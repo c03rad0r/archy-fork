@@ -1222,6 +1222,19 @@ impl MeshService {
         Ok(dest_prefix)
     }
 
+    /// True if `contact_id` is reachable over the mesh radio right now — the
+    /// same peer/twin resolution `peer_dest_prefix` performs, exposed as a
+    /// cheap bool so RPC handlers can gate radio-only transports (LXMF
+    /// native image, Reticulum resource transfer) without duplicating the
+    /// twin-resolution logic. A federation-only contact_id with no matching
+    /// radio twin returns false here — offering "resource-mesh" or native
+    /// image to such a peer sends it straight into `peer_dest_prefix`'s
+    /// "federation-only (no radio twin)" error (picture-send from a
+    /// federation-only contact, 2026-08-07).
+    pub async fn has_radio_route(&self, contact_id: u32) -> bool {
+        self.peer_dest_prefix(contact_id).await.is_ok()
+    }
+
     /// Split an oversized wire payload into MC-framed base64 chunks and send
     /// each via the mesh device. Matches the receive-side reassembly in
     /// `mesh/listener/decode.rs::handle_chunked_frame` (header `MCIIXXTT`,

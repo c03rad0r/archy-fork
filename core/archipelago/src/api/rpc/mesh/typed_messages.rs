@@ -405,9 +405,17 @@ impl RpcHandler {
             .as_ref()
             .ok_or_else(|| anyhow::anyhow!("Mesh service not running"))?;
         let device_type = svc.shared_state().status.read().await.device_type;
+        // Resource transfer is a native RNS transfer over LoRa — it needs an
+        // actual radio route to this contact, not just a Reticulum device on
+        // our end. A federation-only peer with no radio twin fits the size
+        // and device-type checks but has no dest_prefix to send to; without
+        // this check the send falls into send_content_resource and fails
+        // with "Peer is federation-only (no radio twin)" (picture-send,
+        // 2026-08-07) instead of falling back to the federation path below.
         let use_resource_transfer = bytes.len() > INLINE_HARD_MAX
             && device_type == crate::mesh::types::DeviceType::Reticulum
-            && bytes.len() <= RETICULUM_RESOURCE_MAX;
+            && bytes.len() <= RETICULUM_RESOURCE_MAX
+            && svc.has_radio_route(contact_id).await;
 
         if bytes.len() > INLINE_HARD_MAX && !use_resource_transfer {
             anyhow::bail!(
@@ -633,6 +641,16 @@ impl RpcHandler {
         let est_seconds = (size.saturating_add(lora_bytes_per_sec - 1) / lora_bytes_per_sec).max(1);
 
         let is_reticulum = device_type == crate::mesh::types::DeviceType::Reticulum;
+        // A Reticulum device on our end doesn't mean THIS peer is radio
+        // reachable — a federation-only contact (no radio twin) has no dest
+        // prefix for a resource transfer, even though it's small enough and
+        // our device type qualifies. Without this check the frontend was
+        // steered into mesh.send-content-inline's resource-transfer path,
+        // which fails with "Peer is federation-only (no radio twin)"
+        // (picture-send, 2026-08-07); the tier below now defers to the
+        // has_tor branches for such peers, which route via mesh.send-content
+        // (federation) instead.
+        let has_radio_route = is_reticulum && svc.has_radio_route(contact_id).await;
         let (tier, reason) = if size <= MESH_AUTO_MAX {
             ("auto-mesh", "Small enough to send inline over mesh")
         } else if size <= MESH_HARD_MAX {
@@ -641,7 +659,7 @@ impl RpcHandler {
             } else {
                 ("auto-mesh", "No Tor path — sending inline over mesh")
             }
-        } else if is_reticulum && size <= RETICULUM_RESOURCE_MAX {
+        } else if has_radio_route && size <= RETICULUM_RESOURCE_MAX {
             (
                 "resource-mesh",
                 "Sending directly over LoRa via a Reticulum resource transfer",
