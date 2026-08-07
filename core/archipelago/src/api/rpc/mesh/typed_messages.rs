@@ -492,15 +492,58 @@ impl RpcHandler {
                 )
                 .await?
             } else {
-                svc.send_typed_wire(
-                    contact_id,
-                    wire,
-                    "content_ref",
-                    &display,
-                    Some(typed_json),
-                    seq,
-                )
-                .await?
+                // Federation-only peers have no radio twin for
+                // send_typed_wire's LoRa dest-prefix resolution — route over
+                // Tor federation instead, mirroring mesh.send-content's onion
+                // lookup, or the send fails with "Peer is federation-only (no
+                // radio twin)" (picture-send from a federation-only contact,
+                // 2026-08-07).
+                let federation_onion = {
+                    let state = svc.shared_state();
+                    let peers = state.peers.read().await;
+                    peers
+                        .get(&contact_id)
+                        .map(|p| (p.pubkey_hex.clone(), p.did.clone()))
+                };
+                let federation_onion = match federation_onion {
+                    Some((Some(pubkey_hex), did)) => {
+                        let nodes = crate::federation::load_nodes(&self.config.data_dir)
+                            .await
+                            .unwrap_or_default();
+                        nodes
+                            .iter()
+                            .find(|n| n.pubkey == pubkey_hex)
+                            .map(|n| n.onion.clone())
+                            .or_else(|| {
+                                did.as_ref().and_then(|d| {
+                                    nodes.iter().find(|n| &n.did == d).map(|n| n.onion.clone())
+                                })
+                            })
+                    }
+                    _ => None,
+                };
+                if let Some(onion) = federation_onion {
+                    svc.send_typed_wire_via_federation(
+                        contact_id,
+                        &onion,
+                        wire,
+                        "content_ref",
+                        &display,
+                        Some(typed_json),
+                        seq,
+                    )
+                    .await?
+                } else {
+                    svc.send_typed_wire(
+                        contact_id,
+                        wire,
+                        "content_ref",
+                        &display,
+                        Some(typed_json),
+                        seq,
+                    )
+                    .await?
+                }
             }
         };
 
