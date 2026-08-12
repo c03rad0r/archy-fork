@@ -1540,9 +1540,7 @@ pub async fn apply_update(data_dir: &Path) -> Result<()> {
         .await?
         .available_update
         .ok_or_else(|| {
-            anyhow::anyhow!(
-                "Update manifest missing from state — re-download the update"
-            )
+            anyhow::anyhow!("Update manifest missing from state — re-download the update")
         })?;
     verify_staged_components(&staging_dir, &manifest).await?;
 
