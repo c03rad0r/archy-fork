@@ -86,4 +86,5 @@ file.
 ## Roadmap & history
 
 - [Roadmap](ROADMAP.md) — where the project is going
+- [TODO](TODO.md) — working backlog of unscoped forward-looking items
 - [archive/](archive/README.md) — superseded design and status documents, kept for provenance
