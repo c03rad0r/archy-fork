@@ -362,6 +362,22 @@ init()
               </button>
             </div>
             <div class="overflow-y-auto flex-1 min-h-0 space-y-6 pr-1">
+              <!-- v1.8.0-alpha -->
+              <div>
+                <div class="flex items-center gap-2 mb-3">
+                  <span class="text-xs font-mono px-2 py-0.5 rounded bg-orange-500/20 text-orange-300">v1.8.0-alpha</span>
+                  <span class="text-xs text-white/40">August 12, 2026</span>
+                </div>
+                <div class="space-y-3 text-sm text-white/80 pl-3 border-l border-white/10">
+                  <p>**Archipelago is now open source.** The full source code of the node you are running — the orchestrator, the dashboard, the app platform, the mesh, the release tooling — is published for anyone to read, build and audit at source.archipelago-foundation.org/lfg2025/archy. A node that holds your money, your files and your communications should not ask to be taken on faith: from this release onward you, or anyone you trust, can see exactly what it does and follow every change we make in the open.</p>
+                  <p>**Installing an update is reliable again, and tells you what happened when it isn't.** Some nodes could download an update but never apply it — the button stayed on "Install", and no amount of retrying worked. The cause: applying the update consumed the downloaded files as it went, so if any one step hit a snag partway through, the leftover files were incomplete and every later attempt failed the safety re-check forever, needing a technician to recover. Applying no longer consumes the download — a failed apply can always be retried from the same files — and the pieces are now applied in a fixed order with the program itself last, so a hiccup can't leave a half-swapped node. When an apply does fail, the screen now shows the real reason and what to do ("download the update again"), and offers Download again instead of a dead "Install" button, rather than a generic "it failed".</p>
+                  <p>**Video on the kiosk stops tearing.** The kiosk's display had no vertical sync at all, so fast motion — IndeedHub films especially — showed horizontal tearing lines. The display driver now syncs every frame to the panel (no extra hardware needed, existing kiosks pick it up with this update), and on machines with a GPU, video decoding moves off the CPU onto the video hardware — smoother playback that also leaves more headroom for audio, not less.</p>
+                  <p>**The Back button finally does what you expect.** Pressing Back — the mouse's side button on a kiosk, a swipe on a phone, the toolbar button in any browser — used to navigate the screen underneath an open window, or leave the dashboard entirely. Back now closes the topmost open window first, one per press, exactly like a native app; closing a window yourself never leaves a phantom entry that makes you press Back twice.</p>
+                  <p>**No more bare IP addresses in your update or app-registry settings.** The update mirrors and the app registry each listed the same server twice — once by its proper name, once as a raw http://146… address left over from before the domain existed. The raw-address entries are retired: new nodes never see them, and existing nodes clean them out of their saved lists automatically on the next read. Everything now goes through the named, TLS-protected origin — which was always the same machine.</p>
+                  <p>**The phone companion app downloads over the proper domain.** The download QR pointed at a raw address over plain HTTP; it now points at the same file on the https domain. Scanning it gets you an encrypted download from a named server.</p>
+                  <p>**The Receive window now tells you when the money is on its way.** Previously it showed a QR code and left you to check elsewhere whether anything happened. Now, the moment the sender's transaction is broadcast, the QR gives way to a clock: the amount, the transaction ID (tap to copy), and a note that the funds arrive on their own — with a single Done button. If you keep the window open, the clock becomes a green check at the first confirmation. Verified live on a real node: payment detected within seconds of broadcast.</p>
+                </div>
+              </div>
               <!-- v1.7.129-alpha -->
               <div>
                 <div class="flex items-center gap-2 mb-3">
