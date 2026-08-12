@@ -10,6 +10,10 @@ app:
     # --http-bind-ip 0.0.0.0, as user "phoenix"; no custom args needed.
     image: source.archipelago-foundation.org/lfg2025/phoenixd:0.9.0
     pull_policy: if-not-present
+    # The image runs as user phoenix (1000:1000); the datadir bind source
+    # must be chowned to that identity or phoenixd dies on
+    # "Failed to open /data/phoenix.conf with Permission denied".
+    data_uid: "1000:1000"
 
   dependencies:
     - storage: 500Mi
@@ -41,10 +45,17 @@ app:
     # The wallet seed (seed.dat) and phoenix.conf live here. This directory
     # must survive reinstall/migration like any other app data dir —
     # losing it means losing funds.
+    # Target is /data (via PHOENIX_DATADIR below), NOT the image's default
+    # /phoenix/.phoenix: the orchestrator treats any bind path containing a
+    # dot as a file mount and skips creating its source directory, so a
+    # hidden-dir target never gets its host dir and the unit crash-loops.
     - type: bind
       source: /var/lib/archipelago/phoenixd
-      target: /phoenix/.phoenix
+      target: /data
       options: [rw]
+
+  environment:
+    - PHOENIX_DATADIR=/data
 
   health_check:
     type: tcp

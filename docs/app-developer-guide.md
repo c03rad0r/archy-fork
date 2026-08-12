@@ -130,7 +130,38 @@ app:
 
 Additional extension keys may exist for current integrations, for example Bitcoin, Lightning, or app-specific launch/interface metadata. Treat extension keys as transitional unless they are documented as reusable platform primitives.
 
-Use `metadata.launch.open_in_new_tab: true` when the app UI is known to reject iframe embedding with headers such as `X-Frame-Options` or restrictive CSP. The frontend app-session metadata is generated from this flag during release work.
+### Iframe embedding — the rules
+
+The dashboard opens apps in an **embedded frame** (My Apps → app session) by
+default. Whether that works is decided by HTTP headers, not by wishes, so
+know the mechanics:
+
+- Browsers refuse to render a page in an iframe when the response carries
+  `X-Frame-Options: DENY`/`SAMEORIGIN` (the dashboard and the app are
+  different origins — different port at minimum) or a CSP `frame-ancestors`
+  directive that excludes the dashboard's origin.
+- Many upstream apps ship exactly those headers (Alby Hub sends
+  `X-Frame-Options: DENY`). In a normal deployment that is correct hardening;
+  behind Archipelago's app gate the clickjacking threat those headers address
+  is already handled — every proxied request is authenticated by the gate
+  first.
+- Therefore **the gate neutralizes frame blocking on proxied responses**: it
+  removes `X-Frame-Options` and strips only the `frame-ancestors` directive
+  from the app's CSP. The rest of the app's CSP (script-src, connect-src, …)
+  passes through untouched — the gate never weakens the app's own content
+  policy, only its framing policy. You do not need a bespoke reverse proxy,
+  header patches, or app config to be embeddable.
+
+Set `metadata.launch.open_in_new_tab: true` only when embedding is broken by
+things headers can't fix — the app frame-busts in JavaScript, requires being
+the top-level origin (OAuth redirect flows, WebAuthn), or sets
+`SameSite=Strict` session cookies that never accompany framed requests. Test
+in the real embedded app session, **not** a plain browser tab: tabs don't
+enforce framing headers, so a tab proves nothing about the iframe.
+
+(Historical note: before the gate handled this, embeddable-but-blocking apps
+each carried a hand-built nginx strip proxy — gitea's port-3000 proxy is the
+surviving example. Do not copy that pattern for new apps.)
 
 ### Launch Interfaces
 

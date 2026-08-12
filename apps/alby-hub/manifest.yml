@@ -64,7 +64,10 @@ app:
     repo: https://github.com/getAlby/hub
     tier: optional
     launch:
-      open_in_new_tab: true
+      # Embedded: the gate neutralizes Alby Hub's X-Frame-Options: DENY on
+      # proxied responses. Nodes older than the gate fix show a blocked
+      # frame — flip to true only if targeting such nodes.
+      open_in_new_tab: false
     features:
       - Self-custodial Lightning node (LDK) with a friendly wallet UI
       - Connect wallets and apps via Nostr Wallet Connect (NWC)
