@@ -520,8 +520,60 @@ async fn proxy_to_app(
 
     let client = hyper::Client::new();
     match client.request(Request::from_parts(parts, body)).await {
-        Ok(resp) => resp,
+        Ok(mut resp) => {
+            neutralize_frame_blocking(resp.headers_mut());
+            resp
+        }
         Err(_) => app_down_page(app),
+    }
+}
+
+/// Make gate-proxied app responses embeddable by the dashboard's My Apps
+/// iframe. Apps that were never designed for framing ship
+/// `X-Frame-Options: DENY` (Alby Hub) or a CSP `frame-ancestors` directive,
+/// and either one makes the embedded app session a dead grey pane — the
+/// historical workaround was a bespoke per-app nginx proxy (gitea), which is
+/// exactly the per-app patching the manifest platform exists to delete.
+///
+/// Framing protection exists to stop a FOREIGN origin from framing an authed
+/// page and clickjacking it. Behind the gate that threat model is already
+/// handled the way the gate's own pages handle it: every proxied request is
+/// authenticated by the gate first, and the gate's own responses declare
+/// `frame-ancestors 'self' http://*:* https://*:*` (see `page()`) because the
+/// dashboard is reached by LAN IP, mDNS name, and onion alike. Upstream
+/// X-Frame-Options is dropped entirely; only the `frame-ancestors` directive
+/// is removed from the app's CSP — the rest of the app's policy (script-src,
+/// connect-src, …) is the app's business and passes through untouched.
+fn neutralize_frame_blocking(headers: &mut hyper::HeaderMap) {
+    headers.remove("x-frame-options");
+    let Some(csp) = headers.get("content-security-policy") else {
+        return;
+    };
+    let Ok(raw) = csp.to_str() else {
+        return;
+    };
+    if !raw.to_ascii_lowercase().contains("frame-ancestors") {
+        return;
+    }
+    let kept: Vec<&str> = raw
+        .split(';')
+        .map(str::trim)
+        .filter(|d| !d.to_ascii_lowercase().starts_with("frame-ancestors") && !d.is_empty())
+        .collect();
+    if kept.is_empty() {
+        headers.remove("content-security-policy");
+        return;
+    }
+    match header::HeaderValue::from_str(&kept.join("; ")) {
+        Ok(v) => {
+            headers.insert("content-security-policy", v);
+        }
+        Err(_) => {
+            // Unrepresentable after filtering — fail open for framing but
+            // closed for the policy: better to drop a mangled CSP than to
+            // serve one we rewrote incorrectly.
+            headers.remove("content-security-policy");
+        }
     }
 }
 
@@ -1072,6 +1124,50 @@ mod tests {
     /// 2026-08-05). It must still be uncacheable, and still refuse to be
     /// framed by a foreign origin, which `frame-ancestors` expresses and
     /// `X-Frame-Options` cannot.
+    /// Upstream frame-blocking must not survive the proxy: X-Frame-Options
+    /// goes away entirely, CSP loses ONLY its frame-ancestors directive —
+    /// the app's remaining policy must pass through byte-preserving in
+    /// content (Alby Hub's DENY + strict CSP was the real-world case,
+    /// archi-dev-box 2026-08-12).
+    #[test]
+    fn proxied_responses_lose_frame_blocking_but_keep_the_apps_csp() {
+        let mut headers = hyper::HeaderMap::new();
+        headers.insert("x-frame-options", "DENY".parse().unwrap());
+        headers.insert(
+            "content-security-policy",
+            "default-src 'self'; frame-ancestors 'none'; img-src 'self' https://cdn.example"
+                .parse()
+                .unwrap(),
+        );
+        neutralize_frame_blocking(&mut headers);
+        assert!(!headers.contains_key("x-frame-options"));
+        let csp = headers["content-security-policy"].to_str().unwrap();
+        assert!(!csp.contains("frame-ancestors"));
+        assert!(csp.contains("default-src 'self'"));
+        assert!(csp.contains("img-src 'self' https://cdn.example"));
+
+        // CSP that is ONLY a frame-ancestors directive disappears entirely.
+        let mut only = hyper::HeaderMap::new();
+        only.insert(
+            "content-security-policy",
+            "frame-ancestors 'self'".parse().unwrap(),
+        );
+        neutralize_frame_blocking(&mut only);
+        assert!(!only.contains_key("content-security-policy"));
+
+        // No frame directives at all → CSP untouched.
+        let mut plain = hyper::HeaderMap::new();
+        plain.insert(
+            "content-security-policy",
+            "default-src 'self'".parse().unwrap(),
+        );
+        neutralize_frame_blocking(&mut plain);
+        assert_eq!(
+            plain["content-security-policy"].to_str().unwrap(),
+            "default-src 'self'"
+        );
+    }
+
     #[test]
     fn challenge_pages_are_uncacheable_and_framable_only_by_this_node() {
         let resp = login_page(&app(), None, StatusCode::UNAUTHORIZED);
