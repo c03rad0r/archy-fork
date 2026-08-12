@@ -1,0 +1,72 @@
+app:
+  id: alby-hub
+  name: Alby Hub
+  version: 1.23.0
+  description: Self-custodial Lightning wallet hub. Runs its own Lightning node on your Archipelago and connects your apps to it over Nostr Wallet Connect — one hub, every app pays through it.
+  category: money
+
+  container:
+    image: source.archipelago-foundation.org/lfg2025/alby-hub:v1.23.0
+    pull_policy: if-not-present
+
+  dependencies:
+    - storage: 1Gi
+
+  resources:
+    cpu_limit: 1
+    memory_limit: 512Mi
+    disk_limit: 2Gi
+
+  security:
+    capabilities: []
+    readonly_root: true
+    no_new_privileges: true
+    network_policy: bridge
+
+  ports:
+    - host: 8087
+      container: 8080
+      protocol: tcp
+      bind: 127.0.0.1
+      auth: gated
+
+  volumes:
+    - type: bind
+      source: /var/lib/archipelago/alby-hub
+      target: /data
+      options: [rw]
+
+  environment:
+    - WORK_DIR=/data
+    - PORT=8080
+    # LDK peers are dialed outbound-only in v1; no inbound p2p port is
+    # advertised, so no extra port mapping is needed for payments to work.
+    - LOG_LEVEL=info
+
+  health_check:
+    type: http
+    endpoint: http://localhost:8080
+    path: /
+    interval: 30s
+    timeout: 5s
+    retries: 5
+
+  interfaces:
+    main:
+      name: Web UI
+      description: Alby Hub wallet interface
+      type: ui
+      port: 8087
+      protocol: http
+
+  metadata:
+    icon: /assets/img/app-icons/alby-hub.svg
+    repo: https://github.com/getAlby/hub
+    tier: optional
+    launch:
+      open_in_new_tab: true
+    features:
+      - Self-custodial Lightning node (LDK) with a friendly wallet UI
+      - Connect wallets and apps via Nostr Wallet Connect (NWC)
+      - Per-app budgets and isolated sub-wallets
+      - Works with the Alby browser extension and mobile app

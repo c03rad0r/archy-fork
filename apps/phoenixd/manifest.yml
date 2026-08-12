@@ -1,0 +1,64 @@
+app:
+  id: phoenixd
+  name: phoenixd
+  version: 0.9.0
+  description: Headless Lightning daemon by ACINQ (the Phoenix wallet team). No screen of its own — it exposes a small local API that other apps and tools use to send and receive Lightning payments. Channel liquidity is managed automatically for a fee.
+  category: money
+
+  container:
+    # Image entrypoint already runs with --agree-to-terms-of-service and
+    # --http-bind-ip 0.0.0.0, as user "phoenix"; no custom args needed.
+    image: source.archipelago-foundation.org/lfg2025/phoenixd:0.9.0
+    pull_policy: if-not-present
+
+  dependencies:
+    - storage: 500Mi
+
+  resources:
+    cpu_limit: 1
+    memory_limit: 512Mi
+    disk_limit: 1Gi
+
+  security:
+    capabilities: []
+    readonly_root: true
+    no_new_privileges: true
+    network_policy: bridge
+
+  ports:
+    - host: 9740
+      container: 9740
+      protocol: tcp
+      bind: 127.0.0.1
+      auth: none
+      auth_rationale: >-
+        Loopback-only JSON API, not a web page. Every request is
+        authenticated by the http password phoenixd generates in its own
+        data directory on first run; the app gate's browser login page
+        would break the API clients this port exists for.
+
+  volumes:
+    # The wallet seed (seed.dat) and phoenix.conf live here. This directory
+    # must survive reinstall/migration like any other app data dir —
+    # losing it means losing funds.
+    - type: bind
+      source: /var/lib/archipelago/phoenixd
+      target: /phoenix/.phoenix
+      options: [rw]
+
+  health_check:
+    type: tcp
+    endpoint: localhost:9740
+    interval: 30s
+    timeout: 5s
+    retries: 5
+
+  metadata:
+    icon: /assets/img/app-icons/phoenixd.svg
+    repo: https://github.com/ACINQ/phoenixd
+    tier: optional
+    features:
+      - Ultra-light Lightning node — no bitcoin node required
+      - Automated channel and liquidity management (fees apply)
+      - Simple HTTP API + websockets for payments
+      - Backed by the team behind the Phoenix mobile wallet
