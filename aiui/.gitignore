@@ -1,0 +1,54 @@
+# Dependencies
+node_modules/
+.pnpm-store/
+
+# Build output
+dist/
+*.tsbuildinfo
+
+# scripts/build-aiui.sh's staleness-detection cache (13-09) — a local,
+# best-effort marker so the script can tell "source changed but the
+# emitted asset filenames didn't" from a plain rebuild with no changes.
+.build-aiui-last-src-hash
+.build-aiui-last-assets
+
+# Turborepo
+.turbo/
+
+# Environment (secrets)
+.env.local
+.env.*.local
+
+# Tauri
+packages/app/src-tauri/target/
+
+# IDE
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Dev chat history
+.dev/
+
+# Debug
+npm-debug.log*
+pnpm-debug.log*
+
+# Test coverage
+coverage/
+
+# Overnight loop logs
+loop/loop.log
+
+# Playwright
+test-results/
+playwright-report/
+playwright/.cache/
+
+# Storybook
+storybook-static/

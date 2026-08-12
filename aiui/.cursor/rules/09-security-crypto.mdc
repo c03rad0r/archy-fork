@@ -1,0 +1,60 @@
+---
+description: Cryptography and security rules - E2E encryption, key management, storage
+globs: "**/crypto/**,**/*.ts"
+alwaysApply: false
+---
+
+# Security & Cryptography
+
+## Principles
+- Privacy is a requirement, not a feature
+- Zero telemetry, zero analytics unless user explicitly opts in
+- Never transmit unencrypted sensitive data
+- Never store plaintext credentials
+- Minimal data collection — store only what's needed
+
+## Encryption Stack
+
+### E2E Message Encryption
+- Library: **tweetnacl.js** (6KB, audited by Cure53)
+- Algorithm: XSalsa20-Poly1305 via NaCl `box` (public-key authenticated encryption)
+- Each conversation has a shared secret derived from key exchange
+
+### Local Storage Encryption
+- Library: **Web Crypto API** (native, zero bundle cost)
+- Algorithm: AES-256-GCM for encrypting IndexedDB values
+- Key derived from user's master password via PBKDF2 (100K+ iterations)
+
+### Key Management
+- **Desktop (Tauri)**: OS keychain (macOS Keychain, Windows Credential Manager, Linux Secret Service)
+- **Web**: Encrypted IndexedDB with user-derived key
+- **Nostr compatibility**: secp256k1 keys via @noble/curves, NIP-07 browser extension support
+- **Passkeys/WebAuthn**: For passwordless authentication
+
+### Credential Storage
+- API keys encrypted at rest using AES-256-GCM
+- Never stored in localStorage (use encrypted IndexedDB or OS keychain)
+- Never included in logs, error reports, or system prompts
+- Display as masked values in settings UI (show last 4 chars only)
+
+## Dev Mode Bypass
+When `VITE_DISABLE_CRYPTO=true` (dev only):
+- Skip E2E encryption (messages stored in plain text)
+- Skip storage encryption (IndexedDB unencrypted)
+- API keys stored in `.env.local` (gitignored)
+- This flag must NEVER exist in production builds
+
+## Security Rules for Code
+- Never log sensitive data (keys, tokens, passwords, message content)
+- Never include secrets in error messages
+- Sanitize all user input before rendering (XSS prevention)
+- Use Content Security Policy headers
+- Validate all data from plugins before rendering
+- Community plugins run in sandboxed iframes (no direct DOM access)
+- Never eval() or innerHTML with untrusted content
+
+## Network Security
+- All external requests over HTTPS only
+- Certificate pinning for known services (Tauri)
+- Proxy social media fetches to avoid leaking user IP
+- No third-party tracking scripts, analytics, or telemetry SDKs

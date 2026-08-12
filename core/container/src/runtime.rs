@@ -1,0 +1,1149 @@
+use crate::manifest::{AppManifest, BuildConfig};
+use crate::podman_client::{ContainerState, ContainerStatus, PodmanClient};
+use anyhow::{Context, Result};
+use async_trait::async_trait;
+use std::time::Duration;
+use tokio::process::Command as TokioCommand;
+
+const PODMAN_CLI_DEFAULT_TIMEOUT: Duration = Duration::from_secs(30);
+const PODMAN_CLI_IMAGE_CHECK_TIMEOUT: Duration = Duration::from_secs(10);
+const PODMAN_CLI_BUILD_TIMEOUT: Duration = Duration::from_secs(900);
+
+/// Default graceful-stop grace (seconds) when a caller doesn't supply a per-app
+/// value. Mirrors the historical `podman stop -t 30`.
+pub const DEFAULT_STOP_GRACE_SECS: u64 = 30;
+/// Headroom added to a stop grace to form the await/HTTP deadline, so podman's
+/// post-grace SIGKILL completes before the wrapper times out.
+pub const STOP_GRACE_DEADLINE_BUFFER_SECS: u64 = 15;
+
+/// Canonical per-app graceful-stop grace (seconds), keyed by container name.
+/// Slow-to-SIGTERM apps need far longer than the 30s default: bitcoin-core
+/// flushes its chainstate, lnd closes channels, electrumx finishes indexing,
+/// stack DBs checkpoint. Used as the fallback when a manifest doesn't declare
+/// `stop_grace_secs`. NOTE: the RPC layer's `stop_timeout_secs` mirrors this
+/// (returns the same values as `&str` for legacy `podman stop -t` call sites) —
+/// keep the two in sync until that path is retired.
+pub fn stop_grace_secs_for(container_name: &str) -> u64 {
+    let id = container_name
+        .strip_prefix("archy-")
+        .unwrap_or(container_name);
+    match id {
+        "bitcoin-knots" | "bitcoin-core" | "bitcoin" => 600,
+        "lnd" => 330,
+        "electrumx" | "electrs" | "mempool-electrs" => 300,
+        "btcpay-db" | "mempool-db" | "penpot-postgres" | "immich_postgres" | "nextcloud-db"
+        | "endurain-db" => 120,
+        "btcpay-server" | "nbxplorer" | "fedimint" | "fedimint-gateway" => 60,
+        _ => DEFAULT_STOP_GRACE_SECS,
+    }
+}
+
+#[async_trait]
+pub trait ContainerRuntime: Send + Sync {
+    async fn pull_image(&self, image: &str, signature: Option<&str>) -> Result<()>;
+    async fn create_container(
+        &self,
+        manifest: &AppManifest,
+        name: &str,
+        port_offset: u16,
+    ) -> Result<String>;
+    async fn start_container(&self, name: &str) -> Result<()>;
+    async fn stop_container(&self, name: &str) -> Result<()>;
+    /// Stop a container honouring a per-app graceful-shutdown grace (seconds).
+    ///
+    /// Slow-to-SIGTERM apps (bitcoin-core, lnd, electrumx, fedimint, immich…)
+    /// need a longer `podman stop -t` than the default 30s, or `podman stop`
+    /// returns before the container exits and the orchestrator treats the stop
+    /// as failed (the container keeps running). The wrapping deadline is always
+    /// kept strictly greater than `grace_secs` so podman's post-grace SIGKILL
+    /// lands inside the await. The default impl ignores the grace and calls
+    /// `stop_container` — only the real podman runtime honours it.
+    async fn stop_container_with_grace(&self, name: &str, grace_secs: u64) -> Result<()> {
+        let _ = grace_secs;
+        self.stop_container(name).await
+    }
+    async fn remove_container(&self, name: &str) -> Result<()>;
+    async fn get_container_status(&self, name: &str) -> Result<ContainerStatus>;
+    async fn get_container_logs(&self, name: &str, lines: u32) -> Result<Vec<String>>;
+    async fn list_containers(&self) -> Result<Vec<ContainerStatus>>;
+
+    /// Check whether an image reference exists in local storage.
+    ///
+    /// The reconciler calls this before deciding to build. `true` means
+    /// `image inspect <image_ref>` succeeded (or equivalent); `false` means
+    /// the image is not present. Registry/network state is explicitly NOT
+    /// consulted — this is a local-storage check only.
+    async fn image_exists(&self, image_ref: &str) -> Result<bool>;
+
+    /// Build a local image from a `BuildConfig`.
+    ///
+    /// Equivalent to `podman build -t <tag> -f <dockerfile> [--build-arg K=V ...] <context>`.
+    /// The resulting image is referenceable by `config.tag` for subsequent
+    /// `create_container` / `image_exists` calls. Stdout/stderr are collected
+    /// and included in the error on failure; on success they are discarded.
+    async fn build_image(&self, config: &BuildConfig) -> Result<()>;
+
+    /// Register the app's resolved secret-env entries in the runtime's
+    /// secret store (idempotent — skips entries whose content hash already
+    /// matches). Called before `create_container` for manifests with
+    /// `secret_env_refs`, so the create can reference secrets by name and
+    /// the values never appear in inspect output or unit files. Default is
+    /// a no-op for runtimes without a secret store (mocks, docker — the
+    /// docker fallback injects plain env in `create_container` instead).
+    async fn ensure_env_secrets(&self, refs: &[crate::manifest::SecretEnvRef]) -> Result<()> {
+        let _ = refs;
+        Ok(())
+    }
+}
+
+pub struct PodmanRuntime {
+    client: PodmanClient,
+}
+
+impl PodmanRuntime {
+    pub fn new(user: String) -> Self {
+        Self {
+            client: PodmanClient::new(user),
+        }
+    }
+
+    /// Run `podman <args>`, returning an error with captured stderr on non-zero
+    /// exit. Used for operations (build, image inspect) that are awkward over the
+    /// HTTP API. The daemon runs as the target user already, so no sudo hop.
+    async fn podman_cli_timeout(
+        &self,
+        args: &[&str],
+        timeout: Duration,
+    ) -> Result<std::process::Output> {
+        let mut cmd = TokioCommand::new("podman");
+        cmd.args(args);
+        cmd.kill_on_drop(true);
+        tokio::time::timeout(timeout, cmd.output())
+            .await
+            .with_context(|| {
+                format!(
+                    "podman {} timed out after {}s",
+                    args.join(" "),
+                    timeout.as_secs()
+                )
+            })?
+            .with_context(|| format!("failed to execute podman {}", args.join(" ")))
+    }
+
+    /// Run `podman <args>` with a short timeout for control-plane operations.
+    async fn podman_cli(&self, args: &[&str]) -> Result<std::process::Output> {
+        self.podman_cli_timeout(args, PODMAN_CLI_DEFAULT_TIMEOUT)
+            .await
+    }
+}
+
+#[async_trait]
+impl ContainerRuntime for PodmanRuntime {
+    async fn pull_image(&self, image: &str, signature: Option<&str>) -> Result<()> {
+        self.client.pull_image(image, signature).await
+    }
+
+    async fn ensure_env_secrets(&self, refs: &[crate::manifest::SecretEnvRef]) -> Result<()> {
+        use crate::manifest::{secret_env_content_hash, SECRET_HASH_LABEL};
+        use tokio::io::AsyncWriteExt;
+
+        for r in refs {
+            let hash = secret_env_content_hash(&[(r.env_key.clone(), r.value.clone())]);
+
+            // Skip the write when the stored secret already has this content
+            // (label round-trip beats rewriting the secret store every
+            // reconcile). Any inspect failure just falls through to create.
+            let fmt = format!("{{{{ index .Spec.Labels \"{SECRET_HASH_LABEL}\" }}}}");
+            if let Ok(out) = self
+                .podman_cli(&["secret", "inspect", &r.secret_name, "--format", &fmt])
+                .await
+            {
+                if out.status.success() && String::from_utf8_lossy(&out.stdout).trim() == hash {
+                    continue;
+                }
+            }
+
+            // Value goes via stdin — never argv, never a temp file.
+            let mut cmd = TokioCommand::new("podman");
+            cmd.args([
+                "secret",
+                "create",
+                "--replace",
+                "--label",
+                &format!("{SECRET_HASH_LABEL}={hash}"),
+                &r.secret_name,
+                "-",
+            ]);
+            cmd.stdin(std::process::Stdio::piped());
+            cmd.stdout(std::process::Stdio::piped());
+            cmd.stderr(std::process::Stdio::piped());
+            cmd.kill_on_drop(true);
+            let mut child = cmd
+                .spawn()
+                .with_context(|| format!("spawning podman secret create {}", r.secret_name))?;
+            {
+                let mut stdin = child
+                    .stdin
+                    .take()
+                    .context("podman secret create stdin unavailable")?;
+                stdin.write_all(r.value.as_bytes()).await?;
+                // drop closes the pipe so podman sees EOF
+            }
+            let out = tokio::time::timeout(PODMAN_CLI_DEFAULT_TIMEOUT, child.wait_with_output())
+                .await
+                .with_context(|| format!("podman secret create {} timed out", r.secret_name))??;
+            if !out.status.success() {
+                anyhow::bail!(
+                    "podman secret create {} failed: {}",
+                    r.secret_name,
+                    String::from_utf8_lossy(&out.stderr)
+                );
+            }
+        }
+        Ok(())
+    }
+
+    async fn create_container(
+        &self,
+        manifest: &AppManifest,
+        name: &str,
+        port_offset: u16,
+    ) -> Result<String> {
+        // Apply port offset to manifest ports
+        let mut dev_manifest = manifest.clone();
+        for port in &mut dev_manifest.app.ports {
+            port.host += port_offset;
+        }
+
+        // PodmanClient doesn't take port_offset, so we use the modified manifest
+        self.client.create_container(&dev_manifest, name).await
+    }
+
+    async fn start_container(&self, name: &str) -> Result<()> {
+        match self.client.start_container(name).await {
+            Ok(()) => Ok(()),
+            Err(api_err) => {
+                let output = self.podman_cli(&["start", name]).await?;
+                if output.status.success() {
+                    Ok(())
+                } else {
+                    let stderr = String::from_utf8_lossy(&output.stderr);
+                    Err(api_err.context(format!("podman start fallback failed: {}", stderr.trim())))
+                }
+            }
+        }
+    }
+
+    async fn stop_container(&self, name: &str) -> Result<()> {
+        self.stop_container_with_grace(name, DEFAULT_STOP_GRACE_SECS)
+            .await
+    }
+
+    async fn stop_container_with_grace(&self, name: &str, grace_secs: u64) -> Result<()> {
+        match self
+            .client
+            .stop_container_with_grace(name, grace_secs)
+            .await
+        {
+            Ok(()) => Ok(()),
+            Err(api_err) => {
+                // CLI fallback. Keep the wrapper deadline strictly above the
+                // `-t` grace so podman's post-grace SIGKILL completes before the
+                // await gives up (otherwise a deadline == grace races the kill
+                // and reports a spurious timeout).
+                let grace = grace_secs.to_string();
+                let deadline = Duration::from_secs(grace_secs + STOP_GRACE_DEADLINE_BUFFER_SECS);
+                let output = self
+                    .podman_cli_timeout(&["stop", "-t", &grace, name], deadline)
+                    .await?;
+                if output.status.success() {
+                    Ok(())
+                } else {
+                    let stderr = String::from_utf8_lossy(&output.stderr);
+                    if is_missing_container_error(&stderr) {
+                        return Ok(());
+                    }
+                    Err(api_err.context(format!("podman stop fallback failed: {}", stderr.trim())))
+                }
+            }
+        }
+    }
+
+    async fn remove_container(&self, name: &str) -> Result<()> {
+        match self.client.remove_container(name).await {
+            Ok(()) => Ok(()),
+            Err(api_err) => {
+                let output = self.podman_cli(&["rm", "-f", name]).await?;
+                if output.status.success() {
+                    Ok(())
+                } else {
+                    let stderr = String::from_utf8_lossy(&output.stderr);
+                    if is_missing_container_error(&stderr) {
+                        return Ok(());
+                    }
+                    let zero_timeout = self.podman_cli(&["rm", "-f", "--time", "0", name]).await?;
+                    if zero_timeout.status.success() {
+                        return Ok(());
+                    }
+
+                    let _ = self.podman_cli(&["container", "cleanup", name]).await;
+                    let cleanup_rm = self.podman_cli(&["rm", "-f", name]).await?;
+                    if cleanup_rm.status.success() {
+                        return Ok(());
+                    }
+                    let cleanup_stderr = String::from_utf8_lossy(&cleanup_rm.stderr);
+                    if is_missing_container_error(&cleanup_stderr) {
+                        return Ok(());
+                    }
+                    Err(api_err.context(format!(
+                        "podman rm fallback failed: {}; cleanup rm failed: {}",
+                        stderr.trim(),
+                        cleanup_stderr.trim()
+                    )))
+                }
+            }
+        }
+    }
+
+    async fn get_container_status(&self, name: &str) -> Result<ContainerStatus> {
+        match self.client.get_container_status(name).await {
+            Ok(status) => Ok(status),
+            Err(api_err) => {
+                let output = self
+                    .podman_cli(&["container", "inspect", "--format", "json", name])
+                    .await?;
+                if !output.status.success() {
+                    let stderr = String::from_utf8_lossy(&output.stderr);
+                    return Err(api_err
+                        .context(format!("podman inspect fallback failed: {}", stderr.trim())));
+                }
+                parse_podman_inspect_json(&output.stdout, name)
+                    .with_context(|| format!("podman API inspect failed: {api_err}"))
+            }
+        }
+    }
+
+    async fn get_container_logs(&self, name: &str, lines: u32) -> Result<Vec<String>> {
+        self.client.get_container_logs(name, lines).await
+    }
+
+    async fn list_containers(&self) -> Result<Vec<ContainerStatus>> {
+        match self.client.list_containers().await {
+            Ok(containers) => Ok(containers),
+            Err(api_err) => {
+                let output = self.podman_cli(&["ps", "-a", "--format", "json"]).await?;
+                if !output.status.success() {
+                    let stderr = String::from_utf8_lossy(&output.stderr);
+                    return Err(
+                        api_err.context(format!("podman ps fallback failed: {}", stderr.trim()))
+                    );
+                }
+                parse_podman_ps_json(&output.stdout)
+                    .with_context(|| format!("podman API list failed: {api_err}"))
+            }
+        }
+    }
+
+    async fn image_exists(&self, image_ref: &str) -> Result<bool> {
+        // Avoid `podman image exists`: on production nodes with a stressed
+        // rootless store it can hang even when targeted at one image. A bounded
+        // inspect is the local-storage probe the trait contract describes.
+        let output = self
+            .podman_cli_timeout(
+                &["image", "inspect", image_ref],
+                PODMAN_CLI_IMAGE_CHECK_TIMEOUT,
+            )
+            .await?;
+        match output.status.code() {
+            Some(0) => Ok(true),
+            Some(1) => Ok(false),
+            Some(code) => {
+                let stderr = String::from_utf8_lossy(&output.stderr);
+                Err(anyhow::anyhow!(
+                    "podman image inspect {image_ref} exited with {code}: {stderr}"
+                ))
+            }
+            None => Err(anyhow::anyhow!(
+                "podman image inspect {image_ref} terminated by signal"
+            )),
+        }
+    }
+
+    async fn build_image(&self, config: &BuildConfig) -> Result<()> {
+        let args = build_args_for_podman(config);
+        let borrowed: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
+        let output = self
+            .podman_cli_timeout(&borrowed, PODMAN_CLI_BUILD_TIMEOUT)
+            .await?;
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            return Err(anyhow::anyhow!(
+                "podman build -t {} failed: {stderr}{}{stdout}",
+                config.tag,
+                if stderr.is_empty() || stdout.is_empty() {
+                    ""
+                } else {
+                    "\n---stdout---\n"
+                }
+            ));
+        }
+        Ok(())
+    }
+}
+
+fn parse_podman_ps_json(stdout: &[u8]) -> Result<Vec<ContainerStatus>> {
+    let text = String::from_utf8_lossy(stdout);
+    if text.trim().is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let containers: Vec<serde_json::Value> = serde_json::from_str(&text)?;
+    Ok(containers
+        .into_iter()
+        .map(|c| {
+            let name = c
+                .get("Names")
+                .and_then(|v| v.as_array())
+                .and_then(|a| a.first())
+                .and_then(|v| v.as_str())
+                .or_else(|| c.get("Names").and_then(|v| v.as_str()))
+                .unwrap_or("")
+                .to_string();
+            let status = c.get("Status").and_then(|v| v.as_str()).unwrap_or("");
+            let state = c.get("State").and_then(|v| v.as_str()).unwrap_or("unknown");
+            ContainerStatus {
+                id: c
+                    .get("Id")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string(),
+                name: name.clone(),
+                state: ContainerState::from(state),
+                health: parse_health_from_status(status),
+                exit_code: c.get("ExitCode").and_then(|v| v.as_i64()).map(|c| c as i32),
+                started_at: c
+                    .get("StartedAt")
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.to_string()),
+                image: c
+                    .get("Image")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string(),
+                created: c
+                    .get("Created")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string(),
+                ports: parse_podman_ps_ports(c.get("Ports")),
+                lan_address: PodmanClient::lan_address_for(&name),
+            }
+        })
+        .collect())
+}
+
+fn parse_podman_inspect_json(stdout: &[u8], requested_name: &str) -> Result<ContainerStatus> {
+    let text = String::from_utf8_lossy(stdout);
+    let containers: Vec<serde_json::Value> = serde_json::from_str(&text)?;
+    let c = containers
+        .first()
+        .ok_or_else(|| anyhow::anyhow!("podman inspect returned no containers"))?;
+    if c.get("State").is_none() {
+        return Err(anyhow::anyhow!(
+            "podman inspect returned non-container object for {requested_name}"
+        ));
+    }
+    let name = c
+        .get("Name")
+        .and_then(|v| v.as_str())
+        .map(|s| s.trim_start_matches('/'))
+        .unwrap_or(requested_name)
+        .to_string();
+    let state = c
+        .get("State")
+        .and_then(|v| v.get("Status"))
+        .and_then(|v| v.as_str())
+        .unwrap_or("unknown");
+    Ok(ContainerStatus {
+        id: c
+            .get("Id")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string(),
+        name: name.clone(),
+        state: ContainerState::from(state),
+        health: c
+            .get("State")
+            .and_then(|v| v.get("Health"))
+            .and_then(|v| v.get("Status"))
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string()),
+        exit_code: c
+            .get("State")
+            .and_then(|v| v.get("ExitCode"))
+            .and_then(|v| v.as_i64())
+            .map(|c| c as i32),
+        started_at: c
+            .get("State")
+            .and_then(|v| v.get("StartedAt"))
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string()),
+        image: c
+            .get("ImageName")
+            .and_then(|v| v.as_str())
+            .or_else(|| {
+                c.get("Config")
+                    .and_then(|v| v.get("Image"))
+                    .and_then(|v| v.as_str())
+            })
+            .unwrap_or("")
+            .to_string(),
+        created: c
+            .get("Created")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string(),
+        ports: parse_inspect_ports(c),
+        lan_address: PodmanClient::lan_address_for(&name),
+    })
+}
+
+fn parse_inspect_ports(c: &serde_json::Value) -> Vec<String> {
+    let Some(bindings) = c
+        .get("HostConfig")
+        .and_then(|v| v.get("PortBindings"))
+        .and_then(|v| v.as_object())
+    else {
+        return Vec::new();
+    };
+
+    let mut ports = Vec::new();
+    for (container_port, host_bindings) in bindings {
+        let Some(host_bindings) = host_bindings.as_array() else {
+            continue;
+        };
+        for binding in host_bindings {
+            let host_ip = binding
+                .get("HostIp")
+                .and_then(|v| v.as_str())
+                .unwrap_or("0.0.0.0");
+            let host_port = binding
+                .get("HostPort")
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            if !host_port.is_empty() {
+                ports.push(format!("{host_ip}:{host_port}->{container_port}"));
+            }
+        }
+    }
+    ports
+}
+
+fn parse_podman_ps_ports(ports: Option<&serde_json::Value>) -> Vec<String> {
+    ports
+        .and_then(|v| v.as_array())
+        .map(|ports| {
+            ports
+                .iter()
+                .filter_map(|port| {
+                    let host = port.get("host_port").and_then(|v| v.as_u64())?;
+                    let container = port.get("container_port").and_then(|v| v.as_u64())?;
+                    let proto = port
+                        .get("protocol")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("tcp");
+                    Some(format!("0.0.0.0:{host}->{container}/{proto}"))
+                })
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+fn parse_health_from_status(status: &str) -> Option<String> {
+    let start = status.rfind('(')?;
+    let end = status.rfind(')')?;
+    (start < end).then(|| status[start + 1..end].to_string())
+}
+
+fn is_missing_container_error(stderr: &str) -> bool {
+    let stderr = stderr.to_ascii_lowercase();
+    stderr.contains("no container with name or id")
+        || stderr.contains("no such container")
+        // podman 5.x `inspect` phrasing: `Error: no such object: "name"`
+        || stderr.contains("no such object")
+        || stderr.contains("does not exist")
+        || stderr.contains("not found")
+}
+
+/// Build the argv for `podman build` from a BuildConfig.
+///
+/// Extracted so it can be unit-tested without actually invoking podman.
+/// Order is fixed for deterministic tests: subcommand, -t, -f, build-args
+/// (sorted by key), context.
+fn build_args_for_podman(config: &BuildConfig) -> Vec<String> {
+    let mut args: Vec<String> = vec![
+        "build".to_string(),
+        "-t".to_string(),
+        config.tag.clone(),
+        "-f".to_string(),
+        config.dockerfile.clone(),
+    ];
+    let mut kv: Vec<(&String, &String)> = config.build_args.iter().collect();
+    kv.sort_by(|a, b| a.0.cmp(b.0));
+    for (k, v) in kv {
+        args.push("--build-arg".to_string());
+        args.push(format!("{k}={v}"));
+    }
+    args.push(config.context.clone());
+    args
+}
+
+pub struct DockerRuntime {
+    _user: String,
+}
+
+impl DockerRuntime {
+    pub fn new(user: String) -> Self {
+        Self { _user: user }
+    }
+
+    fn docker_async(&self) -> TokioCommand {
+        let mut cmd = TokioCommand::new("docker");
+        // Use actual HOME environment variable instead of hardcoded /home
+        if let Ok(home) = std::env::var("HOME") {
+            cmd.env("HOME", home);
+        }
+        cmd
+    }
+}
+
+#[async_trait]
+impl ContainerRuntime for DockerRuntime {
+    async fn pull_image(&self, image: &str, signature: Option<&str>) -> Result<()> {
+        // Same signature gate as the podman path — the docker fallback is
+        // dev-only, but a declared signature must never be skippable by
+        // switching runtimes.
+        crate::image_verify::enforce_signature_claim(image, signature, false).await?;
+
+        let mut cmd = self.docker_async();
+        cmd.arg("pull").arg(image);
+
+        let output = cmd
+            .output()
+            .await
+            .context("Failed to execute docker pull")?;
+
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            return Err(anyhow::anyhow!("Failed to pull image: {}", stderr));
+        }
+
+        Ok(())
+    }
+
+    async fn create_container(
+        &self,
+        manifest: &AppManifest,
+        name: &str,
+        port_offset: u16,
+    ) -> Result<String> {
+        let mut cmd = self.docker_async();
+        cmd.arg("create");
+
+        cmd.arg("--name").arg(name);
+
+        if manifest.app.security.readonly_root {
+            cmd.arg("--read-only");
+        }
+
+        match manifest.app.security.network_policy.as_str() {
+            "host" => {
+                cmd.arg("--network").arg("host");
+            }
+            "isolated" => {
+                // Docker uses bridge network by default
+            }
+            _ => {
+                cmd.arg("--network")
+                    .arg(&manifest.app.security.network_policy);
+            }
+        }
+
+        // Port mappings with offset
+        for port in &manifest.app.ports {
+            let host_port = port.host + port_offset;
+            cmd.arg("-p")
+                .arg(format!("{}:{}", host_port, port.container));
+        }
+
+        // Volumes
+        for volume in &manifest.app.volumes {
+            let mut mount = format!("{}:{}", volume.source, volume.target);
+            if !volume.options.is_empty() {
+                mount.push_str(&format!(":{}", volume.options.join(",")));
+            }
+            cmd.arg("-v").arg(mount);
+        }
+
+        // Devices
+        for device in &manifest.app.devices {
+            cmd.arg("--device").arg(device);
+        }
+
+        // Environment variables
+        for env in &manifest.app.environment {
+            cmd.arg("-e").arg(env);
+        }
+        // Dev-only fallback: docker has no rootless secret store, so secret
+        // env rides as plain env here. The podman path (production) passes
+        // these by secret reference instead — see ensure_env_secrets.
+        for r in &manifest.app.container.secret_env_refs {
+            cmd.arg("-e").arg(format!("{}={}", r.env_key, r.value));
+        }
+
+        // Resource limits
+        if let Some(cpu) = manifest.app.resources.cpu_limit {
+            cmd.arg("--cpus").arg(cpu.to_string());
+        }
+
+        if let Some(memory) = &manifest.app.resources.memory_limit {
+            cmd.arg("--memory").arg(memory);
+        }
+
+        // Capabilities
+        cmd.arg("--cap-drop").arg("ALL");
+        for cap in &manifest.app.security.capabilities {
+            cmd.arg("--cap-add").arg(cap);
+        }
+
+        let image_ref = manifest.app.container.image_ref().ok_or_else(|| {
+            anyhow::anyhow!(
+                "container config for {} has neither a valid image nor build source",
+                manifest.app.id
+            )
+        })?;
+        cmd.arg(&image_ref);
+
+        let output = cmd.output().await.context("Failed to create container")?;
+
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            return Err(anyhow::anyhow!("Failed to create container: {}", stderr));
+        }
+
+        let container_id = String::from_utf8_lossy(&output.stdout).trim().to_string();
+
+        Ok(container_id)
+    }
+
+    async fn start_container(&self, name: &str) -> Result<()> {
+        let mut cmd = self.docker_async();
+        cmd.arg("start").arg(name);
+
+        let output = cmd.output().await.context("Failed to start container")?;
+
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            return Err(anyhow::anyhow!("Failed to start container: {}", stderr));
+        }
+
+        Ok(())
+    }
+
+    async fn stop_container(&self, name: &str) -> Result<()> {
+        let mut cmd = self.docker_async();
+        cmd.arg("stop").arg(name);
+
+        let output = cmd.output().await.context("Failed to stop container")?;
+
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            return Err(anyhow::anyhow!("Failed to stop container: {}", stderr));
+        }
+
+        Ok(())
+    }
+
+    async fn remove_container(&self, name: &str) -> Result<()> {
+        let mut cmd = self.docker_async();
+        cmd.arg("rm").arg("-f").arg(name);
+
+        let output = cmd.output().await.context("Failed to remove container")?;
+
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            return Err(anyhow::anyhow!("Failed to remove container: {}", stderr));
+        }
+
+        Ok(())
+    }
+
+    async fn get_container_status(&self, name: &str) -> Result<ContainerStatus> {
+        let mut cmd = self.docker_async();
+        cmd.arg("inspect")
+            .arg("--format")
+            .arg("{{.Id}}|{{.Name}}|{{.State.Status}}|{{.Config.Image}}|{{.Created}}|{{.NetworkSettings.Ports}}")
+            .arg(name);
+
+        let output = cmd.output().await.context("Failed to inspect container")?;
+
+        if !output.status.success() {
+            return Err(anyhow::anyhow!("Container not found: {}", name));
+        }
+
+        let info = String::from_utf8_lossy(&output.stdout);
+        let parts: Vec<&str> = info.trim().split('|').collect();
+
+        if parts.len() < 5 {
+            return Err(anyhow::anyhow!("Invalid container inspect output"));
+        }
+
+        Ok(ContainerStatus {
+            id: parts[0].to_string(),
+            name: parts[1].to_string(),
+            state: crate::podman_client::ContainerState::from(parts[2]),
+            health: None,
+            exit_code: None,
+            started_at: None,
+            image: parts[3].to_string(),
+            created: parts[4].to_string(),
+            ports: vec![],
+            lan_address: None,
+        })
+    }
+
+    async fn get_container_logs(&self, name: &str, lines: u32) -> Result<Vec<String>> {
+        let mut cmd = self.docker_async();
+        cmd.arg("logs")
+            .arg("--tail")
+            .arg(lines.to_string())
+            .arg(name);
+
+        let output = cmd.output().await.context("Failed to get container logs")?;
+
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            return Err(anyhow::anyhow!("Failed to get logs: {}", stderr));
+        }
+
+        let logs = String::from_utf8_lossy(&output.stdout);
+        Ok(logs.lines().map(|s| s.to_string()).collect())
+    }
+
+    async fn list_containers(&self) -> Result<Vec<ContainerStatus>> {
+        let mut cmd = self.docker_async();
+        cmd.arg("ps").arg("-a").arg("--format").arg("json");
+
+        let output = cmd.output().await.context("Failed to list containers")?;
+
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            return Err(anyhow::anyhow!("Failed to list containers: {}", stderr));
+        }
+
+        let json = String::from_utf8_lossy(&output.stdout);
+        let mut result = Vec::new();
+
+        // Docker returns NDJSON (newline-delimited JSON), not a JSON array
+        for line in json.lines() {
+            if line.trim().is_empty() {
+                continue;
+            }
+
+            let container: serde_json::Value = serde_json::from_str(line)
+                .context(format!("Failed to parse container JSON: {}", line))?;
+
+            // Extract ports from JSON
+            let ports_value = &container["Ports"];
+            let ports_str = ports_value.as_str().unwrap_or("");
+            let ports: Vec<String> = if !ports_str.is_empty() {
+                ports_str.split(", ").map(|s| s.to_string()).collect()
+            } else {
+                vec![]
+            };
+
+            result.push(ContainerStatus {
+                id: container["ID"].as_str().unwrap_or("").to_string(),
+                name: container["Names"].as_str().unwrap_or("").to_string(),
+                state: ContainerState::from(container["State"].as_str().unwrap_or("unknown")),
+                health: None,
+                exit_code: container["ExitCode"].as_i64().map(|c| c as i32),
+                started_at: None,
+                image: container["Image"].as_str().unwrap_or("").to_string(),
+                created: container["CreatedAt"].as_str().unwrap_or("").to_string(),
+                ports,
+                lan_address: None,
+            });
+        }
+
+        Ok(result)
+    }
+
+    async fn image_exists(&self, image_ref: &str) -> Result<bool> {
+        // `docker image inspect` exits 1 when the image is absent. Any message
+        // to stderr in that case is informational; we swallow it.
+        let mut cmd = self.docker_async();
+        cmd.arg("image").arg("inspect").arg(image_ref);
+        let output = cmd
+            .output()
+            .await
+            .context("failed to execute docker image inspect")?;
+        match output.status.code() {
+            Some(0) => Ok(true),
+            Some(1) => Ok(false),
+            Some(code) => {
+                let stderr = String::from_utf8_lossy(&output.stderr);
+                Err(anyhow::anyhow!(
+                    "docker image inspect {image_ref} exited with {code}: {stderr}"
+                ))
+            }
+            None => Err(anyhow::anyhow!(
+                "docker image inspect {image_ref} terminated by signal"
+            )),
+        }
+    }
+
+    async fn build_image(&self, config: &BuildConfig) -> Result<()> {
+        let mut cmd = self.docker_async();
+        cmd.arg("build")
+            .arg("-t")
+            .arg(&config.tag)
+            .arg("-f")
+            .arg(&config.dockerfile);
+        for (k, v) in &config.build_args {
+            cmd.arg("--build-arg").arg(format!("{k}={v}"));
+        }
+        cmd.arg(&config.context);
+        let output = cmd
+            .output()
+            .await
+            .context("failed to execute docker build")?;
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            return Err(anyhow::anyhow!(
+                "docker build -t {} failed: {stderr}",
+                config.tag
+            ));
+        }
+        Ok(())
+    }
+}
+
+pub struct AutoRuntime {
+    runtime: Box<dyn ContainerRuntime>,
+}
+
+impl AutoRuntime {
+    pub async fn new(user: String) -> Result<Self> {
+        // Try Podman first
+        if Self::check_podman_available().await {
+            Ok(Self {
+                runtime: Box::new(PodmanRuntime::new(user)),
+            })
+        } else if Self::check_docker_available().await {
+            Ok(Self {
+                runtime: Box::new(DockerRuntime::new(user)),
+            })
+        } else {
+            Err(anyhow::anyhow!("Neither Podman nor Docker is available"))
+        }
+    }
+
+    async fn check_podman_available() -> bool {
+        TokioCommand::new("podman")
+            .arg("--version")
+            .output()
+            .await
+            .is_ok()
+    }
+
+    async fn check_docker_available() -> bool {
+        TokioCommand::new("docker")
+            .arg("--version")
+            .output()
+            .await
+            .is_ok()
+    }
+}
+
+#[async_trait]
+impl ContainerRuntime for AutoRuntime {
+    async fn pull_image(&self, image: &str, signature: Option<&str>) -> Result<()> {
+        self.runtime.pull_image(image, signature).await
+    }
+
+    async fn ensure_env_secrets(&self, refs: &[crate::manifest::SecretEnvRef]) -> Result<()> {
+        self.runtime.ensure_env_secrets(refs).await
+    }
+
+    async fn create_container(
+        &self,
+        manifest: &AppManifest,
+        name: &str,
+        port_offset: u16,
+    ) -> Result<String> {
+        self.runtime
+            .create_container(manifest, name, port_offset)
+            .await
+    }
+
+    async fn start_container(&self, name: &str) -> Result<()> {
+        self.runtime.start_container(name).await
+    }
+
+    async fn stop_container(&self, name: &str) -> Result<()> {
+        self.runtime.stop_container(name).await
+    }
+
+    async fn stop_container_with_grace(&self, name: &str, grace_secs: u64) -> Result<()> {
+        self.runtime
+            .stop_container_with_grace(name, grace_secs)
+            .await
+    }
+
+    async fn remove_container(&self, name: &str) -> Result<()> {
+        self.runtime.remove_container(name).await
+    }
+
+    async fn get_container_status(&self, name: &str) -> Result<ContainerStatus> {
+        self.runtime.get_container_status(name).await
+    }
+
+    async fn get_container_logs(&self, name: &str, lines: u32) -> Result<Vec<String>> {
+        self.runtime.get_container_logs(name, lines).await
+    }
+
+    async fn list_containers(&self) -> Result<Vec<ContainerStatus>> {
+        self.runtime.list_containers().await
+    }
+
+    async fn image_exists(&self, image_ref: &str) -> Result<bool> {
+        self.runtime.image_exists(image_ref).await
+    }
+
+    async fn build_image(&self, config: &BuildConfig) -> Result<()> {
+        self.runtime.build_image(config).await
+    }
+}
+
+// Runtime factory functions will be provided by the archipelago crate
+// that imports this library and has access to Config
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::collections::HashMap;
+
+    #[test]
+    fn missing_container_classifier_covers_podman5_phrasings() {
+        // podman 5.x `inspect` phrasing for a missing container.
+        assert!(is_missing_container_error(
+            "Error: no such object: \"mempool\""
+        ));
+        assert!(is_missing_container_error("Error: no such container x"));
+        assert!(!is_missing_container_error("Error: OCI runtime error"));
+    }
+
+    fn cfg(context: &str, tag: &str, dockerfile: &str, args: &[(&str, &str)]) -> BuildConfig {
+        BuildConfig {
+            context: context.to_string(),
+            dockerfile: dockerfile.to_string(),
+            tag: tag.to_string(),
+            build_args: args
+                .iter()
+                .map(|(k, v)| (k.to_string(), v.to_string()))
+                .collect::<HashMap<_, _>>(),
+        }
+    }
+
+    #[test]
+    fn build_args_minimal() {
+        let c = cfg("/tmp/ctx", "archy-bitcoin-ui:local", "Dockerfile", &[]);
+        assert_eq!(
+            build_args_for_podman(&c),
+            vec![
+                "build",
+                "-t",
+                "archy-bitcoin-ui:local",
+                "-f",
+                "Dockerfile",
+                "/tmp/ctx",
+            ]
+        );
+    }
+
+    #[test]
+    fn build_args_custom_dockerfile() {
+        let c = cfg("/opt/archy/bitcoin-ui", "x:local", "Dockerfile.prod", &[]);
+        let got = build_args_for_podman(&c);
+        assert_eq!(got[3], "-f");
+        assert_eq!(got[4], "Dockerfile.prod");
+        assert_eq!(got.last().unwrap(), "/opt/archy/bitcoin-ui");
+    }
+
+    #[test]
+    fn build_args_are_sorted_deterministically() {
+        // HashMap iteration order is nondeterministic; the runtime sorts so that
+        // equivalent BuildConfigs produce identical commands (easier to debug,
+        // cache-friendly if we ever layer build-cache keys on top).
+        let c = cfg(
+            "/c",
+            "t",
+            "Dockerfile",
+            &[("BAR", "2"), ("FOO", "1"), ("BAZ", "3")],
+        );
+        let args = build_args_for_podman(&c);
+        let flat: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
+        // Build args appear as pairs of --build-arg K=V; locate them:
+        let mut pairs: Vec<&str> = Vec::new();
+        for w in flat.windows(2) {
+            if w[0] == "--build-arg" {
+                pairs.push(w[1]);
+            }
+        }
+        assert_eq!(pairs, vec!["BAR=2", "BAZ=3", "FOO=1"]);
+    }
+
+    #[test]
+    fn build_args_context_is_last() {
+        // Context MUST be the final positional argument — podman treats any
+        // stray trailing arg after build-args as the context, so placement
+        // matters. Regression guard.
+        let c = cfg("/final/context", "t", "Dockerfile", &[("K", "V")]);
+        let args = build_args_for_podman(&c);
+        assert_eq!(args.last().unwrap(), "/final/context");
+    }
+
+    #[test]
+    fn parse_podman_ps_json_handles_cli_output() {
+        let stdout = br#"[
+            {
+                "Id": "abc123",
+                "Names": ["mempool"],
+                "Image": "docker.io/mempool/frontend:latest",
+                "State": "running",
+                "Status": "Up 2 minutes (healthy)",
+                "Created": "2026-05-03T00:00:00Z",
+                "StartedAt": "2026-05-03T00:01:00Z",
+                "ExitCode": 0,
+                "Ports": [
+                    {
+                        "host_port": 4080,
+                        "container_port": 8080,
+                        "protocol": "tcp"
+                    }
+                ]
+            }
+        ]"#;
+
+        let containers = parse_podman_ps_json(stdout).unwrap();
+        assert_eq!(containers.len(), 1);
+        assert_eq!(containers[0].id, "abc123");
+        assert_eq!(containers[0].name, "mempool");
+        assert_eq!(containers[0].state, ContainerState::Running);
+        assert_eq!(containers[0].health.as_deref(), Some("healthy"));
+        assert_eq!(containers[0].exit_code, Some(0));
+        assert_eq!(containers[0].ports, vec!["0.0.0.0:4080->8080/tcp"]);
+    }
+}

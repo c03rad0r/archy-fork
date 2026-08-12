@@ -1,0 +1,615 @@
+/* Mesh view styles — extracted from Mesh.vue
+ * Unscoped — mesh-* classes must reach child components (MeshBitcoinPanel, MeshDeadmanPanel)
+ */
+
+.mesh-view {
+  padding: 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  height: 100%;
+  overflow: hidden;
+}
+
+@media (min-width: 921px) {
+  .mesh-dashboard-panel.mobile-scroll-pad {
+    padding-bottom: 0;
+  }
+}
+
+@media (min-width: 921px) and (max-width: 1279px) {
+  .mesh-dashboard-panel {
+    overflow-y: auto;
+  }
+}
+.mesh-header { justify-content: space-between; align-items: center; gap: 16px; flex-shrink: 0; }
+.mesh-header-left { flex: 1; }
+.mesh-title-row { display: flex; align-items: center; gap: 8px; }
+.mesh-title { font-size: 1.5rem; font-weight: 700; color: rgba(255, 255, 255, 0.95); margin: 0; }
+.mesh-subtitle { color: rgba(255, 255, 255, 0.5); font-size: 0.85rem; margin: 2px 0 0; display: flex; align-items: center; gap: 8px; }
+.mesh-subtitle-badge { font-size: 0.65rem; font-weight: 600; color: #4ade80; background: rgba(74, 222, 128, 0.12); padding: 1px 6px; border-radius: 4px; text-transform: uppercase; letter-spacing: 0.5px; }
+.mesh-flasher-btn { display: inline-flex; align-items: center; gap: 0; padding: 8px 16px; font-size: 0.9rem; text-decoration: none; white-space: nowrap; flex-shrink: 0; }
+.mesh-flasher-btn:disabled { opacity: 0.45; cursor: not-allowed; }
+.mesh-flasher-sep { margin: 0 8px; color: rgba(255, 255, 255, 0.2); }
+.mesh-error { color: #ef4444; font-size: 0.85rem; padding: 8px 12px; background: rgba(239, 68, 68, 0.1); border-radius: 8px; border: 1px solid rgba(239, 68, 68, 0.2); flex-shrink: 0; }
+.mesh-columns { display: flex; gap: 16px; flex: 1; min-height: 0; overflow: hidden; }
+.mesh-left { width: 380px; flex-shrink: 0; display: flex; flex-direction: column; gap: 12px; min-height: 0; overflow-y: auto; overscroll-behavior: contain; }
+.mesh-right { flex: 1; min-width: 0; min-height: 0; display: flex; flex-direction: column; gap: 12px; overflow: hidden; overscroll-behavior: contain; }
+.mesh-tools-wrapper { display: contents; }
+.mesh-tools-tab-bar { display: none; }
+.mesh-columns-wide { display: grid; grid-template-columns: minmax(300px, 340px) minmax(420px, 1.1fr) minmax(360px, 0.9fr); gap: 16px; }
+.mesh-columns-wide .mesh-left { grid-column: 1; width: auto; }
+.mesh-columns-wide .mesh-right { display: contents; }
+.mesh-columns-wide .mesh-chat-card { grid-column: 2; grid-row: 1; min-height: 0; overflow: hidden; }
+.mesh-columns-wide .mesh-tools-wrapper { grid-column: 3; grid-row: 1; display: flex; flex-direction: column; gap: 0; min-height: 0; overflow: hidden; }
+.mesh-columns-wide .mesh-tools-tab-bar { display: flex; gap: 2px; background: rgba(0,0,0,0.3); border-radius: 10px; padding: 3px; flex-shrink: 0; margin-bottom: 12px; }
+/* A very wide screen gets a roomier third column — but the SAME tabbed
+   panel as every other desktop width. It used to stack Bitcoin, Dead Man,
+   AI, the map and Device on top of each other in fixed grid rows, which on
+   a real 2560px display clipped the first three headings to a few pixels,
+   letterboxed the map, and pushed Radio Settings into a scroll — more
+   screen producing a worse view (reported with a screenshot 2026-08-05).
+   One tab at a time, filling the column, is what makes the map edge to
+   edge and every control reachable without scrolling. */
+.mesh-columns-very-wide { grid-template-columns: minmax(300px, 340px) minmax(460px, 1.05fr) minmax(460px, 1fr); }
+.mesh-columns-wide .mesh-tools-wrapper .mesh-bitcoin-panel,
+.mesh-columns-wide .mesh-tools-wrapper .mesh-deadman-panel,
+.mesh-columns-wide .mesh-tools-wrapper .mesh-assistant-panel,
+.mesh-columns-wide .mesh-tools-wrapper .mesh-device-panel,
+.mesh-columns-wide .mesh-tools-wrapper .mesh-map-panel {
+  flex: 1 1 auto; min-height: 0; height: auto; overflow-y: auto;
+}
+/* The map is the one panel with nothing to scroll: let it consume the
+   column edge to edge rather than sitting in a letterbox. */
+.mesh-columns-wide .mesh-tools-wrapper .mesh-map-panel { overflow: hidden; padding: 0; }
+.mesh-columns-wide .mesh-tools-wrapper .mesh-map-panel > * { height: 100%; width: 100%; }
+.mesh-columns-wide .mesh-mobile-back-btn,
+.mesh-columns-wide .mesh-tab-bar { display: none; }
+.mesh-status-card { padding: 16px; flex-shrink: 0; }
+.mesh-status-header { display: flex; align-items: center; gap: 8px; margin-bottom: 12px; cursor: pointer; }
+.mesh-status-card.mesh-status-collapsed .mesh-status-header { margin-bottom: 0; }
+.mesh-status-card.mesh-status-collapsed .mesh-status-grid,
+.mesh-status-card.mesh-status-collapsed .mesh-detected-devices { display: none; }
+.mesh-status-indicator { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+.mesh-status-indicator.connected { background: #4ade80; box-shadow: 0 0 6px rgba(74, 222, 128, 0.5); }
+.mesh-status-indicator.disconnected { background: rgba(255, 255, 255, 0.3); }
+.mesh-section-title { font-size: 0.95rem; font-weight: 600; color: rgba(255, 255, 255, 0.9); margin: 0; }
+/* Collapse chevron — the Device panel collapses/expands on every breakpoint. */
+.mesh-status-chevron { display: block; width: 16px; height: 16px; margin-left: auto; flex-shrink: 0; color: rgba(255, 255, 255, 0.5); transition: transform 0.2s ease; }
+.mesh-status-card:not(.mesh-status-collapsed) .mesh-status-chevron { transform: rotate(180deg); }
+.mesh-status-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+.mesh-stat { display: flex; flex-direction: column; gap: 1px; padding: 8px; background: rgba(255, 255, 255, 0.05); border-radius: 6px; }
+.mesh-stat-label { font-size: 0.65rem; color: rgba(255, 255, 255, 0.4); text-transform: uppercase; letter-spacing: 0.5px; }
+.mesh-stat-value { font-size: 0.8rem; color: rgba(255, 255, 255, 0.85); font-weight: 500; }
+.text-green { color: #4ade80; }
+.text-orange { color: #fb923c; }
+.text-muted { color: rgba(255, 255, 255, 0.4); }
+.mesh-loading, .mesh-empty { color: rgba(255, 255, 255, 0.4); font-size: 0.85rem; text-align: center; padding: 16px 0; }
+.mesh-detected-devices { margin-top: 10px; padding-top: 10px; border-top: 1px solid rgba(255, 255, 255, 0.06); }
+.mesh-device-row { display: flex; align-items: center; gap: 8px; padding: 6px 8px; background: rgba(255, 255, 255, 0.04); border-radius: 6px; }
+.mesh-device-indicator { width: 6px; height: 6px; border-radius: 50%; background: #4ade80; box-shadow: 0 0 4px rgba(74, 222, 128, 0.4); flex-shrink: 0; }
+.mesh-device-path { font-family: monospace; font-size: 0.8rem; color: rgba(255, 255, 255, 0.7); flex: 1; }
+.mesh-connect-btn { padding: 3px 12px; font-size: 0.75rem; flex-shrink: 0; }
+.mesh-offgrid-banner { display: flex; align-items: center; gap: 8px; padding: 8px 12px; background: rgba(251, 146, 60, 0.1); border: 1px solid rgba(251, 146, 60, 0.3); border-radius: 8px; flex-shrink: 0; }
+.mesh-offgrid-active { border-color: rgba(251, 146, 60, 0.4) !important; color: #fb923c !important; }
+.mesh-actions { display: flex; gap: 8px; flex-shrink: 0; }
+.mesh-action-btn { flex: 1; padding: 8px 0; font-size: 0.8rem; }
+.mesh-action-ok { color: #34d399; border-color: rgba(52, 211, 153, 0.4); }
+.mesh-refresh-spinner {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  margin-right: 4px;
+  border-radius: 9999px;
+  border: 2px solid rgba(251, 146, 60, 0.7);
+  border-top-color: transparent;
+  animation: mesh-refresh-spin 0.8s linear infinite;
+  vertical-align: -1px;
+}
+@keyframes mesh-refresh-spin { to { transform: rotate(360deg); } }
+.mesh-peers-card { padding: 14px; flex: 1; min-height: 0; display: flex; flex-direction: column; }
+.mesh-peers-card .mesh-section-title { margin-bottom: 10px; flex-shrink: 0; }
+.mesh-peer-list { display: flex; flex-direction: column; gap: 4px; overflow-y: auto; flex: 1; min-height: 0; }
+.mesh-peer-row { display: flex; align-items: center; gap: 10px; padding: 10px; border-radius: 8px; cursor: pointer; transition: background 0.15s; }
+.mesh-peer-row:hover { background: rgba(255, 255, 255, 0.06); }
+.mesh-peer-row.active { background: rgba(251, 146, 60, 0.1); border: 1px solid rgba(251, 146, 60, 0.2); }
+.mesh-peer-avatar { position: relative; width: 36px; height: 36px; border-radius: 50%; background: rgba(255, 255, 255, 0.08); display: flex; align-items: center; justify-content: center; font-size: 0.9rem; color: rgba(255, 255, 255, 0.6); flex-shrink: 0; font-weight: 600; }
+.mesh-peer-search-wrap { position: relative; margin-bottom: 10px; flex-shrink: 0; }
+.mesh-peer-search { width: 100%; box-sizing: border-box; padding: 7px 36px 7px 10px; font-size: 0.85rem; border-radius: 8px; border: 1px solid rgba(255,255,255,0.1); background: rgba(0,0,0,0.25); color: rgba(255,255,255,0.9); outline: none; }
+.mesh-peer-search::placeholder { color: rgba(255,255,255,0.35); }
+.mesh-peer-search:focus { border-color: rgba(251,146,60,0.4); }
+.mesh-peer-search-clear { position: absolute; top: 50%; right: 4px; transform: translateY(-50%); display: flex; align-items: center; justify-content: center; width: 28px; height: 28px; line-height: 1; border: none; border-radius: 50%; background: rgba(255,255,255,0.12); color: rgba(255,255,255,0.7); font-size: 15px; cursor: pointer; padding: 0; touch-action: manipulation; }
+.mesh-peer-search-clear:hover { background: rgba(255,255,255,0.22); color: #fff; }
+.mesh-peer-reach { position: absolute; bottom: -1px; right: -1px; width: 10px; height: 10px; border-radius: 50%; border: 2px solid #11131a; }
+.mesh-peer-reach.is-reachable { background: #34d399; }
+.mesh-peer-reach.is-unreachable { background: rgba(255,255,255,0.25); }
+.mesh-peer-avatar.archy { background: rgba(251, 146, 60, 0.15); padding: 0; overflow: hidden; }
+.mesh-peer-avatar.archy :deep(> div) { width: 26px; height: 26px; border-radius: 50%; overflow: hidden; }
+.mesh-peer-avatar.channel { background: rgba(59, 130, 246, 0.15); color: #3b82f6; font-weight: 700; font-size: 1.1rem; }
+.mesh-peer-channel-badge { font-size: 0.6rem; font-weight: 700; color: #3b82f6; background: rgba(59, 130, 246, 0.12); padding: 1px 5px; border-radius: 3px; text-transform: uppercase; letter-spacing: 0.5px; }
+.mesh-peer-count { font-size: 0.75rem; font-weight: 600; color: rgba(255, 255, 255, 0.4); background: rgba(255, 255, 255, 0.08); padding: 2px 8px; border-radius: 10px; margin-left: 6px; vertical-align: middle; }
+.mesh-peer-row.is-channel { border-bottom: 1px solid rgba(255, 255, 255, 0.04); padding-bottom: 12px; margin-bottom: 4px; }
+.mesh-peer-info { flex: 1; min-width: 0; }
+.mesh-peer-name { font-weight: 600; font-size: 0.85rem; color: rgba(255, 255, 255, 0.9); display: flex; align-items: center; gap: 6px; }
+.mesh-peer-archy-badge { font-size: 0.6rem; font-weight: 700; color: #fb923c; background: rgba(251, 146, 60, 0.12); padding: 1px 5px; border-radius: 3px; text-transform: uppercase; letter-spacing: 0.5px; }
+.mesh-peer-sub { font-size: 0.7rem; color: rgba(255, 255, 255, 0.3); font-family: monospace; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mesh-peer-signal { flex-shrink: 0; }
+.mesh-signal-bars { display: flex; align-items: flex-end; gap: 2px; height: 14px; }
+.mesh-signal-bar { width: 3px; border-radius: 1px; background: rgba(255, 255, 255, 0.12); }
+.mesh-signal-bar:nth-child(1) { height: 3px; }
+.mesh-signal-bar:nth-child(2) { height: 6px; }
+.mesh-signal-bar:nth-child(3) { height: 10px; }
+.mesh-signal-bar:nth-child(4) { height: 14px; }
+.mesh-signal-bar.active { background: #4ade80; }
+.mesh-unread-badge { background: #fb923c; color: #000; font-size: 0.65rem; font-weight: 700; min-width: 18px; height: 18px; border-radius: 9px; display: flex; align-items: center; justify-content: center; padding: 0 5px; flex-shrink: 0; }
+.mesh-chat-card { padding: 0; flex: 1; display: flex; flex-direction: column; min-height: 0; overflow: hidden; }
+.mesh-chat-empty { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; color: rgba(255, 255, 255, 0.14); gap: 8px; padding: 40px; }
+.mesh-chat-empty-icon { font-size: 3rem; opacity: 0.18; }
+.mesh-chat-empty p { margin: 0; font-size: 0.9rem; }
+.mesh-chat-empty-sub { font-size: 0.75rem !important; color: rgba(255, 255, 255, 0.1); }
+.mesh-chat-header { display: flex; align-items: center; gap: 10px; padding: 14px 16px; border-bottom: 1px solid rgba(255, 255, 255, 0.06); flex-shrink: 0; }
+/* Floating mobile back button (Teleported to body). Hidden by default; only
+   shown in the single-column mobile mesh layout (see media query below). */
+.mesh-chat-mobile-back { display: none; }
+.mesh-chat-header-info { flex: 1; min-width: 0; }
+.mesh-chat-header-name { font-weight: 600; font-size: 0.95rem; color: rgba(255, 255, 255, 0.9); display: flex; align-items: center; gap: 6px; }
+.mesh-chat-header-rename { background: transparent; border: none; color: rgba(255, 255, 255, 0.4); cursor: pointer; padding: 2px 4px; font-size: 0.85rem; line-height: 1; }
+.mesh-chat-header-rename:hover { color: rgba(255, 255, 255, 0.9); }
+.mesh-chat-header-rename-input { background: rgba(255, 255, 255, 0.08); border: 1px solid rgba(255, 255, 255, 0.18); border-radius: 6px; color: rgba(255, 255, 255, 0.95); font-size: 0.95rem; font-weight: 600; padding: 4px 8px; outline: none; min-width: 0; max-width: 220px; }
+.mesh-chat-header-rename-input:focus { border-color: rgba(255, 255, 255, 0.4); }
+.mesh-chat-header-sub { font-size: 0.7rem; color: rgba(255, 255, 255, 0.3); font-family: monospace; }
+.mesh-chat-header-status { flex-shrink: 0; }
+.mesh-chat-header-time { font-size: 0.7rem; color: rgba(255, 255, 255, 0.3); }
+.mesh-chat-messages { flex: 1; overflow-y: auto; overscroll-behavior: contain; padding: 16px; display: flex; flex-direction: column; gap: 8px; min-height: 0; }
+.mesh-chat-no-messages { flex: 1; display: flex; align-items: center; justify-content: center; color: rgba(255, 255, 255, 0.25); font-size: 0.85rem; }
+.mesh-chat-bubble-wrapper { display: flex; }
+.mesh-chat-bubble-wrapper.sent { justify-content: flex-end; }
+.mesh-chat-bubble-wrapper.received { justify-content: flex-start; }
+.mesh-chat-bubble { max-width: 75%; padding: 10px 14px; border-radius: 16px; word-break: break-word; }
+.mesh-chat-bubble.sent { background: rgba(251, 146, 60, 0.15); border: 1px solid rgba(251, 146, 60, 0.2); border-bottom-right-radius: 4px; }
+.mesh-chat-bubble.received { background: rgba(255, 255, 255, 0.06); border: 1px solid rgba(255, 255, 255, 0.08); border-bottom-left-radius: 4px; }
+.mesh-chat-bubble-sender { font-size: 0.7rem; font-weight: 600; color: rgba(251, 146, 60, 0.85); margin-bottom: 3px; }
+.mesh-chat-bubble-text { color: rgba(255, 255, 255, 0.9); font-size: 0.9rem; line-height: 1.4; }
+.mesh-chat-bubble-meta { display: flex; align-items: center; gap: 6px; margin-top: 4px; justify-content: flex-end; }
+.mesh-chat-bubble-time { font-size: 0.65rem; color: rgba(255, 255, 255, 0.3); }
+.mesh-chat-e2e { font-size: 0.55rem; font-weight: 700; color: #4ade80; padding: 0 3px; border: 1px solid rgba(74, 222, 128, 0.3); border-radius: 3px; }
+/* Per-message transport pill (Meshtastic / Meshcore / Reticulum / FIPS / Tor), styled like the E2E badge. */
+.mesh-chat-transport { font-size: 0.55rem; font-weight: 700; padding: 0 3px; border-radius: 3px; border: 1px solid currentColor; opacity: 0.85; }
+.mesh-chat-transport.transport-meshtastic { color: #3eb489; } /* Meshtastic — mint */
+.mesh-chat-transport.transport-meshcore { color: #fb923c; }  /* Meshcore — orange */
+.mesh-chat-transport.transport-reticulum { color: #60a5fa; } /* Reticulum — blue */
+.mesh-chat-transport.transport-lora { color: #f59e0b; }  /* legacy generic Mesh/LoRa (pre-split) — amber */
+.mesh-chat-transport.transport-fips { color: #a78bfa; }  /* FIPS — violet */
+.mesh-chat-transport.transport-tor { color: #818cf8; }   /* Tor — indigo */
+.mesh-chat-ack { font-size: 0.7rem; color: #3b82f6; }
+.mesh-chat-compose { padding: 12px 16px; border-top: 1px solid rgba(255, 255, 255, 0.06); flex-shrink: 0; }
+.mesh-chat-send-error { color: #ef4444; font-size: 0.75rem; margin-bottom: 6px; }
+.mesh-chat-compose-row { display: flex; gap: 8px; }
+.mesh-chat-input { flex: 1; background: rgba(255, 255, 255, 0.06); border: 1px solid rgba(255, 255, 255, 0.1); border-radius: 20px; color: rgba(255, 255, 255, 0.9); padding: 10px 16px; font-size: 0.9rem; font-family: inherit; outline: none; }
+.mesh-chat-input:focus { border-color: rgba(251, 146, 60, 0.4); }
+.mesh-chat-input::placeholder { color: rgba(255, 255, 255, 0.25); }
+.mesh-chat-send-btn { padding: 10px 20px; border-radius: 20px; font-size: 0.85rem; background: rgba(251, 146, 60, 0.15); border-color: rgba(251, 146, 60, 0.25); min-width: 72px; display: inline-flex; align-items: center; justify-content: center; }
+.mesh-chat-send-btn:hover:not(:disabled) { background: rgba(251, 146, 60, 0.25); }
+.mesh-send-spinner { display: inline-block; width: 14px; height: 14px; border: 2px solid rgba(255, 255, 255, 0.2); border-top-color: rgba(251, 146, 60, 0.9); border-radius: 50%; animation: mesh-send-spin 0.7s linear infinite; }
+@keyframes mesh-send-spin { to { transform: rotate(360deg); } }
+.mesh-mobile-back-btn { display: none; }
+
+/* Floating mobile mesh tab strip (Teleported to body). Hidden on desktop; the
+   ≤1279px block flips it to flex and the placement mirrors the mobile back
+   button (pinned above the global tab bar + audio player). */
+.mesh-mobile-tabbar {
+  display: none;
+  position: fixed;
+  left: 12px;
+  right: 12px;
+  bottom: calc(var(--mobile-tab-bar-height, 72px) + var(--audio-player-height, 0px) + 8px);
+  z-index: 40;
+  gap: 4px;
+  padding: 4px;
+  border-radius: 14px;
+  background: rgba(0, 0, 0, 0.55);
+  backdrop-filter: blur(24px) saturate(140%);
+  -webkit-backdrop-filter: blur(24px) saturate(140%);
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+}
+.mesh-mtab {
+  flex: 1 1 0;
+  min-width: 0;
+  min-height: 40px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  padding: 6px 4px;
+  border: none;
+  border-radius: 10px;
+  background: transparent;
+  color: rgba(255, 255, 255, 0.6);
+  font-size: 0.78rem;
+  font-weight: 600;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: background-color 0.15s ease, color 0.15s ease;
+}
+.mesh-mtab:hover { color: rgba(255, 255, 255, 0.9); }
+.mesh-mtab.active { background: rgba(251, 146, 60, 0.2); color: #fff; }
+
+@media (max-width: 1279px) {
+  .mesh-view { height: auto; overflow: visible; padding: 0 12px 100px 12px; }
+  .mesh-columns { flex-direction: column; overflow: visible; }
+  .mesh-left { width: 100%; overflow: visible; }
+  .mesh-right { min-height: auto; overflow: visible; }
+  .mesh-chat-card { min-height: 60dvh; max-height: 75dvh; overflow: hidden; display: flex; flex-direction: column; }
+
+  /* ── Single-column mobile mesh: one fixed, internally-scrolling pane that
+     fills the space between the top tab strip and the floating mesh tab bar.
+     The page itself never scrolls; each pane scrolls inside its own bounds.
+     Fixed positioning is relative to the full-height perspective container, so
+     the offsets line up with the body-teleported tab bar / back button. ──── */
+  .mesh-left,
+  .mesh-mobile-tools,
+  .mesh-chat-card.mesh-chat-card-active {
+    position: fixed;
+    left: 12px;
+    right: 12px;
+    /* width:auto so left+right govern the box — .mesh-left otherwise carries a
+       fixed 380px width that ignores `right` and overflows the screen. */
+    width: auto;
+    box-sizing: border-box;
+    top: calc(var(--safe-area-top, env(safe-area-inset-top, 0px)) + 96px);
+    /* Just above the floating mesh tab bar (tabs sit at +8, ~48px tall). */
+    bottom: calc(var(--mobile-tab-bar-height, 72px) + var(--audio-player-height, 0px) + 72px);
+    height: auto;
+    min-height: 0;
+    max-height: none;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    z-index: 30;
+  }
+  /* Active conversation: the floating tabs are hidden here and the back button
+     takes the standard spot above the tab bar, so the chat window fills down to
+     just above the back pill (back pill ≈44px at +8, plus a 16px gap). When the
+     keyboard is up it covers the tab bar, so anchor to whichever is taller — the
+     bottom controls or the keyboard — so the window sits right above both. */
+  .mesh-chat-card.mesh-chat-card-active {
+    bottom: calc(max(var(--mobile-tab-bar-height, 72px) + var(--audio-player-height, 0px), var(--keyboard-inset, 0px)) + 68px);
+    overflow: hidden; /* the messages list inside does the scrolling */
+  }
+  .mesh-tools-wrapper { display: none !important; }
+  .mesh-mobile-tools { margin-top: 0; display: flex; flex-direction: column; gap: 12px; }
+  /* The active tool fills the whole fixed pane (no fixed cap that would leave a
+     bottom margin); the panel itself scrolls if its content is taller. */
+  .mesh-mobile-tools > * { flex: 1 1 auto; min-height: 0; max-height: none; }
+  .mesh-mobile-tools .mesh-bitcoin-panel,
+  .mesh-mobile-tools .mesh-assistant-panel,
+  .mesh-mobile-tools .mesh-deadman-panel { overflow-y: auto; }
+  .mesh-mobile-tools .mesh-map-panel { height: 100%; overflow: hidden; }
+  .mesh-status-grid { grid-template-columns: repeat(2, 1fr); }
+  /* In a conversation the tabs are hidden, so the back pill sits just above the
+     tab bar — or above the keyboard when it's up, whichever is taller. */
+  .mesh-chat-mobile-back { display: flex; }
+  .mesh-chat-mobile-back.mobile-back-btn {
+    bottom: calc(max(var(--mobile-tab-bar-height, 72px) + var(--audio-player-height, 0px), var(--keyboard-inset, 0px)) + 8px);
+  }
+  /* Floating mesh tab strip — same placement logic as the mobile back button. */
+  .mesh-mobile-tabbar { display: flex; }
+  .mobile-hidden { display: none !important; }
+  :deep(.mesh-bitcoin-panel),
+  :deep(.mesh-assistant-panel),
+  :deep(.mesh-deadman-panel) { flex: none; cursor: pointer; flex-shrink: 0; }
+  .mesh-mobile-back-btn:hover { color: rgba(255, 255, 255, 0.9); }
+}
+
+@media (min-width: 921px) and (max-width: 1279px) {
+  .mesh-view {
+    padding: 24px;
+  }
+  /* In this range the desktop sidebar (256px) is still shown. The in-pane
+     fixed elements are positioned relative to the main content area (their
+     perspective containing block), so they already clear the sidebar — but the
+     body-teleported floating bars are viewport-relative, so nudge them right. */
+  .mesh-mobile-tabbar,
+  .mesh-chat-mobile-back.mobile-back-btn {
+    left: 268px;
+  }
+
+  /* The ≤1279px bottom offsets above reserve `--mobile-tab-bar-height` for the
+     OS-style bottom nav bar — but that bar only ever renders below 768px
+     (DashboardMobileNav's `md:hidden`); here the desktop sidebar is the primary
+     nav instead, so the var is always unset and its 72px fallback becomes a
+     phantom reservation with nothing under it, leaving a huge dead gap below
+     the panel. Drop that term so bottom clearance matches the top/left/right
+     margins, keeping only the space actually needed for the in-page floating
+     tab bar / back button. */
+  .mesh-left,
+  .mesh-mobile-tools,
+  .mesh-chat-card.mesh-chat-card-active {
+    bottom: calc(var(--audio-player-height, 0px) + 72px);
+  }
+  .mesh-chat-card.mesh-chat-card-active {
+    bottom: calc(max(var(--audio-player-height, 0px), var(--keyboard-inset, 0px)) + 68px);
+  }
+  .mesh-mobile-tabbar {
+    bottom: calc(var(--audio-player-height, 0px) + 12px);
+  }
+  .mesh-chat-mobile-back.mobile-back-btn {
+    bottom: calc(max(var(--audio-player-height, 0px), var(--keyboard-inset, 0px)) + 8px);
+  }
+}
+
+@media (max-width: 920px) {
+  .mesh-view {
+    padding-left: 0;
+    padding-right: 0;
+  }
+}
+
+.mesh-session-badge { font-size: 0.75rem; margin-right: 6px; opacity: 0.7; }
+.mesh-session-rotate { background: transparent; border: 1px solid rgba(255,255,255,0.15); color: rgba(255,255,255,0.7); font-size: 0.75rem; line-height: 1; padding: 2px 6px; margin-right: 8px; border-radius: 10px; cursor: pointer; transition: background 0.15s ease, color 0.15s ease; }
+.mesh-session-rotate:hover:not(:disabled) { background: rgba(251,146,60,0.2); color: #fff; border-color: rgba(251,146,60,0.4); }
+.mesh-session-rotate:disabled { opacity: 0.5; cursor: wait; }
+.mesh-outbox-badge { font-size: 0.7rem; padding: 2px 7px; margin-right: 8px; border-radius: 10px; background: rgba(251,146,60,0.2); border: 1px solid rgba(251,146,60,0.4); color: #fff; }
+.session-ratchet { color: #4ade80; opacity: 1; }
+.session-static { color: #fbbf24; }
+.session-none { color: rgba(255,255,255,0.3); }
+.mesh-typed-icon { margin-right: 4px; }
+.mesh-typed-label { font-weight: 600; font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.05em; }
+.typed-invoice { border-left: 3px solid #fb923c; }
+.mesh-typed-invoice { padding: 4px 0; }
+.mesh-typed-invoice-header { display: flex; align-items: center; gap: 4px; margin-bottom: 4px; color: #fb923c; font-size: 0.75rem; }
+.mesh-typed-invoice-amount { font-size: 1.1rem; font-weight: 700; color: #fb923c; }
+.mesh-typed-invoice-memo { font-size: 0.8rem; color: rgba(255,255,255,0.7); margin-top: 2px; }
+.mesh-typed-invoice-bolt11 { font-size: 0.65rem; color: rgba(255,255,255,0.3); font-family: monospace; margin-top: 4px; word-break: break-all; }
+.mesh-typed-paid { background: rgba(74,222,128,0.2); color: #4ade80; font-size: 0.65rem; padding: 1px 6px; border-radius: 4px; margin-left: auto; }
+.typed-alert { border-left: 3px solid #ef4444; }
+.typed-alert.alert-status { border-left-color: #3b82f6; }
+.mesh-typed-alert { padding: 4px 0; }
+.mesh-typed-alert-header { display: flex; align-items: center; gap: 4px; margin-bottom: 4px; font-size: 0.75rem; }
+.alert-emergency .mesh-typed-alert-header { color: #ef4444; }
+.alert-dead_man .mesh-typed-alert-header { color: #ef4444; }
+.alert-status .mesh-typed-alert-header { color: #3b82f6; }
+.mesh-typed-alert-message { font-size: 0.85rem; color: rgba(255,255,255,0.9); }
+.mesh-typed-alert-location { display: block; font-size: 0.75rem; color: #3b82f6; margin-top: 4px; text-decoration: underline; }
+.mesh-typed-signed { font-size: 0.6rem; color: #4ade80; border: 1px solid rgba(74,222,128,0.3); padding: 0 4px; border-radius: 3px; margin-left: auto; }
+.typed-coordinate { border-left: 3px solid #3b82f6; }
+.mesh-typed-coordinate { padding: 4px 0; }
+.mesh-typed-coordinate-header { display: flex; align-items: center; gap: 4px; margin-bottom: 4px; color: #3b82f6; font-size: 0.75rem; }
+.mesh-typed-coordinate-value { font-size: 0.9rem; font-family: monospace; color: rgba(255,255,255,0.8); }
+.mesh-typed-coordinate-label { font-size: 0.8rem; color: rgba(255,255,255,0.6); margin-top: 2px; }
+.mesh-typed-coordinate-link { display: inline-block; font-size: 0.75rem; color: #3b82f6; margin-top: 4px; text-decoration: underline; }
+.typed-block_header { border-left: 3px solid #a855f7; }
+.mesh-typed-block { display: flex; align-items: center; gap: 4px; color: #a855f7; font-size: 0.8rem; }
+.mesh-typed-content-preview { max-width: 220px; max-height: 220px; border-radius: 10px; display: block; cursor: pointer; }
+.mesh-typed-content-thumb { opacity: 0.85; filter: blur(0.5px); margin-bottom: 6px; }
+.mesh-typed-content-audio { width: 220px; max-width: 100%; display: block; }
+.mesh-typed-content-image-wrap { position: relative; display: inline-block; }
+.mesh-typed-content-download-btn {
+  position: absolute; bottom: 8px; right: 8px;
+  width: 2.25rem; height: 2.25rem; min-width: 2.25rem; flex-shrink: 0;
+  border-radius: 50%; border: 1px solid rgba(255,255,255,0.18);
+  background: rgba(10,10,14,0.55); color: rgba(255,255,255,0.9);
+  display: flex; align-items: center; justify-content: center; cursor: pointer;
+  backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px);
+  box-shadow: 0 2px 8px rgba(0,0,0,0.35);
+  transition: background 0.15s ease, transform 0.15s ease;
+}
+.mesh-typed-content-download-btn svg { width: 1.05rem; height: 1.05rem; }
+.mesh-typed-content-download-btn:hover { background: rgba(251,146,60,0.35); color: #fff; transform: scale(1.06); }
+.mesh-typed-content-download-btn:active { transform: scale(0.96); }
+/* Pre-fetch "Download" pill under an incoming attachment. The generic .btn it
+   replaced collapsed to its text width inside the narrow mobile bubble and
+   looked squashed — this is a full-width glass pill in the house style. */
+.mesh-typed-content-fetch-btn {
+  display: flex; align-items: center; justify-content: center; gap: 7px;
+  width: 100%; min-height: 2.4rem; padding: 8px 14px; margin-top: 2px;
+  border-radius: 12px; border: 1px solid rgba(255,255,255,0.14);
+  background: rgba(255,255,255,0.07); color: rgba(255,255,255,0.9);
+  font-size: 0.82rem; font-weight: 500; cursor: pointer; white-space: nowrap;
+  backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px);
+  transition: background 0.15s ease, border-color 0.15s ease;
+}
+.mesh-typed-content-fetch-btn svg { width: 1rem; height: 1rem; flex-shrink: 0; }
+.mesh-typed-content-fetch-btn:hover:not(:disabled) {
+  background: rgba(251,146,60,0.18); border-color: rgba(251,146,60,0.4); color: #fff;
+}
+.mesh-typed-content-fetch-btn:disabled { opacity: 0.6; cursor: default; }
+.mesh-tab-bar { display: flex; gap: 2px; background: rgba(0,0,0,0.3); border-radius: 10px; padding: 3px; flex-shrink: 0; }
+.mesh-tab { flex: 1; padding: 8px 12px; border: none; background: transparent; color: rgba(255,255,255,0.5); font-size: 0.82rem; font-weight: 500; border-radius: 8px; cursor: pointer; transition: all 0.2s ease; display: flex; align-items: center; justify-content: center; gap: 6px; }
+.mesh-tab:hover { color: rgba(255,255,255,0.8); background: rgba(255,255,255,0.05); }
+.mesh-tab.active { color: #fff; background: rgba(255,255,255,0.1); }
+.mesh-tab-badge { font-size: 0.65rem; background: rgba(251,146,60,0.2); color: #fb923c; padding: 1px 5px; border-radius: 4px; font-weight: 600; }
+.mesh-tab-badge-alert { background: rgba(239,68,68,0.3); color: #ef4444; animation: pulse-alert 1.5s infinite; }
+@keyframes pulse-alert { 0%, 100% { opacity: 1; } 50% { opacity: 0.5; } }
+.mesh-map-panel { flex: 1; min-height: 400px; padding: 0 !important; overflow: hidden; border-radius: 12px; position: relative; }
+
+/* Bitcoin & Deadman panels (child components) */
+.mesh-bitcoin-panel,
+.mesh-deadman-panel,
+.mesh-assistant-panel { padding: 16px; display: flex; flex-direction: column; gap: 12px; flex: 1; min-height: 0; overflow-y: auto; }
+.mesh-assistant-field { display: flex; flex-direction: column; gap: 4px; }
+.mesh-assistant-install { padding: 12px; background: rgba(251,146,60,0.08); border: 1px solid rgba(251,146,60,0.25); border-radius: 10px; }
+.mesh-assistant-install-btn { display: inline-block; text-align: center; padding: 8px 14px; font-size: 0.8rem; }
+.mesh-assistant-allowlist { display: flex; flex-direction: column; gap: 2px; max-height: 180px; overflow-y: auto; overscroll-behavior: contain; border: 1px solid rgba(255,255,255,0.08); border-radius: 10px; padding: 6px; background: rgba(0,0,0,0.2); }
+.mesh-assistant-allow-row { display: flex; align-items: center; gap: 8px; padding: 6px 8px; border-radius: 8px; cursor: pointer; font-size: 0.85rem; color: rgba(255,255,255,0.85); }
+.mesh-assistant-allow-row:hover { background: rgba(255,255,255,0.06); }
+.mesh-assistant-allow-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mesh-assistant-addkey { display: flex; gap: 6px; margin-top: 6px; }
+.mesh-assistant-addkey input { flex: 1; min-width: 0; }
+.mesh-panel-title { font-size: 1rem; font-weight: 700; color: rgba(255,255,255,0.95); margin: 0; }
+.mesh-panel-sub { font-size: 0.8rem; color: rgba(255,255,255,0.45); margin: -4px 0 0; }
+.mesh-device-panel { padding: 16px; display: flex; flex-direction: column; gap: 12px; flex: 1; min-height: 0; overflow-y: auto; }
+.mesh-device-panel-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px; }
+.mesh-device-panel-actions { display: flex; flex-direction: column; gap: 6px; padding-top: 4px; border-top: 1px solid rgba(255,255,255,0.08); }
+.mesh-device-reboot-btn { align-self: flex-start; padding: 8px 16px; font-size: 0.85rem; }
+.mesh-device-reboot-hint { font-size: 0.75rem; color: rgba(255,255,255,0.4); margin: 0; }
+.mesh-device-reboot-error { font-size: 0.8rem; color: #ef4444; margin: 0; }
+.mesh-bitcoin-section { display: flex; flex-direction: column; gap: 8px; }
+.mesh-bitcoin-section-header { display: flex; justify-content: space-between; align-items: center; }
+.mesh-bitcoin-label { font-size: 0.75rem; font-weight: 600; color: rgba(255,255,255,0.5); text-transform: uppercase; letter-spacing: 0.5px; }
+.mesh-bitcoin-height { font-size: 0.85rem; font-weight: 700; color: #fb923c; font-family: monospace; }
+.mesh-bitcoin-height.mesh-muted { color: rgba(255,255,255,0.3); font-weight: 400; }
+.mesh-bitcoin-hint { font-size: 0.8rem; color: rgba(255,255,255,0.45); margin: 0; }
+.mesh-bitcoin-input { width: 100%; background: rgba(255,255,255,0.06); border: 1px solid rgba(255,255,255,0.1); border-radius: 8px; color: rgba(255,255,255,0.9); padding: 10px 12px; font-size: 0.85rem; font-family: inherit; outline: none; box-sizing: border-box; }
+.mesh-bitcoin-input:focus { border-color: rgba(251,146,60,0.4); }
+.mesh-bitcoin-input::placeholder { color: rgba(255,255,255,0.25); }
+.mesh-bitcoin-input-sm { padding: 8px 12px; font-size: 0.8rem; }
+textarea.mesh-bitcoin-input { resize: vertical; min-height: 60px; }
+select.mesh-bitcoin-input { cursor: pointer; appearance: none; background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' fill='rgba(255,255,255,0.4)' viewBox='0 0 16 16'%3E%3Cpath d='M8 11L3 6h10z'/%3E%3C/svg%3E"); background-repeat: no-repeat; background-position: right 12px center; padding-right: 32px; }
+select.mesh-bitcoin-input option { background: #1a1a2e; color: rgba(255,255,255,0.9); }
+.mesh-bitcoin-advanced { margin-top: 4px; }
+.mesh-bitcoin-advanced summary { cursor: pointer; list-style: none; display: flex; align-items: center; gap: 6px; }
+.mesh-bitcoin-advanced summary::before { content: '\25B6'; font-size: 0.6rem; color: rgba(255,255,255,0.4); transition: transform 0.2s; }
+.mesh-bitcoin-advanced[open] summary::before { transform: rotate(90deg); }
+.mesh-block-list { display: flex; flex-direction: column; gap: 4px; }
+.mesh-block-row { display: flex; align-items: center; gap: 8px; padding: 6px 8px; background: rgba(255,255,255,0.04); border-radius: 6px; }
+.mesh-block-height { font-size: 0.8rem; font-weight: 600; color: #a855f7; font-family: monospace; }
+.mesh-block-hash { font-size: 0.7rem; color: rgba(255,255,255,0.35); font-family: monospace; }
+.mesh-send-tabs { display: flex; gap: 2px; background: rgba(0,0,0,0.3); border-radius: 8px; padding: 2px; }
+.mesh-send-tab { flex: 1; padding: 6px 12px; border: none; background: transparent; color: rgba(255,255,255,0.5); font-size: 0.8rem; font-weight: 500; border-radius: 6px; cursor: pointer; transition: all 0.2s; }
+.mesh-send-tab:hover { color: rgba(255,255,255,0.8); }
+.mesh-send-tab.active { color: #fff; background: rgba(255,255,255,0.1); }
+.mesh-relay-mode { display: flex; gap: 4px; flex-wrap: wrap; }
+.mesh-relay-mode-option { display: flex; align-items: center; gap: 6px; padding: 6px 10px; border-radius: 6px; cursor: pointer; font-size: 0.8rem; color: rgba(255,255,255,0.6); transition: all 0.15s; }
+.mesh-relay-mode-option.active { color: rgba(255,255,255,0.9); }
+.mesh-relay-mode-option small { color: rgba(255,255,255,0.35); font-size: 0.7rem; }
+.mesh-relay-mode-option input[type="radio"] { accent-color: #fb923c; }
+.mesh-relay-result { padding: 8px 12px; border-radius: 8px; font-size: 0.8rem; }
+.mesh-relay-result.success { background: rgba(74,222,128,0.1); border: 1px solid rgba(74,222,128,0.2); color: #4ade80; }
+.mesh-relay-result.error { background: rgba(239,68,68,0.1); border: 1px solid rgba(239,68,68,0.2); color: #ef4444; }
+
+/* Deadman panel specifics */
+.mesh-deadman-status { display: flex; flex-direction: column; gap: 8px; padding: 12px; background: rgba(0,0,0,0.2); border-radius: 10px; }
+.mesh-deadman-indicator { display: inline-flex; align-items: center; font-size: 0.7rem; font-weight: 700; text-transform: uppercase; letter-spacing: 1px; padding: 4px 10px; border-radius: 6px; width: fit-content; }
+.mesh-deadman-indicator.armed { background: rgba(251,146,60,0.15); color: #fb923c; border: 1px solid rgba(251,146,60,0.3); }
+.mesh-deadman-indicator.disabled { background: rgba(255,255,255,0.06); color: rgba(255,255,255,0.4); border: 1px solid rgba(255,255,255,0.08); }
+.mesh-deadman-indicator.triggered { background: rgba(239,68,68,0.15); color: #ef4444; border: 1px solid rgba(239,68,68,0.3); animation: pulse-alert 1.5s infinite; }
+.mesh-deadman-timer { font-size: 1.8rem; font-weight: 700; color: #fb923c; font-family: monospace; }
+.mesh-deadman-message { font-size: 0.8rem; color: rgba(255,255,255,0.5); font-style: italic; }
+.mesh-deadman-checkin-btn { margin-top: 4px; }
+.mesh-deadman-config { display: flex; flex-direction: column; gap: 10px; }
+.mesh-deadman-field { display: flex; flex-direction: column; gap: 4px; }
+.mesh-deadman-info { display: flex; gap: 12px; flex-wrap: wrap; }
+.mesh-deadman-info-item { font-size: 0.75rem; color: rgba(255,255,255,0.4); }
+
+/* Reaction chips and action menu (Phase 2a) */
+.mesh-chat-reactions { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
+.mesh-chat-reaction-chip { display: inline-flex; align-items: center; gap: 4px; padding: 3px 8px; border-radius: 12px; background: rgba(255,255,255,0.06); border: 1px solid rgba(255,255,255,0.12); font-size: 0.85rem; line-height: 1.1; }
+.mesh-chat-reaction-chip.by-self { background: rgba(251,146,60,0.15); border-color: rgba(251,146,60,0.4); }
+.mesh-chat-reaction-count { font-size: 0.7rem; color: rgba(255,255,255,0.55); font-weight: 600; }
+.mesh-chat-action-menu { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin-top: 8px; padding: 8px 10px; border-radius: 10px; background: rgba(0,0,0,0.35); border: 1px solid rgba(255,255,255,0.1); }
+.mesh-chat-action-btn { background: transparent; border: none; color: rgba(255,255,255,0.75); font-size: 0.8rem; padding: 4px 8px; border-radius: 6px; cursor: pointer; }
+.mesh-chat-action-btn:hover { background: rgba(255,255,255,0.08); color: #fff; }
+.mesh-chat-reaction-btn { background: rgba(255,255,255,0.04); border: 1px solid rgba(255,255,255,0.1); color: #fff; font-size: 1.15rem; line-height: 1; padding: 6px 10px; border-radius: 8px; cursor: pointer; transition: transform 0.1s ease, background 0.15s ease; }
+.mesh-chat-reaction-btn:hover { background: rgba(251,146,60,0.2); transform: scale(1.1); }
+
+.mesh-chat-action-danger { color: rgba(248, 113, 113, 0.9) !important; }
+.mesh-chat-action-danger:hover { background: rgba(239,68,68,0.2) !important; color: #fff !important; }
+
+.mesh-chat-forward-header { font-size: 0.75rem; color: rgba(251,146,60,0.85); font-style: italic; margin-bottom: 3px; }
+.mesh-chat-forward-body { }
+.mesh-chat-deleted { font-style: italic; opacity: 0.55; }
+.mesh-chat-edited { font-size: 0.7rem; opacity: 0.55; font-style: italic; }
+
+/* Telegram-style ⋯ action trigger: tiny, ghosted in the meta row, expands on hover or when menu is open */
+.mesh-chat-action-trigger {
+  background: transparent;
+  border: none;
+  color: rgba(255,255,255,0.45);
+  font-size: 1rem;
+  line-height: 1;
+  padding: 2px 6px;
+  margin-left: 2px;
+  border-radius: 10px;
+  cursor: pointer;
+  opacity: 0;
+  transform: scale(0.85);
+  transition: opacity 0.15s ease, transform 0.15s ease, background 0.15s ease, color 0.15s ease;
+}
+.mesh-chat-bubble:hover .mesh-chat-action-trigger,
+.mesh-chat-bubble.menu-open .mesh-chat-action-trigger,
+.mesh-chat-action-trigger.active,
+.mesh-chat-action-trigger:focus-visible {
+  opacity: 1;
+  transform: scale(1);
+}
+.mesh-chat-action-trigger:hover,
+.mesh-chat-action-trigger.active {
+  background: rgba(255,255,255,0.1);
+  color: #fff;
+}
+@media (hover: none) {
+  .mesh-chat-action-trigger { opacity: 0.7; transform: scale(1); }
+}
+
+/* Generic inline spinner for busy buttons */
+.mesh-spinner { display: inline-block; width: 1em; height: 1em; border: 2px solid rgba(255,255,255,0.25); border-top-color: #fb923c; border-radius: 50%; animation: mesh-spin 0.7s linear infinite; vertical-align: middle; }
+@keyframes mesh-spin { to { transform: rotate(360deg); } }
+.mesh-chat-attach-btn.is-busy { opacity: 0.8; cursor: wait; }
+.mesh-chat-record-btn.is-recording { background: rgba(239,68,68,0.25); animation: mesh-record-pulse 1.1s ease-in-out infinite; }
+@keyframes mesh-record-pulse { 0%, 100% { box-shadow: 0 0 0 0 rgba(239,68,68,0.4); } 50% { box-shadow: 0 0 0 6px rgba(239,68,68,0); } }
+
+/* "+" attach menu — replaces individually-visible attach/record buttons
+   (was overflowing the compose row) with one toggle + an animated stack. */
+.mesh-attach-menu-anchor { position: relative; flex-shrink: 0; }
+.mesh-chat-plus-btn { font-size: 1.3rem; line-height: 1; font-weight: 300; transition: transform 0.2s ease; }
+.mesh-chat-plus-btn.is-open { transform: rotate(45deg); background: rgba(255,255,255,0.14); }
+.mesh-attach-stack {
+  position: absolute; bottom: calc(100% + 8px); left: 0;
+  display: flex; flex-direction: column; gap: 8px;
+}
+.mesh-attach-stack-enter-active, .mesh-attach-stack-leave-active {
+  transition: opacity 0.18s ease, transform 0.18s ease;
+}
+.mesh-attach-stack-enter-from, .mesh-attach-stack-leave-to {
+  opacity: 0; transform: translateY(8px) scale(0.9);
+}
+.mesh-chat-reaction-btn.is-busy { background: rgba(251,146,60,0.25); }
+.mesh-chat-reaction-btn:disabled { opacity: 0.6; cursor: wait; }
+
+/* Reply / attachment pending banner */
+.mesh-chat-pending-reply,
+.mesh-chat-pending-attachment { display: flex; align-items: flex-start; gap: 8px; padding: 8px 12px; margin: 6px 0; border-radius: 10px; background: rgba(251,146,60,0.1); border: 1px solid rgba(251,146,60,0.25); font-size: 0.85rem; }
+.mesh-chat-pending-reply .mesh-typed-icon,
+.mesh-chat-pending-attachment .mesh-typed-icon { color: #fb923c; font-size: 1rem; line-height: 1.4; flex: 0 0 auto; }
+.mesh-chat-pending-name { flex: 1 1 auto; min-width: 0; color: rgba(255,255,255,0.85); overflow-wrap: anywhere; word-break: break-word; line-height: 1.35; }
+.mesh-chat-pending-size { flex: 0 0 auto; color: rgba(255,255,255,0.45); font-size: 0.75rem; margin-left: 4px; }
+.mesh-chat-pending-clear { flex: 0 0 auto; align-self: center; margin-left: auto; background: rgba(255,255,255,0.08); border: 1px solid rgba(255,255,255,0.15); color: rgba(255,255,255,0.85); width: 28px; height: 28px; border-radius: 50%; display: inline-flex; align-items: center; justify-content: center; cursor: pointer; font-size: 0.95rem; line-height: 1; transition: background 0.15s ease, color 0.15s ease, border-color 0.15s ease, transform 0.1s ease; }
+.mesh-chat-pending-clear:hover { background: rgba(239,68,68,0.3); color: #fff; border-color: rgba(239,68,68,0.6); transform: scale(1.08); }
+.mesh-chat-pending-clear:active { transform: scale(0.92); }
+
+/* Transport chooser modal (attachment size router) */
+.mesh-transport-modal-backdrop { position: fixed; inset: 0; background: rgba(0,0,0,0.6); backdrop-filter: blur(4px); display: flex; align-items: center; justify-content: center; z-index: 1000; }
+.mesh-transport-modal { max-width: 420px; width: 92%; padding: 24px; display: flex; flex-direction: column; gap: 14px; }
+.mesh-transport-title { margin: 0; font-size: 1.1rem; color: #fff; }
+.mesh-transport-sub { margin: 0; color: rgba(255,255,255,0.6); font-size: 0.85rem; overflow-wrap: anywhere; }
+.mesh-transport-options { display: flex; flex-direction: column; gap: 10px; margin-top: 6px; }
+.mesh-transport-option { display: flex; align-items: center; gap: 12px; padding: 14px 16px; border-radius: 12px; background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.12); color: #fff; cursor: pointer; text-align: left; transition: background 0.15s ease, border-color 0.15s ease, transform 0.1s ease; }
+.mesh-transport-option:hover:not(:disabled) { background: rgba(255,255,255,0.1); border-color: rgba(255,255,255,0.25); transform: translateY(-1px); }
+.mesh-transport-option:disabled { opacity: 0.4; cursor: not-allowed; }
+.mesh-transport-icon { font-size: 1.5rem; flex: 0 0 auto; }
+.mesh-transport-label { flex: 1 1 auto; font-weight: 600; }
+.mesh-transport-meta { flex: 0 0 auto; font-size: 0.75rem; color: rgba(255,255,255,0.5); }
+.mesh-transport-cancel { margin-top: 4px; padding: 8px; background: transparent; border: none; color: rgba(255,255,255,0.5); cursor: pointer; font-size: 0.85rem; }
+.mesh-transport-cancel:hover { color: #fff; }
+
+/* Transport pills at the bottom of the image quality modal — pick LoRa vs
+   FIPS vs Tor for the outgoing image when the peer is federation-reachable. */
+.mesh-image-transport-row { display: flex; align-items: center; gap: 8px; margin-top: 10px; flex-wrap: wrap; }
+.mesh-image-transport-caption { font-size: 0.75rem; color: rgba(255,255,255,0.5); }
+.mesh-image-transport-pill { padding: 6px 12px; border-radius: 999px; background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.15); color: rgba(255,255,255,0.75); cursor: pointer; font-size: 0.8rem; transition: background 0.15s ease, border-color 0.15s ease, color 0.15s ease; }
+.mesh-image-transport-pill:hover { background: rgba(255,255,255,0.1); }
+.mesh-image-transport-pill.active { background: rgba(251,146,60,0.18); border-color: rgba(251,146,60,0.7); color: #fff; }
+
+/* Clickable transport pill — opens the hop-route modal (HopVizModal.vue,
+   which carries its own scoped hopviz styles). */
+.mesh-chat-transport-clickable { cursor: pointer; }
+.mesh-chat-transport-clickable:hover { filter: brightness(1.4); }
+
+/* Per-message "more" button — opens the route/hops modal (same target as the
+   transport pill, but always visible and discoverable). */
+.mesh-chat-more-btn { background: none; border: none; color: rgba(255,255,255,0.45); font-size: 0.9rem; line-height: 1; padding: 0 4px; cursor: pointer; border-radius: 6px; }
+.mesh-chat-more-btn:hover { color: #fff; background: rgba(255,255,255,0.1); }
+
+/* Reaction dropdown inside the message action menu */
+.mesh-chat-reaction-dropdown { flex-basis: 100%; display: flex; flex-wrap: wrap; gap: 4px; padding-top: 6px; }

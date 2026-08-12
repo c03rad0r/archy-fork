@@ -1,0 +1,164 @@
+# SSH keys and sandbox copies
+.ssh/
+
+# Rust build output
+target/
+**/target/
+
+# Node.js
+node_modules/
+**/node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# Build outputs
+dist/
+dist-ssr/
+build/
+*.local
+
+# Vite build cache
+neode-ui/.vite/
+
+# IDE / editor
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.DS_Store
+._*
+Thumbs.db
+
+# Environment and local overrides
+.env
+.env.local
+.env.*.local
+.env.production
+core/.env.production
+scripts/deploy-config.sh
+
+# Logs
+logs/
+*.log
+
+# Testing
+coverage/
+.nyc_output/
+
+# Image / release artifacts
+*.iso
+*.img
+*.dmg
+*.app
+*.apk
+*.keystore
+*.s9pk
+*.tar.gz
+
+# Release artifacts live in release attachments, not Git history.
+releases/**
+!releases/
+!releases/manifest.json
+# The signed app catalog and the registry trust floor are source, not build
+# output: nodes fetch the catalog from this path on main, and the floor is what
+# scripts/check-catalog-registry-trust.py checks it against. Both were being
+# swallowed by the rule above — app-catalog.json only stayed tracked because it
+# predates it.
+!releases/app-catalog.json
+!releases/registry-trust-floor.json
+
+# Image recipe output
+image-recipe/output/
+image-recipe/*.iso
+image-recipe/*.img
+
+# Loop tool artifacts
+*/loop/
+loop/loop/
+loop/loop.log.bak
+
+# Separate repos nested in tree
+web/
+
+# Resilience harness reports contain session cookies.
+scripts/resilience/reports/
+
+# Codex / pnpm / python caches / editor backups
+.codex
+.codex-target-*/
+.codex-tmp/
+.claude/
+.pnpm-store/
+
+# Key material and local databases — belt-and-braces so a stray key or a
+# copied node database can never be committed. Open-source readiness plan,
+# Phase 1 item 5: `.claude/settings.local.json` was previously only caught by
+# a machine-global ignore rule, which protects one machine and no contributor.
+*.key
+*.pem
+id_rsa*
+*.sqlite
+*.sqlite3
+*.db
+
+# ...except the throwaway TLS fixtures the appgate tests compile in via
+# include_bytes!. They are documented non-identity material (see that
+# directory's README) and are already tracked; the negation stops the rule
+# above from silently dropping them if they are ever regenerated.
+!core/archipelago/src/appgate/testdata/*.key
+**/__pycache__/
+*.bak
+
+# Local evidence screenshots; intentional UI screenshots should live under an
+# app/docs asset path with a descriptive filename.
+Screenshot *.png
+uploads/
+
+# ── Local-only material ─────────────────────────────────────────────────────
+# Present on disk, never tracked: everything describing Archipelago's own
+# infrastructure or internal development process. The repo is source code and
+# guidelines only. Inventory: .local-only/manifest.txt — wipe: .local-only/wipe.sh
+/.local-only/
+/.planning/
+/loop/
+/docs/operations-runbook.md
+/docs/hotfix-process.md
+/docs/PRODUCTION-MASTER-PLAN.md
+/docs/UNIFIED-TASK-TRACKER.md
+/docs/FIPS-UPTIME-AND-UI-STATE-PLAN.md
+/docs/HANDOFF-2026-07-20-fips-peer-files.md
+/docs/HANDOFF-2026-07-23-companion-apk-deploy.md
+/docs/qr-scanner-snappiness-handover.md
+/docs/RETICULUM-TRANSPORT-PROGRESS.md
+/docs/combined-test-plan-2026-07-22.md
+/docs/pine-voice-release-test-plan.md
+/docs/OPEN-SOURCE-READINESS-PLAN.md
+/docs/archive/HANDOVER-2026-07-02-iso-feedback.md
+/docs/archive/SESSION-1.8.0-OTA-PROGRESS.md
+/docs/security/KEY-02-FLEET-ROTATION.md
+/docs/security/KEY-03-SIGNING-POSTURE.md
+/tests/production-quality/TRACKER.md
+/scripts/deploy-config-defaults.sh
+/scripts/deploy-tailscale.sh
+/scripts/deploy-to-target.sh
+/scripts/setup-target-dev.sh
+/scripts/setup-aiui-server.sh
+/scripts/setup-https-dev.sh
+/scripts/debug-frontend.sh
+/scripts/node-profile.sh
+/scripts/fleet-fips-pair.sh
+/scripts/fleet-fips-unpair.sh
+/image-recipe/sync-from-live.sh
+/docs/security/PHASE-10-VERIFICATION-GUIDE.md
+/docs/security/KEY-01-ON-NODE-VERIFICATION.md
+/docs/security/KEY-02-ROOTFS-EVIDENCE.md
+/docs/security/ENTROPY-SEED-AUDIT-2026-07-31.md
+/image-recipe/INTEGRATION-GUIDE.md
+/docs/multinode-testing-plan.md
+/docs/bitcoin-version-bulletproof-rollout.md
+
+# Generated PWA dev output (vite-plugin-pwa) — never a source artifact
+neode-ui/dev-dist/

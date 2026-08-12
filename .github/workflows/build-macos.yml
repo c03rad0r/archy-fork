@@ -1,0 +1,219 @@
+name: macOS Production Build
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version number (e.g., 0.1.0)'
+        required: true
+        default: '0.1.0'
+
+env:
+  RUST_VERSION: stable
+  NODE_VERSION: 18
+
+jobs:
+  build-macos:
+    name: Build macOS App
+    runs-on: macos-latest
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set version
+        id: version
+        run: |
+          if [ "${{ github.event_name }}" == "workflow_dispatch" ]; then
+            VERSION="${{ github.event.inputs.version }}"
+          else
+            VERSION="${GITHUB_REF#refs/tags/v}"
+          fi
+          echo "VERSION=$VERSION" >> $GITHUB_OUTPUT
+          echo "Building version: $VERSION"
+
+      - name: Setup Rust
+        uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          toolchain: ${{ env.RUST_VERSION }}
+          components: rustfmt, clippy
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+          cache-dependency-path: neode-ui/package-lock.json
+
+      - name: Install frontend dependencies
+        working-directory: neode-ui
+        run: npm ci
+
+      - name: Build Rust backend (Release)
+        working-directory: core
+        run: |
+          cargo build --release --workspace
+          strip target/release/archipelago
+          ls -lh target/release/archipelago
+
+      - name: Build Vue.js frontend (Production)
+        working-directory: neode-ui
+        run: |
+          npm run build:production
+          ls -lh dist/
+
+      - name: Run production build script
+        env:
+          ARCHIPELAGO_VERSION: ${{ steps.version.outputs.VERSION }}
+        run: |
+          chmod +x build-macos-production.sh
+          ./build-macos-production.sh
+
+      - name: Verify build artifacts
+        run: |
+          ls -lh build/macos/
+          if [ ! -d "build/macos/Archipelago.app" ]; then
+            echo "❌ App bundle not found!"
+            exit 1
+          fi
+          if [ ! -f "build/macos/Archipelago-${{ steps.version.outputs.VERSION }}-macOS.dmg" ]; then
+            echo "⚠️ DMG not created (optional)"
+          fi
+
+      - name: Code sign (if credentials available)
+        if: ${{ secrets.MACOS_CERTIFICATE != '' }}
+        env:
+          MACOS_CERTIFICATE: ${{ secrets.MACOS_CERTIFICATE }}
+          MACOS_CERTIFICATE_PWD: ${{ secrets.MACOS_CERTIFICATE_PWD }}
+          KEYCHAIN_PWD: ${{ secrets.KEYCHAIN_PWD }}
+        run: |
+          # Import certificate
+          echo "$MACOS_CERTIFICATE" | base64 --decode > certificate.p12
+          security create-keychain -p "$KEYCHAIN_PWD" build.keychain
+          security default-keychain -s build.keychain
+          security unlock-keychain -p "$KEYCHAIN_PWD" build.keychain
+          security import certificate.p12 -k build.keychain -P "$MACOS_CERTIFICATE_PWD" -T /usr/bin/codesign
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KEYCHAIN_PWD" build.keychain
+          
+          # Sign the app
+          codesign --deep --force --verify --verbose \
+            --sign "Developer ID Application" \
+            --options runtime \
+            build/macos/Archipelago.app
+          
+          # Verify
+          codesign --verify --verbose build/macos/Archipelago.app
+
+      - name: Notarize (if credentials available)
+        if: ${{ secrets.APPLE_ID != '' }}
+        env:
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          APPLE_APP_PASSWORD: ${{ secrets.APPLE_APP_PASSWORD }}
+        run: |
+          # Create zip for notarization
+          ditto -c -k --keepParent build/macos/Archipelago.app Archipelago.zip
+          
+          # Submit for notarization
+          xcrun notarytool submit Archipelago.zip \
+            --apple-id "$APPLE_ID" \
+            --team-id "$APPLE_TEAM_ID" \
+            --password "$APPLE_APP_PASSWORD" \
+            --wait
+          
+          # Staple
+          xcrun stapler staple build/macos/Archipelago.app
+          
+          # Recreate DMG with notarized app
+          rm -f build/macos/Archipelago-${{ steps.version.outputs.VERSION }}-macOS.dmg
+          hdiutil create -volname "Archipelago ${{ steps.version.outputs.VERSION }}" \
+            -srcfolder build/macos/Archipelago.app \
+            -ov -format UDZO \
+            build/macos/Archipelago-${{ steps.version.outputs.VERSION }}-macOS.dmg
+          
+          xcrun stapler staple build/macos/Archipelago-${{ steps.version.outputs.VERSION }}-macOS.dmg
+
+      - name: Create checksums
+        working-directory: build/macos
+        run: |
+          if [ -f "Archipelago-${{ steps.version.outputs.VERSION }}-macOS.dmg" ]; then
+            shasum -a 256 "Archipelago-${{ steps.version.outputs.VERSION }}-macOS.dmg" > checksums.txt
+          fi
+          cat checksums.txt || echo "No DMG to checksum"
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: Archipelago-${{ steps.version.outputs.VERSION }}-macOS
+          path: |
+            build/macos/Archipelago.app
+            build/macos/*.dmg
+            build/macos/checksums.txt
+          retention-days: 30
+
+      - name: Create GitHub Release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v1
+        with:
+          files: |
+            build/macos/Archipelago-${{ steps.version.outputs.VERSION }}-macOS.dmg
+            build/macos/checksums.txt
+          draft: true
+          generate_release_notes: true
+          body: |
+            ## Archipelago v${{ steps.version.outputs.VERSION }}
+            
+            ### 🎉 macOS Release
+            
+            **Download**: `Archipelago-${{ steps.version.outputs.VERSION }}-macOS.dmg`
+            
+            ### Installation
+            1. Download the DMG file
+            2. Open and drag Archipelago to Applications
+            3. Install [Docker Desktop](https://www.docker.com/products/docker-desktop)
+            4. Launch Archipelago
+            
+            ### What's New
+            See [CHANGELOG.md](https://github.com/${{ github.repository }}/blob/main/CHANGELOG.md)
+            
+            ### System Requirements
+            - macOS 10.15 (Catalina) or later
+            - 8GB RAM minimum (16GB recommended)
+            - Docker Desktop 23.0+
+            
+            ### Checksums
+            See `checksums.txt` for SHA-256 verification
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  test-build:
+    name: Test Build (No Artifacts)
+    runs-on: macos-latest
+    if: github.event_name == 'push' && !startsWith(github.ref, 'refs/tags/')
+    
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        
+      - name: Setup Rust
+        uses: actions-rust-lang/setup-rust-toolchain@v1
+        
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          
+      - name: Test backend build
+        working-directory: core
+        run: cargo build --release
+        
+      - name: Test frontend build
+        working-directory: neode-ui
+        run: |
+          npm ci
+          npm run build:production

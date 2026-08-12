@@ -1,0 +1,47 @@
+app:
+  id: indeedhub-relay
+  name: IndeedHub Nostr Relay
+  version: "0.9.0"
+  description: nostr-rs-relay backing IndeedHub's Nostr identity + comments.
+  category: community
+
+  # Hyphen name matches runtime references + the live container (adoption);
+  # alias `relay` is the short hostname the frontend nginx proxies to
+  # (http://relay:8080 for the /relay websocket).
+  container_name: indeedhub-relay
+
+  container:
+    image: source.archipelago-foundation.org/lfg2025/nostr-rs-relay:0.9.0
+    pull_policy: if-not-present
+    network: indeedhub-net
+    network_aliases: [relay]
+
+  dependencies:
+    - storage: 2Gi
+
+  resources:
+    memory_limit: 256Mi
+    disk_limit: 2Gi
+
+  security:
+    capabilities: []
+    readonly_root: false
+    network_policy: isolated
+
+  ports: []
+
+  # Named volume matches the live indeedhub-relay-data volume on .228.
+  volumes:
+    - type: volume
+      source: indeedhub-relay-data
+      target: /usr/src/app/db
+      options: [rw]
+
+  environment: []
+
+  health_check:
+    type: tcp
+    endpoint: localhost:8080
+    interval: 30s
+    timeout: 5s
+    retries: 3

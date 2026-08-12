@@ -1,0 +1,98 @@
+---
+description: Plugin architecture rules - interfaces, registration, lifecycle, sandboxing
+globs: "**/plugins/**,**/*.plugin.ts"
+alwaysApply: false
+---
+
+# Plugin System
+
+## Philosophy
+Every external integration connects through a typed plugin interface. No direct coupling to any service, provider, or protocol.
+
+## Plugin Types
+```typescript
+type PluginType =
+  | 'ai-provider'     // LLM backends (OpenRouter, Ollama, Claude, etc.)
+  | 'media-source'    // Content sources (Plex, YouTube, Nextcloud, Archive.org)
+  | 'messaging'       // Chat protocols (Nostr, Matrix, local)
+  | 'storage'         // File storage (local FS, IPFS, Nextcloud)
+  | 'renderer'        // Custom content renderers
+  | 'file-handler'    // File open/preview handlers
+  | 'crypto'          // Encryption providers
+  | 'search'          // Search backends (SearXNG, local)
+  | 'auth'            // Authentication (Nostr keys, DID, passkeys)
+  | 'wallet'          // Bitcoin wallet deep-linking (Phoenix, Zeus, Alby, etc.)
+  | 'social-embed'    // Social post fetching (X, Nostr, Mastodon)
+  | 'mcp'             // Model Context Protocol servers
+  | 'media'           // Media processing (ffmpeg.wasm, whisper, TTS)
+```
+
+## Base Plugin Interface
+```typescript
+interface AIUIPlugin {
+  id: string
+  name: string
+  version: string
+  type: PluginType
+  description?: string
+  icon?: string
+  init(context: PluginContext): Promise<void>
+  destroy(): Promise<void>
+  isAvailable(): Promise<boolean>
+}
+```
+
+## Plugin Context
+Plugins receive a context object with access to:
+- Settings store (read/write plugin-specific settings)
+- Event bus (emit/listen for app events)
+- Logger (structured logging)
+- Crypto utilities (for encrypting plugin data at rest)
+
+Plugins do NOT receive:
+- Direct DOM access (community plugins)
+- File system access (without explicit capability grant)
+- Network access to arbitrary hosts (without declaration)
+
+## Sandboxing Tiers
+
+### Tier 1: Trusted (built-in, official)
+Run in main thread with full API access. AI adapters, core renderers, crypto providers.
+
+### Tier 2: Community
+Run in sandboxed iframes with `postMessage` API. Custom renderers, themes, visual extensions. Cannot access host DOM, file system, or network directly.
+
+### Tier 3: External Processes
+MCP servers, local AI runners. Run as separate processes (Tauri IPC) or connect via HTTP. Isolated by OS process boundary.
+
+## Plugin Lifecycle
+1. `register()` — declare plugin to registry
+2. `init()` — plugin sets up, connects to services
+3. Active — plugin responds to requests
+4. `destroy()` — cleanup on disable/uninstall
+
+## Registration
+```typescript
+import { registerPlugin } from '@aiui/core'
+
+registerPlugin({
+  id: 'ai-openrouter',
+  name: 'OpenRouter',
+  type: 'ai-provider',
+  version: '1.0.0',
+  async init(ctx) { /* setup */ },
+  async destroy() { /* cleanup */ },
+  // ... adapter methods
+})
+```
+
+## Plugin Settings
+Each plugin can declare settings schema. Settings are stored encrypted and exposed through a standard settings UI.
+
+## Rules
+- Every plugin must declare its type
+- Every plugin must implement `init()` and `destroy()`
+- Every plugin must implement `isAvailable()` to report its status
+- Plugins must handle errors gracefully — never crash the host
+- Community plugins must not load external scripts
+- All network requests must go through the plugin context (for privacy/proxy control)

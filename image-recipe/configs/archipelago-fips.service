@@ -1,0 +1,21 @@
+[Unit]
+Description=Archipelago FIPS mesh transport (wraps upstream fips daemon)
+# Stay dark until onboarding materialises the seed-derived key. Archipelago
+# backend unmasks + starts this unit via `sudo systemctl` once the key is
+# present; pre-onboarding the unit must be masked so no traffic is sent
+# from an ephemeral identity.
+ConditionPathExists=/var/lib/archipelago/identity/fips_key
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStartPre=/bin/sh -c 'test -x /usr/bin/fips || { echo "fips daemon not installed — run fips.install from dashboard" >&2; exit 1; }'
+ExecStart=/usr/bin/fips --config /etc/fips/fips.yaml
+Restart=on-failure
+RestartSec=5
+# UDP 8668 is reachable on all interfaces by default; the daemon does its
+# own Noise authentication so no firewall gate is added here.
+
+[Install]
+WantedBy=multi-user.target

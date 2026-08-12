@@ -1,0 +1,59 @@
+# KEY-05 layer (c) — make the `rand` major-version split VISIBLE rather than silent.
+#
+# WHY
+#   F-07 / R-05 asked for exactly one thing: a rule that fails the build when the
+#   duplicate `rand` majors in this graph change, "so the split is visible rather
+#   than silent". Two majors coexist today and that is tolerated-and-recorded, not
+#   fixed — bumping is not casual on a tree that pins `bip39` and `bitcoin` exactly.
+#
+#   The contract this file encodes:
+#     - the tree AS IT STANDS passes;
+#     - a THIRD `rand` version, or a change to either member of the current pair,
+#       FAILS.
+#
+# POLICY DECISION (checkpoint 10-06 Task 5, decided 2026-08-02)
+#   Selected: **bans-only**. The `advisories` section is deliberately NOT enabled.
+#   An advisories gate fails builds when a new CVE is published against an existing
+#   dependency, with no change to this repository — on a tree where several agents
+#   commit and push continuously, an unrelated upstream disclosure would block
+#   everyone at an arbitrary hour, and the remediation is often a dependency bump
+#   that is itself a phase-sized change. No break-glass procedure exists today.
+#   Consequence, recorded rather than glossed: F-07's advisory half stays OPEN.
+#
+#   Tool legitimacy: cargo-deny is published by EmbarkStudios
+#   (github.com/EmbarkStudios/cargo-deny), ~4.79M all-time downloads. CI pins 0.20.2
+#   (published 2026-07-09).
+
+[bans]
+# Global default stays permissive: this repo has many legitimately-duplicated
+# transitive crates, and turning them all into build failures is not what F-07
+# asked for and would be a large, unrelated cleanup.
+multiple-versions = "allow"
+
+# ...but `rand` specifically is change-detecting.
+[[bans.deny]]
+name = "rand"
+deny-multiple-versions = true
+
+# Grandfather entry — dated 2026-08-02, per F-07.
+#
+# Tolerates the CURRENTLY KNOWN second major so the rule lands green instead of
+# turning CI red on the day it ships. Anything outside this exact pair trips the
+# rule above.
+#
+#   rand 0.8.5 — direct dependency (core/archipelago/Cargo.toml), and also via
+#                archipelago-security, bip39 2.1.0, mainline, secp256k1,
+#                tungstenite 0.20.1
+#   rand 0.9.2 — transitive only, via totp-rs 5.7.0 and tungstenite 0.26.2
+#                (through nostr-sdk)
+#
+# WHEN THIS FIRES: do not widen the skip list reflexively. A third version means a
+# new dependency brought its own `rand`; decide deliberately whether to accept it,
+# and if so record where it comes from here, the same way these two are recorded.
+[[bans.skip]]
+name = "rand"
+version = "=0.9.2"
+
+# Deliberately empty: see the policy decision above. Re-enabling this is a policy
+# change that needs a break-glass procedure agreed first, not a quiet edit.
+# [advisories]

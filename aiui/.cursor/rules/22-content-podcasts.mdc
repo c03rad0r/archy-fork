@@ -1,0 +1,26 @@
+---
+description: Expert rules for Podcast content extraction, display, and surfacing
+globs: "**/useContentPanel.ts,**/PodcastCard.vue,**/PodcastGrid.vue,**/PodcastDetail.vue,**/mocks/podcasts*"
+alwaysApply: false
+---
+
+# Podcasts Content Surface
+
+## Extraction Patterns
+
+- **Tagged**: `[[podcast:p123]]` or `[[podcast_ext:Title|Host|YYYY]]`
+- No pattern fallback (unlike songs) — only tags
+
+## Edge Cases
+
+- Duplicate prevention: key by `title|host` lowercase
+- Empty: skip if title or host < 2 chars
+- Year optional in external format
+
+## looksLikePodcast (when added)
+
+Reject when title/host looks like: news source names, documentation sites, "Bitcoin Mailing List", etc. — same philosophy as `looksLikeSong`.
+
+## Strip Rules
+
+- `stripPodcastTags` removes podcast tags before displaying text

@@ -1,0 +1,927 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Archipelago — Seed &amp; Entropy</title>
+<link rel="icon" href="/favicon-v2.ico">
+<style>
+  /* Everything below is lifted from the app's own stylesheets
+     (src/style.css + views/dashboard/dashboard-styles.css) so this page is
+     the dashboard, not a lookalike. No new container styles: .glass-card is
+     the only box. */
+
+  :root { color-scheme: dark; }
+
+  @font-face {
+    font-family: 'Montserrat';
+    src: url('/assets/fonts/Montserrat/Montserrat-Bold.ttf') format('truetype');
+    font-weight: 700; font-style: normal;
+  }
+  @font-face {
+    font-family: 'Montserrat';
+    src: url('/assets/fonts/Montserrat/Montserrat-ExtraBold.ttf') format('truetype');
+    font-weight: 800; font-style: normal;
+  }
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+
+  body {
+    font-family: 'Avenir Next', system-ui, -apple-system, sans-serif;
+    color: rgba(255, 255, 255, 0.9);
+    line-height: 1.7;
+    font-size: 16px;
+    min-height: 100vh;
+  }
+
+  /* Dashboard background layer — the Settings wallpaper, as the app uses it */
+  body::before {
+    content: '';
+    position: fixed; inset: 0; z-index: -2;
+    background: #000 url('/assets/img/bg-settings.webp') center center / cover no-repeat;
+  }
+  body::after {
+    content: '';
+    position: fixed; inset: 0; z-index: -1;
+    background: linear-gradient(to bottom, rgba(0,0,0,0.45), rgba(0,0,0,0.62));
+  }
+
+  .dashboard-view { display: flex; min-height: 100vh; }
+
+  /* ---- Sidebar (dashboard-styles.css) ---- */
+  aside {
+    width: 256px;
+    flex-shrink: 0;
+    position: sticky;
+    top: 0;
+    height: 100vh;
+    z-index: 10;
+  }
+  .sidebar-shell {
+    width: 100%; height: 100%; min-height: 0;
+    background: rgba(0, 0, 0, 0.25);
+    backdrop-filter: blur(18px);
+    -webkit-backdrop-filter: blur(18px);
+    border-right: 1px solid rgba(255, 255, 255, 0.18);
+    box-shadow: 4px 0 24px rgba(0, 0, 0, 0.3);
+    overflow: hidden;
+  }
+  .sidebar-inner { display: flex; flex-direction: column; height: 100%; min-height: 0; overflow: hidden; }
+
+  .sidebar-logo {
+    display: flex; align-items: center; gap: 0.75rem;
+    margin-bottom: 2rem; padding: 1.5rem 1.5rem 0; flex-shrink: 0;
+  }
+  .sidebar-logo h2 {
+    font-size: 1.125rem; font-weight: 600; color: #fff;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+  .sidebar-logo p { font-size: 0.75rem; color: rgba(255, 255, 255, 0.6); }
+
+  /* AnimatedLogo.vue — gradient ring + staggered square reveal */
+  .logo-gradient-border {
+    position: relative;
+    flex-shrink: 0;
+    display: inline-block;
+    overflow: hidden;
+    width: 3.5rem; height: 3.5rem;
+    border-radius: 9999px;
+    padding: 3px;
+    background: linear-gradient(135deg, rgba(255,255,255,0.6) 0%, rgba(0,0,0,0.8) 100%);
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
+  }
+  .logo-gradient-border::after {
+    content: '';
+    position: absolute; inset: 3px;
+    border-radius: 9999px;
+    background: #000;
+    z-index: 0;
+  }
+  .logo-gradient-border svg {
+    border-radius: 9999px;
+    display: block; position: relative; z-index: 1;
+    width: 100%; height: 100%;
+  }
+  .logo-square {
+    opacity: 0;
+    animation: logo-square-in 3s ease-out infinite;
+    animation-delay: var(--delay, 0ms);
+    animation-fill-mode: both;
+  }
+  @keyframes logo-square-in {
+    0% { opacity: 0; }
+    15% { opacity: 1; }
+    100% { opacity: 1; }
+  }
+
+  .sidebar-nav {
+    flex: 1; min-height: 0;
+    overflow-y: auto; overscroll-behavior: contain;
+    padding: 1rem 1.5rem;
+    scrollbar-width: thin;
+    scrollbar-color: rgba(255, 255, 255, 0.24) transparent;
+  }
+  .sidebar-nav::-webkit-scrollbar { width: 6px; }
+  .sidebar-nav::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.22); border-radius: 999px; }
+  .sidebar-nav > * + * { margin-top: 0.5rem; }
+
+  .sidebar-nav-item {
+    display: flex; align-items: center; gap: 0.75rem;
+    padding: 0.75rem 1rem;
+    border-radius: 0.5rem;
+    color: rgba(255, 255, 255, 0.8);
+    text-decoration: none;
+    font-size: 0.9375rem;
+    transition: background-color 0.2s ease, color 0.2s ease;
+  }
+  .sidebar-nav-item:hover { background: rgba(255, 255, 255, 0.1); color: #fff; }
+  .sidebar-nav-item svg { width: 1.25rem; height: 1.25rem; flex-shrink: 0; }
+
+  /* nav-tab-active (style.css) — the app's current-section treatment */
+  .nav-tab-active {
+    position: relative;
+    background: rgba(0, 0, 0, 0.35);
+    box-shadow: 0 6px 16px rgba(0,0,0,0.6), inset 0 1px 0 rgba(255,255,255,0.25);
+    color: #fff;
+    font-weight: 600;
+  }
+  .nav-tab-active::before {
+    content: '';
+    position: absolute; inset: 0;
+    border-radius: inherit;
+    padding: 2px;
+    background: linear-gradient(135deg, rgba(255,255,255,0.3), transparent);
+    -webkit-mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+    -webkit-mask-composite: xor;
+    mask-composite: exclude;
+    pointer-events: none;
+  }
+
+  .sidebar-bottom {
+    padding: 1rem 1.5rem 1.5rem;
+    flex-shrink: 0;
+    background: linear-gradient(to top, rgba(0, 0, 0, 0.18), transparent 100%);
+  }
+
+  /* Entrance animation, mirroring the dashboard's staggered sidebar reveal */
+  .sidebar-logo { opacity: 0; animation: sidebar-logo-in 0.5s cubic-bezier(0.25,0.46,0.45,0.94) 0.05s forwards; }
+  @keyframes sidebar-logo-in {
+    0% { opacity: 0; transform: translateY(-8px); }
+    100% { opacity: 1; transform: translateY(0); }
+  }
+  .sidebar-nav-item {
+    opacity: 0;
+    animation: sidebar-nav-item-in 0.4s cubic-bezier(0.25,0.46,0.45,0.94) forwards;
+    animation-delay: calc(0.22s + var(--nav-stagger, 0) * 0.06s);
+  }
+  @keyframes sidebar-nav-item-in {
+    0% { opacity: 0; transform: translateX(-12px); }
+    100% { opacity: 1; transform: translateX(0); }
+  }
+
+  /* ---- Main content ---- */
+  main {
+    flex: 1; min-width: 0;
+    padding: 2.5rem 2rem 6rem;
+  }
+  .content { max-width: 900px; margin: 0 auto; }
+
+  h1 {
+    font-family: 'Montserrat', 'Avenir Next', sans-serif;
+    font-size: 2rem; font-weight: 800;
+    color: #fff;
+    letter-spacing: -0.02em;
+    line-height: 1.25;
+  }
+  h2 {
+    font-family: 'Montserrat', 'Avenir Next', sans-serif;
+    font-size: 1.5rem; font-weight: 700;
+    color: #fff;
+    letter-spacing: -0.02em;
+    margin: 3rem 0 0.25rem;
+    scroll-margin-top: 1.5rem;
+  }
+  h3 { font-size: 1.125rem; font-weight: 600; color: #fff; margin: 1.75rem 0 0.5rem; }
+  h4 { font-size: 0.9375rem; font-weight: 600; color: #fff; margin: 0 0 0.35rem; }
+  p { margin: 0.5rem 0 1rem; }
+  .glass-card > p:last-child, .glass-card > ul:last-child { margin-bottom: 0; }
+  ul, ol { margin: 0.5rem 0 1rem 1.25rem; }
+  li { margin: 0.25rem 0; }
+  .lede { color: rgba(255,255,255,0.6); font-size: 0.9375rem; margin-bottom: 1rem; }
+  a { color: #fb923c; }
+
+  /* The section label the app uses above grouped content */
+  .section-label {
+    display: block;
+    font-size: 0.6875rem; font-weight: 700;
+    letter-spacing: 0.1em; text-transform: uppercase;
+    color: rgba(255, 255, 255, 0.5);
+    margin-bottom: 0.5rem;
+  }
+  .section-label.accent { color: #fb923c; }
+
+  /* glass-card (style.css) — the ONLY container on this page */
+  .glass-card {
+    background-color: rgba(0, 0, 0, 0.65);
+    backdrop-filter: blur(18px);
+    -webkit-backdrop-filter: blur(18px);
+    border: 1px solid rgba(255, 255, 255, 0.18);
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
+    border-radius: 1rem;
+    padding: 1.25rem 1.5rem;
+    margin: 1rem 0;
+    overflow-x: auto;
+  }
+
+  /* Layout only — no new box chrome */
+  .grid { display: grid; gap: 1rem; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); margin: 1rem 0; }
+  .grid .glass-card { margin: 0; }
+
+  /* Orange count badge, as used on sidebar nav items */
+  .badge {
+    display: inline-flex; align-items: center; justify-content: center;
+    min-width: 1.25rem; height: 1.25rem; padding: 0 0.4rem;
+    border-radius: 9999px;
+    background: #f97316; color: #fff;
+    font-size: 10px; font-weight: 700;
+    vertical-align: middle;
+  }
+  .badge.muted { background: rgba(255,255,255,0.14); color: rgba(255,255,255,0.85); }
+
+  .pill {
+    display: inline-block;
+    font-size: 0.75rem;
+    padding: 0.25rem 0.75rem;
+    border-radius: 9999px;
+    background: rgba(0, 0, 0, 0.35);
+    backdrop-filter: blur(18px);
+    -webkit-backdrop-filter: blur(18px);
+    border: 1px solid rgba(255, 255, 255, 0.18);
+    color: rgba(255, 255, 255, 0.6);
+  }
+  .pills { display: flex; flex-wrap: wrap; gap: 0.5rem; margin-top: 1rem; }
+
+  table { width: 100%; border-collapse: collapse; font-size: 0.8125rem; }
+  th {
+    text-align: left; padding: 0.5rem 0.75rem;
+    color: rgba(255, 255, 255, 0.5);
+    font-size: 0.6875rem; font-weight: 600;
+    text-transform: uppercase; letter-spacing: 0.05em;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.18);
+    white-space: nowrap;
+  }
+  td { padding: 0.625rem 0.75rem; border-bottom: 1px solid rgba(255, 255, 255, 0.06); vertical-align: top; }
+  tr:last-child td { border-bottom: none; }
+
+  code {
+    font-family: 'Menlo', 'Monaco', 'Courier New', monospace;
+    font-size: 0.8125rem;
+    background: rgba(255, 255, 255, 0.08);
+    padding: 0.1rem 0.35rem;
+    border-radius: 0.25rem;
+    color: #fb923c;
+  }
+  pre {
+    font-family: 'Menlo', 'Monaco', monospace;
+    font-size: 0.8125rem;
+    line-height: 1.55;
+    color: rgba(255, 255, 255, 0.6);
+    overflow-x: auto;
+  }
+  pre code { background: none; padding: 0; color: rgba(255,255,255,0.85); }
+  pre .a { color: #fb923c; font-weight: 600; }
+  pre .g { color: #4ade80; }
+  pre .b { color: #60a5fa; }
+  pre .r { color: #f87171; }
+  pre .p { color: #a78bfa; }
+  pre .y { color: #facc15; }
+
+  .ok { color: #4ade80; }
+  .warn { color: #facc15; }
+  .bad { color: #f87171; }
+
+  ol.steps { list-style: none; margin-left: 0; counter-reset: s; }
+  ol.steps li {
+    counter-increment: s;
+    position: relative;
+    padding-left: 2.25rem;
+    margin: 0.85rem 0;
+  }
+  ol.steps li::before {
+    content: counter(s);
+    position: absolute; left: 0; top: 0.15rem;
+    width: 1.5rem; height: 1.5rem;
+    border-radius: 9999px;
+    background: rgba(249, 115, 22, 0.18);
+    color: #fb923c;
+    font-size: 0.75rem; font-weight: 700;
+    display: flex; align-items: center; justify-content: center;
+  }
+
+  @media (max-width: 920px) {
+    aside { display: none; }
+    main { padding: 1.5rem 1rem 4rem; }
+    h1 { font-size: 1.5rem; }
+  }
+</style>
+</head>
+<body>
+
+<div class="dashboard-view">
+
+<aside>
+  <div class="sidebar-shell">
+    <div class="sidebar-inner">
+
+      <div class="sidebar-logo">
+        <div class="logo-gradient-border">
+          <svg viewBox="0 0 1024 1024" fill="none" xmlns="http://www.w3.org/2000/svg" aria-label="Neode">
+            <rect width="1024" height="1024" fill="#030202"/>
+            <rect class="logo-square" style="--delay:0ms"    x="357.614" y="318"     width="71.007" height="70.936" fill="white"/>
+            <rect class="logo-square" style="--delay:100ms"  x="436.152" y="318"     width="72.082" height="70.936" fill="white"/>
+            <rect class="logo-square" style="--delay:200ms"  x="515.766" y="318"     width="72.082" height="70.936" fill="white"/>
+            <rect class="logo-square" style="--delay:300ms"  x="595.379" y="318"     width="71.007" height="70.936" fill="white"/>
+            <rect class="logo-square" style="--delay:400ms"  x="595.379" y="396.46"  width="71.007" height="72.011" fill="white"/>
+            <rect class="logo-square" style="--delay:500ms"  x="673.917" y="396.46"  width="72.083" height="72.011" fill="white"/>
+            <rect class="logo-square" style="--delay:600ms"  x="278"     y="475.994" width="72.083" height="72.012" fill="white"/>
+            <rect class="logo-square" style="--delay:700ms"  x="357.614" y="475.994" width="71.007" height="72.012" fill="white"/>
+            <rect class="logo-square" style="--delay:800ms"  x="436.152" y="475.994" width="72.082" height="72.012" fill="white"/>
+            <rect class="logo-square" style="--delay:900ms"  x="515.766" y="475.994" width="72.082" height="72.012" fill="white"/>
+            <rect class="logo-square" style="--delay:1000ms" x="595.379" y="475.994" width="71.007" height="72.012" fill="white"/>
+            <rect class="logo-square" style="--delay:1100ms" x="673.917" y="475.994" width="72.083" height="72.012" fill="white"/>
+            <rect class="logo-square" style="--delay:1200ms" x="278"     y="555.529" width="72.083" height="70.936" fill="white"/>
+            <rect class="logo-square" style="--delay:1300ms" x="357.614" y="555.529" width="71.007" height="70.936" fill="white"/>
+            <rect class="logo-square" style="--delay:1400ms" x="595.379" y="555.529" width="71.007" height="70.936" fill="white"/>
+            <rect class="logo-square" style="--delay:1500ms" x="673.917" y="555.529" width="72.083" height="70.936" fill="white"/>
+            <rect class="logo-square" style="--delay:1600ms" x="357.614" y="633.989" width="71.007" height="72.011" fill="white"/>
+            <rect class="logo-square" style="--delay:1700ms" x="436.152" y="633.989" width="72.082" height="72.011" fill="white"/>
+            <rect class="logo-square" style="--delay:1800ms" x="515.766" y="633.989" width="72.082" height="72.011" fill="white"/>
+            <rect class="logo-square" style="--delay:1900ms" x="595.379" y="633.989" width="71.007" height="72.011" fill="white"/>
+          </svg>
+        </div>
+        <div style="min-width:0;flex:1">
+          <h2>Seed &amp; Entropy</h2>
+          <p>Node security guide</p>
+        </div>
+      </div>
+
+      <nav class="sidebar-nav" aria-label="Guide sections">
+        <a class="sidebar-nav-item nav-tab-active" href="#overview" style="--nav-stagger:0">
+          <svg fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6"/></svg>
+          <span>Overview</span>
+        </a>
+        <a class="sidebar-nav-item" href="#creation" style="--nav-stagger:1">
+          <svg fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/></svg>
+          <span>How it's created</span>
+        </a>
+        <a class="sidebar-nav-item" href="#guardrails" style="--nav-stagger:2">
+          <svg fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z"/></svg>
+          <span>Guardrails</span>
+          <span class="badge">5</span>
+        </a>
+        <a class="sidebar-nav-item" href="#storage" style="--nav-stagger:3">
+          <svg fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"/></svg>
+          <span>Stored on disk</span>
+        </a>
+        <a class="sidebar-nav-item" href="#derivation" style="--nav-stagger:4">
+          <svg fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8.684 13.342C8.886 12.938 9 12.482 9 12c0-.482-.114-.938-.316-1.342m0 2.684a3 3 0 110-2.684m0 2.684l6.632 3.316m-6.632-6l6.632-3.316m0 0a3 3 0 105.367-2.684 3 3 0 00-5.367 2.684zm0 9.316a3 3 0 105.368 2.684 3 3 0 00-5.368-2.684z"/></svg>
+          <span>Derivation tree</span>
+        </a>
+        <a class="sidebar-nav-item" href="#failures" style="--nav-stagger:5">
+          <svg fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"/></svg>
+          <span>Failures</span>
+        </a>
+        <a class="sidebar-nav-item" href="#restore" style="--nav-stagger:6">
+          <svg fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/></svg>
+          <span>Restore</span>
+        </a>
+        <a class="sidebar-nav-item" href="#verify" style="--nav-stagger:7">
+          <svg fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+          <span>Verify it yourself</span>
+        </a>
+      </nav>
+
+      <div class="sidebar-bottom">
+        <a class="sidebar-nav-item" href="/dashboard/settings" style="--nav-stagger:8">
+          <svg fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 19l-7-7m0 0l7-7m-7 7h18"/></svg>
+          <span>Back to Settings</span>
+        </a>
+      </div>
+
+    </div>
+  </div>
+</aside>
+
+<main>
+<div class="content">
+
+  <h1>Your node's seed &amp; entropy</h1>
+  <p class="lede">How 32 random bytes become every key this node owns — where the randomness comes from, what protects it, and exactly what your 24 words can and cannot bring back.</p>
+  <div class="pills">
+    <span class="pill">256-bit entropy</span>
+    <span class="pill">BIP-39 · 24 words</span>
+    <span class="pill">HKDF-SHA256</span>
+    <span class="pill">Kernel CSPRNG only</span>
+    <span class="pill">KEY-05 hardened</span>
+  </div>
+
+  <h2 id="overview">Overview</h2>
+  <p class="lede">One master secret, many keys — by design.</p>
+
+  <p>
+    Almost everything cryptographic on this node — its identity, its Nostr keys, its mesh
+    transport keys, its Lightning wallet — grows from a <strong>single master seed</strong>:
+    32 bytes of randomness drawn once, shown to you once as a 24-word recovery phrase, and
+    never stored in raw form anywhere.
+  </p>
+
+  <div class="glass-card">
+    <span class="section-label accent">In plain words</span>
+    <p>
+      Think of the seed as an acorn. Every branch of the tree — your identity, your wallet,
+      your mesh radio's name — grows from it in a fixed, repeatable pattern. Plant the same
+      acorn on new hardware by typing your 24 words and the <em>same tree</em> grows back,
+      branch for branch. That is why those words are the most valuable thing your node ever
+      shows you, and why anyone who copies them owns your tree.
+    </p>
+  </div>
+
+  <div class="glass-card">
+<pre><span class="b">Linux kernel CSPRNG</span>  (interrupt timing, jitter, CPU RNG)
+      │
+      │  getrandom(2) — via an explicitly named <span class="a">OsRng</span>, nothing else allowed
+      ▼
+<span class="a">32 bytes raw entropy</span> ──▶ degenerate-draw check ──▶ <span class="r">refuse &amp; wipe if suspicious</span>
+      │
+      │  BIP-39 encoding
+      ▼
+<span class="g">24-word recovery phrase</span>  ←── the only form you ever see or back up
+      │
+      │  PBKDF2-HMAC-SHA512 × 2048
+      ▼
+<span class="a">64-byte master seed</span>      ←── lives only in RAM, never written to disk
+      │
+      ├─ HKDF "archipelago/node/ed25519/v1"    ──▶ <span class="g">Node identity key + DID</span>
+      ├─ HKDF "archipelago/nostr-node/…/v1"    ──▶ <span class="p">Node Nostr key (npub)</span>
+      ├─ HKDF "archipelago/fips/secp256k1/v1"  ──▶ <span class="b">FIPS mesh transport key</span>
+      ├─ HKDF "archipelago/identity/{i}/…/v1"  ──▶ <span class="g">Personal identities</span>
+      ├─ BIP-32 m/44'/1237'/0'/0/{i} (NIP-06)  ──▶ <span class="p">Personal Nostr keys</span>
+      ├─ HKDF "archipelago/lnd/entropy/v1"     ──▶ <span class="y">Lightning entropy → aezeed</span>
+      └─ BIP-32 m/84'/0'/0'                    ──▶ <span class="y">Bitcoin xprv (dormant)</span>
+                  │
+                  │  and from the node key, second-order:
+                  ▼
+      ├─ <span class="b">Reticulum / LXMF mesh identity</span>
+      ├─ <span class="g">Message-store + contacts encryption</span>
+      └─ <span class="g">Credential-store key</span>
+</pre>
+  </div>
+
+  <div class="glass-card">
+    <h4>One rule to remember</h4>
+    <p>
+      If it is on the diagram above, your 24 words rebuild it from scratch, on any hardware,
+      forever. If it is not on the diagram — session tokens, app passwords, WireGuard keys,
+      Lightning channel state — it is independent randomness, protected by other backups.
+    </p>
+  </div>
+
+  <h2 id="creation">How it's created</h2>
+  <p class="lede">One named source. No mixing. No silent defaults.</p>
+
+  <div class="glass-card">
+    <span class="section-label accent">In plain words</span>
+    <p>
+      Computers cannot invent randomness — they collect it. The Linux kernel constantly
+      harvests unpredictable physical noise (the exact nanosecond a network card interrupts,
+      timing jitter between CPU cores, the CPU's hardware random generator) into a
+      cryptographic pool. Archipelago rolls its dice by asking that pool directly, and only
+      that pool. There is deliberately no blending of other sources: a single, named,
+      well-studied source is auditable, whereas a blend is a place for bugs to hide.
+    </p>
+  </div>
+
+  <h3>Technically</h3>
+  <p>
+    The master seed is generated by <code>MasterSeed::generate()</code> in
+    <code>core/archipelago/src/seed.rs</code>. It fills a 32-byte buffer using
+    <code>rand::rngs::OsRng</code> — a thin wrapper around the <code>getrandom(2)</code>
+    system call, which reads the kernel CSPRNG (same source as <code>/dev/urandom</code>,
+    but immune to file-descriptor exhaustion and chroot tricks).
+  </p>
+
+  <div class="glass-card">
+<pre><code>let mut entropy = [0u8; 32];
+crate::entropy::draw_key_bytes(&amp;mut rand::rngs::OsRng, &amp;mut entropy)?;  // guarded draw
+let mnemonic = bip39::Mnemonic::from_entropy(&amp;entropy)?;                // → 24 words
+entropy.zeroize();                                                       // wipe raw bytes</code></pre>
+  </div>
+
+  <ul>
+    <li><strong>Exactly 32 bytes / 256 bits</strong> — the maximum BIP-39 strength, encoding to 24 words.</li>
+    <li><strong>The RNG is named at the call site.</strong> No function anywhere generates key material with a default or implicit RNG.</li>
+    <li><strong>The RNG type is compiler-enforced.</strong> Key generation only accepts RNGs on a sealed allowlist (<code>KeyGenRng</code>) whose single production member is <code>OsRng</code>.</li>
+    <li><strong>The buffer is zeroized</strong> on every path, success or failure.</li>
+  </ul>
+
+  <p>
+    The words are then stretched into the 64-byte master seed by standard BIP-39:
+    PBKDF2-HMAC-SHA512, 2048 rounds, empty passphrase. That 64-byte value is a 512-bit
+    expansion of the same 256 bits of entropy — not extra randomness. It exists only in
+    memory, is recomputed from the words when needed, and never touches disk.
+  </p>
+
+  <h3>When the seed is born</h3>
+  <p>At onboarding — not at first boot.</p>
+  <div class="glass-card">
+    <ol class="steps">
+      <li><strong>First boot: a placeholder.</strong> A freshly flashed node boots with a random <em>temporary</em> identity key so services can start. It is not seed-derived and is about to be thrown away.</li>
+      <li><strong>Onboarding: the real draw.</strong> At the "Recovery phrase" step, the <code>seed.generate</code> RPC performs the guarded 32-byte draw and shows you the 24 words.</li>
+      <li><strong>Derivation.</strong> Node key, DID, Nostr key, FIPS mesh key and your first identity are derived and written to <code>/var/lib/archipelago/identity/</code> at mode 0600, overwriting the placeholder.</li>
+      <li><strong>Password setup: the backup is sealed.</strong> The words are encrypted under your login password and stored as <code>master_seed.enc</code>, so you can reveal them again later.</li>
+    </ol>
+    <p>
+      Generation is idempotent for 10 minutes and serialised behind a lock: a browser refresh
+      returns the <em>same</em> words rather than minting a second seed.
+    </p>
+  </div>
+
+  <h2 id="guardrails">Guardrails</h2>
+  <p class="lede">Defence in depth around a single random draw.</p>
+
+  <div class="grid">
+    <div class="glass-card">
+      <h4><span class="badge muted">1</span> Sealed RNG allowlist</h4>
+      <p>Key draws only compile against RNG types on a closed, private allowlist. A refactor that swaps in a weak or deterministic RNG becomes a <em>compile error</em>, not a silent disaster.</p>
+    </div>
+    <div class="glass-card">
+      <h4><span class="badge muted">2</span> Degenerate-draw refusal</h4>
+      <p>Every draw is checked for three broken-RNG shapes: all zeros, all bytes identical, or a counting pattern. A match is refused and wiped — <strong>never retried</strong>, because retrying would mask a broken RNG instead of exposing it.</p>
+    </div>
+    <div class="glass-card">
+      <h4><span class="badge muted">3</span> CSPRNG readiness ledger</h4>
+      <p>Before generating, the node probes whether the kernel pool is fully initialised and appends the verdict to an append-only log at <code>security/csprng-readiness.jsonl</code> (0600). You can audit the entropy conditions your seed was born under, forever.</p>
+    </div>
+    <div class="glass-card">
+      <h4><span class="badge muted">4</span> Build-time lint bans</h4>
+      <p>CI bans <code>rand::random()</code> and <code>rand::thread_rng()</code> across the workspace — the two convenient entry points behind real-world wallet disasters. Using either fails the build.</p>
+    </div>
+    <div class="glass-card">
+      <h4><span class="badge muted">5</span> Zeroization everywhere</h4>
+      <p>Raw entropy, mnemonics and derived secrets are wiped from memory on every code path, including error paths, so key material does not linger in freed RAM or crash dumps.</p>
+    </div>
+  </div>
+
+  <div class="glass-card">
+    <span class="section-label accent">In plain words</span>
+    <h4>Why so paranoid about one function?</h4>
+    <p>
+      In 2026 a well-known hardware wallet shipped a bug where a refactor quietly switched
+      seed generation to a <em>predictable</em> random source — no error, no warning, and seeds
+      that looked perfectly normal. Predictable randomness is invisible: the words look random,
+      the wallet works, and months later someone who can predict the generator drains it.
+      Archipelago's answer is to make that entire class of bug impossible to compile, and to
+      log the health of the random pool at the moment your seed was created.
+    </p>
+  </div>
+
+  <h3>What the degenerate check does and doesn't do</h3>
+  <p>
+    It is deliberately closed-form: it recognises exactly three catastrophic shapes
+    (all-zero, all-identical, ±1 counter). It is <em>not</em> a statistical entropy estimator —
+    those cannot distinguish good randomness from a cleverly broken RNG and add false
+    positives. The security load is carried by guardrails 1, 3 and 4; this is a tripwire for
+    total RNG failure, such as a buffer that was never filled.
+  </p>
+
+  <h3>Recent hardening</h3>
+  <p>
+    This system was audited and rebuilt in early August 2026. The headline finding: the
+    mnemonic library was silently choosing its own RNG via a transitive default. It happened
+    to be a secure one, but nothing guaranteed that, and a dependency update could have
+    changed it with no diff in Archipelago's own code.
+  </p>
+  <div class="glass-card">
+    <table>
+      <tr><th>Date</th><th>Change</th></tr>
+      <tr><td>Jul 30</td><td>Kernel CSPRNG readiness probe; non-determinism regression test (64 consecutive mnemonics must be unique).</td></tr>
+      <tr><td>Jul 31</td><td>Full entropy audit published (findings F-01…F-13).</td></tr>
+      <tr><td>Aug 1</td><td><strong>The pivotal fix:</strong> master-seed RNG made explicit — <code>OsRng</code> named at the call site, injected through a testable seam, pinned by a known-answer test.</td></tr>
+      <tr><td>Aug 2</td><td>Audit widened: 43 defaulted-RNG call sites across 15 files migrated to explicit <code>OsRng</code>, including AEAD nonces and ecash key material.</td></tr>
+      <tr><td>Aug 2</td><td>Onboarding RPCs gated — <code>seed.restore</code> now refuses on a provisioned node (previously an unauthenticated restore could hijack a live node; fixed before any release shipped it).</td></tr>
+      <tr><td>Aug 2</td><td>KEY-05 layer landed: sealed allowlist, guarded draws, readiness ledger, clippy bans, supply-chain pinning of the <code>rand</code> crate.</td></tr>
+      <tr><td>Aug 2</td><td>Legacy Bitcoin Core wallet-import path deleted — the master xprv is no longer handed to any external wallet process.</td></tr>
+    </table>
+  </div>
+
+  <h2 id="storage">Stored on disk</h2>
+  <p class="lede">The words, encrypted — and the derived keys. Never the raw seed.</p>
+
+  <div class="glass-card">
+    <table>
+      <tr><th>File</th><th>Contents</th><th>Protection</th></tr>
+      <tr><td><code>identity/master_seed.enc</code></td><td>Your 24 words, encrypted</td><td>Argon2(login password) + ChaCha20-Poly1305, 0600</td></tr>
+      <tr><td><code>identity/node_key</code></td><td>Node Ed25519 identity key</td><td>0600, seed-derived</td></tr>
+      <tr><td><code>identity/nostr_secret</code></td><td>Node Nostr keypair</td><td>0600, seed-derived</td></tr>
+      <tr><td><code>identity/fips_key</code></td><td>FIPS mesh transport key (bech32 nsec)</td><td>0600, seed-derived</td></tr>
+      <tr><td><code>identity/identity_index</code></td><td>Next unused derivation index</td><td>Plain integer, not secret</td></tr>
+      <tr><td><code>identities/&lt;uuid&gt;.json</code></td><td>Identity records: keys + metadata</td><td>0600; keys seed-derived, <em>metadata is not</em></td></tr>
+      <tr><td><code>identity/lnd_aezeed.enc</code></td><td>Lightning wallet's own seed</td><td>Encrypted under the LND wallet password</td></tr>
+      <tr><td><code>security/csprng-readiness.jsonl</code></td><td>Append-only entropy audit trail</td><td>0600; outside <code>identity/</code> so restores never touch it</td></tr>
+    </table>
+  </div>
+
+  <div class="glass-card">
+    <h4 class="ok">The raw seed never touches disk</h4>
+    <p>
+      What is stored is the <em>encrypted words</em> and the <em>derived keys</em>. The 64-byte
+      master seed is recomputed in RAM from the words when needed and wiped afterwards.
+    </p>
+  </div>
+
+  <h3>The encrypted envelope</h3>
+  <div class="glass-card">
+<pre>login password ──▶ <span class="a">Argon2id</span> (memory-hard) ──▶ 256-bit file key
+                       ▲
+               16-byte random salt
+
+24 words ──▶ <span class="a">ChaCha20-Poly1305</span> (authenticated, 12-byte random nonce)
+                       │
+                       ▼
+     ┌───────────┬────────────┬───────────────────────────┐
+     │ salt (16) │ nonce (12) │ ciphertext + auth tag     │  = master_seed.enc
+     └───────────┴────────────┴───────────────────────────┘
+</pre>
+  </div>
+
+  <div class="glass-card">
+    <span class="section-label accent">In plain words</span>
+    <p>
+      Your words are locked in a digital safe whose combination is your login password, run
+      through a deliberately slow, memory-hungry grinder (Argon2) so guessing billions of
+      passwords per second is impractical even for someone who steals the file. The
+      authentication tag means the safe also notices tampering: a modified file fails loudly
+      rather than yielding wrong words.
+    </p>
+  </div>
+
+  <p>
+    Revealing the words later (Settings → Backup → Reveal) requires an authenticated session,
+    re-entering your password, and your 2FA code if enabled. It is rate-limited, and the words
+    go only to your browser — never to logs.
+  </p>
+
+  <h2 id="derivation">Derivation tree</h2>
+  <p class="lede">Every key, its exact derivation, and where it lands.</p>
+
+  <div class="glass-card">
+    <span class="section-label accent">In plain words</span>
+    <p>
+      The node never uses the master seed directly as a key. It uses HKDF — think of a
+      locksmith who, given one master blank and a <em>label</em> ("node key", "mesh key",
+      "Lightning entropy"), cuts a completely different, unrelated key for each label. Knowing
+      one cut key tells you nothing about the others or about the blank. The labels are fixed
+      strings baked into the code, which is what lets the identical tree regrow on new hardware.
+    </p>
+  </div>
+
+  <div class="glass-card">
+    <table>
+      <tr><th>Key</th><th>Method</th><th>Label / path</th></tr>
+      <tr><td><strong>Node identity (Ed25519)</strong> — signs everything, forms your DID</td><td>HKDF-SHA256</td><td><code>archipelago/node/ed25519/v1</code></td></tr>
+      <tr><td><strong>Node Nostr key</strong> — the node's npub</td><td>HKDF-SHA256</td><td><code>archipelago/nostr-node/secp256k1/v1</code></td></tr>
+      <tr><td><strong>FIPS mesh transport key</strong></td><td>HKDF-SHA256</td><td><code>archipelago/fips/secp256k1/v1</code></td></tr>
+      <tr><td><strong>Personal identity #i (Ed25519)</strong></td><td>HKDF-SHA256</td><td><code>archipelago/identity/{i}/ed25519/v1</code></td></tr>
+      <tr><td><strong>Personal Nostr key #i</strong> — NIP-06 standard, portable to other Nostr apps</td><td>BIP-32</td><td><code>m/44'/1237'/0'/0/{i}</code></td></tr>
+      <tr><td><strong>Lightning wallet entropy</strong> — 16 bytes</td><td>HKDF-SHA256</td><td><code>archipelago/lnd/entropy/v1</code></td></tr>
+      <tr><td><strong>Bitcoin BIP-84 xprv</strong> — dormant, reserved for a future cold vault</td><td>BIP-32</td><td><code>m/84'/0'/0'</code></td></tr>
+      <tr><td><strong>Release-root signing key</strong> — never on a node; derived offline by the publisher</td><td>HKDF-SHA256</td><td><code>archipelago/release/root/ed25519/v1</code></td></tr>
+    </table>
+  </div>
+
+  <p>
+    All HKDF derivations are HKDF-SHA256 with a distinct, versioned label — the <code>/v1</code>
+    suffix means a future migration can introduce <code>/v2</code> without ambiguity. Personal
+    Nostr keys deliberately use the NIP-06 standard path instead of HKDF, so the same 24 words
+    typed into any NIP-06 Nostr client reproduce the same npub: your social identity is portable
+    beyond Archipelago.
+  </p>
+
+  <h3>The Lightning special case</h3>
+  <div class="glass-card">
+<pre>master seed ──HKDF──▶ 16 bytes ──▶ <span class="y">LND generates its own "aezeed"</span> ──▶ wallet
+                                              │
+                                              │  ⚠ one-way: the aezeed cannot be
+                                              │    recomputed from your 24 words
+                                              ▼
+                              captured ONCE at init, stored encrypted as
+                              <span class="a">identity/lnd_aezeed.enc</span>
+</pre>
+  </div>
+  <p>
+    LND uses its own seed format, <em>aezeed</em>, which is not BIP-39. Archipelago derives
+    deterministic entropy from your master seed and hands it to LND at wallet creation — but LND
+    wraps it with its own internal salt, so the resulting aezeed cannot be re-derived from your
+    24 words afterwards. The node captures it once and stores it encrypted alongside your other
+    identity files.
+  </p>
+  <div class="glass-card">
+    <h4 class="warn">Back up the Lightning seed separately</h4>
+    <p>
+      Your 24 words restore your node identity and on-chain derivations, but <em>not</em> an
+      already-initialised Lightning wallet, and never off-chain channel balances (those need
+      channel backups, as Lightning requires by design). Treat the aezeed in the Lightning
+      backup screen as a second phrase worth writing down. It restores into LND-based wallets
+      such as Zeus, Blixt or another Archipelago node — hardware wallets cannot import it.
+    </p>
+  </div>
+
+  <h3>Second-order keys</h3>
+  <p>
+    Some subsystems derive from the <em>node identity key</em> rather than the master seed
+    directly. Since the node key is itself seed-derived, these still regrow from your words:
+    <code>words → master seed → node key → subsystem key</code>. Each prefixes a unique fixed
+    string before hashing (domain separation), so compromising one never exposes another.
+  </p>
+  <div class="glass-card">
+    <table>
+      <tr><th>Subsystem</th><th>Derivation from <code>node_key</code></th></tr>
+      <tr><td><strong>Reticulum / LXMF mesh identity</strong> (LoRa long-range mesh)</td><td>HKDF-SHA256, salt <code>archipelago-reticulum-identity-v1</code>, separate X25519 + Ed25519 labels — a stable address that survives reinstalls</td></tr>
+      <tr><td><strong>Message store</strong> (chats at rest)</td><td><code>SHA-256("archipelago-message-store-v1" ‖ node_key)</code></td></tr>
+      <tr><td><strong>Mesh contacts</strong></td><td><code>SHA-256("archipelago-mesh-contacts-v1" ‖ node_key)</code></td></tr>
+      <tr><td><strong>Credential store</strong> (saved app credentials)</td><td>Same domain-separated SHA-256 pattern</td></tr>
+    </table>
+  </div>
+
+  <h3>What is <em>not</em> derived from the seed</h3>
+  <p>
+    Plenty of secrets are freshly random instead. That is intentional: things that should die
+    with a session, rotate freely, or belong to a third-party app must not be recoverable from
+    your words.
+  </p>
+  <div class="grid">
+    <div class="glass-card">
+      <h4>Ephemeral by design</h4>
+      <p>Session tokens, device pairing tokens, federation invites, TOTP secrets and backup codes, all encryption nonces, X3DH ephemeral mesh keys, anonymous marketplace and discovery Nostr keys.</p>
+    </div>
+    <div class="glass-card">
+      <h4>App-owned secrets</h4>
+      <p>Every manifest-declared <code>generated_secret</code> (app database passwords, API keys), Bitcoin RPC credentials, the LND wallet <em>password</em> (distinct from its seed), Home Assistant tokens.</p>
+    </div>
+    <div class="glass-card">
+      <h4>Host-level material</h4>
+      <p>WireGuard keypairs (via <code>wg genkey</code>), SSH host keys and the TLS certificate (created by the installer image at first boot), the machine-id.</p>
+    </div>
+    <div class="glass-card">
+      <h4>Opt-outs from derivability</h4>
+      <p>Identities created with "new random key" instead of seed derivation, and a node key after an explicit <code>rotate-key</code> — rotation deliberately breaks the link to your words, and says so.</p>
+    </div>
+  </div>
+
+  <h2 id="failures">Failures</h2>
+  <p class="lede">What happens when something goes wrong, at every stage.</p>
+
+  <div class="glass-card">
+    <table>
+      <tr><th>Scenario</th><th>Behaviour</th><th>Outcome</th></tr>
+      <tr>
+        <td>RNG returns a degenerate pattern</td>
+        <td>Draw refused and wiped, <strong>never retried</strong>; error logged; onboarding fails loudly</td>
+        <td class="bad">No seed created</td>
+      </tr>
+      <tr>
+        <td>Kernel pool not yet initialised</td>
+        <td><code>getrandom(2)</code> blocks until seeded — an unseeded pool cannot produce a seed. The probe logs a warning and records the verdict</td>
+        <td class="warn">Waits, then proceeds</td>
+      </tr>
+      <tr>
+        <td>Onboarding page refreshed mid-generation</td>
+        <td>Same words returned for 10 minutes, mutex-serialised; no second seed can be minted</td>
+        <td class="ok">Idempotent</td>
+      </tr>
+      <tr>
+        <td><code>master_seed.enc</code> missing</td>
+        <td>Node runs normally — derived keys are already on disk. Only Reveal and future re-derivation are unavailable, and the UI says so</td>
+        <td class="warn">Degraded, functional</td>
+      </tr>
+      <tr>
+        <td>Seed file corrupt, or wrong password</td>
+        <td>Authenticated decryption fails closed with an explicit error — no fallback, no partial output, no auto-regeneration</td>
+        <td class="bad">Fails loudly</td>
+      </tr>
+      <tr>
+        <td>Restore attempted on a provisioned node</td>
+        <td>The onboarding gate refuses identity-mutating RPCs once set up — a live node cannot be hijacked or accidentally re-seeded</td>
+        <td class="ok">Refused</td>
+      </tr>
+      <tr>
+        <td>Legacy or corrupt FIPS key format</td>
+        <td>Self-heals: the legacy raw-byte format is detected and migrated in place to bech32</td>
+        <td class="ok">Auto-migrated</td>
+      </tr>
+      <tr>
+        <td>Readiness-ledger write fails</td>
+        <td>Warns and continues — the audit trail is best-effort and can never block key generation</td>
+        <td class="warn">Non-blocking</td>
+      </tr>
+    </table>
+  </div>
+
+  <div class="glass-card">
+    <h4 class="bad">The one true single point of failure is you</h4>
+    <p>
+      Every software failure above fails <em>safe</em>. The only unrecoverable scenario is
+      losing the 24 words <em>and</em> the node's disk together. Write the words down, store
+      them offline, and never type them into anything except a node you are restoring. Anyone
+      holding them can rebuild your entire identity tree — which is exactly what makes them a
+      perfect backup and a perfect target.
+    </p>
+  </div>
+
+  <h2 id="restore">Restore</h2>
+  <p class="lede">Typing 24 words into a fresh node, step by step.</p>
+
+  <div class="glass-card">
+    <ol class="steps">
+      <li><strong>Gate check.</strong> Restore only proceeds on an un-onboarded node. This gate is load-bearing and runs before anything else.</li>
+      <li><strong>Validation.</strong> Exactly 24 words, checked against the BIP-39 wordlist and its checksum — a typo is caught here, before anything is written.</li>
+      <li><strong>Identity regrowth.</strong> Node key, DID, node Nostr key and FIPS mesh key are re-derived byte-identically, because the HKDF labels are fixed.</li>
+      <li><strong>Personal identity #0.</strong> The index resets to 0 and your default identity (Ed25519 + NIP-06 Nostr key) is recreated. Further seed-derived identities re-derive as the index walks forward, but their names and avatars were metadata, not key material.</li>
+      <li><strong>Mesh reactivation.</strong> FIPS auto-activation starts in the background; the Reticulum identity re-derives from the restored node key, so your LXMF address returns too.</li>
+      <li><strong>Password and re-seal.</strong> Setting the new login password re-encrypts the words into a fresh <code>master_seed.enc</code>, so Reveal works on the restored node.</li>
+    </ol>
+  </div>
+
+  <h3>What comes back — and what doesn't</h3>
+  <div class="grid">
+    <div class="glass-card">
+      <h4 class="ok">Restored by the words</h4>
+      <p>Node identity and DID · node npub · FIPS mesh key · Reticulum/LXMF address · personal identity keys and npubs · message-store, contacts and credential encryption keys · the dormant Bitcoin xprv · the ability to reveal the phrase again.</p>
+    </div>
+    <div class="glass-card">
+      <h4 class="warn">Needs its own backup</h4>
+      <p>Lightning wallet (aezeed — one-way gate) and channel state · chat history and app data (node backup) · identity names and avatars · app secrets, which regenerate on reinstall.</p>
+    </div>
+    <div class="glass-card">
+      <h4 class="bad">Gone by design</h4>
+      <p>Sessions and device pairings (log in, re-pair) · 2FA secret (re-enrol) · WireGuard peers (re-pair) · rotated-away node keys · anonymous throwaway Nostr keys.</p>
+    </div>
+  </div>
+
+  <h3>SeedQR</h3>
+  <p>
+    Wherever the phrase is shown, a QR tab sits beside the words. For the BIP-39 phrase the
+    default is <strong>SeedQR</strong>: each word becomes its 4-digit position in the official
+    wordlist (24 words → 96 digits) as a compact numeric QR. Passport, SeedSigner and Keystone
+    import this directly, so you can move your on-chain identity to cold storage without typing.
+    A plain-text QR fallback exists for wallets that read the phrase as text.
+  </p>
+  <ul>
+    <li>The QR holds <em>exactly the same secret</em> as the words — treat a printout or screenshot identically.</li>
+    <li>The Lightning aezeed is never SeedQR-encoded: it is not BIP-39, hardware wallets cannot import it, and pretending otherwise would be dishonest. It gets a plain-text QR with an explanation.</li>
+    <li>Restore is by typed or pasted words; there is no camera-based SeedQR scanner on the restore path today.</li>
+  </ul>
+
+  <h2 id="verify">Verify it yourself</h2>
+  <p class="lede">Don't trust — recompute.</p>
+
+  <p>Because every derivation is deterministic and label-fixed, you can independently confirm that this node's keys really do come from your words:</p>
+  <ul>
+    <li><strong>Independent re-derivation:</strong> <code>scripts/verify-seed-derivation.py</code> in the Archipelago source — pure standard-library Python, no Archipelago code. On a trusted offline machine it recomputes <code>node_key</code>, <code>nostr_secret</code> and <code>fips_key</code> from your mnemonic and byte-compares them against <code>/var/lib/archipelago/identity/</code>.</li>
+    <li><strong>Known-answer tests:</strong> the test suite pins the exact expected keys for a fixed test mnemonic, so any change to the derivation math turns the build red.</li>
+    <li><strong>Non-determinism test:</strong> 64 consecutive generated mnemonics are asserted unique — a canary against the predictable-RNG failure class.</li>
+    <li><strong>Your own audit trail:</strong> <code>/var/lib/archipelago/security/csprng-readiness.jsonl</code> records, append-only, the kernel randomness verdict at every key-generation event on this node — including the moment your seed was born.</li>
+  </ul>
+
+  <h3>Honest edges</h3>
+  <p>The audit that produced this system also tracked what it did not fix. Naming the edges is part of the point:</p>
+  <ul>
+    <li><strong>The words cross the RPC boundary.</strong> During onboarding the phrase travels to your browser to be displayed, sits in session storage for the wizard's duration, and is held in server memory for the 10-minute idempotence window — the price of a refresh-proof, display-once flow.</li>
+    <li><strong>Argon2 uses library defaults</strong> (≈19 MiB, 2 passes) rather than the heavier profile the design doc specifies. Still memory-hard; scheduled for tightening.</li>
+    <li><strong>2FA backup codes carry slight modulo bias</strong> — cosmetically imperfect, cryptographically irrelevant at their length, queued for cleanup.</li>
+    <li><strong>The lint ban covers the main workspace</strong>, but one small helper crate outside it is not reached yet.</li>
+    <li><strong>Best-effort sealing:</strong> if writing <code>master_seed.enc</code> fails during setup, the node continues (keys exist, only Reveal is lost). Whether that should fail loudly instead is under review.</li>
+  </ul>
+
+  <div class="glass-card">
+    <h4 class="ok">The whole story in one paragraph</h4>
+    <p>
+      Your node asked the Linux kernel for 32 bytes of hardware-grade randomness through a
+      single, named, compiler-enforced channel; refused to proceed unless the bytes looked
+      alive; wrote down the health of the random pool as evidence; turned the bytes into 24
+      words it showed you exactly once; locked an encrypted copy behind your password; and then
+      grew every identity and key it owns from those words along fixed, versioned,
+      independently verifiable paths — so the words in your drawer are, and will remain, a
+      complete blueprint of who your node is.
+    </p>
+  </div>
+
+</div>
+</main>
+
+</div>
+
+<script src="./nav.js" defer></script>
+</body>
+</html>

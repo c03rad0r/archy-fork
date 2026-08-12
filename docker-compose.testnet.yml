@@ -1,0 +1,147 @@
+# Archipelago Lightning Testnet Stack (Signet)
+# Real Bitcoin signet + LND + ThunderHub for testing Lightning features
+#
+# Start:  docker compose -f docker-compose.testnet.yml up -d
+# Stop:   docker compose -f docker-compose.testnet.yml down
+# Logs:   docker compose -f docker-compose.testnet.yml logs -f
+#
+# First run: signet blockchain syncs in ~10 minutes (~200MB)
+# LND wallet auto-created with --noseedbackup (dev only!)
+#
+# Access:
+#   ThunderHub:  http://localhost:3010  (password: thunderhub)
+#   LND REST:    http://localhost:8080
+#   LND gRPC:    localhost:10009
+#   Bitcoin RPC: localhost:38332 (user: bitcoin, pass: bitcoinpass)
+#
+# Get signet coins: https://signetfaucet.com or https://alt.signetfaucet.com
+
+services:
+  # Bitcoin Core — signet mode (lightweight testnet, ~200MB sync)
+  bitcoind-signet:
+    image: lncm/bitcoind:v27.0
+    container_name: archy-bitcoind-signet
+    ports:
+      - "38332:38332"  # RPC
+      - "38333:38333"  # P2P
+    volumes:
+      - signet-bitcoin-data:/data/.bitcoin
+    command: |
+      -signet
+      -server
+      -rpcuser=bitcoin
+      -rpcpassword=bitcoinpass
+      -rpcallowip=0.0.0.0/0
+      -rpcbind=0.0.0.0
+      -rpcport=38332
+      -txindex=1
+      -zmqpubrawblock=tcp://0.0.0.0:28332
+      -zmqpubrawtx=tcp://0.0.0.0:28333
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "bitcoin-cli", "-signet", "-rpcuser=bitcoin", "-rpcpassword=bitcoinpass", "-rpcport=38332", "getblockchaininfo"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+    networks:
+      - signet-net
+
+  # LND — connected to signet bitcoind
+  lnd-signet:
+    image: lightninglabs/lnd:v0.17.4-beta
+    container_name: archy-lnd-signet
+    ports:
+      - "9735:9735"    # P2P (Lightning)
+      - "8080:8080"    # REST API
+      - "10009:10009"  # gRPC
+    volumes:
+      - signet-lnd-data:/root/.lnd
+    command: |
+      --bitcoin.active
+      --bitcoin.signet
+      --bitcoin.node=bitcoind
+      --bitcoind.rpchost=bitcoind-signet:38332
+      --bitcoind.rpcuser=bitcoin
+      --bitcoind.rpcpass=bitcoinpass
+      --bitcoind.zmqpubrawblock=tcp://bitcoind-signet:28332
+      --bitcoind.zmqpubrawtx=tcp://bitcoind-signet:28333
+      --debuglevel=info
+      --rpclisten=0.0.0.0:10009
+      --restlisten=0.0.0.0:8080
+      --listen=0.0.0.0:9735
+      --alias=archy-signet
+      --color=#f7931a
+      --noseedbackup
+      --accept-keysend
+      --gc-canceled-invoices-on-startup
+    depends_on:
+      bitcoind-signet:
+        condition: service_healthy
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "lncli", "--network=signet", "getinfo"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+    networks:
+      - signet-net
+
+  # ThunderHub — Lightning node management UI
+  thunderhub-signet:
+    image: apotdevin/thunderhub:v0.13.31
+    container_name: archy-thunderhub-signet
+    ports:
+      - "3010:3000"
+    volumes:
+      - signet-lnd-data:/lnd-data:ro
+      - ./testnet/thunderhub-config.yaml:/data/thubConfig.yaml:ro
+    environment:
+      ACCOUNT_CONFIG_PATH: /data/thubConfig.yaml
+      LOG_LEVEL: info
+      THEME: dark
+      CURRENCY: BTC
+      FETCH_PRICES: "false"
+      FETCH_FEES: "true"
+    depends_on:
+      lnd-signet:
+        condition: service_healthy
+    restart: unless-stopped
+    networks:
+      - signet-net
+
+  # Fedimint — signet mode (optional, for ecash testing)
+  fedimint-signet:
+    image: fedimint/fedimintd:v0.10.0
+    container_name: archy-fedimint-signet
+    platform: linux/amd64
+    ports:
+      - "18173:8173"  # P2P
+      - "18174:8174"  # API
+      - "18175:8175"  # Guardian UI
+    volumes:
+      - signet-fedimint-data:/data
+    environment:
+      FM_BITCOIND_URL: http://bitcoind-signet:38332
+      FM_BITCOIND_USERNAME: bitcoin
+      FM_BITCOIND_PASSWORD: bitcoinpass
+      FM_BITCOIN_NETWORK: signet
+      FM_BIND_P2P: 0.0.0.0:8173
+      FM_BIND_API: 0.0.0.0:8174
+      FM_BIND_UI: 0.0.0.0:8175
+    depends_on:
+      bitcoind-signet:
+        condition: service_healthy
+    restart: unless-stopped
+    networks:
+      - signet-net
+
+volumes:
+  signet-bitcoin-data:
+  signet-lnd-data:
+  signet-fedimint-data:
+
+networks:
+  signet-net:
+    driver: bridge

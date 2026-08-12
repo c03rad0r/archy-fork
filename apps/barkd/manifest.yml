@@ -1,0 +1,78 @@
+app:
+  id: barkd
+  name: Ark Wallet
+  version: 0.3.0
+  description: Ark protocol wallet daemon (barkd). Lets the node hold self-custodial off-chain bitcoin via an Ark server; the wallet talks to it over a local REST API. Signet by default while Ark matures.
+
+  container:
+    # barkd packaged from the pinned upstream release binary (no usable
+    # upstream image exists — their registry is empty). Built from
+    # apps/barkd/Dockerfile and pushed to the node registry. Pin the tag to
+    # match the REST shapes coded in core/archipelago/src/wallet/ark_client.rs
+    # (validated against barkd 0.3.0 on signet, 2026-07-14).
+    image: source.archipelago-foundation.org/lfg2025/barkd:0.3.0
+    pull_policy: if-not-present
+    network: archy-net
+    # The entrypoint installs the shared secret below via `barkd secret
+    # refresh` (so the wallet bridge can derive the matching Bearer token) and
+    # execs the daemon. The Ark wallet itself is created over REST by the
+    # bridge on first use (wallet.ark-* RPCs) with the node's ark_config
+    # (default: Second's public signet server) — no host provisioning needed.
+    generated_secrets:
+      - name: barkd-secret
+        kind: hex32
+    secret_env:
+      - key: BARKD_SECRET
+        secret_file: barkd-secret
+    data_uid: "1000:1000"
+
+  dependencies:
+    - storage: 1Gi
+
+  resources:
+    # barkd is a single wallet daemon (SQLite + a gRPC conn to the Ark server
+    # + esplora polling); steady state is tiny. Cap it so a stuck sync can't
+    # starve the node.
+    cpu_limit: 1
+    memory_limit: 512Mi
+    disk_limit: 1Gi
+
+  security:
+    readonly_root: true
+    # Needs outbound HTTPS to the Ark server (ark.signet.2nd.dev) and the
+    # esplora chain source, plus the published REST port for the wallet
+    # bridge. No inbound requirements beyond that.
+    network_policy: bridge
+
+  ports:
+    # barkd REST bound to 3535 in-container (BARKD_BIND_PORT); 3535 is free on
+    # the host (see port_allocator.rs). The Rust bridge targets
+    # http://127.0.0.1:3535.
+    - host: 3535
+      container: 3535
+      protocol: tcp
+      bind: 127.0.0.1
+      auth: local
+
+  volumes:
+    # Holds the wallet DB, mnemonic and auth token. ARK funds are recoverable
+    # on-chain from this datadir (unilateral exit) — include it in backups.
+    - type: bind
+      source: /var/lib/archipelago/barkd
+      target: /data
+      options: [rw]
+
+  environment:
+    - BARKD_DATADIR=/data
+    - BARKD_BIND_HOST=0.0.0.0
+    - BARKD_BIND_PORT=3535
+
+  # All /api/v1/* routes require the Bearer token, so an HTTP probe would 401
+  # forever — use a TCP probe like fmcd (the host-side lifecycle layer
+  # verifies reachability).
+  health_check:
+    type: tcp
+    endpoint: localhost:3535
+    interval: 30s
+    timeout: 5s
+    retries: 3

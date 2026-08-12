@@ -1,0 +1,69 @@
+---
+description: Accessibility standards - WCAG AA, keyboard navigation, screen readers
+globs: "**/*.vue"
+alwaysApply: false
+---
+
+# Accessibility
+
+## Standard
+WCAG AA compliance minimum. Target AAA where feasible.
+
+## Color Contrast
+- Normal text: 4.5:1 minimum ratio
+- Large text (18px+ or 14px+ bold): 3:1 minimum
+- Interactive elements: 3:1 against adjacent colors
+- Test with browser DevTools accessibility panel
+
+## Keyboard Navigation
+- All interactive elements focusable via Tab
+- Visible focus indicators on every focusable element (`focus:ring-2`)
+- Escape closes modals, drawers, dropdowns
+- Arrow keys navigate within lists, grids, tabs
+- Enter/Space activates buttons and controls
+- Focus trap inside modals (Tab cycles within modal)
+
+## Semantic HTML
+```html
+<header>, <nav>, <main>, <article>, <aside>, <footer>
+```
+Never `<div class="header">`. Use semantic elements.
+
+## ARIA
+- Icon-only buttons: `aria-label="Close modal"`
+- Dynamic content: `aria-live="polite"` for updates
+- Screen reader only text: `class="sr-only"`
+- Expandable sections: `aria-expanded="true/false"`
+- Form fields: `aria-describedby` for help text, `aria-invalid` for errors
+
+## Images
+- All `<img>` tags need `alt` text
+- Decorative images: `alt=""`
+- Complex images: `aria-describedby` pointing to description
+
+## Media
+- Audio/video players: keyboard-accessible controls
+- Provide transcripts/captions when available
+- Respect `prefers-reduced-motion` for animations
+
+## Touch Targets
+- Minimum: 44x44px (Apple HIG)
+- Recommended: 48x48px (Material Design)
+- Minimum 8px gap between adjacent targets
+
+## Reduced Motion
+```css
+@media (prefers-reduced-motion: reduce) {
+  * {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+```
+Check in JS: `window.matchMedia('(prefers-reduced-motion: reduce)').matches`
+
+## Testing
+- VoiceOver (macOS), TalkBack (Android), NVDA (Windows)
+- Keyboard-only navigation test
+- axe DevTools or Lighthouse accessibility audit
+- High contrast mode test

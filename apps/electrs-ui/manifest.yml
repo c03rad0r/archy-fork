@@ -1,0 +1,53 @@
+app:
+  id: electrs-ui
+  name: Electrs UI
+  version: 1.0.0
+  description: |
+    Archipelago-native HTTP frontend for electrs/electrumx status. Runs
+    nginx inside a container, serves static assets, and proxies
+    /electrs-status to the archipelago backend on 127.0.0.1:5678.
+
+  container:
+    build:
+      context: /opt/archipelago/docker/electrs-ui
+      dockerfile: Dockerfile
+      tag: localhost/electrs-ui:local
+
+  dependencies: []
+
+  resources:
+    memory_limit: 64Mi
+
+  security:
+    readonly_root: false
+    network_policy: host
+
+  # Host networking: nginx listens on 50002 directly on the host IP.
+  # Declared so the APP GATE can see this port. Host networking means Podman
+  # publishes nothing (quadlet skips PublishPort in host mode), so `bind:` here
+  # is a statement of where the container's own nginx listens — 127.0.0.1 —
+  # not a publish instruction. Without this declaration the gate had no idea
+  # the port existed: it was neither protected nor listed as unprotected, and
+  # served the Electrs screen unauthenticated on every interface.
+  ports:
+    - host: 50002
+      container: 50002
+      protocol: tcp
+      bind: 127.0.0.1
+      auth: gated
+      # First-party companion UI: its nginx forwards the node session cookie
+      # to the daemon's authenticated endpoints; without passthrough the gate
+      # strips it and every data call 401s while the page shell renders.
+      session_passthrough: true
+
+  volumes: []
+
+  environment: []
+
+  health_check:
+    type: http
+    endpoint: http://127.0.0.1:50002
+    path: /
+    interval: 30s
+    timeout: 5s
+    retries: 3

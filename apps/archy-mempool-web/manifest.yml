@@ -1,0 +1,49 @@
+app:
+  id: archy-mempool-web
+  name: Mempool Web
+  version: 3.0.1
+  description: Frontend web UI for mempool explorer.
+  container_name: mempool
+
+  container:
+    image: source.archipelago-foundation.org/lfg2025/mempool-frontend:v3.0.1
+    pull_policy: if-not-present
+    network: archy-net
+
+  dependencies:
+    - app_id: mempool-api
+      version: ">=3.0.0"
+
+  resources:
+    memory_limit: 512Mi
+
+  security:
+    capabilities: []
+    readonly_root: false
+    network_policy: isolated
+
+  ports:
+    - host: 4080
+      container: 8080
+      protocol: tcp
+      bind: 127.0.0.1
+      auth: gated
+
+  environment:
+    - FRONTEND_HTTP_PORT=8080
+    - BACKEND_MAINNET_HTTP_HOST=mempool-api
+
+  health_check:
+    type: http
+    # 127.0.0.1 not localhost: the image's wget resolves localhost to ::1 (IPv6)
+    # first, but nginx binds 0.0.0.0:8080 (IPv4) only -> localhost probe gets
+    # "connection refused" -> perpetual unhealthy -> health_monitor restart loop.
+    endpoint: http://127.0.0.1:8080
+    path: /
+    interval: 30s
+    timeout: 5s
+    retries: 3
+
+  bitcoin_integration:
+    rpc_access: none
+    sync_required: false

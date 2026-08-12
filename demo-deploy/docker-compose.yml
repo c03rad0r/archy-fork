@@ -1,0 +1,53 @@
+# Archipelago Public Demo — thin deploy stack
+#
+# This is the ENTIRE contents intended for the public `archy-demo` repo. It holds
+# NO source — it pulls prebuilt `:demo` images that CI builds from the monorepo on
+# every neode-ui change (see .github/workflows/demo-images.yml). Deploy this in
+# Portainer ("deploy from repository" or paste into the web editor).
+#
+# Demo login password: entertoexit
+# Access on http://<host>:2100
+#
+# Configure via a .env file (see .env.example):
+#   REGISTRY            registry host/namespace holding the demo images
+#   IMAGE_TAG           image tag to pull (default: demo)
+#   ANTHROPIC_API_KEY   optional — enables the AI chat panel
+#   DEMO_WEB_PORT       host port for the UI (default 2100)
+#   DEMO_INDEE_PORT     host port for the IndeeHub demo proxy (default 2101;
+#                       must stay 2101 unless the UI's demoAppUrl changes)
+
+services:
+  neode-backend:
+    image: ${REGISTRY:-source.archipelago-foundation.org/lfg2025}/archy-demo-backend:${IMAGE_TAG:-demo}
+    container_name: archy-demo-backend
+    environment:
+      DEMO: "1"
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      NODE_OPTIONS: "--dns-result-order=ipv4first"
+      DEMO_SESSION_TTL_MS: ${DEMO_SESSION_TTL_MS:-2700000}
+      DEMO_MAX_SESSIONS: ${DEMO_MAX_SESSIONS:-500}
+      DEMO_FILE_QUOTA_BYTES: ${DEMO_FILE_QUOTA_BYTES:-52428800}
+    expose:
+      - "5959"
+    dns:
+      - 8.8.8.8
+      - 1.1.1.1
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://127.0.0.1:5959/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  neode-web:
+    image: ${REGISTRY:-source.archipelago-foundation.org/lfg2025}/archy-demo-web:${IMAGE_TAG:-demo}
+    container_name: archy-demo-web
+    ports:
+      - "${DEMO_WEB_PORT:-2100}:80"
+      # IndeeHub whole-origin demo proxy (nginx :2101 in the web image)
+      - "${DEMO_INDEE_PORT:-2101}:2101"
+    environment:
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+    depends_on:
+      - neode-backend
+    restart: unless-stopped

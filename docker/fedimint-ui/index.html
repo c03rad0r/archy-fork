@@ -1,0 +1,452 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width,initial-scale=1">
+    <meta http-equiv="refresh" content="30">
+    <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+    <meta http-equiv="Pragma" content="no-cache">
+    <meta http-equiv="Expires" content="0">
+    <title>Fedimint Guardian - Archipelago</title>
+    <style>
+      * {
+        box-sizing: border-box;
+        margin: 0;
+        padding: 0;
+      }
+
+      body {
+        min-height: 100vh;
+        color: white;
+        overflow-x: hidden;
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Roboto", "Oxygen", "Ubuntu", sans-serif;
+        background: #050505;
+      }
+
+      .bg-perspective-container {
+        position: fixed;
+        inset: 0;
+        z-index: -10;
+        perspective: 1000px;
+        perspective-origin: 50% 50%;
+        overflow: hidden;
+      }
+
+      .bg-layer {
+        position: absolute;
+        inset: 0;
+        background-image: url("/assets/img/bg-network.jpg");
+        background-size: cover;
+        background-position: center;
+        background-repeat: no-repeat;
+        transition: all 0.45s cubic-bezier(0.68, -0.55, 0.265, 1.55);
+        transform-style: preserve-3d;
+        opacity: 1;
+        transform: translateZ(0) scale(1);
+      }
+
+      .overlay {
+        position: fixed;
+        inset: 0;
+        background: rgba(0, 0, 0, 0.8);
+        z-index: -5;
+        pointer-events: none;
+      }
+
+      .container {
+        width: min(1400px, 100%);
+        margin: 0 auto;
+        padding: 2rem;
+        padding-bottom: 4rem;
+      }
+
+      .glass-card,
+      .info-card {
+        position: relative;
+        background: rgba(0, 0, 0, 0.6);
+        backdrop-filter: blur(24px);
+        -webkit-backdrop-filter: blur(24px);
+        box-shadow:
+          0 8px 24px rgba(0, 0, 0, 0.45),
+          inset 0 1px 0 rgba(255, 255, 255, 0.22);
+        border: none;
+      }
+
+      .glass-card {
+        border-radius: 16px;
+        padding: 24px;
+        overflow: hidden;
+      }
+
+      .info-card {
+        border-radius: 16px;
+        padding: 12px;
+      }
+
+      .glass-card::before,
+      .info-card::before {
+        content: "";
+        position: absolute;
+        inset: 0;
+        border-radius: inherit;
+        padding: 2px;
+        background: linear-gradient(135deg, rgba(0, 0, 0, 0.8), transparent);
+        -webkit-mask:
+          linear-gradient(#fff 0 0) content-box,
+          linear-gradient(#fff 0 0);
+        -webkit-mask-composite: xor;
+        mask-composite: exclude;
+        pointer-events: none;
+        z-index: 1;
+      }
+
+      .glass-card > *,
+      .info-card > * {
+        position: relative;
+        z-index: 2;
+      }
+
+      .header {
+        display: flex;
+        align-items: center;
+        gap: 24px;
+      }
+
+      .logo-gradient-border {
+        position: relative;
+        border-radius: 16px;
+        padding: 3px;
+        background: linear-gradient(135deg, rgba(255, 255, 255, 0.6) 0%, rgba(0, 0, 0, 0.8) 100%);
+        box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
+        display: inline-block;
+        flex: 0 0 auto;
+      }
+
+      .logo-gradient-border::after {
+        content: "";
+        position: absolute;
+        inset: 3px;
+        border-radius: 13px;
+        background: #fff;
+        z-index: 0;
+      }
+
+      .logo-gradient-border img {
+        border-radius: 13px;
+        display: block;
+        position: relative;
+        z-index: 1;
+        width: 64px;
+        height: 64px;
+        object-fit: cover;
+      }
+
+      .title {
+        flex: 1;
+        min-width: 0;
+      }
+
+      .title h1 {
+        font-size: clamp(28px, 4vw, 36px);
+        line-height: 1.12;
+        font-weight: 700;
+        color: white;
+        margin-bottom: 8px;
+      }
+
+      .title p,
+      .body-copy {
+        color: rgba(255, 255, 255, 0.7);
+        line-height: 1.55;
+      }
+
+      .status-strip {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        width: 100%;
+        max-width: 260px;
+      }
+
+      .status-dot-wrap {
+        position: relative;
+        width: 12px;
+        height: 12px;
+        flex: 0 0 auto;
+      }
+
+      .status-dot {
+        width: 12px;
+        height: 12px;
+        border-radius: 999px;
+        background: rgb(251, 146, 60);
+      }
+
+      .status-dot-ping {
+        position: absolute;
+        inset: 0;
+        width: 12px;
+        height: 12px;
+        border-radius: 999px;
+        background: rgb(251, 146, 60);
+        opacity: 0.75;
+        animation: ping 1s cubic-bezier(0, 0, 0.2, 1) infinite;
+      }
+
+      .status-strip .label {
+        color: rgba(255, 255, 255, 0.6);
+        font-size: 12px;
+        line-height: 1.25;
+      }
+
+      .status-strip .value {
+        color: white;
+        font-size: 14px;
+        line-height: 1.25;
+        font-weight: 500;
+      }
+
+      .main-grid {
+        display: grid;
+        grid-template-columns: minmax(0, 1.2fr) minmax(280px, 0.8fr);
+        gap: 24px;
+        margin-top: 24px;
+      }
+
+      .wait-card h2 {
+        font-size: clamp(24px, 4vw, 32px);
+        line-height: 1.18;
+        font-weight: 700;
+        margin-bottom: 12px;
+      }
+
+      .body-copy {
+        max-width: 70ch;
+        font-size: 15px;
+      }
+
+      .body-copy + .body-copy {
+        margin-top: 10px;
+      }
+
+      .readiness {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        margin-top: 24px;
+        padding: 14px;
+        border-radius: 12px;
+        background: rgba(255, 255, 255, 0.05);
+      }
+
+      .readiness-icon {
+        width: 40px;
+        height: 40px;
+        border-radius: 12px;
+        background: rgba(251, 146, 60, 0.2);
+        color: rgb(251, 146, 60);
+        display: grid;
+        place-items: center;
+        flex: 0 0 auto;
+      }
+
+      .readiness-icon svg {
+        width: 22px;
+        height: 22px;
+        animation: spin 3s linear infinite;
+      }
+
+      .readiness .label {
+        color: rgba(255, 255, 255, 0.6);
+        font-size: 12px;
+        margin-bottom: 2px;
+      }
+
+      .readiness .value {
+        color: rgba(255, 255, 255, 0.92);
+        font-size: 15px;
+        font-weight: 500;
+      }
+
+      .detail-list {
+        display: grid;
+        gap: 12px;
+      }
+
+      .detail-row {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 16px;
+        padding: 12px;
+        border-radius: 12px;
+        background: rgba(255, 255, 255, 0.05);
+      }
+
+      .detail-row span:first-child {
+        color: rgba(255, 255, 255, 0.72);
+        font-size: 14px;
+      }
+
+      .detail-row span:last-child {
+        color: rgba(255, 255, 255, 0.92);
+        font-size: 14px;
+        font-weight: 500;
+        text-align: right;
+      }
+
+      .progress-track {
+        position: relative;
+        height: 12px;
+        margin-top: 22px;
+        overflow: hidden;
+        border-radius: 999px;
+        background: rgba(255, 255, 255, 0.1);
+      }
+
+      .progress-track::before {
+        content: "";
+        position: absolute;
+        inset: 0;
+        width: 45%;
+        border-radius: inherit;
+        background: linear-gradient(90deg, rgb(251, 146, 60), rgb(250, 204, 21));
+        animation: indeterminate 1.8s ease-in-out infinite;
+        box-shadow:
+          0 0 10px rgba(251, 146, 60, 0.5),
+          0 0 20px rgba(251, 146, 60, 0.28);
+      }
+
+      @keyframes ping {
+        75%, 100% {
+          transform: scale(2);
+          opacity: 0;
+        }
+      }
+
+      @keyframes spin {
+        from { transform: rotate(0deg); }
+        to { transform: rotate(360deg); }
+      }
+
+      @keyframes indeterminate {
+        0% { transform: translateX(-110%); }
+        50% { transform: translateX(80%); }
+        100% { transform: translateX(230%); }
+      }
+
+      @media (max-width: 900px) {
+        .container {
+          padding: 18px;
+        }
+
+        .header {
+          align-items: flex-start;
+          flex-direction: column;
+        }
+
+        .status-strip {
+          max-width: none;
+        }
+
+        .main-grid {
+          grid-template-columns: 1fr;
+        }
+      }
+
+      @media (max-width: 520px) {
+        .glass-card {
+          padding: 18px;
+        }
+
+        .logo-gradient-border img {
+          width: 56px;
+          height: 56px;
+        }
+
+        .detail-row {
+          align-items: flex-start;
+          flex-direction: column;
+          gap: 4px;
+        }
+
+        .detail-row span:last-child {
+          text-align: left;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="bg-perspective-container">
+      <div class="bg-layer"></div>
+    </div>
+    <div class="overlay"></div>
+
+    <main class="container">
+      <section class="glass-card">
+        <div class="header">
+          <div class="logo-gradient-border">
+            <img src="assets/img/app-icons/fedimint.jpg" alt="Fedimint Guardian">
+          </div>
+          <div class="title">
+            <h1>Fedimint Guardian</h1>
+            <p>Guardian is installed and will open here automatically when Bitcoin Knots finishes initial block download.</p>
+          </div>
+          <div class="info-card status-strip">
+            <div class="status-dot-wrap">
+              <div class="status-dot"></div>
+              <div class="status-dot-ping"></div>
+            </div>
+            <div>
+              <p class="label">Status</p>
+              <p class="value">Waiting for Bitcoin sync</p>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="main-grid">
+        <div class="glass-card wait-card">
+          <h2>Waiting for Bitcoin sync</h2>
+          <p class="body-copy">Fedimint needs a synced Bitcoin RPC before federation setup can start safely.</p>
+          <p class="body-copy">This page refreshes every 30 seconds and switches to the Guardian UI as soon as the backend is ready.</p>
+
+          <div class="readiness">
+            <div class="readiness-icon" aria-hidden="true">
+              <svg fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path>
+              </svg>
+            </div>
+            <div>
+              <p class="label">Readiness check</p>
+              <p class="value">Checking bitcoind readiness...</p>
+            </div>
+          </div>
+
+          <div class="progress-track" aria-hidden="true"></div>
+        </div>
+
+        <aside class="glass-card">
+          <div class="detail-list">
+            <div class="detail-row">
+              <span>Bitcoin backend</span>
+              <span>Bitcoin Knots</span>
+            </div>
+            <div class="detail-row">
+              <span>Guardian launch</span>
+              <span>Automatic</span>
+            </div>
+            <div class="detail-row">
+              <span>Refresh interval</span>
+              <span>30 seconds</span>
+            </div>
+            <div class="detail-row">
+              <span>Required state</span>
+              <span>IBD complete</span>
+            </div>
+          </div>
+        </aside>
+      </section>
+    </main>
+  </body>
+</html>

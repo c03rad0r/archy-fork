@@ -1,0 +1,60 @@
+---
+description: Performance optimization - bundle budget, lazy loading, virtual scrolling
+globs: "**/*"
+alwaysApply: false
+---
+
+# Performance
+
+## Bundle Budget
+- Initial load: **< 250KB gzipped**
+- Core (Vue + Tailwind + Pinia + Router + chat UI): ~150KB
+- First renderer batch (markdown, streaming text): ~50KB
+- Everything else: lazy-loaded on demand
+
+## Lazy Loading Strategy
+- Route-based code splitting via Vue Router `() => import(...)`
+- Renderer components via `defineAsyncComponent`
+- Heavy libraries loaded only when their renderer is activated:
+  - CodeMirror 6: ~300KB (on code edit)
+  - Monaco: ~5MB (on IDE panel open)
+  - pdf.js: ~400KB (on PDF view)
+  - KaTeX: ~300KB (on math render)
+  - Mermaid: ~200KB (on diagram render)
+  - Leaflet: ~40KB (on map render)
+  - Whisper WASM: ~50MB (on STT activation, cached)
+  - Piper TTS: ~100MB (on TTS activation, cached)
+
+## Virtual Scrolling
+- Chat message list uses TanStack Virtual
+- Dynamic row heights (messages vary in size)
+- Inverted scroll (newest at bottom, load older on scroll up)
+- Buffer: render 5 items above and below viewport
+- Recycle DOM nodes for off-screen messages
+
+## GPU Acceleration
+Only animate `transform` and `opacity` — never `width`, `height`, `top`, `left`.
+Use `will-change` sparingly and remove after animation.
+
+## Image Optimization
+- Use `loading="lazy"` on all non-critical images
+- Provide `srcset` with multiple sizes
+- Use WebP/AVIF where supported
+- Skeleton placeholders while loading
+
+## Network
+- Preconnect to known API hosts
+- Preload critical resources
+- Debounce scroll and resize handlers (100ms)
+- Batch API requests where possible
+
+## Memory
+- Clean up event listeners in `onUnmounted`
+- Use `shallowRef` for large data sets
+- Dispose heavy library instances when panel closes
+- Monitor memory with browser DevTools
+
+## Core Web Vitals Targets
+- LCP (Largest Contentful Paint): < 2.5s
+- FID (First Input Delay): < 100ms
+- CLS (Cumulative Layout Shift): < 0.1

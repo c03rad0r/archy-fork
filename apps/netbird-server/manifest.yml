@@ -1,0 +1,130 @@
+app:
+  id: netbird-server
+  name: NetBird Server
+  version: "0.71.2"
+  description: NetBird combined management / signal / relay server with an embedded identity provider and STUN. Backend for the self-hosted NetBird mesh VPN.
+  category: networking
+
+  # Hyphen name matches the runtime references (crash_recovery / dependencies /
+  # config startup order) + the live container, so on an existing node the
+  # orchestrator ADOPTS the running server rather than recreating it (data +
+  # the sqlite store under /var/lib/netbird preserved). Alias `netbird-server`
+  # is the short hostname the proxy's nginx proxies/grpc-passes to.
+  container_name: netbird-server
+
+  container:
+    image: docker.io/netbirdio/netbird-server:0.71.2
+    pull_policy: if-not-present
+    network: netbird-net
+    network_aliases: [netbird-server]
+    # The relay authSecret and the sqlite store encryptionKey are base64 keys
+    # (the server base64-decodes them to recover raw bytes — hex would decode to
+    # the wrong value). Generated once and reused: ensure_generated_secrets
+    # no-ops when the file already exists, so a re-render of config.yaml on an
+    # adopted node keeps the same keys (regenerating would orphan the store).
+    generated_secrets:
+      - name: netbird-relay-auth-secret
+        kind: base64
+      - name: netbird-store-encryption-key
+        kind: base64
+    # Pass the rendered config explicitly, mirroring the legacy `--config` arg.
+    custom_args: ["--config", "/etc/netbird/config.yaml"]
+
+  dependencies:
+    - storage: 1Gi
+
+  resources:
+    memory_limit: 1Gi
+
+  security:
+    # cap-drop=ALL is applied by the orchestrator. The server binds :80
+    # (management/signal/relay HTTP + gRPC) inside the container — a privileged
+    # port — so it needs NET_BIND_SERVICE. STUN is 3478/udp (unprivileged).
+    capabilities: [NET_BIND_SERVICE]
+    readonly_root: false
+    network_policy: isolated
+
+  ports:
+    - host: 8086
+      container: 80
+      protocol: tcp   # management API + embedded OIDC issuer (/oauth2)
+      auth: none
+      auth_rationale: >-
+        NetBird management API and its OIDC issuer. Enrolled devices authenticate
+        themselves with setup keys and JWTs, and they cannot hold a browser session —
+        a login page here would disconnect every VPN client on the network.
+    - host: 3478
+      container: 3478
+      protocol: udp   # STUN — must be UDP; tcp here breaks relay discovery
+      auth: none
+      auth_rationale: >-
+        STUN over UDP for NAT traversal; it must answer unauthenticated probes to do its job at all.
+
+  volumes:
+    - type: bind
+      source: /var/lib/archipelago/netbird/data
+      target: /var/lib/netbird
+      options: [rw]
+    # The rendered config.yaml, read-only. Re-rendered on every reconcile from
+    # host facts + the base64 secrets; idempotent (stable bytes → no restart).
+    - type: bind
+      source: /var/lib/archipelago/netbird/config.yaml
+      target: /etc/netbird/config.yaml
+      options: [ro]
+
+  environment: []
+
+  # The server's config. {{HOST_IP}} is the node's primary host IP (the proxy's
+  # public origin is https on 8087 — the dashboard needs a secure context for
+  # OIDC PKCE, issue #15). {{secret:...}} are read 0600 from the secrets dir.
+  files:
+    - path: /var/lib/archipelago/netbird/config.yaml
+      overwrite: true
+      content: |
+        server:
+          listenAddress: ":80"
+          exposedAddress: "https://{{HOST_IP}}:8087"
+          stunPorts:
+            - 3478
+          metricsPort: 9090
+          healthcheckAddress: ":9000"
+          logLevel: "info"
+          logFile: "console"
+          authSecret: "{{secret:netbird-relay-auth-secret}}"
+          dataDir: "/var/lib/netbird"
+          auth:
+            issuer: "https://{{HOST_IP}}:8087/oauth2"
+            localAuthDisabled: false
+            signKeyRefreshEnabled: false
+            dashboardRedirectURIs:
+              - "https://{{HOST_IP}}:8087/nb-auth"
+              - "https://{{HOST_IP}}:8087/nb-silent-auth"
+            dashboardPostLogoutRedirectURIs:
+              - "https://{{HOST_IP}}:8087/"
+            cliRedirectURIs:
+              - "http://localhost:53000/"
+          store:
+            engine: "sqlite"
+            encryptionKey: "{{secret:netbird-store-encryption-key}}"
+
+  # TCP liveness on the management port. Binds at startup, stays green; an http
+  # check of /oauth2 would false-fail while the issuer warms up.
+  health_check:
+    type: tcp
+    endpoint: localhost:80
+    interval: 30s
+    timeout: 5s
+    retries: 10
+    start_period: 30s
+
+  metadata:
+    author: NetBird
+    icon: /assets/img/app-icons/netbird.svg
+    website: https://netbird.io
+    repo: https://github.com/netbirdio/netbird
+    license: BSD-3-Clause
+    tags:
+      - networking
+      - vpn
+      - wireguard
+      - mesh

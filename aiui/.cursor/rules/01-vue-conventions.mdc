@@ -1,0 +1,84 @@
+---
+description: Vue 3 Composition API conventions and best practices for AIUI
+globs: "**/*.vue,**/*.ts"
+alwaysApply: false
+---
+
+# Vue 3 Conventions
+
+## Composition API with `<script setup>`
+Always use `<script setup lang="ts">`. Never use Options API.
+
+## Component Organization Order
+1. Imports — external, then internal
+2. Props — with TypeScript-style validation
+3. Emits — explicitly defined
+4. State (refs and reactive)
+5. Computed — derived values, always pure
+6. Watchers — side effects only
+7. Methods — business logic
+8. Lifecycle hooks — ordered by execution
+9. Expose — public API (if needed)
+
+## File Organization
+```
+src/
+  components/
+    ui/           # Primitives (Button, Card, Badge, Input)
+    chat/         # Chat window, message list, input
+    content-panel/ # Side panel for surfaced content
+    renderers/    # Content type renderers
+    layout/       # Shell, split-pane, responsive containers
+  composables/    # Shared composition functions (useTheme, useMedia, useCrypto)
+  stores/         # Pinia stores
+  plugins/        # Plugin system
+  types/          # Shared TypeScript types
+  styles/         # Global CSS, themes, design tokens
+  utils/          # Pure utility functions
+```
+
+## Naming Conventions
+- Components: PascalCase (`ProjectCard.vue`)
+- Composables: camelCase, prefixed with "use" (`useTheme.ts`)
+- Props: camelCase in JS, kebab-case in templates
+- Boolean props: prefix with `is`, `has`, `can`, `should`
+- Handler props: prefix with `on` (`onClick`, `onClose`)
+- Emits: explicit, kebab-case in templates (`project:updated`)
+
+## Props — Always Validate
+```typescript
+defineProps({
+  title: { type: String, required: true },
+  count: { type: Number, default: 0 },
+  status: {
+    type: String as PropType<'pending' | 'active' | 'complete'>,
+    default: 'pending'
+  }
+})
+```
+
+Never use array-style props: `defineProps(['title', 'count'])`
+
+## Reactive State
+- `ref` for primitives and single values
+- `reactive` for objects with multiple properties
+- `computed` for derived state (never side effects in computed)
+- `shallowRef` for large objects that change at top level only
+
+## Templates — Keep Clean
+Move complex logic to computed properties or methods. No inline logic in templates. Use `v-if` for infrequent toggles, `v-show` for frequent ones.
+
+## Composables
+- One responsibility per composable
+- Return only what's needed
+- Handle cleanup in `onUnmounted`
+- Make composables testable
+
+## Performance
+- Lazy load heavy components: `defineAsyncComponent(() => import(...))`
+- Use `shallowRef` for large lists
+- Use `:key` with unique identifiers, never index
+- Avoid reactive objects in templates (create in script)
+
+## Error Handling
+Use `onErrorCaptured` for component-level error boundaries. Always handle async errors with try/catch/finally pattern (loading, error, data states).

@@ -1,0 +1,13 @@
+[Unit]
+Description=Archipelago Standalone WireGuard (wg0)
+After=network.target
+ConditionPathExists=/var/lib/archipelago/wireguard/private.key
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/local/bin/archipelago-wg setup /var/lib/archipelago/wireguard/private.key
+ExecStop=/bin/bash -c 'ip link del wg0 2>/dev/null || true'
+
+[Install]
+WantedBy=multi-user.target

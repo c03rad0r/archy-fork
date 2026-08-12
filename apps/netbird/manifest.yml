@@ -1,0 +1,187 @@
+app:
+  id: netbird
+  name: NetBird
+  version: "2.38.0"
+  description: Self-hosted WireGuard mesh VPN control plane with dashboard, embedded identity provider, management API, signal, relay, and STUN. The user-facing entry point — a TLS proxy in front of the dashboard + server.
+  category: networking
+
+  # The user-facing launcher (app_id + container both "netbird", matching the
+  # runtime references + the live container so the orchestrator adopts it). This
+  # is the nginx that terminates TLS on 8087 and fans out to the dashboard +
+  # server by their short aliases on netbird-net.
+  container_name: netbird
+
+  container:
+    image: docker.io/library/nginx:1.27-alpine
+    pull_policy: if-not-present
+    network: netbird-net
+    # Self-signed TLS cert materialised before create — the dashboard needs a
+    # secure context (window.crypto.subtle / OIDC PKCE, issue #15), so the proxy
+    # serves HTTPS. Idempotent: kept as-is when crt+key already exist (a user
+    # accepts it once). SAN defaults to the host IP + 127.0.0.1 + localhost.
+    generated_certs:
+      - crt: /var/lib/archipelago/netbird/tls.crt
+        key: /var/lib/archipelago/netbird/tls.key
+
+  dependencies:
+    - app_id: netbird-server
+    - app_id: netbird-dashboard
+    - storage: 1Gi
+
+  resources:
+    memory_limit: 256Mi
+
+  security:
+    # cap-drop=ALL is applied by the orchestrator. nginx (master as root, drops
+    # workers) binds :443 — needs the worker-drop caps + NET_BIND_SERVICE.
+    capabilities: [CHOWN, DAC_OVERRIDE, SETGID, SETUID, NET_BIND_SERVICE]
+    readonly_root: false
+    network_policy: isolated
+
+  ports:
+    # 8087 publishes the TLS listener (container :443). HTTPS is required for the
+    # dashboard's secure context (issue #15).
+    - host: 8087
+      container: 443
+      protocol: tcp
+      auth: none
+      auth_rationale: >-
+        NetBird dashboard over TLS, with its own login. The gate speaks plain HTTP,
+        so fronting this port would break the secure context the dashboard requires
+        (issue #15) and the certificate clients pin.
+
+  volumes:
+    - type: bind
+      source: /var/lib/archipelago/netbird/nginx.conf
+      target: /etc/nginx/conf.d/default.conf
+      options: [ro]
+    - type: bind
+      source: /var/lib/archipelago/netbird/tls.crt
+      target: /etc/nginx/tls.crt
+      options: [ro]
+    - type: bind
+      source: /var/lib/archipelago/netbird/tls.key
+      target: /etc/nginx/tls.key
+      options: [ro]
+
+  environment: []
+
+  # The proxy config. {{NETWORK_GATEWAY}} is the netbird-net bridge gateway =
+  # Podman's aardvark DNS. nginx uses it as an explicit `resolver` with VARIABLE
+  # upstreams so it re-resolves container names per request — without it nginx
+  # pins a container IP at startup and 502s forever once that IP moves on a
+  # restart/reboot (issue #15, observed live on .198). Every #15 fix below
+  # (CORS $http_origin reflect, grpc pass, nb-auth/nb-silent-auth rewrite to
+  # index.html, /relay websocket) is preserved verbatim from the legacy config.
+  files:
+    - path: /var/lib/archipelago/netbird/nginx.conf
+      overwrite: true
+      content: |
+        server {
+            listen 443 ssl;
+            server_name _;
+
+            # netbird's dashboard needs a secure context (window.crypto.subtle for
+            # OIDC PKCE), so the proxy terminates TLS with a self-signed cert (#15).
+            ssl_certificate /etc/nginx/tls.crt;
+            ssl_certificate_key /etc/nginx/tls.key;
+
+            # Rootless Podman can hand a container a new IP across restarts/reboots.
+            # nginx resolves a literal upstream name ONCE at startup and caches it,
+            # so after the IP moves every request 502s with "host unreachable"
+            # (issue #15, observed live on .198: nginx pinned to a dead
+            # netbird-dashboard IP). Fix: point `resolver` at the netbird-net
+            # gateway (Podman's aardvark DNS) and use VARIABLE upstreams, which
+            # forces nginx to re-resolve the container names at request time.
+            resolver {{NETWORK_GATEWAY}} valid=10s ipv6=off;
+
+            proxy_set_header Host $host;
+            proxy_set_header X-Real-IP $remote_addr;
+            proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+            proxy_set_header X-Forwarded-Proto $scheme;
+            proxy_http_version 1.1;
+
+            location ~ ^/(relay|ws-proxy/) {
+                set $nb_server netbird-server;
+                proxy_pass http://$nb_server:80;
+                proxy_set_header Upgrade $http_upgrade;
+                proxy_set_header Connection "upgrade";
+                proxy_read_timeout 1d;
+            }
+
+            location ~ ^/(api|oauth2)(/|$) {
+                # The dashboard is a SPA whose API/OIDC base URL is baked at build
+                # time to one host:port. A single box is reached via several
+                # addresses, so those fetches are cross-origin and the browser
+                # blocks them with no Access-Control-Allow-Origin (#15, live on
+                # .198). Reflect the caller's Origin and answer the CORS preflight.
+                if ($request_method = OPTIONS) {
+                    add_header Access-Control-Allow-Origin $http_origin always;
+                    add_header Access-Control-Allow-Credentials true always;
+                    add_header Access-Control-Allow-Methods "GET, POST, PUT, PATCH, DELETE, OPTIONS" always;
+                    add_header Access-Control-Allow-Headers "Authorization, Content-Type, Accept" always;
+                    add_header Access-Control-Max-Age 86400 always;
+                    add_header Content-Length 0;
+                    return 204;
+                }
+                add_header Access-Control-Allow-Origin $http_origin always;
+                add_header Access-Control-Allow-Credentials true always;
+                add_header Access-Control-Allow-Methods "GET, POST, PUT, PATCH, DELETE, OPTIONS" always;
+                add_header Access-Control-Allow-Headers "Authorization, Content-Type, Accept" always;
+                set $nb_server netbird-server;
+                proxy_pass http://$nb_server:80;
+            }
+
+            location ~ ^/(signalexchange\.SignalExchange|management\.ManagementService|management\.ProxyService)/ {
+                set $nb_server netbird-server;
+                grpc_pass grpc://$nb_server:80;
+                grpc_read_timeout 1d;
+                grpc_send_timeout 1d;
+            }
+
+            # OIDC callback routes are client-side SPA routes with NO prebuilt page
+            # in the dashboard bundle, so proxying them straight through 404s —
+            # which crashes the dashboard's auth init and shows "Unauthenticated"
+            # with dead buttons (#15, live on .198: /nb-auth + /nb-silent-auth
+            # returned 404). Serve index.html at these paths (URL unchanged) so
+            # react-oidc boots and completes the login / silent-SSO.
+            location ~ ^/(nb-auth|nb-silent-auth) {
+                set $nb_dashboard netbird-dashboard;
+                rewrite ^.*$ /index.html break;
+                proxy_pass http://$nb_dashboard:80;
+            }
+
+            location / {
+                set $nb_dashboard netbird-dashboard;
+                proxy_pass http://$nb_dashboard:80;
+            }
+        }
+
+  health_check:
+    type: tcp
+    endpoint: localhost:443
+    interval: 30s
+    timeout: 5s
+    retries: 5
+    start_period: 20s
+
+  interfaces:
+    main:
+      name: Dashboard
+      description: Manage your self-hosted NetBird mesh VPN
+      type: ui
+      port: 8087
+      protocol: https
+      path: /
+
+  metadata:
+    author: NetBird
+    icon: /assets/img/app-icons/netbird.svg
+    website: https://netbird.io
+    repo: https://github.com/netbirdio/netbird
+    license: BSD-3-Clause
+    tags:
+      - networking
+      - vpn
+      - wireguard
+      - mesh

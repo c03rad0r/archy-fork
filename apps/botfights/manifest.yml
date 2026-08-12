@@ -1,0 +1,131 @@
+app:
+  id: botfights
+  name: BotFights
+  version: 1.2.11
+  description: Bot competition arena with 2-player arcade fighting mode. AI bots battle in trivia challenges while humans duke it out with controllers. Built for Bitcoiners.
+  category: community
+
+  container:
+    image: source.archipelago-foundation.org/lfg2025/botfights:1.2.11
+    pull_policy: always
+    # Auto-generated on first install (random hex, 0600, rootless-owned). The
+    # 1.2.x image's server/src/middleware/jwt.ts throws at module import when
+    # JWT_SECRET is unset and NODE_ENV=production, so a fresh install without
+    # this crash-loops immediately. hex32 (not base64, unlike netbird) because
+    # jwt.ts uses the value directly as an HMAC key with no decode step.
+    generated_secrets:
+      - name: botfights-jwt-secret
+        kind: hex32
+    secret_env:
+      - key: JWT_SECRET
+        secret_file: botfights-jwt-secret
+    # Was missing entirely (found live during a fresh install on a second
+    # node): without it, the orchestrator's bind-dir ownership fixup only
+    # fires via a same-owner-as-anchor fallback that assumes an app with no
+    # data_uid runs as container-internal root — but this app runs as a
+    # non-root system user, so that fallback doesn't apply either. The bind
+    # mount ended up unwritable, crash-looping the container on startup
+    # (SqliteError: unable to open database file). Same pattern as
+    # apps/fedimint-clientd/manifest.yml and apps/barkd/manifest.yml.
+    #
+    # 999, not 1001: the image's Dockerfile does `useradd --system` with no
+    # explicit UID, which lands at 999 (confirmed via `podman exec botfights
+    # id` — uid=999(botfights) gid=999(botfights)), not the security.user
+    # value below. security.user is not currently read by the non-Quadlet
+    # install path this app uses (only quadlet.rs consumes
+    # security.{capabilities,readonly_root,no_new_privileges,network_policy}
+    # for companion containers) — it's descriptive metadata here, not
+    # enforced. A first pass at this fix used 1001 (copying the
+    # fedimint-clientd/barkd pattern without verifying against this image)
+    # and still crash-looped; corrected after inspecting the running
+    # container's actual UID.
+    data_uid: "999:999"
+
+  dependencies:
+    - storage: 500Mi
+
+  resources:
+    cpu_limit: 2
+    memory_limit: 512Mi
+    disk_limit: 500Mi
+
+  security:
+    capabilities: []
+    readonly_root: true
+    no_new_privileges: true
+    user: 999
+    seccomp_profile: default
+    network_policy: bridge
+    apparmor_profile: default
+
+  ports:
+    - host: 9100
+      container: 9100
+      protocol: tcp  # Web UI + API
+      bind: 127.0.0.1
+      auth: gated
+
+  volumes:
+    # A bare relative source (was "botfights-data", no leading slash) is
+    # inconsistent with every other app's manifest, which uses an absolute
+    # host path — found live during a fresh install on a second node:
+    # resolved to /var/lib/archipelago/botfights on a test node (by
+    # accident of that node's specific state) but /home/archipelago/
+    # botfights-data on a different node, which doesn't exist there,
+    # crash-looping the container on a real SqliteError: unable to open
+    # database file. Absolute path removes the ambiguity entirely, matching
+    # apps/netbird-server/manifest.yml and every other app's convention.
+    - type: bind
+      source: /var/lib/archipelago/botfights
+      target: /app/server/data
+    - type: tmpfs
+      target: /tmp
+      options: [rw,noexec,nosuid,size=64m]
+
+  environment:
+    - NODE_ENV=production
+    - PORT=9100
+    # Default-on shared public arena federation (BOT-03/D-03): this node's
+    # BotFights becomes a thin client of the Foundation's well-known arena —
+    # all nodes see all fighters, fights cross nodes. This is a rendezvous,
+    # not an authority: any node can host its own arena (same image, just
+    # without this var set), and an operator can remove this line entirely to
+    # run a fully standalone, node-local arena instead.
+    - ARENA_UPSTREAM_URL=https://botfights.archipelago-foundation.org
+    # Tells the app it is embedded (first-party) in the node dashboard's
+    # iframe, so it can safely disable X-Frame-Options: SAMEORIGIN — see
+    # server/src/app.ts in the botfight repo. Without this the 1.2.x image's
+    # default security headers block the dashboard iframe entirely.
+    - ARCHY_EMBEDDED=1
+
+  health_check:
+    type: http
+    endpoint: http://localhost:9100
+    path: /api/health
+    interval: 30s
+    timeout: 10s
+    retries: 3
+    start_period: 30s
+
+  interfaces:
+    main:
+      name: Web UI
+      description: Bot arena and arcade fighter with controller support
+      type: ui
+      port: 9100
+      protocol: http
+      path: /
+
+  metadata:
+    author: Dorian
+    repo: https://botfights.net
+    icon: /assets/img/app-icons/botfights.svg
+    license: MIT
+    tags:
+      - bitcoin
+      - gaming
+      - arcade
+      - fighter
+      - bots
+      - competition
+      - controller

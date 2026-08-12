@@ -1,0 +1,31 @@
+---
+description: Expert rules for Song content extraction, display, and surfacing
+globs: "**/useContentPanel.ts,**/SongCard.vue,**/SongGrid.vue,**/SongDetail.vue,**/mocks/songs*"
+alwaysApply: false
+---
+
+# Songs Content Surface
+
+## Extraction Priority
+
+1. Tagged: `[[song:s123]]` or `[[song_ext:Title|Artist|YYYY]]`
+2. Library match: title + artist within 120 chars
+3. Patterns: `"Title" by Artist`, `Title – Artist`, `**Title** by Artist`
+
+## looksLikeSong Rejection
+
+Reject when title/artist contains: news phrases, "BIP", "protocol", "web search", "mailing list", "training cutoff", etc. See `looksLikeSong()` blocklist.
+
+- Max length: title 55 chars, artist 40 chars
+
+## Edge Cases
+
+- If `extractFilmIds` or `extractPodcastIds` found → return [] (don't mix film/podcast with song patterns)
+- If `isNewsLikeResponse` → return [] (news bullets often look like "X – Y")
+- Skip if title/artist is 4-digit year
+- Skip if contains `[[film` or `[[song` tags
+- Dedupe by `title|artist` lowercase
+
+## Strip Rules
+
+- `stripSongTags` removes song tags before displaying text

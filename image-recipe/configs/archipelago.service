@@ -1,0 +1,88 @@
+[Unit]
+Description=Archipelago Backend
+After=network-online.target archipelago-setup-tor.service
+Wants=network-online.target
+# The data dir AND podman's graphroot (containers/storage) both live on the
+# separate /var/lib/archipelago volume. Without this, on a cold boot the service
+# (and its ExecStartPre) can start BEFORE var-lib-archipelago.mount, write to the
+# bare mountpoint on rootfs, fail every podman call, exit, and get restarted every
+# 5s until the volume mounts (~5 min of "[FAILED] Failed to start" on boot — B17).
+# RequiresMountsFor adds both Requires= and After= on the mount unit so we never
+# start until the data volume is mounted.
+RequiresMountsFor=/var/lib/archipelago
+
+[Service]
+Type=notify
+User=archipelago
+Environment="ARCHIPELAGO_BIND=127.0.0.1:5678"
+Environment="ARCHIPELAGO_USE_QUADLET_BACKENDS=true"
+EnvironmentFile=-/var/lib/archipelago/telemetry.env
+# DEV_MODE disabled in production — enabled via override.conf on dev servers
+Environment="XDG_RUNTIME_DIR=/run/user/1000"
+# + prefix runs these as root (needed for chown/mkdir outside ReadWritePaths)
+ExecStartPre=+/bin/bash -c 'mkdir -p /run/user/1000 /var/lib/containers && chown archipelago:archipelago /run/user/1000 && chmod 700 /run/user/1000'
+# Host IP from the main-table default route — hostname -I token order breaks
+# once a VPN/bridge interface exists (netbird's wg tunnel sorted first and
+# poisoned every host_ip consumer). Falls back to hostname -I when routeless.
+ExecStartPre=+/bin/bash -c 'mkdir -p /var/lib/archipelago && chown archipelago:archipelago /var/lib/archipelago && IP=$(ip -4 route show default 2>/dev/null | sed -n "s/.* src \([0-9.]*\).*/\1/p" | head -1); [ -n "$$IP" ] || IP=$(hostname -I 2>/dev/null | awk "{print $$1}"); echo "ARCHIPELAGO_HOST_IP=$$IP" > /var/lib/archipelago/host-ip.env && chown archipelago:archipelago /var/lib/archipelago/host-ip.env'
+# OTA crash-loop guard: if a just-applied binary can't start (SEGV loop), the
+# in-binary post-OTA probe never runs — this restores the update-backup binary
+# after 5 failed start attempts while the pending-verify marker exists.
+# "-" so a missing/failed guard can never block the service itself.
+ExecStartPre=+-/opt/archipelago/scripts/ota-crash-guard.sh
+ExecStart=/usr/local/bin/archipelago
+# always (not on-failure): the OTA restart path once stopped the daemon
+# cleanly and the queued start never fired (a test node, v1.7.114->115,
+# 2026-07-26) — the node sat dead all night behind "server starting up".
+# Restart=always self-heals any lost start job; an explicit
+# `systemctl stop` is still honored (systemd never auto-restarts after
+# a manual stop).
+Restart=always
+RestartSec=5
+WatchdogSec=300
+TimeoutStartSec=300
+# Backend shuts down in <1s; 15s is generous for any cleanup
+TimeoutStopSec=15
+
+# Filesystem protection
+ProtectSystem=strict
+# ProtectHome=no: rootless podman needs writable ~/.local/share/containers
+ProtectHome=no
+# PrivateTmp disabled: rootless podman runtime lives in /tmp/podman-run-UID/
+# and must be shared between the service and SSH-created containers
+ReadWritePaths=/var/lib/archipelago /etc/containers /var/lib/containers /run/user /tmp /home/archipelago/.local/share/containers /home/archipelago/.config/containers /etc
+
+# Privilege restriction — NoNewPrivileges=no required for sudo archipelago-wg
+# (WireGuard peer management). Scoped via sudoers to only archipelago-wg.
+NoNewPrivileges=no
+PrivateDevices=no
+SupplementaryGroups=dialout debian-tor fips
+
+# Syscall and network restrictions — safe on Debian 13 (systemd 256+)
+# which respects NoNewPrivileges=no as an explicit override for seccomp filters
+SystemCallArchitectures=native
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK
+RestrictRealtime=yes
+
+# MemoryDenyWriteExecute removed: ring (rustls) and secp256k1 (bitcoin/nostr)
+# use assembly code that requires executable memory mappings on some platforms
+
+# Resource limits
+MemoryMax=4G
+LimitNOFILE=65535
+TasksMax=2048
+
+# Delegate cgroup controllers so rootless podman (run from this system service
+# as user=archipelago, not user@1000.service) can create transient libpod-*.scope
+# units with --memory / --cpus / --pids-limit. Without this, podman create fails
+# at start time with: "MemoryMax is out of range" because systemd rejects resource
+# limits on undelegated cgroup subtrees. Required for the ProdContainerOrchestrator
+# code path (see core/archipelago/src/container/prod_orchestrator.rs).
+Delegate=memory pids cpu io
+
+# Logging
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

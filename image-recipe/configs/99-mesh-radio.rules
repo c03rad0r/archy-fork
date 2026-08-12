@@ -1,0 +1,9 @@
+# Stable symlink for USB serial adapters used as mesh radios.
+# Creates /dev/mesh-radio pointing to the underlying ttyUSB device.
+# Supports MeshCore and Meshtastic radios using CP2102 (Heltec V3),
+# CH340 (T-Beam), FTDI (RAK WisBlock), and known USB CDC ACM radios.
+SUBSYSTEM=="tty", ATTRS{idVendor}=="10c4", ATTRS{idProduct}=="ea60", SYMLINK+="mesh-radio", MODE="0660", GROUP="dialout"
+SUBSYSTEM=="tty", ATTRS{idVendor}=="1a86", ATTRS{idProduct}=="7523", SYMLINK+="mesh-radio", MODE="0660", GROUP="dialout"
+SUBSYSTEM=="tty", ATTRS{idVendor}=="0403", ATTRS{idProduct}=="6001", SYMLINK+="mesh-radio", MODE="0660", GROUP="dialout"
+SUBSYSTEM=="tty", ATTRS{idVendor}=="239a", KERNEL=="ttyACM[0-9]*", SYMLINK+="mesh-radio", MODE="0660", GROUP="dialout"
+SUBSYSTEM=="tty", ATTRS{idVendor}=="2e8a", KERNEL=="ttyACM[0-9]*", SYMLINK+="mesh-radio", MODE="0660", GROUP="dialout"

@@ -1,0 +1,28 @@
+# Ignore everything except what the demo Dockerfiles need
+*
+
+# Allow neode-ui (frontend + mock backend + docker configs)
+!neode-ui/
+
+# Allow demo assets (AIUI pre-built dist)
+!demo/
+
+# Allow the Bitcoin UI + ElectrumX UI mock shells (served from /docker/*)
+!docker/
+docker/*
+!docker/bitcoin-ui/
+!docker/electrs-ui/
+!docker/lnd-ui/
+!docker/fedimint-ui/
+
+# Allow backend source for ISO source builds
+!core/
+!scripts/
+!image-recipe/
+image-recipe/build/
+image-recipe/results/
+image-recipe/output/
+
+# Exclude nested node_modules (will npm install in container)
+neode-ui/node_modules
+neode-ui/dist

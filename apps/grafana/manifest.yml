@@ -1,0 +1,59 @@
+app:
+  id: grafana
+  name: Grafana
+  version: 10.2.0
+  description: Analytics and monitoring platform. Visualize metrics and create dashboards.
+  
+  container:
+    image: source.archipelago-foundation.org/lfg2025/grafana:10.2.0
+    image_signature: cosign://...
+    pull_policy: if-not-present
+    data_uid: "472:472"
+    
+  dependencies:
+    - storage: 5Gi
+    
+  resources:
+    cpu_limit: 2
+    memory_limit: 1Gi
+    disk_limit: 5Gi
+    
+  security:
+    capabilities: []
+    readonly_root: true
+    no_new_privileges: true
+    user: 1000
+    seccomp_profile: default
+    network_policy: isolated
+    apparmor_profile: grafana
+    
+  ports:
+    - host: 3000
+      container: 3000
+      protocol: tcp  # Web UI
+      bind: 127.0.0.1
+      auth: gated
+    
+  volumes:
+    - type: bind
+      source: /var/lib/archipelago/grafana
+      target: /var/lib/grafana
+      options: [rw]
+      
+  environment:
+    - GF_SECURITY_ADMIN_USER=admin
+    - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_ADMIN_PASSWORD}
+    - GF_SERVER_ROOT_URL=http://localhost:3000
+    - GF_INSTALL_PLUGINS=
+    
+  health_check:
+    type: http
+    endpoint: http://localhost:3000
+    path: /api/health
+    interval: 30s
+    timeout: 30s
+    retries: 5
+
+  metadata:
+    launch:
+      open_in_new_tab: true

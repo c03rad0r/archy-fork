@@ -1,0 +1,27 @@
+[package]
+name = "archipelago-security"
+version = "0.1.0"
+edition = "2021"
+license.workspace = true
+
+[dependencies]
+tokio = { version = "1", features = ["full"] }
+serde = { version = "1.0", features = ["derive"] }
+anyhow = "1.0"
+thiserror = "1.0"
+log = "0.4"
+tracing = "0.1"
+uuid = { version = "1.0", features = ["v4"] }
+chrono = { version = "0.4", features = ["serde"] }
+serde_json = "1.0"
+aes-gcm = "0.10.3"
+rand = "0.8.5"
+hex = "0.4"
+zeroize = { version = "1.8.2", features = ["derive"] }
+
+[dev-dependencies]
+tempfile = "3"
+
+[lib]
+name = "archipelago_security"
+path = "src/lib.rs"

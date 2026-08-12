@@ -1,0 +1,77 @@
+app:
+  id: mempool-api
+  name: Mempool API
+  version: 3.0.0
+  description: Backend API for mempool explorer.
+
+  container:
+    image: source.archipelago-foundation.org/lfg2025/mempool-backend:v3.0.0
+    pull_policy: if-not-present
+    network: archy-net
+    # CORE_RPC_HOST must follow the node's actual Bitcoin container — Knots or
+    # Core — resolved at apply time from host facts (B12). Hardcoding either
+    # breaks mempool's RPC connection on the other.
+    derived_env:
+      - key: CORE_RPC_HOST
+        template: "{{BITCOIN_HOST}}"
+    secret_env:
+      - key: CORE_RPC_PASSWORD
+        secret_file: bitcoin-rpc-password
+      - key: DATABASE_PASSWORD
+        secret_file: mempool-db-password
+
+  dependencies:
+    - app_id: bitcoin-knots
+      version: ">=26.0"
+    - app_id: electrumx
+      version: ">=1.18.0"
+    - app_id: archy-mempool-db
+      version: ">=11.4.10"
+    - bitcoin:archival
+
+  resources:
+    memory_limit: 2Gi
+    disk_limit: 20Gi
+
+  security:
+    capabilities: []
+    readonly_root: false
+    network_policy: isolated
+
+  ports:
+    - host: 8999
+      container: 8999
+      protocol: tcp
+      bind: 127.0.0.1
+      auth: local
+
+  volumes:
+    - type: bind
+      source: /var/lib/archipelago/mempool
+      target: /data
+      options: [rw]
+
+  environment:
+    - MEMPOOL_BACKEND=electrum
+    - ELECTRUM_HOST=electrumx
+    - ELECTRUM_PORT=50001
+    - ELECTRUM_TLS_ENABLED=false
+    - CORE_RPC_PORT=8332
+    - CORE_RPC_USERNAME=archipelago
+    - DATABASE_ENABLED=true
+    - DATABASE_HOST=archy-mempool-db
+    - DATABASE_DATABASE=mempool
+    - DATABASE_USERNAME=mempool
+
+  health_check:
+    type: http
+    endpoint: http://localhost:8999
+    path: /api/v1/backend-info
+    interval: 30s
+    timeout: 5s
+    retries: 3
+
+  bitcoin_integration:
+    rpc_access: read-only
+    sync_required: true
+    pruning_support: false

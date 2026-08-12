@@ -1,0 +1,118 @@
+---
+description: Design system foundations - glassmorphism from Archy, colors, typography, spacing
+globs: "**/*.vue,**/*.css,**/*.ts"
+alwaysApply: false
+---
+
+# Design System
+
+All glass morphism, container, and button patterns are ported from the Archy project and must match exactly.
+
+## Glass Morphism Hierarchy (from Archy)
+
+### Glass Intensity Levels
+| Class | Background | Blur | Use Case |
+|-------|-----------|------|----------|
+| `.glass` | `rgba(0,0,0,0.35)` | 18px | Sidebar, panels, inputs |
+| `.glass-strong` | `rgba(0,0,0,0.35)` | 24px | Headers, message bubbles (user) |
+| `.glass-card` | `rgba(0,0,0,0.65)` | 18px | Primary cards, modals, main containers |
+| `.gradient-card` | gradient white→black | 18px | Feature cards |
+| `.gradient-card-dark` | gradient black→black | 18px | Dark feature cards |
+
+All share: `border: 1px solid rgba(255,255,255,0.18)`, `box-shadow: 0 8px 24px rgba(0,0,0,0.45)`.
+
+### Button Hierarchy (from Archy)
+| Class | Purpose | Details |
+|-------|---------|---------|
+| `.glass-button` | Default | 48px height, `rgba(0,0,0,0.6)`, blur 18px |
+| `.glass-button-sm` | Compact | Auto height, smaller padding |
+| Ghost | Icon/text actions | `p-2 rounded-lg text-white/70 hover:text-white hover:bg-white/10` |
+
+### Inset Highlight
+Signature Archy top-edge glow on focused/active elements:
+```css
+box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.22);
+```
+
+### Gradient Border (CSS mask technique)
+For premium-feel borders on selected cards and active nav:
+```css
+::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  padding: 2px;
+  background: linear-gradient(135deg, rgba(255, 255, 255, 0.3), transparent);
+  -webkit-mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+  -webkit-mask-composite: xor;
+  mask-composite: exclude;
+  pointer-events: none;
+}
+```
+
+## Design Tokens
+
+### Color Palette
+Semantic color tokens defined by purpose:
+- `primary` — main brand actions (#606060)
+- `accent` — highlight, Bitcoin orange (#F7931A)
+- `success` — positive states (#10B981)
+- `error` — negative states (#EF4444)
+- `warning` — caution states (#F59E0B)
+- `info` — informational (#3B82F6)
+
+### Glass Tokens (from Archy Tailwind config)
+- `glass-dark`: `rgba(0, 0, 0, 0.35)`
+- `glass-darker`: `rgba(0, 0, 0, 0.6)`
+- `glass-border`: `rgba(255, 255, 255, 0.18)`
+- `glass-highlight`: `rgba(255, 255, 255, 0.22)`
+
+### Shadows
+- `shadow-glass`: `0 8px 24px rgba(0, 0, 0, 0.45)`
+- `shadow-glass-sm`: `0 6px 18px rgba(0, 0, 0, 0.35)`
+- `shadow-glass-inset`: `inset 0 1px 0 rgba(255, 255, 255, 0.22)`
+
+### Typography
+- Body font: Inter, system-ui (AIUI default)
+- Mono font: Menlo, Monaco, Courier New
+- Text opacity scale: `text-white/25` (placeholders), `text-white/40` (muted), `text-white/60` (secondary), `text-white/70` (interactive default), `text-white/80` (body), `text-white/90` (emphasis), `text-white/96` (headings), `text-white` (active/selected)
+
+### Spacing
+4px grid: `4, 8, 12, 16, 20, 24, 28, 32` px.
+
+### Border Radius
+- `rounded-lg` (8px) — buttons, nav items, inputs
+- `rounded-xl` (12px) — toasts, small cards
+- `rounded-2xl` (16px) — main cards, modals
+- `rounded-3xl` (24px) — bottom sheets
+- `rounded-full` — pills, avatars, FABs
+- `1rem` (16px) — `.glass-card` default
+
+## Component Patterns
+
+### Cards
+Use `.glass-card` with additional padding:
+```html
+<div class="glass-card p-6">Content</div>
+```
+
+### Modals
+```html
+<div class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
+  <div class="glass-card p-6 max-w-md w-full">...</div>
+</div>
+```
+
+### Icons
+- SVG, using `currentColor`
+- Sizes: 16px, 20px, 24px, 32px
+- Icon-only buttons: `p-2 rounded-lg` (reaches 44px touch target with 24px icon)
+- Must have `aria-label`
+
+## Theme Architecture
+- Base background: `#0a0a0a` (near-black)
+- No separator borders between sidebar/header/content
+- Header, sidebar, root share same visual weight
+- CSS-based themes with reactive Vue state
+- `localStorage` persistence

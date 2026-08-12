@@ -1,0 +1,9 @@
+[Unit]
+Description=Watch for Archipelago Tor management actions
+
+[Path]
+PathExists=/var/lib/archipelago/tor-config/tor-action
+MakeDirectory=yes
+
+[Install]
+WantedBy=multi-user.target

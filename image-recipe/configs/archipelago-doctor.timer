@@ -1,0 +1,14 @@
+[Unit]
+Description=Archipelago container doctor (periodic)
+
+[Timer]
+# First run 2 minutes after boot, then every 5 minutes. The doctor is
+# idempotent and exits quickly when no drift exists; this keeps vanished
+# rootless port listeners and stopped containers from remaining broken.
+OnBootSec=2min
+OnUnitActiveSec=5min
+# Jitter to avoid load spikes
+RandomizedDelaySec=60
+
+[Install]
+WantedBy=timers.target

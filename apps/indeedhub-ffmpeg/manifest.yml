@@ -1,0 +1,51 @@
+app:
+  id: indeedhub-ffmpeg
+  name: IndeedHub FFmpeg Worker
+  version: "1.0.0"
+  description: IndeedHub background media transcoding worker.
+  category: community
+
+  # Hyphen name matches runtime references + the live container (adoption). No
+  # network_alias: nothing connects TO the worker — it only dials out to
+  # postgres/redis/minio (resolved by their aliases on indeedhub-net).
+  container_name: indeedhub-ffmpeg
+
+  container:
+    image: source.archipelago-foundation.org/lfg2025/indeedhub-ffmpeg:1.0.0
+    pull_policy: if-not-present
+    network: indeedhub-net
+    secret_env:
+      - key: DATABASE_PASSWORD
+        secret_file: indeedhub-db-password
+      - key: AWS_SECRET_KEY
+        secret_file: indeedhub-minio-password
+
+  dependencies:
+    - app_id: indeedhub-api
+
+  resources:
+    memory_limit: 4Gi
+
+  security:
+    capabilities: []
+    readonly_root: false
+    network_policy: isolated
+
+  ports: []
+
+  volumes: []
+
+  environment:
+    - DATABASE_HOST=postgres
+    - DATABASE_PORT=5432
+    - DATABASE_USER=indeedhub
+    - DATABASE_NAME=indeedhub
+    - QUEUE_HOST=redis
+    - QUEUE_PORT=6379
+    - S3_ENDPOINT=http://minio:9000
+    - AWS_REGION=us-east-1
+    - AWS_ACCESS_KEY=indeeadmin
+    - S3_PUBLIC_BUCKET_NAME=indeedhub-public
+    - S3_PRIVATE_BUCKET_NAME=indeedhub-private
+    - ENVIRONMENT=production
+    - AES_MASTER_SECRET=0123456789abcdef0123456789abcdef

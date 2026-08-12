@@ -1,0 +1,1 @@
+const e={id:"wikipedia",name:"Wikipedia",version:"1.0.0",type:"search",description:"Search Wikipedia articles with /wiki command",async init(i){},async destroy(){},async isAvailable(){return!0}};export{e as wikipediaPlugin};

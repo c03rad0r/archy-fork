@@ -1,0 +1,3216 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* The app is dark-only — NEVER let the OS/browser theme leak into native
+   controls. Without this, select popups / scrollbars / date pickers follow
+   the user's OS setting (a light-mode ThinkPad rendered white dropdown
+   lists inside the dark UI, 2026-07-22). color-scheme pins Chromium's
+   native select popup dark; the explicit select/option rules cover
+   Firefox and the closed control itself. */
+:root {
+  color-scheme: dark;
+}
+select,
+select option,
+select optgroup {
+  background-color: #16181d;
+  color: #fff;
+}
+
+/* Montserrat - header font (used in neode present) */
+@font-face {
+  font-family: 'Montserrat';
+  src: url('/assets/fonts/Montserrat/Montserrat-Bold.ttf') format('truetype');
+  font-weight: 700;
+  font-style: normal;
+}
+
+@font-face {
+  font-family: 'Montserrat';
+  src: url('/assets/fonts/Montserrat/Montserrat-ExtraBold.ttf') format('truetype');
+  font-weight: 800;
+  font-style: normal;
+}
+
+/* Skip to main content — keyboard navigation accessibility */
+.skip-to-content {
+  position: absolute;
+  left: -9999px;
+  top: auto;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  z-index: 9999;
+}
+.skip-to-content:focus,
+.skip-to-content:focus-visible {
+  position: fixed;
+  top: 12px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: auto;
+  height: auto;
+  overflow: visible;
+  padding: 8px 24px;
+  background: rgba(0, 0, 0, 0.85);
+  color: white;
+  border: 1px solid rgba(255, 255, 255, 0.3);
+  border-radius: 8px;
+  font-size: 14px;
+  font-weight: 500;
+  text-decoration: none;
+  backdrop-filter: blur(12px);
+  outline: none;
+}
+
+/* Controller / keyboard navigation — only for elements without their own focus styles.
+   Elements with existing hover/active styles (glass-button, sidebar-nav-item, etc.) keep theirs. */
+*:focus-visible {
+  outline: none;
+  box-shadow:
+    0 0 12px rgba(251, 146, 60, 0.2),
+    0 0 24px rgba(251, 146, 60, 0.08);
+  transition: box-shadow 0.2s ease;
+}
+
+/* Elements with existing styles: suppress the global glow, let their own styles handle it */
+.glass-card:focus-visible,
+.sidebar-nav-item:focus-visible,
+.path-option-card:focus-visible,
+input:focus-visible,
+textarea:focus-visible,
+select:focus-visible {
+  box-shadow: unset;
+  outline: none;
+}
+
+/* Glass button: orange glow on gamepad/keyboard focus */
+.glass-button:focus-visible {
+  outline: none;
+  box-shadow:
+    0 0 0 1px rgba(251, 146, 60, 0.5),
+    0 0 16px rgba(251, 146, 60, 0.25),
+    0 0 32px rgba(251, 146, 60, 0.1);
+  border-color: rgba(251, 146, 60, 0.4);
+}
+
+/* Card action placement: actions always live at the bottom of the card as
+   full-width buttons — same layout on every screen size. The compact header
+   variants are permanently retired for consistency (desktop == mobile). */
+.responsive-card-actions-top,
+.web5-card-actions-top {
+  display: none;
+}
+
+.responsive-card-actions-bottom,
+.web5-card-actions-bottom {
+  display: flex;
+}
+
+.responsive-card-actions-bottom-grid,
+.web5-card-actions-bottom-grid {
+  display: grid;
+}
+
+.mobile-card-action {
+  display: inline-flex;
+  width: 100%;
+  min-width: 0;
+  min-height: 44px;
+  aspect-ratio: auto;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  padding: 0.625rem 1rem;
+  text-align: center;
+  white-space: nowrap;
+}
+
+/* Mobile touch targets — ensure tappable elements meet 44px minimum */
+@media (max-width: 767px) {
+  button:not(.mode-switcher-btn):not(.sidebar-nav-item):not([class*="w-9"]):not([class*="w-8"]):not([class*="w-7"]):not([class*="w-10"]):not([class*="w-11"]):not([class*="w-12"]) {
+    min-height: 44px;
+  }
+}
+
+/* Height of the global audio player bar — 0 unless it is visible. Set on
+   <html> by GlobalAudioPlayer.vue. Scroll containers add it to their bottom
+   padding so the fixed player pushes content up instead of covering it. */
+:root {
+  --audio-player-height: 0px;
+}
+
+/* Scroll container bottom padding — desktop breathing room. (On desktop the
+   audio player instead shrinks the whole #main-content area — see the
+   html.audio-active rule below — so no player offset is added here.) */
+.mobile-scroll-pad,
+.mobile-scroll-pad-back {
+  padding-bottom: 6rem;
+}
+
+/* Audio player docked: shrink the whole interface into the space above it so
+   the entire view scales up (like the AIUI iframe) instead of just gaining
+   scroll padding. On desktop the player spans full width and BOTH the sidebar
+   and the main content scale into the reduced height above it. Mobile keeps the
+   tab-bar + player handled via .mobile-scroll-pad padding. */
+@media (min-width: 768px) {
+  html.audio-active .dashboard-view {
+    height: calc(100dvh - var(--audio-player-height, 0px));
+    min-height: 0;
+    overflow: hidden;
+  }
+  /* Sidebar uses h-screen (100vh) — pin it to the reduced container height. */
+  html.audio-active .dashboard-view [data-controller-zone="sidebar"] {
+    height: 100%;
+  }
+}
+
+/* Mobile: override with tab bar clearance */
+@media (max-width: 767px) {
+  /* Mobile web browsers report 100vh taller than the visible area (the dynamic
+     URL/toolbar chrome). The dashboard is the containing block for the fixed,
+     container-relative panes (the mesh chat/tools panes), so a 100vh-tall
+     container pushes their `bottom` offset below the visible viewport — they
+     slide under the bottom tab bar (which is body-teleported and viewport-fixed,
+     so it stays put). Pin the dashboard to the *dynamic* viewport so the two
+     reference frames line up. No-op in the companion WebView (no browser chrome
+     → dvh == vh), so its layout is unchanged. Doubled class beats Tailwind's
+     `.min-h-screen` (100vh) utility on specificity. */
+  .dashboard-view.dashboard-view {
+    height: 100dvh;
+    height: var(--visual-viewport-height, 100dvh);
+    min-height: 100dvh;
+    min-height: var(--visual-viewport-height, 100dvh);
+  }
+
+  .mobile-scroll-pad {
+    padding-bottom: calc(var(--mobile-tab-bar-height, 88px) + var(--safe-area-bottom, env(safe-area-inset-bottom, 0px)) + var(--audio-player-height, 0px) + 28px);
+  }
+  .mobile-scroll-pad-back {
+    padding-bottom: calc(var(--mobile-tab-bar-height, 88px) + var(--safe-area-bottom, env(safe-area-inset-bottom, 0px)) + var(--audio-player-height, 0px) + 64px);
+  }
+
+  /* Safe area top padding for all mobile content views.
+     When tabs are showing, Dashboard.vue sets an explicit paddingTop via :style
+     which overrides this. When no tabs (e.g. Home), this kicks in.
+     Android WebView sets --safe-area-top; iOS uses env(). */
+  .mobile-safe-top {
+    padding-top: calc(var(--safe-area-top, env(safe-area-inset-top, 0px)) + 16px);
+  }
+}
+
+@media (max-width: 920px) {
+  /* Same dynamic-viewport pin as the <768px rule: mobile browsers report 100vh
+     taller than the visible area (URL/tab-bar chrome), which pushes the bottom
+     of every page under the browser chrome. Pin the dashboard to the dynamic
+     viewport across the whole mobile/tablet breakpoint so pages always scroll
+     fully clear of the tab bar, with the .mobile-scroll-pad margin visible. */
+  .dashboard-view.dashboard-view {
+    height: 100dvh;
+    height: var(--visual-viewport-height, 100dvh);
+    min-height: 100dvh;
+    min-height: var(--visual-viewport-height, 100dvh);
+  }
+
+  .dashboard-view .app-header-inline-tabs {
+    display: none !important;
+  }
+
+  .dashboard-view [data-controller-zone="sidebar"] {
+    display: none !important;
+  }
+
+  .dashboard-view .mobile-top-tabs,
+  .dashboard-view [data-mobile-tab-bar] {
+    display: block !important;
+  }
+
+  .dashboard-view .dashboard-scroll-panel {
+    padding-left: 1rem !important;
+    padding-right: 1rem !important;
+  }
+
+  .mobile-scroll-pad {
+    padding-bottom: calc(var(--mobile-tab-bar-height, 88px) + var(--safe-area-bottom, env(safe-area-inset-bottom, 0px)) + var(--audio-player-height, 0px) + 28px);
+  }
+
+  .mobile-scroll-pad-back {
+    padding-bottom: calc(var(--mobile-tab-bar-height, 88px) + var(--safe-area-bottom, env(safe-area-inset-bottom, 0px)) + var(--audio-player-height, 0px) + 64px);
+  }
+
+  .mobile-safe-top {
+    padding-top: calc(var(--safe-area-top, env(safe-area-inset-top, 0px)) + 16px);
+  }
+
+  .marketplace-container .grid,
+  .discover-container .grid {
+    grid-template-columns: minmax(0, 1fr) !important;
+  }
+}
+
+/* Haptic-like press feedback for all interactive elements */
+button:active:not(:disabled),
+[role="button"]:active,
+a.glass-card:active,
+a.goal-card:active,
+.path-action-button:active {
+  transform: scale(0.97) !important;
+  transition: transform 0.1s ease !important;
+}
+
+/* Toggle switches — subtle press */
+input[type="checkbox"]:active + *,
+input[type="radio"]:active + * {
+  transform: scale(0.95);
+  transition: transform 0.1s ease;
+}
+
+/* Containers: base scale for smooth grow animation */
+[data-controller-container] {
+  transition: transform 0.2s ease, box-shadow 0.2s ease, border-color 0.2s ease;
+  outline: none !important;
+}
+
+/* Containers: console-style focus — lift + ambient orange glow.
+   Pure glow approach — no border-color or outline changes, avoids
+   Chromium compositor bugs with border-radius on translateZ(0) layers.
+   Gated behind html.controller-nav (set by useControllerNav only while
+   the user navigates with arrows/gamepad; cleared on any pointer input).
+   Ungated, the plain :focus selector painted the ring on every tap of a
+   tabindex card — the "gamepad selection with no gamepad" bug on mobile. */
+html.controller-nav [data-controller-container]:focus-visible,
+html.controller-nav [data-controller-container]:focus {
+  outline: none;
+  transform: translateY(-4px) scale(1.01);
+  box-shadow:
+    0 0 6px 2px rgba(251, 146, 60, 0.35),
+    0 0 20px rgba(251, 146, 60, 0.15),
+    0 0 40px rgba(251, 146, 60, 0.08);
+}
+
+/* Global glassmorphism utilities */
+@layer components {
+  .glass {
+    background-color: rgba(0, 0, 0, 0.35);
+    backdrop-filter: blur(18px);
+    -webkit-backdrop-filter: blur(18px);
+    border: 1px solid rgba(255, 255, 255, 0.18);
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
+    transform: translateZ(0);
+    isolation: isolate;
+  }
+
+  .glass-strong {
+    background-color: rgba(0, 0, 0, 0.35);
+    backdrop-filter: blur(24px);
+    -webkit-backdrop-filter: blur(24px);
+    border: 1px solid rgba(255, 255, 255, 0.18);
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
+    transform: translateZ(0);
+    isolation: isolate;
+  }
+  
+  .glass-card {
+    background-color: rgba(0, 0, 0, 0.65);
+    backdrop-filter: blur(18px);
+    -webkit-backdrop-filter: blur(18px);
+    border: 1px solid rgba(255, 255, 255, 0.18);
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
+    border-radius: 1rem;
+    overflow-x: hidden;
+    overflow-y: visible;
+  }
+
+  /* Dashboard content lives inside animated perspective/scroll containers.
+     Chromium/Brave can corrupt backdrop-filter + transformed cards into black
+     square/rectangle layers, so use translucent fills there instead.
+
+     `.home-card-shell` (Home.vue) was missing from this list and kept its own
+     `backdrop-filter: blur(18px)`, producing a second, subtler form of the
+     same corruption: a vertical seam where the blurred backdrop is refreshed
+     on one side and stale on the other. Because the boundary is in SCREEN
+     space, it cut both dashboard cards at the same x and vanished in the gap
+     between them — which is how it was identified from a screenshot
+     (2026-08-03: a lone unpaired brightness step at CSS x=633, present on
+     10/13 sampled rows inside the cards and 2/10 in the gap). It surfaced on
+     hover because a hover repaint is what re-rasterises part of the
+     backdrop. The card's fill is already rgba(0,0,0,0.65) — the same as
+     .glass-card, which renders unblurred here — so dropping the blur also
+     makes the shell consistent with the tiles beside it. */
+  body.dashboard-active .dashboard-scroll-panel .glass-card,
+  body.dashboard-active .dashboard-scroll-panel .home-card-shell,
+  body.dashboard-active .dashboard-scroll-panel .glass,
+  body.dashboard-active .dashboard-scroll-panel .mode-switcher,
+  body.dashboard-active .dashboard-scroll-panel .glass-button,
+  body.dashboard-active .dashboard-scroll-panel input,
+  body.dashboard-active .dashboard-scroll-panel textarea,
+  body.dashboard-active .dashboard-scroll-panel select,
+  .apps-view .glass-card,
+  .apps-view .glass,
+  .apps-view .mode-switcher,
+  .apps-view .glass-button,
+  .apps-view input {
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
+    transform: none;
+    isolation: auto;
+  }
+
+  /* Mode switcher - sidebar toggle */
+  .mode-switcher {
+    display: inline-flex;
+    gap: 2px;
+    padding: 3px;
+    border-radius: 0.5rem;
+    background: rgba(255, 255, 255, 0.06);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+  }
+
+  .segmented-select {
+    display: inline-flex;
+    gap: 2px;
+    padding: 3px;
+    border-radius: 0.5rem;
+    background: rgba(255, 255, 255, 0.06);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    max-width: min(260px, 24vw);
+  }
+
+  .segmented-select-with-discover {
+    max-width: min(360px, 34vw);
+  }
+
+  .app-header-desktop {
+    display: none;
+  }
+
+  .app-header-mobile {
+    display: block;
+  }
+
+  .app-header-inline-tabs {
+    display: none !important;
+  }
+
+  @media (min-width: 921px) {
+    .app-header-desktop {
+      display: flex;
+    }
+
+    .app-header-mobile {
+      display: none;
+    }
+  }
+
+  .apps-icon-grid-mobile {
+    display: block;
+  }
+
+  .apps-card-grid-desktop {
+    display: none;
+  }
+
+  @media (min-width: 921px) {
+    .apps-icon-grid-mobile {
+      display: none;
+    }
+
+    .apps-card-grid-desktop {
+      display: grid;
+    }
+  }
+
+  .category-tabs-wide {
+    flex: 0 1 auto;
+    min-width: 0;
+    width: max-content;
+    max-width: 100%;
+    overflow-x: auto;
+    overflow-y: hidden;
+    scrollbar-width: none;
+  }
+
+  .category-tabs-wide::-webkit-scrollbar {
+    display: none;
+  }
+
+  .category-tabs-wide .mode-switcher-btn {
+    flex: 0 0 auto;
+  }
+
+  .category-tabs-probe {
+    position: absolute;
+    left: -10000px;
+    top: -10000px;
+    visibility: hidden;
+    pointer-events: none;
+    width: max-content;
+    max-width: none;
+  }
+
+  .app-header-search,
+  .app-header-search-wrap {
+    flex: 1 1 auto;
+    min-width: 9rem;
+    max-width: none;
+  }
+
+  /* Give the search bar the same pill-container look as .mode-switcher (the
+     My Apps/App Store/Services and category tabs it sits next to), instead
+     of its own brighter ad-hoc background/border. */
+  .app-header-search {
+    padding: 0.5rem 1rem;
+    border-radius: 0.5rem;
+    background: rgba(255, 255, 255, 0.06);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    outline: none;
+    transition: border-color 0.2s ease, background-color 0.2s ease;
+  }
+
+  .app-header-search:focus {
+    border-color: rgba(251, 146, 60, 0.35);
+    background-color: rgba(251, 146, 60, 0.08);
+  }
+
+  /* Match the search bar to the tabs it sits beside — not just the inner
+     button, but the full .mode-switcher pill container (button + its 3px
+     padding + border): 40px on desktop. On mobile, the visible tab row is
+     the floating top tab bar (DashboardMobileNav), measured at 52px. */
+  @media (min-width: 921px) {
+    .app-header-search {
+      height: 40px;
+      padding-top: 0;
+      padding-bottom: 0;
+      font-size: 0.8rem;
+      box-sizing: border-box;
+    }
+  }
+
+  @media (max-width: 920px) {
+    .app-header-search {
+      height: 52px;
+      padding-top: 0;
+      padding-bottom: 0;
+      box-sizing: border-box;
+    }
+  }
+
+  .segmented-select .mode-switcher-btn {
+    flex: 0 0 auto;
+  }
+
+  .segmented-select-control {
+    width: clamp(132px, 18vw, 220px);
+    appearance: none;
+    -webkit-appearance: none;
+    background:
+      linear-gradient(45deg, transparent 50%, rgba(255, 255, 255, 0.68) 50%) right 12px center / 6px 6px no-repeat,
+      linear-gradient(135deg, rgba(255, 255, 255, 0.68) 50%, transparent 50%) right 8px center / 6px 6px no-repeat,
+      transparent;
+    border: 1px solid transparent;
+    border-radius: 0.375rem;
+    color: rgba(255, 255, 255, 0.95);
+    cursor: pointer;
+    font-size: 0.75rem;
+    font-weight: 500;
+    padding-right: 1.75rem;
+    padding: 0.375rem 1.75rem 0.375rem 0.75rem;
+    text-align: left;
+    white-space: nowrap;
+  }
+
+  .segmented-select-control:focus {
+    outline: none;
+    border-color: rgba(251, 146, 60, 0.35);
+    background-color: rgba(251, 146, 60, 0.12);
+  }
+
+  .segmented-select-control option {
+    background: #111827;
+    color: #fff;
+  }
+
+  /* Full-width mode switcher variant (sidebar, mobile settings) */
+  .mode-switcher-full {
+    display: flex;
+    width: 100%;
+  }
+
+  .mode-switcher-btn {
+    flex: 1 1 0%;
+    padding: 0.375rem 0.75rem;
+    border-radius: 0.375rem;
+    white-space: nowrap;
+    font-size: 0.75rem;
+    font-weight: 500;
+    color: rgba(255, 255, 255, 0.45);
+    transition: color 0.2s ease, background-color 0.2s ease, box-shadow 0.2s ease, border-color 0.2s ease;
+    cursor: pointer;
+    text-align: center;
+    border: 1px solid transparent;
+    background: transparent;
+  }
+
+  @media (max-width: 767px) {
+    .mode-switcher-btn {
+      min-height: 44px;
+      font-size: 0.875rem;
+      padding: 0.625rem 1rem;
+    }
+  }
+
+  .mode-switcher-btn:hover {
+    color: rgba(255, 255, 255, 0.75);
+  }
+
+  .mode-switcher-btn-active {
+    background: rgba(251, 146, 60, 0.15);
+    color: rgba(255, 255, 255, 0.95);
+    box-shadow:
+      0 1px 4px rgba(0, 0, 0, 0.3),
+      0 0 8px rgba(251, 146, 60, 0.12),
+      inset 0 1px 0 rgba(251, 146, 60, 0.2);
+    border-color: rgba(251, 146, 60, 0.25);
+  }
+
+  .mode-switcher-btn:focus-visible {
+    background: rgba(251, 146, 60, 0.1);
+    color: rgba(255, 255, 255, 0.9);
+    box-shadow:
+      0 0 0 1px rgba(251, 146, 60, 0.4),
+      0 0 12px rgba(251, 146, 60, 0.2);
+    border-color: rgba(251, 146, 60, 0.3);
+  }
+
+  /* Chat launcher button — sidebar (desktop) */
+  .chat-launcher-btn {
+    background: rgba(255, 255, 255, 0.06);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    color: rgba(255, 255, 255, 0.8);
+    margin-top: 0.25rem;
+  }
+
+  .chat-launcher-btn:hover {
+    background: rgba(251, 146, 60, 0.15);
+    border-color: rgba(251, 146, 60, 0.3);
+    color: #fb923c;
+    transform: translateY(-1px);
+  }
+
+  /* Chat launcher button — mobile bottom bar */
+  .chat-launcher-btn-mobile {
+    color: rgba(255, 255, 255, 0.7);
+  }
+
+  .chat-launcher-btn-mobile:hover {
+    color: #fb923c;
+  }
+
+  /* Chat close button (floating pill) */
+  .chat-close-btn {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.5rem 0.75rem;
+    border-radius: 0.75rem;
+    background: rgba(0, 0, 0, 0.5);
+    backdrop-filter: blur(18px);
+    -webkit-backdrop-filter: blur(18px);
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    color: rgba(255, 255, 255, 0.8);
+    cursor: pointer;
+    transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1), background-color 0.2s ease, border-color 0.2s ease, color 0.2s ease;
+    user-select: none;
+  }
+
+  .chat-close-btn:hover {
+    background: rgba(0, 0, 0, 0.65);
+    border-color: rgba(255, 255, 255, 0.2);
+    color: rgba(255, 255, 255, 1);
+    transform: translateY(-1px);
+  }
+
+  /* Chat fullscreen layout — fills the view-wrapper container */
+  .chat-fullscreen {
+    width: 100%;
+    height: 100%;
+    display: flex;
+    flex-direction: column;
+    background: transparent;
+    position: relative;
+  }
+
+
+  /* On mobile browsers, cap chat height to the dynamic viewport to prevent
+     content extending behind browser chrome (address bar / toolbar). */
+  @media (max-width: 767px) {
+    .chat-fullscreen {
+      max-height: 100vh;
+      max-height: 100dvh;
+      max-height: var(--visual-viewport-height, 100dvh);
+    }
+  }
+
+  .chat-mode-pill {
+    position: absolute;
+    top: 2.25rem;
+    right: 2.25rem;
+    z-index: 10;
+  }
+
+  .chat-iframe {
+    flex: 1;
+    width: 100%;
+    height: 100%;
+    border: none;
+    background: transparent;
+  }
+
+  /* On mobile, shrink iframe height so AIUI ends above the Archipelago tab bar.
+     Subtract both the bottom tab bar AND the top safe-area offset (status bar on
+     Android WebView / companion app) so the AIUI's internal tabs (chat/content/
+     context) stay above the tab bar instead of sliding underneath it. */
+  @media (max-width: 767px) {
+    .chat-iframe-mobile {
+      height: calc(100vh - var(--mobile-tab-bar-height, 72px) - var(--safe-area-top, env(safe-area-inset-top, 0px)) - var(--audio-player-height, 0px) - 16px) !important;
+      height: calc(100dvh - var(--mobile-tab-bar-height, 72px) - var(--safe-area-top, env(safe-area-inset-top, 0px)) - var(--audio-player-height, 0px) - 16px) !important;
+      height: calc(var(--visual-viewport-height, 100dvh) - var(--mobile-tab-bar-height, 72px) - var(--safe-area-top, env(safe-area-inset-top, 0px)) - var(--audio-player-height, 0px) - 16px) !important;
+      flex: none;
+    }
+  }
+
+  /* Chat placeholder (no AIUI URL) */
+  .chat-placeholder {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  .chat-placeholder-inner {
+    text-align: center;
+    max-width: 28rem;
+    padding: 3rem;
+    border-radius: 1rem;
+    background: rgba(255, 255, 255, 0.05);
+    backdrop-filter: blur(18px);
+    -webkit-backdrop-filter: blur(18px);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+  }
+
+  .chat-placeholder-icon {
+    width: 4rem;
+    height: 4rem;
+    margin: 0 auto 1.5rem;
+    border-radius: 9999px;
+    background: rgba(255, 255, 255, 0.1);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  /* Goal cards */
+  .goal-card {
+    cursor: pointer;
+    transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1), box-shadow 0.3s ease;
+  }
+
+  .goal-card:hover {
+    transform: translateY(-2px);
+  }
+
+  .goal-card:active {
+    transform: translateY(1px);
+  }
+
+  .goal-status-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.375rem;
+    padding: 0.25rem 0.625rem;
+    border-radius: 9999px;
+    font-size: 0.75rem;
+    font-weight: 500;
+  }
+
+  .goal-status-badge-not-started {
+    background: rgba(255, 255, 255, 0.08);
+    color: rgba(255, 255, 255, 0.5);
+  }
+
+  .goal-status-badge-in-progress {
+    background: rgba(251, 146, 60, 0.15);
+    color: #fb923c;
+  }
+
+  .goal-status-badge-completed {
+    background: rgba(74, 222, 128, 0.15);
+    color: #4ade80;
+  }
+
+  /* Goal wizard steps */
+  .goal-step {
+    padding: 1rem 1.25rem;
+    border-left: 3px solid rgba(255, 255, 255, 0.1);
+    transition: border-color 0.3s ease, background-color 0.3s ease;
+  }
+
+  .goal-step-active {
+    border-left-color: #fb923c;
+    background: rgba(251, 146, 60, 0.05);
+  }
+
+  .goal-step-completed {
+    border-left-color: #4ade80;
+  }
+
+  .goal-step-pending {
+    opacity: 0.5;
+  }
+
+  .glass-button {
+    position: relative;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding-inline: 1.25rem;
+    min-height: 44px;
+    background: rgba(0, 0, 0, 0.6);
+    backdrop-filter: blur(24px);
+    -webkit-backdrop-filter: blur(24px);
+    box-shadow:
+      0 8px 24px rgba(0, 0, 0, 0.45),
+      inset 0 1px 0 rgba(255, 255, 255, 0.22);
+    border-radius: 0.75rem;
+    border: none;
+    color: rgba(255, 255, 255, 0.9);
+    transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1), background-color 0.2s ease, box-shadow 0.3s ease;
+  }
+
+  .glass-button:active {
+    transform: translateY(1px);
+  }
+
+  .glass-button::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    border-radius: inherit;
+    padding: 2px;
+    background: linear-gradient(135deg, rgba(0, 0, 0, 0.8), transparent);
+    -webkit-mask:
+      linear-gradient(#fff 0 0) content-box,
+      linear-gradient(#fff 0 0);
+    -webkit-mask-composite: xor;
+    mask-composite: exclude;
+    pointer-events: none;
+  }
+
+  .glass-button:hover {
+    transform: translateY(-2px);
+    background: rgba(0, 0, 0, 0.35);
+    box-shadow:
+      0 12px 32px rgba(0, 0, 0, 0.6),
+      inset 0 1px 0 rgba(255, 255, 255, 0.25);
+  }
+
+  .glass-button:hover::before {
+    background: linear-gradient(135deg, rgba(255, 255, 255, 0.3), transparent);
+  }
+
+  /* Tier badges for marketplace */
+  .tier-badge {
+    font-size: 0.625rem;
+    padding: 1px 6px;
+    border-radius: 9999px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    vertical-align: middle;
+    margin-left: 6px;
+  }
+
+  .tier-badge-core {
+    background: rgba(251, 146, 60, 0.2);
+    color: #fb923c;
+  }
+
+  .tier-badge-recommended {
+    background: rgba(59, 130, 246, 0.2);
+    color: #60a5fa;
+  }
+
+  .glass-button-sm {
+    padding-block: 0.375rem;
+    padding-inline: 0.75rem;
+    font-size: 0.875rem;
+    min-height: 36px;
+  }
+
+  /* Transparent "frosted" variant for back buttons — the light counterpart to
+     the solid black .glass-button. Used by the floating mobile back pill so it
+     reads as transparent over content rather than a black slab. */
+  .back-button-glass {
+    position: relative;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 44px;
+    background: rgba(255, 255, 255, 0.08);
+    backdrop-filter: blur(24px) saturate(140%);
+    -webkit-backdrop-filter: blur(24px) saturate(140%);
+    border: 1px solid rgba(255, 255, 255, 0.16);
+    box-shadow:
+      0 8px 24px rgba(0, 0, 0, 0.28),
+      inset 0 1px 0 rgba(255, 255, 255, 0.18);
+    color: rgba(255, 255, 255, 0.92);
+    transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1), background-color 0.2s ease, border-color 0.2s ease;
+  }
+
+  .back-button-glass:hover {
+    transform: translateY(-2px);
+    background: rgba(255, 255, 255, 0.14);
+    border-color: rgba(255, 255, 255, 0.26);
+  }
+
+  .back-button-glass:active {
+    transform: translateY(1px);
+  }
+
+  /* Glass button color variants */
+  .glass-button-warning {
+    background: rgba(251, 146, 60, 0.2);
+    border: 1px solid rgba(251, 146, 60, 0.3);
+    color: #fdba74;
+  }
+
+  .glass-button-warning:hover {
+    background: rgba(251, 146, 60, 0.3);
+  }
+
+  .glass-button-danger {
+    background: rgba(239, 68, 68, 0.2);
+    border: 1px solid rgba(239, 68, 68, 0.3);
+    color: #fca5a5;
+  }
+
+  .glass-button-danger:hover {
+    background: rgba(239, 68, 68, 0.3);
+  }
+
+  .glass-button-success {
+    background: rgba(74, 222, 128, 0.2);
+    border: 1px solid rgba(74, 222, 128, 0.4);
+    color: #bbf7d0;
+  }
+
+  .glass-button-success:hover {
+    background: rgba(74, 222, 128, 0.3);
+  }
+
+  /* Status badges — inline colored pills */
+  .status-success {
+    background: rgba(74, 222, 128, 0.2);
+    color: #4ade80;
+  }
+
+  .status-error {
+    background: rgba(239, 68, 68, 0.2);
+    color: #f87171;
+  }
+
+  .status-warning {
+    background: rgba(251, 146, 60, 0.2);
+    color: #fb923c;
+  }
+
+  .status-info {
+    background: rgba(59, 130, 246, 0.2);
+    color: #60a5fa;
+  }
+
+  /* Alert banners — padded containers with border */
+  .alert-success {
+    padding: 0.5rem 0.75rem;
+    background: rgba(74, 222, 128, 0.1);
+    border: 1px solid rgba(74, 222, 128, 0.2);
+    border-radius: 0.5rem;
+    color: #bbf7d0;
+    font-size: 0.875rem;
+  }
+
+  .alert-error {
+    padding: 0.5rem 0.75rem;
+    background: rgba(239, 68, 68, 0.2);
+    border: 1px solid rgba(239, 68, 68, 0.3);
+    border-radius: 0.5rem;
+    color: #fca5a5;
+    font-size: 0.875rem;
+  }
+
+  .alert-warning {
+    padding: 0.5rem 0.75rem;
+    background: rgba(251, 146, 60, 0.1);
+    border: 1px solid rgba(251, 146, 60, 0.2);
+    border-radius: 0.5rem;
+    color: #fdba74;
+    font-size: 0.875rem;
+  }
+
+  .alert-info {
+    padding: 0.5rem 0.75rem;
+    background: rgba(59, 130, 246, 0.1);
+    border: 1px solid rgba(59, 130, 246, 0.2);
+    border-radius: 0.5rem;
+    color: #93c5fd;
+    font-size: 0.875rem;
+  }
+
+  /* Form input focus ring */
+  .input-glass {
+    background: rgba(255, 255, 255, 0.05);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-radius: 0.5rem;
+    padding: 0.5rem 0.75rem;
+    color: rgba(255, 255, 255, 0.9);
+    font-size: 0.875rem;
+    transition: border-color 0.2s ease;
+  }
+
+  .input-glass:focus {
+    outline: none;
+    border-color: #fb923c;
+    box-shadow: 0 0 0 1px #fb923c;
+  }
+
+  /* Toast - glassmorphic, top-right */
+  .toast-glass {
+    background-color: rgba(0, 0, 0, 0.65);
+    backdrop-filter: blur(18px);
+    -webkit-backdrop-filter: blur(18px);
+    border: 1px solid rgba(255, 255, 255, 0.18);
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
+    border-radius: 0.75rem;
+  }
+
+  /* Toast transition */
+  .toast-enter-active,
+  .toast-leave-active {
+    transition: opacity 0.3s ease, transform 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+  }
+  .toast-enter-from,
+  .toast-leave-to {
+    opacity: 0;
+    transform: translateX(1rem);
+  }
+
+  /* Incoming Transactions badge */
+  .incoming-tx-badge {
+    display: flex;
+    align-items: center;
+    gap: 0.375rem;
+    padding: 0.375rem 0.75rem;
+    background: rgba(34, 197, 94, 0.12);
+    border: 1px solid rgba(34, 197, 94, 0.25);
+    border-radius: 9999px;
+    font-size: 0.75rem;
+    font-weight: 600;
+    color: #4ade80;
+    cursor: pointer;
+    transition: all 0.3s ease;
+    position: relative;
+    white-space: nowrap;
+  }
+
+  .incoming-tx-badge:hover {
+    background: rgba(34, 197, 94, 0.2);
+    border-color: rgba(34, 197, 94, 0.4);
+    transform: translateY(-1px);
+  }
+
+  .incoming-tx-ping {
+    position: absolute;
+    top: -2px;
+    right: -2px;
+    width: 8px;
+    height: 8px;
+    background: #4ade80;
+    border-radius: 9999px;
+    animation: incoming-pulse 2s ease-in-out infinite;
+  }
+
+  @keyframes incoming-pulse {
+    0%, 100% { opacity: 1; transform: scale(1); }
+    50% { opacity: 0.5; transform: scale(1.5); }
+  }
+
+  /* Incoming transaction row */
+  .incoming-tx-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.75rem;
+    padding: 0.75rem 1rem;
+    background: rgba(0, 0, 0, 0.2);
+    cursor: pointer;
+    transition: all 0.2s ease;
+  }
+
+  .incoming-tx-row:hover {
+    background: rgba(34, 197, 94, 0.08);
+  }
+
+  .incoming-tx-icon {
+    width: 1.75rem;
+    height: 1.75rem;
+    border-radius: 0.5rem;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+  }
+
+  .incoming-tx-icon-pending {
+    background: rgba(234, 179, 8, 0.15);
+    color: #facc15;
+  }
+
+  .incoming-tx-icon-confirmed {
+    background: rgba(34, 197, 94, 0.15);
+    color: #4ade80;
+  }
+
+  /* Slide-down transition for incoming tx panel */
+  .incoming-tx-slide-enter-active {
+    transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+  }
+
+  .incoming-tx-slide-leave-active {
+    transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+  }
+
+  .incoming-tx-slide-enter-from,
+  .incoming-tx-slide-leave-to {
+    opacity: 0;
+    max-height: 0;
+    transform: translateY(-8px);
+    margin-bottom: 0;
+  }
+
+  .incoming-tx-slide-enter-to,
+  .incoming-tx-slide-leave-from {
+    opacity: 1;
+    max-height: 500px;
+    transform: translateY(0);
+  }
+
+  /* BANNED: gradient-card, gradient-card-dark, gradient-button
+     Use .glass-card or .path-option-card for containers.
+     Use .glass-button for all buttons.
+     These gradient styles break the clean glass aesthetic. */
+
+  /* Gradient border for logo badge */
+  .logo-gradient-border {
+    position: relative;
+    border-radius: 9999px;
+    padding: 3px;
+    background: linear-gradient(135deg, rgba(255, 255, 255, 0.6) 0%, rgba(0, 0, 0, 0.8) 100%);
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
+  }
+
+  .logo-gradient-border::after {
+    content: '';
+    position: absolute;
+    inset: 3px;
+    border-radius: 9999px;
+    background: #000;
+    z-index: 0;
+  }
+
+  .logo-gradient-border img,
+  .logo-gradient-border svg {
+    border-radius: 9999px;
+    display: block;
+    position: relative;
+    z-index: 1;
+  }
+
+  /* Choose Your Path - Main Container */
+  .path-glass-container {
+    width: calc(100% - 48px);
+    max-width: 1200px;
+    margin: 40px auto;
+    padding: 32px;
+    background: rgba(0, 0, 0, 0.65);
+    backdrop-filter: blur(40px);
+    -webkit-backdrop-filter: blur(40px);
+    border-radius: 24px;
+    border: 1px solid rgba(255, 255, 255, 0.06);
+    box-shadow:
+      0 20px 60px rgba(0, 0, 0, 0.3),
+      inset 0 1px 0 rgba(255, 255, 255, 0.1);
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+    overflow-x: hidden;
+  }
+
+  /* Onboarding scroll container — constrains to viewport and scrolls */
+  .onb-scroll-container {
+    max-height: calc(100dvh - 2rem);
+    overflow-y: auto;
+    overflow-x: hidden;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  /* Mobile: tighter padding and margins for onboarding containers */
+  @media (max-width: 639px) {
+    .path-glass-container {
+      width: calc(100% - 24px);
+      margin: 12px auto;
+      padding: 12px;
+      border-radius: 20px;
+      gap: 8px;
+    }
+    .onb-scroll-container {
+      max-height: calc(100dvh - 1.5rem);
+    }
+  }
+
+  /* Choose Your Path - Option Cards */
+  .path-option-card {
+    position: relative;
+    background: rgba(0, 0, 0, 0.60);
+    backdrop-filter: blur(24px);
+    -webkit-backdrop-filter: blur(24px);
+    box-shadow:
+      0 8px 24px rgba(0, 0, 0, 0.45),
+      inset 0 1px 0 rgba(255, 255, 255, 0.22);
+    border-radius: 16px;
+    padding: 12px 10px;
+    text-align: center;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1), background-color 0.2s ease, box-shadow 0.3s ease;
+    border: none;
+    transform: translateZ(0);
+    isolation: isolate;
+  }
+
+  .path-option-card:active {
+    transform: translateY(1px);
+  }
+
+  /* Gradient border effect using CSS mask - default is subtle */
+  .path-option-card::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    border-radius: inherit;
+    padding: 2px;
+    background: linear-gradient(135deg, rgba(0, 0, 0, 0.8), transparent);
+    -webkit-mask:
+      linear-gradient(#fff 0 0) content-box,
+      linear-gradient(#fff 0 0);
+    -webkit-mask-composite: xor;
+    mask-composite: exclude;
+    pointer-events: none;
+  }
+
+  /* Icon styling with black glass effect */
+  .path-option-card svg {
+    color: rgba(255, 255, 255, 0.85);
+    transition: color 0.2s ease, filter 0.3s ease;
+    filter:
+      drop-shadow(0 1px 1px rgba(255, 255, 255, 0.3))
+      drop-shadow(0 2px 4px rgba(0, 0, 0, 0.8))
+      drop-shadow(0 -1px 2px rgba(0, 0, 0, 0.6));
+    stroke-width: 2.5;
+  }
+
+  .path-option-card:hover {
+    transform: translateY(-2px);
+    background: rgba(0, 0, 0, 0.35);
+    box-shadow:
+      0 12px 32px rgba(0, 0, 0, 0.6),
+      inset 0 1px 0 rgba(255, 255, 255, 0.25);
+  }
+
+  .path-option-card:hover::before {
+    background: linear-gradient(135deg, rgba(255, 255, 255, 0.3), transparent);
+  }
+
+  .path-option-card:hover svg {
+    color: rgba(255, 255, 255, 1);
+    filter:
+      drop-shadow(0 1px 2px rgba(255, 255, 255, 0.5))
+      drop-shadow(0 3px 6px rgba(0, 0, 0, 0.9))
+      drop-shadow(0 -1px 3px rgba(0, 0, 0, 0.7));
+  }
+
+  /* Selected state */
+  .path-option-card--selected {
+    background: rgba(255, 255, 255, 0.12);
+    box-shadow:
+      0 12px 32px rgba(0, 0, 0, 0.6),
+      0 0 30px rgba(255, 255, 255, 0.2),
+      inset 0 1px 0 rgba(255, 255, 255, 0.35);
+    transform: translateY(-2px);
+  }
+
+  .path-option-card--selected::before {
+    background: linear-gradient(135deg, rgba(255, 255, 255, 0.6), transparent);
+  }
+
+  .path-option-card--selected svg {
+    color: rgba(255, 255, 255, 1);
+    filter:
+      drop-shadow(0 1px 2px rgba(255, 255, 255, 0.6))
+      drop-shadow(0 3px 8px rgba(0, 0, 0, 1))
+      drop-shadow(0 0 12px rgba(255, 255, 255, 0.3));
+  }
+
+  .path-option-card--selected h3 {
+    color: rgba(255, 255, 255, 1);
+  }
+
+  /* Action Buttons */
+  .path-action-button {
+    font-size: 18px;
+  font-weight: 500;
+    line-height: 1.4;
+    border-radius: 16px;
+    background: rgba(0, 0, 0, 0.25);
+    color: rgba(255, 255, 255, 0.96);
+    box-shadow:
+      0 8px 24px rgba(0, 0, 0, 0.45),
+      inset 0 1px 0 rgba(255, 255, 255, 0.22);
+    backdrop-filter: blur(24px);
+    -webkit-backdrop-filter: blur(24px);
+    border: none;
+    position: relative;
+    cursor: pointer;
+    transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1), background-color 0.2s ease, box-shadow 0.3s ease;
+    min-width: 0;
+    white-space: nowrap;
+    letter-spacing: 0.02em;
+  }
+
+  .path-action-button:active {
+    transform: translateY(1px);
+  }
+
+  .path-action-button--skip {
+    padding: 12px 40px;
+    font-size: 16px;
+  }
+
+  .path-action-button--skip::before {
+    display: none;
+  }
+
+  .path-action-button--continue {
+    padding: 16px 40px;
+    font-size: 18px;
+    font-weight: 600;
+  }
+
+  @media (max-width: 639px) {
+    .path-action-button {
+      font-size: 15px;
+      border-radius: 14px;
+    }
+    .path-action-button--skip {
+      padding: 10px 24px;
+      font-size: 14px;
+    }
+    .path-action-button--continue {
+      padding: 12px 28px;
+      font-size: 15px;
+    }
+  }
+
+  .path-action-button::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    border-radius: inherit;
+    padding: 2px;
+    background: linear-gradient(135deg, rgba(0, 0, 0, 0.8), transparent);
+    -webkit-mask: 
+      linear-gradient(#fff 0 0) content-box, 
+      linear-gradient(#fff 0 0);
+    -webkit-mask-composite: xor;
+    mask-composite: exclude;
+    pointer-events: none;
+  }
+
+  .path-action-button:hover {
+    transform: translateY(-2px);
+    background: rgba(0, 0, 0, 0.35);
+    box-shadow:
+      0 12px 32px rgba(0, 0, 0, 0.6),
+      inset 0 1px 0 rgba(255, 255, 255, 0.25);
+}
+
+  .path-action-button:hover::before {
+    background: linear-gradient(135deg, rgba(255, 255, 255, 0.3), transparent);
+  }
+
+  .path-action-button:active {
+    background: rgba(0, 0, 0, 0.55);
+    transform: translateY(1px);
+  }
+
+  /* Active Navigation Tab Style — sidebar selected item */
+  .nav-tab-active {
+    position: relative;
+    background: rgba(0, 0, 0, 0.35) !important;
+    box-shadow:
+      0 6px 16px rgba(0, 0, 0, 0.6),
+      inset 0 1px 0 rgba(255, 255, 255, 0.25) !important;
+    color: rgba(255, 255, 255, 1) !important;
+    font-weight: 600 !important;
+  }
+
+  .nav-tab-active::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    border-radius: inherit;
+    padding: 2px;
+    background: linear-gradient(135deg, rgba(255, 255, 255, 0.3), transparent);
+    -webkit-mask:
+      linear-gradient(#fff 0 0) content-box,
+      linear-gradient(#fff 0 0);
+    -webkit-mask-composite: xor;
+    mask-composite: exclude;
+    pointer-events: none;
+  }
+
+  /* Sidebar nav items: grow + glow on gamepad focus (same as containers) */
+  .sidebar-nav-item {
+    transition: transform 0.2s ease, box-shadow 0.2s ease;
+  }
+  .sidebar-nav-item:focus-visible {
+    outline: none !important;
+    background: rgba(255, 255, 255, 0.1) !important;
+    color: white !important;
+  }
+}
+
+/* Modal transition (Vue <Transition name="modal">) — shared across all modal components */
+.modal-enter-active,
+.modal-leave-active {
+  transition: opacity 0.3s ease;
+}
+
+.modal-enter-active .glass-card,
+.modal-leave-active .glass-card {
+  transition: transform 0.3s ease, opacity 0.3s ease;
+}
+
+.modal-enter-from,
+.modal-leave-to {
+  opacity: 0;
+}
+
+.modal-enter-from .glass-card,
+.modal-leave-to .glass-card {
+  transform: scale(0.95);
+  opacity: 0;
+}
+
+/* Background image */
+body {
+  margin: 0;
+  font-family: 'Avenir Next', system-ui, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  background: #000;
+  color: white;
+  min-height: 100vh;
+  min-height: 100dvh;
+}
+
+#app {
+  min-height: 100vh;
+  min-height: 100dvh;
+}
+
+html.kiosk-safe-area,
+html.kiosk-safe-area body {
+  width: 100vw;
+  height: 100vh;
+  overflow: hidden;
+}
+/* Black fill on BODY only, never on the root element. With a background on
+   <html>, body's background no longer propagates to the canvas and instead
+   paints as a normal block background — which by CSS paint order lands ON TOP
+   of negative-z-index descendants, i.e. over .bg-perspective-container
+   (z-index -10): every dashboard/login background image rendered as solid
+   black on kiosk displays. Body-only matches the non-kiosk pages, where the
+   art has always shown. */
+html.kiosk-safe-area body {
+  background: #000;
+}
+
+html.kiosk-safe-area #app {
+  width: 100vw;
+  height: 100vh;
+  min-height: 0;
+  overflow: hidden;
+}
+
+/* Horizontal filter-pill rail: single row, swipes sideways on narrow
+   screens, no visible scrollbar — pills never wrap or squish. */
+.pill-rail {
+  display: flex;
+  gap: 0.375rem;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: none;
+  -webkit-overflow-scrolling: touch;
+}
+.pill-rail::-webkit-scrollbar {
+  display: none;
+}
+.pill-rail > * {
+  flex: 0 0 auto;
+  white-space: nowrap;
+}
+
+/* Custom scrollbar for glass containers */
+.custom-scrollbar::-webkit-scrollbar {
+  width: 10px;
+}
+
+.custom-scrollbar::-webkit-scrollbar-track {
+  background: rgba(0, 0, 0, 0.2);
+  border-radius: 10px;
+}
+
+.custom-scrollbar::-webkit-scrollbar-thumb {
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.3) 0%, rgba(255, 255, 255, 0.1) 100%);
+  border-radius: 10px;
+  border: 2px solid rgba(0, 0, 0, 0.2);
+}
+
+.custom-scrollbar::-webkit-scrollbar-thumb:hover {
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.4) 0%, rgba(255, 255, 255, 0.2) 100%);
+}
+
+/* Hide scrollbar but keep scroll functionality - applied globally to all scrollable content */
+.scrollbar-hide,
+.overflow-y-auto,
+.overflow-auto,
+.overflow-y-scroll,
+.iframe-scrollbar-hide {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+.scrollbar-hide::-webkit-scrollbar,
+.overflow-y-auto::-webkit-scrollbar,
+.overflow-auto::-webkit-scrollbar,
+.overflow-y-scroll::-webkit-scrollbar,
+.iframe-scrollbar-hide::-webkit-scrollbar {
+  display: none;
+}
+/* Iframe scrollbar hide - targets iframe element; inner doc scrollbars need same-origin injection */
+iframe.iframe-scrollbar-hide {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+
+/* Animations */
+@keyframes fadeUpIn {
+  0% {
+    opacity: 0;
+    transform: translateY(28px);
+  }
+  100% {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes fadeOut {
+  from { opacity: 1; }
+  to { opacity: 0; }
+}
+
+@keyframes caretBlink {
+  0%, 100% {
+    border-right-color: #fbbf24;
+  }
+  50% {
+    border-right-color: transparent;
+  }
+}
+
+.animate-fade-up {
+  animation: fadeUpIn 900ms cubic-bezier(0.22, 1, 0.36, 1) 120ms both;
+}
+
+.animate-fade-in {
+  animation: fadeIn 0.5s ease forwards;
+}
+
+.animate-fade-out {
+  animation: fadeOut 0.8s ease forwards;
+}
+
+.typing-text {
+  display: inline-block;
+  overflow: hidden;
+  white-space: nowrap;
+  max-width: 0;
+  border-right: 4px solid #fbbf24;
+  animation:
+    typing 2s steps(30, end) forwards,
+    caretBlink 0.5s step-end 3 2.6s;
+}
+
+/* Adjust typing animation to use max-width for better centering */
+@keyframes typing {
+  from {
+    max-width: 0;
+  }
+  to {
+    max-width: 100%;
+  }
+}
+
+/* Splash screen styles */
+.splash-complete .login-card {
+  animation: fadeUpIn 900ms cubic-bezier(0.22, 1, 0.36, 1) 120ms both;
+}
+
+/* Background glitch effect - continuous every 5s */
+body::before,
+body::after,
+html::before {
+  content: '';
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 0;
+  opacity: 0;
+}
+
+/* Subtle black glitch overlay - delay to avoid flash of partial clip-path on first paint (black crescent bug) */
+body::before {
+  background-image: url('/assets/img/bg.jpg');
+  background-size: auto 100vh;
+  background-position: center top;
+  background-attachment: fixed;
+  mix-blend-mode: multiply;
+  filter: brightness(0.4) contrast(1.2);
+  will-change: transform, clip-path, opacity;
+  animation: bg-glitch-shift-repeat 5s steps(10, end) infinite;
+  animation-delay: 1.5s;
+  animation-fill-mode: backwards;
+}
+
+/* Second subtle black layer */
+html::before {
+  background-image: url('/assets/img/bg.jpg');
+  background-size: auto 100vh;
+  background-position: center top;
+  background-attachment: fixed;
+  mix-blend-mode: multiply;
+  filter: brightness(0.3) contrast(1.3);
+  will-change: transform, clip-path, opacity;
+  animation: bg-glitch-shift-2-repeat 5s steps(9, end) infinite;
+  animation-delay: 1.6s;
+  animation-fill-mode: backwards;
+}
+
+/* Subtle scanline sweep */
+body::after {
+  background:
+    linear-gradient(180deg, rgba(0,0,0,0.08), rgba(0,0,0,0) 60%),
+    repeating-linear-gradient(180deg, rgba(0,0,0,0.02) 0 2px, rgba(0,0,0,0) 2px 4px),
+    radial-gradient(ellipse at center, rgba(0,0,0,0) 40%, rgba(0,0,0,0.15) 100%);
+  will-change: transform, opacity;
+  animation: bg-glitch-scan-repeat 5s ease-out infinite;
+  animation-delay: 1.5s;
+  animation-fill-mode: backwards;
+}
+
+/* Pause background animations when tab is hidden to prevent
+   Chromium compositor from corrupting backdrop-filter layers on tab return */
+html.tab-hidden body::before,
+html.tab-hidden body::after,
+html.tab-hidden::before {
+  animation-play-state: paused !important;
+  will-change: auto !important;
+}
+
+/* Strip all backdrop-filters to force compositor layer rebuild on tab return */
+html.no-backdrop *,
+html.no-backdrop *::before,
+html.no-backdrop *::after {
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+}
+
+/* Kiosk: the infinite mix-blend-mode:multiply glitch overlays with
+   background-attachment:fixed are a known black-screen vector under the
+   kiosk's software compositor — a missed repaint leaves a dark multiply
+   layer stuck over the whole viewport. Their base opacity is 0, so
+   disabling the animations hides them entirely on kiosk. */
+html.kiosk-mode body::before,
+html.kiosk-mode body::after,
+html.kiosk-mode::before {
+  animation: none !important;
+  will-change: auto !important;
+}
+
+/* Dashboard: full viewport width, no letterboxing, no body scroll */
+body.dashboard-active {
+  overflow: hidden;
+  width: 100%;
+}
+
+body.dashboard-active .dashboard-view .bg-perspective-container {
+  left: 0 !important;
+  right: 0 !important;
+  width: 100% !important;
+  min-width: 100% !important;
+}
+
+/* Disable glitch effect on dashboard */
+.dashboard-view ~ body::before,
+.dashboard-view ~ body::after,
+.dashboard-view ~ html::before {
+  animation: none !important;
+  opacity: 0 !important;
+}
+
+/* Alternative approach - disable on body when dashboard is active */
+body:has(.dashboard-view)::before,
+body:has(.dashboard-view)::after,
+html:has(.dashboard-view)::before {
+  animation: none !important;
+  opacity: 0 !important;
+}
+
+/* Disable glitch effect on video background screens (onboarding intro/login) */
+body.video-background-active::before,
+body.video-background-active::after,
+html:has(body.video-background-active)::before {
+  animation: none !important;
+  opacity: 0 !important;
+  display: none !important;
+}
+
+/* Full-screen modal overlays should freeze the page underneath, including
+   custom Teleport modals that do not go through BaseModal. */
+html:has(body .fixed.inset-0:not(.pointer-events-none)),
+body:has(.fixed.inset-0:not(.pointer-events-none)) {
+  overflow: hidden;
+}
+
+html.modal-scroll-locked .fixed.inset-0 {
+  overscroll-behavior: contain;
+  touch-action: none;
+}
+
+html.modal-scroll-locked .fixed.inset-0 .overflow-y-auto,
+html.modal-scroll-locked .fixed.inset-0 .overflow-auto,
+html.modal-scroll-locked .fixed.inset-0 [style*="overflow-y: auto"],
+html.modal-scroll-locked .fixed.inset-0 [style*="overflow: auto"] {
+  overscroll-behavior: contain;
+  touch-action: pan-y;
+}
+
+html.modal-scroll-locked .dashboard-scroll-panel {
+  overflow: hidden !important;
+  overscroll-behavior: none;
+  touch-action: none;
+}
+
+/* Repeating glitch animations - every 5 seconds (subtle) */
+@keyframes bg-glitch-shift-repeat {
+  0%, 82% { transform: translate(0,0); clip-path: inset(0% 0 0 0); opacity: 0; }
+  82.1% { opacity: .08; }
+  84% { transform: translate(3px,-1px); clip-path: inset(8% 0 70% 0); }
+  86% { transform: translate(-3px,1px); clip-path: inset(42% 0 40% 0); }
+  88% { transform: translate(2px,0); clip-path: inset(68% 0 10% 0); }
+  91% { transform: translate(-2px,2px); clip-path: inset(18% 0 60% 0); }
+  93% { transform: translate(3px,-2px); clip-path: inset(55% 0 20% 0); }
+  95% { transform: translate(-2px,1px); clip-path: inset(10% 0 80% 0); }
+  100% { transform: translate(0,0); clip-path: inset(0% 0 0 0); opacity: 0; }
+}
+
+@keyframes bg-glitch-scan-repeat {
+  0%, 82% { opacity: 0; transform: translateY(-20%); }
+  84% { opacity: 0.15; }
+  90% { opacity: 0.10; }
+  100% { opacity: 0; transform: translateY(115%); }
+}
+
+@keyframes bg-glitch-shift-2-repeat {
+  0%, 82% { transform: translate(0,0); clip-path: inset(0% 0 0 0); opacity: 0; }
+  82.1% { opacity: .06; }
+  84% { transform: translate(-3px,1px); clip-path: inset(12% 0 65% 0); }
+  86% { transform: translate(3px,-1px) skewX(0.3deg); clip-path: inset(36% 0 42% 0); }
+  89% { transform: translate(-2px,1px); clip-path: inset(72% 0 8% 0); }
+  92% { transform: translate(2px,-2px); clip-path: inset(22% 0 58% 0); }
+  95% { transform: translate(-2px,1px); clip-path: inset(50% 0 26% 0); }
+  100% { transform: translate(0,0); clip-path: inset(0% 0 0 0); opacity: 0; }
+}
+
+/* ── Cloud File Browser (AIUI-style list cards) ──── */
+
+.cloud-file-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  padding-bottom: 1rem;
+}
+
+.cloud-file-item {
+  display: flex;
+  gap: 0.75rem;
+  padding: 0.625rem 0.75rem;
+  border-radius: 0.75rem;
+  transition: background-color 0.2s ease;
+  text-align: left;
+  width: 100%;
+  cursor: pointer;
+  /* Readable card rows (like the Peer Files list) — bare text over the
+     wallpaper was unreadable. */
+  background: rgba(0, 0, 0, 0.45);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  color: inherit;
+  align-items: center;
+}
+.cloud-file-item:hover {
+  background: rgba(255, 255, 255, 0.08);
+}
+.cloud-file-item:active {
+  background: rgba(255, 255, 255, 0.1);
+}
+.cloud-file-item:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 1.5px rgba(251, 146, 60, 0.5), 0 0 16px rgba(251, 146, 60, 0.12);
+}
+
+.cloud-file-item-thumb {
+  flex-shrink: 0;
+  width: 3rem;
+  height: 3rem;
+  border-radius: 0.5rem;
+  overflow: hidden;
+}
+
+.cloud-file-item-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
+  opacity: 0;
+  transition: opacity 0.15s ease;
+  flex-shrink: 0;
+}
+.cloud-file-item:hover .cloud-file-item-actions,
+.cloud-file-item:focus-within .cloud-file-item-actions {
+  opacity: 1;
+}
+
+.cloud-file-action-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.75rem;
+  height: 1.75rem;
+  border-radius: 0.375rem;
+  background: rgba(255, 255, 255, 0.08);
+  color: rgba(255, 255, 255, 0.6);
+  border: none;
+  cursor: pointer;
+  transition: background-color 0.15s ease, color 0.15s ease, opacity 0.15s ease;
+  text-decoration: none;
+}
+.cloud-file-action-btn:hover {
+  background: rgba(255, 255, 255, 0.15);
+  color: white;
+}
+.cloud-file-action-delete:hover {
+  background: rgba(239, 68, 68, 0.2);
+  color: #ef4444;
+}
+
+.cloud-file-badge {
+  display: inline-flex;
+  font-size: 0.6875rem;
+  font-weight: 500;
+  padding: 0.125rem 0.375rem;
+  border-radius: 0.25rem;
+}
+
+.cloud-file-item-skeleton {
+  pointer-events: none;
+}
+
+/* Toolbar */
+.cloud-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  margin-bottom: 1rem;
+}
+
+.cloud-breadcrumbs {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0;
+  min-width: 0;
+}
+
+.cloud-breadcrumb-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.125rem;
+  padding: 0.25rem 0.375rem;
+  font-size: 0.8125rem;
+  color: rgba(255, 255, 255, 0.5);
+  background: none;
+  border: none;
+  cursor: pointer;
+  border-radius: 0.25rem;
+  transition: background-color 0.15s ease, color 0.15s ease, opacity 0.15s ease;
+  white-space: nowrap;
+}
+.cloud-breadcrumb-item:hover:not(.cloud-breadcrumb-active) {
+  color: white;
+  background: rgba(255, 255, 255, 0.08);
+}
+.cloud-breadcrumb-active {
+  color: rgba(255, 255, 255, 0.9);
+  font-weight: 500;
+  cursor: default;
+}
+
+.cloud-toolbar-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.375rem;
+  padding: 0.375rem 0.625rem;
+  font-size: 0.8125rem;
+  border-radius: 0.5rem;
+}
+
+/* View toggle */
+.cloud-view-toggle {
+  display: flex;
+  border-radius: 0.5rem;
+  overflow: hidden;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+}
+.cloud-view-toggle-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 2rem;
+  height: 2rem;
+  border: none;
+  cursor: pointer;
+  background: transparent;
+  color: rgba(255, 255, 255, 0.35);
+  transition: background-color 0.15s ease, color 0.15s ease, opacity 0.15s ease;
+}
+.cloud-view-toggle-btn:hover {
+  color: rgba(255, 255, 255, 0.7);
+  background: rgba(255, 255, 255, 0.05);
+}
+.cloud-view-toggle-active {
+  background: rgba(255, 255, 255, 0.1);
+  color: rgba(255, 255, 255, 0.9);
+}
+
+/* ── Cloud Card Grid (AIUI-style poster cards) ──── */
+
+.cloud-card-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 1rem;
+  padding-bottom: 1rem;
+}
+@media (min-width: 640px) {
+  .cloud-card-grid {
+    grid-template-columns: repeat(3, 1fr);
+  }
+}
+@media (min-width: 1024px) {
+  .cloud-card-grid {
+    grid-template-columns: repeat(4, 1fr);
+  }
+}
+
+/* Mobile: square, tappable tiles + bottom clearance so the last row scrolls
+   above the tab bar / back button (matches .mobile-scroll-pad). */
+@media (max-width: 767px) {
+  .cloud-card-grid,
+  .cloud-file-list {
+    padding-bottom: calc(
+      var(--mobile-tab-bar-height, 88px) +
+      var(--safe-area-bottom, env(safe-area-inset-bottom, 0px)) +
+      var(--audio-player-height, 0px) + 24px
+    );
+  }
+  .cloud-grid-card-cover {
+    aspect-ratio: 1 / 1;
+  }
+}
+
+.cloud-grid-card {
+  display: flex;
+  flex-direction: column;
+  text-align: left;
+  width: 100%;
+  border: none;
+  cursor: pointer;
+  background: rgba(255, 255, 255, 0.04);
+  border-radius: 0.75rem;
+  overflow: hidden;
+  transition: background-color 0.2s ease, box-shadow 0.2s ease;
+  color: inherit;
+  padding: 0;
+}
+.cloud-grid-card:hover {
+  background: rgba(255, 255, 255, 0.08);
+  transform: translateY(-2px);
+}
+.cloud-grid-card:active {
+  transform: translateY(0);
+}
+.cloud-grid-card:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 1.5px rgba(251, 146, 60, 0.5), 0 0 16px rgba(251, 146, 60, 0.12);
+}
+
+.cloud-grid-card-cover {
+  position: relative;
+  width: 100%;
+  /* Fallback aspect when the Tailwind aspect-[4/3] utility is unavailable, so
+     the cover never collapses to zero height. */
+  aspect-ratio: 4 / 3;
+  overflow: hidden;
+  border-radius: 0.625rem;
+}
+
+.cloud-grid-card-gradient {
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(to top, rgba(0, 0, 0, 0.6), transparent 60%);
+  pointer-events: none;
+}
+
+.cloud-grid-card-info {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  padding: 0.5rem;
+  z-index: 1;
+}
+
+.cloud-grid-card-badges {
+  position: absolute;
+  top: 0.375rem;
+  right: 0.375rem;
+  display: flex;
+  gap: 0.25rem;
+  z-index: 1;
+}
+.cloud-grid-card-badge {
+  font-size: 0.625rem;
+  font-weight: 500;
+  padding: 0.125rem 0.375rem;
+  border-radius: 0.25rem;
+  background: rgba(0, 0, 0, 0.6);
+  backdrop-filter: blur(4px);
+  color: rgba(255, 255, 255, 0.7);
+}
+
+/* Play button overlay (audio/video) */
+.cloud-grid-card-play {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 2;
+  backdrop-filter: blur(2px);
+  background: rgba(0, 0, 0, 0.3);
+  opacity: 0;
+  transition: opacity 0.2s ease;
+}
+.cloud-grid-card:hover .cloud-grid-card-play {
+  opacity: 1;
+}
+.cloud-grid-card-play-btn {
+  width: 3.5rem;
+  height: 3.5rem;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.5);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  backdrop-filter: blur(8px);
+  transition: transform 0.15s ease;
+}
+.cloud-grid-card:hover .cloud-grid-card-play-btn {
+  transform: scale(1.1);
+}
+
+/* Actions overlay (top-left, on hover) */
+.cloud-grid-card-actions {
+  position: absolute;
+  top: 0.375rem;
+  left: 0.375rem;
+  display: flex;
+  gap: 0.25rem;
+  z-index: 3;
+  opacity: 0;
+  transition: opacity 0.15s ease;
+}
+.cloud-grid-card:hover .cloud-grid-card-actions {
+  opacity: 1;
+}
+
+/* Grid skeleton */
+.cloud-grid-card-skeleton {
+  border-radius: 0.75rem;
+  overflow: hidden;
+}
+
+/* Playing state — keep play overlay visible */
+.cloud-grid-card-play-active {
+  opacity: 1 !important;
+  background: rgba(0, 0, 0, 0.4);
+}
+
+/* ── Mobile floating back/close button (always 8px above tab bar — and above
+      the audio player too when it is showing, so it never hides behind it) ── */
+.mobile-back-btn {
+  position: fixed;
+  left: 1rem;
+  right: 1rem;
+  bottom: calc(var(--mobile-tab-bar-height, 72px) + var(--audio-player-height, 0px) + 8px);
+  z-index: 40;
+  filter: drop-shadow(0 10px 25px rgba(0, 0, 0, 0.5));
+}
+
+.mobile-filter-btn {
+  bottom: calc(var(--mobile-tab-bar-height, 72px) + var(--safe-area-bottom, env(safe-area-inset-bottom, 0px)) + var(--audio-player-height, 0px) + 12px);
+  filter: drop-shadow(0 10px 25px rgba(0, 0, 0, 0.5));
+}
+
+.mobile-filter-sheet {
+  padding-bottom: calc(var(--safe-area-bottom, env(safe-area-inset-bottom, 0px)) + 1.5rem);
+}
+
+.mobile-category-strip {
+  display: flex;
+  gap: 0.5rem;
+  overflow-x: auto;
+  overscroll-behavior-x: contain;
+  padding-bottom: 0.25rem;
+  scrollbar-width: none;
+}
+
+.marketplace-container {
+  padding-bottom: 6rem;
+}
+
+@media (max-width: 767px) {
+  .marketplace-container {
+    padding-bottom: calc(var(--mobile-tab-bar-height, 88px) + var(--safe-area-bottom, env(safe-area-inset-bottom, 0px)) + 2rem);
+  }
+}
+
+.mobile-category-strip::-webkit-scrollbar {
+  display: none;
+}
+
+.mobile-category-pill {
+  flex: 0 0 auto;
+  white-space: nowrap;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.08);
+  color: rgba(255, 255, 255, 0.78);
+  padding: 0.55rem 0.9rem;
+  font-size: 0.85rem;
+  font-weight: 600;
+}
+
+.mobile-category-pill-active {
+  border-color: rgba(255, 255, 255, 0.36);
+  background: rgba(255, 255, 255, 0.2);
+  color: white;
+}
+
+/* ── Cloud Audio Player (mini bar) ──── */
+
+.cloud-audio-player {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.75rem 1rem;
+  margin-top: 0.5rem;
+  background: rgba(0, 0, 0, 0.65);
+  backdrop-filter: blur(18px);
+  -webkit-backdrop-filter: blur(18px);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 0.75rem;
+  flex-shrink: 0;
+}
+.cloud-audio-player-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 2.75rem;
+  height: 2.75rem;
+  min-width: 2.75rem;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.1);
+  border: none;
+  color: white;
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: background-color 0.15s ease, color 0.15s ease, opacity 0.15s ease;
+  padding: 0;
+}
+.cloud-audio-player-btn:hover {
+  background: rgba(255, 255, 255, 0.2);
+}
+.cloud-audio-progress {
+  height: 3px;
+  background: rgba(255, 255, 255, 0.1);
+  border-radius: 2px;
+  margin-top: 0.375rem;
+  overflow: hidden;
+}
+.cloud-audio-progress-bar {
+  height: 100%;
+  background: #fb923c;
+  border-radius: 2px;
+  transition: width 0.3s linear;
+}
+
+/* ── Cloud Drag-and-Drop Overlay ──── */
+
+.cloud-drop-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 30;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.6);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  border-radius: 0.75rem;
+  border: 2px dashed rgba(251, 146, 60, 0.6);
+  animation: drop-overlay-in 0.2s ease-out;
+}
+.cloud-drop-overlay-inner {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  padding: 2rem;
+}
+@keyframes drop-overlay-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+/* ── Share Modal ──── */
+
+.share-modal-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 9999;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.6);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  animation: share-modal-fade-in 0.2s ease-out;
+}
+@keyframes share-modal-fade-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+.share-modal {
+  width: 100%;
+  max-width: 28rem;
+  margin: 1rem;
+  padding: 1.5rem;
+  animation: share-modal-slide-in 0.25s ease-out;
+}
+@keyframes share-modal-slide-in {
+  from { opacity: 0; transform: translateY(12px) scale(0.97); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+.share-modal-close {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 2rem;
+  height: 2rem;
+  border-radius: 0.5rem;
+  border: none;
+  background: rgba(255, 255, 255, 0.08);
+  color: rgba(255, 255, 255, 0.5);
+  cursor: pointer;
+  transition: background-color 0.15s ease, color 0.15s ease;
+}
+.share-modal-close:hover {
+  background: rgba(255, 255, 255, 0.15);
+  color: white;
+}
+
+.share-modal-row {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  padding: 0.75rem 1rem;
+  border-radius: 0.75rem;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+/* Access type options */
+.share-access-options {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 0.5rem;
+}
+.share-access-option {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.375rem;
+  padding: 0.75rem 0.5rem;
+  border-radius: 0.75rem;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(255, 255, 255, 0.04);
+  color: rgba(255, 255, 255, 0.6);
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+.share-access-option:hover {
+  background: rgba(255, 255, 255, 0.08);
+  border-color: rgba(255, 255, 255, 0.15);
+  color: rgba(255, 255, 255, 0.9);
+}
+.share-access-option-active {
+  background: rgba(251, 146, 60, 0.1);
+  border-color: rgba(251, 146, 60, 0.4);
+  color: #fb923c;
+}
+.share-access-option-active:hover {
+  background: rgba(251, 146, 60, 0.15);
+  border-color: rgba(251, 146, 60, 0.5);
+  color: #fb923c;
+}
+
+/* Price input */
+.share-price-input-wrap {
+  display: flex;
+  align-items: center;
+  gap: 0;
+  border-radius: 0.75rem;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: rgba(255, 255, 255, 0.05);
+  overflow: hidden;
+  margin-top: 0.5rem;
+}
+.share-price-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 0.75rem;
+  flex-shrink: 0;
+}
+.share-price-input {
+  flex: 1;
+  min-width: 0;
+  padding: 0.625rem 0;
+  background: transparent;
+  border: none;
+  outline: none;
+  color: white;
+  font-size: 0.875rem;
+  font-family: inherit;
+}
+.share-price-input::placeholder {
+  color: rgba(255, 255, 255, 0.3);
+}
+.share-price-unit {
+  padding: 0 0.75rem;
+  font-size: 0.75rem;
+  font-weight: 500;
+  color: rgba(255, 255, 255, 0.4);
+  flex-shrink: 0;
+}
+
+/* Status messages */
+.share-modal-status {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.5rem 0.75rem;
+  border-radius: 0.5rem;
+  background: rgba(255, 255, 255, 0.05);
+}
+.share-modal-error {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.5rem 0.75rem;
+  border-radius: 0.5rem;
+  background: rgba(239, 68, 68, 0.1);
+  border: 1px solid rgba(239, 68, 68, 0.2);
+}
+.share-modal-success {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.5rem 0.75rem;
+  border-radius: 0.5rem;
+  background: rgba(74, 222, 128, 0.1);
+  border: 1px solid rgba(74, 222, 128, 0.2);
+}
+.share-modal-save {
+  background: rgba(251, 146, 60, 0.15);
+  border-color: rgba(251, 146, 60, 0.3);
+}
+.share-modal-save:hover:not(:disabled) {
+  background: rgba(251, 146, 60, 0.25);
+}
+.share-modal-save:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+/* ── Media Lightbox ── */
+.lightbox-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 4000;
+  background: rgba(0, 0, 0, 0.92);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  outline: none;
+}
+.lightbox-close {
+  position: absolute;
+  top: 1rem;
+  right: 1rem;
+  z-index: 4010;
+  color: rgba(255, 255, 255, 0.7);
+  background: rgba(255, 255, 255, 0.1);
+  border: none;
+  border-radius: 0.5rem;
+  padding: 0.5rem;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+}
+.lightbox-close:hover {
+  background: rgba(255, 255, 255, 0.2);
+  color: white;
+}
+.lightbox-counter {
+  position: absolute;
+  top: 1.25rem;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 4010;
+  color: rgba(255, 255, 255, 0.5);
+  font-size: 0.875rem;
+  font-variant-numeric: tabular-nums;
+}
+.lightbox-nav {
+  position: absolute;
+  top: 50%;
+  transform: translateY(-50%);
+  z-index: 4010;
+  color: rgba(255, 255, 255, 0.5);
+  background: rgba(255, 255, 255, 0.05);
+  border: none;
+  border-radius: 0.5rem;
+  padding: 0.75rem 0.5rem;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+}
+.lightbox-nav:hover {
+  background: rgba(255, 255, 255, 0.15);
+  color: white;
+}
+.lightbox-nav-prev { left: 1rem; }
+.lightbox-nav-next { right: 1rem; }
+.lightbox-content {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  max-width: calc(100vw - 8rem);
+  max-height: calc(100vh - 6rem);
+}
+.lightbox-media {
+  max-width: calc(100vw - 8rem);
+  max-height: calc(100vh - 6rem);
+  object-fit: contain;
+  border-radius: 0.25rem;
+}
+.lightbox-loading {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 200px;
+  height: 200px;
+}
+.lightbox-error {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 200px;
+  height: 200px;
+}
+.lightbox-filename {
+  position: absolute;
+  bottom: 1rem;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 4010;
+  background: rgba(0, 0, 0, 0.6);
+  padding: 0.375rem 1rem;
+  border-radius: 0.5rem;
+}
+@media (max-width: 768px) {
+  .lightbox-nav-prev { left: 0.25rem; }
+  .lightbox-nav-next { right: 0.25rem; }
+  .lightbox-content {
+    max-width: calc(100vw - 2rem);
+    max-height: calc(100vh - 4rem);
+  }
+  .lightbox-media {
+    max-width: calc(100vw - 2rem);
+    max-height: calc(100vh - 4rem);
+  }
+}
+
+/* Share action button highlight */
+.cloud-file-action-share:hover {
+  background: rgba(251, 146, 60, 0.2);
+  color: #fb923c;
+}
+
+/* Smooth loading → content transition */
+.content-fade-enter-active,
+.content-fade-leave-active {
+  transition: opacity 0.2s ease, transform 0.2s ease;
+}
+
+.content-fade-enter-from {
+  opacity: 0;
+  transform: translateY(6px);
+}
+
+.content-fade-leave-to {
+  opacity: 0;
+}
+
+/* Staggered card entrance animation */
+.card-stagger {
+  opacity: 0;
+  animation: card-stagger-in 0.4s cubic-bezier(0.25, 0.46, 0.45, 0.94) forwards;
+  animation-delay: calc(var(--stagger-index, 0) * 50ms);
+}
+
+@keyframes card-stagger-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+/* ===== iPhone-style App Icon Grid (mobile) ===== */
+
+.app-icon-grid-wrap {
+  width: 100%;
+}
+
+.app-icon-pages {
+  display: flex;
+  overflow-x: auto;
+  scroll-snap-type: x mandatory;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: none;
+}
+.app-icon-pages::-webkit-scrollbar {
+  display: none;
+}
+
+.app-icon-page {
+  flex: 0 0 100%;
+  scroll-snap-align: start;
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 18px 10px;
+  padding: 8px 2px 16px;
+  align-content: start;
+}
+
+.app-icon-item {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+  transition: transform 0.1s ease;
+}
+.app-icon-item:active {
+  transform: scale(0.9);
+}
+
+.app-icon-frame {
+  position: relative;
+  width: 60px;
+  height: 60px;
+  border-radius: 18px;
+  overflow: visible;
+  background: rgba(0, 0, 0, 0.72);
+  box-shadow: 0 8px 18px rgba(0, 0, 0, 0.38);
+}
+
+.archy-app-icon {
+  display: block;
+  box-sizing: border-box;
+  object-fit: cover;
+  background:
+    radial-gradient(circle at 35% 28%, rgba(255, 255, 255, 0.1), rgba(255, 255, 255, 0) 42%),
+    linear-gradient(145deg, rgba(22, 22, 24, 0.96), rgba(0, 0, 0, 0.96));
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.12),
+    inset 0 -10px 24px rgba(0, 0, 0, 0.34),
+    0 8px 18px rgba(0, 0, 0, 0.35);
+}
+
+.app-icon-img {
+  width: 100%;
+  height: 100%;
+  border-radius: 18px;
+}
+
+.app-card-icon {
+  border-radius: 16px;
+}
+
+.app-detail-icon {
+  border-radius: 22px;
+  object-fit: cover;
+}
+
+/* Status dot — top-right of icon */
+.app-icon-status {
+  position: absolute;
+  top: -3px;
+  right: -3px;
+  width: 13px;
+  height: 13px;
+  border-radius: 50%;
+  border: 2px solid rgba(0, 0, 0, 0.85);
+  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.16), 0 2px 6px rgba(0, 0, 0, 0.45);
+}
+.app-icon-status-running {
+  background: #22c55e;
+}
+.app-icon-status-error {
+  background: #ef4444;
+}
+.app-icon-status-transition {
+  background: #f59e0b;
+  animation: pulse 1.5s infinite;
+}
+
+.app-icon-installing {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.6);
+  border-radius: 18px;
+}
+
+.app-icon-label {
+  font-size: 11px;
+  line-height: 1.2;
+  color: rgba(255, 255, 255, 0.85);
+  text-align: center;
+  max-width: 72px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.app-icon-progress-label {
+  display: -webkit-box;
+  max-width: 84px;
+  min-height: 22px;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  color: rgba(255, 255, 255, 0.58);
+  font-size: 9px;
+  line-height: 1.2;
+  text-align: center;
+}
+
+/* Page indicator dots */
+.app-icon-dots {
+  display: flex;
+  justify-content: center;
+  gap: 6px;
+  padding: 2px 0 8px;
+}
+
+.app-icon-dot {
+  display: block;
+  flex: 0 0 auto;
+  width: 8px;
+  height: 8px;
+  min-width: 8px !important;
+  min-height: 8px !important;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.25);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  padding: 0;
+  margin: 0;
+  appearance: none;
+  -webkit-appearance: none;
+  cursor: pointer;
+  transition: background 0.2s, transform 0.2s;
+}
+.app-icon-dot-active {
+  background: rgba(247, 147, 26, 0.9);
+  border-color: rgba(247, 147, 26, 0.65);
+  transform: none;
+}
+
+/* ===== End App Icon Grid ===== */
+
+/* Monitoring dashboard */
+.monitoring-stat-card {
+  background: rgba(0, 0, 0, 0.58);
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  border-radius: 0.75rem;
+  padding: 1rem;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.34);
+}
+
+.monitoring-stat-card-compact {
+  padding: 0 1rem;
+}
+
+.monitoring-chart {
+  width: 100%;
+  height: auto;
+  display: block;
+}
+
+.monitoring-bar-container {
+  width: 80px;
+  height: 6px;
+  background: rgba(255, 255, 255, 0.08);
+  border-radius: 3px;
+  overflow: hidden;
+  flex-shrink: 0;
+}
+
+.monitoring-bar-fill {
+  height: 100%;
+  border-radius: 3px;
+  transition: width 0.3s ease;
+}
+
+.monitoring-bar-ok {
+  background: #4ade80;
+}
+
+.monitoring-bar-warn {
+  background: #f59e0b;
+}
+
+.monitoring-bar-danger {
+  background: #ef4444;
+}
+.monitoring-threshold-input {
+  width: 60px;
+  padding: 4px 8px;
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 6px;
+  color: white;
+  font-size: 0.75rem;
+  text-align: right;
+}
+
+/* Fleet dashboard */
+.fleet-node-card {
+  background: rgba(0, 0, 0, 0.3);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 0.75rem;
+  padding: 1rem;
+  cursor: pointer;
+  transition: all 0.3s ease;
+}
+
+.fleet-node-card:hover {
+  transform: translateY(-2px);
+  border-color: rgba(255, 255, 255, 0.15);
+  background: rgba(0, 0, 0, 0.4);
+}
+
+.fleet-node-card-selected {
+  border-color: rgba(251, 146, 60, 0.4);
+  background: rgba(251, 146, 60, 0.06);
+}
+
+.fleet-status-dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.fleet-dot-online {
+  background: #4ade80;
+  box-shadow: 0 0 6px rgba(74, 222, 128, 0.4);
+}
+
+.fleet-dot-offline {
+  background: #ef4444;
+  box-shadow: 0 0 6px rgba(239, 68, 68, 0.4);
+}
+
+.fleet-version-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 8px;
+  border-radius: 9999px;
+  font-size: 0.625rem;
+  font-weight: 500;
+  background: rgba(59, 130, 246, 0.15);
+  color: #60a5fa;
+  border: 1px solid rgba(59, 130, 246, 0.2);
+}
+
+.fleet-metric-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.fleet-bar-track {
+  flex: 1;
+  height: 6px;
+  background: rgba(255, 255, 255, 0.08);
+  border-radius: 3px;
+  overflow: hidden;
+}
+
+.fleet-bar-fill {
+  height: 100%;
+  border-radius: 3px;
+  transition: width 0.3s ease;
+}
+
+.fleet-node-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 1px 6px;
+  border-radius: 4px;
+  font-size: 0.625rem;
+  font-family: ui-monospace, monospace;
+  font-weight: 500;
+  background: rgba(255, 255, 255, 0.08);
+  color: rgba(255, 255, 255, 0.6);
+}
+
+.fleet-sort-btn {
+  padding: 5px 11px;
+  border-radius: 6px;
+  font-size: 0.8rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+  color: rgba(255, 255, 255, 0.5);
+  background: transparent;
+  border: 1px solid transparent;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.fleet-sort-btn:hover {
+  color: rgba(255, 255, 255, 0.7);
+  background: rgba(255, 255, 255, 0.05);
+}
+
+.fleet-sort-btn-active {
+  color: rgba(255, 255, 255, 0.9);
+  background: rgba(255, 255, 255, 0.08);
+  border-color: rgba(255, 255, 255, 0.12);
+}
+
+.fleet-text-warn {
+  color: #f59e0b !important;
+}
+
+.fleet-text-danger {
+  color: #ef4444 !important;
+}
+
+/* ── Discover Page (App Store) ──── */
+
+.discover-container {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255, 255, 255, 0.2) rgba(255, 255, 255, 0.05);
+}
+
+.discover-hero {
+  background: linear-gradient(135deg, rgba(0, 0, 0, 0.75) 0%, rgba(251, 146, 60, 0.06) 100%);
+  border-color: rgba(251, 146, 60, 0.12);
+  position: relative;
+  overflow: hidden;
+}
+
+.discover-hero-scanline {
+  position: absolute;
+  inset: 0;
+  background:
+    repeating-linear-gradient(
+      180deg,
+      transparent 0px,
+      transparent 3px,
+      rgba(255, 255, 255, 0.015) 3px,
+      rgba(255, 255, 255, 0.015) 4px
+    );
+  pointer-events: none;
+  z-index: 1;
+}
+
+.discover-hero-layout {
+  display: flex;
+  align-items: center;
+  gap: 2rem;
+}
+
+.discover-hero-content {
+  flex: 1;
+  min-width: 0;
+}
+
+.discover-hero-face {
+  display: none;
+  flex-shrink: 0;
+  opacity: 0.85;
+}
+
+@media (min-width: 1280px) {
+  .discover-hero-face {
+    display: block;
+  }
+}
+
+.discover-hero-accent {
+  background: linear-gradient(90deg, #fb923c, #f59e0b, #fb923c);
+  background-size: 200% 100%;
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+  animation: discover-gradient-shift 6s ease-in-out infinite;
+}
+
+@keyframes discover-gradient-shift {
+  0%, 100% { background-position: 0% 50%; }
+  50% { background-position: 100% 50%; }
+}
+
+.discover-terminal-tag {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 8px;
+  border-radius: 4px;
+  font-size: 0.6875rem;
+  font-weight: 600;
+  font-family: ui-monospace, 'Cascadia Code', 'Fira Code', monospace;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  background: rgba(251, 146, 60, 0.12);
+  color: rgba(251, 146, 60, 0.8);
+  border: 1px solid rgba(251, 146, 60, 0.2);
+}
+
+/* Featured App Banner */
+.featured-banner {
+  position: relative;
+  min-height: 320px;
+  border-radius: 16px;
+  border: 1px solid rgba(251, 146, 60, 0.15);
+}
+.featured-banner-img {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  border-radius: 16px;
+  opacity: 0.6;
+  transition: opacity 0.4s ease;
+}
+.featured-banner:hover .featured-banner-img {
+  opacity: 0.75;
+}
+.featured-banner-overlay {
+  position: relative;
+  z-index: 1;
+  padding: 2.5rem;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  min-height: 320px;
+  background: linear-gradient(to top, rgba(0,0,0,0.92) 0%, rgba(0,0,0,0.5) 40%, rgba(0,0,0,0.1) 100%);
+  border-radius: 16px;
+}
+@media (max-width: 768px) {
+  .featured-banner { min-height: 240px; }
+  .featured-banner-overlay { padding: 1.5rem; min-height: 240px; }
+}
+
+.discover-stat-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.375rem;
+  padding: 0.375rem 0.75rem;
+  border-radius: 9999px;
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  font-size: 0.8125rem;
+}
+
+.discover-installed-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 1px 6px;
+  border-radius: 4px;
+  font-size: 0.625rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  background: rgba(74, 222, 128, 0.15);
+  color: #4ade80;
+}
+
+.discover-principle-card {
+  padding: 1.25rem;
+  border-radius: 1rem;
+  background-color: rgba(0, 0, 0, 0.65);
+  backdrop-filter: blur(18px);
+  -webkit-backdrop-filter: blur(18px);
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
+  transition: border-color 0.3s ease, transform 0.3s ease;
+}
+
+.discover-principle-card:hover {
+  border-color: rgba(251, 146, 60, 0.2);
+  transform: translateY(-2px);
+}
+
+.discover-manifesto {
+  background-color: rgba(0, 0, 0, 0.65);
+  backdrop-filter: blur(18px);
+  -webkit-backdrop-filter: blur(18px);
+}
+
+.fleet-matrix-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.75rem;
+}
+
+.fleet-matrix-header-cell {
+  padding: 8px 12px;
+  text-align: left;
+  font-weight: 500;
+  color: rgba(255, 255, 255, 0.5);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  white-space: nowrap;
+}
+
+.fleet-matrix-cell {
+  padding: 6px 12px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+  white-space: nowrap;
+}
+
+/* Mobile GPU optimization — reduce blur radius for cheaper compositing */
+@media (max-width: 768px) {
+  .glass-card, .glass-button {
+    backdrop-filter: blur(8px);
+    -webkit-backdrop-filter: blur(8px);
+  }
+}
+
+/* =========================================================================
+   Mesh Bitcoin & Deadman Panels (child components of Mesh.vue)
+   ========================================================================= */
+.mesh-bitcoin-panel,
+.mesh-deadman-panel { padding: 16px; display: flex; flex-direction: column; gap: 12px; }
+.mesh-panel-title { font-size: 1rem; font-weight: 700; color: rgba(255,255,255,0.95); margin: 0; }
+.mesh-panel-sub { font-size: 0.8rem; color: rgba(255,255,255,0.45); margin: -4px 0 0; }
+.mesh-bitcoin-section { display: flex; flex-direction: column; gap: 8px; }
+.mesh-bitcoin-section-header { display: flex; justify-content: space-between; align-items: center; }
+.mesh-bitcoin-label { font-size: 0.75rem; font-weight: 600; color: rgba(255,255,255,0.5); text-transform: uppercase; letter-spacing: 0.5px; }
+.mesh-bitcoin-height { font-size: 0.85rem; font-weight: 700; color: #fb923c; font-family: monospace; }
+.mesh-bitcoin-height.mesh-muted { color: rgba(255,255,255,0.3); font-weight: 400; }
+.mesh-bitcoin-hint { font-size: 0.8rem; color: rgba(255,255,255,0.45); margin: 0; }
+.mesh-bitcoin-input { width: 100%; background: rgba(255,255,255,0.06); border: 1px solid rgba(255,255,255,0.1); border-radius: 8px; color: rgba(255,255,255,0.9); padding: 10px 12px; font-size: 0.85rem; font-family: inherit; outline: none; box-sizing: border-box; }
+.mesh-bitcoin-input:focus { border-color: rgba(251,146,60,0.4); }
+.mesh-bitcoin-input::placeholder { color: rgba(255,255,255,0.25); }
+.mesh-bitcoin-input-sm { padding: 8px 12px; font-size: 0.8rem; }
+textarea.mesh-bitcoin-input { resize: vertical; min-height: 60px; }
+select.mesh-bitcoin-input { cursor: pointer; appearance: none; background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' fill='rgba(255,255,255,0.4)' viewBox='0 0 16 16'%3E%3Cpath d='M8 11L3 6h10z'/%3E%3C/svg%3E"); background-repeat: no-repeat; background-position: right 12px center; padding-right: 32px; }
+select.mesh-bitcoin-input option { background: #1a1a2e; color: rgba(255,255,255,0.9); }
+.mesh-bitcoin-advanced { margin-top: 4px; }
+.mesh-bitcoin-advanced summary { cursor: pointer; list-style: none; display: flex; align-items: center; gap: 6px; }
+.mesh-bitcoin-advanced summary::before { content: '\25B6'; font-size: 0.6rem; color: rgba(255,255,255,0.4); transition: transform 0.2s; }
+.mesh-bitcoin-advanced[open] summary::before { transform: rotate(90deg); }
+.mesh-block-list { display: flex; flex-direction: column; gap: 4px; }
+.mesh-block-row { display: flex; align-items: center; gap: 8px; padding: 6px 8px; background: rgba(255,255,255,0.04); border-radius: 6px; }
+.mesh-block-height { font-size: 0.8rem; font-weight: 600; color: #a855f7; font-family: monospace; }
+.mesh-block-hash { font-size: 0.7rem; color: rgba(255,255,255,0.35); font-family: monospace; }
+.mesh-send-tabs { display: flex; gap: 2px; background: rgba(0,0,0,0.3); border-radius: 8px; padding: 2px; }
+.mesh-send-tab { flex: 1; padding: 6px 12px; border: none; background: transparent; color: rgba(255,255,255,0.5); font-size: 0.8rem; font-weight: 500; border-radius: 6px; cursor: pointer; transition: all 0.2s; }
+.mesh-send-tab:hover { color: rgba(255,255,255,0.8); }
+.mesh-send-tab.active { color: #fff; background: rgba(255,255,255,0.1); }
+.mesh-relay-mode { display: flex; gap: 4px; flex-wrap: wrap; }
+.mesh-relay-mode-option { display: flex; align-items: center; gap: 6px; padding: 6px 10px; border-radius: 6px; cursor: pointer; font-size: 0.8rem; color: rgba(255,255,255,0.6); transition: all 0.15s; }
+.mesh-relay-mode-option.active { color: rgba(255,255,255,0.9); }
+.mesh-relay-mode-option small { color: rgba(255,255,255,0.35); font-size: 0.7rem; }
+.mesh-relay-mode-option input[type="radio"] { accent-color: #fb923c; }
+.mesh-relay-result { padding: 8px 12px; border-radius: 8px; font-size: 0.8rem; }
+.mesh-relay-result.success { background: rgba(74,222,128,0.1); border: 1px solid rgba(74,222,128,0.2); color: #4ade80; }
+.mesh-relay-result.error { background: rgba(239,68,68,0.1); border: 1px solid rgba(239,68,68,0.2); color: #ef4444; }
+
+/* Deadman panel */
+.mesh-deadman-status { display: flex; flex-direction: column; gap: 8px; padding: 12px; background: rgba(0,0,0,0.2); border-radius: 10px; }
+.mesh-deadman-indicator { display: inline-flex; align-items: center; font-size: 0.7rem; font-weight: 700; text-transform: uppercase; letter-spacing: 1px; padding: 4px 10px; border-radius: 6px; width: fit-content; }
+.mesh-deadman-indicator.armed { background: rgba(251,146,60,0.15); color: #fb923c; border: 1px solid rgba(251,146,60,0.3); }
+.mesh-deadman-indicator.disabled { background: rgba(255,255,255,0.06); color: rgba(255,255,255,0.4); border: 1px solid rgba(255,255,255,0.08); }
+.mesh-deadman-indicator.triggered { background: rgba(239,68,68,0.15); color: #ef4444; border: 1px solid rgba(239,68,68,0.3); animation: pulse-alert 1.5s infinite; }
+.mesh-deadman-timer { font-size: 1.8rem; font-weight: 700; color: #fb923c; font-family: monospace; }
+.mesh-deadman-message { font-size: 0.8rem; color: rgba(255,255,255,0.5); font-style: italic; }
+.mesh-deadman-checkin-btn { margin-top: 4px; }
+.mesh-deadman-config { display: flex; flex-direction: column; gap: 10px; }
+.mesh-deadman-field { display: flex; flex-direction: column; gap: 4px; }
+.mesh-deadman-info { display: flex; gap: 12px; flex-wrap: wrap; }
+.mesh-deadman-info-item { font-size: 0.75rem; color: rgba(255,255,255,0.4); }
+
+/* ── Global dropdown normalization ─────────────────────────────────────────
+   Native select arrows rendered with inconsistent right padding per browser
+   and per ad-hoc utility classes, and long labels could run into the icon.
+   One rule for every select: no native arrow, one chevron at a fixed inset,
+   uniform right padding (wins over pr-* utilities), and ellipsis truncation. */
+select {
+  appearance: none;
+  -webkit-appearance: none;
+  -moz-appearance: none;
+  background-image: url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='rgba(255,255,255,0.55)' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 0.75rem center;
+  background-size: 1rem 1rem;
+  padding-right: 2.5rem !important;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+select::-ms-expand {
+  display: none;
+}
+
+/* =========================================================================
+   Federation 3D node map — fill-to-bottom layout
+   When the map stage is on screen, the dashboard scroll panel switches from
+   a scrolling document to a column that hands all remaining height to the
+   map, killing the big bottom margin on every form factor. List view (no
+   .node-map-stage in the DOM) is untouched, and browsers without :has()
+   gracefully fall back to the old scrolling behaviour via the stage's
+   min-height.
+   ========================================================================= */
+.dashboard-scroll-panel:has(.node-map-stage) {
+  display: flex;
+  flex-direction: column;
+  /* Desktop: trim the 6rem .mobile-scroll-pad breathing room to a slim edge */
+  padding-bottom: 1rem;
+}
+
+/* The routed view stretches; DashboardRouterView tags it .view-container
+   (with Tailwind's flex-none, which this outranks on specificity). */
+.dashboard-scroll-panel:has(.node-map-stage) > .view-container {
+  flex: 1 1 auto;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+/* The wrapper's bottom scroll spacer is dead weight in a filled column */
+.dashboard-scroll-panel:has(.node-map-stage) > div[aria-hidden="true"] {
+  display: none;
+}
+
+/* Mobile/tablet: fill down to the tab bar (+ audio player / safe area),
+   not under it — the bar is viewport-fixed and would cover the map. */
+@media (max-width: 920px) {
+  .dashboard-scroll-panel:has(.node-map-stage) {
+    padding-bottom: calc(var(--mobile-tab-bar-height, 88px) + var(--safe-area-bottom, env(safe-area-inset-bottom, 0px)) + var(--audio-player-height, 0px) + 12px);
+  }
+}
+
+/* Pages with the floating mobile back button (.mobile-scroll-pad-back) keep
+   its full clearance under the filled map so the stage never slides beneath
+   the button. */
+@media (max-width: 920px) {
+  .dashboard-scroll-panel.mobile-scroll-pad-back:has(.node-map-stage) {
+    padding-bottom: calc(var(--mobile-tab-bar-height, 88px) + var(--safe-area-bottom, env(safe-area-inset-bottom, 0px)) + var(--audio-player-height, 0px) + 64px);
+  }
+}

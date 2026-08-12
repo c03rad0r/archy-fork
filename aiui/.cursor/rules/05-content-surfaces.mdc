@@ -1,0 +1,91 @@
+---
+description: The five content surfaces that define how content is rendered in AIUI
+globs: "**/renderers/**,**/chat/**,**/content-panel/**"
+alwaysApply: false
+---
+
+# Content Surfaces
+
+AIUI has five distinct surfaces where content can appear. Every renderer must define how it behaves in each applicable surface.
+
+## Surface 1: Chat Preview
+- Location: inline in chat message bubble
+- Max height: ~120px
+- Purpose: identify content at a glance (thumbnail, title, brief metadata)
+- Always tappable/clickable to expand to Panel Preview or Panel Play
+- Lightweight rendering only — no heavy libraries loaded
+- Examples: film poster thumbnail strip, file icon with name, code snippet (first 5 lines), image thumbnail
+
+## Surface 2: Chat Play
+- Location: inline in chat message bubble
+- Max height: ~200px
+- Purpose: inline playback without leaving the chat
+- Must not disrupt chat scrolling
+- Has an "expand" button to open in Panel Play
+- Examples: voice note waveform with play button, short video player, audio player, small interactive widget
+
+## Surface 3: Panel Preview
+- Location: content panel (beside chat on desktop, overlay on mobile)
+- No height limit (scrollable within panel)
+- Purpose: full browsing/exploration experience
+- Supports: filtering, sorting, searching, pagination
+- Click items to go to Panel Play or Panel Edit
+- Examples: film grid (tiled, filterable), image gallery, search results list, document preview, file tree
+
+## Surface 4: Panel Play
+- Location: content panel
+- Purpose: full immersive media playback
+- Examples: full video player with controls, audio with spectrum visualization, slideshow, trailer playback
+
+## Surface 5: Panel Edit/Interactive
+- Location: content panel
+- Purpose: full interaction and editing
+- Changes can be sent back to chat as new messages
+- Examples: code editor (CodeMirror), form filling, approval workflow, spreadsheet editing, diagram creation
+
+## Surface Transitions
+```
+Chat Preview  --tap-->  Panel Preview  --tap item-->  Panel Play
+                                       --tap item-->  Panel Edit
+Chat Play     --expand-->  Panel Play
+Panel Edit    --submit-->  Chat (new message with result)
+```
+
+## Renderer Interface
+Every renderer must export:
+```typescript
+interface RendererDefinition {
+  id: string
+  name: string
+  contentType: string                    // MIME-like type identifier
+  surfaces: SurfaceType[]               // which surfaces this renderer supports
+  chatPreview?: Component               // Surface 1
+  chatPlay?: Component                  // Surface 2
+  panelPreview?: Component              // Surface 3
+  panelPlay?: Component                 // Surface 4
+  panelEdit?: Component                 // Surface 5
+  lazyDependencies?: () => Promise<any> // heavy libs loaded on demand
+}
+```
+
+## Mobile Behavior
+- On mobile, there is no side-by-side layout
+- Panel surfaces open as a full-screen overlay or bottom sheet
+- Chat Preview and Chat Play remain inline
+- Transition: tap Chat Preview → full-screen Panel Preview (slide up)
+- Back gesture or button returns to chat
+
+## Performance Rules
+- Chat Preview and Chat Play must render with zero lazy-loaded dependencies
+- Panel surfaces may lazy-load heavy libraries (CodeMirror, pdf.js, etc.)
+- Never block the chat scroll with renderer loading
+- Use skeleton/placeholder while panel content loads
+
+## Content Type Expert Rules
+For extraction, parsing, and surfacing logic, see:
+- `20-content-films.mdc` — Films
+- `21-content-songs.mdc` — Songs (includes looksLikeSong blocklist)
+- `22-content-podcasts.mdc` — Podcasts (includes looksLikePodcast)
+- `23-content-news.mdc` — News + RSS, ArticleDetail security
+- `24-content-websites.mdc` — Websites vs News, overlay
+- `25-content-magazine.mdc` — Magazine/Brief parsing, hero, meme

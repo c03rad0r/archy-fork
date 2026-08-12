@@ -1,0 +1,80 @@
+---
+description: How to build content renderers - interfaces, lazy loading, accessibility
+globs: "**/renderers/**"
+alwaysApply: false
+---
+
+# Renderer Development
+
+## What is a Renderer?
+A renderer is a set of Vue components that know how to display a specific content type across the five content surfaces (chat-preview, chat-play, panel-preview, panel-play, panel-edit).
+
+## Renderer Registration
+```typescript
+import { registerRenderer } from '@aiui/core'
+
+registerRenderer({
+  id: 'film',
+  name: 'Film',
+  contentType: 'application/x-aiui-film',
+  surfaces: ['chat-preview', 'panel-preview', 'panel-play'],
+  chatPreview: () => import('./FilmChatPreview.vue'),
+  panelPreview: () => import('./FilmGrid.vue'),
+  panelPlay: () => import('./FilmDetail.vue'),
+})
+```
+
+## Content Type Detection
+Renderers are matched to content by `contentType` field in the message data:
+```typescript
+interface ContentBlock {
+  contentType: string           // e.g., 'application/x-aiui-film'
+  data: Record<string, unknown> // renderer-specific data
+  title?: string                // human-readable title for panel tab
+}
+```
+
+## Performance Rules
+1. Chat surfaces (preview, play) must render with ZERO lazy-loaded heavy dependencies
+2. Panel surfaces may lazy-load libraries (CodeMirror, pdf.js, etc.)
+3. Use `defineAsyncComponent` for panel components
+4. Show skeleton/placeholder while loading
+5. Never block the main thread — use Web Workers for heavy parsing
+
+## Data Contracts
+Each renderer defines its expected data shape as a TypeScript interface:
+```typescript
+interface FilmRendererData {
+  films: Film[]
+  query?: string
+  filters?: FilmFilters
+}
+```
+Document the interface. Validate incoming data. Show graceful error if data is malformed.
+
+## Accessibility Requirements
+- All renderers must be keyboard navigable
+- Images need alt text
+- Interactive elements need ARIA labels
+- Media players need captions/transcripts when available
+- Focus management when transitioning between surfaces
+
+## Mobile Behavior
+- Chat Preview: constrained to message bubble width
+- Chat Play: full message width, max 200px height
+- Panel surfaces on mobile: full-screen overlay with back gesture
+- Touch targets: minimum 44x44px
+- Swipe gestures where appropriate (image gallery, film cards)
+
+## Renderer Checklist
+- [ ] TypeScript data interface defined and exported
+- [ ] All applicable surfaces implemented
+- [ ] Lazy loading for heavy dependencies
+- [ ] Skeleton/placeholder states
+- [ ] Error state (malformed data)
+- [ ] Empty state (no data)
+- [ ] Keyboard navigation
+- [ ] ARIA labels on interactive elements
+- [ ] Mobile responsive
+- [ ] Dark mode compatible
+- [ ] Transition animations (per motion design rules)

@@ -1,0 +1,69 @@
+app:
+  id: core-lightning
+  name: Core Lightning (CLN)
+  version: 23.08.2
+  description: Lightning Network implementation in C. Lightweight alternative to LND.
+  
+  container:
+    image: elementsproject/lightningd:v23.08.2
+    image_signature: cosign://...
+    pull_policy: verify-signature
+    
+  dependencies:
+    - app_id: bitcoin-core
+      version: ">=26.0"
+    
+  resources:
+    cpu_limit: 1
+    memory_limit: 512Mi
+    disk_limit: 5Gi
+    
+  security:
+    capabilities: [NET_BIND_SERVICE]
+    readonly_root: true
+    no_new_privileges: true
+    user: 1000
+    seccomp_profile: default
+    network_policy: isolated
+    apparmor_profile: core-lightning
+    
+  ports:
+    - host: 9736
+      container: 9735
+      protocol: tcp  # P2P (using 9736 to avoid conflict with LND)
+      auth: none
+      auth_rationale: >-
+        Lightning p2p. The BOLT-8 noise handshake authenticates and encrypts the channel itself.
+    - host: 9835
+      container: 9835
+      protocol: tcp  # gRPC
+      auth: none
+      auth_rationale: >-
+        Core Lightning gRPC, authenticated by mutual TLS client certificates.
+    
+  volumes:
+    - type: bind
+      source: /var/lib/archipelago/core-lightning
+      target: /home/clightning/.lightning
+      options: [rw]
+      
+  environment:
+    - BITCOIND_RPCURL=http://bitcoin-core:8332
+    - BITCOIND_RPCUSER=${BITCOIN_RPC_USER}
+    - BITCOIND_RPCPASS=${BITCOIN_RPC_PASSWORD}
+    - NETWORK=bitcoin
+    
+  health_check:
+    type: exec
+    endpoint: lightning-cli getinfo
+    interval: 30s
+    timeout: 5s
+    retries: 3
+    
+  bitcoin_integration:
+    rpc_access: admin
+    sync_required: true
+    
+  lightning_integration:
+    channel_management: true
+    payment_routing: true

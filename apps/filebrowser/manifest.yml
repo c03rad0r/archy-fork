@@ -1,0 +1,55 @@
+app:
+  id: filebrowser
+  name: File Browser
+  version: 2.27.0
+  description: Baseline Archipelago file manager service.
+
+  container:
+    image: source.archipelago-foundation.org/lfg2025/filebrowser:v2.27.0
+    pull_policy: if-not-present
+    network: archy-net
+    custom_args: ["--config", "/data/.filebrowser.json"]
+    data_uid: "100000:100000"
+
+  dependencies:
+    - storage: 10Gi
+
+  resources:
+    memory_limit: 256Mi
+    disk_limit: 10Gi
+
+  security:
+    capabilities: [CHOWN, FOWNER, SETUID, SETGID, DAC_OVERRIDE, NET_BIND_SERVICE]
+    readonly_root: false
+    network_policy: isolated
+
+  ports:
+    - host: 8083
+      container: 80
+      protocol: tcp
+      bind: 127.0.0.1
+      auth: gated
+
+  volumes:
+    - type: bind
+      source: /var/lib/archipelago/filebrowser
+      target: /srv
+      options: [rw]
+    - type: bind
+      source: /var/lib/archipelago/filebrowser-data
+      target: /data
+      options: [rw]
+
+  environment: []
+
+  health_check:
+    type: http
+    endpoint: http://localhost:80
+    path: /health
+    interval: 30s
+    timeout: 5s
+    retries: 3
+
+  bitcoin_integration:
+    rpc_access: none
+    sync_required: false

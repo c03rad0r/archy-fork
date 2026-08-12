@@ -1,0 +1,4 @@
+# Canonical Reticulum stack — pinned for reproducible, hash-verified bundles.
+# Validated in the Phase-0 spike: RNS 1.3.5 + LXMF 1.0.1 on Python 3.13.
+rns==1.3.5
+lxmf==1.0.1

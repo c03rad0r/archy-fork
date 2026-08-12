@@ -1,0 +1,2058 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+    <meta http-equiv="Pragma" content="no-cache">
+    <meta http-equiv="Expires" content="0">
+    <title id="pageTitle">Bitcoin Node - Archipelago</title>
+    <!-- Relative: the shell is served at / in the container but under
+         /app/bitcoin-ui/ in the public demo — absolute paths 404 there. -->
+    <link rel="stylesheet" href="tailwind.css">
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen', 'Ubuntu', sans-serif;
+            min-height: 100vh;
+            background: #000;
+            color: white;
+            overflow-x: hidden;
+        }
+
+        /* Background - Web5 style */
+        .bg-perspective-container {
+            position: fixed;
+            inset: 0;
+            z-index: -10;
+            perspective: 1000px;
+            perspective-origin: 50% 50%;
+            overflow: hidden;
+        }
+
+        .bg-layer {
+            position: absolute;
+            inset: 0;
+            background-image: url('/assets/img/bg-network.jpg');
+            background-size: cover;
+            background-position: center;
+            background-repeat: no-repeat;
+            transition: all 0.45s cubic-bezier(0.68, -0.55, 0.265, 1.55);
+            transform-style: preserve-3d;
+            opacity: 1;
+            transform: translateZ(0) scale(1);
+        }
+
+        /* Dark overlay - Web5 style (0.8 opacity) */
+        .overlay {
+            position: fixed;
+            inset: 0;
+            background: rgba(0, 0, 0, 0.8);
+            z-index: -5;
+            pointer-events: none;
+        }
+
+        /* Glass card - Archipelago standard with gradient border */
+        .glass-card {
+            position: relative;
+            background: rgba(0, 0, 0, 0.60);
+            backdrop-filter: blur(24px);
+            -webkit-backdrop-filter: blur(24px);
+            box-shadow:
+                0 8px 24px rgba(0, 0, 0, 0.45),
+                inset 0 1px 0 rgba(255, 255, 255, 0.22);
+            border-radius: 1rem;
+            overflow-x: hidden;
+            overflow-y: visible;
+            border: none;
+        }
+
+        .glass-card::before {
+            content: '';
+            position: absolute;
+            inset: 0;
+            border-radius: inherit;
+            padding: 2px;
+            background: linear-gradient(135deg, rgba(0, 0, 0, 0.8), transparent);
+            -webkit-mask: 
+                linear-gradient(#fff 0 0) content-box, 
+                linear-gradient(#fff 0 0);
+            -webkit-mask-composite: xor;
+            mask-composite: exclude;
+            pointer-events: none;
+            z-index: 1;
+        }
+
+        .glass-card > * {
+            position: relative;
+            z-index: 2;
+        }
+
+        /* Glass button - Archipelago standard (secondary actions) */
+        .glass-button {
+            background-color: rgba(0, 0, 0, 0.6);
+            backdrop-filter: blur(18px);
+            -webkit-backdrop-filter: blur(18px);
+            border: 1px solid rgba(255, 255, 255, 0.18);
+            color: rgba(255, 255, 255, 0.9);
+            transition: all 0.3s ease;
+        }
+
+        .glass-button:hover {
+            color: white;
+            background-color: rgba(0, 0, 0, 0.7);
+        }
+
+        /* Gradient button - Archipelago standard (primary actions) */
+        .gradient-button {
+            background: linear-gradient(135deg, rgba(255, 255, 255, 0.15) 0%, rgba(0, 0, 0, 0.8) 100%);
+            backdrop-filter: blur(10px);
+            -webkit-backdrop-filter: blur(10px);
+            border: 1px solid rgba(255, 255, 255, 0.2);
+            color: rgba(255, 255, 255, 0.95);
+            transition: all 0.3s ease;
+        }
+
+        .gradient-button:hover {
+            background: linear-gradient(135deg, rgba(255, 255, 255, 0.2) 0%, rgba(0, 0, 0, 0.9) 100%);
+            border-color: rgba(255, 255, 255, 0.3);
+            box-shadow: 0 8px 24px rgba(0, 0, 0, 0.6);
+            transform: translateY(-1px);
+        }
+
+        .gradient-button:active {
+            transform: translateY(1px);
+        }
+
+        /* Interactive card - Archipelago standard (display only, no hover) */
+        .info-card {
+            position: relative;
+            background: rgba(0, 0, 0, 0.60);
+            backdrop-filter: blur(24px);
+            -webkit-backdrop-filter: blur(24px);
+            box-shadow:
+                0 8px 24px rgba(0, 0, 0, 0.45),
+                inset 0 1px 0 rgba(255, 255, 255, 0.22);
+            border-radius: 16px;
+            padding: 12px;
+            border: none;
+        }
+
+        .info-card::before {
+            content: '';
+            position: absolute;
+            inset: 0;
+            border-radius: inherit;
+            padding: 2px;
+            background: linear-gradient(135deg, rgba(0, 0, 0, 0.8), transparent);
+            -webkit-mask: 
+                linear-gradient(#fff 0 0) content-box, 
+                linear-gradient(#fff 0 0);
+            -webkit-mask-composite: xor;
+            mask-composite: exclude;
+            pointer-events: none;
+        }
+
+        /* Interactive button - Same as info-card but with hover effects */
+        .info-card-button {
+            position: relative;
+            background: rgba(0, 0, 0, 0.60);
+            backdrop-filter: blur(24px);
+            -webkit-backdrop-filter: blur(24px);
+            box-shadow:
+                0 8px 24px rgba(0, 0, 0, 0.45),
+                inset 0 1px 0 rgba(255, 255, 255, 0.22);
+            border-radius: 16px;
+            padding: 12px;
+            transition: all 0.3s ease;
+            border: none;
+            cursor: pointer;
+            color: rgba(255, 255, 255, 0.9);
+        }
+
+        .info-card-button::before {
+            content: '';
+            position: absolute;
+            inset: 0;
+            border-radius: inherit;
+            padding: 2px;
+            background: linear-gradient(135deg, rgba(0, 0, 0, 0.8), transparent);
+            -webkit-mask: 
+                linear-gradient(#fff 0 0) content-box, 
+                linear-gradient(#fff 0 0);
+            -webkit-mask-composite: xor;
+            mask-composite: exclude;
+            pointer-events: none;
+            transition: all 0.3s ease;
+        }
+
+        .info-card-button:hover {
+            transform: translateY(-2px);
+            background: rgba(0, 0, 0, 0.35);
+            box-shadow:
+                0 12px 32px rgba(0, 0, 0, 0.6),
+                inset 0 1px 0 rgba(255, 255, 255, 0.25);
+            color: rgba(255, 255, 255, 1);
+        }
+
+        .info-card-button:hover::before {
+            background: linear-gradient(135deg, rgba(255, 255, 255, 0.3), transparent);
+        }
+
+        .info-card-button:active {
+            transform: translateY(1px);
+        }
+
+        /* Same treatment, sized for a normal inline button rather than a
+           full-width card, so every button on the page reads as one family
+           instead of the flat glass-button used for one-off controls. */
+        .info-card-button.compact {
+            width: auto; display: inline-flex; align-items: center; justify-content: center;
+            gap: 0.5rem; padding: 0.65rem 1rem; text-align: center;
+            font-size: 0.875rem; font-weight: 500;
+        }
+        /* Square variant for modal dismiss buttons. */
+        .info-card-button.icon-only {
+            width: 2.75rem; height: 2.75rem; padding: 0; line-height: 1;
+            display: inline-flex; align-items: center; justify-content: center;
+            font-size: 1.25rem; font-weight: 500;
+        }
+
+        /* Container */
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+            padding: 2rem;
+            padding-bottom: 4rem;
+        }
+
+        /* Logo gradient border */
+        .logo-gradient-border {
+            position: relative;
+            border-radius: 16px;
+            padding: 3px;
+            background: linear-gradient(135deg, rgba(255, 255, 255, 0.6) 0%, rgba(0, 0, 0, 0.8) 100%);
+            box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
+            display: inline-block;
+        }
+
+        .logo-gradient-border::after {
+            content: '';
+            position: absolute;
+            inset: 3px;
+            border-radius: 13px;
+            background: #fff;
+            z-index: 0;
+        }
+
+        .logo-gradient-border img {
+            border-radius: 13px;
+            display: block;
+            position: relative;
+            z-index: 1;
+            width: 64px;
+            height: 64px;
+        }
+
+        /* Ping animation for status dots */
+        @keyframes ping {
+            75%, 100% {
+                transform: scale(2);
+                opacity: 0;
+            }
+        }
+
+        .animate-ping {
+            animation: ping 1s cubic-bezier(0, 0, 0.2, 1) infinite;
+        }
+
+        /* Pulsing glow for progress bar */
+        @keyframes progressGlow {
+            0%, 100% {
+                box-shadow: 0 0 10px rgba(251, 146, 60, 0.5),
+                            0 0 20px rgba(251, 146, 60, 0.3),
+                            0 0 30px rgba(251, 146, 60, 0.1);
+            }
+            50% {
+                box-shadow: 0 0 20px rgba(251, 146, 60, 0.8),
+                            0 0 30px rgba(251, 146, 60, 0.5),
+                            0 0 40px rgba(251, 146, 60, 0.3);
+            }
+        }
+
+        .progress-glow {
+            animation: progressGlow 2s ease-in-out infinite;
+        }
+
+        /* Spinning animation */
+        @keyframes spin {
+            from {
+                transform: rotate(0deg);
+            }
+            to {
+                transform: rotate(360deg);
+            }
+        }
+
+        .animate-spin-slow {
+            animation: spin 3s linear infinite;
+        }
+
+        /* Shimmer effect */
+        @keyframes shimmer {
+            0% {
+                background-position: -1000px 0;
+            }
+            100% {
+                background-position: 1000px 0;
+            }
+        }
+
+        .shimmer {
+            background: linear-gradient(
+                90deg,
+                rgba(255, 255, 255, 0) 0%,
+                rgba(255, 255, 255, 0.1) 50%,
+                rgba(255, 255, 255, 0) 100%
+            );
+            background-size: 1000px 100%;
+            animation: shimmer 3s infinite;
+        }
+
+        /* ── Primary tab bar (umbrelOS's dock, Archipelago-styled) ─────── */
+        .tabbar-wrap { margin-bottom: 1.5rem; }
+        .tabbar {
+            display: flex; gap: 0.25rem; padding: 0.3rem; border-radius: 0.85rem;
+            background: rgba(0, 0, 0, 0.55);
+            backdrop-filter: blur(24px); -webkit-backdrop-filter: blur(24px);
+            border: 1px solid rgba(255, 255, 255, 0.12);
+            box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45), inset 0 1px 0 rgba(255, 255, 255, 0.18);
+            overflow-x: auto; scrollbar-width: none; -webkit-overflow-scrolling: touch;
+        }
+        .tabbar::-webkit-scrollbar { display: none; }
+        .tab-btn {
+            flex: 1 0 auto; display: flex; align-items: center; justify-content: center; gap: 0.5rem;
+            padding: 0.65rem 1rem; border: none; background: none; border-radius: 0.6rem;
+            font-size: 0.875rem; font-weight: 500; color: rgba(255, 255, 255, 0.6);
+            cursor: pointer; transition: all 0.25s ease; white-space: nowrap;
+        }
+        .tab-btn svg { width: 1.05rem; height: 1.05rem; flex-shrink: 0; }
+        .tab-btn:hover { color: rgba(255, 255, 255, 0.9); }
+        .tab-btn.active {
+            color: #fff;
+            background: linear-gradient(135deg, rgba(251, 146, 60, 0.28) 0%, rgba(255, 255, 255, 0.08) 100%);
+            box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.22);
+        }
+        .tab-panel { display: none; }
+        .tab-panel.active { display: block; animation: fadeUp 0.28s ease both; }
+        @keyframes fadeUp { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: translateY(0); } }
+
+        /* Status pill */
+        .pill {
+            display: inline-flex; align-items: center; gap: 0.4rem; padding: 0.25rem 0.6rem;
+            border-radius: 9999px; font-size: 0.6875rem; font-weight: 600; letter-spacing: 0.02em;
+            background: rgba(255, 255, 255, 0.08); border: 1px solid rgba(255, 255, 255, 0.12);
+            color: rgba(255, 255, 255, 0.75); white-space: nowrap;
+        }
+        .pill.ok { background: rgba(74, 222, 128, 0.14); border-color: rgba(74, 222, 128, 0.3); color: #4ade80; }
+        .pill.warn { background: rgba(250, 204, 21, 0.14); border-color: rgba(250, 204, 21, 0.3); color: #facc15; }
+        .pill.bad { background: rgba(248, 113, 113, 0.14); border-color: rgba(248, 113, 113, 0.3); color: #f87171; }
+
+        /* Data tables (peers) */
+        .table-scroll { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+        .data-table { width: 100%; border-collapse: collapse; font-size: 0.8125rem; }
+        .data-table th {
+            text-align: left; padding: 0.6rem 0.75rem; font-size: 0.6875rem; font-weight: 600;
+            text-transform: uppercase; letter-spacing: 0.05em; color: rgba(255, 255, 255, 0.45);
+            border-bottom: 1px solid rgba(255, 255, 255, 0.1); white-space: nowrap;
+            cursor: pointer; user-select: none;
+        }
+        .data-table th:hover { color: rgba(255, 255, 255, 0.75); }
+        .data-table th .caret { opacity: 0.35; font-size: 0.6rem; margin-left: 0.25rem; }
+        .data-table th.sorted .caret { opacity: 1; }
+        .data-table td {
+            padding: 0.65rem 0.75rem; border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+            color: rgba(255, 255, 255, 0.8); vertical-align: middle;
+        }
+        .data-table tr:last-child td { border-bottom: none; }
+        .data-table tbody tr { transition: background 0.2s ease; }
+        .data-table tbody tr:hover { background: rgba(255, 255, 255, 0.04); }
+        .filter-input {
+            width: 100%; padding: 0.55rem 0.85rem; background: rgba(0, 0, 0, 0.4);
+            border: 1px solid rgba(255, 255, 255, 0.12); border-radius: 0.5rem;
+            color: white; font-size: 0.8125rem; outline: none;
+        }
+        .filter-input::placeholder { color: rgba(255, 255, 255, 0.35); }
+        .filter-input:focus { border-color: rgba(251, 146, 60, 0.5); }
+
+        /* Latest blocks strip */
+        .blocks-strip { display: flex; gap: 0.75rem; overflow-x: auto; padding-bottom: 0.5rem; scrollbar-width: thin; -webkit-overflow-scrolling: touch; }
+        .block-tile {
+            flex: 0 0 auto; width: 8.5rem; padding: 0.9rem;
+            background: linear-gradient(135deg, rgba(251, 146, 60, 0.14) 0%, rgba(255, 255, 255, 0.04) 100%);
+            border: 1px solid rgba(251, 146, 60, 0.25); border-radius: 0.75rem;
+        }
+        .block-tile .h { font-size: 1rem; font-weight: 700; color: #fff; font-variant-numeric: tabular-nums; }
+        .block-tile .m { font-size: 0.6875rem; color: rgba(255, 255, 255, 0.5); margin-top: 0.15rem; }
+
+        /* Mini bar charts (Umbrel's Insights charts, CSP-safe / no chart lib) */
+        .chart-rows { display: flex; align-items: flex-end; gap: 0.3rem; height: 7rem; }
+        .chart-col { flex: 1; display: flex; flex-direction: column; justify-content: flex-end; align-items: center; gap: 0.3rem; min-width: 0; }
+        .chart-bar { width: 100%; border-radius: 0.25rem 0.25rem 0 0; min-height: 2px; transition: height 0.5s ease; }
+        .chart-bar.orange { background: linear-gradient(180deg, #fb923c, rgba(251, 146, 60, 0.35)); }
+        .chart-bar.yellow { background: linear-gradient(180deg, #facc15, rgba(250, 204, 21, 0.35)); }
+        .chart-bar.green { background: linear-gradient(180deg, #4ade80, rgba(74, 222, 128, 0.35)); }
+        .chart-lbl { font-size: 0.5625rem; color: rgba(255, 255, 255, 0.35); font-variant-numeric: tabular-nums; white-space: nowrap; overflow: hidden; }
+
+        /* Field rows with copy (connect tab) */
+        .field-label { font-size: 0.6875rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; color: rgba(255, 255, 255, 0.45); margin-bottom: 0.25rem; }
+        .field-row { display: flex; align-items: center; background: rgba(255, 255, 255, 0.06); border: 1px solid rgba(255, 255, 255, 0.1); border-radius: 0.5rem; overflow: hidden; min-width: 0; }
+        .field-value { flex: 1; min-width: 0; padding: 0.625rem 0.875rem; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.8125rem; color: rgba(255, 255, 255, 0.9); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+        .copy-btn { padding: 0.625rem 0.75rem; background: none; border: none; border-left: 1px solid rgba(255, 255, 255, 0.1); cursor: pointer; color: rgba(255, 255, 255, 0.4); transition: all 0.2s ease; display: flex; align-items: center; flex-shrink: 0; }
+        .copy-btn:hover { color: rgba(255, 255, 255, 0.8); background: rgba(255, 255, 255, 0.05); }
+        .conn-layout { display: flex; flex-direction: column; gap: 1.5rem; }
+        .conn-fields { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 0.75rem; }
+        .qr-box { flex-shrink: 0; width: 100%; max-width: 216px; aspect-ratio: 1; margin: 0 auto; background: white; border-radius: 0.75rem; padding: 0.6rem; display: flex; align-items: center; justify-content: center; }
+        .qr-box img { width: 100%; height: auto; display: block; image-rendering: pixelated; }
+        .conn-select { width: 100%; padding: 0.75rem 1rem; background: rgba(255, 255, 255, 0.05); border: 1px solid rgba(255, 255, 255, 0.1); border-radius: 0.5rem; color: white; font-size: 0.875rem; font-weight: 500; appearance: none; cursor: pointer; outline: none; background-image: url('data:image/svg+xml;utf8,<svg fill="white" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path d="M7 10l5 5 5-5z"/></svg>'); background-repeat: no-repeat; background-position: right 12px center; background-size: 20px; }
+        .conn-select option { background: #1a1a2e; color: white; }
+
+        .empty-state { padding: 2.5rem 1rem; text-align: center; color: rgba(255, 255, 255, 0.4); font-size: 0.875rem; }
+        .tabular { font-variant-numeric: tabular-nums; }
+
+        @media (min-width: 640px) {
+            .conn-layout { flex-direction: row; }
+            .qr-box { margin: 0; width: 216px; }
+        }
+
+        /* Mobile: the tab bar becomes a bottom dock, like umbrelOS. */
+        @media (max-width: 767px) {
+            .container { padding: 1rem; padding-bottom: 6.5rem; }
+            .tabbar-wrap {
+                position: fixed; left: 0; right: 0; bottom: 0; z-index: 40;
+                margin: 0; padding: 0.5rem 0.75rem calc(0.5rem + env(safe-area-inset-bottom, 0px));
+                background: linear-gradient(to top, rgba(0, 0, 0, 0.9) 55%, rgba(0, 0, 0, 0));
+            }
+            .tabbar { border-radius: 1rem; }
+            .tab-btn { flex: 1 1 0; flex-direction: column; gap: 0.2rem; padding: 0.5rem 0.35rem; font-size: 0.625rem; }
+            .tab-btn svg { width: 1.25rem; height: 1.25rem; }
+            .data-table th, .data-table td { padding: 0.55rem 0.5rem; }
+        }
+
+        /* Number increment animation */
+        @keyframes numberPulse {
+            0%, 100% {
+                transform: scale(1);
+                color: rgba(255, 255, 255, 0.9);
+            }
+            50% {
+                transform: scale(1.05);
+                color: rgba(251, 146, 60, 1);
+            }
+        }
+
+        .number-update {
+            animation: numberPulse 0.5s ease-in-out;
+        }
+
+        /* ── App header ──────────────────────────────────────────────────
+           Three breakpoints, because the four status cards need real width
+           before they can sit beside the title:
+             < 768px  fully stacked, identity centred, cards stacked
+             < 1024px logo + title on one row, cards wrap underneath
+                      (this is the width where the title used to squish
+                      against the cards and overlap)
+             >= 1024px single row */
+        .app-header { display: flex; flex-direction: column; align-items: center; gap: 1rem; }
+        .app-header-id { display: flex; flex-direction: column; align-items: center; gap: 1rem; width: 100%; min-width: 0; }
+        .app-header-text { min-width: 0; width: 100%; text-align: center; }
+        .app-header-actions {
+            display: flex; flex-direction: column; gap: 0.75rem;
+            width: 100%; align-items: stretch;
+        }
+
+        @media (min-width: 640px) {
+            .app-header-actions { flex-direction: row; flex-wrap: wrap; justify-content: center; align-items: center; }
+            .app-header-actions > * { flex: 1 1 auto; min-width: 10rem; }
+            .app-header-actions > button { flex: 0 0 auto; min-width: 0; }
+        }
+        @media (min-width: 768px) {
+            .app-header-id { flex-direction: row; align-items: center; gap: 1.5rem; }
+            .app-header-text { text-align: left; }
+        }
+        @media (min-width: 1024px) {
+            .app-header { flex-direction: row; align-items: center; gap: 1.5rem; }
+            .app-header-actions { width: auto; flex-shrink: 0; justify-content: flex-end; gap: 1rem; }
+            .app-header-actions > * { flex: 0 0 auto; min-width: 0; }
+        }
+    </style>
+</head>
+<body>
+    <div class="bg-perspective-container">
+        <div class="bg-layer"></div>
+    </div>
+    <div class="overlay"></div>
+
+    <div class="container">
+        <!-- Header - Glass card with logo and node info -->
+        <div class="glass-card p-6 mb-6">
+            <div class="app-header">
+                <div class="app-header-id">
+                <!-- Logo - Top Left -->
+                <div class="flex-shrink-0">
+                    <div class="logo-gradient-border">
+                        <img
+                            id="implLogo"
+                            src="assets/img/app-icons/bitcoin-knots.webp"
+                            alt="Bitcoin Node"
+                            class="w-16 h-16"
+                            style="object-fit: contain;"
+                            onerror="this.style.display='none'"
+                        />
+                    </div>
+                </div>
+                
+                <!-- Title and Description -->
+                <div class="flex-1 min-w-0 app-header-text">
+                    <h1 id="implName" class="text-3xl font-bold text-white mb-2">Bitcoin Node</h1>
+                    <p id="implTagline" class="text-white/70">Detecting implementation…</p>
+                </div>
+                </div><!-- /app-header-id -->
+
+                <!-- Node Status Info - Compact on Desktop -->
+                <div class="app-header-actions">
+                    <div class="info-card flex items-center gap-3">
+                        <div class="relative">
+                            <div class="w-3 h-3 rounded-full bg-green-400"></div>
+                            <div class="absolute inset-0 w-3 h-3 rounded-full bg-green-400 animate-ping opacity-75"></div>
+                        </div>
+                        <div>
+                            <p class="text-xs text-white/60">Status</p>
+                            <p class="text-sm font-medium text-white">Running</p>
+                        </div>
+                    </div>
+
+                    <div class="info-card flex items-center gap-3">
+                        <svg class="w-5 h-5 text-white/60" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z" />
+                        </svg>
+                        <div>
+                            <p class="text-xs text-white/60">Version</p>
+                            <p class="text-sm font-medium text-white" id="nodeVersion">Loading...</p>
+                        </div>
+                    </div>
+
+                    <div class="info-card flex items-center gap-3">
+                        <svg class="w-5 h-5 text-white/60" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 12a9 9 0 01-9 9m9-9a9 9 0 00-9-9m9 9H3m9 9a9 9 0 01-9-9m9 9c1.657 0 3-4.03 3-9s-1.343-9-3-9m0 18c-1.657 0-3-4.03-3-9s1.343-9 3-9m-9 9a9 9 0 019-9" />
+                        </svg>
+                        <div>
+                            <p class="text-xs text-white/60">Network</p>
+                            <p class="text-sm font-medium text-white" id="networkType">Loading...</p>
+                        </div>
+                    </div>
+
+                    <div class="info-card flex items-center gap-3">
+                        <svg class="w-5 h-5 text-white/60" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 7v10c0 2 1.6 3 4 3h8c2.4 0 4-1 4-3V7M4 7c0-2 1.6-3 4-3h8c2.4 0 4 1 4 3M4 7h16M9 11h6M9 15h6" />
+                        </svg>
+                        <div>
+                            <p class="text-xs text-white/60">Storage</p>
+                            <p class="text-sm font-medium text-white" id="storageMode">Loading...</p>
+                        </div>
+                    </div>
+
+                    <button
+                        onclick="openSettings()"
+                        class="info-card-button compact"
+                    >
+                        Settings
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <!-- ── Tab bar ─────────────────────────────────────────────────── -->
+        <div class="tabbar-wrap">
+            <div class="tabbar" role="tablist">
+                <button class="tab-btn active" data-tab="node" role="tab">
+                    <svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M3 12l9-9 9 9M5 10v10a1 1 0 001 1h3v-6h6v6h3a1 1 0 001-1V10"/></svg>
+                    <span>Node</span>
+                </button>
+                <button class="tab-btn" data-tab="insights" role="tab">
+                    <svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M3 3v18h18M7 15l3-4 3 3 5-7"/></svg>
+                    <span>Insights</span>
+                </button>
+                <button class="tab-btn" data-tab="peers" role="tab">
+                    <svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M17 20h5v-2a3 3 0 00-5.36-1.86M17 20H7m10 0v-2c0-.66-.13-1.3-.36-1.86m0 0A5 5 0 0012 13a5 5 0 00-4.64 3.14M7 20H2v-2a3 3 0 015.36-1.86M7 20v-2c0-.66.13-1.3.36-1.86m0 0A5 5 0 019 13m6-4a3 3 0 11-6 0 3 3 0 016 0z"/></svg>
+                    <span>Peers</span>
+                </button>
+                <button class="tab-btn" data-tab="connect" role="tab">
+                    <svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M4 4h6v6H4zM14 4h6v6h-6zM4 14h6v6H4zM14 14h2v2h-2zM18 14h2v2h-2zM14 18h2v2h-2zM18 18h2v2h-2z"/></svg>
+                    <span>Connect</span>
+                </button>
+                <button class="tab-btn" data-tab="sharing" role="tab">
+                    <svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M8.684 13.342a3 3 0 000-2.684m0 2.684a3 3 0 110-2.684m0 2.684l6.632 3.316m-6.632-6l6.632-3.316m0 0a3 3 0 105.368-2.684 3 3 0 00-5.368 2.684zm0 9.316a3 3 0 105.368 2.684 3 3 0 00-5.368-2.684z"/></svg>
+                    <span>Sharing</span>
+                </button>
+            </div>
+        </div>
+
+        <!-- ══ NODE ══════════════════════════════════════════════════════ -->
+        <div class="tab-panel active" id="panel-node">
+
+        <!-- Blockchain Sync Status Card - NEW -->
+        <div class="glass-card p-6 mb-6" id="syncStatusCard">
+            <div class="flex items-start gap-4 mb-4">
+                <div class="flex-shrink-0 w-12 h-12 rounded-lg bg-orange-500/20 flex items-center justify-center">
+                    <svg class="w-6 h-6 text-orange-500 animate-spin-slow" fill="none" stroke="currentColor" viewBox="0 0 24 24" id="syncIcon">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                    </svg>
+                </div>
+                <div class="flex-1">
+                    <h2 class="text-xl font-semibold text-white mb-1">Blockchain Sync</h2>
+                    <p class="text-white/70 text-sm" id="syncStatusText">Checking sync status...</p>
+                </div>
+            </div>
+
+            <!-- Progress Bar -->
+            <div class="mb-4">
+                <div class="flex justify-between text-sm text-white/60 mb-2">
+                    <span id="currentBlock">Block 0</span>
+                    <span id="syncPercentage">0%</span>
+                </div>
+                <div class="w-full bg-white/10 rounded-full h-3 overflow-hidden relative shimmer">
+                    <div class="h-full bg-gradient-to-r from-orange-500 to-yellow-400 rounded-full transition-all duration-500 progress-glow" id="syncProgressBar" style="width: 0%"></div>
+                </div>
+            </div>
+
+            <!-- Sync Stats Grid -->
+            <div class="grid grid-cols-2 md:grid-cols-4 gap-3">
+                <div class="info-card">
+                    <p class="text-xs text-white/60 mb-1">Current Height</p>
+                    <p class="text-lg font-semibold text-white transition-all" id="currentHeight">-</p>
+                </div>
+                <div class="info-card">
+                    <p class="text-xs text-white/60 mb-1">Network Height</p>
+                    <p class="text-lg font-semibold text-white" id="networkHeight">-</p>
+                </div>
+                <div class="info-card">
+                    <p class="text-xs text-white/60 mb-1">Headers</p>
+                    <p class="text-lg font-semibold text-white" id="headers">-</p>
+                </div>
+                <div class="info-card">
+                    <p class="text-xs text-white/60 mb-1">Verification</p>
+                    <p class="text-lg font-semibold text-white" id="verificationProgress">-</p>
+                </div>
+            </div>
+        </div>
+
+        <!-- Core Services Overview Cards - Web5 style -->
+        <div class="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-8">
+            <div class="glass-card p-6">
+                <div class="flex items-start gap-4 mb-4">
+                    <div class="flex-shrink-0 w-12 h-12 rounded-lg bg-white/10 flex items-center justify-center">
+                        <svg class="w-6 h-6 text-white/80" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8.111 16.404a5.5 5.5 0 017.778 0M12 20h.01m-7.08-7.071c3.904-3.905 10.236-3.905 14.141 0M1.394 9.393c5.857-5.857 15.355-5.857 21.213 0" />
+                        </svg>
+                    </div>
+                    <div class="flex-1">
+                        <h2 class="text-xl font-semibold text-white mb-2">RPC Connection</h2>
+                        <p class="text-white/70 text-sm mb-4">JSON-RPC API access</p>
+                    </div>
+                </div>
+
+                <div class="space-y-3">
+                    <div class="flex items-center justify-between p-3 bg-white/5 rounded-lg">
+                        <div class="flex items-center gap-3">
+                            <svg class="w-5 h-5 text-white/60" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1" />
+                            </svg>
+                            <span class="text-white/80 text-sm">RPC Host</span>
+                        </div>
+                        <span class="text-white/60 text-sm font-mono" id="rpcHost">localhost:8332</span>
+                    </div>
+
+                    <div class="flex items-center justify-between p-3 bg-white/5 rounded-lg">
+                        <div class="flex items-center gap-3">
+                            <svg class="w-5 h-5 text-white/60" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
+                            </svg>
+                            <span class="text-white/80 text-sm">RPC User</span>
+                        </div>
+                        <span class="text-white/60 text-sm font-mono">archipelago</span>
+                    </div>
+
+                    <div class="flex items-center justify-between p-3 bg-white/5 rounded-lg">
+                        <div class="flex items-center gap-3">
+                            <svg class="w-5 h-5 text-white/60" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" />
+                            </svg>
+                            <span class="text-white/80 text-sm">RPC Status</span>
+                        </div>
+                        <span class="text-green-400 text-sm font-medium">Connected</span>
+                    </div>
+                </div>
+
+                <button class="mt-4 w-full info-card-button text-sm font-medium" onclick="copyRPCInfo()">
+                    Copy RPC Info
+                </button>
+            </div>
+
+            <!-- ZMQ Notifications -->
+            <div class="glass-card p-6">
+                <div class="flex items-start gap-4 mb-4">
+                    <div class="flex-shrink-0 w-12 h-12 rounded-lg bg-white/10 flex items-center justify-center">
+                        <svg class="w-6 h-6 text-white/80" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9" />
+                        </svg>
+                    </div>
+                    <div class="flex-1">
+                        <h2 class="text-xl font-semibold text-white mb-2">ZMQ Notifications</h2>
+                        <p class="text-white/70 text-sm mb-4">Real-time block and transaction updates</p>
+                    </div>
+                </div>
+
+                <div class="space-y-3">
+                    <div class="flex items-center justify-between p-3 bg-white/5 rounded-lg">
+                        <div class="flex items-center gap-3">
+                            <svg class="w-5 h-5 text-white/60" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 20l-5.447-2.724A1 1 0 013 16.382V5.618a1 1 0 011.447-.894L9 7m0 13l6-3m-6 3V7m6 10l4.553 2.276A1 1 0 0021 18.382V7.618a1 1 0 00-.553-.894L15 4m0 13V4m0 0L9 7" />
+                            </svg>
+                            <span class="text-white/80 text-sm">Block Notifications</span>
+                        </div>
+                        <span class="text-white/60 text-sm font-mono">tcp://localhost:28332</span>
+                    </div>
+
+                    <div class="flex items-center justify-between p-3 bg-white/5 rounded-lg">
+                        <div class="flex items-center gap-3">
+                            <svg class="w-5 h-5 text-white/60" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" />
+                            </svg>
+                            <span class="text-white/80 text-sm">TX Notifications</span>
+                        </div>
+                        <span class="text-white/60 text-sm font-mono">tcp://localhost:28333</span>
+                    </div>
+
+                    <div class="flex items-center justify-between p-3 bg-white/5 rounded-lg">
+                        <div class="flex items-center gap-3">
+                            <svg class="w-5 h-5 text-white/60" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" />
+                            </svg>
+                            <span class="text-white/80 text-sm">ZMQ Status</span>
+                        </div>
+                        <span class="text-green-400 text-sm font-medium">Active</span>
+                    </div>
+                </div>
+
+                <button class="mt-4 w-full info-card-button text-sm font-medium" onclick="openLogs()">
+                    View Logs
+                </button>
+            </div>
+        </div>
+
+        </div><!-- /panel-node -->
+
+        <!-- ══ INSIGHTS ══════════════════════════════════════════════════ -->
+        <div class="tab-panel" id="panel-insights">
+            <!-- Stat summary (umbrel StatSummary parity) -->
+            <div class="grid grid-cols-2 md:grid-cols-4 gap-3 mb-6">
+                <div class="info-card">
+                    <p class="text-xs text-white/60 mb-1">Connections</p>
+                    <p class="text-2xl font-bold text-white tabular" id="insPeers">-</p>
+                    <p class="text-xs text-white/40 mt-1" id="insPeersSub">peers</p>
+                </div>
+                <div class="info-card">
+                    <p class="text-xs text-white/60 mb-1">Mempool</p>
+                    <p class="text-2xl font-bold text-orange-400 tabular" id="insMempool">-</p>
+                    <p class="text-xs text-white/40 mt-1" id="insMempoolSub">unconfirmed</p>
+                </div>
+                <div class="info-card">
+                    <p class="text-xs text-white/60 mb-1">Blockchain Size</p>
+                    <p class="text-2xl font-bold text-white tabular" id="insChainSize">-</p>
+                    <p class="text-xs text-white/40 mt-1" id="insChainSizeSub">on disk</p>
+                </div>
+                <div class="info-card">
+                    <p class="text-xs text-white/60 mb-1">Node Uptime</p>
+                    <p class="text-2xl font-bold text-white" id="insUptime">-</p>
+                    <p class="text-xs text-white/40 mt-1">since last restart</p>
+                </div>
+            </div>
+
+            <!-- Latest blocks -->
+            <div class="glass-card p-6 mb-6">
+                <div class="flex items-center justify-between gap-3 mb-4">
+                    <div>
+                        <h2 class="text-xl font-semibold text-white mb-1">Latest Blocks</h2>
+                        <p class="text-white/60 text-sm">Most recent blocks this node has validated.</p>
+                    </div>
+                </div>
+                <div class="blocks-strip" id="blocksStrip">
+                    <div class="empty-state">Loading blocks…</div>
+                </div>
+            </div>
+
+            <!-- Charts (umbrel BlockSize / FeeRate / BlockRewards parity) -->
+            <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+                <div class="glass-card p-6">
+                    <h3 class="text-lg font-semibold text-white mb-1">Block Size</h3>
+                    <p class="text-white/60 text-sm mb-4" id="chartSizeSub">MB per block</p>
+                    <div class="chart-rows" id="chartSize"></div>
+                </div>
+                <div class="glass-card p-6">
+                    <h3 class="text-lg font-semibold text-white mb-1">Fee Rate</h3>
+                    <p class="text-white/60 text-sm mb-4" id="chartFeeSub">average sat/vB</p>
+                    <div class="chart-rows" id="chartFee"></div>
+                </div>
+                <div class="glass-card p-6">
+                    <h3 class="text-lg font-semibold text-white mb-1">Block Rewards</h3>
+                    <p class="text-white/60 text-sm mb-4" id="chartRewardSub">subsidy + fees, BTC</p>
+                    <div class="chart-rows" id="chartReward"></div>
+                </div>
+            </div>
+        </div>
+
+        <!-- ══ PEERS ═════════════════════════════════════════════════════ -->
+        <div class="tab-panel" id="panel-peers">
+            <div class="glass-card p-6">
+                <div class="flex flex-col md:flex-row md:items-start justify-between gap-3 mb-4">
+                    <div>
+                        <h2 class="text-xl font-semibold text-white mb-1">Peers <span class="text-white/40 text-sm font-medium" id="peersCount"></span></h2>
+                        <p class="text-white/60 text-sm">Nodes this node is exchanging blocks and transactions with.</p>
+                    </div>
+                    <input class="filter-input" style="max-width:16rem" id="peerFilter" placeholder="Filter peers…" oninput="renderPeers()">
+                </div>
+                <div class="table-scroll">
+                    <table class="data-table">
+                        <thead>
+                            <tr>
+                                <th onclick="sortPeers('subver')" data-col="subver">Peer<span class="caret">&#9660;</span></th>
+                                <th onclick="sortPeers('network')" data-col="network">Network<span class="caret">&#9660;</span></th>
+                                <th onclick="sortPeers('relay')" data-col="relay">Relay TXNs<span class="caret">&#9660;</span></th>
+                                <th onclick="sortPeers('direction')" data-col="direction">In/Out<span class="caret">&#9660;</span></th>
+                                <th onclick="sortPeers('conntime')" data-col="conntime">Connected<span class="caret">&#9660;</span></th>
+                                <th onclick="sortPeers('ping')" data-col="ping">Ping<span class="caret">&#9660;</span></th>
+                            </tr>
+                        </thead>
+                        <tbody id="peersBody">
+                            <tr><td colspan="6"><div class="empty-state">Loading peers…</div></td></tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+
+        <!-- ══ CONNECT ═══════════════════════════════════════════════════ -->
+        <div class="tab-panel" id="panel-connect">
+            <div class="glass-card p-6 mb-6">
+                <h2 class="text-xl font-semibold text-white mb-1">RPC Details</h2>
+                <p class="text-white/70 text-sm mb-4">Point a wallet or app at this node's JSON-RPC interface.</p>
+
+                <div class="mb-4">
+                    <select id="connMode" onchange="renderConnect()" class="conn-select">
+                        <option value="local">Local Network</option>
+                        <option value="tor">Tor</option>
+                    </select>
+                </div>
+
+                <div class="conn-layout">
+                    <div class="qr-panel">
+                        <div class="qr-box" id="rpcQrBox">
+                            <div style="color:#999;font-size:12px;text-align:center;padding:2rem">Loading…</div>
+                        </div>
+                    </div>
+                    <div class="conn-fields">
+                        <div>
+                            <div class="field-label">Host</div>
+                            <div class="field-row">
+                                <span class="field-value" id="rpcHostField">-</span>
+                                <button class="copy-btn" onclick="copyEl('rpcHostField', this)" title="Copy" aria-label="Copy host">
+                                    <svg width="16" height="16" fill="none" stroke="currentColor" viewBox="0 0 24 24"><rect x="9" y="9" width="13" height="13" rx="2" ry="2" stroke-width="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1" stroke-width="2"/></svg>
+                                </button>
+                            </div>
+                        </div>
+                        <div>
+                            <div class="field-label">Port</div>
+                            <div class="field-row">
+                                <span class="field-value" id="rpcPortField">8332</span>
+                                <button class="copy-btn" onclick="copyEl('rpcPortField', this)" title="Copy" aria-label="Copy port">
+                                    <svg width="16" height="16" fill="none" stroke="currentColor" viewBox="0 0 24 24"><rect x="9" y="9" width="13" height="13" rx="2" ry="2" stroke-width="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1" stroke-width="2"/></svg>
+                                </button>
+                            </div>
+                        </div>
+                        <div>
+                            <div class="field-label">Username</div>
+                            <div class="field-row">
+                                <span class="field-value" id="rpcUserField">archipelago</span>
+                                <button class="copy-btn" onclick="copyEl('rpcUserField', this)" title="Copy" aria-label="Copy username">
+                                    <svg width="16" height="16" fill="none" stroke="currentColor" viewBox="0 0 24 24"><rect x="9" y="9" width="13" height="13" rx="2" ry="2" stroke-width="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1" stroke-width="2"/></svg>
+                                </button>
+                            </div>
+                        </div>
+                        <div>
+                            <div class="field-label">Password</div>
+                            <div class="field-row">
+                                <span class="field-value text-white/50" id="rpcPassField">Held in the node's secret store</span>
+                            </div>
+                            <p class="text-xs text-white/40 mt-2">
+                                The RPC password is a manifest-declared generated secret. It is injected into this app's
+                                nginx upstream by the orchestrator and is deliberately never sent to the browser.
+                            </p>
+                        </div>
+                    </div>
+                </div>
+
+                <div id="rpcLocalWarning" class="mt-4 p-3 rounded-lg" style="background:rgba(250,204,21,0.1);border:1px solid rgba(250,204,21,0.25)">
+                    <p class="text-sm" style="color:#facc15">Local Network mode sends RPC traffic unencrypted. Only use it on a network you trust.</p>
+                </div>
+            </div>
+
+            <div class="glass-card p-6">
+                <h2 class="text-xl font-semibold text-white mb-1">P2P Details</h2>
+                <p class="text-white/70 text-sm mb-4">Let another Bitcoin node peer directly with this one.</p>
+                <div class="conn-layout">
+                    <div class="qr-panel">
+                        <div class="qr-box" id="p2pQrBox">
+                            <div style="color:#999;font-size:12px;text-align:center;padding:2rem">Loading…</div>
+                        </div>
+                    </div>
+                    <div class="conn-fields">
+                        <div>
+                            <div class="field-label">Host</div>
+                            <div class="field-row">
+                                <span class="field-value" id="p2pHostField">-</span>
+                                <button class="copy-btn" onclick="copyEl('p2pHostField', this)" title="Copy" aria-label="Copy P2P host">
+                                    <svg width="16" height="16" fill="none" stroke="currentColor" viewBox="0 0 24 24"><rect x="9" y="9" width="13" height="13" rx="2" ry="2" stroke-width="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1" stroke-width="2"/></svg>
+                                </button>
+                            </div>
+                        </div>
+                        <div>
+                            <div class="field-label">Port</div>
+                            <div class="field-row">
+                                <span class="field-value" id="p2pPortField">8333</span>
+                                <button class="copy-btn" onclick="copyEl('p2pPortField', this)" title="Copy" aria-label="Copy P2P port">
+                                    <svg width="16" height="16" fill="none" stroke="currentColor" viewBox="0 0 24 24"><rect x="9" y="9" width="13" height="13" rx="2" ry="2" stroke-width="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1" stroke-width="2"/></svg>
+                                </button>
+                            </div>
+                        </div>
+                        <div class="p-3 rounded-lg" style="background:rgba(255,255,255,0.05)">
+                            <p class="text-sm text-white/70">
+                                For an Electrum wallet, install the <strong class="text-white/90">electrs</strong> app, wait for it to
+                                finish indexing, and use the connection details it publishes.
+                            </p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- ══ SHARING ═══════════════════════════════════════════════════ -->
+        <div class="tab-panel" id="panel-sharing">
+        <div class="glass-card p-6 mb-8">
+            <div class="flex flex-col lg:flex-row lg:items-start lg:justify-between gap-4 mb-6">
+                <div>
+                    <h2 class="text-xl font-semibold text-white mb-2">Transaction Relay Sharing</h2>
+                    <p class="text-white/70 text-sm">Trusted peer access for broadcasting transactions through this node</p>
+                </div>
+                <div class="px-3 py-2 bg-white/5 rounded-lg text-sm">
+                    <span class="text-white/60">Local node</span>
+                    <span class="ml-2 font-medium text-yellow-300" id="relaySyncStatus">Checking...</span>
+                </div>
+            </div>
+
+            <div class="grid grid-cols-1 lg:grid-cols-3 gap-4 mb-5">
+                <div class="p-4 bg-white/5 rounded-lg">
+                    <div class="text-xs uppercase tracking-wide text-white/50 mb-2">HTTPS Endpoint</div>
+                    <div class="text-sm text-white/80 font-mono break-all min-h-[1.5rem]" id="relayHttpsEndpoint">Not configured</div>
+                </div>
+                <div class="p-4 bg-white/5 rounded-lg">
+                    <div class="text-xs uppercase tracking-wide text-white/50 mb-2">HTTP Endpoint</div>
+                    <div class="text-sm text-white/80 font-mono break-all min-h-[1.5rem]" id="relayHttpEndpoint">Not configured</div>
+                </div>
+                <div class="p-4 bg-white/5 rounded-lg">
+                    <div class="text-xs uppercase tracking-wide text-white/50 mb-2">Tor Endpoint</div>
+                    <div class="text-sm text-white/80 font-mono break-all min-h-[1.5rem]" id="relayTorEndpoint">Not configured</div>
+                </div>
+            </div>
+
+            <div class="grid grid-cols-1 xl:grid-cols-2 gap-6">
+                <div class="space-y-4">
+                    <div class="grid grid-cols-1 md:grid-cols-3 gap-3">
+                        <label class="flex items-center justify-between gap-3 p-3 bg-white/5 rounded-lg">
+                            <span class="text-white/80 text-sm">Allow peer use</span>
+                            <input id="relayEnabledToggle" type="checkbox" class="h-5 w-5 accent-orange-500" onchange="saveRelaySettings()">
+                        </label>
+                        <label class="flex items-center justify-between gap-3 p-3 bg-white/5 rounded-lg">
+                            <span class="text-white/80 text-sm">Allow requests</span>
+                            <input id="relayRequestsToggle" type="checkbox" class="h-5 w-5 accent-orange-500" onchange="saveRelaySettings()">
+                        </label>
+                        <label class="flex items-center justify-between gap-3 p-3 bg-white/5 rounded-lg">
+                            <span class="text-white/80 text-sm">Serve over Tor</span>
+                            <input id="relayTorToggle" type="checkbox" class="h-5 w-5 accent-orange-500" onchange="saveRelaySettings()">
+                        </label>
+                    </div>
+
+                    <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
+                        <input id="relayHttpsInput" class="w-full px-3 py-2 rounded-lg bg-black/40 border border-white/10 text-sm text-white placeholder-white/35" placeholder="https://rpc.example.com/">
+                        <input id="relayHttpInput" class="w-full px-3 py-2 rounded-lg bg-black/40 border border-white/10 text-sm text-white placeholder-white/35" placeholder="http://192.0.2.2/">
+                    </div>
+                    <div class="grid grid-cols-1 md:grid-cols-[1fr_auto] gap-3">
+                        <input id="relayTorInput" class="w-full px-3 py-2 rounded-lg bg-black/40 border border-white/10 text-sm text-white placeholder-white/35" placeholder="http://exampleonion.onion/">
+                        <button class="info-card-button compact" onclick="createRelayTorService()">Create Tor</button>
+                    </div>
+                    <button class="gradient-button px-4 py-2 rounded-lg text-sm font-medium" onclick="saveRelaySettings()">Save Sharing Settings</button>
+                </div>
+
+                <div class="space-y-4">
+                    <div class="grid grid-cols-1 md:grid-cols-[1fr_auto] gap-3">
+                        <select id="relayPeerSelect" class="w-full px-3 py-2 rounded-lg bg-black/40 border border-white/10 text-sm text-white" onchange="saveRelaySettings()">
+                            <option value="">No trusted nodes available</option>
+                        </select>
+                        <button id="relayRequestButton" class="info-card-button compact" onclick="requestPeerRelay()">Request Access</button>
+                    </div>
+                    <textarea id="relayRequestMessage" class="w-full px-3 py-2 rounded-lg bg-black/40 border border-white/10 text-sm text-white placeholder-white/35 min-h-[5rem]" placeholder="Optional note for the peer"></textarea>
+                    <div class="p-3 bg-white/5 rounded-lg">
+                        <div class="flex items-center justify-between gap-3">
+                            <span class="text-white/70 text-sm">Restricted RPC user</span>
+                            <span class="text-white/90 text-sm font-mono" id="relayCredentialUser">txrelay</span>
+                        </div>
+                        <div class="text-xs mt-2 text-white/50" id="relayCredentialStatus">Credential status unavailable</div>
+                    </div>
+                    <div>
+                        <div class="text-sm font-semibold text-white mb-2">Relay Requests</div>
+                        <div class="space-y-2" id="relayRequestsList">
+                            <div class="text-sm text-white/50 p-3 bg-white/5 rounded-lg">No relay requests</div>
+                        </div>
+                    </div>
+                    <div class="text-sm text-white/60" id="relayStatusMessage"></div>
+                </div>
+            </div>
+        </div>
+        </div><!-- /panel-sharing -->
+    </div>
+
+    <!-- Settings Modal -->
+    <div class="modal hidden fixed inset-0 bg-black/80 backdrop-blur-sm z-50 items-center justify-center p-4" id="settingsModal">
+        <div class="glass-card p-6 max-w-2xl w-full max-h-[80vh] overflow-y-auto">
+            <div class="flex justify-between items-center mb-4">
+                <h2 class="text-2xl font-bold text-white">Node Settings</h2>
+                <button onclick="closeSettings()" class="info-card-button icon-only" aria-label="Close">×</button>
+            </div>
+            <div class="space-y-3">
+                <div class="p-3 bg-white/5 rounded-lg">
+                    <div class="font-semibold text-white mb-1">Network Mode</div>
+                    <div class="text-white/70 text-sm" id="settingsNetworkMode">Loading…</div>
+                </div>
+                <div class="p-3 bg-white/5 rounded-lg">
+                    <div class="font-semibold text-white mb-1">Storage Mode</div>
+                    <div class="text-white/70 text-sm" id="settingsStorageMode">Loading…</div>
+                </div>
+                <div class="p-3 bg-white/5 rounded-lg">
+                    <div class="font-semibold text-white mb-1">Transaction Index</div>
+                    <div class="text-white/70 text-sm" id="settingsTxIndex">Loading…</div>
+                </div>
+                <div class="p-3 bg-white/5 rounded-lg">
+                    <div class="font-semibold text-white mb-1">ZMQ Publishing</div>
+                    <div class="text-white/70 text-sm" id="settingsZmq">Loading…</div>
+                </div>
+                <div class="p-3 bg-white/5 rounded-lg">
+                    <div class="font-semibold text-white mb-1">RPC Access</div>
+                    <div class="text-white/70 text-sm" id="settingsRpc">Loading…</div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Logs Modal -->
+    <div class="modal hidden fixed inset-0 bg-black/80 backdrop-blur-sm z-50 items-center justify-center p-4" id="logsModal">
+        <div class="glass-card p-6 max-w-4xl w-full max-h-[80vh] overflow-y-auto">
+            <div class="flex justify-between items-center mb-4">
+                <h2 class="text-2xl font-bold text-white">Node Logs</h2>
+                <button onclick="closeLogs()" class="info-card-button icon-only" aria-label="Close">×</button>
+            </div>
+            <div class="bg-black/40 rounded-lg p-4 font-mono text-xs text-white/80 whitespace-pre-wrap break-all" id="logsContent">
+                Loading logs...
+            </div>
+        </div>
+    </div>
+
+    <script src="qrcode.js"></script>
+    <script>
+        console.log('[Bitcoin UI] Script loaded, initializing...');
+        
+        // RPC Configuration - Use local Nginx proxy within container
+        const RPC_ENDPOINT = 'bitcoin-rpc/';
+        const STATUS_ENDPOINT = 'bitcoin-status';
+        const ARCHY_RPC_ENDPOINT = 'rpc/v1';
+        console.log('[Bitcoin UI] RPC Endpoint:', RPC_ENDPOINT);
+
+        // Make RPC call to Bitcoin node via local proxy
+        async function callRPC(method, params = []) {
+            try {
+                console.log(`[Bitcoin UI] Calling RPC method: ${method}`);
+                const response = await fetch(RPC_ENDPOINT, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({
+                        jsonrpc: '1.0',
+                        id: 'bitcoin-ui',
+                        method: method,
+                        params: params
+                    })
+                });
+
+                console.log(`[Bitcoin UI] RPC response status: ${response.status}`);
+                
+                if (!response.ok) {
+                    throw new Error(`HTTP error! status: ${response.status}`);
+                }
+
+                const data = await response.json();
+                console.log(`[Bitcoin UI] RPC ${method} success:`, data.result ? 'OK' : 'Error');
+                
+                if (data.error) {
+                    throw new Error(data.error.message);
+                }
+                return data.result;
+            } catch (error) {
+                console.error(`[Bitcoin UI] RPC call failed: ${method}`, error);
+                return null;
+            }
+        }
+
+        async function fetchBitcoinStatus() {
+            const response = await fetch(STATUS_ENDPOINT, { cache: 'no-store' });
+            if (!response.ok) {
+                throw new Error(`status HTTP ${response.status}`);
+            }
+            return response.json();
+        }
+
+        // Snapshot age in ms. Prefer the server-computed age_ms (single clock, no
+        // skew). Fall back to the old browser-vs-server subtraction only for an
+        // older backend that doesn't send age_ms. Mixing clocks was why the
+        // "reconnecting…" banner could stick on nodes whose clock drifted.
+        function snapshotAgeMs(status) {
+            if (typeof status.age_ms === 'number') return status.age_ms;
+            return status.updated_at_ms ? Date.now() - status.updated_at_ms : Number.POSITIVE_INFINITY;
+        }
+
+        function cookieValue(name) {
+            return document.cookie
+                .split('; ')
+                .find(row => row.startsWith(`${name}=`))
+                ?.split('=')
+                .slice(1)
+                .join('=') || '';
+        }
+
+        async function callArchyRPC(method, params = {}) {
+            const headers = { 'Content-Type': 'application/json' };
+            const csrf = cookieValue('csrf');
+            if (csrf) headers['X-CSRF-Token'] = decodeURIComponent(csrf);
+            const response = await fetch(ARCHY_RPC_ENDPOINT, {
+                method: 'POST',
+                headers,
+                credentials: 'include',
+                cache: 'no-store',
+                body: JSON.stringify({ method, params })
+            });
+            const body = await response.json().catch(() => ({}));
+            if (!response.ok || body.error) {
+                throw new Error(body.error?.message || `Archipelago RPC ${response.status}`);
+            }
+            return body.result;
+        }
+
+        // Clipboard with a fallback. navigator.clipboard only exists in a secure
+        // context, and most nodes serve this app over plain http; on top of
+        // that, the main UI embeds these apps in an iframe, where the async
+        // Clipboard API is additionally gated by the clipboard-write permission
+        // policy. execCommand('copy') still works in both situations, so it is
+        // the fallback rather than letting the button silently do nothing.
+        function legacyCopy(text) {
+            return new Promise((resolve, reject) => {
+                try {
+                    const ta = document.createElement('textarea');
+                    ta.value = text;
+                    ta.setAttribute('readonly', '');
+                    ta.style.position = 'fixed';
+                    ta.style.top = '0';
+                    ta.style.left = '0';
+                    ta.style.opacity = '0';
+                    document.body.appendChild(ta);
+                    ta.select();
+                    ta.setSelectionRange(0, ta.value.length);
+                    const ok = document.execCommand('copy');
+                    document.body.removeChild(ta);
+                    if (ok) resolve(); else reject(new Error('copy rejected'));
+                } catch (e) { reject(e); }
+            });
+        }
+        function copyText(text) {
+            if (navigator.clipboard && window.isSecureContext) {
+                return navigator.clipboard.writeText(text).catch(() => legacyCopy(text));
+            }
+            return legacyCopy(text);
+        }
+
+        function escapeHtml(value) {
+            return String(value ?? '').replace(/[&<>"']/g, char => ({
+                '&': '&amp;',
+                '<': '&lt;',
+                '>': '&gt;',
+                '"': '&quot;',
+                "'": '&#39;'
+            }[char]));
+        }
+
+        function setText(id, value, fallback = 'Not configured') {
+            const el = document.getElementById(id);
+            if (el) el.textContent = value || fallback;
+        }
+
+        function setTextIfPresent(id, value) {
+            const el = document.getElementById(id);
+            if (el) el.textContent = value;
+            return el;
+        }
+
+        function setWidthIfPresent(id, value) {
+            const el = document.getElementById(id);
+            if (el) el.style.width = value;
+            return el;
+        }
+
+        function renderRelayRequests(requests = []) {
+            const list = document.getElementById('relayRequestsList');
+            if (!list) return;
+            if (!requests.length) {
+                list.innerHTML = '<div class="text-sm text-white/50 p-3 bg-white/5 rounded-lg">No relay requests</div>';
+                return;
+            }
+            list.innerHTML = requests.map(req => {
+                const name = escapeHtml(req.peer_name || req.peer_onion || req.peer_pubkey);
+                const message = req.message ? `<div class="text-xs text-white/50 mt-1">${escapeHtml(req.message)}</div>` : '';
+                const endpoint = req.approved_endpoint ? `<div class="text-xs text-white/50 mt-1 font-mono break-all">${escapeHtml(req.approved_endpoint)}</div>` : '';
+                const statusClass = req.status === 'approved'
+                    ? 'text-green-300'
+                    : req.status === 'rejected'
+                    ? 'text-red-300'
+                    : 'text-yellow-300';
+                const actions = req.direction === 'incoming' && req.status === 'pending'
+                    ? `<div class="flex gap-2 mt-3">
+                        <button class="info-card-button compact" style="font-size:0.75rem;padding:0.45rem 0.8rem" onclick="approveRelayRequest('${escapeHtml(req.id)}')">Approve</button>
+                        <button class="info-card-button compact" style="font-size:0.75rem;padding:0.45rem 0.8rem" onclick="rejectRelayRequest('${escapeHtml(req.id)}')">Reject</button>
+                    </div>`
+                    : '';
+                return `<div class="p-3 bg-white/5 rounded-lg">
+                    <div class="flex items-center justify-between gap-3">
+                        <div class="text-sm text-white/80">${name}</div>
+                        <div class="text-xs uppercase ${statusClass}">${escapeHtml(req.direction)} · ${escapeHtml(req.status)}</div>
+                    </div>
+                    ${message}
+                    ${endpoint}
+                    ${actions}
+                </div>`;
+            }).join('');
+        }
+
+        function renderRelayPeers(peers = [], selectedPeer = '', localSynced = true) {
+            const select = document.getElementById('relayPeerSelect');
+            const button = document.getElementById('relayRequestButton');
+            if (!select) return;
+            if (!localSynced) {
+                select.innerHTML = '<option value="">Local Bitcoin node must finish syncing first</option>';
+                select.disabled = true;
+                if (button) button.disabled = true;
+                return;
+            }
+            if (!peers.length) {
+                select.innerHTML = '<option value="">No trusted nodes available</option>';
+                select.disabled = true;
+                if (button) button.disabled = true;
+                return;
+            }
+            select.disabled = false;
+            if (button) button.disabled = false;
+            select.innerHTML = '<option value="">Choose a trusted node</option>' + peers.map(peer => {
+                const label = escapeHtml(peer.name || peer.onion || peer.pubkey.slice(0, 16));
+                const approved = peer.relay_approved ? ' · approved' : '';
+                const selected = peer.pubkey === selectedPeer ? ' selected' : '';
+                return `<option value="${escapeHtml(peer.pubkey)}"${selected}>${label}${approved}</option>`;
+            }).join('');
+        }
+
+        async function loadRelayAccess() {
+            const statusEl = document.getElementById('relayStatusMessage');
+            try {
+                const relay = await callArchyRPC('bitcoin.relay-status');
+                const settings = relay.settings || {};
+                const local = relay.local_node || {};
+                setText('relayHttpsEndpoint', settings.https_endpoint);
+                setText('relayHttpEndpoint', settings.http_endpoint);
+                setText('relayTorEndpoint', settings.tor_endpoint);
+                const syncEl = document.getElementById('relaySyncStatus');
+                if (syncEl) {
+                    syncEl.textContent = local.synced ? 'Synchronized' : 'Not synchronized';
+                    syncEl.className = local.synced ? 'ml-2 font-medium text-green-300' : 'ml-2 font-medium text-yellow-300';
+                }
+                const enabled = document.getElementById('relayEnabledToggle');
+                const requests = document.getElementById('relayRequestsToggle');
+                const tor = document.getElementById('relayTorToggle');
+                if (enabled) enabled.checked = !!settings.enabled_for_peers;
+                if (requests) requests.checked = !!settings.allow_peer_requests;
+                if (tor) tor.checked = !!settings.allow_tor;
+                const httpsInput = document.getElementById('relayHttpsInput');
+                const httpInput = document.getElementById('relayHttpInput');
+                const torInput = document.getElementById('relayTorInput');
+                if (httpsInput && document.activeElement !== httpsInput) httpsInput.value = settings.https_endpoint || '';
+                if (httpInput && document.activeElement !== httpInput) httpInput.value = settings.http_endpoint || '';
+                if (torInput && document.activeElement !== torInput) torInput.value = settings.tor_endpoint || '';
+                renderRelayPeers(relay.trusted_nodes || [], settings.selected_peer_pubkey || '', !!local.synced);
+                renderRelayRequests(relay.requests || []);
+                setText('relayCredentialUser', relay.credentials?.username || 'txrelay', 'txrelay');
+                setText(
+                    'relayCredentialStatus',
+                    relay.credentials?.available ? `Credential file ready: ${relay.credentials.client_env_path}. ${relay.credentials.restart_hint || ''}` : 'Restricted relay credential will be generated when peer sharing is enabled',
+                    'Credential status unavailable'
+                );
+                if (statusEl) statusEl.textContent = '';
+            } catch (error) {
+                console.warn('[Bitcoin UI] relay status failed', error);
+                if (statusEl) statusEl.textContent = `Relay controls unavailable: ${error.message}`;
+            }
+        }
+
+        async function saveRelaySettings() {
+            const statusEl = document.getElementById('relayStatusMessage');
+            const payload = {
+                enabled_for_peers: !!document.getElementById('relayEnabledToggle')?.checked,
+                allow_peer_requests: !!document.getElementById('relayRequestsToggle')?.checked,
+                allow_tor: !!document.getElementById('relayTorToggle')?.checked,
+                allow_https: !!document.getElementById('relayHttpsInput')?.value.trim(),
+                allow_http: !!document.getElementById('relayHttpInput')?.value.trim(),
+                selected_peer_pubkey: document.getElementById('relayPeerSelect')?.value || '',
+                https_endpoint: document.getElementById('relayHttpsInput')?.value.trim() || '',
+                http_endpoint: document.getElementById('relayHttpInput')?.value.trim() || '',
+                tor_endpoint: document.getElementById('relayTorInput')?.value.trim() || ''
+            };
+            try {
+                await callArchyRPC('bitcoin.relay-update-settings', payload);
+                if (statusEl) statusEl.textContent = 'Relay settings saved.';
+                await loadRelayAccess();
+            } catch (error) {
+                if (statusEl) statusEl.textContent = `Save failed: ${error.message}`;
+            }
+        }
+
+        async function requestPeerRelay() {
+            const statusEl = document.getElementById('relayStatusMessage');
+            const peer = document.getElementById('relayPeerSelect')?.value;
+            if (!peer) {
+                if (statusEl) statusEl.textContent = 'Choose a trusted node first.';
+                return;
+            }
+            try {
+                await callArchyRPC('bitcoin.relay-request-peer', {
+                    peer_pubkey: peer,
+                    message: document.getElementById('relayRequestMessage')?.value || ''
+                });
+                if (statusEl) statusEl.textContent = 'Relay access request sent.';
+                await loadRelayAccess();
+            } catch (error) {
+                if (statusEl) statusEl.textContent = `Request failed: ${error.message}`;
+            }
+        }
+
+        async function approveRelayRequest(id) {
+            await updateRelayRequest('bitcoin.relay-approve-request', id);
+        }
+
+        async function rejectRelayRequest(id) {
+            await updateRelayRequest('bitcoin.relay-reject-request', id);
+        }
+
+        async function updateRelayRequest(method, id) {
+            const statusEl = document.getElementById('relayStatusMessage');
+            try {
+                await callArchyRPC(method, { id });
+                if (statusEl) statusEl.textContent = 'Relay request updated.';
+                await loadRelayAccess();
+            } catch (error) {
+                if (statusEl) statusEl.textContent = `Update failed: ${error.message}`;
+            }
+        }
+
+        async function createRelayTorService() {
+            const statusEl = document.getElementById('relayStatusMessage');
+            try {
+                await callArchyRPC('bitcoin.relay-create-tor-service');
+                if (statusEl) statusEl.textContent = 'Tor service requested.';
+                await loadRelayAccess();
+            } catch (error) {
+                if (statusEl) statusEl.textContent = `Tor setup failed: ${error.message}`;
+            }
+        }
+
+        // Implementation branding — detected from getnetworkinfo.subversion.
+        // Bitcoin Knots identifies as "/Satoshi:<ver>/Knots:<date>/", Bitcoin Core as "/Satoshi:<ver>/".
+        let brandingApplied = false;
+        function applyImplBranding(subversion) {
+            if (brandingApplied) return;
+            if (!subversion) return;
+            const isKnots = /Knots/i.test(subversion);
+            const name = isKnots ? 'Bitcoin Knots' : 'Bitcoin Core';
+            const tagline = isKnots
+                ? 'Enhanced Bitcoin node implementation'
+                : 'Reference Bitcoin node implementation';
+            const icon = isKnots
+                ? 'assets/img/app-icons/bitcoin-knots.webp'
+                : 'assets/img/app-icons/bitcoin-core.svg';
+            const pageTitle = document.getElementById('pageTitle');
+            const implName = document.getElementById('implName');
+            const implTagline = document.getElementById('implTagline');
+            const implLogo = document.getElementById('implLogo');
+            if (pageTitle) pageTitle.textContent = `${name} - Archipelago`;
+            if (implName) implName.textContent = name;
+            if (implTagline) implTagline.textContent = tagline;
+            if (implLogo) { implLogo.src = icon; implLogo.alt = name; }
+            brandingApplied = true;
+        }
+
+        // Track last block count for animations
+        let lastBlockCount = 0;
+        let consecutiveRpcFailures = 0;
+        let lastSuccessfulUpdateAt = 0;
+
+        function formatPercent(value) {
+            if (!Number.isFinite(value) || value <= 0) return '0.00';
+            if (value < 0.01) return '<0.01';
+            return value.toFixed(2);
+        }
+
+        function formatBytes(bytes) {
+            if (!Number.isFinite(bytes) || bytes <= 0) return null;
+            const units = ['B', 'KB', 'MB', 'GB', 'TB'];
+            let value = bytes;
+            let unit = 0;
+            while (value >= 1000 && unit < units.length - 1) {
+                value /= 1000;
+                unit += 1;
+            }
+            return `${value.toFixed(unit >= 3 ? 1 : 0)} ${units[unit]}`;
+        }
+
+        // Update blockchain info
+        async function updateBlockchainInfo() {
+            console.log('[Bitcoin UI] updateBlockchainInfo() called');
+            try {
+                const status = await fetchBitcoinStatus();
+                const blockchainInfo = status.blockchain_info;
+                console.log('[Bitcoin UI] blockchainInfo:', blockchainInfo);
+                
+                if (!blockchainInfo) {
+                    console.error('[Bitcoin UI] No blockchain info received');
+                    consecutiveRpcFailures += 1;
+                    const syncStatusText = document.getElementById('syncStatusText');
+                    const syncIcon = document.getElementById('syncIcon');
+                    if (syncStatusText) {
+                        if (status.stale) {
+                            syncStatusText.textContent = status.error || 'Bitcoin node is reconnecting... showing last known values';
+                            syncStatusText.className = 'text-yellow-300 text-sm font-medium';
+                        } else if (consecutiveRpcFailures < 6) {
+                            syncStatusText.textContent = status.error || 'Bitcoin node is starting or busy syncing...';
+                            syncStatusText.className = 'text-yellow-300 text-sm font-medium';
+                        } else {
+                            syncStatusText.textContent = status.error || 'Bitcoin node is still syncing; retrying automatically...';
+                            syncStatusText.className = 'text-yellow-300 text-sm font-medium';
+                        }
+                    }
+                    if (syncIcon) {
+                        syncIcon.classList.add('animate-spin-slow');
+                        syncIcon.classList.remove('text-green-500');
+                    }
+                    return;
+                }
+                consecutiveRpcFailures = 0;
+                lastSuccessfulUpdateAt = Date.now();
+
+                const networkInfo = status.network_info;
+
+                applyImplBranding(networkInfo && networkInfo.subversion);
+
+                // Update network mode
+                const chain = blockchainInfo.chain || 'unknown';
+                const networkType = document.getElementById('networkType');
+                
+                let networkShort = '';
+                if (chain === 'regtest') {
+                    networkShort = 'Regtest';
+                } else if (chain === 'test') {
+                    networkShort = 'Testnet';
+                } else if (chain === 'main') {
+                    networkShort = 'Mainnet';
+                } else {
+                    networkShort = chain;
+                }
+                
+                if (networkType) networkType.textContent = networkShort;
+
+                // Mirror to Settings modal — Network Mode
+                const settingsNetworkMode = document.getElementById('settingsNetworkMode');
+                if (settingsNetworkMode) {
+                    const labels = { main: 'Mainnet', test: 'Testnet', signet: 'Signet', regtest: 'Regtest (Development)' };
+                    settingsNetworkMode.textContent = labels[chain] || networkShort;
+                }
+
+                // Update storage mode (pruned vs full archive)
+                const storageMode = document.getElementById('storageMode');
+                if (storageMode) {
+                    const sizeGb = blockchainInfo.size_on_disk
+                        ? (blockchainInfo.size_on_disk / 1e9).toFixed(1) + ' GB'
+                        : null;
+                    if (blockchainInfo.pruned) {
+                        storageMode.textContent = sizeGb ? `Pruned · ${sizeGb}` : 'Pruned';
+                        storageMode.className = 'text-sm font-medium text-amber-300';
+                    } else {
+                        storageMode.textContent = sizeGb ? `Full Archive · ${sizeGb}` : 'Full Archive';
+                        storageMode.className = 'text-sm font-medium text-emerald-300';
+                    }
+                }
+
+                // Mirror to Settings modal — Storage Mode
+                const settingsStorageMode = document.getElementById('settingsStorageMode');
+                if (settingsStorageMode) {
+                    if (blockchainInfo.pruned) {
+                        const heightNote = blockchainInfo.prune_height != null
+                            ? ` (keeping from block ${blockchainInfo.prune_height.toLocaleString()})` : '';
+                        settingsStorageMode.textContent = `Pruned${heightNote}`;
+                    } else {
+                        settingsStorageMode.textContent = 'Full archive (no pruning)';
+                    }
+                }
+
+                // Populate Settings — Transaction Index, ZMQ, RPC (fire-and-forget)
+                const txIndexEl = document.getElementById('settingsTxIndex');
+                if (txIndexEl) {
+                    const idx = status.index_info;
+                    if (idx && typeof idx === 'object') {
+                        const names = Object.keys(idx);
+                        txIndexEl.textContent = names.length
+                            ? `Enabled: ${names.join(', ')}`
+                            : 'Disabled';
+                    } else {
+                        txIndexEl.textContent = 'Unavailable while node starts';
+                    }
+                }
+                const zmqEl = document.getElementById('settingsZmq');
+                if (zmqEl) {
+                    const zmq = status.zmq_notifications;
+                    if (Array.isArray(zmq) && zmq.length) {
+                        zmqEl.textContent = zmq.map(z => `${z.type}@${z.address}`).join('; ');
+                    } else if (Array.isArray(zmq)) {
+                        zmqEl.textContent = 'Not enabled';
+                    } else {
+                        zmqEl.textContent = 'Unavailable while node starts';
+                    }
+                }
+                const rpcEl = document.getElementById('settingsRpc');
+                if (rpcEl) {
+                    const port = chain === 'main' ? 8332 : (chain === 'test' ? 18332 : (chain === 'signet' ? 38332 : 18443));
+                    const statusAgeMs = snapshotAgeMs(status);
+                    const displayStale = status.stale === true && statusAgeMs > 30000;
+                    rpcEl.textContent = displayStale
+                        ? `Reconnecting on port ${port}`
+                        : `Reachable on port ${port}`;
+                }
+
+                // Update sync status
+                const blocks = blockchainInfo.blocks || 0;
+                const headers = blockchainInfo.headers || 0;
+                const verificationProgress = blockchainInfo.verificationprogress || 0;
+                const initialBlockDownload = blockchainInfo.initialblockdownload === true;
+                const isSynced = headers > 0 && blocks >= headers - 1 && !initialBlockDownload;
+                const diskSize = formatBytes(blockchainInfo.size_on_disk || 0);
+                const appearsToBeReindexing = initialBlockDownload && blocks === 0 && headers > 0 && (blockchainInfo.size_on_disk || 0) > 1024 * 1024 * 1024;
+                const previousBlockCount = lastBlockCount;
+                const statusAgeMs = snapshotAgeMs(status);
+                const snapshotAdvanced = previousBlockCount > 0 && blocks > previousBlockCount;
+                const displayStale = status.stale === true && !snapshotAdvanced && statusAgeMs > 30000;
+                
+                // Calculate actual sync percentage based on blocks/headers
+                const actualSyncValue = headers > 0 ? (blocks / headers) * 100 : 0;
+                const actualSyncPercentage = formatPercent(actualSyncValue);
+                const progressWidth = Math.max(0, Math.min(100, actualSyncValue));
+                const verificationPercentage = formatPercent(verificationProgress * 100);
+
+                // Animate block count if it changed
+                const currentHeightElem = document.getElementById('currentHeight');
+                if (currentHeightElem && blocks !== lastBlockCount && lastBlockCount > 0) {
+                    currentHeightElem.classList.add('number-update');
+                    setTimeout(() => currentHeightElem.classList.remove('number-update'), 500);
+                }
+                lastBlockCount = blocks;
+
+                setTextIfPresent('currentHeight', blocks.toLocaleString());
+                setTextIfPresent('networkHeight', headers.toLocaleString());
+                setTextIfPresent('headers', headers.toLocaleString());
+                setTextIfPresent('verificationProgress', `${verificationPercentage}%`);
+                setTextIfPresent('syncPercentage', `${actualSyncPercentage}%`);
+                setTextIfPresent('currentBlock', appearsToBeReindexing
+                    ? 'Reindexing from disk'
+                    : `Block ${blocks.toLocaleString()}`);
+                setWidthIfPresent('syncProgressBar', `${progressWidth}%`);
+
+                // Update sync status text and icon
+                const syncStatusText = document.getElementById('syncStatusText');
+                const syncIcon = document.getElementById('syncIcon');
+                
+                if (appearsToBeReindexing) {
+                    syncStatusText.textContent = `Reindexing local block files${diskSize ? ` (${diskSize} on disk)` : ''}`;
+                    syncStatusText.className = 'text-orange-400 text-sm font-medium';
+                    if (syncIcon) {
+                        syncIcon.classList.add('animate-spin-slow');
+                        syncIcon.classList.remove('text-green-500');
+                    }
+                } else if (isSynced) {
+                    syncStatusText.textContent = displayStale
+                        ? 'Bitcoin node is reconnecting... showing last known synchronized state'
+                        : '✓ Fully synchronized with the network';
+                    syncStatusText.className = displayStale ? 'text-yellow-300 text-sm font-medium' : 'text-green-400 text-sm font-medium';
+                    // Stop spinning when synced
+                    if (syncIcon) {
+                        syncIcon.classList.remove('animate-spin-slow');
+                        syncIcon.classList.add('text-green-500');
+                    }
+                } else {
+                    const remaining = headers - blocks;
+                    syncStatusText.textContent = displayStale
+                        ? 'Bitcoin node is reconnecting... showing last known sync state'
+                        : initialBlockDownload
+                        ? `Initial block download... ${remaining.toLocaleString()} blocks remaining`
+                        : `Syncing... ${remaining.toLocaleString()} blocks remaining`;
+                    syncStatusText.className = displayStale ? 'text-yellow-300 text-sm font-medium' : 'text-orange-400 text-sm font-medium';
+                    // Keep spinning while syncing
+                    if (syncIcon) {
+                        syncIcon.classList.add('animate-spin-slow');
+                        syncIcon.classList.remove('text-green-500');
+                    }
+                }
+
+                // Update block height in quick actions (removed section)
+                // document.getElementById('blockHeight').textContent = blocks.toLocaleString();
+
+                // Update version
+                if (networkInfo && networkInfo.version) {
+                    const version = networkInfo.version;
+                    const versionStr = `v${Math.floor(version / 10000)}.${Math.floor((version % 10000) / 100)}.${version % 100}`;
+                    const versionElem = document.getElementById('nodeVersion');
+                    if (versionElem) versionElem.textContent = versionStr;
+                }
+
+            } catch (error) {
+                console.error('Failed to update blockchain info:', error);
+                consecutiveRpcFailures += 1;
+                const syncStatusText = document.getElementById('syncStatusText');
+                if (syncStatusText) {
+                    const hasRecentData = lastSuccessfulUpdateAt > 0 && Date.now() - lastSuccessfulUpdateAt < 120000;
+                    syncStatusText.textContent = hasRecentData
+                        ? 'Bitcoin status bridge is retrying... keeping last known values'
+                        : 'Bitcoin status bridge is starting...';
+                    syncStatusText.className = 'text-yellow-300 text-sm font-medium';
+                }
+            }
+        }
+
+        // Initial update
+        console.log('[Bitcoin UI] Starting initial blockchain info update...');
+        updateBlockchainInfo();
+        loadRelayAccess();
+
+        // Update every 5 seconds
+        console.log('[Bitcoin UI] Setting up 5-second update interval');
+        setInterval(updateBlockchainInfo, 5000);
+        setInterval(loadRelayAccess, 15000);
+
+        function copyRPCInfo() {
+            // No password here. It is a manifest-declared generated secret that
+            // the orchestrator renders straight into this app's nginx upstream;
+            // the browser never receives it. This function used to paste a
+            // hardcoded placeholder that was not the real credential and only
+            // ever misled whoever copied it.
+            const info = `RPC Host: ${window.location.hostname}:8332\nRPC User: archipelago\nRPC Password: (held in the node secret store)\nRPC Endpoint: ${RPC_ENDPOINT}`;
+            copyText(info).then(() => {
+                alert('RPC info copied to clipboard!');
+            });
+        }
+
+        function openSettings() {
+            document.getElementById('settingsModal').classList.remove('hidden');
+            document.getElementById('settingsModal').classList.add('flex');
+        }
+
+        function closeSettings() {
+            document.getElementById('settingsModal').classList.add('hidden');
+            document.getElementById('settingsModal').classList.remove('flex');
+        }
+
+        function openLogs() {
+            document.getElementById('logsModal').classList.remove('hidden');
+            document.getElementById('logsModal').classList.add('flex');
+            loadLogs();
+        }
+
+        function closeLogs() {
+            document.getElementById('logsModal').classList.add('hidden');
+            document.getElementById('logsModal').classList.remove('flex');
+        }
+
+        async function loadLogs() {
+            const logsContent = document.getElementById('logsContent');
+            logsContent.textContent = 'Loading logs from node...';
+            
+            try {
+                const networkInfo = await callRPC('getnetworkinfo');
+                const blockchainInfo = await callRPC('getblockchaininfo');
+                const peerInfo = await callRPC('getpeerinfo');
+                
+                if (networkInfo && blockchainInfo) {
+                    applyImplBranding(networkInfo.subversion);
+                    const implLabel = /Knots/i.test(networkInfo.subversion || '') ? 'Bitcoin Knots' : 'Bitcoin Core';
+                    logsContent.textContent = `${implLabel} version ${networkInfo.subversion || 'unknown'}
+Network: ${blockchainInfo.chain}
+Blocks: ${blockchainInfo.blocks}
+Headers: ${blockchainInfo.headers}
+Verification Progress: ${(blockchainInfo.verificationprogress * 100).toFixed(2)}%
+Connected Peers: ${peerInfo ? peerInfo.length : 0}
+Difficulty: ${blockchainInfo.difficulty}
+Chain Work: ${blockchainInfo.chainwork || 'N/A'}
+
+Node is running and accepting connections.
+RPC server active on port 8332`;
+                } else {
+                    logsContent.textContent = 'Unable to fetch node logs. Please check your RPC connection.';
+                }
+            } catch (error) {
+                logsContent.textContent = `Error loading logs: ${error.message}`;
+            }
+        }
+
+        // ══ Tabs / Insights / Peers / Connect ═══════════════════════════
+        // Everything below is additive: it reads through the same callRPC()
+        // proxy the rest of the page uses and never touches the sync/relay
+        // state machines above.
+
+        const P2P_PORT = 8333;
+        const RPC_PORT = 8332;
+        let peerCache = [];
+        let peerSort = { col: 'conntime', dir: 1 };
+        let blockCache = [];
+        let insightsLoaded = false;
+
+        function tabular(n) { return Number(n || 0).toLocaleString('en-US'); }
+
+        function shortAgo(unixSeconds) {
+            const secs = Math.floor(Date.now() / 1000) - Number(unixSeconds || 0);
+            if (!isFinite(secs) || secs < 0) return '-';
+            if (secs < 60) return secs + 's ago';
+            if (secs < 3600) return Math.floor(secs / 60) + 'm ago';
+            if (secs < 86400) return Math.floor(secs / 3600) + 'h ago';
+            return Math.floor(secs / 86400) + 'd ago';
+        }
+
+        function formatUptime(secs) {
+            const n = Number(secs || 0);
+            if (n <= 0) return '-';
+            const d = Math.floor(n / 86400);
+            const h = Math.floor((n % 86400) / 3600);
+            const m = Math.floor((n % 3600) / 60);
+            if (d > 0) return d + 'd ' + h + 'h';
+            if (h > 0) return h + 'h ' + m + 'm';
+            return m + 'm';
+        }
+
+        function setTab(tab) {
+            document.querySelectorAll('.tab-btn').forEach(b => b.classList.toggle('active', b.dataset.tab === tab));
+            document.querySelectorAll('.tab-panel').forEach(p => p.classList.toggle('active', p.id === 'panel-' + tab));
+            if (tab === 'insights' && !insightsLoaded) { insightsLoaded = true; updateInsights(); }
+            if (tab === 'peers') updatePeers();
+            if (tab === 'connect') renderConnect();
+            if (window.matchMedia('(max-width: 767px)').matches) window.scrollTo({ top: 0, behavior: 'smooth' });
+            try { history.replaceState(null, '', '#' + tab); } catch (_) {}
+        }
+        document.querySelectorAll('.tab-btn').forEach(b => b.addEventListener('click', () => setTab(b.dataset.tab)));
+
+        // ── Insights ────────────────────────────────────────────────────
+        async function updateInsights() {
+            try {
+                const [mempool, chain, uptimeSecs, peers] = await Promise.all([
+                    callRPC('getmempoolinfo'),
+                    callRPC('getblockchaininfo'),
+                    callRPC('uptime'),
+                    callRPC('getpeerinfo'),
+                ]);
+
+                if (peers) {
+                    peerCache = peers;
+                    const inbound = peers.filter(p => p.inbound).length;
+                    setTextIfPresent('insPeers', String(peers.length));
+                    setTextIfPresent('insPeersSub', inbound + ' in / ' + (peers.length - inbound) + ' out');
+                }
+                if (mempool) {
+                    setTextIfPresent('insMempool', tabular(mempool.size));
+                    setTextIfPresent('insMempoolSub', formatBytes(mempool.bytes || 0) + ' of ' + formatBytes(mempool.maxmempool || 0));
+                }
+                if (chain) {
+                    setTextIfPresent('insChainSize', formatBytes(chain.size_on_disk || 0));
+                    setTextIfPresent('insChainSizeSub', (chain.pruned ? 'pruned' : 'full') + ' · ' + (chain.chain || '-'));
+                }
+                if (uptimeSecs != null) setTextIfPresent('insUptime', formatUptime(uptimeSecs));
+
+                if (chain && chain.blocks) await loadRecentBlocks(chain.blocks);
+            } catch (e) {
+                console.error('[Bitcoin UI] insights update failed', e);
+            }
+        }
+
+        // getblockstats gives height/time/size/txs/subsidy/fees in one call per
+        // block, which is what umbrel's block charts are built from. Only the
+        // tip is re-fetched on later passes, so this stays cheap.
+        async function loadRecentBlocks(tipHeight) {
+            const WANT = 10;
+            const have = new Set(blockCache.map(b => b.height));
+            const wanted = [];
+            for (let h = tipHeight; h > tipHeight - WANT && h >= 0; h--) if (!have.has(h)) wanted.push(h);
+
+            if (wanted.length) {
+                const fetched = await Promise.all(wanted.map(h =>
+                    callRPC('getblockstats', [h, ['height', 'time', 'total_size', 'txs', 'subsidy', 'totalfee', 'avgfeerate']])
+                ));
+                for (const b of fetched) if (b && b.height != null) blockCache.push(b);
+            }
+            blockCache = blockCache
+                .filter(b => b.height > tipHeight - WANT)
+                .sort((a, b) => b.height - a.height)
+                .slice(0, WANT);
+
+            renderBlocks();
+            renderCharts();
+        }
+
+        function renderBlocks() {
+            const strip = document.getElementById('blocksStrip');
+            if (!strip) return;
+            if (!blockCache.length) {
+                strip.innerHTML = '<div class="empty-state">Block statistics unavailable. A pruned node cannot report stats for blocks it no longer stores.</div>';
+                return;
+            }
+            strip.innerHTML = blockCache.map(b =>
+                '<div class="block-tile">' +
+                    '<div class="h">' + tabular(b.height) + '</div>' +
+                    '<div class="m">' + escapeHtml(shortAgo(b.time)) + '</div>' +
+                    '<div class="m">' + tabular(b.txs) + ' txs</div>' +
+                    '<div class="m">' + escapeHtml(formatBytes(b.total_size || 0)) + '</div>' +
+                '</div>').join('');
+        }
+
+        function renderChart(elId, subId, values, labels, cls, subtitle) {
+            const el = document.getElementById(elId);
+            if (!el) return;
+            const max = Math.max(...values, 0) || 1;
+            el.innerHTML = values.map((v, i) =>
+                '<div class="chart-col" title="' + escapeHtml(String(labels[i])) + '">' +
+                    '<div class="chart-bar ' + cls + '" style="height:' + Math.max(2, (v / max) * 100) + '%"></div>' +
+                    '<div class="chart-lbl">' + escapeHtml(String(labels[i])) + '</div>' +
+                '</div>').join('');
+            if (subtitle) setTextIfPresent(subId, subtitle);
+        }
+
+        function renderCharts() {
+            const asc = blockCache.slice().sort((a, b) => a.height - b.height);
+            if (!asc.length) return;
+            const labels = asc.map(b => String(b.height).slice(-4));
+
+            renderChart('chartSize', 'chartSizeSub',
+                asc.map(b => (b.total_size || 0) / 1e6), labels, 'orange',
+                'MB per block · last ' + asc.length);
+
+            renderChart('chartFee', 'chartFeeSub',
+                asc.map(b => b.avgfeerate || 0), labels, 'yellow',
+                'average sat/vB · last ' + asc.length);
+
+            renderChart('chartReward', 'chartRewardSub',
+                asc.map(b => ((b.subsidy || 0) + (b.totalfee || 0)) / 1e8), labels, 'green',
+                'subsidy + fees, BTC · last ' + asc.length);
+        }
+
+        // ── Peers table (umbrel PeersTable parity) ──────────────────────
+        async function updatePeers() {
+            const peers = await callRPC('getpeerinfo');
+            if (peers) peerCache = peers;
+            renderPeers();
+        }
+
+        function peerNetwork(p) {
+            const net = String(p.network || '').toLowerCase();
+            if (net === 'onion') return 'Tor';
+            if (net === 'i2p') return 'I2P';
+            if (net === 'cjdns') return 'CJDNS';
+            if (net === 'not_publicly_routable') return 'Local';
+            const addr = String(p.addr || '').toLowerCase();
+            if (addr.includes('.onion')) return 'Tor';
+            if (/^(127\.|10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])|\[?::1\]?)/.test(addr)) return 'Local';
+            return 'Clearnet';
+        }
+
+        function sortPeers(col) {
+            if (peerSort.col === col) peerSort.dir *= -1; else { peerSort.col = col; peerSort.dir = 1; }
+            renderPeers();
+        }
+
+        function renderPeers() {
+            const body = document.getElementById('peersBody');
+            if (!body) return;
+            const q = (document.getElementById('peerFilter')?.value || '').toLowerCase();
+
+            let rows = peerCache.map(p => ({
+                subver: String(p.subver || '').replace(/^\/|\/$/g, '') || 'unknown',
+                addr: p.addr || '',
+                network: peerNetwork(p),
+                relay: p.relaytxes !== false,
+                direction: p.inbound ? 'Inbound' : 'Outbound',
+                conntime: Number(p.conntime || 0),
+                ping: Number(p.pingtime || 0),
+            }));
+
+            setTextIfPresent('peersCount', peerCache.length ? '(' + peerCache.length + ')' : '');
+
+            if (q) rows = rows.filter(r =>
+                r.subver.toLowerCase().includes(q) || r.addr.toLowerCase().includes(q) ||
+                r.network.toLowerCase().includes(q) || r.direction.toLowerCase().includes(q));
+
+            rows.sort((a, b) => {
+                const x = a[peerSort.col], y = b[peerSort.col];
+                let cmp;
+                if (typeof x === 'boolean') cmp = (x === y) ? 0 : (x ? 1 : -1);
+                else if (typeof x === 'number') cmp = x - y;
+                else cmp = String(x).localeCompare(String(y));
+                return cmp * peerSort.dir;
+            });
+
+            document.querySelectorAll('.data-table th[data-col]').forEach(th =>
+                th.classList.toggle('sorted', th.dataset.col === peerSort.col));
+
+            if (!rows.length) {
+                body.innerHTML = '<tr><td colspan="6"><div class="empty-state">' +
+                    (peerCache.length ? 'No peers match that filter.' : 'No connected peers.') + '</div></td></tr>';
+                return;
+            }
+
+            const check = '<svg width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7"/></svg>';
+            body.innerHTML = rows.map(r =>
+                '<tr>' +
+                    '<td><div class="text-white/90">' + escapeHtml(r.subver) + '</div>' +
+                        '<div class="text-xs text-white/40 truncate" style="max-width:14rem">' + escapeHtml(r.addr) + '</div></td>' +
+                    '<td><span class="pill">' + escapeHtml(r.network) + '</span></td>' +
+                    '<td><span style="opacity:' + (r.relay ? '1' : '0.2') + '">' + check + '</span></td>' +
+                    '<td class="text-white/70">' + escapeHtml(r.direction) + '</td>' +
+                    '<td class="text-white/70 tabular">' + escapeHtml(shortAgo(r.conntime)) + '</td>' +
+                    '<td class="text-white/70 tabular">' + (r.ping ? (r.ping * 1000).toFixed(0) + ' ms' : '-') + '</td>' +
+                '</tr>').join('');
+        }
+
+        // ── Connect tab ─────────────────────────────────────────────────
+        function renderQR(containerId, text) {
+            const container = document.getElementById(containerId);
+            if (!container) return;
+            container.innerHTML = '';
+            if (typeof qrcode !== 'function') {
+                container.innerHTML = '<div style="color:#999;font-size:12px;text-align:center;padding:2rem">QR unavailable</div>';
+                return;
+            }
+            try {
+                const qr = qrcode(0, 'L');
+                qr.addData(text);
+                qr.make();
+                container.innerHTML = qr.createImgTag(3, 0);
+            } catch (e) {
+                container.innerHTML = '<div style="color:#999;font-size:11px;text-align:center;padding:2rem">QR too large</div>';
+            }
+        }
+
+        function renderConnect() {
+            const mode = document.getElementById('connMode')?.value || 'local';
+            const isTor = mode === 'tor';
+            // The onion is published by the relay-sharing settings; reuse it so
+            // Tor mode shows a real address rather than a placeholder.
+            const torEndpoint = (document.getElementById('relayTorInput')?.value || '').trim()
+                .replace(/^https?:\/\//, '').replace(/\/$/, '');
+            const rpcHost = isTor ? (torEndpoint || 'Tor not configured') : window.location.hostname;
+
+            setTextIfPresent('rpcHostField', rpcHost);
+            setTextIfPresent('rpcPortField', String(RPC_PORT));
+            setTextIfPresent('p2pHostField', rpcHost);
+            setTextIfPresent('p2pPortField', String(P2P_PORT));
+
+            const warn = document.getElementById('rpcLocalWarning');
+            if (warn) warn.style.display = isTor ? 'none' : '';
+
+            const usable = !isTor || !!torEndpoint;
+            if (usable) {
+                renderQR('rpcQrBox', 'btcrpc://' + rpcHost + ':' + RPC_PORT);
+                renderQR('p2pQrBox', rpcHost + ':' + P2P_PORT);
+            } else {
+                const msg = '<div style="color:#999;font-size:12px;text-align:center;padding:2rem">Tor not configured</div>';
+                document.getElementById('rpcQrBox').innerHTML = msg;
+                document.getElementById('p2pQrBox').innerHTML = msg;
+            }
+        }
+
+        function copyEl(id, btn) {
+            const text = document.getElementById(id)?.textContent.trim();
+            if (!text || text === '-') return;
+            copyText(text).then(() => {
+                const orig = btn.innerHTML;
+                btn.innerHTML = '<svg width="16" height="16" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/></svg>';
+                btn.style.color = '#4ade80';
+                setTimeout(() => { btn.innerHTML = orig; btn.style.color = ''; }, 1500);
+            });
+        }
+
+        // Refresh the live tabs on the same cadence as the rest of the page,
+        // but only for whichever tab is actually visible.
+        setInterval(() => {
+            if (document.getElementById('panel-insights')?.classList.contains('active')) updateInsights();
+            else if (document.getElementById('panel-peers')?.classList.contains('active')) updatePeers();
+        }, 15000);
+
+        {
+            const initialTab = (location.hash || '').replace('#', '');
+            if (initialTab && document.getElementById('panel-' + initialTab)) setTab(initialTab);
+        }
+
+        document.addEventListener('keydown', (e) => {
+            if (e.key === 'Escape') {
+                closeSettings();
+                closeLogs();
+            }
+        });
+
+        document.querySelectorAll('.modal').forEach(modal => {
+            modal.addEventListener('click', (e) => {
+                if (e.target === modal) {
+                    closeSettings();
+                    closeLogs();
+                }
+            });
+        });
+    </script>
+</body>
+</html>

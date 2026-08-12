@@ -1,0 +1,14 @@
+[Unit]
+Description=Assign WireGuard server address to wg0
+After=archipelago-wg.service
+Wants=archipelago-wg.service
+ConditionPathExists=/sys/class/net/wg0
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/bin/bash -c 'ip address show dev wg0 | grep -q "10.44.0.1" || ip address add 10.44.0.1/16 dev wg0'
+ExecStart=/bin/bash -c 'iptables -t nat -C POSTROUTING -s 10.44.0.0/16 ! -o wg0 -j MASQUERADE 2>/dev/null || iptables -t nat -A POSTROUTING -s 10.44.0.0/16 ! -o wg0 -j MASQUERADE'
+
+[Install]
+WantedBy=multi-user.target

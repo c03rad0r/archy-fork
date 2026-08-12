@@ -1,0 +1,9 @@
+[Unit]
+Description=Process Archipelago Tor management action
+After=tor.service
+
+[Service]
+Type=oneshot
+ExecStart=/opt/archipelago/scripts/tor-helper.sh
+# Runs as root — needs to write /etc/tor/torrc and restart tor.service
+User=root

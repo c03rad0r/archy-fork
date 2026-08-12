@@ -1,0 +1,19 @@
+[info]
+relay_url = "ws://0.0.0.0:7777/"
+name = "Archipelago Private Relay"
+description = "Private Nostr relay for Archipelago mesh VPN peer discovery"
+
+[database]
+data_directory = "/var/lib/archipelago/nostr-relay"
+in_memory = true
+
+[network]
+address = "0.0.0.0"
+port = 7777
+ping_interval = 120
+
+[limits]
+messages_per_sec = 50
+max_event_bytes = 65536
+max_ws_message_bytes = 65536
+max_ws_frame_bytes = 65536

@@ -1,0 +1,78 @@
+name: App Submission
+description: Submit an app for the Archipelago marketplace
+title: "[App]: "
+labels: ["app-submission"]
+body:
+  - type: input
+    id: app_name
+    attributes:
+      label: App Name
+      placeholder: My Bitcoin App
+    validations:
+      required: true
+
+  - type: input
+    id: docker_image
+    attributes:
+      label: Container Image
+      description: Full image reference with tag (no :latest)
+      placeholder: "ghcr.io/org/app:1.2.3"
+    validations:
+      required: true
+
+  - type: textarea
+    id: description
+    attributes:
+      label: Description
+      description: What does this app do?
+    validations:
+      required: true
+
+  - type: input
+    id: homepage
+    attributes:
+      label: Homepage / Repository
+      placeholder: "https://github.com/..."
+
+  - type: dropdown
+    id: category
+    attributes:
+      label: Category
+      options:
+        - Bitcoin
+        - Lightning
+        - Privacy
+        - Storage
+        - Communication
+        - Development
+        - Other
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: requirements
+    attributes:
+      label: App Requirements Met
+      options:
+        - label: Runs as non-root user (UID > 1000)
+          required: true
+        - label: No `latest` tag — pinned version
+          required: true
+        - label: "Supports x86_64"
+          required: true
+        - label: "Supports ARM64"
+        - label: Tested on Archipelago hardware
+          required: true
+
+  - type: textarea
+    id: ports
+    attributes:
+      label: Required Ports
+      description: List ports the app needs exposed
+      placeholder: "8080 (web UI), 9735 (Lightning)"
+
+  - type: textarea
+    id: dependencies
+    attributes:
+      label: Dependencies
+      description: Does this app require other apps (e.g., Bitcoin, LND)?

@@ -1,0 +1,20 @@
+[Unit]
+Description=Archipelago audio router (HDMI hot-plug follow + ELD boot-race heal)
+# Talks to the archipelago user's PipeWire (running under the lingering user
+# manager) and pokes the kiosk X server for the ELD re-modeset nudge; start
+# after both are plausibly up. Missing/inactive units here are harmless.
+After=user@1000.service archipelago-kiosk.service
+Wants=user@1000.service
+ConditionPathExists=/usr/local/bin/archipelago-audio-router
+
+[Service]
+Type=simple
+User=archipelago
+ExecStart=/usr/local/bin/archipelago-audio-router
+Restart=always
+RestartSec=10
+# Polls a few pactl calls every 5s — keep it invisible to the scheduler.
+Nice=10
+
+[Install]
+WantedBy=multi-user.target

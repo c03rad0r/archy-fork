@@ -1,0 +1,80 @@
+app:
+  id: lnd
+  name: LND
+  version: 0.18.4
+  description: Lightning Network implementation by Lightning Labs. Enables instant, low-cost Bitcoin payments.
+
+  container:
+    image: source.archipelago-foundation.org/lfg2025/lnd:v0.18.4-beta
+    pull_policy: if-not-present
+    network: archy-net
+    # BITCOIND_HOST must follow the node's actual Bitcoin container — Knots or
+    # Core — resolved at apply time from host facts. Hardcoding either breaks
+    # LND's chain backend connection on the other (lnd.conf is likewise
+    # resolved in lnd::ensure_config).
+    derived_env:
+      - key: BITCOIND_HOST
+        template: "{{BITCOIN_HOST}}"
+    secret_env:
+      - key: BITCOIND_RPCPASS
+        secret_file: bitcoin-rpc-password
+    data_uid: "100000:100000"
+
+  dependencies:
+    - app_id: bitcoin-core
+      version: ">=26.0"
+
+  resources:
+    cpu_limit: 2
+    memory_limit: 1Gi
+    disk_limit: 10Gi
+
+  security:
+    capabilities: [CHOWN, FOWNER, SETUID, SETGID, DAC_OVERRIDE, NET_RAW]
+    readonly_root: false
+    network_policy: isolated
+
+  ports:
+    - host: 9735
+      container: 9735
+      protocol: tcp
+      auth: none
+      auth_rationale: >-
+        Lightning p2p. The BOLT-8 noise handshake authenticates and encrypts the channel itself.
+    - host: 10009
+      container: 10009
+      protocol: tcp
+      auth: none
+      auth_rationale: >-
+        LND gRPC, authenticated by macaroon over TLS. Zeus and other remote wallets depend on reaching this directly.
+    - host: 18080
+      container: 8080
+      protocol: tcp
+      auth: none
+      auth_rationale: >-
+        LND REST, authenticated by macaroon over TLS. A browser login page would break Zeus and every non-browser wallet client.
+
+  volumes:
+    - type: bind
+      source: /var/lib/archipelago/lnd
+      target: /root/.lnd
+      options: [rw]
+
+  environment:
+    - BITCOIND_RPCUSER=archipelago
+    - NETWORK=mainnet
+
+  health_check:
+    type: tcp
+    endpoint: localhost:10009
+    interval: 30s
+    timeout: 5s
+    retries: 3
+
+  bitcoin_integration:
+    rpc_access: admin
+    sync_required: true
+
+  lightning_integration:
+    channel_management: true
+    payment_routing: true

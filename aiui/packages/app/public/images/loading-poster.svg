@@ -1,0 +1,24 @@
+<svg width="200" height="300" viewBox="0 0 200 300" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <clipPath id="clip-poster">
+      <rect width="200" height="300" rx="12" fill="white"/>
+    </clipPath>
+  </defs>
+  <g clip-path="url(#clip-poster)">
+    <rect width="200" height="300" fill="currentColor" fill-opacity="0.15"/>
+    <g fill="currentColor" fill-opacity="0.2">
+      <rect x="8" y="12" width="16" height="24" rx="2"/>
+      <rect x="40" y="12" width="16" height="24" rx="2"/>
+      <rect x="72" y="12" width="16" height="24" rx="2"/>
+      <rect x="104" y="12" width="16" height="24" rx="2"/>
+      <rect x="136" y="12" width="16" height="24" rx="2"/>
+      <rect x="168" y="12" width="16" height="24" rx="2"/>
+      <rect x="8" y="48" width="16" height="24" rx="2"/>
+      <rect x="40" y="48" width="16" height="24" rx="2"/>
+      <rect x="72" y="48" width="16" height="24" rx="2"/>
+      <rect x="104" y="48" width="16" height="24" rx="2"/>
+      <rect x="136" y="48" width="16" height="24" rx="2"/>
+      <rect x="168" y="48" width="16" height="24" rx="2"/>
+    </g>
+  </g>
+</svg>

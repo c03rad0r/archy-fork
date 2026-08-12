@@ -1,0 +1,30 @@
+---
+description: Expert rules for Film content extraction, display, and surfacing
+globs: "**/useContentPanel.ts,**/FilmCard.vue,**/FilmGrid.vue,**/FilmDetail.vue,**/mocks/films*"
+alwaysApply: false
+---
+
+# Films Content Surface
+
+## Extraction Patterns
+
+- **Tagged**: `[[film:f123]]` or `[[film:123]]` → resolved from mock library
+- **External**: `[[film_ext:Title|YYYY|Director]]` → create external film with fallback poster
+
+## Edge Cases
+
+- `normalizeFilmId`: `f123` and `123` both become `f123`
+- Duplicate prevention: key by `title|year` for externals
+- Empty/malformed: skip if title < 2 chars, year invalid
+- Poster: use `generatePosterFallback(title, year)` for externals
+
+## Strip Rules
+
+- `stripFilmTags` removes `[[film:...]]` and `[[film_ext:...]]` before displaying text
+- Preserve `\n{3,}` → `\n\n` to avoid excessive whitespace
+
+## Display
+
+- FilmCard: poster, title, year, director
+- FilmDetail: full metadata, sources, cast
+- Panel: grid of FilmCards, click opens FilmDetail in panel

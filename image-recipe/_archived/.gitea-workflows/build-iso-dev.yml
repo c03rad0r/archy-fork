@@ -1,0 +1,352 @@
+name: Build Archipelago ISO (dev)
+
+on:
+  push:
+    branches: [main, dev-iso]
+  workflow_dispatch:
+
+jobs:
+  build-iso:
+    runs-on: iso-builder
+    timeout-minutes: 60
+    steps:
+      - name: Checkout
+        run: |
+          # Direct fetch + sync (actions/checkout token is broken on this Gitea)
+          REPO_DIR="$HOME/archy"
+          cd "$REPO_DIR" && git fetch origin main && git reset --hard origin/main
+          echo "=== Source at commit: $(git log --oneline -1) ==="
+          rsync -a --delete \
+            --exclude '.git' --exclude 'node_modules' --exclude 'target' \
+            --exclude 'image-recipe/build' --exclude 'image-recipe/results' \
+            --exclude 'web/dist' \
+            "$REPO_DIR/" "$GITHUB_WORKSPACE/"
+          cd "$GITHUB_WORKSPACE"
+          echo "=== Workspace version: $(grep '^version' core/archipelago/Cargo.toml) ==="
+          [ -f "scripts/first-boot-containers.sh" ] && echo "  first-boot-containers.sh: PRESENT" || echo "  first-boot-containers.sh: MISSING"
+          grep -q 'network-alias' scripts/first-boot-containers.sh 2>/dev/null && echo "  network-alias fix: PRESENT" || echo "  network-alias fix: MISSING"
+
+      - name: Install ISO build dependencies
+        run: |
+          # Skip apt if packages already installed (persistent runner)
+          if dpkg -s debootstrap squashfs-tools xorriso isolinux syslinux-common mtools \
+               grub-efi-amd64-bin grub-pc-bin grub-common musl-tools >/dev/null 2>&1; then
+            echo "ISO build deps already installed, skipping apt"
+          else
+            sudo apt-get update -qq
+            sudo apt-get install -y -qq \
+              debootstrap squashfs-tools xorriso \
+              isolinux syslinux-common mtools \
+              grub-efi-amd64-bin grub-pc-bin grub-common \
+              musl-tools
+          fi
+          # Ensure musl Rust target is available
+          source $HOME/.cargo/env 2>/dev/null || true
+          rustup target add x86_64-unknown-linux-musl 2>/dev/null || true
+
+      - name: Build backend (incremental, musl static)
+        run: |
+          source $HOME/.cargo/env 2>/dev/null || true
+          # Build in persistent repo dir to reuse target/ cache
+          cd "$HOME/archy"
+          export GIT_HASH=$(git rev-parse --short HEAD)
+          # Static musl build for portability — ensures binary runs regardless
+          # of glibc version differences between build host and ISO rootfs.
+          cargo build --release --target x86_64-unknown-linux-musl --manifest-path core/Cargo.toml
+          # Copy binary to workspace for downstream steps
+          mkdir -p "$GITHUB_WORKSPACE/core/target/release"
+          cp core/target/x86_64-unknown-linux-musl/release/archipelago "$GITHUB_WORKSPACE/core/target/release/"
+
+      - name: Build frontend
+        run: |
+          source $HOME/.nvm/nvm.sh 2>/dev/null || true
+          cd neode-ui && npm ci && npm run build
+
+      - name: Type check frontend
+        run: |
+          source $HOME/.nvm/nvm.sh 2>/dev/null || true
+          cd neode-ui && npx vue-tsc -b --noEmit
+
+      - name: Run frontend tests
+        run: |
+          source $HOME/.nvm/nvm.sh 2>/dev/null || true
+          cd neode-ui && npx vitest run
+
+      - name: Include AIUI if available
+        run: |
+          # AIUI (the Claude chat sidebar) lives outside the Vue build
+          # and must be copied into the frontend dist BEFORE packaging,
+          # otherwise OTA-tarball upgrades silently strip it from nodes
+          # in the field. Try in order: cached on runner, then the
+          # newest release tarball in this repo's releases/ dir as a
+          # fallback so a freshly-provisioned runner still gets AIUI.
+          AIUI_SRC=""
+          if [ -f "/opt/archipelago/web-ui/aiui/index.html" ]; then
+            AIUI_SRC="/opt/archipelago/web-ui/aiui"
+          elif [ -f "$HOME/archy/web/dist/neode-ui/aiui/index.html" ]; then
+            AIUI_SRC="$HOME/archy/web/dist/neode-ui/aiui"
+          else
+            LATEST_FRONTEND=$(ls -t releases/v*/archipelago-frontend-*.tar.gz 2>/dev/null | head -1)
+            if [ -n "$LATEST_FRONTEND" ]; then
+              echo "Extracting AIUI from $LATEST_FRONTEND (runner cache miss)"
+              TMP=$(mktemp -d)
+              tar xzf "$LATEST_FRONTEND" -C "$TMP" ./aiui 2>/dev/null || true
+              if [ -f "$TMP/aiui/index.html" ]; then
+                AIUI_SRC="$TMP/aiui"
+              fi
+            fi
+          fi
+          if [ -n "$AIUI_SRC" ]; then
+            mkdir -p web/dist/neode-ui/aiui
+            cp -r "$AIUI_SRC/"* web/dist/neode-ui/aiui/
+            echo "AIUI included from $AIUI_SRC ($(du -sh web/dist/neode-ui/aiui | cut -f1))"
+          else
+            echo "FAIL: AIUI not found anywhere (runner cache + release tarballs)"
+            echo "  checked: /opt/archipelago/web-ui/aiui"
+            echo "           \$HOME/archy/web/dist/neode-ui/aiui"
+            echo "           releases/v*/archipelago-frontend-*.tar.gz"
+            exit 1
+          fi
+
+      - name: Configure root podman for insecure registry
+        run: |
+          sudo mkdir -p /etc/containers/registries.conf.d
+          echo '[[registry]]
+          location = "source.archipelago-foundation.org"
+          insecure = true' | sudo tee /etc/containers/registries.conf.d/archipelago.conf
+
+      - name: Build unbundled ISO
+        run: |
+          cd image-recipe
+          export ARCHIPELAGO_BIN="$(pwd)/../core/target/release/archipelago"
+          if [ ! -x "$ARCHIPELAGO_BIN" ]; then
+            echo "FAIL: backend binary missing or not executable at $ARCHIPELAGO_BIN"
+            exit 1
+          fi
+          BIN_VERSION=$(strings "$ARCHIPELAGO_BIN" | grep -oE 'archipelago [0-9]+\.[0-9]+\.[0-9]+(-[a-z]+)?' | head -1 || true)
+          EXPECTED=$(grep '^version' ../core/archipelago/Cargo.toml | head -1 | sed 's/.*"\(.*\)".*/\1/')
+          echo "Binary: $ARCHIPELAGO_BIN ($(du -h "$ARCHIPELAGO_BIN" | cut -f1))"
+          echo "Embedded version string: ${BIN_VERSION:-unknown}"
+          echo "Expected version (Cargo.toml): $EXPECTED"
+          sudo -E UNBUNDLED=1 DEV_SERVER=localhost BUILD_FROM_SOURCE=0 \
+            ARCHIPELAGO_BIN="$ARCHIPELAGO_BIN" \
+            ./build-auto-installer-iso.sh
+
+      - name: Smoke test ISO
+        run: |
+          ISO=$(ls image-recipe/results/archipelago-installer-unbundled-*.iso 2>/dev/null | head -1)
+          if [ -z "$ISO" ]; then
+            echo "FAIL: No ISO produced"
+            exit 1
+          fi
+          echo "ISO: $ISO ($(du -h "$ISO" | cut -f1))"
+
+          # Mount and verify structure
+          MNT=$(mktemp -d)
+          sudo mount -o loop,ro "$ISO" "$MNT"
+
+          FAIL=0
+          for f in live/vmlinuz live/initrd.img live/filesystem.squashfs \
+                   isolinux/isolinux.bin isolinux/isolinux.cfg \
+                   boot/grub/grub.cfg EFI/BOOT/BOOTX64.EFI \
+                   archipelago/auto-install.sh archipelago/rootfs.tar; do
+            if [ -e "$MNT/$f" ]; then
+              echo "  OK: $f ($(sudo du -h "$MNT/$f" 2>/dev/null | cut -f1))"
+            else
+              echo "  MISSING: $f"
+              FAIL=1
+            fi
+          done
+
+          # Verify initrd has live-boot
+          INITRD_DIR=$(mktemp -d)
+          sudo unmkinitramfs "$MNT/live/initrd.img" "$INITRD_DIR" 2>/dev/null
+          if [ -e "$INITRD_DIR/scripts/live" ] || [ -e "$INITRD_DIR/main/scripts/live" ]; then
+            echo "  OK: initrd has live-boot scripts"
+          else
+            echo "  MISSING: live-boot scripts in initrd!"
+            echo "  initrd scripts/: $(ls "$INITRD_DIR/scripts/" 2>/dev/null || ls "$INITRD_DIR/main/scripts/" 2>/dev/null)"
+            FAIL=1
+          fi
+
+          # Check GRUB config has boot=live
+          if grep -q "boot=live" "$MNT/boot/grub/grub.cfg"; then
+            echo "  OK: grub.cfg has boot=live"
+          else
+            echo "  MISSING: boot=live in grub.cfg"
+            FAIL=1
+          fi
+
+          sudo umount "$MNT" 2>/dev/null
+          rmdir "$MNT" 2>/dev/null
+          sudo rm -r "$INITRD_DIR" 2>/dev/null
+
+          if [ "$FAIL" = "1" ]; then
+            echo "SMOKE TEST FAILED"
+            exit 1
+          fi
+          echo "SMOKE TEST PASSED"
+
+      - name: QEMU boot test
+        timeout-minutes: 5
+        continue-on-error: true
+        run: |
+          ISO=$(ls image-recipe/results/archipelago-installer-unbundled-*.iso 2>/dev/null | head -1)
+          if [ -n "$ISO" ] && command -v qemu-system-x86_64 >/dev/null 2>&1; then
+            echo "Running headless QEMU boot test..."
+            bash image-recipe/test-iso-qemu.sh "$ISO" 120
+          else
+            echo "Skipping QEMU test (no ISO or QEMU not available)"
+          fi
+
+      - name: Copy to Builds
+        run: |
+          ISO=$(ls image-recipe/results/archipelago-installer-unbundled-*.iso 2>/dev/null | head -1)
+          if [ -n "$ISO" ]; then
+            DATE=$(date +%Y%m%d-%H%M)
+            DEST="/var/lib/archipelago/filebrowser/Builds/archipelago-dev-unbundled-${DATE}.iso"
+            sudo cp "$ISO" "$DEST"
+            sudo chown 1000:1000 "$DEST"
+            echo "ISO: archipelago-dev-unbundled-${DATE}.iso"
+            echo "Size: $(du -h "$DEST" | cut -f1)"
+            echo "SHA256: $(sha256sum "$DEST" | cut -d' ' -f1)"
+          fi
+
+      - name: Publish release artifacts and manifest
+        run: |
+          VERSION=$(grep '^version' core/archipelago/Cargo.toml | head -1 | sed 's/.*"\(.*\)".*/\1/')
+          DATE=$(date +%Y-%m-%d)
+          RELEASE_DIR="/var/lib/archipelago/filebrowser/Builds/releases/v${VERSION}"
+          sudo mkdir -p "$RELEASE_DIR"
+
+          # Copy backend binary
+          BINARY="core/target/release/archipelago"
+          if [ -f "$BINARY" ]; then
+            sudo cp "$BINARY" "$RELEASE_DIR/archipelago"
+            sudo chmod 755 "$RELEASE_DIR/archipelago"
+            echo "Backend: $(du -h "$RELEASE_DIR/archipelago" | cut -f1)"
+          fi
+
+          # Create frontend archive
+          if [ -d "web/dist/neode-ui" ]; then
+            FRONTEND_ARCHIVE="$RELEASE_DIR/archipelago-frontend-${VERSION}.tar.gz"
+            sudo tar -czf "$FRONTEND_ARCHIVE" -C web/dist neode-ui
+            echo "Frontend: $(du -h "$FRONTEND_ARCHIVE" | cut -f1)"
+          fi
+
+          # Generate manifest with SHA256 hashes
+          BACKEND_HASH=$(sha256sum "$RELEASE_DIR/archipelago" 2>/dev/null | awk '{print $1}')
+          BACKEND_SIZE=$(stat -c%s "$RELEASE_DIR/archipelago" 2>/dev/null || echo 0)
+          FRONTEND_NAME="archipelago-frontend-${VERSION}.tar.gz"
+          FRONTEND_HASH=$(sha256sum "$RELEASE_DIR/$FRONTEND_NAME" 2>/dev/null | awk '{print $1}')
+          FRONTEND_SIZE=$(stat -c%s "$RELEASE_DIR/$FRONTEND_NAME" 2>/dev/null || echo 0)
+
+          # Build download base URL (FileBrowser serves from /Builds/)
+          HOST=$(hostname -I 2>/dev/null | awk '{print $1}')
+          BASE_URL="http://${HOST:-192.0.2.10}:8083/Builds/releases/v${VERSION}"
+
+          # Generate manifest JSON
+          python3 -c "
+          import json
+          manifest = {
+              'version': '$VERSION',
+              'release_date': '$DATE',
+              'changelog': ['Update to version $VERSION'],
+              'components': []
+          }
+          if '$BACKEND_HASH':
+              manifest['components'].append({
+                  'name': 'archipelago',
+                  'current_version': '$VERSION',
+                  'new_version': '$VERSION',
+                  'download_url': '$BASE_URL/archipelago',
+                  'sha256': '$BACKEND_HASH',
+                  'size_bytes': int('$BACKEND_SIZE' or '0')
+              })
+          if '$FRONTEND_HASH':
+              manifest['components'].append({
+                  'name': '$FRONTEND_NAME',
+                  'current_version': '$VERSION',
+                  'new_version': '$VERSION',
+                  'download_url': '$BASE_URL/$FRONTEND_NAME',
+                  'sha256': '$FRONTEND_HASH',
+                  'size_bytes': int('$FRONTEND_SIZE' or '0')
+              })
+          print(json.dumps(manifest, indent=2))
+          " | sudo tee "$RELEASE_DIR/manifest.json" > /dev/null
+
+          # Also copy manifest to repo releases/ dir for git-based serving
+          cp "$RELEASE_DIR/manifest.json" releases/manifest.json 2>/dev/null || true
+
+          sudo chown -R 1000:1000 "$RELEASE_DIR"
+          echo ""
+          echo "Release manifest:"
+          cat "$RELEASE_DIR/manifest.json"
+          echo ""
+          echo "Artifacts published to: $RELEASE_DIR"
+
+      - name: Build report
+        if: always()
+        continue-on-error: true
+        run: |
+          set +eo pipefail
+          echo "══════════════════════════════════════════"
+          echo "DEV ISO BUILD REPORT"
+          echo "══════════════════════════════════════════"
+          echo "Commit:    $(git -C "$HOME/archy" rev-parse --short HEAD 2>/dev/null || echo 'unknown') ($(git -C "$HOME/archy" log -1 --format=%s 2>/dev/null || echo 'unknown'))"
+          echo "Branch:    ${GITHUB_REF_NAME:-dev-iso}"
+          echo "Date:      $(date -u '+%Y-%m-%d %H:%M:%S UTC')"
+          echo "Runner:    $(hostname)"
+          echo ""
+          echo "── Artifacts ──"
+          ls -lh image-recipe/results/*.iso 2>/dev/null || echo "  No ISO produced"
+          ls -lh /var/lib/archipelago/filebrowser/Builds/archipelago-dev-*.iso 2>/dev/null | tail -3
+          echo ""
+          echo "── Rootfs contents check ──"
+          ROOTFS=$(ls image-recipe/build/auto-installer/archipelago-rootfs.tar 2>/dev/null) || true
+          if [ -n "$ROOTFS" ]; then
+            echo "  rootfs.tar: $(sudo du -h "$ROOTFS" 2>/dev/null | cut -f1 || echo 'unknown')"
+            # List key paths once (podman export omits ./ prefix, so match without it)
+            ROOTFS_LIST=$(sudo tar tf "$ROOTFS" 2>/dev/null | grep -E '(etc/nginx/sites-available/archipelago|etc/archipelago/ssl/archipelago.crt|usr/local/bin/archipelago-kiosk-launcher|usr/local/bin/archipelago|opt/archipelago/web-ui/index.html)' || true)
+            for item in \
+              "nginx config:etc/nginx/sites-available/archipelago" \
+              "SSL cert:etc/archipelago/ssl/archipelago.crt" \
+              "kiosk launcher:usr/local/bin/archipelago-kiosk-launcher" \
+              "backend binary:usr/local/bin/archipelago" \
+              "web-ui index:opt/archipelago/web-ui/index.html"; do
+              label="${item%%:*}"; path="${item#*:}"
+              echo "$ROOTFS_LIST" | grep -q "$path" && echo "  $label: PRESENT" || echo "  $label: MISSING"
+            done
+          else
+            echo "  rootfs.tar not found in workspace"
+          fi
+          echo ""
+          echo "── ISO contents check ──"
+          ISO=$(ls image-recipe/results/archipelago-installer-unbundled-*.iso 2>/dev/null | head -1) || true
+          if [ -n "$ISO" ]; then
+            echo "  ISO size: $(sudo du -h "$ISO" 2>/dev/null | cut -f1 || echo 'unknown')"
+            ISO_MOUNT=$(mktemp -d)
+            if sudo mount -o loop,ro "$ISO" "$ISO_MOUNT" 2>/dev/null; then
+              echo "  auto-install.sh: $([ -f "$ISO_MOUNT/archipelago/auto-install.sh" ] && echo 'PRESENT' || echo 'MISSING')"
+              echo "  rootfs.tar: $([ -f "$ISO_MOUNT/archipelago/rootfs.tar" ] && echo "PRESENT ($(sudo du -h "$ISO_MOUNT/archipelago/rootfs.tar" 2>/dev/null | cut -f1))" || echo 'MISSING')"
+              echo "  backend bin: $([ -f "$ISO_MOUNT/archipelago/bin/archipelago" ] && echo "PRESENT ($(sudo du -h "$ISO_MOUNT/archipelago/bin/archipelago" 2>/dev/null | cut -f1))" || echo 'MISSING')"
+              echo "  frontend: $([ -f "$ISO_MOUNT/archipelago/web-ui/index.html" ] && echo 'PRESENT' || echo 'MISSING')"
+              echo "  vmlinuz: $([ -f "$ISO_MOUNT/live/vmlinuz" ] && echo 'PRESENT' || echo 'MISSING')"
+              echo "  initrd: $([ -f "$ISO_MOUNT/live/initrd.img" ] && echo 'PRESENT' || echo 'MISSING')"
+              echo "  squashfs: $([ -f "$ISO_MOUNT/live/filesystem.squashfs" ] && echo "PRESENT ($(sudo du -h "$ISO_MOUNT/live/filesystem.squashfs" 2>/dev/null | cut -f1))" || echo 'MISSING')"
+              echo "  grub theme: $([ -d "$ISO_MOUNT/boot/grub/themes/archipelago" ] && echo 'PRESENT' || echo 'MISSING')"
+              sudo umount "$ISO_MOUNT" 2>/dev/null || true
+            else
+              echo "  Could not mount ISO for inspection"
+            fi
+            rmdir "$ISO_MOUNT" 2>/dev/null || true
+          fi
+          echo "══════════════════════════════════════════"
+
+      - name: Fix workspace permissions
+        if: always()
+        run: |
+          sudo chown -R $(id -u):$(id -g) . 2>/dev/null || true
+          sudo chmod -R u+rwX . 2>/dev/null || true
+          sudo chown -R $(id -u):$(id -g) "$HOME/.cache/act" 2>/dev/null || true
+          sudo chmod -R u+rwX "$HOME/.cache/act" 2>/dev/null || true

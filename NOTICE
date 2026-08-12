@@ -1,0 +1,73 @@
+# Archipelago — Third-Party Notices
+
+Archipelago is licensed under the MIT License (see LICENSE).
+This file lists third-party components included in this repository and its
+release artifacts, with their licenses and required attributions.
+
+## Embedded / vendored components
+
+- **FIPS mesh networking** — https://github.com/jmcorgan/fips
+  Copyright (c) 2026 Johnathan Corgan. MIT License.
+  Used as the embedded mesh VPN in the OS (`fips` daemon, pinned v0.4.1) and
+  compiled into the Android companion app (`Android/rust/archy-fips-core`).
+
+- **QR Code Generator for JavaScript** — http://www.d-project.com/
+  Copyright (c) 2009 Kazuhiko Arase. MIT License.
+  Vendored at `docker/lnd-ui/qrcode.js` and `docker/electrs-ui/qrcode.js`
+  (original headers preserved).
+
+- **nostr-rs-relay** — https://github.com/scsibug/nostr-rs-relay — MIT License.
+  Binary extracted into the OS image at `/opt/archipelago/bin/`.
+
+- **Reticulum (RNS) and LXMF** — https://github.com/markqvist/Reticulum
+  Copyright Mark Qvist. Distributed under the Reticulum License (an MIT-style
+  license with field-of-use restrictions: no use in systems designed to harm
+  human beings, and no use in AI/ML training datasets). The optional
+  `archy-reticulum-daemon` binary bundles RNS 1.3.5 and LXMF 1.0.1. The
+  Reticulum License is NOT an OSI-approved open-source license; it applies
+  only to that optional component, not to Archipelago itself.
+
+## Fonts
+
+- **Montserrat** — SIL Open Font License 1.1
+  (`neode-ui/public/assets/fonts/Montserrat/OFL.txt`).
+- **Open Sans** — Apache License 2.0
+  (`neode-ui/public/assets/fonts/Open_Sans/LICENSE.txt`).
+
+## Artwork and icons
+
+- **Mesh device artwork** (`neode-ui/public/assets/img/mesh-devices/`):
+  device illustrations from the Meshtastic project — https://meshtastic.org
+  © Meshtastic contributors, GPL-3.0. Meshtastic® is a registered trademark
+  of Meshtastic LLC. See the ATTRIBUTION.md in that directory.
+- Some UI icons are derived from **game-icons.net** (CC BY 3.0 — see
+  ATTRIBUTION.md in `neode-ui/public/assets/icon/`) and **pixelarticons**
+  (MIT, https://github.com/halfmage/pixelarticons).
+- Third-party application logos under `neode-ui/public/assets/img/app-icons/`
+  and `service-icons/` are trademarks of their respective owners, used solely
+  to identify the corresponding applications. No endorsement is implied.
+
+## Original media
+
+All demo content (music, photos, posters in `demo/`), UI sound effects,
+background images, and intro video in `neode-ui/public/assets/` are original
+works created and owned by the Archipelago project author, released with the
+project. The welcome voice line (`welcome-noderunner.mp3`) was generated with
+ElevenLabs TTS under a commercial-use plan.
+
+## Redistributed software (ISO and container registry)
+
+The Archipelago OS image is based on Debian and redistributes Debian packages
+(including the Linux kernel, GRUB, and non-free firmware/microcode blobs
+required for hardware support); per-package license texts are preserved at
+`/usr/share/doc/*/copyright` in the installed system, and corresponding source
+is available via Debian (https://snapshot.debian.org) as referenced in each
+release's notes. Container images offered through the app catalog and mirror
+registry remain under their upstream licenses (including GPL/AGPL software
+such as mempool, Nextcloud, Vaultwarden, SearXNG, PhotoPrism, Immich,
+Jellyfin, MariaDB, AdGuard Home, and strfry); source links are provided in
+the app catalog. The modified mempool-frontend image is built from
+`docker/mempool-frontend/` in this repository (AGPL-3.0 corresponding source).
+
+Full per-crate and per-package license inventories for release binaries are
+generated at build time (see THIRD-PARTY-LICENSES files in release artifacts).

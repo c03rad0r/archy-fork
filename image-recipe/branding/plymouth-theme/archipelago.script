@@ -1,0 +1,109 @@
+// Archipelago Plymouth Theme — cyberpunk boot splash
+// Dark background, neon orange pixel-art logo, animated progress bar
+
+// Screen dimensions
+screen_w = Window.GetWidth();
+screen_h = Window.GetHeight();
+
+// Background — solid near-black (the GRUB background handles the fancy stuff)
+Window.SetBackgroundTopColor(0.02, 0.02, 0.04);
+Window.SetBackgroundBottomColor(0.01, 0.01, 0.02);
+
+// Load logo image (generated during build)
+logo_image = Image("logo.png");
+logo_sprite = Sprite(logo_image);
+logo_w = logo_image.GetWidth();
+logo_h = logo_image.GetHeight();
+logo_sprite.SetX(screen_w / 2 - logo_w / 2);
+logo_sprite.SetY(screen_h / 2 - logo_h / 2 - 60);
+logo_sprite.SetOpacity(1.0);
+
+// --- Progress bar ---
+// Neon orange bar with glow, centered below logo
+bar_w = 300;
+bar_h = 4;
+bar_x = screen_w / 2 - bar_w / 2;
+bar_y = screen_h / 2 + logo_h / 2;
+
+// Progress bar background (dark glass)
+bar_bg = Image(bar_w, bar_h);
+for (x = 0; x < bar_w; x++) {
+    for (y = 0; y < bar_h; y++) {
+        bar_bg.SetPixel(x, y, 0.1, 0.1, 0.12, 0.8);
+    }
+}
+bar_bg_sprite = Sprite(bar_bg);
+bar_bg_sprite.SetX(bar_x);
+bar_bg_sprite.SetY(bar_y);
+
+// Progress bar fill (neon orange)
+progress_val = 0;
+
+fun refresh_callback() {
+    // Animate progress smoothly
+    if (Plymouth.GetMode() == "boot") {
+        progress_val = progress_val + 0.002;
+        if (progress_val > 1.0) progress_val = 1.0;
+    }
+
+    fill_w = Math.Int(bar_w * progress_val);
+    if (fill_w > 0) {
+        bar_fill = Image(fill_w, bar_h);
+        for (x = 0; x < fill_w; x++) {
+            for (y = 0; y < bar_h; y++) {
+                // Orange: rgb(251, 146, 60) = 0.984, 0.573, 0.235
+                bar_fill.SetPixel(x, y, 0.984, 0.573, 0.235, 1.0);
+            }
+        }
+        bar_fill_sprite = Sprite(bar_fill);
+        bar_fill_sprite.SetX(bar_x);
+        bar_fill_sprite.SetY(bar_y);
+        bar_fill_sprite.SetZ(1);
+    }
+}
+
+Plymouth.SetRefreshFunction(refresh_callback);
+
+// --- Boot progress callback ---
+fun boot_progress_callback(duration, progress) {
+    progress_val = progress;
+}
+Plymouth.SetBootProgressFunction(boot_progress_callback);
+
+// --- Status message (below progress bar) ---
+msg_sprite = Sprite();
+msg_sprite.SetPosition(screen_w / 2, bar_y + 30, 2);
+
+fun message_callback(text) {
+    // Plymouth passes boot messages here
+    // We could render them but keeping it clean — just the logo and bar
+}
+Plymouth.SetMessageFunction(message_callback);
+
+// --- Password prompt (for LUKS) ---
+fun display_password_callback(prompt, bullets) {
+    // LUKS unlock prompt
+    pass_image = Image.Text(prompt, 0.984, 0.573, 0.235);
+    pass_sprite = Sprite(pass_image);
+    pass_sprite.SetX(screen_w / 2 - pass_image.GetWidth() / 2);
+    pass_sprite.SetY(screen_h / 2 + 80);
+
+    // Bullet dots for password
+    if (bullets > 0) {
+        bullet_text = "";
+        for (i = 0; i < bullets; i++) {
+            bullet_text = bullet_text + "* ";
+        }
+        bullet_image = Image.Text(bullet_text, 0.984, 0.573, 0.235);
+        bullet_sprite = Sprite(bullet_image);
+        bullet_sprite.SetX(screen_w / 2 - bullet_image.GetWidth() / 2);
+        bullet_sprite.SetY(screen_h / 2 + 110);
+    }
+}
+Plymouth.SetDisplayPasswordFunction(display_password_callback);
+
+// --- Quit callback ---
+fun quit_callback() {
+    logo_sprite.SetOpacity(0);
+}
+Plymouth.SetQuitFunction(quit_callback);

@@ -1,0 +1,11 @@
+# Deploy config (copy to deploy-config.sh and set your password)
+# deploy-config.sh is gitignored so the password is not committed.
+#
+# cp scripts/deploy-config.example scripts/deploy-config.sh
+# Edit deploy-config.sh and set ARCHIPELAGO_PASSWORD
+#
+export ARCHIPELAGO_PASSWORD='your_password_here'
+
+# Optional: central beta telemetry collector RPC endpoint.
+# The reporter sends telemetry.ingest JSON-RPC requests here when users opt in.
+# export TELEMETRY_COLLECTOR_URL='https://YOUR-COLLECTOR-HOST/rpc/v1'

@@ -1,0 +1,1 @@
+const e={id:"openlibrary",name:"Open Library",version:"1.0.0",type:"search",description:"Search books from Open Library",async init(r){},async destroy(){},async isAvailable(){return!0}};export{e as openLibraryPlugin};

@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="Pine">
+  <rect width="512" height="512" fill="#ffffff"/>
+  <g fill="#000000">
+    <!-- trunk -->
+    <rect x="236" y="396" width="40" height="72" rx="6"/>
+    <!-- three tiers of the evergreen, top to bottom -->
+    <path d="M256 44 L336 168 L296 168 L256 108 L216 168 L176 168 Z"/>
+    <path d="M256 150 L360 300 L300 300 L256 236 L212 300 L152 300 Z"/>
+    <path d="M256 262 L392 430 L120 430 L256 262 Z"/>
+  </g>
+</svg>

@@ -1,0 +1,60 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Archipelago</string>
+    <string name="server_address_label">Server Address</string>
+    <string name="server_address_placeholder">192.168.1.100</string>
+    <string name="server_address_hint">Enter your Archipelago server IP or hostname</string>
+    <string name="connect">Connect</string>
+    <string name="connecting">Connecting…</string>
+    <string name="connection_failed">Could not reach server. Check the address and try again.</string>
+    <string name="connection_timeout">Connection timed out. Is the server running?</string>
+    <string name="welcome_title">Your Sovereign\nPersonal Server</string>
+    <string name="welcome_subtitle">Bitcoin node, app platform, and private cloud — all in one box you control.</string>
+    <string name="get_started">Get Started</string>
+    <string name="mesh_party">Mesh Party</string>
+    <string name="use_https">Use HTTPS</string>
+    <string name="port_label">Port (optional)</string>
+    <string name="saved_servers">Saved Servers</string>
+    <string name="no_saved_servers">No saved servers yet</string>
+    <string name="remove_server">Remove</string>
+    <string name="disconnect">Disconnect</string>
+    <string name="server_unreachable">Server unreachable</string>
+    <string name="retry">Retry</string>
+    <string name="remote_input">Remote Control</string>
+    <string name="remote_input_hint">Use your phone as a keyboard and mouse for the kiosk</string>
+    <string name="close">Close</string>
+    <string name="open_in_browser">Open in browser</string>
+    <string name="back">Back</string>
+    <string name="forward">Forward</string>
+    <string name="refresh">Refresh</string>
+    <string name="server_name_label">Server Name (optional)</string>
+    <string name="server_name_placeholder">My Archipelago</string>
+    <string name="edit_server">Edit</string>
+    <string name="scan_node_qr">Scan Node\'s QR</string>
+    <string name="enter_manually">Enter Manually</string>
+    <string name="connect_landing_hint">Scan the pairing QR from your node\'s Companion popup, or enter the address manually</string>
+    <string name="scan_qr_hint">Point the camera at the pairing QR shown in the Companion popup</string>
+    <string name="camera_permission_needed">Camera access is needed to scan the pairing QR. You can also enter the server details manually.</string>
+    <string name="grant_camera_access">Grant Camera Access</string>
+    <string name="invalid_pairing_qr">Not an Archipelago pairing code</string>
+    <string name="update_app_for_qr">This pairing code needs a newer app version — please update the companion app</string>
+    <string name="add_server_qr">Add server by QR</string>
+    <string name="edit_server_title">Edit Server</string>
+    <string name="save_changes">Save Changes</string>
+    <string name="cancel">Cancel</string>
+    <string name="gesture_hint_title">Hold with three fingers</string>
+    <string name="gesture_hint_body">Anywhere in the app — opens the remote control and menu</string>
+    <string name="gesture_hint_got_it">Got it</string>
+    <string name="scan_to_send">Scan to send</string>
+    <string name="scan_wallet_hint">Point the camera at a Lightning invoice, Bitcoin address, Cashu or Fedimint code</string>
+    <string name="upload_qr_image">Upload image</string>
+    <string name="no_qr_in_image">No QR code found in that image — try another, closer and well-lit</string>
+    <string name="torch_on">Turn on the torch</string>
+    <string name="torch_off">Turn off the torch</string>
+
+    <!-- Launch node picker (more than one node saved) -->
+    <string name="pick_node_title">Which node?</string>
+    <string name="pick_node_hint">Choose the Archipelago this session connects to. The FIPS mesh only comes up for mesh nodes.</string>
+    <string name="pick_node_add">Add another node</string>
+    <string name="connect_to_node">Connect to your node</string>
+</resources>

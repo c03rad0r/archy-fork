@@ -1,0 +1,52 @@
+FROM node:22-alpine
+
+WORKDIR /app
+
+# Install runtime dependencies
+RUN apk add --no-cache wget curl docker-cli
+
+# Copy package files
+COPY neode-ui/package*.json ./
+
+# Install Node dependencies (need all deps for mock backend)
+RUN npm install
+
+# Copy application code
+COPY neode-ui/ ./
+
+# Sibling assets the mock backend reads relative to /app (../docker, ../demo):
+# the Bitcoin UI mock shell and the curated cloud files (demo/files drop-ins +
+# the committed demo/content library — both are scanned by loadDemoDiskFiles).
+COPY docker/bitcoin-ui /docker/bitcoin-ui
+COPY docker/electrs-ui /docker/electrs-ui
+COPY docker/lnd-ui /docker/lnd-ui
+COPY docker/fedimint-ui /docker/fedimint-ui
+COPY demo/files /demo/files
+COPY demo/content /demo/content
+# Peer catalog media (posters/covers/photos for content.browse-peer mocks) —
+# deliberately OUTSIDE demo/content so it doesn't appear as the visitor's own
+# cloud files.
+COPY demo/peer-media /demo/peer-media
+
+# This image only ever serves the public demo — scrub the private release/registry
+# server address from everything it serves (mock data, catalog.json, demo assets)
+# and fail the build if any occurrence survives.
+RUN find /app /docker /demo -type f \( -name '*.js' -o -name '*.mjs' -o -name '*.cjs' \
+      -o -name '*.css' -o -name '*.html' -o -name '*.json' -o -name '*.md' -o -name '*.txt' \
+      -o -name '*.yml' -o -name '*.yaml' \) -not -path '*/node_modules/*' \
+      -exec sed -i \
+        -e 's#146\.59\.87\.168:3000/lfg2025#registry.demo.internal/archy#g' \
+        -e 's#146\.59\.87\.168:3000#registry.demo.internal#g' \
+        -e 's#146\.59\.87\.168#registry.demo.internal#g' {} + && \
+    if grep -rq '146\.59\.87\.168' /app/mock-backend.js /app/public /docker /demo; then \
+      echo 'LEAK: release-server IP still in demo image'; exit 1; fi
+
+# Expose port
+EXPOSE 5959
+
+# Health check
+HEALTHCHECK --interval=30s --timeout=15s --retries=5 --start-period=180s \
+  CMD wget --quiet --tries=1 --spider http://localhost:5959/health || exit 1
+
+# Start the mock backend with error handling
+CMD ["sh", "-c", "node mock-backend.js 2>&1 || (echo 'ERROR: Backend failed to start'; cat /app/package.json; ls -la /app; sleep infinity)"]

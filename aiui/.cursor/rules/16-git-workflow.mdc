@@ -1,0 +1,52 @@
+---
+description: Git workflow - commit conventions, branching, PR process
+globs: "**/*"
+alwaysApply: false
+---
+
+# Git Workflow
+
+## Commit Messages
+Format: `type(scope): description`
+
+Types:
+- `feat`: new feature
+- `fix`: bug fix
+- `refactor`: code restructuring (no behavior change)
+- `style`: formatting, whitespace (no code change)
+- `docs`: documentation
+- `test`: adding/updating tests
+- `chore`: build, dependencies, tooling
+- `perf`: performance improvement
+
+Scope: the package or area (`core`, `app`, `plugin-x`, `renderer-film`, etc.)
+
+Examples:
+```
+feat(core): add renderer registry with lazy loading
+fix(chat): prevent scroll jump on new message
+refactor(plugin-system): simplify adapter interface
+chore(deps): update Vue to 3.6
+```
+
+## Branching
+- `main`: production-ready, always deployable
+- `dev`: integration branch for features
+- `feat/description`: feature branches (from dev)
+- `fix/description`: bug fix branches
+- `release/x.y.z`: release preparation
+
+## Pull Requests
+- One feature per PR
+- Description: what changed, why, how to test
+- All tests pass
+- TypeScript strict mode passes
+- No linter errors
+- Reviewed before merge
+
+## Rules
+- Never force push to `main` or `dev`
+- Never commit `.env.local` or any secrets
+- Never commit `node_modules`
+- Squash merge feature branches to keep history clean
+- Tag releases with semver: `v1.0.0`

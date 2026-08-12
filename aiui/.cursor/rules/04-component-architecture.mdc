@@ -1,0 +1,91 @@
+---
+description: Component architecture principles - composition, patterns, and structure
+globs: "**/*.vue,**/*.ts"
+alwaysApply: false
+---
+
+# Component Architecture
+
+## Core Philosophy: Composition Over Configuration
+Build complex UIs from simple, focused components that compose well together.
+
+- Single Responsibility: each component does one thing well
+- Use slots instead of complex prop APIs
+- Provide sensible defaults
+- Clear TypeScript interfaces for props
+- Keep component state local and minimal
+
+## Anti-Patterns
+- God components that do everything
+- Prop drilling through many layers (use provide/inject or Pinia)
+- Hard-coded values instead of props
+- Component logic mixed with layout
+- Tight coupling between components
+
+## Compound Component Pattern
+Components that work together as a cohesive unit:
+```vue
+<Card>
+  <Card.Header>Title</Card.Header>
+  <Card.Body>Content</Card.Body>
+  <Card.Footer>Actions</Card.Footer>
+</Card>
+```
+
+## Container/Presenter Pattern
+Separate logic from presentation:
+- Container: handles data fetching, state, side effects
+- Presenter: pure rendering, receives data via props, emits events
+
+## Slot Pattern (Vue)
+Use named slots for flexible content injection:
+```vue
+<template>
+  <div class="section">
+    <slot name="title" />
+    <slot name="content" />
+    <slot name="actions" />
+  </div>
+</template>
+```
+
+## Prop Interface Design
+```typescript
+interface BaseComponentProps {
+  class?: string
+  testId?: string
+}
+
+interface ButtonProps extends BaseComponentProps {
+  variant?: 'primary' | 'secondary' | 'ghost'
+  size?: 'sm' | 'md' | 'lg'
+  disabled?: boolean
+  loading?: boolean
+}
+```
+
+## Component File Template
+```
+1. Imports (external, then internal)
+2. Types/Interfaces
+3. Constants
+4. Main component (props, emits, state, computed, methods, lifecycle)
+5. Sub-components (if any)
+```
+
+## Error Boundaries
+Every major section should have error boundary handling via `onErrorCaptured`. Show fallback UI, never a blank screen.
+
+## Responsive Components
+Use CSS-based responsive (`hidden md:block`) over JS-based (`useMediaQuery`) when possible. JS-based only when behavior changes (not just visibility).
+
+## Component Checklist
+Before shipping any component:
+- [ ] TypeScript interface defined
+- [ ] Sensible default props
+- [ ] Loading and error states handled
+- [ ] ARIA attributes added
+- [ ] Keyboard navigation works
+- [ ] Responsive behavior tested
+- [ ] Dark mode styling works
+- [ ] Touch interactions verified on mobile

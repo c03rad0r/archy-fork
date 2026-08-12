@@ -1,0 +1,119 @@
+app:
+  id: bitcoin-core
+  name: Bitcoin Core
+  version: 28.4.0
+  description: Reference Bitcoin Core node with dynamic prune/full-mode startup based on host disk.
+
+  container_name: bitcoin-core
+
+  container:
+    image: source.archipelago-foundation.org/lfg2025/bitcoin:28.4
+    pull_policy: if-not-present
+    network: archy-net
+    entrypoint: ["sh", "-lc"]
+    custom_args:
+      # Sync-speed flags: -par=0 uses every core (was capped at 2 by
+      # --cpus=2, now removed for bitcoin/electrumx). -dbcache sized to
+      # the IBD sweet spot - 4GB on full nodes, 1GB on pruned. Container
+      # --memory=8g (config.rs::get_memory_limit) leaves headroom for
+      # mempool + connections.
+      #
+      # -printtoconsole=0: foreground bitcoind defaults console logging ON,
+      # which pushed every IBD "UpdateTip" line through conmon into journald
+      # (>1 GB/day on a fresh node). bitcoind still writes debug.log in the
+      # datadir (/var/lib/archipelago/bitcoin/debug.log, self-shrunk on
+      # restart) — use that for deep debugging; podman logs only carries
+      # entrypoint/startup errors.
+      - >-
+        BITCOIND="$(command -v bitcoind || true)";
+        if [ -z "$BITCOIND" ]; then
+          BITCOIND="$(find /opt -path '*/bin/bitcoind' -type f 2>/dev/null | sort | tail -n 1)";
+        fi;
+        if [ -z "$BITCOIND" ]; then
+          echo "bitcoind not found in image" >&2;
+          exit 127;
+        fi;
+        RPC_USER="$(printenv BITCOIN_RPC_USER)";
+        RPC_PASS="$(printenv BITCOIN_RPC_PASS)";
+        RPC_CONF="/tmp/rpc.conf";
+        umask 077;
+        { echo "rpcuser=$RPC_USER"; echo "rpcpassword=$RPC_PASS"; } > "$RPC_CONF";
+        if [ -f /home/bitcoin/.bitcoin/bitcoin.conf ]; then
+          echo "archipelago: ignoring legacy datadir bitcoin.conf; RPC config comes from $RPC_CONF" >&2;
+        fi;
+        RPC_TXRELAY_AUTH="$(printenv BITCOIN_RPC_TXRELAY_RPCAUTH || true)";
+        DISK_GB_VALUE="$(printenv DISK_GB || true)";
+        RPC_HEADROOM="-rpcthreads=16 -rpcworkqueue=256";
+        RPC_TXRELAY_FLAGS="-rpcwhitelistdefault=0";
+        if [ -n "$RPC_TXRELAY_AUTH" ]; then
+          RPC_TXRELAY_FLAGS="$RPC_TXRELAY_FLAGS -rpcauth=$RPC_TXRELAY_AUTH -rpcwhitelist=txrelay:sendrawtransaction,submitpackage,testmempoolaccept,getmempoolinfo,getrawmempool,getmempoolentry,getnetworkinfo,getblockchaininfo,getblockcount,getblockhash,getblock,getblockheader,getrawtransaction,gettxout,gettxspendingprevout,decoderawtransaction,decodescript,estimatesmartfee,uptime,ping,getconnectioncount,getpeerinfo,getindexinfo,getdeploymentinfo,getchaintips";
+        fi;
+        if [ "${DISK_GB_VALUE:-0}" -lt 1000 ]; then
+          exec "$BITCOIND" -datadir=/home/bitcoin/.bitcoin -conf="$RPC_CONF" -allowignoredconf=1 -printtoconsole=0 -server=1 -prune=550 -rpcallowip=0.0.0.0/0 -rpcbind=0.0.0.0:8332 -listen=1 -bind=0.0.0.0:8333 -dbcache=1024 -par=0 -maxconnections=125 $RPC_HEADROOM $RPC_TXRELAY_FLAGS;
+        else
+          exec "$BITCOIND" -datadir=/home/bitcoin/.bitcoin -conf="$RPC_CONF" -allowignoredconf=1 -printtoconsole=0 -server=1 -txindex=1 -rpcallowip=0.0.0.0/0 -rpcbind=0.0.0.0:8332 -listen=1 -bind=0.0.0.0:8333 -dbcache=4096 -par=0 -maxconnections=125 $RPC_HEADROOM $RPC_TXRELAY_FLAGS;
+        fi
+    derived_env:
+      - key: DISK_GB
+        template: "{{DISK_GB}}"
+    secret_env:
+      - key: BITCOIN_RPC_PASS
+        secret_file: bitcoin-rpc-password
+      - key: BITCOIN_RPC_TXRELAY_RPCAUTH
+        secret_file: bitcoin-rpc-txrelay-rpcauth
+    data_uid: "100101:100101"
+
+  dependencies:
+    - storage: 500Gi
+
+  resources:
+    cpu_limit: 0
+    memory_limit: 4Gi
+    disk_limit: 500Gi
+
+  security:
+    capabilities: [CHOWN, FOWNER, SETUID, SETGID, DAC_OVERRIDE]
+    readonly_root: false
+    network_policy: isolated
+
+  ports:
+    # RPC is auth-only: publish host-local ONLY - the LAN cannot reach
+    # nodeIP:8332. In-node consumers (lnd, fedimint, btcpay, mempool-api)
+    # dial the container's archy-net alias directly (bitcoin-core:8332),
+    # which needs no publish at all. Do NOT bind the archy-net gateway
+    # (10.89.0.1): rootlessport binds in the HOST netns where that address
+    # does not exist, and the whole unit crash-loops (2026-07-09, .228).
+    # P2P 8333 stays public.
+    - host: 8332
+      container: 8332
+      protocol: tcp
+      bind: 127.0.0.1
+      auth: local
+    - host: 8333
+      container: 8333
+      protocol: tcp
+      auth: none
+      auth_rationale: >-
+        Bitcoin p2p gossip. Peers are anonymous by design and speak the Bitcoin wire protocol, not HTTP.
+
+  volumes:
+    - type: bind
+      source: /var/lib/archipelago/bitcoin
+      target: /home/bitcoin/.bitcoin
+      options: [rw]
+
+  environment:
+    - BITCOIN_RPC_USER=archipelago
+
+  health_check:
+    type: tcp
+    endpoint: localhost:8332
+    interval: 30s
+    timeout: 5s
+    retries: 3
+
+  bitcoin_integration:
+    rpc_access: admin
+    sync_required: true
+    testnet_support: false
+    pruning_support: true

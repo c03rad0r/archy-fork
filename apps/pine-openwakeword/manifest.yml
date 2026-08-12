@@ -1,0 +1,73 @@
+app:
+  id: pine-openwakeword
+  name: Pine Wake Word (openWakeWord)
+  version: "2.1.0"
+  description: Wyoming-protocol openWakeWord wake-word engine. Internal Pine voice-assistant stack member — lets Assist pipelines run wake-word detection on the node (groundwork for the custom "Yo Archy" wake word; stock models like "ok nabu" ship with the image).
+  category: home
+
+  # Hyphen name matches the runtime references (stack member table / startup
+  # order) so the orchestrator adopts a matching running container instead of
+  # recreating it.
+  container_name: pine-openwakeword
+
+  container:
+    image: docker.io/rhasspy/wyoming-openwakeword:2.1.0
+    pull_policy: if-not-present
+    network: archy-net
+    network_aliases: [pine-openwakeword]
+    # The image entrypoint binds tcp://0.0.0.0:10400. Preload the stock
+    # "ok nabu" model; /custom is where a trained custom model (yo_archy)
+    # drops in later — the engine picks up new .tflite files on restart.
+    custom_args: ["--preload-model", "ok_nabu", "--custom-model-dir", "/custom"]
+
+  dependencies:
+    - storage: 512Mi
+
+  resources:
+    memory_limit: 512Mi
+
+  security:
+    # cap-drop=ALL is applied by the orchestrator. A plain Python Wyoming server
+    # on an unprivileged port needs no added capabilities.
+    capabilities: []
+    readonly_root: false
+    no_new_privileges: true
+    network_policy: isolated
+
+  ports:
+    # Published so Home Assistant (on the pasta net) can reach the engine via
+    # host.containers.internal:10400 (the Wyoming integration endpoint).
+    - host: 10400
+      container: 10400
+      protocol: tcp
+      auth: none
+      auth_rationale: >-
+        Wyoming voice protocol, a binary local-only stream consumed by Home Assistant; not HTTP and not browser-reachable.
+
+  volumes:
+    - type: bind
+      source: /var/lib/archipelago/pine-openwakeword
+      target: /custom
+      options: [rw]
+
+  environment: []
+
+  health_check:
+    type: tcp
+    endpoint: localhost:10400
+    interval: 30s
+    timeout: 5s
+    retries: 5
+    start_period: 30s
+
+  metadata:
+    author: Rhasspy / Home Assistant
+    icon: /assets/img/app-icons/pine.svg
+    website: https://github.com/rhasspy/wyoming-openwakeword
+    repo: https://github.com/rhasspy/wyoming-openwakeword
+    license: MIT
+    tags:
+      - home
+      - voice
+      - wake-word
+      - wyoming

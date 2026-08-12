@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" role="img" aria-label="NetBird">
+  <defs>
+    <linearGradient id="g" x1="18" y1="14" x2="110" y2="116" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#24c8ff"/>
+      <stop offset="1" stop-color="#3157ff"/>
+    </linearGradient>
+  </defs>
+  <rect width="128" height="128" rx="28" fill="#071422"/>
+  <path d="M28 72c16-30 39-46 72-50-11 13-18 26-21 40 10-1 19 1 29 5-19 4-35 13-48 27-8 8-18 12-30 12 7-7 12-14 15-22-7 0-13-4-17-12Z" fill="url(#g)"/>
+  <circle cx="82" cy="43" r="6" fill="#fff" opacity=".95"/>
+  <path d="M36 72c10 3 20 4 30 2" fill="none" stroke="#fff" stroke-width="6" stroke-linecap="round" opacity=".8"/>
+</svg>

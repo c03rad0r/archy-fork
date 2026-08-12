@@ -1,0 +1,110 @@
+use anyhow::{Context, Result};
+use ssh2::Session;
+use std::io::{Read, Write};
+use std::net::TcpStream;
+use std::path::Path;
+use tracing::debug;
+
+/// An active SSH connection to an OpenWrt router.
+pub struct Router {
+    pub host: String,
+    pub port: u16,
+    session: Session,
+}
+
+impl Router {
+    /// Connect to an OpenWrt router via SSH using a private key.
+    pub fn connect(host: &str, port: u16, user: &str, key_path: &Path) -> Result<Self> {
+        let addr = format!("{}:{}", host, port);
+        let tcp = TcpStream::connect(&addr).with_context(|| format!("TCP connect to {}", addr))?;
+
+        let mut session = Session::new().context("create SSH session")?;
+        session.set_tcp_stream(tcp);
+        session.handshake().context("SSH handshake")?;
+        session
+            .userauth_pubkey_file(user, None, key_path, None)
+            .with_context(|| format!("SSH auth as {} with key {:?}", user, key_path))?;
+
+        Ok(Self {
+            host: host.to_string(),
+            port,
+            session,
+        })
+    }
+
+    /// Connect using a password (fallback for routers not yet provisioned with a key).
+    pub fn connect_password(host: &str, port: u16, user: &str, password: &str) -> Result<Self> {
+        let addr = format!("{}:{}", host, port);
+        let tcp = TcpStream::connect(&addr).with_context(|| format!("TCP connect to {}", addr))?;
+
+        let mut session = Session::new().context("create SSH session")?;
+        session.set_tcp_stream(tcp);
+        session.handshake().context("SSH handshake")?;
+        session
+            .userauth_password(user, password)
+            .with_context(|| format!("SSH password auth as {}", user))?;
+
+        Ok(Self {
+            host: host.to_string(),
+            port,
+            session,
+        })
+    }
+
+    /// Run a command and return (stdout, exit_code).
+    pub fn run(&self, cmd: &str) -> Result<(String, i32)> {
+        debug!("ssh [{}] $ {}", self.host, cmd);
+
+        let mut channel = self.session.channel_session().context("open channel")?;
+        channel
+            .exec(cmd)
+            .with_context(|| format!("exec: {}", cmd))?;
+
+        let mut stdout = String::new();
+        channel.read_to_string(&mut stdout).context("read stdout")?;
+        channel.wait_close().context("wait close")?;
+        let exit = channel.exit_status().context("exit status")?;
+
+        Ok((stdout, exit))
+    }
+
+    /// Run a command, fail if exit code is non-zero.
+    pub fn run_ok(&self, cmd: &str) -> Result<String> {
+        let (out, code) = self.run(cmd)?;
+        if code != 0 {
+            anyhow::bail!(
+                "command `{}` exited with code {}: {}",
+                cmd,
+                code,
+                out.trim()
+            );
+        }
+        Ok(out)
+    }
+
+    /// Verify the remote device is actually running OpenWrt.
+    pub fn verify_openwrt(&self) -> Result<String> {
+        let release = self
+            .run_ok("cat /etc/openwrt_release")
+            .context("read /etc/openwrt_release — is this an OpenWrt device?")?;
+        Ok(release)
+    }
+
+    /// Upload file contents to the router over SCP, overwriting any existing
+    /// file at `remote_path`. Used for config files that aren't UCI-backed
+    /// (e.g. `/etc/tollgate/config.json`), where `uci_*` helpers don't apply.
+    pub fn upload_file(&self, remote_path: &str, contents: &[u8]) -> Result<()> {
+        let mut channel = self
+            .session
+            .scp_send(Path::new(remote_path), 0o644, contents.len() as u64, None)
+            .with_context(|| format!("scp_send to {}", remote_path))?;
+        channel
+            .write_all(contents)
+            .with_context(|| format!("write contents to {}", remote_path))?;
+        channel.send_eof().context("scp send_eof")?;
+        channel.wait_eof().context("scp wait_eof")?;
+        channel.close().context("scp close")?;
+        channel.wait_close().context("scp wait_close")?;
+        Ok(())
+    }
+}

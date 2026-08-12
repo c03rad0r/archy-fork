@@ -1,0 +1,29 @@
+[workspace]
+resolver = "2"
+
+members = [
+    "archipelago",
+    "container",
+    "openwrt",
+    "performance",
+    "security",
+]
+
+# Shared package metadata, inherited by each member via `license.workspace = true`.
+# The repo ships an MIT LICENSE and the README advertises MIT; this makes the
+# crates themselves declare it so `cargo metadata`, packaging and mirrors agree.
+[workspace.package]
+license = "MIT"
+
+# Profiles at workspace root (members' [profile] are ignored in virtual workspaces)
+[profile.release]
+opt-level = 3
+
+[profile.dev]
+opt-level = 0
+
+[profile.test]
+opt-level = 3
+
+# Archipelago workspace - no StartOS dependencies
+# All patches removed - we use standard crates.io dependencies

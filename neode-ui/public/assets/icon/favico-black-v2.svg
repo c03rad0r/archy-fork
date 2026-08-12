@@ -1,0 +1,31 @@
+<svg width="1024" height="1024" viewBox="0 0 1024 1024" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <radialGradient id="bgGrad" cx="50%" cy="45%" r="55%">
+      <stop offset="0%" stop-color="#1a1a1a"/>
+      <stop offset="100%" stop-color="#050505"/>
+    </radialGradient>
+    <linearGradient id="borderGrad" x1="0" y1="0" x2="1024" y2="1024" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#ffffff" stop-opacity="0.55"/>
+      <stop offset="50%" stop-color="#888888" stop-opacity="0.25"/>
+      <stop offset="100%" stop-color="#000000" stop-opacity="0.7"/>
+    </linearGradient>
+    <radialGradient id="glassGlow" cx="35%" cy="30%" r="50%">
+      <stop offset="0%" stop-color="#ffffff" stop-opacity="0.06"/>
+      <stop offset="100%" stop-color="#000000" stop-opacity="0"/>
+    </radialGradient>
+  </defs>
+
+  <!-- Background circle -->
+  <circle cx="512" cy="512" r="484" fill="url(#bgGrad)"/>
+
+  <!-- Glass glow highlight (top-left) -->
+  <circle cx="512" cy="512" r="460" fill="url(#glassGlow)"/>
+
+  <!-- Gradient border ring (white-to-dark, like logo-gradient-border CSS) -->
+  <circle cx="512" cy="512" r="484" fill="none" stroke="url(#borderGrad)" stroke-width="16"/>
+
+  <!-- The "A" logo — pixel-art style, centered and scaled -->
+  <g transform="translate(160, 168) scale(0.69)">
+    <path d="M357.614 388.936V318H428.621V388.936H357.614ZM436.152 388.936V318H508.234V388.936H436.152ZM515.766 388.936V318H587.848V388.936H515.766ZM595.379 388.936V318H666.386V388.936H595.379ZM595.379 468.471V396.46H666.386V468.471H595.379ZM673.917 468.471V396.46H746V468.471H673.917ZM278 548.006V475.994H350.083V548.006H278ZM357.614 548.006V475.994H428.621V548.006H357.614ZM436.152 548.006V475.994H508.234V548.006H436.152ZM515.766 548.006V475.994H587.848V548.006H515.766ZM595.379 548.006V475.994H666.386V548.006H595.379ZM673.917 548.006V475.994H746V548.006H673.917ZM278 626.465V555.529H350.083V626.465H278ZM357.614 626.465V555.529H428.621V626.465H357.614ZM595.379 626.465V555.529H666.386V626.465H595.379ZM673.917 626.465V555.529H746V626.465H673.917ZM357.614 706V633.989H428.621V706H357.614ZM436.152 706V633.989H508.234V706H436.152ZM515.766 706V633.989H587.848V706H515.766ZM595.379 706V633.989H666.386V706H595.379Z" fill="white"/>
+  </g>
+</svg>

@@ -1,0 +1,48 @@
+[Unit]
+Description=Archipelago Kiosk (X11 + Chromium)
+After=archipelago.service systemd-user-sessions.service network-online.target
+Wants=archipelago.service network-online.target
+ConditionPathExists=/usr/local/bin/archipelago-kiosk-launcher
+Conflicts=getty@tty1.service
+
+[Service]
+Type=simple
+# Wait up to 5 min for archipelago to serve /health. On slow hardware
+# first-boot is dominated by the FileBrowser pull (unbundled ISO),
+# initial archipelago state sync, and frontend settle — .198 took
+# longer than 120s and chromium launched against an empty backend,
+# producing a white window that only recovered on reboot. 300s gives
+# slow-but-functional hardware enough headroom; TimeoutStartSec is
+# bumped in lockstep so systemd doesn't kill us mid-wait.
+ExecStartPre=/bin/bash -c 'for i in $(seq 1 150); do curl -sf http://localhost/health >/dev/null 2>&1 && break; sleep 2; done'
+# Also wait for the web-ui asset swap to finish. The first-boot rsync into
+# /opt/archipelago/web-ui is non-atomic and writes the large bg-*.webp images
+# last — a kiosk launched mid-swap rendered the UI with blank backgrounds
+# (CSS background-image 404s are never refetched). A representative large
+# asset answering 200 means the swap is effectively done. Bounded 60s so a
+# renamed asset can never block kiosk startup.
+ExecStartPre=/bin/bash -c 'for i in $(seq 1 30); do curl -sf -o /dev/null http://localhost/assets/img/bg-home.webp && break; sleep 2; done; exit 0'
+ExecStart=/usr/local/bin/archipelago-kiosk-launcher
+TimeoutStartSec=360
+Restart=always
+RestartSec=5
+
+# Resource guardrail (#36). On GPU-less / headless hardware chromium could spin
+# software compositing at ~92% of a core, saturating the node and starving the
+# backend (it caused the .198 receive timeout + deploy storms). Cap CPU + memory
+# so a runaway kiosk can never take the whole machine down; Delegate so the cap
+# also binds the chromium/Xorg children in this unit's cgroup.
+# CPUQuota=75% (0.75 cores) was too tight even for normal playback — the kiosk
+# was throttled ~40% of the time, which is what caused choppy HDMI audio on
+# a test node (2026-06-28 incident). 200% (2 cores) gives enough headroom.
+Delegate=yes
+CPUQuota=200%
+# Raised from 1500M/1200M: a Framework (Tiger Lake) kiosk sat at 806M used /
+# 1.1G peak, riding the old MemoryHigh reclaim-throttle line — the throttling
+# itself was the perceived UI lag. Keep Max well above real peaks; High stays
+# the soft reclaim line so a runaway kiosk still can't take the machine down.
+MemoryMax=2800M
+MemoryHigh=2200M
+
+[Install]
+WantedBy=multi-user.target

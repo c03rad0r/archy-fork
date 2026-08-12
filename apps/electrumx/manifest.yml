@@ -1,0 +1,90 @@
+app:
+  id: electrumx
+  name: ElectrumX
+  version: 1.18.0
+  description: Electrum server indexing Bitcoin chain data for lightweight wallet queries.
+
+  container:
+    image: source.archipelago-foundation.org/lfg2025/electrumx:v1.18.0
+    pull_policy: if-not-present
+    network: archy-net
+    data_uid: "1000:1000"
+    entrypoint: ["sh", "-lc"]
+    # The bitcoin backend container is bitcoin-knots OR bitcoin-core depending
+    # on which version the node runs (multi-version switch) — probe which name
+    # resolves on archy-net instead of hardcoding knots, which left electrumx
+    # permanently disconnected (block index 0) on core nodes.
+    custom_args:
+      - >-
+        for h in bitcoin-knots bitcoin-core; do
+        if getent hosts "$h" >/dev/null 2>&1; then BTC_HOST="$h"; break; fi;
+        done;
+        export DAEMON_URL="http://archipelago:$(printenv BITCOIN_RPC_PASS)@${BTC_HOST:-bitcoin-knots}:8332/";
+        exec electrumx_server
+    secret_env:
+      - key: BITCOIN_RPC_PASS
+        secret_file: bitcoin-rpc-password
+
+  dependencies:
+    - app_id: bitcoin-knots
+      version: ">=26.0"
+    - storage: 50Gi
+    - bitcoin:archival
+
+  resources:
+    cpu_limit: 0
+    memory_limit: 6Gi
+    disk_limit: 50Gi
+
+  security:
+    capabilities: [DAC_OVERRIDE]
+    readonly_root: false
+    network_policy: isolated
+
+  ports:
+    - host: 50001
+      container: 50001
+      protocol: tcp
+      auth: none
+      auth_rationale: >-
+        Electrum wire protocol over TCP. Electrum wallets speak it directly and cannot hold a session cookie.
+
+  volumes:
+    - type: bind
+      source: /var/lib/archipelago/electrumx
+      target: /data
+      options: [rw]
+
+  environment:
+    - COIN=Bitcoin
+    - DB_DIRECTORY=/data
+    - SERVICES=tcp://:50001,rpc://0.0.0.0:8000
+    - CACHE_MB=1024
+    - MAX_SEND=10000000
+
+  # The ElectrumX dashboard tile is served by the host-networked companion UI
+  # (archy-electrs-ui) on port 50002, NOT by this container. Declaring it here
+  # lets the catalog generator emit electrumx -> 50002 into GENERATED_APP_PORTS
+  # so the tile resolves a launch URL without relying on the hand-maintained
+  # override in appSessionConfig.ts (which the generator can clobber). The
+  # backend only validates this block — it does not proxy/health-check it.
+  interfaces:
+    main:
+      name: Web UI
+      description: ElectrumX server status and connection details
+      type: ui
+      port: 50002
+      protocol: http
+
+  health_check:
+    type: tcp
+    endpoint: localhost:50001
+    interval: 30s
+    timeout: 5s
+    retries: 3
+    start_period: 10m
+
+  bitcoin_integration:
+    rpc_access: read-only
+    sync_required: true
+    pruning_support: false

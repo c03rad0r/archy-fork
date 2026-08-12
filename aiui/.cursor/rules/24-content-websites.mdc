@@ -1,0 +1,32 @@
+---
+description: Expert rules for Websites content extraction and surfacing
+globs: "**/useContentPanel.ts,**/NewsGrid.vue,**/articleOverlay*"
+alwaysApply: false
+---
+
+# Websites Content Surface
+
+## Extraction
+
+1. **Markdown links**: `[Title](https://...)` — extract all with `extractMarkdownLinks`
+2. **Bold domains**: `**Name** (domain.tld)` — extract with `extractBoldDomainLinks`
+3. Merge with `mergeNewsResults` (dedupe by URL)
+
+## URLs Validation
+
+- Scheme: `https?://` only
+- `new URL(raw)` must not throw
+- Min length: title 2, url 10 chars
+- Normalize for dedupe: lowercase, no trailing slash
+
+## Display
+
+- NewsGrid (variant=websites): card with favicon/globe icon
+- Click → **overlay iframe** (not ArticleDetail)
+- Use `articleOverlayStore.open(url, title, undefined, imgSrc)`
+
+## Distinction from News
+
+- News = articles (web search + RSS) → ArticleDetail in panel
+- Websites = plain links from response → overlay iframe
+- Same NewsGrid component, different `variant` and click handler

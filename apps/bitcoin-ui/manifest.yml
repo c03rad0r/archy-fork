@@ -1,0 +1,71 @@
+app:
+  id: bitcoin-ui
+  name: Bitcoin UI
+  version: 1.0.0
+  description: |
+    Archipelago-native HTTP proxy + static site for interacting with the
+    Bitcoin Core / Bitcoin Knots JSON-RPC. Runs nginx inside a container
+    and reverse-proxies /bitcoin-rpc/ to 127.0.0.1:8332 on the host. The
+    upstream Authorization header is substituted from
+    /var/lib/archipelago/secrets/bitcoin-rpc-password by the prod
+    orchestrator's pre-start hook, rendered into an nginx.conf that is
+    bind-mounted read-only at container start.
+
+  container:
+    build:
+      context: /opt/archipelago/docker/bitcoin-ui
+      dockerfile: Dockerfile
+      tag: localhost/bitcoin-ui:local
+
+  dependencies:
+    - app_id: bitcoin-core
+
+  resources:
+    memory_limit: 128Mi
+
+  security:
+    readonly_root: false
+    network_policy: host
+
+  # Host networking: nginx listens on 8334 directly on the host IP, and
+  # proxies to 127.0.0.1:8332 which is where the bitcoin backend binds
+  # its RPC. `ports:` is intentionally empty because host networking
+  # bypasses port mapping.
+  # Declared so the APP GATE can see this port. Host networking means Podman
+  # publishes nothing (quadlet skips PublishPort in host mode), so `bind:` here
+  # is a statement of where the container's own nginx listens — 127.0.0.1 —
+  # not a publish instruction. Without this declaration the gate had no idea
+  # the port existed: it was neither protected nor listed as unprotected, and
+  # served the Bitcoin screen unauthenticated on every interface.
+  ports:
+    - host: 8334
+      container: 8334
+      protocol: tcp
+      bind: 127.0.0.1
+      auth: gated
+      # First-party companion UI: its nginx forwards the node session cookie
+      # to the daemon's authenticated endpoints; without passthrough the gate
+      # strips it and every data call 401s while the page shell renders.
+      session_passthrough: true
+
+  volumes:
+    # Bind-mount the rendered nginx.conf read-only. The prod orchestrator
+    # renders /var/lib/archipelago/bitcoin-ui/nginx.conf on every install
+    # and every reconcile pass, substituting the base64 RPC auth from
+    # the plaintext password secret. If the rendered bytes change (the
+    # password rotated, or the template was updated by OTA), the
+    # reconciler restarts this container so nginx re-reads the config.
+    - type: bind
+      source: /var/lib/archipelago/bitcoin-ui/nginx.conf
+      target: /etc/nginx/conf.d/default.conf
+      options: [ro]
+
+  environment: []
+
+  health_check:
+    type: http
+    endpoint: http://127.0.0.1:8334
+    path: /
+    interval: 30s
+    timeout: 5s
+    retries: 3

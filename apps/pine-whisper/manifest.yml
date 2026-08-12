@@ -1,0 +1,81 @@
+app:
+  id: pine-whisper
+  name: Pine Whisper (STT)
+  # App revision 3.4.2 = upstream wyoming-whisper 3.4.1 image + tuned args
+  # (--beam-size 1). Bumped past the image version so catalog-driven nodes
+  # pick up the args change; the pre-release form "3.4.1-1" would compare
+  # LOWER than 3.4.1 under semver and never roll out.
+  version: "3.4.2"
+  description: Wyoming-protocol faster-whisper speech-to-text engine. Internal Pine voice-assistant stack member — turns speech captured by a PineVoice satellite into text for Home Assistant Assist.
+  category: home
+
+  # Hyphen name matches the runtime references (stack member table / startup
+  # order) + the live container, so on an existing node the orchestrator ADOPTS
+  # the running engine rather than recreating it (downloaded models under /data
+  # preserved).
+  container_name: pine-whisper
+
+  container:
+    image: docker.io/rhasspy/wyoming-whisper:3.4.1
+    pull_policy: if-not-present
+    network: archy-net
+    network_aliases: [pine-whisper]
+    # The image entrypoint already binds tcp://0.0.0.0:10300; these args only
+    # pick the model + language (mirrors the pine ha-stack.yml compose command).
+    # --beam-size 1: the image default is 5 on x86 (1 on ARM). Benchmarked on
+    # a test node (i5-1135G7, base-int8): beam 1 transcribes the same text
+    # ~45% faster — the standard low-latency setting for short voice commands
+    # (HA's own whisper add-on defaults to 1).
+    custom_args: ["--model", "base-int8", "--language", "en", "--beam-size", "1"]
+
+  dependencies:
+    - storage: 2Gi
+
+  resources:
+    memory_limit: 2Gi
+
+  security:
+    # cap-drop=ALL is applied by the orchestrator. A plain Python Wyoming server
+    # on an unprivileged port needs no added capabilities.
+    capabilities: []
+    readonly_root: false   # downloads the whisper model into /data on first run
+    no_new_privileges: true
+    network_policy: isolated
+
+  ports:
+    # Published so Home Assistant (on the pasta net) can reach the engine via
+    # host.containers.internal:10300 (the Wyoming integration endpoint).
+    - host: 10300
+      container: 10300
+      protocol: tcp
+      auth: none
+      auth_rationale: >-
+        Wyoming voice protocol, a binary local-only stream consumed by Home Assistant; not HTTP and not browser-reachable.
+
+  volumes:
+    - type: bind
+      source: /var/lib/archipelago/pine-whisper
+      target: /data
+      options: [rw]
+
+  environment: []
+
+  health_check:
+    type: tcp
+    endpoint: localhost:10300
+    interval: 30s
+    timeout: 5s
+    retries: 5
+    start_period: 60s   # first start downloads the model
+
+  metadata:
+    author: Rhasspy / Home Assistant
+    icon: /assets/img/app-icons/pine.svg
+    website: https://github.com/rhasspy/wyoming-faster-whisper
+    repo: https://github.com/rhasspy/wyoming-faster-whisper
+    license: MIT
+    tags:
+      - home
+      - voice
+      - speech-to-text
+      - wyoming

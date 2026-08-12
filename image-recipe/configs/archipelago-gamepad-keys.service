@@ -1,0 +1,16 @@
+[Unit]
+Description=Archipelago gamepad->keyboard bridge (TV/kiosk input in every app iframe)
+# Only meaningful where a display UI runs; the kiosk unit is the marker.
+ConditionPathExists=/etc/systemd/system/archipelago-kiosk.service
+ConditionPathExists=/usr/local/bin/archipelago-gamepad-keys
+
+[Service]
+Type=simple
+# Root: /dev/uinput device creation + raw /dev/input readers.
+ExecStart=/usr/bin/python3 /usr/local/bin/archipelago-gamepad-keys
+Restart=always
+RestartSec=10
+Nice=5
+
+[Install]
+WantedBy=multi-user.target

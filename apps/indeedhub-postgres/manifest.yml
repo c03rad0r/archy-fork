@@ -1,0 +1,59 @@
+app:
+  id: indeedhub-postgres
+  name: IndeedHub Postgres
+  version: "16.13-alpine"
+  description: Postgres database backend for IndeedHub.
+  category: community
+
+  # Container named indeedhub-postgres (hyphen) to match the runtime's existing
+  # per-app references (health_monitor tiers/deps, crash_recovery) and the live
+  # .228 install, so the orchestrator ADOPTS the running container instead of
+  # recreating it. `network_aliases: [postgres]` keeps the short hostname the
+  # api/ffmpeg/relay reach by (DATABASE_HOST=postgres) resolvable on
+  # indeedhub-net, reproducing the legacy `--network-alias postgres`.
+  container_name: indeedhub-postgres
+
+  container:
+    image: source.archipelago-foundation.org/lfg2025/postgres:16.13-alpine
+    pull_policy: if-not-present
+    network: indeedhub-net
+    network_aliases: [postgres]
+    generated_secrets:
+      - name: indeedhub-db-password
+        kind: hex32
+    secret_env:
+      - key: POSTGRES_PASSWORD
+        secret_file: indeedhub-db-password
+
+  dependencies:
+    - storage: 10Gi
+
+  resources:
+    memory_limit: 1Gi
+    disk_limit: 10Gi
+
+  security:
+    capabilities: [CHOWN, DAC_OVERRIDE, FOWNER, SETGID, SETUID]
+    readonly_root: false
+    network_policy: isolated
+
+  ports: []
+
+  # Named podman volume (matches the live indeedhub-postgres-data volume on .228);
+  # preserves all existing database content across the migration.
+  volumes:
+    - type: volume
+      source: indeedhub-postgres-data
+      target: /var/lib/postgresql/data
+      options: [rw]
+
+  environment:
+    - POSTGRES_USER=indeedhub
+    - POSTGRES_DB=indeedhub
+
+  health_check:
+    type: tcp
+    endpoint: localhost:5432
+    interval: 30s
+    timeout: 5s
+    retries: 3

@@ -1,0 +1,33 @@
+{
+  "_comment": [
+    "Registry hosts that binaries ALREADY DEPLOYED to nodes are known to trust.",
+    "",
+    "This is the floor the signed app catalog must stay within. It is NOT the",
+    "same as TRUSTED_REGISTRIES in the working tree: that list describes what a",
+    "binary being built today accepts, while nodes in the field run whatever was",
+    "shipped to them. Publishing a catalog that names a host the fleet's binaries",
+    "do not trust makes every install fail with 'not from a trusted registry'.",
+    "",
+    "To migrate to a new registry host, in this order:",
+    "  1. Add the host to TRUSTED_REGISTRIES and ship a binary OTA.",
+    "  2. Confirm the fleet is running that binary or newer.",
+    "  3. Add the host here, in the same commit as the confirmation.",
+    "  4. Only then regenerate and re-sign the catalog against the new host.",
+    "",
+    "Removing a host is the mirror image: take it out of the catalog first, let",
+    "that catalog reach every node, and only then drop it from here."
+  ],
+  "hosts": [
+    "docker.io",
+    "ghcr.io",
+    "localhost",
+    "146.59.87.168:3000"
+  ],
+  "pending": {
+    "source.archipelago-foundation.org": {
+      "trusted_from_binary": "unreleased",
+      "note": "Added to TRUSTED_REGISTRIES 2026-08-07. Not yet shipped in any OTA, so no deployed node accepts it. Promote to `hosts` only after the fleet is confirmed on a binary that includes it."
+    }
+  },
+  "updated": "2026-08-07"
+}

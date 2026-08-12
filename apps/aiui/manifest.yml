@@ -1,0 +1,39 @@
+app:
+  id: aiui
+  name: AI Assistant
+  version: 0.1.0
+  description: Conversational AI interface for Archipelago. Quarantined — communicates only via context broker.
+  internal: true  # System-managed, not shown in App Store
+
+  container:
+    image: localhost/archipelago-aiui:latest
+    pull_policy: always
+
+  resources:
+    cpu_limit: 1
+    memory_limit: 512Mi
+    disk_limit: 1Gi
+
+  security:
+    capabilities: []
+    readonly_root: true
+    no_new_privileges: true
+    user: 1000
+    seccomp_profile: default
+    network_policy: isolated  # No outbound network — all data comes via context broker
+    apparmor_profile: aiui
+
+  ports:
+    - host: 5180
+      container: 80
+      protocol: tcp
+      bind: 127.0.0.1  # Only accessible via nginx proxy, not externally
+      auth: local
+
+  health_check:
+    type: http
+    endpoint: http://localhost:80
+    path: /
+    interval: 60s
+    timeout: 5s
+    retries: 3

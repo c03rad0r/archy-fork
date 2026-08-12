@@ -1,0 +1,159 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>AIUI Integration Test</title>
+  <style>
+    body { background: #111; color: #eee; font-family: monospace; padding: 20px; }
+    .test { margin: 8px 0; padding: 8px; border-left: 3px solid #444; }
+    .pass { border-color: #4ade80; }
+    .fail { border-color: #ef4444; }
+    .pending { border-color: #fb923c; }
+    button { background: #fb923c; color: #111; border: none; padding: 8px 16px; cursor: pointer; margin: 4px; border-radius: 4px; }
+    button:hover { background: #f59e0b; }
+    #results { max-height: 60vh; overflow-y: auto; }
+    h2 { color: #fb923c; }
+  </style>
+</head>
+<body>
+  <h1>AIUI ↔ Archy Integration Test</h1>
+  <p>This page simulates AIUI sending postMessage requests to test the ContextBroker.</p>
+
+  <div>
+    <button onclick="testAllCategories()">Test All Categories</button>
+    <button onclick="testActions()">Test Actions</button>
+    <button onclick="testPermissionDenial()">Test Permission Denial</button>
+    <button onclick="clearResults()">Clear</button>
+  </div>
+
+  <h2>Results</h2>
+  <div id="results"></div>
+
+  <script>
+    const results = document.getElementById('results');
+    let messageId = 0;
+    const pendingRequests = new Map();
+
+    function log(msg, status = 'pending') {
+      const div = document.createElement('div');
+      div.className = `test ${status}`;
+      div.textContent = msg;
+      results.appendChild(div);
+      return div;
+    }
+
+    function clearResults() {
+      results.innerHTML = '';
+    }
+
+    // Listen for responses from ContextBroker
+    window.addEventListener('message', (e) => {
+      const msg = e.data;
+      if (!msg || !msg.type) return;
+
+      if (msg.type === 'context:response' || msg.type === 'action:response') {
+        const cb = pendingRequests.get(msg.id);
+        if (cb) {
+          cb(msg);
+          pendingRequests.delete(msg.id);
+        }
+      }
+
+      if (msg.type === 'permissions:update') {
+        log(`permissions:update → categories: [${msg.categories.join(', ')}]`, 'pass');
+      }
+
+      if (msg.type === 'theme:response') {
+        log(`theme:response → accent: ${msg.theme.accent}, mode: ${msg.theme.mode}`, 'pass');
+      }
+    });
+
+    function sendRequest(type, payload) {
+      return new Promise((resolve) => {
+        const id = `test-${++messageId}`;
+        pendingRequests.set(id, resolve);
+        window.postMessage({ type, id, ...payload }, '*');
+        setTimeout(() => {
+          if (pendingRequests.has(id)) {
+            pendingRequests.delete(id);
+            resolve({ timeout: true });
+          }
+        }, 5000);
+      });
+    }
+
+    // Simulate AIUI ready message
+    function sendReady() {
+      window.postMessage({ type: 'ready' }, '*');
+      log('Sent ready message', 'pass');
+    }
+
+    async function testCategory(category) {
+      const div = log(`Testing category: ${category}...`);
+      const resp = await sendRequest('context:request', { category });
+
+      if (resp.timeout) {
+        div.textContent = `${category}: TIMEOUT — no response from ContextBroker`;
+        div.className = 'test fail';
+        return;
+      }
+
+      if (!resp.permitted) {
+        div.textContent = `${category}: DENIED (permission not enabled)`;
+        div.className = 'test fail';
+        return;
+      }
+
+      div.textContent = `${category}: OK → ${JSON.stringify(resp.data).slice(0, 200)}`;
+      div.className = 'test pass';
+    }
+
+    async function testAllCategories() {
+      sendReady();
+      const categories = ['apps', 'system', 'network', 'wallet', 'files', 'media', 'search', 'ai-local', 'notes', 'bitcoin'];
+      for (const cat of categories) {
+        await testCategory(cat);
+      }
+      log('All category tests complete', 'pass');
+    }
+
+    async function testActions() {
+      const actions = [
+        { action: 'navigate', params: { path: '/dashboard' } },
+        { action: 'launch-app', params: { appId: 'mempool' } },
+        { action: 'search-web', params: { query: 'bitcoin price' } },
+      ];
+
+      for (const { action, params } of actions) {
+        const div = log(`Testing action: ${action}...`);
+        const resp = await sendRequest('action:request', { action, params });
+
+        if (resp.timeout) {
+          div.textContent = `${action}: TIMEOUT`;
+          div.className = 'test fail';
+        } else {
+          div.textContent = `${action}: ${resp.success ? 'OK' : 'FAIL'} ${resp.error || ''}`;
+          div.className = resp.success ? 'test pass' : 'test fail';
+        }
+      }
+      log('All action tests complete', 'pass');
+    }
+
+    async function testPermissionDenial() {
+      const div = log('Testing permission denial for "wallet"...');
+      const resp = await sendRequest('context:request', { category: 'wallet' });
+
+      if (resp.timeout) {
+        div.textContent = 'Permission denial: TIMEOUT';
+        div.className = 'test fail';
+      } else if (!resp.permitted) {
+        div.textContent = 'Permission denial: CORRECTLY DENIED';
+        div.className = 'test pass';
+      } else {
+        div.textContent = 'Permission denial: UNEXPECTEDLY PERMITTED';
+        div.className = 'test fail';
+      }
+    }
+  </script>
+</body>
+</html>

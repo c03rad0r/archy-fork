@@ -1,0 +1,14 @@
+[Unit]
+Description=Archipelago Kiosk Watchdog
+After=archipelago.service
+Wants=archipelago.service
+
+[Service]
+Type=simple
+User=root
+ExecStart=/usr/local/bin/archipelago-kiosk-watchdog
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target

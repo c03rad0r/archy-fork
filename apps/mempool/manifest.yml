@@ -1,0 +1,62 @@
+app:
+  id: mempool
+  name: Mempool Explorer
+  version: 3.0.0
+  description: Bitcoin mempool and blockchain explorer. Real-time transaction and block visualization.
+  
+  container:
+    image: source.archipelago-foundation.org/lfg2025/mempool-frontend:v3.0.1
+    image_signature: cosign://...
+    pull_policy: if-not-present
+    
+  dependencies:
+    - app_id: bitcoin-core
+      version: ">=24.0"
+    - storage: 20Gi
+    - bitcoin:archival
+    
+  resources:
+    cpu_limit: 2
+    memory_limit: 2Gi
+    disk_limit: 20Gi
+    
+  security:
+    capabilities: []
+    readonly_root: true
+    no_new_privileges: true
+    user: 1000
+    seccomp_profile: default
+    network_policy: isolated
+    apparmor_profile: mempool
+    
+  ports:
+    - host: 4080
+      container: 8080  # mempool-frontend nginx listens on 8080 (FRONTEND_HTTP_PORT=8080)
+      protocol: tcp  # Web UI
+      bind: 127.0.0.1
+      auth: gated
+    
+  volumes:
+    - type: bind
+      source: /var/lib/archipelago/mempool
+      target: /data
+      options: [rw]
+      
+  environment:
+    - MEMPOOL_BACKEND=electrum
+    - MEMPOOL_BITCOIN_HOST=bitcoin-core
+    - MEMPOOL_BITCOIN_PORT=8332
+    - MEMPOOL_BITCOIN_USER=${BITCOIN_RPC_USER}
+    - MEMPOOL_BITCOIN_PASSWORD=${BITCOIN_RPC_PASSWORD}
+    
+  health_check:
+    type: http
+    endpoint: http://localhost:4080
+    path: /api/health
+    interval: 30s
+    timeout: 5s
+    retries: 3
+    
+  bitcoin_integration:
+    rpc_access: read-only
+    sync_required: true

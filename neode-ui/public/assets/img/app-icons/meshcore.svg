@@ -1,0 +1,28 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" role="img" aria-labelledby="title desc">
+  <title id="title">Meshtastic</title>
+  <desc id="desc">LoRa mesh radio nodes connected by signal links</desc>
+  <defs>
+    <linearGradient id="radioBody" x1="27" y1="28" x2="93" y2="107" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#f8fafc"/>
+      <stop offset="1" stop-color="#94a3b8"/>
+    </linearGradient>
+    <linearGradient id="signal" x1="16" y1="14" x2="112" y2="114" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#38bdf8"/>
+      <stop offset="0.52" stop-color="#22c55e"/>
+      <stop offset="1" stop-color="#f59e0b"/>
+    </linearGradient>
+  </defs>
+  <rect width="128" height="128" rx="26" fill="#0f172a"/>
+  <path d="M36 31 50 78" stroke="#64748b" stroke-width="6" stroke-linecap="round"/>
+  <path d="M32 28c7-5 16-5 23 0" stroke="#38bdf8" stroke-width="5" stroke-linecap="round" fill="none"/>
+  <path d="M24 18c12-9 28-9 40 0" stroke="#38bdf8" stroke-opacity=".55" stroke-width="5" stroke-linecap="round" fill="none"/>
+  <rect x="42" y="54" width="50" height="55" rx="11" fill="url(#radioBody)"/>
+  <rect x="51" y="64" width="32" height="15" rx="4" fill="#0f172a"/>
+  <circle cx="57" cy="94" r="5" fill="#0f172a"/>
+  <circle cx="77" cy="94" r="5" fill="#0f172a"/>
+  <circle cx="26" cy="84" r="8" fill="#38bdf8"/>
+  <circle cx="102" cy="43" r="8" fill="#22c55e"/>
+  <circle cx="103" cy="99" r="8" fill="#f59e0b"/>
+  <path d="M33 81 51 72M82 65l15-17M88 93l8 3" stroke="url(#signal)" stroke-width="5" stroke-linecap="round"/>
+  <path d="M22 103c25-16 55-16 84 0" stroke="#22c55e" stroke-opacity=".32" stroke-width="5" stroke-linecap="round" fill="none"/>
+</svg>

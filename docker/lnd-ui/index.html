@@ -1,0 +1,1692 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+    <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+    <meta http-equiv="Pragma" content="no-cache">
+    <meta http-equiv="Expires" content="0">
+    <title>LND - Archipelago</title>
+    <style>
+        /* ── Archipelago design system ────────────────────────────────────
+           Mirrors docker/bitcoin-ui: perspective background layer, 0.8 dark
+           overlay, glass cards with a masked gradient border, and the same
+           glass/gradient button pair. Self-contained (no tailwind.css link)
+           because lnd-ui has always shipped its own utilities and the shared
+           tailwind.css is a hand-extracted subset built for bitcoin-ui. */
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        img, svg { display: block; vertical-align: middle; max-width: 100%; }
+        button { font-family: inherit; font-size: 100%; line-height: inherit; color: inherit; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen', 'Ubuntu', sans-serif;
+            min-height: 100vh; background: #000; color: white; overflow-x: hidden;
+            -webkit-text-size-adjust: 100%;
+        }
+
+        /* Background — same perspective treatment as bitcoin-ui. Paths are
+           relative: the shell is served at / on :18083 but under /app/lnd/
+           when proxied by the host nginx, where absolute /assets 404s. */
+        .bg-perspective-container { position: fixed; inset: 0; z-index: -10; perspective: 1000px; perspective-origin: 50% 50%; overflow: hidden; }
+        .bg-layer {
+            position: absolute; inset: 0;
+            background-image: url('assets/img/bg-web5.jpg');
+            background-size: cover; background-position: center; background-repeat: no-repeat;
+            transition: all 0.45s cubic-bezier(0.68, -0.55, 0.265, 1.55);
+            transform-style: preserve-3d; opacity: 1; transform: translateZ(0) scale(1);
+        }
+        .overlay { position: fixed; inset: 0; background: rgba(0, 0, 0, 0.8); z-index: -5; pointer-events: none; }
+
+        /* Glass card — gradient border via masked ::before */
+        .glass-card {
+            position: relative; background: rgba(0, 0, 0, 0.60);
+            backdrop-filter: blur(24px); -webkit-backdrop-filter: blur(24px);
+            box-shadow: 0 8px 24px rgba(0,0,0,0.45), inset 0 1px 0 rgba(255,255,255,0.22);
+            border-radius: 1rem; border: none; overflow-x: hidden; overflow-y: visible;
+        }
+        .glass-card::before {
+            content: ''; position: absolute; inset: 0; border-radius: inherit; padding: 2px;
+            background: linear-gradient(135deg, rgba(0,0,0,0.8), transparent);
+            -webkit-mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+            -webkit-mask-composite: xor; mask-composite: exclude; pointer-events: none; z-index: 1;
+        }
+        .glass-card > * { position: relative; z-index: 2; }
+
+        .info-card {
+            position: relative; background: rgba(0, 0, 0, 0.60);
+            backdrop-filter: blur(24px); -webkit-backdrop-filter: blur(24px);
+            box-shadow: 0 8px 24px rgba(0,0,0,0.45), inset 0 1px 0 rgba(255,255,255,0.22);
+            border-radius: 16px; padding: 12px; border: none;
+        }
+        .info-card::before {
+            content: ''; position: absolute; inset: 0; border-radius: inherit; padding: 2px;
+            background: linear-gradient(135deg, rgba(0,0,0,0.8), transparent);
+            -webkit-mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+            -webkit-mask-composite: xor; mask-composite: exclude; pointer-events: none;
+        }
+        .info-card > * { position: relative; z-index: 2; }
+
+        .info-card-button {
+            position: relative; background: rgba(0, 0, 0, 0.60);
+            backdrop-filter: blur(24px); -webkit-backdrop-filter: blur(24px);
+            box-shadow: 0 8px 24px rgba(0,0,0,0.45), inset 0 1px 0 rgba(255,255,255,0.22);
+            border-radius: 16px; padding: 12px; border: none; cursor: pointer;
+            color: rgba(255,255,255,0.9); transition: all 0.3s ease; text-align: left; width: 100%;
+            display: block; text-decoration: none;
+        }
+        .info-card-button::before {
+            content: ''; position: absolute; inset: 0; border-radius: inherit; padding: 2px;
+            background: linear-gradient(135deg, rgba(0,0,0,0.8), transparent);
+            -webkit-mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+            -webkit-mask-composite: xor; mask-composite: exclude; pointer-events: none; transition: all 0.3s ease;
+        }
+        .info-card-button > * { position: relative; z-index: 2; }
+        /* Same treatment, sized for a normal inline button rather than a
+           full-width card, so every button on the page reads as one family. */
+        .info-card-button.compact {
+            width: auto; display: inline-flex; align-items: center; justify-content: center;
+            gap: 0.5rem; padding: 0.65rem 1rem; text-align: center;
+            font-size: 0.875rem; font-weight: 500;
+        }
+        .info-card-button:hover {
+            transform: translateY(-2px); background: rgba(0,0,0,0.35);
+            box-shadow: 0 12px 32px rgba(0,0,0,0.6), inset 0 1px 0 rgba(255,255,255,0.25);
+            color: rgba(255,255,255,1);
+        }
+        .info-card-button:hover::before { background: linear-gradient(135deg, rgba(255,255,255,0.3), transparent); }
+        .info-card-button:active { transform: translateY(1px); }
+
+        .glass-button {
+            background-color: rgba(0,0,0,0.6); backdrop-filter: blur(18px); -webkit-backdrop-filter: blur(18px);
+            border: 1px solid rgba(255,255,255,0.18); color: rgba(255,255,255,0.9);
+            transition: all 0.3s ease; cursor: pointer;
+        }
+        .glass-button:hover { color: white; background-color: rgba(0,0,0,0.7); }
+        .glass-button:disabled { opacity: 0.5; cursor: not-allowed; }
+
+        .gradient-button {
+            background: linear-gradient(135deg, rgba(255,255,255,0.15) 0%, rgba(0,0,0,0.8) 100%);
+            backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px);
+            border: 1px solid rgba(255,255,255,0.2); color: rgba(255,255,255,0.95);
+            transition: all 0.3s ease; cursor: pointer;
+        }
+        .gradient-button:hover {
+            background: linear-gradient(135deg, rgba(255,255,255,0.2) 0%, rgba(0,0,0,0.9) 100%);
+            border-color: rgba(255,255,255,0.3); box-shadow: 0 8px 24px rgba(0,0,0,0.6); transform: translateY(-1px);
+        }
+        .gradient-button:active { transform: translateY(1px); }
+
+        /* Logo — LND purple gradient ring. The app-store icon is a full-bleed
+           square with an opaque white background (not a transparent glyph), so
+           it fills the frame and gets clipped to the inner radius, exactly the
+           way bitcoin-ui frames its icon. */
+        .logo-gradient-border {
+            position: relative; border-radius: 16px; padding: 3px;
+            background: linear-gradient(135deg, rgba(167,139,250,0.85) 0%, rgba(0,0,0,0.8) 100%);
+            box-shadow: 0 8px 24px rgba(0,0,0,0.5); display: inline-block;
+        }
+        .logo-gradient-border::after { content: ''; position: absolute; inset: 3px; border-radius: 13px; background: #fff; z-index: 0; }
+        .logo-gradient-border img { border-radius: 13px; display: block; position: relative; z-index: 1; width: 64px; height: 64px; object-fit: cover; }
+
+        .container { max-width: 1400px; margin: 0 auto; padding: 2rem; padding-bottom: 4rem; }
+
+        /* ── App header ──────────────────────────────────────────────────
+           Three deliberate breakpoints, because the identity block and the
+           controls both need room before they sit side by side:
+             < 768px  fully stacked, everything centred
+             < 1024px logo + text on one row, controls stacked underneath
+                      (this is the width where the title used to squish
+                      against the controls)
+             >= 1024px single row */
+        .app-header { display: flex; flex-direction: column; align-items: center; gap: 1rem; }
+        .app-header-id { display: flex; flex-direction: column; align-items: center; gap: 1rem; width: 100%; min-width: 0; }
+        .app-header-text { min-width: 0; width: 100%; text-align: center; }
+        .app-header-title { display: flex; align-items: center; gap: 0.75rem; flex-wrap: wrap; justify-content: center; margin-bottom: 0.25rem; }
+        .app-header-actions { display: flex; align-items: center; gap: 0.75rem; justify-content: center; width: 100%; flex-wrap: wrap; }
+
+        @media (min-width: 768px) {
+            .app-header-id { flex-direction: row; align-items: center; }
+            .app-header-text { text-align: left; }
+            .app-header-title { justify-content: flex-start; }
+        }
+        @media (min-width: 1024px) {
+            .app-header { flex-direction: row; align-items: center; }
+            .app-header-actions { width: auto; justify-content: flex-end; flex-shrink: 0; }
+        }
+
+        /* Layout utilities */
+        .flex { display: flex; } .flex-col { flex-direction: column; }
+        .items-center { align-items: center; } .items-start { align-items: flex-start; } .items-end { align-items: flex-end; }
+        .justify-between { justify-content: space-between; } .justify-center { justify-content: center; }
+        .flex-1 { flex: 1 1 0%; } .flex-shrink-0 { flex-shrink: 0; } .flex-wrap { flex-wrap: wrap; }
+        .min-w-0 { min-width: 0; } .w-full { width: 100%; } .relative { position: relative; }
+        .grid { display: grid; }
+        .grid-cols-1 { grid-template-columns: repeat(1, minmax(0,1fr)); }
+        .grid-cols-2 { grid-template-columns: repeat(2, minmax(0,1fr)); }
+        .grid-cols-3 { grid-template-columns: repeat(3, minmax(0,1fr)); }
+        .gap-2 { gap: 0.5rem; } .gap-3 { gap: 0.75rem; } .gap-4 { gap: 1rem; } .gap-6 { gap: 1.5rem; }
+        .mb-1 { margin-bottom: 0.25rem; } .mb-2 { margin-bottom: 0.5rem; } .mb-3 { margin-bottom: 0.75rem; }
+        .mb-4 { margin-bottom: 1rem; } .mb-6 { margin-bottom: 1.5rem; } .mb-8 { margin-bottom: 2rem; }
+        .mt-1 { margin-top: 0.25rem; } .mt-2 { margin-top: 0.5rem; } .mt-3 { margin-top: 0.75rem; } .mt-4 { margin-top: 1rem; }
+        .p-2 { padding: 0.5rem; } .p-3 { padding: 0.75rem; } .p-4 { padding: 1rem; } .p-5 { padding: 1.25rem; } .p-6 { padding: 1.5rem; }
+        .px-3 { padding-left: 0.75rem; padding-right: 0.75rem; } .px-4 { padding-left: 1rem; padding-right: 1rem; } .px-6 { padding-left: 1.5rem; padding-right: 1.5rem; }
+        .py-1-5 { padding-top: 0.375rem; padding-bottom: 0.375rem; } .py-2 { padding-top: 0.5rem; padding-bottom: 0.5rem; }
+        .py-2-5 { padding-top: 0.625rem; padding-bottom: 0.625rem; } .py-3 { padding-top: 0.75rem; padding-bottom: 0.75rem; }
+        .rounded-lg { border-radius: 0.5rem; } .rounded-xl { border-radius: 0.75rem; } .rounded-full { border-radius: 9999px; }
+        .overflow-hidden { overflow: hidden; }
+        .text-center { text-align: center; } .text-right { text-align: right; }
+        .text-xs { font-size: 0.75rem; } .text-sm { font-size: 0.875rem; } .text-base { font-size: 1rem; }
+        .text-lg { font-size: 1.125rem; } .text-xl { font-size: 1.25rem; } .text-2xl { font-size: 1.5rem; }
+        .text-3xl { font-size: 1.875rem; } .text-4xl { font-size: 2.25rem; }
+        .font-bold { font-weight: 700; } .font-semibold { font-weight: 600; } .font-medium { font-weight: 500; }
+        .font-mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+        .uppercase { text-transform: uppercase; } .tracking-wide { letter-spacing: 0.05em; }
+        .truncate { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+        .break-all { word-break: break-all; }
+        .tabular { font-variant-numeric: tabular-nums; }
+        .text-white { color: #fff; }
+        .text-white-90 { color: rgba(255,255,255,0.9); } .text-white-80 { color: rgba(255,255,255,0.8); }
+        .text-white-70 { color: rgba(255,255,255,0.7); } .text-white-60 { color: rgba(255,255,255,0.6); }
+        .text-white-50 { color: rgba(255,255,255,0.5); } .text-white-45 { color: rgba(255,255,255,0.45); }
+        .text-white-40 { color: rgba(255,255,255,0.4); }
+        .text-green { color: #4ade80; } .text-orange { color: #fb923c; } .text-red { color: #f87171; }
+        .text-purple { color: #a78bfa; } .text-yellow { color: #facc15; } .text-btc { color: #f7931a; }
+        .bg-green { background: #4ade80; } .bg-yellow { background: #facc15; } .bg-red { background: #f87171; }
+        .bg-grey { background: rgba(255,255,255,0.35); }
+
+        .icon-box { width: 3rem; height: 3rem; border-radius: 0.75rem; background: rgba(139,92,246,0.2); display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
+        .icon-box-neutral { background: rgba(255,255,255,0.1); }
+        .icon-box-btc { background: rgba(247,147,26,0.18); }
+        .status-dot { width: 0.75rem; height: 0.75rem; border-radius: 9999px; }
+        .status-dot-sm { width: 0.5rem; height: 0.5rem; border-radius: 9999px; display: inline-block; flex-shrink: 0; }
+        .sub-row { display: flex; align-items: center; justify-content: space-between; gap: 0.75rem; padding: 0.75rem; background: rgba(255,255,255,0.05); border-radius: 0.5rem; }
+
+        /* Animations */
+        @keyframes ping { 75%, 100% { transform: scale(2); opacity: 0; } }
+        .animate-ping { animation: ping 1s cubic-bezier(0,0,0.2,1) infinite; position: absolute; inset: 0; }
+        @keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
+        .animate-spin-slow { animation: spin 3s linear infinite; }
+        @keyframes shimmer { 0% { background-position: -1000px 0; } 100% { background-position: 1000px 0; } }
+        .shimmer { background: linear-gradient(90deg, rgba(255,255,255,0) 0%, rgba(255,255,255,0.1) 50%, rgba(255,255,255,0) 100%); background-size: 1000px 100%; animation: shimmer 3s infinite; }
+        @keyframes progressGlow {
+            0%, 100% { box-shadow: 0 0 10px rgba(167,139,250,0.5), 0 0 20px rgba(167,139,250,0.3); }
+            50% { box-shadow: 0 0 20px rgba(167,139,250,0.8), 0 0 30px rgba(167,139,250,0.5); }
+        }
+        .progress-glow { animation: progressGlow 2s ease-in-out infinite; }
+        @keyframes fadeUp { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: translateY(0); } }
+        .tab-panel.active { animation: fadeUp 0.28s ease both; }
+
+        /* ── Primary tab bar (Umbrel's dock, Archipelago-styled) ────────── */
+        .tabbar-wrap { margin-bottom: 1.5rem; }
+        .tabbar {
+            display: flex; gap: 0.25rem; padding: 0.3rem; border-radius: 0.85rem;
+            background: rgba(0,0,0,0.55); backdrop-filter: blur(24px); -webkit-backdrop-filter: blur(24px);
+            border: 1px solid rgba(255,255,255,0.12);
+            box-shadow: 0 8px 24px rgba(0,0,0,0.45), inset 0 1px 0 rgba(255,255,255,0.18);
+            overflow-x: auto; scrollbar-width: none; -webkit-overflow-scrolling: touch;
+        }
+        .tabbar::-webkit-scrollbar { display: none; }
+        .tab-btn {
+            flex: 1 0 auto; display: flex; align-items: center; justify-content: center; gap: 0.5rem;
+            padding: 0.65rem 1rem; border: none; background: none; border-radius: 0.6rem;
+            font-size: 0.875rem; font-weight: 500; color: rgba(255,255,255,0.6);
+            cursor: pointer; transition: all 0.25s ease; white-space: nowrap;
+        }
+        .tab-btn svg { width: 1.05rem; height: 1.05rem; flex-shrink: 0; }
+        .tab-btn:hover { color: rgba(255,255,255,0.9); }
+        .tab-btn.active {
+            color: #fff;
+            background: linear-gradient(135deg, rgba(167,139,250,0.28) 0%, rgba(255,255,255,0.08) 100%);
+            box-shadow: inset 0 1px 0 rgba(255,255,255,0.22);
+        }
+        .tab-panel { display: none; }
+        .tab-panel.active { display: block; }
+
+        /* ── Balance hero ───────────────────────────────────────────────── */
+        .balance-hero { display: grid; grid-template-columns: 1fr; gap: 0.75rem; }
+        .balance-tile { padding: 1.15rem; background: rgba(255,255,255,0.045); border: 1px solid rgba(255,255,255,0.08); border-radius: 0.85rem; }
+        .balance-tile .label { font-size: 0.6875rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.06em; color: rgba(255,255,255,0.45); margin-bottom: 0.4rem; display: flex; align-items: center; gap: 0.4rem; }
+        .balance-tile .value { font-size: 1.6rem; font-weight: 700; line-height: 1.15; font-variant-numeric: tabular-nums; }
+        .balance-tile .sub { font-size: 0.75rem; color: rgba(255,255,255,0.45); margin-top: 0.25rem; }
+        .balance-tile.total { background: linear-gradient(135deg, rgba(167,139,250,0.16) 0%, rgba(255,255,255,0.04) 100%); border-color: rgba(167,139,250,0.28); }
+
+        /* Unit switch (sats / BTC) */
+        .unit-switch { display: inline-flex; padding: 0.2rem; background: rgba(255,255,255,0.07); border: 1px solid rgba(255,255,255,0.1); border-radius: 0.6rem; }
+        .unit-switch button { padding: 0.3rem 0.7rem; border: none; background: none; border-radius: 0.45rem; font-size: 0.75rem; font-weight: 600; color: rgba(255,255,255,0.5); cursor: pointer; transition: all 0.2s ease; }
+        .unit-switch button.active { background: rgba(255,255,255,0.16); color: #fff; }
+
+        /* Liquidity bar — local (send) vs remote (receive) */
+        .liq-bar { height: 0.6rem; width: 100%; border-radius: 9999px; background: rgba(255,255,255,0.1); overflow: hidden; display: flex; }
+        .liq-bar .local { background: linear-gradient(90deg, #a78bfa, #8b5cf6); height: 100%; transition: width 0.6s ease; }
+        .liq-bar .remote { background: linear-gradient(90deg, #4ade80, #22c55e); height: 100%; transition: width 0.6s ease; }
+
+        /* Sync banner */
+        .progress-track { width: 100%; height: 0.6rem; background: rgba(255,255,255,0.1); border-radius: 9999px; overflow: hidden; position: relative; }
+        .progress-fill { height: 100%; border-radius: 9999px; background: linear-gradient(90deg, #8b5cf6, #facc15); transition: width 0.5s ease; }
+
+        /* Status pill */
+        .pill { display: inline-flex; align-items: center; gap: 0.4rem; padding: 0.25rem 0.6rem; border-radius: 9999px; font-size: 0.6875rem; font-weight: 600; letter-spacing: 0.02em; background: rgba(255,255,255,0.08); border: 1px solid rgba(255,255,255,0.12); color: rgba(255,255,255,0.75); }
+        .pill.ok { background: rgba(74,222,128,0.14); border-color: rgba(74,222,128,0.3); color: #4ade80; }
+        .pill.warn { background: rgba(250,204,21,0.14); border-color: rgba(250,204,21,0.3); color: #facc15; }
+        .pill.bad { background: rgba(248,113,113,0.14); border-color: rgba(248,113,113,0.3); color: #f87171; }
+
+        /* Field rows with copy */
+        .field-label { font-size: 0.6875rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; color: rgba(255,255,255,0.45); margin-bottom: 0.25rem; }
+        .field-row { display: flex; align-items: center; background: rgba(255,255,255,0.06); border: 1px solid rgba(255,255,255,0.1); border-radius: 0.5rem; overflow: hidden; min-width: 0; }
+        .field-value { flex: 1; min-width: 0; padding: 0.625rem 0.875rem; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.8125rem; color: rgba(255,255,255,0.9); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+        .copy-btn { padding: 0.625rem 0.75rem; background: none; border: none; border-left: 1px solid rgba(255,255,255,0.1); cursor: pointer; color: rgba(255,255,255,0.4); transition: all 0.2s ease; display: flex; align-items: center; flex-shrink: 0; }
+        .copy-btn:hover { color: rgba(255,255,255,0.8); background: rgba(255,255,255,0.05); }
+        .field-row-split { display: flex; gap: 0.75rem; }
+        .field-row-split > div { flex: 1; min-width: 0; }
+        .help-text { margin-top: 1rem; padding-top: 1rem; border-top: 1px solid rgba(255,255,255,0.08); font-size: 0.875rem; color: rgba(255,255,255,0.5); line-height: 1.5; }
+
+        /* Connect */
+        .conn-select { width: 100%; padding: 0.75rem 1rem; background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.1); border-radius: 0.5rem; color: white; font-size: 0.875rem; font-weight: 500; appearance: none; cursor: pointer; outline: none; background-image: url('data:image/svg+xml;utf8,<svg fill="white" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path d="M7 10l5 5 5-5z"/></svg>'); background-repeat: no-repeat; background-position: right 12px center; background-size: 20px; }
+        .conn-select:focus { border-color: rgba(255,255,255,0.25); }
+        .conn-select option { background: #1a1a2e; color: white; }
+        .conn-layout { display: flex; flex-direction: column; gap: 1.5rem; }
+        /* The QR plate stays square. It sits inside a glass panel that takes
+           the height of the fields column, so a tall fields list no longer
+           stretches the white plate into a letterboxed rectangle. */
+        .qr-panel {
+            flex-shrink: 0; display: flex; align-items: center; justify-content: center;
+            padding: 1rem; background: rgba(0, 0, 0, 0.45);
+            border: 1px solid rgba(255, 255, 255, 0.1); border-radius: 0.9rem;
+        }
+        .qr-box { width: 100%; max-width: 200px; aspect-ratio: 1; background: #fff; border-radius: 0.6rem; padding: 0.55rem; display: flex; align-items: center; justify-content: center; }
+        .qr-box img { width: 100%; height: auto; display: block; image-rendering: pixelated; }
+        .conn-fields { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 0.75rem; }
+
+        /* Tables (peers / activity) */
+        .table-scroll { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+        .data-table { width: 100%; border-collapse: collapse; font-size: 0.8125rem; }
+        .data-table th {
+            text-align: left; padding: 0.6rem 0.75rem; font-size: 0.6875rem; font-weight: 600;
+            text-transform: uppercase; letter-spacing: 0.05em; color: rgba(255,255,255,0.45);
+            border-bottom: 1px solid rgba(255,255,255,0.1); white-space: nowrap; cursor: pointer; user-select: none;
+        }
+        .data-table th:hover { color: rgba(255,255,255,0.75); }
+        .data-table th .caret { opacity: 0.35; font-size: 0.6rem; margin-left: 0.25rem; }
+        .data-table th.sorted .caret { opacity: 1; }
+        .data-table td { padding: 0.65rem 0.75rem; border-bottom: 1px solid rgba(255,255,255,0.06); color: rgba(255,255,255,0.8); vertical-align: middle; }
+        .data-table tr:last-child td { border-bottom: none; }
+        .data-table tbody tr { transition: background 0.2s ease; }
+        .data-table tbody tr:hover { background: rgba(255,255,255,0.04); }
+        .filter-input {
+            width: 100%; padding: 0.55rem 0.85rem; background: rgba(0,0,0,0.4);
+            border: 1px solid rgba(255,255,255,0.12); border-radius: 0.5rem;
+            color: white; font-size: 0.8125rem; outline: none;
+        }
+        .filter-input::placeholder { color: rgba(255,255,255,0.35); }
+        .filter-input:focus { border-color: rgba(167,139,250,0.5); }
+
+        /* Activity list */
+        .act-row { display: flex; align-items: center; gap: 0.85rem; padding: 0.75rem; border-radius: 0.6rem; transition: background 0.2s ease; }
+        .act-row:hover { background: rgba(255,255,255,0.04); }
+        .act-icon { width: 2.15rem; height: 2.15rem; border-radius: 9999px; display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
+        .act-icon.in { background: rgba(74,222,128,0.15); color: #4ade80; }
+        .act-icon.out { background: rgba(167,139,250,0.18); color: #a78bfa; }
+        .act-icon.pending { background: rgba(250,204,21,0.15); color: #facc15; }
+        .act-icon.failed { background: rgba(248,113,113,0.15); color: #f87171; }
+        .chip-row { display: flex; gap: 0.4rem; flex-wrap: wrap; }
+        .chip { padding: 0.35rem 0.8rem; border-radius: 9999px; font-size: 0.75rem; font-weight: 500; background: rgba(255,255,255,0.07); border: 1px solid rgba(255,255,255,0.1); color: rgba(255,255,255,0.6); cursor: pointer; transition: all 0.2s ease; }
+        .chip:hover { color: rgba(255,255,255,0.9); }
+        .chip.active { background: rgba(167,139,250,0.22); border-color: rgba(167,139,250,0.4); color: #fff; }
+
+        .empty-state { padding: 2.5rem 1rem; text-align: center; color: rgba(255,255,255,0.4); font-size: 0.875rem; }
+        .logs-box { background: rgba(0,0,0,0.45); border-radius: 0.5rem; padding: 1rem; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.75rem; color: rgba(255,255,255,0.8); white-space: pre-wrap; word-break: break-all; min-height: 220px; max-height: 55vh; overflow-y: auto; }
+
+        .skel { display: inline-block; height: 0.85em; width: 4.5rem; border-radius: 0.25rem; background: rgba(255,255,255,0.1); }
+
+        /* ── Responsive ─────────────────────────────────────────────────── */
+        @media (min-width: 640px) {
+            .sm-grid-cols-2 { grid-template-columns: repeat(2, minmax(0,1fr)); }
+            .sm-grid-cols-3 { grid-template-columns: repeat(3, minmax(0,1fr)); }
+            .balance-hero { grid-template-columns: repeat(3, minmax(0,1fr)); }
+            .conn-layout { flex-direction: row; }
+            .qr-box { width: 200px; }
+        }
+        @media (min-width: 768px) {
+            .md-grid-cols-2 { grid-template-columns: repeat(2, minmax(0,1fr)); }
+            .md-grid-cols-3 { grid-template-columns: repeat(3, minmax(0,1fr)); }
+            .md-grid-cols-4 { grid-template-columns: repeat(4, minmax(0,1fr)); }
+            .md-flex-row { flex-direction: row; }
+            .md-text-right { text-align: right; }
+        }
+        @media (min-width: 1024px) {
+            .lg-grid-cols-2 { grid-template-columns: repeat(2, minmax(0,1fr)); }
+            .lg-grid-cols-3 { grid-template-columns: repeat(3, minmax(0,1fr)); }
+            .lg-grid-cols-4 { grid-template-columns: repeat(4, minmax(0,1fr)); }
+        }
+
+        /* Mobile: the tab bar becomes a bottom dock, like umbrelOS. */
+        @media (max-width: 767px) {
+            .container { padding: 1rem; padding-bottom: 6.5rem; }
+            .balance-tile .value { font-size: 1.35rem; }
+            .logo-gradient-border img { width: 52px; height: 52px; }
+            .tabbar-wrap {
+                position: fixed; left: 0; right: 0; bottom: 0; z-index: 40;
+                margin: 0; padding: 0.5rem 0.75rem calc(0.5rem + env(safe-area-inset-bottom, 0px));
+                background: linear-gradient(to top, rgba(0,0,0,0.9) 55%, rgba(0,0,0,0));
+            }
+            .tabbar { border-radius: 1rem; }
+            .tab-btn { flex: 1 1 0; flex-direction: column; gap: 0.2rem; padding: 0.5rem 0.35rem; font-size: 0.625rem; }
+            .tab-btn svg { width: 1.25rem; height: 1.25rem; }
+            .hide-mobile { display: none; }
+            .data-table th, .data-table td { padding: 0.55rem 0.5rem; }
+        }
+        @media (min-width: 768px) { .only-mobile { display: none; } }
+    </style>
+</head>
+<body>
+    <div class="bg-perspective-container"><div class="bg-layer"></div></div>
+    <div class="overlay"></div>
+
+    <div class="container">
+        <!-- ── Header ──────────────────────────────────────────────────── -->
+        <div class="glass-card p-6 mb-6">
+            <div class="app-header">
+                <div class="app-header-id">
+                    <div class="flex-shrink-0">
+                        <div class="logo-gradient-border">
+                            <img src="assets/img/app-icons/lnd.png" alt="LND" onerror="this.style.display='none'" />
+                        </div>
+                    </div>
+                    <div class="app-header-text flex-1">
+                        <div class="app-header-title">
+                            <h1 class="text-2xl font-bold text-white">LND</h1>
+                            <span class="pill" id="headerStatusPill">
+                                <span class="status-dot-sm bg-grey" id="headerStatusDot"></span>
+                                <span id="headerStatusText">Connecting…</span>
+                            </span>
+                            <span class="pill" id="headerNetworkPill" style="display:none"></span>
+                        </div>
+                        <p class="text-white-70 text-sm" id="headerAlias">Lightning Network Daemon for instant Bitcoin payments</p>
+                        <p class="text-xs text-white-40 mt-1 font-mono truncate" id="headerPubkey">&mdash;</p>
+                    </div>
+                </div>
+                <div class="app-header-actions">
+                    <div class="unit-switch" role="group" aria-label="Display unit">
+                        <button id="unitSats" class="active" onclick="setUnit('sats')">sats</button>
+                        <button id="unitBtc" onclick="setUnit('btc')">BTC</button>
+                    </div>
+                    <button onclick="refreshAll()" class="info-card-button compact" id="refreshBtn" title="Refresh">
+                        <svg style="width:1.1rem;height:1.1rem" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" id="refreshIcon">
+                            <path stroke-linecap="round" stroke-linejoin="round" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                        </svg>
+                        <span class="hide-mobile">Refresh</span>
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <!-- ── Sync banner (only while the node is not fully synced) ────── -->
+        <div class="glass-card p-6 mb-6" id="syncCard" style="display:none">
+            <div class="flex items-start gap-4 mb-4">
+                <div class="icon-box">
+                    <svg style="width:1.5rem;height:1.5rem;color:#a78bfa" class="animate-spin-slow" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                    </svg>
+                </div>
+                <div class="flex-1 min-w-0">
+                    <h2 class="text-xl font-semibold text-white mb-1">Synchronizing</h2>
+                    <p class="text-white-70 text-sm" id="syncSubtitle">Waiting for the Bitcoin backend…</p>
+                </div>
+            </div>
+            <div class="flex justify-between text-sm text-white-60 mb-2">
+                <span id="syncBlockLabel">Block &mdash;</span>
+                <span id="syncPercent">&mdash;</span>
+            </div>
+            <div class="progress-track shimmer">
+                <div class="progress-fill progress-glow" id="syncProgressBar" style="width:0%"></div>
+            </div>
+            <div class="grid grid-cols-2 md-grid-cols-4 gap-3 mt-4">
+                <div class="info-card">
+                    <p class="text-xs text-white-60 mb-1">Chain</p>
+                    <p class="text-sm font-semibold text-white" id="syncChain">&mdash;</p>
+                </div>
+                <div class="info-card">
+                    <p class="text-xs text-white-60 mb-1">Graph</p>
+                    <p class="text-sm font-semibold text-white" id="syncGraph">&mdash;</p>
+                </div>
+                <div class="info-card">
+                    <p class="text-xs text-white-60 mb-1">Block Height</p>
+                    <p class="text-sm font-semibold text-white tabular" id="syncHeight">&mdash;</p>
+                </div>
+                <div class="info-card">
+                    <p class="text-xs text-white-60 mb-1">Peers</p>
+                    <p class="text-sm font-semibold text-white tabular" id="syncPeers">&mdash;</p>
+                </div>
+            </div>
+        </div>
+
+        <!-- ── Tab bar ─────────────────────────────────────────────────── -->
+        <div class="tabbar-wrap">
+            <div class="tabbar" role="tablist">
+                <button class="tab-btn active" data-tab="overview" role="tab">
+                    <svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M3 12l9-9 9 9M5 10v10a1 1 0 001 1h3v-6h6v6h3a1 1 0 001-1V10"/></svg>
+                    <span>Overview</span>
+                </button>
+                <button class="tab-btn" data-tab="channels" role="tab">
+                    <svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1"/></svg>
+                    <span>Channels</span>
+                </button>
+                <button class="tab-btn" data-tab="activity" role="tab">
+                    <svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M4 12h4l2-7 4 14 2-7h4"/></svg>
+                    <span>Activity</span>
+                </button>
+                <button class="tab-btn" data-tab="insights" role="tab">
+                    <svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M3 3v18h18M7 15l3-4 3 3 5-7"/></svg>
+                    <span>Insights</span>
+                </button>
+                <button class="tab-btn" data-tab="connect" role="tab">
+                    <svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M4 4h6v6H4zM14 4h6v6h-6zM4 14h6v6H4zM14 14h2v2h-2zM18 14h2v2h-2zM14 18h2v2h-2zM18 18h2v2h-2z"/></svg>
+                    <span>Connect</span>
+                </button>
+                <button class="tab-btn" data-tab="settings" role="tab">
+                    <svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M9.594 3.94c.09-.542.56-.94 1.11-.94h2.593c.55 0 1.02.398 1.11.94l.213 1.281c.063.374.313.686.645.87.074.04.147.083.22.127.325.196.72.257 1.075.124l1.217-.456a1.125 1.125 0 011.37.49l1.296 2.247a1.125 1.125 0 01-.26 1.431l-1.003.827c-.293.241-.438.613-.43.992a7.723 7.723 0 010 .255c-.008.378.137.75.43.991l1.004.827c.424.35.534.955.26 1.43l-1.298 2.247a1.125 1.125 0 01-1.369.491l-1.217-.456c-.355-.133-.75-.072-1.076.124a6.47 6.47 0 01-.22.128c-.331.183-.581.495-.644.869l-.213 1.281c-.09.543-.56.94-1.11.94h-2.594c-.55 0-1.019-.398-1.11-.94l-.213-1.281c-.062-.374-.312-.686-.644-.87a6.52 6.52 0 01-.22-.127c-.325-.196-.72-.257-1.076-.124l-1.217.456a1.125 1.125 0 01-1.369-.49l-1.297-2.247a1.125 1.125 0 01.26-1.431l1.004-.827c.292-.24.437-.613.43-.991a6.932 6.932 0 010-.255c.007-.38-.138-.751-.43-.992l-1.004-.827a1.125 1.125 0 01-.26-1.43l1.297-2.247a1.125 1.125 0 011.37-.491l1.216.456c.356.133.751.072 1.076-.124.072-.044.146-.086.22-.128.332-.183.582-.495.644-.869l.214-1.28Z"/><path stroke-linecap="round" stroke-linejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/></svg>
+                    <span>Settings</span>
+                </button>
+            </div>
+        </div>
+
+        <!-- ══ OVERVIEW ══════════════════════════════════════════════════ -->
+        <div class="tab-panel active" id="panel-overview">
+            <!-- Balances -->
+            <div class="glass-card p-6 mb-6">
+                <div class="flex items-center justify-between gap-4 mb-4">
+                    <div class="flex items-center gap-4 min-w-0">
+                        <div class="icon-box">
+                            <svg style="width:1.4rem;height:1.4rem;color:#a78bfa" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M3 10h18M7 15h1m4 0h1m-7 4h12a3 3 0 003-3V8a3 3 0 00-3-3H6a3 3 0 00-3 3v8a3 3 0 003 3z"/></svg>
+                        </div>
+                        <div class="min-w-0">
+                            <h2 class="text-xl font-semibold text-white">Balance</h2>
+                            <p class="text-white-60 text-sm">Funds held by this node</p>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="balance-hero mb-4">
+                    <div class="balance-tile total">
+                        <div class="label">Total</div>
+                        <div class="value text-white" id="balTotal">&mdash;</div>
+                        <div class="sub" id="balTotalSub">on-chain + lightning</div>
+                    </div>
+                    <div class="balance-tile">
+                        <div class="label"><span class="text-purple">&#9889;</span> Lightning</div>
+                        <div class="value text-purple" id="balLightning">&mdash;</div>
+                        <div class="sub" id="balLightningSub">&mdash;</div>
+                    </div>
+                    <div class="balance-tile">
+                        <div class="label"><span class="text-btc">&#8383;</span> On-chain</div>
+                        <div class="value text-btc" id="balOnchain">&mdash;</div>
+                        <div class="sub" id="balOnchainSub">&mdash;</div>
+                    </div>
+                </div>
+
+                <!-- Liquidity (Umbrel: Max Send / Max Receive) -->
+                <div class="p-4" style="background:rgba(255,255,255,0.04);border-radius:0.75rem;border:1px solid rgba(255,255,255,0.08)">
+                    <div class="flex items-center justify-between mb-2">
+                        <div>
+                            <div class="text-xs text-white-50 uppercase tracking-wide mb-1">Max Send</div>
+                            <div class="text-base font-semibold text-purple tabular" id="liqLocal">&mdash;</div>
+                        </div>
+                        <div class="text-right">
+                            <div class="text-xs text-white-50 uppercase tracking-wide mb-1">Max Receive</div>
+                            <div class="text-base font-semibold text-green tabular" id="liqRemote">&mdash;</div>
+                        </div>
+                    </div>
+                    <div class="liq-bar">
+                        <div class="local" id="liqBarLocal" style="width:50%"></div>
+                        <div class="remote" id="liqBarRemote" style="width:50%"></div>
+                    </div>
+                    <p class="text-xs text-white-40 mt-2" id="liqHint">Outbound liquidity lets you send; inbound liquidity lets you receive.</p>
+                </div>
+            </div>
+
+            <!-- Summary stats -->
+            <div class="grid grid-cols-2 md-grid-cols-4 gap-3 mb-6">
+                <div class="info-card">
+                    <p class="text-xs text-white-60 mb-1">Connections</p>
+                    <p class="text-2xl font-bold text-white tabular" id="statPeers">&mdash;</p>
+                    <p class="text-xs text-white-40 mt-1">peers</p>
+                </div>
+                <div class="info-card">
+                    <p class="text-xs text-white-60 mb-1">Active Channels</p>
+                    <p class="text-2xl font-bold text-orange tabular" id="statActiveChannels">&mdash;</p>
+                    <p class="text-xs text-white-40 mt-1" id="statChannelsSub">&mdash;</p>
+                </div>
+                <div class="info-card">
+                    <p class="text-xs text-white-60 mb-1">Total Capacity</p>
+                    <p class="text-2xl font-bold text-white tabular" id="statCapacity">&mdash;</p>
+                    <p class="text-xs text-white-40 mt-1">across all channels</p>
+                </div>
+                <div class="info-card">
+                    <p class="text-xs text-white-60 mb-1">Routing Earned</p>
+                    <p class="text-2xl font-bold text-green tabular" id="statRoutingMonth">&mdash;</p>
+                    <p class="text-xs text-white-40 mt-1">last 30 days</p>
+                </div>
+            </div>
+
+            <!-- Channels + node health -->
+            <div class="grid grid-cols-1 lg-grid-cols-2 gap-6">
+                <a class="info-card-button p-5" id="channelsLinkCard" href="#" target="_top">
+                    <div class="flex items-center gap-4">
+                        <div class="icon-box">
+                            <svg style="width:1.4rem;height:1.4rem;color:#a78bfa" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1"/></svg>
+                        </div>
+                        <div class="flex-1 min-w-0">
+                            <h3 class="text-lg font-semibold text-white mb-1">Payment Channels</h3>
+                            <p class="text-white-60 text-sm" id="channelsLinkSub">Open, manage and close channels</p>
+                        </div>
+                        <svg style="width:1.25rem;height:1.25rem;color:rgba(255,255,255,0.5);flex-shrink:0" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M9 5l7 7-7 7"/></svg>
+                    </div>
+                </a>
+
+                <div class="glass-card p-5">
+                    <h3 class="text-lg font-semibold text-white mb-3">Node Health</h3>
+                    <div class="flex flex-col gap-2">
+                        <div class="sub-row">
+                            <span class="text-white-80 text-sm">Synced to chain</span>
+                            <span class="pill" id="healthChain">&mdash;</span>
+                        </div>
+                        <div class="sub-row">
+                            <span class="text-white-80 text-sm">Synced to graph</span>
+                            <span class="pill" id="healthGraph">&mdash;</span>
+                        </div>
+                        <div class="sub-row">
+                            <span class="text-white-80 text-sm">Block height</span>
+                            <span class="text-white-60 text-sm font-mono tabular" id="healthHeight">&mdash;</span>
+                        </div>
+                        <div class="sub-row">
+                            <span class="text-white-80 text-sm">Pending channels</span>
+                            <span class="text-white-60 text-sm tabular" id="healthPending">&mdash;</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- ══ CHANNELS ══════════════════════════════════════════════════ -->
+        <div class="tab-panel" id="panel-channels">
+            <div class="glass-card p-6 mb-6">
+                <div class="flex flex-col md-flex-row items-start gap-4 justify-between mb-5">
+                    <div class="flex items-start gap-4 min-w-0">
+                        <div class="icon-box">
+                            <svg style="width:1.4rem;height:1.4rem;color:#a78bfa" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1"/></svg>
+                        </div>
+                        <div class="min-w-0">
+                            <h2 class="text-xl font-semibold text-white mb-1">Payment Channels</h2>
+                            <p class="text-white-60 text-sm">Full channel management &mdash; opening, balancing and closing &mdash; lives in the Archipelago channels view.</p>
+                        </div>
+                    </div>
+                    <a class="gradient-button px-4 py-2-5 rounded-lg text-sm font-medium flex-shrink-0 flex items-center gap-2" id="channelsOpenBtn" href="#" target="_top" style="text-decoration:none">
+                        Manage Channels
+                        <svg style="width:1rem;height:1rem" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M13 7l5 5-5 5M6 12h12"/></svg>
+                    </a>
+                </div>
+
+                <div class="grid grid-cols-2 md-grid-cols-4 gap-3">
+                    <div class="info-card">
+                        <p class="text-xs text-white-60 mb-1">Active</p>
+                        <p class="text-xl font-bold text-green tabular" id="chActive">&mdash;</p>
+                    </div>
+                    <div class="info-card">
+                        <p class="text-xs text-white-60 mb-1">Inactive</p>
+                        <p class="text-xl font-bold text-white-60 tabular" id="chInactive">&mdash;</p>
+                    </div>
+                    <div class="info-card">
+                        <p class="text-xs text-white-60 mb-1">Pending</p>
+                        <p class="text-xl font-bold text-yellow tabular" id="chPending">&mdash;</p>
+                    </div>
+                    <div class="info-card">
+                        <p class="text-xs text-white-60 mb-1">Capacity</p>
+                        <p class="text-xl font-bold text-white tabular" id="chCapacity">&mdash;</p>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Compact read-only channel list; the full view is the Archipelago one -->
+            <div class="glass-card p-6">
+                <div class="flex items-center justify-between gap-3 mb-4">
+                    <h3 class="text-lg font-semibold text-white">Channel Overview</h3>
+                    <input class="filter-input" style="max-width:16rem" id="channelFilter" placeholder="Filter channels…" oninput="renderChannels()">
+                </div>
+                <div id="channelList"><div class="empty-state">Loading channels…</div></div>
+            </div>
+        </div>
+
+        <!-- ══ ACTIVITY ══════════════════════════════════════════════════ -->
+        <div class="tab-panel" id="panel-activity">
+            <div class="glass-card p-6">
+                <div class="flex flex-col md-flex-row items-start gap-4 justify-between mb-4">
+                    <div class="min-w-0">
+                        <h2 class="text-xl font-semibold text-white mb-1">Activity</h2>
+                        <p class="text-white-60 text-sm">Recent Lightning payments, invoices and on-chain transactions.</p>
+                    </div>
+                    <div class="chip-row flex-shrink-0">
+                        <button class="chip active" data-filter="all" onclick="setActivityFilter('all')">All</button>
+                        <button class="chip" data-filter="lightning" onclick="setActivityFilter('lightning')">Lightning</button>
+                        <button class="chip" data-filter="onchain" onclick="setActivityFilter('onchain')">On-chain</button>
+                    </div>
+                </div>
+                <div id="activityList"><div class="empty-state">Loading activity…</div></div>
+            </div>
+        </div>
+
+        <!-- ══ INSIGHTS ══════════════════════════════════════════════════ -->
+        <div class="tab-panel" id="panel-insights">
+            <!-- Routing revenue -->
+            <div class="glass-card p-6 mb-6">
+                <div class="flex items-start gap-4 mb-4">
+                    <div class="icon-box">
+                        <svg style="width:1.4rem;height:1.4rem;color:#4ade80" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M3 3v18h18M7 15l3-4 3 3 5-7"/></svg>
+                    </div>
+                    <div class="flex-1 min-w-0">
+                        <h2 class="text-xl font-semibold text-white mb-1">Routing Revenue</h2>
+                        <p class="text-white-60 text-sm">Fees earned forwarding payments for the network.</p>
+                    </div>
+                </div>
+                <div class="grid grid-cols-1 sm-grid-cols-3 gap-3">
+                    <div class="info-card">
+                        <p class="text-xs text-white-60 mb-1">Last 24 hours</p>
+                        <p class="text-2xl font-bold text-green tabular" id="feeDay">&mdash;</p>
+                    </div>
+                    <div class="info-card">
+                        <p class="text-xs text-white-60 mb-1">Last 7 days</p>
+                        <p class="text-2xl font-bold text-green tabular" id="feeWeek">&mdash;</p>
+                    </div>
+                    <div class="info-card">
+                        <p class="text-xs text-white-60 mb-1">Last 30 days</p>
+                        <p class="text-2xl font-bold text-green tabular" id="feeMonth">&mdash;</p>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Node totals -->
+            <div class="grid grid-cols-2 md-grid-cols-4 gap-3 mb-6">
+                <div class="info-card">
+                    <p class="text-xs text-white-60 mb-1">Sent</p>
+                    <p class="text-lg font-semibold text-purple tabular" id="insSent">&mdash;</p>
+                    <p class="text-xs text-white-40 mt-1">over channels</p>
+                </div>
+                <div class="info-card">
+                    <p class="text-xs text-white-60 mb-1">Received</p>
+                    <p class="text-lg font-semibold text-green tabular" id="insReceived">&mdash;</p>
+                    <p class="text-xs text-white-40 mt-1">over channels</p>
+                </div>
+                <div class="info-card">
+                    <p class="text-xs text-white-60 mb-1">Channel Updates</p>
+                    <p class="text-lg font-semibold text-white tabular" id="insUpdates">&mdash;</p>
+                    <p class="text-xs text-white-40 mt-1">state transitions</p>
+                </div>
+                <div class="info-card">
+                    <p class="text-xs text-white-60 mb-1">Avg. Channel Age</p>
+                    <p class="text-lg font-semibold text-white" id="insAge">&mdash;</p>
+                    <p class="text-xs text-white-40 mt-1">since open</p>
+                </div>
+            </div>
+
+            <!-- Lightning Network graph -->
+            <div class="glass-card p-6 mb-6">
+                <h3 class="text-lg font-semibold text-white mb-1">Lightning Network</h3>
+                <p class="text-white-60 text-sm mb-4">What this node sees of the public network graph.</p>
+                <div class="grid grid-cols-2 md-grid-cols-4 gap-3">
+                    <div class="info-card">
+                        <p class="text-xs text-white-60 mb-1">Nodes</p>
+                        <p class="text-lg font-semibold text-white tabular" id="graphNodes">&mdash;</p>
+                    </div>
+                    <div class="info-card">
+                        <p class="text-xs text-white-60 mb-1">Channels</p>
+                        <p class="text-lg font-semibold text-white tabular" id="graphChannels">&mdash;</p>
+                    </div>
+                    <div class="info-card">
+                        <p class="text-xs text-white-60 mb-1">Network Capacity</p>
+                        <p class="text-lg font-semibold text-white tabular" id="graphCapacity">&mdash;</p>
+                    </div>
+                    <div class="info-card">
+                        <p class="text-xs text-white-60 mb-1">Avg. Channel Size</p>
+                        <p class="text-lg font-semibold text-white tabular" id="graphAvgSize">&mdash;</p>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Peers table (Umbrel PeersTable parity) -->
+            <div class="glass-card p-6">
+                <div class="flex flex-col md-flex-row items-start justify-between gap-3 mb-4">
+                    <div>
+                        <h3 class="text-lg font-semibold text-white mb-1">Peers <span class="text-white-40 text-sm font-medium" id="peersCount"></span></h3>
+                        <p class="text-white-60 text-sm">Nodes this node holds a live connection to.</p>
+                    </div>
+                    <input class="filter-input" style="max-width:16rem" id="peerFilter" placeholder="Filter peers…" oninput="renderPeers()">
+                </div>
+                <div class="table-scroll">
+                    <table class="data-table">
+                        <thead>
+                            <tr>
+                                <th onclick="sortPeers('peer')" data-col="peer">Peer<span class="caret">&#9660;</span></th>
+                                <th onclick="sortPeers('network')" data-col="network">Network<span class="caret">&#9660;</span></th>
+                                <th onclick="sortPeers('direction')" data-col="direction">In/Out<span class="caret">&#9660;</span></th>
+                                <th onclick="sortPeers('ping')" data-col="ping">Ping<span class="caret">&#9660;</span></th>
+                                <th onclick="sortPeers('sent')" data-col="sent">Sent<span class="caret">&#9660;</span></th>
+                                <th onclick="sortPeers('recv')" data-col="recv">Received<span class="caret">&#9660;</span></th>
+                            </tr>
+                        </thead>
+                        <tbody id="peersBody">
+                            <tr><td colspan="6"><div class="empty-state">Loading peers…</div></td></tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+
+        <!-- ══ CONNECT ═══════════════════════════════════════════════════ -->
+        <div class="tab-panel" id="panel-connect">
+            <div class="glass-card p-6 mb-6">
+                <h2 class="text-xl font-semibold text-white mb-1">Connect Your Wallet</h2>
+                <p class="text-white-70 text-sm mb-4" id="connSubtitle">Use a wallet like Zeus, Zap, or BlueWallet to connect remotely.</p>
+
+                <div class="mb-4">
+                    <select id="connMode" onchange="updateConnInfo()" class="conn-select">
+                        <option value="rest-tor">REST (Tor)</option>
+                        <option value="rest-local">REST (Local Network)</option>
+                        <option value="grpc-tor">gRPC (Tor)</option>
+                        <option value="grpc-local">gRPC (Local Network)</option>
+                    </select>
+                </div>
+
+                <div class="conn-layout" id="connDisplay">
+                    <div class="qr-panel">
+                        <div class="qr-box" id="lndQrBox">
+                            <div style="color:#999;font-size:12px;text-align:center;padding:2rem">Loading…</div>
+                        </div>
+                    </div>
+                    <div class="conn-fields">
+                        <div>
+                            <div class="field-label">Host</div>
+                            <div class="field-row">
+                                <span class="field-value" id="connHost">&mdash;</span>
+                                <button class="copy-btn" onclick="copyEl('connHost', this)" title="Copy" aria-label="Copy host">
+                                    <svg width="16" height="16" fill="none" stroke="currentColor" viewBox="0 0 24 24"><rect x="9" y="9" width="13" height="13" rx="2" ry="2" stroke-width="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1" stroke-width="2"/></svg>
+                                </button>
+                            </div>
+                        </div>
+                        <div class="field-row-split">
+                            <div>
+                                <div class="field-label">Port</div>
+                                <div class="field-row">
+                                    <span class="field-value" id="connPort">&mdash;</span>
+                                    <button class="copy-btn" onclick="copyEl('connPort', this)" title="Copy" aria-label="Copy port">
+                                        <svg width="16" height="16" fill="none" stroke="currentColor" viewBox="0 0 24 24"><rect x="9" y="9" width="13" height="13" rx="2" ry="2" stroke-width="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1" stroke-width="2"/></svg>
+                                    </button>
+                                </div>
+                            </div>
+                            <div>
+                                <div class="field-label">Protocol</div>
+                                <div class="field-row">
+                                    <span class="field-value" id="connProto">&mdash;</span>
+                                </div>
+                            </div>
+                        </div>
+                        <button onclick="copyLndconnectUri()" class="gradient-button w-full mt-2 px-4 py-2-5 rounded-lg text-sm font-medium" id="copyUriBtn">Copy lndconnect URI</button>
+                    </div>
+                </div>
+
+                <div class="help-text">
+                    Scan the QR code with <strong style="color:rgba(255,255,255,0.8)">Zeus</strong>, <strong style="color:rgba(255,255,255,0.8)">Zap</strong>, or <strong style="color:rgba(255,255,255,0.8)">BlueWallet</strong> to connect. Tor mode is recommended for remote access &mdash; Local Network mode sends the macaroon unencrypted over your LAN.
+                </div>
+            </div>
+
+            <!-- Node ID (Umbrel NodeIdModal parity) -->
+            <div class="glass-card p-6">
+                <h2 class="text-xl font-semibold text-white mb-1">Node ID</h2>
+                <p class="text-white-70 text-sm mb-4">Share this so other nodes can open a channel with you.</p>
+                <div class="conn-layout">
+                    <div class="qr-panel">
+                        <div class="qr-box" id="nodeIdQrBox">
+                            <div style="color:#999;font-size:12px;text-align:center;padding:2rem">&mdash;</div>
+                        </div>
+                    </div>
+                    <div class="conn-fields">
+                        <div>
+                            <div class="field-label">Public Key</div>
+                            <div class="field-row">
+                                <span class="field-value" id="nodePubkey">&mdash;</span>
+                                <button class="copy-btn" onclick="copyEl('nodePubkey', this)" title="Copy" aria-label="Copy public key">
+                                    <svg width="16" height="16" fill="none" stroke="currentColor" viewBox="0 0 24 24"><rect x="9" y="9" width="13" height="13" rx="2" ry="2" stroke-width="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1" stroke-width="2"/></svg>
+                                </button>
+                            </div>
+                        </div>
+                        <div id="nodeUriWrap">
+                            <div class="field-label">Node URI</div>
+                            <div class="field-row">
+                                <span class="field-value" id="nodeUri">&mdash;</span>
+                                <button class="copy-btn" onclick="copyEl('nodeUri', this)" title="Copy" aria-label="Copy node URI">
+                                    <svg width="16" height="16" fill="none" stroke="currentColor" viewBox="0 0 24 24"><rect x="9" y="9" width="13" height="13" rx="2" ry="2" stroke-width="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1" stroke-width="2"/></svg>
+                                </button>
+                            </div>
+                            <p class="text-xs text-white-40 mt-2" id="nodeUriHint"></p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- ══ SETTINGS ══════════════════════════════════════════════════ -->
+        <div class="tab-panel" id="panel-settings">
+            <div class="grid grid-cols-1 lg-grid-cols-2 gap-6 mb-6">
+                <div class="glass-card p-6">
+                    <div class="flex items-start gap-4 mb-4">
+                        <div class="icon-box">
+                            <svg style="width:1.4rem;height:1.4rem;color:#a78bfa" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M13 10V3L4 14h7v7l9-11h-7z"/></svg>
+                        </div>
+                        <div class="flex-1 min-w-0">
+                            <h2 class="text-xl font-semibold text-white mb-1">Node</h2>
+                            <p class="text-white-60 text-sm">Identity and chain configuration</p>
+                        </div>
+                    </div>
+                    <div class="flex flex-col gap-2">
+                        <div class="sub-row"><span class="text-white-80 text-sm">Status</span><span class="text-sm font-medium" id="setStatus">&mdash;</span></div>
+                        <div class="sub-row"><span class="text-white-80 text-sm">Alias</span><span class="text-white-60 text-sm truncate" id="setAlias">&mdash;</span></div>
+                        <div class="sub-row"><span class="text-white-80 text-sm">Version</span><span class="text-white-60 text-sm font-mono truncate" id="setVersion">&mdash;</span></div>
+                        <div class="sub-row"><span class="text-white-80 text-sm">Network</span><span class="text-white-60 text-sm" id="setNetwork">&mdash;</span></div>
+                        <div class="sub-row"><span class="text-white-80 text-sm">Chain</span><span class="text-white-60 text-sm" id="setChain">&mdash;</span></div>
+                        <div class="sub-row"><span class="text-white-80 text-sm">Commit hash</span><span class="text-white-60 text-sm font-mono truncate" id="setCommit">&mdash;</span></div>
+                    </div>
+                </div>
+
+                <div class="glass-card p-6">
+                    <div class="flex items-start gap-4 mb-4">
+                        <div class="icon-box icon-box-neutral">
+                            <svg style="width:1.4rem;height:1.4rem;color:rgba(255,255,255,0.8)" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M8.111 16.404a5.5 5.5 0 017.778 0M12 20h.01m-7.08-7.071c3.904-3.905 10.236-3.905 14.141 0M1.394 9.393c5.857-5.857 15.355-5.857 21.213 0"/></svg>
+                        </div>
+                        <div class="flex-1 min-w-0">
+                            <h2 class="text-xl font-semibold text-white mb-1">Interfaces</h2>
+                            <p class="text-white-60 text-sm">API endpoints exposed by this node</p>
+                        </div>
+                    </div>
+                    <div class="flex flex-col gap-2">
+                        <div class="sub-row">
+                            <span class="flex items-center gap-2 text-white-80 text-sm"><span class="status-dot-sm bg-grey" id="restDot"></span>REST API</span>
+                            <span class="text-white-60 text-sm font-mono truncate" id="setRest">&mdash;</span>
+                        </div>
+                        <div class="sub-row">
+                            <span class="flex items-center gap-2 text-white-80 text-sm"><span class="status-dot-sm bg-grey" id="grpcDot"></span>gRPC</span>
+                            <span class="text-white-60 text-sm font-mono truncate" id="setGrpc">&mdash;</span>
+                        </div>
+                        <div class="sub-row">
+                            <span class="text-white-80 text-sm">P2P</span>
+                            <span class="text-white-60 text-sm font-mono" id="setP2p">&mdash;</span>
+                        </div>
+                        <div class="sub-row">
+                            <span class="text-white-80 text-sm">Tor hidden service</span>
+                            <span class="text-white-60 text-sm font-mono truncate" id="setTor">&mdash;</span>
+                        </div>
+                    </div>
+                    <button class="info-card-button w-full mt-4 text-sm font-medium text-center" onclick="copyEndpointInfo(this)">Copy Connection Info</button>
+                </div>
+            </div>
+
+            <!-- Advanced settings live in the orchestrator, not here -->
+            <div class="glass-card p-6 mb-6">
+                <h3 class="text-lg font-semibold text-white mb-1">Advanced Configuration</h3>
+                <p class="text-white-60 text-sm mb-4">
+                    LND's runtime configuration is manifest-declared and owned by the Archipelago orchestrator, so it stays reproducible across reinstalls and node migrations. This panel reflects the values the node is running with.
+                </p>
+                <div class="grid grid-cols-1 md-grid-cols-2 gap-3">
+                    <div class="sub-row"><span class="text-white-80 text-sm">Bitcoin backend</span><span class="text-white-60 text-sm" id="cfgBackend">&mdash;</span></div>
+                    <div class="sub-row"><span class="text-white-80 text-sm">Watchtower client</span><span class="text-white-60 text-sm" id="cfgWatchtower">&mdash;</span></div>
+                    <div class="sub-row"><span class="text-white-80 text-sm">Keysend</span><span class="text-white-60 text-sm" id="cfgKeysend">&mdash;</span></div>
+                    <div class="sub-row"><span class="text-white-80 text-sm">Wumbo channels</span><span class="text-white-60 text-sm" id="cfgWumbo">&mdash;</span></div>
+                </div>
+            </div>
+
+            <!-- Logs -->
+            <div class="glass-card p-6">
+                <div class="flex justify-between items-center gap-3 mb-3">
+                    <h3 class="text-lg font-semibold text-white">Node Logs</h3>
+                    <button onclick="loadLogs()" class="info-card-button compact" style="font-size:0.75rem;padding:0.45rem 0.8rem">Refresh</button>
+                </div>
+                <div class="logs-box" id="logsContent">Open this tab to load logs.</div>
+            </div>
+        </div>
+    </div>
+
+    <script src="qrcode.js"></script>
+    <script>
+        'use strict';
+
+        const REST_PORT = 8080;
+        const GRPC_PORT = 10009;
+        const P2P_PORT = 9735;
+        const host = window.location.hostname;
+
+        // Same-origin by default: the app's own nginx (:18083) proxies these paths
+        // to the archipelago backend, so a relative base ('') avoids any
+        // cross-origin/CORS issues (which broke this on http-only nodes).
+        // ?backend=http://HOST:5678 still overrides for local dev.
+        function getBackendUrl() {
+            return new URLSearchParams(window.location.search).get('backend') || '';
+        }
+
+        // The full channel-management UI is the Archipelago one, served by the
+        // main UI on the standard web port — not this app's :18083, so the port
+        // is dropped. The /dashboard prefix matters: the route is a CHILD of
+        // the /dashboard record in neode-ui/src/router/index.ts, so bare
+        // /apps/lnd/channels is not a route at all. nginx's SPA fallback still
+        // returns 200 for it, so it fails as vue-router's NotFound view rather
+        // than an HTTP 404 — which is exactly how it presented on a test node.
+        const CHANNELS_URL = window.location.protocol + '//' + window.location.hostname + '/dashboard/apps/lnd/channels';
+
+        // ── State ───────────────────────────────────────────────────────
+        let unit = 'sats';
+        let state = { info: null, channels: [], pending: null, peers: [], payments: [], invoices: [], txns: [], fees: null, graph: null };
+        let peerSort = { col: 'peer', dir: 1 };
+        let activityFilter = 'all';
+        let logsLoaded = false;
+
+        try { unit = localStorage.getItem('lndui.unit') || 'sats'; } catch (_) {}
+
+        // ── Formatting ──────────────────────────────────────────────────
+        function num(v) { const n = Number(v); return isFinite(n) ? n : 0; }
+
+        // Amounts are always sats internally; `unit` only changes presentation.
+        function fmtAmount(sats) {
+            const n = num(sats);
+            if (unit === 'btc') {
+                const btc = n / 1e8;
+                return (btc < 0.00001 && btc > 0 ? btc.toFixed(8) : btc.toFixed(5)) + ' BTC';
+            }
+            return n.toLocaleString('en-US') + ' sats';
+        }
+        function fmtAmountShort(sats) {
+            const n = num(sats);
+            if (unit === 'btc') return (n / 1e8).toFixed(4) + ' BTC';
+            if (n >= 1e6) return (n / 1e6).toFixed(2).replace(/\.00$/, '') + 'M';
+            if (n >= 1e3) return (n / 1e3).toFixed(1).replace(/\.0$/, '') + 'k';
+            return n.toLocaleString('en-US');
+        }
+        function fmtCount(v) { return num(v).toLocaleString('en-US'); }
+        function fmtBytes(b) {
+            const n = num(b);
+            if (n >= 1e9) return (n / 1e9).toFixed(2) + ' GB';
+            if (n >= 1e6) return (n / 1e6).toFixed(1) + ' MB';
+            if (n >= 1e3) return (n / 1e3).toFixed(1) + ' KB';
+            return n + ' B';
+        }
+        function timeAgo(unixSeconds) {
+            const secs = Math.floor(Date.now() / 1000) - num(unixSeconds);
+            if (!isFinite(secs) || secs < 0) return '—';
+            if (secs < 60) return secs + 's ago';
+            if (secs < 3600) return Math.floor(secs / 60) + 'm ago';
+            if (secs < 86400) return Math.floor(secs / 3600) + 'h ago';
+            if (secs < 2592000) return Math.floor(secs / 86400) + 'd ago';
+            if (secs < 31536000) return Math.floor(secs / 2592000) + 'mo ago';
+            return Math.floor(secs / 31536000) + 'y ago';
+        }
+        function fmtDuration(secs) {
+            const n = num(secs);
+            if (n <= 0) return '—';
+            const d = Math.floor(n / 86400);
+            if (d >= 1) return d + 'd';
+            const h = Math.floor(n / 3600);
+            if (h >= 1) return h + 'h';
+            return Math.max(1, Math.floor(n / 60)) + 'm';
+        }
+        function shortKey(k) { return !k ? '—' : k.slice(0, 8) + '…' + k.slice(-6); }
+        function escapeHtml(s) {
+            return String(s == null ? '' : s).replace(/[&<>"']/g, c =>
+                ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
+        }
+        // Clipboard with a fallback. navigator.clipboard only exists in a secure
+        // context, and most nodes serve this app over plain http; on top of
+        // that, the main UI embeds these apps in an iframe, where the async
+        // Clipboard API is additionally gated by the clipboard-write permission
+        // policy. execCommand('copy') still works in both situations, so it is
+        // the fallback rather than letting the button silently do nothing.
+        function legacyCopy(text) {
+            return new Promise((resolve, reject) => {
+                try {
+                    const ta = document.createElement('textarea');
+                    ta.value = text;
+                    ta.setAttribute('readonly', '');
+                    ta.style.position = 'fixed';
+                    ta.style.top = '0';
+                    ta.style.left = '0';
+                    ta.style.opacity = '0';
+                    document.body.appendChild(ta);
+                    ta.select();
+                    ta.setSelectionRange(0, ta.value.length);
+                    const ok = document.execCommand('copy');
+                    document.body.removeChild(ta);
+                    if (ok) resolve(); else reject(new Error('copy rejected'));
+                } catch (e) { reject(e); }
+            });
+        }
+        function copyText(text) {
+            if (navigator.clipboard && window.isSecureContext) {
+                return navigator.clipboard.writeText(text).catch(() => legacyCopy(text));
+            }
+            return legacyCopy(text);
+        }
+
+        function setText(id, text) { const el = document.getElementById(id); if (el) el.textContent = text; }
+        function setHtml(id, html) { const el = document.getElementById(id); if (el) el.innerHTML = html; }
+
+        // Classify a peer address the way Umbrel's peers table does.
+        function classifyNetwork(addr) {
+            const a = String(addr || '').toLowerCase();
+            if (a.includes('.onion')) return 'Tor';
+            if (a.includes('.b32.i2p') || a.includes('i2p')) return 'I2P';
+            if (/^(127\.|10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.|\[?::1\]?|localhost)/.test(a)) return 'Local';
+            return 'Clearnet';
+        }
+
+        // ── Unit switch ─────────────────────────────────────────────────
+        function setUnit(u) {
+            unit = u;
+            try { localStorage.setItem('lndui.unit', u); } catch (_) {}
+            document.getElementById('unitSats').classList.toggle('active', u === 'sats');
+            document.getElementById('unitBtc').classList.toggle('active', u === 'btc');
+            renderAll();
+        }
+
+        // ── Tabs ────────────────────────────────────────────────────────
+        function setTab(tab) {
+            document.querySelectorAll('.tab-btn').forEach(b => b.classList.toggle('active', b.dataset.tab === tab));
+            document.querySelectorAll('.tab-panel').forEach(p => p.classList.toggle('active', p.id === 'panel-' + tab));
+            if (tab === 'settings' && !logsLoaded) { logsLoaded = true; loadLogs(); }
+            if (window.matchMedia('(max-width: 767px)').matches) window.scrollTo({ top: 0, behavior: 'smooth' });
+            try { history.replaceState(null, '', '#' + tab); } catch (_) {}
+        }
+        document.querySelectorAll('.tab-btn').forEach(b => b.addEventListener('click', () => setTab(b.dataset.tab)));
+
+        // ── Fetch helpers ───────────────────────────────────────────────
+        // Every LND path goes through the backend's authenticated GET proxy,
+        // which attaches the macaroon and trusts LND's self-signed cert.
+        async function lnd(path) {
+            const res = await fetch(getBackendUrl() + '/proxy/lnd' + path, { credentials: 'include' });
+            if (!res.ok) throw new Error('HTTP ' + res.status);
+            return res.json();
+        }
+        async function lndSafe(path, fallback) {
+            try { return await lnd(path); } catch (_) { return fallback; }
+        }
+
+        async function refreshAll() {
+            const icon = document.getElementById('refreshIcon');
+            if (icon) icon.classList.add('animate-spin-slow');
+            try {
+                const [info, channels, pending, peers, fees, graph, payments, invoices, txns] = await Promise.all([
+                    lndSafe('/v1/getinfo', null),
+                    lndSafe('/v1/channels', { channels: [] }),
+                    lndSafe('/v1/channels/pending', null),
+                    lndSafe('/v1/peers', { peers: [] }),
+                    lndSafe('/v1/fees', null),
+                    lndSafe('/v1/graph/info', null),
+                    lndSafe('/v1/payments?max_payments=25&reversed=true', { payments: [] }),
+                    lndSafe('/v1/invoices?num_max_invoices=25&reversed=true', { invoices: [] }),
+                    lndSafe('/v1/transactions', { transactions: [] }),
+                ]);
+                state.info = info;
+                state.channels = (channels && channels.channels) || [];
+                state.pending = pending;
+                state.peers = (peers && peers.peers) || [];
+                state.fees = fees;
+                state.graph = graph;
+                state.payments = (payments && payments.payments) || [];
+                state.invoices = (invoices && invoices.invoices) || [];
+                state.txns = (txns && txns.transactions) || [];
+
+                // Balances are separate so one failing endpoint can't blank the rest.
+                state.onchain = await lndSafe('/v1/balance/blockchain', null);
+                state.chanbal = await lndSafe('/v1/balance/channels', null);
+            } finally {
+                if (icon) icon.classList.remove('animate-spin-slow');
+            }
+            renderAll();
+        }
+
+        function renderAll() {
+            renderHeader();
+            renderBalances();
+            renderSummary();
+            renderChannels();
+            renderActivity();
+            renderInsights();
+            renderPeers();
+            renderSettings();
+        }
+
+        // ── Header + sync ───────────────────────────────────────────────
+        function renderHeader() {
+            const g = state.info;
+            const pill = document.getElementById('headerStatusPill');
+            const dot = document.getElementById('headerStatusDot');
+
+            if (!g) {
+                setText('headerStatusText', 'Unreachable');
+                pill.className = 'pill bad';
+                dot.className = 'status-dot-sm bg-red';
+                document.getElementById('syncCard').style.display = 'none';
+                return;
+            }
+
+            const synced = !!g.synced_to_chain;
+            setText('headerStatusText', synced ? 'Running' : 'Synchronizing');
+            pill.className = 'pill ' + (synced ? 'ok' : 'warn');
+            dot.className = 'status-dot-sm ' + (synced ? 'bg-green' : 'bg-yellow');
+
+            const network = (g.chains && g.chains[0] && g.chains[0].network) || '—';
+            const netPill = document.getElementById('headerNetworkPill');
+            netPill.textContent = network;
+            netPill.style.display = '';
+
+            setText('headerAlias', g.alias || 'Lightning Network Daemon for instant Bitcoin payments');
+            setText('headerPubkey', g.identity_pubkey || '—');
+
+            // Sync banner — only while the node has work left to do.
+            const syncCard = document.getElementById('syncCard');
+            if (synced && g.synced_to_graph) {
+                syncCard.style.display = 'none';
+            } else {
+                syncCard.style.display = '';
+                setText('syncSubtitle', synced
+                    ? 'Chain is synced. Downloading the network graph…'
+                    : 'Catching up with the Bitcoin backend. Lightning is unavailable until this finishes.');
+                setText('syncBlockLabel', 'Block ' + fmtCount(g.block_height));
+                // LND exposes no IBD percentage, so the bar tracks the two sync
+                // booleans rather than inventing a fake block-based percentage.
+                const done = (synced ? 1 : 0) + (g.synced_to_graph ? 1 : 0);
+                const pct = Math.round((done / 2) * 100);
+                setText('syncPercent', pct + '%');
+                document.getElementById('syncProgressBar').style.width = pct + '%';
+                setText('syncChain', synced ? 'Synced' : 'Syncing');
+                setText('syncGraph', g.synced_to_graph ? 'Synced' : 'Syncing');
+                setText('syncHeight', fmtCount(g.block_height));
+                setText('syncPeers', fmtCount(g.num_peers));
+            }
+        }
+
+        // ── Balances ────────────────────────────────────────────────────
+        function renderBalances() {
+            const onchainConfirmed = num(state.onchain && (state.onchain.confirmed_balance ?? state.onchain.total_balance));
+            const onchainUnconfirmed = num(state.onchain && state.onchain.unconfirmed_balance);
+            const cb = state.chanbal;
+            const lnLocal = num(cb && ((cb.local_balance && cb.local_balance.sat) ?? cb.balance));
+            const lnRemote = num(cb && ((cb.remote_balance && cb.remote_balance.sat) ?? 0));
+            const lnPending = num(cb && ((cb.pending_open_local_balance && cb.pending_open_local_balance.sat) ?? 0));
+
+            setText('balTotal', fmtAmount(onchainConfirmed + lnLocal));
+            setText('balTotalSub', state.onchain || cb ? 'on-chain + lightning' : 'balances unavailable');
+            setText('balLightning', fmtAmount(lnLocal));
+            setText('balLightningSub', lnPending > 0 ? fmtAmount(lnPending) + ' pending open' : 'spendable over channels');
+            setText('balOnchain', fmtAmount(onchainConfirmed));
+            setText('balOnchainSub', onchainUnconfirmed > 0 ? fmtAmount(onchainUnconfirmed) + ' unconfirmed' : 'confirmed');
+
+            setText('liqLocal', fmtAmount(lnLocal));
+            setText('liqRemote', fmtAmount(lnRemote));
+            const total = lnLocal + lnRemote;
+            const localPct = total > 0 ? (lnLocal / total) * 100 : 50;
+            document.getElementById('liqBarLocal').style.width = localPct + '%';
+            document.getElementById('liqBarRemote').style.width = (100 - localPct) + '%';
+            setText('liqHint', total > 0
+                ? Math.round(localPct) + '% of your channel capacity is outbound (sendable).'
+                : 'Open a channel to start sending and receiving over Lightning.');
+        }
+
+        // ── Overview summary ────────────────────────────────────────────
+        function pendingCount() {
+            const p = state.pending;
+            if (!p) return num(state.info && state.info.num_pending_channels);
+            return ((p.pending_open_channels || []).length)
+                 + ((p.pending_force_closing_channels || []).length)
+                 + ((p.waiting_close_channels || []).length);
+        }
+
+        function renderSummary() {
+            const g = state.info;
+            const chans = state.channels;
+            const active = chans.filter(c => c.active).length;
+            const inactive = chans.length - active;
+            const capacity = chans.reduce((s, c) => s + num(c.capacity), 0);
+
+            setText('statPeers', g ? fmtCount(g.num_peers) : '—');
+            setText('statActiveChannels', String(active));
+            setText('statChannelsSub', inactive > 0 ? inactive + ' inactive' : 'all channels online');
+            setText('statCapacity', capacity ? fmtAmountShort(capacity) : '—');
+            setText('statRoutingMonth', state.fees ? fmtAmountShort(state.fees.month_fee_sum) : '—');
+
+            const pending = pendingCount();
+            setText('healthHeight', g ? fmtCount(g.block_height) : '—');
+            setText('healthPending', String(pending));
+
+            const chainPill = document.getElementById('healthChain');
+            chainPill.textContent = g ? (g.synced_to_chain ? 'Yes' : 'No') : '—';
+            chainPill.className = 'pill ' + (g && g.synced_to_chain ? 'ok' : 'warn');
+            const graphPill = document.getElementById('healthGraph');
+            graphPill.textContent = g ? (g.synced_to_graph ? 'Yes' : 'No') : '—';
+            graphPill.className = 'pill ' + (g && g.synced_to_graph ? 'ok' : 'warn');
+
+            setText('channelsLinkSub', chans.length
+                ? active + ' active · ' + fmtAmountShort(capacity) + ' capacity'
+                : 'Open, manage and close channels');
+
+            // Channels tab counters
+            setText('chActive', String(active));
+            setText('chInactive', String(inactive));
+            setText('chPending', String(pending));
+            setText('chCapacity', capacity ? fmtAmountShort(capacity) : '—');
+        }
+
+        // ── Channels (read-only overview; management lives in the main UI) ──
+        function renderChannels() {
+            const el = document.getElementById('channelList');
+            if (!el) return;
+            const q = (document.getElementById('channelFilter').value || '').toLowerCase();
+            let list = state.channels.slice();
+            if (q) list = list.filter(c => String(c.remote_pubkey || '').toLowerCase().includes(q) || String(c.chan_id || '').includes(q));
+
+            if (!list.length) {
+                el.innerHTML = '<div class="empty-state">' +
+                    (state.channels.length ? 'No channels match that filter.' : 'No payment channels yet. Open one to start sending and receiving.') +
+                    '</div>';
+                return;
+            }
+
+            list.sort((a, b) => num(b.capacity) - num(a.capacity));
+            el.innerHTML = list.map(c => {
+                const local = num(c.local_balance), remote = num(c.remote_balance);
+                const total = local + remote || 1;
+                const pct = (local / total) * 100;
+                const statusCls = c.active ? 'ok' : 'bad';
+                const statusTxt = c.active ? 'Online' : 'Offline';
+                return '' +
+                '<div class="p-3 mb-2" style="background:rgba(255,255,255,0.04);border:1px solid rgba(255,255,255,0.07);border-radius:0.7rem">' +
+                    '<div class="flex items-center justify-between gap-3 mb-2 flex-wrap">' +
+                        '<div class="flex items-center gap-2 min-w-0">' +
+                            '<span class="pill ' + statusCls + '">' + statusTxt + '</span>' +
+                            '<span class="pill">' + (c.private ? 'Private' : 'Public') + '</span>' +
+                        '</div>' +
+                        '<span class="text-xs text-white-45 font-mono truncate">' + escapeHtml(shortKey(c.remote_pubkey)) + '</span>' +
+                    '</div>' +
+                    '<div class="flex items-center justify-between gap-3 mb-2">' +
+                        '<div><div class="text-sm font-semibold text-purple tabular">' + escapeHtml(fmtAmountShort(local)) + '</div>' +
+                             '<div class="text-xs text-white-45">Max Send</div></div>' +
+                        '<div class="text-right"><div class="text-sm font-semibold text-green tabular">' + escapeHtml(fmtAmountShort(remote)) + '</div>' +
+                             '<div class="text-xs text-white-45">Max Receive</div></div>' +
+                    '</div>' +
+                    '<div class="liq-bar"><div class="local" style="width:' + pct + '%"></div><div class="remote" style="width:' + (100 - pct) + '%"></div></div>' +
+                    '<div class="flex justify-between mt-2 text-xs text-white-40">' +
+                        '<span>Capacity ' + escapeHtml(fmtAmountShort(c.capacity)) + '</span>' +
+                        '<span>Uptime ' + escapeHtml(fmtDuration(c.uptime)) + ' / ' + escapeHtml(fmtDuration(c.lifetime)) + '</span>' +
+                    '</div>' +
+                '</div>';
+            }).join('');
+        }
+
+        // ── Activity ────────────────────────────────────────────────────
+        function setActivityFilter(f) {
+            activityFilter = f;
+            document.querySelectorAll('.chip[data-filter]').forEach(c => c.classList.toggle('active', c.dataset.filter === f));
+            renderActivity();
+        }
+
+        function buildActivity() {
+            const items = [];
+            for (const p of state.payments) {
+                items.push({
+                    kind: 'lightning', dir: 'out',
+                    label: p.payment_request ? 'Lightning payment' : 'Keysend payment',
+                    sats: num(p.value_sat), fee: num(p.fee_sat),
+                    ts: num(p.creation_date), status: p.status || 'SUCCEEDED',
+                });
+            }
+            for (const i of state.invoices) {
+                // Skip never-paid, expired invoices — they are noise, not activity.
+                const settled = i.settled || i.state === 'SETTLED';
+                if (!settled && i.state === 'CANCELED') continue;
+                items.push({
+                    kind: 'lightning', dir: 'in',
+                    label: i.memo || 'Lightning invoice',
+                    sats: num(i.amt_paid_sat || i.value), fee: 0,
+                    ts: num(settled ? (i.settle_date || i.creation_date) : i.creation_date),
+                    status: settled ? 'SUCCEEDED' : (i.state || 'OPEN'),
+                });
+            }
+            for (const t of state.txns) {
+                const amt = num(t.amount);
+                items.push({
+                    kind: 'onchain', dir: amt >= 0 ? 'in' : 'out',
+                    label: t.label || 'On-chain transaction',
+                    sats: Math.abs(amt), fee: num(t.total_fees),
+                    ts: num(t.time_stamp),
+                    status: num(t.num_confirmations) > 0 ? 'SUCCEEDED' : 'PENDING',
+                });
+            }
+            return items.sort((a, b) => b.ts - a.ts);
+        }
+
+        function renderActivity() {
+            const el = document.getElementById('activityList');
+            if (!el) return;
+            let items = buildActivity();
+            if (activityFilter !== 'all') items = items.filter(i => i.kind === activityFilter);
+
+            if (!items.length) {
+                el.innerHTML = '<div class="empty-state">No activity yet.</div>';
+                return;
+            }
+
+            el.innerHTML = items.slice(0, 60).map(i => {
+                const pending = i.status === 'PENDING' || i.status === 'IN_FLIGHT' || i.status === 'OPEN' || i.status === 'ACCEPTED';
+                const failed = i.status === 'FAILED';
+                const cls = failed ? 'failed' : pending ? 'pending' : i.dir;
+                const arrow = failed
+                    ? '<svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" d="M18 6L6 18M6 6l12 12"/></svg>'
+                    : pending
+                    ? '<svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path stroke-linecap="round" d="M12 7v5l3 2"/></svg>'
+                    : i.dir === 'in'
+                    ? '<svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M12 19V5M5 12l7-7 7 7"/></svg>'
+                    : '<svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M12 5v14M19 12l-7 7-7-7"/></svg>';
+                const sign = failed ? '' : i.dir === 'in' ? '+' : '−';
+                const amtCls = failed ? 'text-white-40' : i.dir === 'in' ? 'text-green' : 'text-white-90';
+                return '' +
+                '<div class="act-row">' +
+                    '<div class="act-icon ' + cls + '">' + arrow + '</div>' +
+                    '<div class="flex-1 min-w-0">' +
+                        '<div class="text-sm font-medium text-white-90 truncate">' + escapeHtml(i.label) + '</div>' +
+                        '<div class="text-xs text-white-45">' +
+                            escapeHtml(i.kind === 'lightning' ? 'Lightning' : 'On-chain') + ' · ' + escapeHtml(timeAgo(i.ts)) +
+                            (pending ? ' · pending' : '') + (failed ? ' · failed' : '') +
+                        '</div>' +
+                    '</div>' +
+                    '<div class="text-right flex-shrink-0">' +
+                        '<div class="text-sm font-semibold tabular ' + amtCls + '">' + sign + escapeHtml(fmtAmountShort(i.sats)) + '</div>' +
+                        (i.fee > 0 ? '<div class="text-xs text-white-40">fee ' + escapeHtml(fmtAmountShort(i.fee)) + '</div>' : '') +
+                    '</div>' +
+                '</div>';
+            }).join('');
+        }
+
+        // ── Insights ────────────────────────────────────────────────────
+        function renderInsights() {
+            const f = state.fees;
+            setText('feeDay', f ? fmtAmount(f.day_fee_sum) : '—');
+            setText('feeWeek', f ? fmtAmount(f.week_fee_sum) : '—');
+            setText('feeMonth', f ? fmtAmount(f.month_fee_sum) : '—');
+
+            const chans = state.channels;
+            const sent = chans.reduce((s, c) => s + num(c.total_satoshis_sent), 0);
+            const recv = chans.reduce((s, c) => s + num(c.total_satoshis_received), 0);
+            const updates = chans.reduce((s, c) => s + num(c.num_updates), 0);
+            const lifetimes = chans.map(c => num(c.lifetime)).filter(v => v > 0);
+            const avgLife = lifetimes.length ? lifetimes.reduce((a, b) => a + b, 0) / lifetimes.length : 0;
+
+            setText('insSent', chans.length ? fmtAmountShort(sent) : '—');
+            setText('insReceived', chans.length ? fmtAmountShort(recv) : '—');
+            setText('insUpdates', chans.length ? fmtCount(updates) : '—');
+            setText('insAge', avgLife ? fmtDuration(avgLife) : '—');
+
+            const gr = state.graph;
+            setText('graphNodes', gr ? fmtCount(gr.num_nodes) : '—');
+            setText('graphChannels', gr ? fmtCount(gr.num_channels) : '—');
+            setText('graphCapacity', gr ? fmtAmountShort(gr.total_network_capacity) : '—');
+            setText('graphAvgSize', gr ? fmtAmountShort(gr.avg_channel_size) : '—');
+        }
+
+        // ── Peers table ─────────────────────────────────────────────────
+        function sortPeers(col) {
+            if (peerSort.col === col) peerSort.dir *= -1; else { peerSort.col = col; peerSort.dir = 1; }
+            renderPeers();
+        }
+
+        function renderPeers() {
+            const body = document.getElementById('peersBody');
+            if (!body) return;
+            const q = (document.getElementById('peerFilter').value || '').toLowerCase();
+
+            let rows = state.peers.map(p => ({
+                peer: p.pub_key || '',
+                address: p.address || '',
+                network: classifyNetwork(p.address),
+                direction: p.inbound ? 'Inbound' : 'Outbound',
+                ping: num(p.ping_time),
+                sent: num(p.bytes_sent),
+                recv: num(p.bytes_recv),
+            }));
+
+            setText('peersCount', state.peers.length ? '(' + state.peers.length + ')' : '');
+
+            if (q) rows = rows.filter(r =>
+                r.peer.toLowerCase().includes(q) || r.address.toLowerCase().includes(q) ||
+                r.network.toLowerCase().includes(q) || r.direction.toLowerCase().includes(q));
+
+            rows.sort((a, b) => {
+                const x = a[peerSort.col], y = b[peerSort.col];
+                const cmp = typeof x === 'number' ? x - y : String(x).localeCompare(String(y));
+                return cmp * peerSort.dir;
+            });
+
+            document.querySelectorAll('.data-table th[data-col]').forEach(th =>
+                th.classList.toggle('sorted', th.dataset.col === peerSort.col));
+
+            if (!rows.length) {
+                body.innerHTML = '<tr><td colspan="6"><div class="empty-state">' +
+                    (state.peers.length ? 'No peers match that filter.' : 'No connected peers.') + '</div></td></tr>';
+                return;
+            }
+
+            body.innerHTML = rows.map(r => '' +
+                '<tr>' +
+                    '<td><div class="font-mono text-xs text-white-90">' + escapeHtml(shortKey(r.peer)) + '</div>' +
+                        '<div class="text-xs text-white-40 truncate" style="max-width:14rem">' + escapeHtml(r.address) + '</div></td>' +
+                    '<td><span class="pill">' + escapeHtml(r.network) + '</span></td>' +
+                    '<td class="text-white-70">' + escapeHtml(r.direction) + '</td>' +
+                    '<td class="tabular text-white-70">' + (r.ping ? Math.round(r.ping / 1000) + ' ms' : '—') + '</td>' +
+                    '<td class="tabular text-white-70">' + escapeHtml(fmtBytes(r.sent)) + '</td>' +
+                    '<td class="tabular text-white-70">' + escapeHtml(fmtBytes(r.recv)) + '</td>' +
+                '</tr>').join('');
+        }
+
+        // ── Settings ────────────────────────────────────────────────────
+        function renderSettings() {
+            const g = state.info;
+            const reachable = !!g;
+            setText('setStatus', reachable ? (g.synced_to_chain ? 'Running' : 'Synchronizing') : 'Unreachable');
+            document.getElementById('setStatus').className = 'text-sm font-medium ' + (reachable ? (g.synced_to_chain ? 'text-green' : 'text-yellow') : 'text-red');
+            setText('setAlias', (g && g.alias) || '—');
+            setText('setVersion', (g && g.version) || '—');
+            setText('setNetwork', (g && g.chains && g.chains[0] && g.chains[0].network) || '—');
+            setText('setChain', (g && g.chains && g.chains[0] && g.chains[0].chain) || 'bitcoin');
+            setText('setCommit', (g && g.commit_hash) || '—');
+
+            setText('setRest', host + ':' + REST_PORT);
+            setText('setGrpc', host + ':' + GRPC_PORT);
+            setText('setP2p', host + ':' + P2P_PORT);
+            document.getElementById('restDot').className = 'status-dot-sm ' + (reachable ? 'bg-green' : 'bg-red');
+            document.getElementById('grpcDot').className = 'status-dot-sm ' + (reachable ? 'bg-green' : 'bg-red');
+            setText('setTor', (lndConnInfo && lndConnInfo.tor_onion) || 'Not configured');
+
+            // Reflect what getinfo actually reports rather than guessing at config.
+            setText('cfgBackend', reachable ? 'Bitcoin Core / Knots (archipelago-managed)' : '—');
+            const feats = (g && g.features) || {};
+            const has = code => Object.prototype.hasOwnProperty.call(feats, String(code));
+            setText('cfgWatchtower', reachable ? (has(2023) ? 'Enabled' : 'Not advertised') : '—');
+            setText('cfgKeysend', reachable ? (has(55) ? 'Enabled' : 'Not advertised') : '—');
+            setText('cfgWumbo', reachable ? (has(19) || has(18) ? 'Enabled' : 'Not advertised') : '—');
+
+            // Node ID panel lives in Connect, but is fed by getinfo.
+            // The useful thing to share is the full pubkey@host:port URI — that
+            // is what a peer pastes to open a channel — not the bare pubkey.
+            // LND only populates getinfo.uris once it is advertising an
+            // external address, so when that list is empty we build the URI
+            // ourselves from the Tor onion (preferred: reachable from anywhere)
+            // or this node's host, rather than degrading to just the pubkey.
+            const pubkey = (g && g.identity_pubkey) || '';
+            setText('nodePubkey', pubkey || '—');
+            const uris = (g && g.uris) || [];
+            const uriWrap = document.getElementById('nodeUriWrap');
+            let uri = '';
+            let hint = '';
+            if (uris.length) {
+                uri = uris[0];
+                hint = uris.length > 1 ? uris.length + ' advertised addresses' : 'Advertised by your node';
+            } else if (pubkey) {
+                const onion = lndConnInfo && lndConnInfo.tor_onion;
+                uri = pubkey + '@' + (onion || host) + ':' + P2P_PORT;
+                hint = onion
+                    ? 'Built from your Tor address — your node is not advertising one yet.'
+                    : 'Built from this node’s local address. It is only reachable from your network until Tor or a public address is configured.';
+            }
+            if (uri) {
+                uriWrap.style.display = '';
+                setText('nodeUri', uri);
+                setText('nodeUriHint', hint);
+                renderQR('nodeIdQrBox', uri);
+            }
+        }
+
+        function copyEndpointInfo(btn) {
+            const lines = [
+                'REST:  http://' + host + ':' + REST_PORT,
+                'gRPC:  ' + host + ':' + GRPC_PORT,
+                'P2P:   ' + host + ':' + P2P_PORT,
+            ];
+            if (lndConnInfo && lndConnInfo.tor_onion) lines.push('Tor:   ' + lndConnInfo.tor_onion);
+            copyText(lines.join('\n')).then(() => flash(btn, 'Copied!'));
+        }
+
+        function flash(btn, msg) {
+            const orig = btn.textContent;
+            btn.textContent = msg;
+            btn.style.color = '#4ade80';
+            setTimeout(() => { btn.textContent = orig; btn.style.color = ''; }, 1500);
+        }
+
+        // ── Logs ────────────────────────────────────────────────────────
+        async function loadLogs() {
+            const el = document.getElementById('logsContent');
+            el.textContent = 'Loading logs…';
+            try {
+                const res = await fetch(getBackendUrl() + '/api/container/logs?app_id=lnd&lines=200', { credentials: 'include' });
+                if (!res.ok) throw new Error(res.statusText || ('HTTP ' + res.status));
+                const json = await res.json();
+                const lines = json.result || json.logs || (Array.isArray(json) ? json : []);
+                el.textContent = Array.isArray(lines) ? lines.join('\n') : String(lines);
+                el.scrollTop = el.scrollHeight;
+            } catch (e) {
+                el.textContent = 'Could not load logs: ' + e.message;
+            }
+        }
+
+        // ── Connect Your Wallet ─────────────────────────────────────────
+        let lndConnInfo = null;
+
+        function renderQR(containerId, text) {
+            const container = document.getElementById(containerId);
+            if (!container) return;
+            container.innerHTML = '';
+            try {
+                const qr = qrcode(0, 'L');
+                qr.addData(text);
+                qr.make();
+                container.innerHTML = qr.createImgTag(3, 0);
+            } catch (e) {
+                container.innerHTML = '<div style="color:#999;font-size:11px;text-align:center;padding:2rem">QR too large for this mode</div>';
+            }
+        }
+
+        function buildLndconnectUri(connHost, connPort, cert, macaroon, isTor) {
+            let uri = 'lndconnect://' + connHost + ':' + connPort + '?';
+            if (!isTor && cert) uri += 'cert=' + cert + '&';
+            uri += 'macaroon=' + macaroon;
+            return uri;
+        }
+
+        function connSelection() {
+            const mode = document.getElementById('connMode').value;
+            const isTor = mode.includes('tor');
+            const isRest = mode.includes('rest');
+            return {
+                isTor, isRest,
+                port: isRest ? lndConnInfo.rest_port : lndConnInfo.grpc_port,
+                connHost: isTor && lndConnInfo.tor_onion ? lndConnInfo.tor_onion : host,
+            };
+        }
+
+        function updateConnInfo() {
+            if (!lndConnInfo) return;
+            const { isTor, isRest, port, connHost } = connSelection();
+
+            setText('connHost', connHost);
+            setText('connPort', String(port));
+            setText('connProto', isRest ? 'REST' : 'gRPC');
+
+            if (isTor && !lndConnInfo.tor_onion) {
+                document.getElementById('lndQrBox').innerHTML = '<div style="color:#999;font-size:12px;text-align:center;padding:2rem">Tor not configured for LND</div>';
+                setText('connSubtitle', 'Tor hidden service not available. Use Local Network mode.');
+                return;
+            }
+
+            setText('connSubtitle', 'Scan QR with Zeus, Zap, or BlueWallet to connect.');
+            renderQR('lndQrBox', buildLndconnectUri(connHost, port, lndConnInfo.cert_base64url, lndConnInfo.macaroon_base64url, isTor));
+        }
+
+        function copyEl(id, btn) {
+            const text = document.getElementById(id).textContent.trim();
+            if (!text || text === '—') return;
+            copyText(text).then(() => {
+                const orig = btn.innerHTML;
+                btn.innerHTML = '<svg width="16" height="16" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/></svg>';
+                btn.style.color = '#4ade80';
+                setTimeout(() => { btn.innerHTML = orig; btn.style.color = ''; }, 1500);
+            });
+        }
+
+        function copyLndconnectUri() {
+            if (!lndConnInfo) return;
+            const { isTor, port, connHost } = connSelection();
+            const uri = buildLndconnectUri(connHost, port, lndConnInfo.cert_base64url, lndConnInfo.macaroon_base64url, isTor);
+            const btn = document.getElementById('copyUriBtn');
+            copyText(uri).then(() => flash(btn, 'Copied!'));
+        }
+
+        async function fetchConnectInfo() {
+            try {
+                const resp = await fetch(getBackendUrl() + '/lnd-connect-info', { credentials: 'include' });
+                if (!resp.ok) throw new Error('HTTP ' + resp.status);
+                const data = await resp.json();
+                if (data.cert_base64url) {
+                    lndConnInfo = data;
+                    // Auto-select local mode when Tor is not available
+                    if (!data.tor_onion) {
+                        document.getElementById('connMode').value = 'rest-local';
+                        setText('connSubtitle', 'Tor hidden service not available. Use Local Network mode.');
+                    }
+                    setText('setTor', data.tor_onion || 'Not configured');
+                    try { updateConnInfo(); } catch (ue) {
+                        document.getElementById('lndQrBox').innerHTML = '<div style="color:#f87171;font-size:11px;text-align:center;padding:1rem">Update error: ' + escapeHtml(ue.message) + '</div>';
+                    }
+                } else if (data.error) {
+                    throw new Error(data.error);
+                }
+            } catch (e) {
+                document.getElementById('lndQrBox').innerHTML = '<div style="color:#f87171;font-size:12px;text-align:center;padding:2rem">' + escapeHtml(e.message) + '</div>';
+            }
+        }
+
+        // ── Boot ────────────────────────────────────────────────────────
+        document.getElementById('channelsLinkCard').href = CHANNELS_URL;
+        document.getElementById('channelsOpenBtn').href = CHANNELS_URL;
+        setUnit(unit);
+
+        const initialTab = (location.hash || '').replace('#', '');
+        if (document.getElementById('panel-' + initialTab)) setTab(initialTab);
+
+        refreshAll();
+        fetchConnectInfo();
+        // Keep the numbers live without hammering LND.
+        setInterval(refreshAll, 30000);
+    </script>
+</body>
+</html>

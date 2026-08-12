@@ -1,0 +1,114 @@
+app:
+  id: fedimint
+  name: Fedimint Guardian
+  version: 0.10.0
+  description: Federated Bitcoin minting service with built-in Guardian UI. Privacy-preserving Bitcoin custody.
+
+  container:
+    image: source.archipelago-foundation.org/lfg2025/fedimintd:v0.10.0
+    pull_policy: if-not-present
+    network: archy-net
+    entrypoint: ["sh", "-lc"]
+    custom_args:
+      - |-
+        until state="$(curl -sS --connect-timeout 5 -m 45 -u "$FM_BITCOIND_USERNAME:$FM_BITCOIND_PASSWORD" -H "Content-Type: application/json" --data-binary '{"jsonrpc":"1.0","id":"fedimint-wait","method":"getblockchaininfo","params":[]}' "$FM_BITCOIND_URL/")" && echo "$state" | grep -q '"initialblockdownload":false'; do
+          echo "Waiting for Bitcoin RPC sync at $FM_BITCOIND_URL...";
+          sleep 30;
+        done;
+        exec fedimintd
+    derived_env:
+      - key: FM_P2P_URL
+        template: fedimint://{{HOST_MDNS}}:8173
+      - key: FM_API_URL
+        template: ws://{{HOST_MDNS}}:8174
+      # Resolves to whichever bitcoin container is running (Knots/Core/future
+      # distro) instead of a hardcoded name — the guardian works on any node
+      # regardless of which Bitcoin software it runs.
+      - key: FM_BITCOIND_URL
+        template: "http://{{BITCOIN_HOST}}:8332"
+    secret_env:
+      - key: FM_BITCOIND_PASSWORD
+        secret_file: bitcoin-rpc-password
+    data_uid: "1000:1000"
+
+  dependencies:
+    - app_id: bitcoin-core
+      version: ">=26.0"
+    - storage: 20Gi
+
+  resources:
+    cpu_limit: 4
+    memory_limit: 4Gi
+    disk_limit: 20Gi
+
+  security:
+    capabilities: []
+    readonly_root: true
+    network_policy: isolated
+
+  ports:
+    - host: 8173
+      container: 8173
+      protocol: tcp
+      auth: none
+      auth_rationale: >-
+        Fedimint guardian consensus. Other guardians speak the federation's own
+        authenticated protocol here; a login page would break consensus.
+    - host: 8174
+      container: 8174
+      protocol: tcp
+      auth: none
+      auth_rationale: >-
+        Fedimint guardian API for federation clients, which authenticate to the
+        federation itself and cannot hold a browser session.
+    # Public launch port 8175 is owned by archy-fedimint-ui, which serves a
+    # wait page while Bitcoin syncs and proxies here after fedimintd starts.
+    # 8175 is NOT declared here. It is served by the archy-fedimint-ui
+    # companion, a different container, and declaring it on this app made the
+    # orchestrator try to publish 8175 from fedimintd — colliding with the
+    # companion that already holds it, so start_container failed forever and
+    # fedimint crash-looped (a fleet node, 2026-08-05). The companion's nginx
+    # is pinned to 127.0.0.1, which is what actually closes that port; the
+    # gate reports it rather than fronting it.
+    - host: 8177
+      container: 8175
+      protocol: tcp
+      bind: 127.0.0.1
+      auth: local
+
+  volumes:
+    - type: bind
+      source: /var/lib/archipelago/fedimint
+      target: /data
+      options: [rw]
+
+  environment:
+    - FM_DATA_DIR=/data
+    # FM_BITCOIND_URL comes from derived_env ({{BITCOIN_HOST}}) above, not a
+    # hardcoded name — do not re-add it here.
+    - FM_BITCOIND_USERNAME=archipelago
+    - FM_BITCOIN_NETWORK=bitcoin
+    - FM_BIND_P2P=0.0.0.0:8173
+    - FM_BIND_API=0.0.0.0:8174
+    - FM_BIND_UI=0.0.0.0:8175
+
+  health_check:
+    type: http
+    endpoint: http://localhost:8175
+    path: /
+    interval: 30s
+    timeout: 5s
+    retries: 3
+
+  interfaces:
+    main:
+      name: Guardian UI
+      description: Fedimint Guardian wait/proxy UI
+      type: ui
+      port: 8175
+      protocol: http
+      path: /
+
+  bitcoin_integration:
+    rpc_access: admin
+    sync_required: true

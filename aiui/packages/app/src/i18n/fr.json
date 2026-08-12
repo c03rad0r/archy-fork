@@ -1,0 +1,89 @@
+{
+  "app": {
+    "name": "AIUI",
+    "tagline": "Chat IA avec des surfaces de contenu enrichies"
+  },
+  "chat": {
+    "newChat": "Nouveau Chat",
+    "sendMessage": "Envoyer le message",
+    "typeMessage": "Tapez un message...",
+    "stopGenerating": "Arrêter la génération",
+    "regenerate": "Régénérer",
+    "edit": "Modifier",
+    "delete": "Supprimer",
+    "copy": "Copier",
+    "reply": "Répondre",
+    "branch": "Bifurquer à partir d'ici",
+    "search": "Rechercher des messages...",
+    "noMessages": "Pas encore de messages",
+    "thinking": "Réflexion..."
+  },
+  "content": {
+    "films": "Films",
+    "music": "Musique",
+    "books": "Livres",
+    "tv": "TV",
+    "images": "Images",
+    "places": "Lieux",
+    "podcasts": "Podcasts",
+    "news": "Actualités",
+    "web": "Web",
+    "brief": "Résumé",
+    "code": "Code",
+    "design": "Design",
+    "nostr": "Nostr",
+    "favorites": "Favoris",
+    "discover": "Découvrir"
+  },
+  "discover": {
+    "forYou": "Pour Vous",
+    "recent": "Récents",
+    "trending": "Tendances",
+    "collections": "Collections",
+    "tags": "Étiquettes",
+    "playlists": "Playlists",
+    "noFavorites": "Ajoutez des favoris pour des suggestions personnalisées",
+    "noRecent": "Aucun élément consulté récemment",
+    "noTrending": "Pas encore de tendances",
+    "noCollections": "Pas encore de collections",
+    "noTags": "Pas encore d'étiquettes"
+  },
+  "settings": {
+    "title": "Paramètres",
+    "appearance": "Apparence",
+    "content": "Contenu",
+    "shortcuts": "Raccourcis",
+    "notifications": "Notifications",
+    "storage": "Stockage",
+    "chat": "Chat",
+    "accentColor": "Couleur d'accent",
+    "glassIntensity": "Intensité du verre",
+    "fontSize": "Taille de police",
+    "exportData": "Exporter toutes les données",
+    "wipeData": "Effacer toutes les données",
+    "wipeConfirm": "Êtes-vous sûr ?",
+    "cancel": "Annuler"
+  },
+  "nostr": {
+    "feed": "Fil",
+    "messages": "Messages",
+    "relays": "Relais",
+    "profile": "Profil",
+    "lists": "Listes",
+    "articles": "Articles",
+    "publish": "Publier",
+    "signIn": "Se connecter avec Nostr"
+  },
+  "common": {
+    "loading": "Chargement...",
+    "error": "Erreur",
+    "save": "Enregistrer",
+    "cancel": "Annuler",
+    "delete": "Supprimer",
+    "close": "Fermer",
+    "search": "Rechercher",
+    "back": "Retour",
+    "next": "Suivant",
+    "previous": "Précédent"
+  }
+}

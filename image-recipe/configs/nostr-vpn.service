@@ -1,0 +1,35 @@
+[Unit]
+Description=Nostr VPN - Mesh VPN with Nostr identity
+After=network-online.target tor.service archipelago.service
+Wants=network-online.target
+StartLimitIntervalSec=300
+StartLimitBurst=10
+# An ISO built without the nvpn binary (registry unreachable at build time)
+# must not restart-loop — skip cleanly instead.
+ConditionPathExists=/usr/local/bin/nvpn
+
+[Service]
+Type=simple
+User=root
+Environment=HOME=/var/lib/archipelago/nostr-vpn
+EnvironmentFile=-/var/lib/archipelago/nostr-vpn/env
+ExecStartPre=+/bin/bash -c 'mkdir -p /run/nostr-vpn /var/lib/archipelago/nostr-vpn/.config/nvpn'
+ExecStartPre=/bin/bash -c 'test -f /var/lib/archipelago/nostr-vpn/env || { echo "NostrVPN not configured — waiting for onboarding"; exit 1; }'
+ExecStart=/usr/local/bin/nvpn daemon
+Restart=on-failure
+RestartSec=30
+TimeoutStartSec=30
+TimeoutStopSec=10
+
+# No sandbox — runs as root for TUN/WireGuard, needs unrestricted filesystem
+
+# Resource limits
+MemoryMax=256M
+TasksMax=64
+
+# Logging
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

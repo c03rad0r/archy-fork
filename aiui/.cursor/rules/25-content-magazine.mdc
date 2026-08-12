@@ -1,0 +1,42 @@
+---
+description: Expert rules for Magazine/Brief content extraction and surfacing
+globs: "**/useContentPanel.ts,**/MagazineGrid.vue"
+alwaysApply: false
+---
+
+# Magazine Content Surface
+
+## Detection
+
+- `hasMagazine` = sections ≥ 1 AND (newsQuery OR newsLikeResponse OR context keywords)
+- Context keywords: sentiment, bearish, bull case, macro, %, BTC, bitcoin, BIP, protocol, debate, what's happening
+
+## Section Extraction Order
+
+1. `## Heading` blocks — content until next ## or **Section**
+2. `**Pro/Anti camp**` blocks with emoji
+3. Bullets: `- **Title**: Content` or `- **Title** — Content` (em/en dash)
+4. Attributed: `- **Name** (Role) description`
+5. Intro paragraph (before first ##)
+6. "Key takeaway" / "This is being called..."
+7. "For deeper analysis" / further reading
+
+## Section Rules
+
+- Min: title 2 chars, content 15 chars
+- Max content: 2000 chars per section
+- Dedupe by title prefix (first 50 chars)
+- Skip bullets already inside ## blocks (`blockContents`)
+- `addSection` extracts: url, author, imageUrl from content
+
+## Hero Image
+
+1. First markdown image in text
+2. First `.jpg|.png|.gif|.webp` URL
+3. `webResults[0]?.imgSrc`
+4. Picsum fallback seeded by query
+
+## Format & Security
+
+- `formatContent`: escape `&<>`, preserve `**bold**` as `<strong>`, `\n\n` → `</p><p>`
+- Meme: imgflip URLs, contextual by topic (bearish, bull, Bitcoin, macro)

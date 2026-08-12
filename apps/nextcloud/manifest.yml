@@ -1,0 +1,61 @@
+app:
+  id: nextcloud
+  name: Nextcloud
+  version: "29"
+  description: Your own private cloud. File sync, calendars, contacts.
+
+  container:
+    image: source.archipelago-foundation.org/lfg2025/nextcloud:29
+    pull_policy: if-not-present
+    network: pasta
+
+  dependencies:
+    - storage: 10Gi
+
+  resources:
+    memory_limit: 1Gi
+    disk_limit: 10Gi
+
+  security:
+    capabilities: [CHOWN, SETUID, SETGID, DAC_OVERRIDE, NET_BIND_SERVICE]
+    readonly_root: false
+    network_policy: isolated
+
+  ports:
+    - host: 8085
+      container: 80
+      protocol: tcp
+      bind: 127.0.0.1
+      auth: gated
+
+  volumes:
+    - type: bind
+      source: /var/lib/archipelago/nextcloud
+      target: /var/www/html
+      options: [rw]
+
+  environment: []
+
+  health_check:
+    type: tcp
+    endpoint: localhost:80
+    interval: 30s
+    timeout: 5s
+    retries: 3
+
+  interfaces:
+    main:
+      name: Web UI
+      description: Nextcloud file and collaboration dashboard
+      type: ui
+      port: 8085
+      protocol: http
+      path: /
+
+  metadata:
+    icon: /assets/img/app-icons/nextcloud.webp
+    category: data
+    author: Nextcloud
+    repo: https://github.com/nextcloud/server
+    launch:
+      open_in_new_tab: true

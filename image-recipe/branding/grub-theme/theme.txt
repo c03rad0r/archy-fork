@@ -1,0 +1,52 @@
+# Archipelago GRUB Theme
+# Dark background with Bitcoin orange accents
+
+title-text: ""
+desktop-color: "#0a0a0a"
+desktop-image: "background.png"
+desktop-image-scale-method: "stretch"
+
++ boot_menu {
+    left = 10%
+    top = 35%
+    width = 80%
+    height = 40%
+    item_font = "DejaVu Sans Bold 16"
+    item_color = "#aaaaaa"
+    selected_item_font = "DejaVu Sans Bold 16"
+    selected_item_color = "#f7931a"
+    item_height = 36
+    item_spacing = 8
+    item_padding = 16
+    scrollbar = false
+}
+
++ label {
+    left = 10%
+    top = 18%
+    width = 80%
+    font = "DejaVu Sans Mono Bold 24"
+    text = "a r c h i p e l a g o"
+    color = "#f7931a"
+    align = "center"
+}
+
++ label {
+    left = 10%
+    top = 26%
+    width = 80%
+    font = "DejaVu Sans Bold 14"
+    text = "bitcoin node os"
+    color = "#888888"
+    align = "center"
+}
+
++ label {
+    left = 10%
+    top = 90%
+    width = 80%
+    font = "DejaVu Sans Bold 12"
+    text = "press tab to edit  |  use arrow keys to select  |  enter to boot"
+    color = "#555555"
+    align = "center"
+}

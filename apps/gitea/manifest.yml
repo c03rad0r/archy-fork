@@ -1,0 +1,92 @@
+app:
+  id: gitea
+  name: Gitea
+  version: "1.23"
+  description: Self-hosted Git service with built-in container registry, CI/CD, and package hosting.
+  category: development
+
+  container:
+    image: docker.io/gitea/gitea:1.23
+    pull_policy: if-not-present
+
+  dependencies:
+    - storage: 500Mi
+
+  resources:
+    memory_limit: 256Mi
+    disk_limit: 500Mi
+
+  security:
+    capabilities: [CHOWN, FOWNER, SETUID, SETGID, DAC_OVERRIDE, NET_BIND_SERVICE]
+    readonly_root: false
+    no_new_privileges: false
+    network_policy: bridge
+
+  ports:
+    - host: 3001
+      container: 3000
+      protocol: tcp
+      bind: 127.0.0.1
+      auth: gated
+    - host: 2222
+      container: 22
+      protocol: tcp
+      auth: none
+      auth_rationale: >-
+        Git over SSH, authenticated by the user's own SSH keypair. Not HTTP, so the gate cannot serve a login page here.
+
+  volumes:
+    - type: bind
+      source: /var/lib/archipelago/gitea/data
+      target: /data
+      options: [rw]
+    - type: bind
+      source: /var/lib/archipelago/gitea/config
+      target: /etc/gitea
+      options: [rw]
+
+  environment:
+    - GITEA__database__DB_TYPE=sqlite3
+    - GITEA__server__SSH_PORT=2222
+    - GITEA__server__SSH_LISTEN_PORT=22
+    - GITEA__server__LFS_START_SERVER=true
+    - GITEA__packages__ENABLED=true
+    - GITEA__repository__ENABLE_PUSH_CREATE_USER=true
+    - GITEA__repository__ENABLE_PUSH_CREATE_ORG=true
+
+  health_check:
+    type: http
+    endpoint: http://localhost:3000
+    path: /
+    interval: 120s
+    timeout: 30s
+    retries: 5
+
+  interfaces:
+    main:
+      name: Web UI
+      description: Gitea web interface
+      type: ui
+      port: 3001
+      protocol: http
+      path: /
+
+  metadata:
+    icon: /assets/img/app-icons/gitea.svg
+    repo: https://gitea.com
+    tier: optional
+    launch:
+      open_in_new_tab: true
+    features:
+      - Git repositories with web UI
+      - Built-in container/package registry
+      - Issue tracking and pull requests
+      - CI/CD via Gitea Actions
+      - Lightweight SQLite deployment
+
+  nginx_proxy:
+    listen: 3000
+    proxy_pass: http://127.0.0.1:3001
+    extra_headers:
+      - proxy_hide_header X-Frame-Options
+      - proxy_hide_header Content-Security-Policy

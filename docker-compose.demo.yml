@@ -1,0 +1,54 @@
+# Archipelago Public Demo Stack - Mock backend + Vue UI + AIUI Chat
+# Deploy via Portainer: Web editor -> paste this, or deploy from repo (build).
+# Access at http://localhost:2100
+#
+# This builds the demo images from source. For the separated, auto-updating
+# deploy that pulls prebuilt :demo images, see demo-deploy/docker-compose.yml.
+#
+# DEMO=1 turns on the public multi-visitor sandbox: each visitor gets an
+# isolated, ephemeral copy of all state; real container runtimes are never
+# touched; the shared login password is "entertoexit".
+#
+# Required: Set ANTHROPIC_API_KEY in environment or .env file for chat to work
+# IndeedHub is deployed as a separate Portainer stack (indee-demo repo)
+
+services:
+  neode-backend:
+    build:
+      context: .
+      dockerfile: neode-ui/Dockerfile.backend
+    container_name: archy-demo-backend
+    environment:
+      DEMO: "1"
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      NODE_OPTIONS: "--dns-result-order=ipv4first"
+      # Optional tuning (defaults shown):
+      # DEMO_SESSION_TTL_MS: "2700000"   # 45 min idle before a session is reaped
+      # DEMO_MAX_SESSIONS: "500"         # concurrent visitor cap
+      # DEMO_FILE_QUOTA_BYTES: "52428800" # 50 MB uploads per visitor
+    expose:
+      - "5959"
+    dns:
+      - 8.8.8.8
+      - 1.1.1.1
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://127.0.0.1:5959/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  neode-web:
+    build:
+      context: .
+      dockerfile: neode-ui/Dockerfile.web
+      args:
+        VITE_DEMO: "1"
+    container_name: archy-demo-web
+    ports:
+      - "2100:80"
+      # IndeeHub whole-origin demo proxy (nginx :2101 in nginx-demo.conf)
+      - "2101:2101"
+    depends_on:
+      - neode-backend
+    restart: unless-stopped

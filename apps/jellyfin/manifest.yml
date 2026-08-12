@@ -1,0 +1,63 @@
+app:
+  id: jellyfin
+  name: Jellyfin
+  version: 10.8.13
+  description: Free media server. Stream movies, music, and photos.
+
+  container:
+    image: source.archipelago-foundation.org/lfg2025/jellyfin:10.8.13
+    pull_policy: if-not-present
+    network: pasta
+
+  dependencies:
+    - storage: 10Gi
+
+  resources:
+    memory_limit: 1Gi
+    disk_limit: 10Gi
+
+  security:
+    capabilities: [CHOWN, FOWNER, SETUID, SETGID, DAC_OVERRIDE]
+    readonly_root: false
+    network_policy: isolated
+
+  ports:
+    - host: 8096
+      container: 8096
+      protocol: tcp
+      bind: 127.0.0.1
+      auth: gated
+
+  volumes:
+    - type: bind
+      source: /var/lib/archipelago/jellyfin/config
+      target: /config
+      options: [rw]
+    - type: bind
+      source: /var/lib/archipelago/jellyfin/cache
+      target: /cache
+      options: [rw]
+
+  environment: []
+
+  health_check:
+    type: tcp
+    endpoint: localhost:8096
+    interval: 30s
+    timeout: 5s
+    retries: 3
+
+  interfaces:
+    main:
+      name: Web UI
+      description: Jellyfin media dashboard
+      type: ui
+      port: 8096
+      protocol: http
+      path: /
+
+  metadata:
+    icon: /assets/img/app-icons/jellyfin.webp
+    category: data
+    author: Jellyfin
+    repo: https://github.com/jellyfin/jellyfin

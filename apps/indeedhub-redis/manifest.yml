@@ -1,0 +1,51 @@
+app:
+  id: indeedhub-redis
+  name: IndeedHub Redis
+  version: "7.4.8-alpine"
+  description: Redis queue/cache backend for IndeedHub.
+  category: community
+
+  # Hyphen name matches runtime references + the live container (adoption);
+  # alias `redis` is the short hostname the api/ffmpeg reach (QUEUE_HOST=redis).
+  container_name: indeedhub-redis
+
+  container:
+    image: source.archipelago-foundation.org/lfg2025/redis:7.4.8-alpine
+    pull_policy: if-not-present
+    network: indeedhub-net
+    network_aliases: [redis]
+
+  dependencies:
+    - storage: 1Gi
+
+  resources:
+    memory_limit: 256Mi
+
+  security:
+    # The alpine entrypoint runs as container-root, `find`s /data to chown
+    # anything not owned by the redis user, then su-execs to it. Under the
+    # orchestrator's --cap-drop=ALL, root cannot traverse the 0700
+    # appendonlydir owned by uid 999 without DAC_OVERRIDE (observed
+    # crash-looping ~4k restarts on a test node) — CHOWN is what the find's
+    # -exec chown needs on adopted legacy data.
+    capabilities: [CHOWN, DAC_OVERRIDE, SETGID, SETUID]
+    readonly_root: false
+    network_policy: isolated
+
+  ports: []
+
+  # Named volume matches the live indeedhub-redis-data volume on .228.
+  volumes:
+    - type: volume
+      source: indeedhub-redis-data
+      target: /data
+      options: [rw]
+
+  environment: []
+
+  health_check:
+    type: tcp
+    endpoint: localhost:6379
+    interval: 30s
+    timeout: 5s
+    retries: 3

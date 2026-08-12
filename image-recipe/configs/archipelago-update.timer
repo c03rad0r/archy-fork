@@ -1,0 +1,14 @@
+[Unit]
+Description=Check for Archipelago updates daily
+ConditionPathExists=/home/archipelago/archy/.git
+
+[Timer]
+# Check at 3 AM daily (low-activity window)
+OnCalendar=*-*-* 03:00:00
+# Randomize within 30 min window to avoid thundering herd
+RandomizedDelaySec=1800
+# Run once on boot if last check was missed
+Persistent=true
+
+[Install]
+WantedBy=timers.target

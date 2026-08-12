@@ -1,0 +1,8 @@
+# ThunderHub account config — connects to LND signet node
+# The LND data volume is mounted read-only at /lnd-data
+masterPassword: "thunderhub"
+accounts:
+  - name: "Archy Signet"
+    serverUrl: "lnd-signet:10009"
+    macaroonPath: "/lnd-data/data/chain/bitcoin/signet/admin.macaroon"
+    certificatePath: "/lnd-data/tls.cert"

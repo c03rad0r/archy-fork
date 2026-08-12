@@ -1,0 +1,89 @@
+{
+  "app": {
+    "name": "AIUI",
+    "tagline": "AI chat with rich content surfaces"
+  },
+  "chat": {
+    "newChat": "New Chat",
+    "sendMessage": "Send message",
+    "typeMessage": "Type a message...",
+    "stopGenerating": "Stop generating",
+    "regenerate": "Regenerate",
+    "edit": "Edit",
+    "delete": "Delete",
+    "copy": "Copy",
+    "reply": "Reply",
+    "branch": "Branch from here",
+    "search": "Search messages...",
+    "noMessages": "No messages yet",
+    "thinking": "Thinking..."
+  },
+  "content": {
+    "films": "Films",
+    "music": "Music",
+    "books": "Books",
+    "tv": "TV",
+    "images": "Images",
+    "places": "Places",
+    "podcasts": "Podcasts",
+    "news": "News",
+    "web": "Web",
+    "brief": "Brief",
+    "code": "Code",
+    "design": "Design",
+    "nostr": "Nostr",
+    "favorites": "Favorites",
+    "discover": "Discover"
+  },
+  "discover": {
+    "forYou": "For You",
+    "recent": "Recent",
+    "trending": "Trending",
+    "collections": "Collections",
+    "tags": "Tags",
+    "playlists": "Playlists",
+    "noFavorites": "Add favorites to get personalized suggestions",
+    "noRecent": "No recently viewed items",
+    "noTrending": "No trending items yet",
+    "noCollections": "No collections yet",
+    "noTags": "No tags yet"
+  },
+  "settings": {
+    "title": "Settings",
+    "appearance": "Appearance",
+    "content": "Content",
+    "shortcuts": "Shortcuts",
+    "notifications": "Notifications",
+    "storage": "Storage",
+    "chat": "Chat",
+    "accentColor": "Accent Colour",
+    "glassIntensity": "Glass Intensity",
+    "fontSize": "Font Size",
+    "exportData": "Export All Data",
+    "wipeData": "Wipe All Data",
+    "wipeConfirm": "Are you sure?",
+    "cancel": "Cancel"
+  },
+  "nostr": {
+    "feed": "Feed",
+    "messages": "Messages",
+    "relays": "Relays",
+    "profile": "Profile",
+    "lists": "Lists",
+    "articles": "Articles",
+    "publish": "Publish",
+    "signIn": "Sign in with Nostr"
+  },
+  "common": {
+    "loading": "Loading...",
+    "error": "Error",
+    "save": "Save",
+    "cancel": "Cancel",
+    "delete": "Delete",
+    "close": "Close",
+    "search": "Search",
+    "back": "Back",
+    "next": "Next",
+    "previous": "Previous"
+  }
+}

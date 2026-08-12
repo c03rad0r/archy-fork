@@ -1,0 +1,79 @@
+app:
+  id: lightning-stack
+  name: Lightning Stack
+  version: 0.12.0
+  description: Complete Lightning Network implementation. Includes LND, CLN, and management tools.
+  
+  container:
+    image: lightninglabs/lightning-stack:v0.12.0
+    image_signature: cosign://...
+    pull_policy: if-not-present
+    
+  dependencies:
+    - app_id: bitcoin-core
+      version: ">=24.0"
+    - storage: 50Gi
+    
+  resources:
+    cpu_limit: 4
+    memory_limit: 4Gi
+    disk_limit: 50Gi
+    
+  security:
+    capabilities: [NET_BIND_SERVICE]
+    readonly_root: true
+    no_new_privileges: true
+    user: 1000
+    seccomp_profile: default
+    network_policy: isolated
+    apparmor_profile: lightning-stack
+    
+  ports:
+    - host: 9738
+      container: 9735
+      protocol: tcp  # P2P
+      auth: none
+      auth_rationale: >-
+        Lightning p2p. The BOLT-8 noise handshake authenticates and encrypts the channel itself.
+    - host: 10010
+      container: 10009
+      protocol: tcp  # gRPC
+      auth: none
+      auth_rationale: >-
+        LND gRPC, authenticated by macaroon over TLS. Remote wallets depend on reaching this directly.
+    # Mirrors lnd's 18080 exemption — same LND REST API, same macaroon auth.
+    - host: 8091
+      container: 8080
+      protocol: tcp  # REST/Web UI
+      auth: none
+      auth_rationale: >-
+        LND REST, authenticated by macaroon over TLS. A browser login page would break
+        Zeus and every non-browser wallet client, exactly as for lnd's 18080.
+    
+  volumes:
+    - type: bind
+      source: /var/lib/archipelago/lightning-stack
+      target: /root/.lightning
+      options: [rw]
+      
+  environment:
+    - BITCOIND_HOST=bitcoin-core
+    - BITCOIND_RPCUSER=${BITCOIN_RPC_USER}
+    - BITCOIND_RPCPASS=${BITCOIN_RPC_PASSWORD}
+    - NETWORK=mainnet
+    
+  health_check:
+    type: http
+    endpoint: http://127.0.0.1:8080
+    path: /v1/getinfo
+    interval: 30s
+    timeout: 5s
+    retries: 3
+    
+  bitcoin_integration:
+    rpc_access: admin
+    sync_required: true
+    
+  lightning_integration:
+    channel_management: true
+    payment_routing: true

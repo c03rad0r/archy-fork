@@ -1,0 +1,39 @@
+{
+  "name": "@aiui/core",
+  "version": "0.1.0",
+  "description": "AIUI core component library - rich AI content surface renderers",
+  "license": "MIT",
+  "type": "module",
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "exports": {
+    ".": "./src/index.ts",
+    "./components/*": "./src/components/*",
+    "./composables/*": "./src/composables/*",
+    "./plugins/*": "./src/plugins/*",
+    "./types/*": "./src/types/*",
+    "./styles/*": "./src/styles/*"
+  },
+  "scripts": {
+    "dev": "vite build --watch",
+    "build": "vue-tsc --noEmit && vite build",
+    "test": "vitest run",
+    "lint": "eslint src/",
+    "typecheck": "vue-tsc --noEmit",
+    "clean": "rm -rf dist"
+  },
+  "peerDependencies": {
+    "vue": "^3.5.0"
+  },
+  "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "@vitejs/plugin-vue": "^6.0.4",
+    "eslint": "^10.0.2",
+    "typescript": "~5.8.0",
+    "typescript-eslint": "^8.56.1",
+    "vite": "^7.3.1",
+    "vitest": "^4.0.18",
+    "vue": "^3.5.29",
+    "vue-tsc": "^3.2.5"
+  }
+}

@@ -1,0 +1,173 @@
+---
+description: Mobile UX patterns informed by Apple iOS HIG — touch targets, typography, spacing, navigation, animations
+globs: "**/*.vue,**/*.css"
+alwaysApply: false
+---
+
+# Mobile UX (iOS HIG-Informed)
+
+## Philosophy
+Design for mobile first, enhance for desktop. Follow Apple iOS Human Interface Guidelines for sizing, spacing, and interaction patterns. Adapt native iOS conventions to our glass morphism dark theme.
+
+## Typography (iOS Dynamic Type Mapped to CSS)
+
+| iOS Text Style | Default Size | CSS Equivalent | AIUI Usage |
+|---|---|---|---|
+| Large Title | 34pt | `text-[34px]` / `text-3xl` | Page titles (rare) |
+| Title 1 | 28pt | `text-[28px]` / `text-2xl` | Section headers |
+| Title 2 | 22pt | `text-[22px]` / `text-xl` | Sub-section headers |
+| Title 3 | 20pt | `text-[20px]` / `text-lg` | Card titles |
+| Headline | 17pt semibold | `text-[17px] font-semibold` | Emphasis labels |
+| Body | 17pt | `text-[17px]` / `text-base` | Primary content |
+| Callout | 16pt | `text-[16px]` | Secondary content |
+| Subheadline | 15pt | `text-[15px]` | Metadata |
+| Footnote | 13pt | `text-[13px]` / `text-xs` | Timestamps, captions |
+| Caption 1 | 12pt | `text-[12px]` | Badges, small labels |
+| Caption 2 | 11pt | `text-[11px]` | Smallest text (tab labels) |
+
+### Key rules
+- **Minimum text size**: 11px (Caption 2) — never go smaller
+- **Body text on mobile**: 17px (not 14px/16px) for comfortable reading
+- Use `text-sm` (14px) sparingly — only for dense UI, not primary reading content
+- Chat messages should use at least 15-16px on mobile
+- Metadata/timestamps: 11-13px is acceptable
+
+## Touch Targets
+
+| Rule | Value | Tailwind |
+|---|---|---|
+| Minimum tap target | **44 × 44px** | `min-w-[44px] min-h-[44px]` |
+| Minimum gap between targets | **8px** | `gap-2` |
+| Comfortable button height | 44-50px | `h-11` to `h-[50px]` |
+| iOS nav bar button | 44px | `h-11` |
+
+### Key rules
+- The 44px minimum applies to the **tappable area**, not the visual size
+- A 24px icon can have a 44px tap target via padding: `p-2.5` on a 24px icon
+- Our `w-9 h-9` (36px) header buttons are below 44px — compensate with generous spacing or padding hit areas
+- Text buttons must extend touch target beyond text bounds
+
+## Spacing & Layout
+
+| Element | iOS Value | CSS |
+|---|---|---|
+| Side margins (iPhone) | 16px | `px-4` |
+| Nav bar height | 44px | `h-11` |
+| Tab bar height | 49px (+34px safe area) | `h-[49px]` + `pb-[env(safe-area-inset-bottom)]` |
+| Bottom safe area (notch) | 34px | `env(safe-area-inset-bottom)` |
+| Search bar | 36px field + 8px padding | `h-9` + `py-1` |
+| Standard content inset | 16px horizontal | `px-4` |
+
+### Safe area insets
+```css
+/* Always use for full-screen layouts */
+padding-top: env(safe-area-inset-top);
+padding-bottom: env(safe-area-inset-bottom);
+padding-left: env(safe-area-inset-left);
+padding-right: env(safe-area-inset-right);
+height: 100dvh; /* Dynamic viewport height — avoids iOS Safari toolbar */
+```
+
+## Navigation Patterns
+
+### iOS-native patterns to follow
+- **Primary navigation**: Bottom tab bar (persists across screens)
+- **Secondary navigation**: Top nav bar with back button (left) and actions (right)
+- **Modals**: Sheet sliding up from bottom (half-screen or full)
+- **Context menus**: Long-press or action sheets from bottom
+
+### Primary action placement
+```
+Top 20%:    Navigation, info, secondary actions
+Middle 60%: Main content (scrollable)
+Bottom 20%: Primary actions (thumb zone) — send, approve, play
+```
+
+### Sheets & modals on mobile
+- Use bottom sheets with three detents: small (~25%), medium (~50%), large (full)
+- Always provide a close button — don't rely solely on swipe-to-dismiss
+- Content panels: full-screen overlay or bottom sheet, never side-by-side
+
+## Form Inputs
+
+| Rule | Value | Why |
+|---|---|---|
+| **Minimum input font** | **16px** | Prevents iOS Safari auto-zoom on focus |
+| Minimum field height | 44px | Matches tap target |
+| Use `inputmode` | `numeric`, `email`, `tel`, `url`, `search` | Shows appropriate keyboard |
+| Use `autocomplete` | Standard attributes | Enables autofill |
+| Submit button placement | Bottom of form, thumb zone | Easy to reach |
+
+## Animations & Motion (iOS Spring Model)
+
+### Duration guidelines
+| Type | Duration | Tailwind |
+|---|---|---|
+| Micro-interaction (tap, toggle) | 100-200ms | `duration-150` |
+| Standard transition (push/pop) | 250-350ms | `duration-300` |
+| Modal presentation (sheet) | 300-400ms | `duration-300` |
+| Complex transitions | 400-500ms | `duration-500` |
+
+### iOS-style easing
+```css
+/* Standard iOS-like transition (ease out / decelerate) */
+transition: transform 0.35s cubic-bezier(0.2, 0.9, 0.3, 1.0);
+
+/* Bouncy spring-like (for playful entrances) */
+transition: transform 0.5s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+
+/* Quick snap (micro-interactions) */
+transition: transform 0.25s cubic-bezier(0.0, 0.0, 0.2, 1.0);
+```
+
+### Motion rules
+- Entrances: ease-out (decelerate)
+- Exits: ease-in (accelerate)
+- Only animate `transform` and `opacity`
+- **Always** respect `prefers-reduced-motion`:
+```css
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+```
+
+## Gestures
+- Swipe left/right: gallery nav, dismiss
+- Swipe down: close overlay/bottom sheet, pull-to-refresh
+- Long press: context menu, selection
+- Pinch: zoom on images
+- Minimum swipe distance: 50px before triggering
+
+## Scroll Behavior
+- Lock body scroll when modal/drawer is open
+- `overscroll-behavior: contain` on modal content
+- `touch-action: manipulation` to prevent zoom on double-tap
+- `-webkit-overflow-scrolling: touch` for smooth iOS scroll
+
+## Iconography
+| Context | Size | Style |
+|---|---|---|
+| Tab bar | 25px | Filled/solid |
+| Nav bar / toolbar | 22px | Outlined, 1.5px stroke |
+| Inline with text | Match font size | Outlined |
+| Standalone | 28-33px | Filled or outlined |
+
+## AIUI Custom Overrides (Keep These)
+These deviate from stock iOS but are intentional for our design language:
+- **Dark-only theme**: No light mode. Background `#0a0a0a`, not iOS system colors
+- **Glass morphism**: Translucent surfaces with backdrop-blur instead of iOS solid materials
+- **Accent color**: Bitcoin orange `#F7931A` instead of iOS systemBlue
+- **Text opacity scale**: Our `/25` → `/96` scale instead of iOS label hierarchy
+- **No separator borders**: We use spacing and glass layering instead
+- **Custom animations**: `animate-fade-up`, `animate-scale-in` per our design system
+- **Header buttons**: Currently 36px (`w-9 h-9`), acceptable with generous spacing
+
+## Performance on Mobile
+- Test on real devices, not just emulators
+- Test on 3G/4G connections
+- Debounce scroll handlers
+- Lazy load images with `loading="lazy"`
+- Critical CSS inlined, rest loaded async

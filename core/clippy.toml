@@ -1,0 +1,44 @@
+# KEY-05 layer (b) — the crate-wide compile-time ban on defaulted RNG entry points.
+#
+# WHY THIS FILE EXISTS
+#   `rand::random()` and `rand::thread_rng()` are not broken today: on the pinned
+#   `rand 0.8.5` both resolve to a ChaCha12 CSPRNG seeded from `getrandom(2)`.
+#   What they lack is a STATED entropy backend. The backend is fixed by dependency
+#   and build configuration rather than by the calling code, and nothing produces a
+#   compile error if that changes underneath us. That is the exact structural shape
+#   ("T1") behind the 2026-07-30 COLDCARD entropy defect — and here the blast radius
+#   includes Cashu blinded-key-exchange values, X3DH prekey material, session bearer
+#   tokens and a ChaCha20-Poly1305 nonce.
+#
+#   So every draw must name `rand::rngs::OsRng` at its own call site, and key
+#   material and AEAD nonces must additionally run the degenerate-entropy predicate
+#   in `archipelago::entropy`.
+#
+# HOW IT IS ENFORCED
+#   No CI change was needed for this layer. The existing Rust job already runs
+#   `cargo clippy --all-targets --all-features -- -D warnings` from `core/`, so a
+#   `disallowed_methods` hit is already a build failure. `--all-targets` means test
+#   code is covered too, which is deliberate: test fixtures migrate to `OsRng` as
+#   readily as production code does, and a fixture that keeps the default is a
+#   template for the next production call site.
+#
+# SCOPE, STATED HONESTLY
+#   This reaches the five workspace members (archipelago, archipelago-container,
+#   archipelago-openwrt, archipelago-performance, archipelago-security), verified
+#   via `cargo metadata --no-deps`. It does NOT reach `core/models`, which is not a
+#   workspace member and therefore not in the clippy build graph; the two matches
+#   there are recorded as a stated limitation in the evidence document.
+#
+# IF YOU ARE HITTING THIS LINT
+#   Do not add `#[allow]` reflexively. Use `rand::rngs::OsRng` at the call site. If
+#   the value is key material or an AEAD nonce of at least 12 bytes, route it through
+#   `crate::entropy::draw_key_bytes`. An `#[allow(clippy::disallowed_methods)]` needs a
+#   justification comment on the line above stating why the DEFAULT is required here —
+#   "it is a test" is not a justification.
+#
+# See: docs/security/KEY-05-ENTROPY-ENFORCEMENT.md
+
+disallowed-methods = [
+    { path = "rand::random", reason = "KEY-05: inherits its entropy backend from a dependency default instead of stating it. Use rand::rngs::OsRng at the call site; for key material or AEAD nonces >= 12 bytes use crate::entropy::draw_key_bytes. See docs/security/KEY-05-ENTROPY-ENFORCEMENT.md" },
+    { path = "rand::thread_rng", reason = "KEY-05: inherits its entropy backend from a dependency default instead of stating it. Use rand::rngs::OsRng at the call site; for key material or AEAD nonces >= 12 bytes use crate::entropy::draw_key_bytes. See docs/security/KEY-05-ENTROPY-ENFORCEMENT.md" },
+]

@@ -1,0 +1,83 @@
+---
+description: AI adapter patterns, streaming, tool calling, context injection
+globs: "**/ai/**,**/plugins/ai-*/**"
+alwaysApply: false
+---
+
+# AI Integration
+
+## Universal AI Adapter
+All AI providers connect through the `AIProviderAdapter` interface:
+
+```typescript
+interface AIProviderAdapter extends AIUIPlugin {
+  type: 'ai-provider'
+  chat(messages: Message[], options: ChatOptions): AsyncIterable<ChatChunk>
+  models(): Promise<Model[]>
+  supportsStreaming: boolean
+  supportsVision: boolean
+  supportsTools: boolean
+  supportsMultimodal: boolean
+}
+```
+
+## Provider Hierarchy
+1. **OpenAI-Compatible Adapter** — covers OpenRouter, Ollama, vLLM, llama.cpp, LocalAI, Mistral, DeepSeek, xAI, Qwen. Just change `baseURL` + API key.
+2. **Anthropic Adapter** — Claude. Different tool_use format (content blocks vs tool_calls).
+3. **Gemini Adapter** — Google. Different multimodal format.
+4. **MCP Client** — connects to any MCP server for tools, resources, prompts.
+
+## Streaming
+- All AI responses use Server-Sent Events (SSE) over HTTP
+- Pattern: `data: {"token": "Hello"}\n\n` with `data: [DONE]\n\n` termination
+- Client: parse SSE stream, feed tokens to `StreamingTextRenderer`
+- Always show a typing indicator while waiting for first token
+- Handle connection drops gracefully (show error, offer retry)
+
+## Tool Calling
+AI can invoke tools. The adapter normalizes tool call formats:
+```typescript
+interface ToolCall {
+  id: string
+  name: string
+  arguments: Record<string, unknown>
+}
+
+interface ToolResult {
+  toolCallId: string
+  content: string | StructuredContent
+  isError: boolean
+}
+```
+
+Normalize across providers:
+- OpenAI: `tool_calls` in assistant message → `role: "tool"` result
+- Claude: `type: "tool_use"` content block → `tool_result` in user message
+- Map both to AIUI's unified `ToolCall` / `ToolResult` types
+
+## Context Injection
+The system prompt includes context about the user's environment:
+- Connected media sources and their capabilities
+- Available tools and plugins
+- User preferences (language, theme, preferred wallet)
+- In dev mode: mock data summaries
+
+Never include sensitive data (API keys, passwords) in system prompts.
+
+## Model Selection
+Users can switch models within a conversation. The UI shows:
+- Available models from all connected providers
+- Model capabilities (vision, tools, streaming)
+- Cost per token in sats (if applicable)
+
+## Dev Mode
+- `VITE_OPENROUTER_API_KEY` in `.env.local`
+- Free models available (Llama, Mistral via OpenRouter)
+- Mock tool responses available via dev fixtures
+- Debug panel shows: raw messages, token count, latency
+
+## Error Handling
+- Rate limits: show user-friendly message, auto-retry with backoff
+- Auth errors: prompt to check API key in settings
+- Network errors: show offline indicator, queue message for retry
+- Model errors: show error in chat, suggest alternative model

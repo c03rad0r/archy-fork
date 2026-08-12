@@ -1,0 +1,49 @@
+app:
+  id: archy-btcpay-db
+  name: BTCPay Postgres
+  version: "15.17"
+  description: Postgres backend for BTCPay and NBXplorer.
+
+  container:
+    image: source.archipelago-foundation.org/lfg2025/postgres:15.17
+    pull_policy: if-not-present
+    network: archy-net
+    data_uid: "100998:100998"
+    secret_env:
+      - key: POSTGRES_PASSWORD
+        secret_file: btcpay-db-password
+
+  dependencies:
+    - storage: 20Gi
+
+  resources:
+    memory_limit: 1Gi
+    disk_limit: 20Gi
+
+  security:
+    capabilities: [CHOWN, FOWNER, SETUID, SETGID, DAC_OVERRIDE]
+    readonly_root: false
+    network_policy: isolated
+
+  ports: []
+
+  volumes:
+    - type: bind
+      source: /var/lib/archipelago/postgres-btcpay
+      target: /var/lib/postgresql/data
+      options: [rw]
+
+  environment:
+    - POSTGRES_DB=btcpay
+    - POSTGRES_USER=btcpay
+
+  health_check:
+    type: tcp
+    endpoint: localhost:5432
+    interval: 30s
+    timeout: 5s
+    retries: 3
+
+  bitcoin_integration:
+    rpc_access: none
+    sync_required: false

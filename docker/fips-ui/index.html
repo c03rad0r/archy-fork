@@ -1,0 +1,478 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>FIPS Mesh</title>
+<style>
+  :root {
+    --bg: #0e1116;
+    --panel: #161b22;
+    --panel-2: #1c232c;
+    --border: #2a323d;
+    --text: #e6edf3;
+    --muted: #8b949e;
+    --accent: #2f81f7;
+    --ok: #2ea043;
+    --warn: #d29922;
+    --bad: #f85149;
+    --radius: 10px;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font: 14px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  }
+  .wrap { max-width: 860px; margin: 0 auto; padding: 24px 18px 64px; }
+  header { display: flex; align-items: center; gap: 12px; margin-bottom: 6px; }
+  header h1 { font-size: 20px; margin: 0; font-weight: 600; }
+  .sub { color: var(--muted); margin: 0 0 20px; font-size: 13px; }
+  .card {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 16px 18px;
+    margin-bottom: 16px;
+  }
+  .card h2 {
+    font-size: 13px; text-transform: uppercase; letter-spacing: .04em;
+    color: var(--muted); margin: 0 0 14px; font-weight: 600;
+  }
+  .row { display: flex; justify-content: space-between; align-items: center; padding: 6px 0; gap: 12px; }
+  .row + .row { border-top: 1px solid var(--border); }
+  .row .k { color: var(--muted); }
+  .row .v { font-variant-numeric: tabular-nums; text-align: right; word-break: break-all; }
+  .pill {
+    display: inline-flex; align-items: center; gap: 6px;
+    padding: 2px 10px; border-radius: 999px; font-size: 12px; font-weight: 600;
+    border: 1px solid transparent;
+  }
+  .pill::before { content: ""; width: 8px; height: 8px; border-radius: 50%; background: currentColor; }
+  .pill.ok { color: var(--ok); background: rgba(46,160,67,.12); }
+  .pill.warn { color: var(--warn); background: rgba(210,153,34,.12); }
+  .pill.bad { color: var(--bad); background: rgba(248,81,73,.12); }
+  .pill.muted { color: var(--muted); background: rgba(139,148,158,.12); }
+  .btns { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 6px; }
+  button {
+    font: inherit; font-weight: 600; cursor: pointer;
+    background: var(--panel-2); color: var(--text);
+    border: 1px solid var(--border); border-radius: 8px; padding: 8px 14px;
+  }
+  button:hover:not(:disabled) { border-color: var(--accent); }
+  button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+  button.danger { color: var(--bad); }
+  button:disabled { opacity: .5; cursor: default; }
+  input, select {
+    font: inherit; background: var(--bg); color: var(--text);
+    border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px; width: 100%;
+  }
+  .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+  .grid .full { grid-column: 1 / -1; }
+  label { display: block; font-size: 12px; color: var(--muted); margin-bottom: 4px; }
+  .anchor-item { padding: 10px 0; }
+  .anchor-item + .anchor-item { border-top: 1px solid var(--border); }
+  .anchor-item .top { display: flex; justify-content: space-between; gap: 10px; align-items: baseline; }
+  .anchor-item .addr { color: var(--muted); font-size: 12px; word-break: break-all; }
+  .anchor-item .npub { font-size: 12px; color: var(--muted); word-break: break-all; }
+  .notice { padding: 10px 12px; border-radius: 8px; font-size: 13px; margin-top: 10px; display: none; }
+  .notice.show { display: block; }
+  .notice.info { background: rgba(47,129,247,.12); color: var(--accent); }
+  .notice.good { background: rgba(46,160,67,.12); color: var(--ok); }
+  .notice.error { background: rgba(248,81,73,.12); color: var(--bad); }
+  .spin { display: inline-block; width: 13px; height: 13px; border: 2px solid currentColor;
+    border-right-color: transparent; border-radius: 50%; animation: r .7s linear infinite; vertical-align: -2px; }
+  @keyframes r { to { transform: rotate(360deg); } }
+  .muted-note { color: var(--muted); font-size: 12px; margin-top: 8px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>FIPS Mesh</h1>
+    <span id="anchorPill" class="pill muted">Loading…</span>
+  </header>
+  <p class="sub">Encrypted mesh transport. This node reaches the network through seed anchors; a connected anchor keeps FIPS routing fast instead of degrading to Tor.</p>
+
+  <div class="card">
+    <h2>Status</h2>
+    <div class="row"><span class="k">Daemon installed</span><span class="v" id="sInstalled">—</span></div>
+    <div class="row"><span class="k">Version</span><span class="v" id="sVersion">—</span></div>
+    <div class="row"><span class="k">Service</span><span class="v" id="sService">—</span></div>
+    <div class="row"><span class="k">Seed key present</span><span class="v" id="sKey">—</span></div>
+    <div class="row"><span class="k">Authenticated peers</span><span class="v" id="sPeers">—</span></div>
+    <div class="row"><span class="k">Anchor connected</span><span class="v" id="sAnchor">—</span></div>
+    <div class="row"><span class="k">This node's npub</span><span class="v" id="sNpub">—</span></div>
+    <div class="btns">
+      <button id="btnRefresh">Refresh</button>
+      <button id="btnReconnect">Reconnect</button>
+      <button id="btnRestart">Restart daemon</button>
+      <button id="btnInstall">Install / repair</button>
+    </div>
+    <div id="actionNotice" class="notice"></div>
+  </div>
+
+  <div class="card">
+    <h2>This node as an anchor</h2>
+    <p class="muted-note" style="margin-top:0">Share these with another node's operator so they can add this node as a seed anchor (their <em>Seed Anchors → Add</em> form). The address is whatever host you reached this dashboard at, so it's reachable the same way you got here.</p>
+    <div class="row">
+      <span class="k">npub</span>
+      <span class="v" style="display:flex;gap:8px;align-items:center">
+        <code id="ownNpub" style="font-size:12px">—</code>
+        <button data-copy="ownNpub">Copy</button>
+      </span>
+    </div>
+    <div class="row">
+      <span class="k">Address</span>
+      <span class="v" style="display:flex;gap:8px;align-items:center">
+        <code id="ownAddr" style="font-size:12px">—</code>
+        <button data-copy="ownAddr">Copy</button>
+      </span>
+    </div>
+    <div id="ownReach" class="muted-note"></div>
+    <div id="copyNotice" class="notice"></div>
+  </div>
+
+  <div class="card">
+    <h2>Updates · stable channel</h2>
+    <div class="row"><span class="k">Installed</span><span class="v" id="uCurrent">—</span></div>
+    <div class="row"><span class="k">Latest stable</span><span class="v" id="uLatest">—</span></div>
+    <div class="row"><span class="k">Status</span><span class="v" id="uStatus">—</span></div>
+    <div class="btns">
+      <button id="btnCheck">Check for updates</button>
+      <button id="btnApply" class="primary" disabled>Apply update</button>
+    </div>
+    <div id="updateNotice" class="notice"></div>
+    <p class="muted-note">Updates download the signed <code>.deb</code> from the upstream <code>jmcorgan/fips</code> releases, verify its SHA-256 against the published checksums, install it, and restart the daemon.</p>
+  </div>
+
+  <div class="card">
+    <h2>Seed Anchors</h2>
+    <div id="anchorList"><p class="muted-note">Loading…</p></div>
+    <div style="margin-top:14px">
+      <div class="grid">
+        <div class="full"><label>npub</label><input id="aNpub" placeholder="npub1…" autocomplete="off" spellcheck="false" /></div>
+        <div><label>Address (host:port)</label><input id="aAddr" placeholder="192.0.2.12:8668" autocomplete="off" spellcheck="false" /></div>
+        <div><label>Transport</label><select id="aTransport"><option value="udp">udp</option><option value="tcp">tcp</option></select></div>
+        <div class="full"><label>Label (optional)</label><input id="aLabel" placeholder="Home anchor" autocomplete="off" /></div>
+      </div>
+      <div class="btns">
+        <button id="btnAddAnchor" class="primary">Add anchor</button>
+        <button id="btnApplyAnchors">Re-apply all</button>
+      </div>
+      <div id="anchorNotice" class="notice"></div>
+    </div>
+  </div>
+</div>
+
+<script>
+  const RPC_ENDPOINT = '/rpc/v1';
+
+  function cookieValue(name) {
+    return document.cookie
+      .split('; ')
+      .find(row => row.startsWith(`${name}=`))
+      ?.split('=').slice(1).join('=') || '';
+  }
+
+  async function rpc(method, params = {}) {
+    const headers = { 'Content-Type': 'application/json' };
+    const csrf = cookieValue('csrf_token');
+    if (csrf) headers['X-CSRF-Token'] = decodeURIComponent(csrf);
+    const res = await fetch(RPC_ENDPOINT, {
+      method: 'POST',
+      headers,
+      credentials: 'include',
+      cache: 'no-store',
+      body: JSON.stringify({ jsonrpc: '2.0', id: 1, method, params })
+    });
+    const body = await res.json().catch(() => ({}));
+    if (!res.ok || body.error) {
+      throw new Error(body.error?.message || `RPC ${method} failed (${res.status})`);
+    }
+    return body.result;
+  }
+
+  function escapeHtml(value) {
+    return String(value ?? '').replace(/[&<>"']/g, c => ({
+      '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+    }[c]));
+  }
+  function setText(id, v, fallback = '—') {
+    const el = document.getElementById(id);
+    if (el) el.textContent = (v === null || v === undefined || v === '') ? fallback : v;
+  }
+  function pill(state, text) {
+    return `<span class="pill ${state}">${escapeHtml(text)}</span>`;
+  }
+  function setHtml(id, html) {
+    const el = document.getElementById(id);
+    if (el) el.innerHTML = html;
+  }
+  function notice(id, kind, msg) {
+    const el = document.getElementById(id);
+    if (!el) return;
+    if (!msg) { el.className = 'notice'; el.textContent = ''; return; }
+    el.className = `notice show ${kind}`;
+    el.innerHTML = msg;
+  }
+  function busy(btn, on, label) {
+    if (!btn) return;
+    if (on) {
+      btn.dataset.label = btn.dataset.label || btn.textContent;
+      btn.disabled = true;
+      btn.innerHTML = `<span class="spin"></span> ${escapeHtml(label || btn.dataset.label)}`;
+    } else {
+      btn.disabled = false;
+      btn.textContent = btn.dataset.label || btn.textContent;
+    }
+  }
+
+  function renderStatus(s) {
+    setText('sInstalled', s.installed ? 'Yes' : 'No');
+    setText('sVersion', s.version);
+    const active = s.service_active;
+    setHtml('sService', active
+      ? pill('ok', s.service_state || 'active')
+      : pill('bad', s.service_state || 'inactive'));
+    setHtml('sKey', s.key_present ? pill('ok', 'present') : pill('warn', 'missing'));
+    const peers = s.authenticated_peer_count || 0;
+    setHtml('sPeers', peers > 0 ? pill('ok', String(peers)) : pill('warn', '0 — isolated'));
+    setHtml('sAnchor', s.anchor_connected ? pill('ok', 'connected') : pill('bad', 'unreachable'));
+    setText('sNpub', s.npub);
+    if (s.npub) document.getElementById('ownNpub').textContent = s.npub;
+
+    const ap = document.getElementById('anchorPill');
+    if (s.anchor_connected) { ap.className = 'pill ok'; ap.textContent = 'Anchor connected'; }
+    else if (peers > 0) { ap.className = 'pill warn'; ap.textContent = 'Peers, no anchor'; }
+    else if (s.service_active) { ap.className = 'pill bad'; ap.textContent = 'Isolated'; }
+    else { ap.className = 'pill muted'; ap.textContent = 'Daemon down'; }
+  }
+
+  async function loadStatus() {
+    try {
+      const s = await rpc('fips.status');
+      renderStatus(s);
+      setText('uCurrent', s.version, 'not installed');
+    } catch (e) {
+      notice('actionNotice', 'error', escapeHtml(e.message));
+    }
+  }
+
+  function renderAnchors(list) {
+    if (!list || list.length === 0) {
+      setHtml('anchorList', '<p class="muted-note">No seed anchors configured. Add one below so this node can reach the mesh.</p>');
+      return;
+    }
+    const html = list.map(a => `
+      <div class="anchor-item">
+        <div class="top">
+          <strong>${escapeHtml(a.label || a.address)}</strong>
+          <button class="danger" data-remove="${escapeHtml(a.npub)}">Remove</button>
+        </div>
+        <div class="addr">${escapeHtml(a.address)} · ${escapeHtml(a.transport || 'udp')}</div>
+        <div class="npub">${escapeHtml(a.npub)}</div>
+      </div>`).join('');
+    setHtml('anchorList', html);
+    document.querySelectorAll('[data-remove]').forEach(btn => {
+      btn.addEventListener('click', () => removeAnchor(btn.dataset.remove, btn));
+    });
+  }
+
+  async function loadAnchors() {
+    try {
+      const r = await rpc('fips.list-seed-anchors');
+      renderAnchors(r.seed_anchors);
+    } catch (e) {
+      setHtml('anchorList', `<p class="muted-note">${escapeHtml(e.message)}</p>`);
+    }
+  }
+
+  async function removeAnchor(npub, btn) {
+    busy(btn, true, 'Removing');
+    notice('anchorNotice', '', '');
+    try {
+      const r = await rpc('fips.remove-seed-anchor', { npub });
+      renderAnchors(r.seed_anchors);
+      notice('anchorNotice', 'good', 'Anchor removed.');
+    } catch (e) {
+      notice('anchorNotice', 'error', escapeHtml(e.message));
+      busy(btn, false);
+    }
+  }
+
+  // --- wire up buttons ---
+  document.getElementById('btnRefresh').addEventListener('click', loadStatus);
+
+  document.getElementById('btnReconnect').addEventListener('click', async (e) => {
+    const btn = e.currentTarget;
+    busy(btn, true, 'Reconnecting…');
+    notice('actionNotice', 'info', 'Restarting the daemon and waiting for an anchor — this takes about 20 seconds…');
+    try {
+      const r = await rpc('fips.reconnect');
+      renderStatus(r.after);
+      const kind = r.after.anchor_connected ? 'good' : 'error';
+      notice('actionNotice', kind, `${escapeHtml(r.hint || r.likely_cause)}`);
+    } catch (err) {
+      notice('actionNotice', 'error', escapeHtml(err.message));
+    } finally {
+      busy(btn, false);
+    }
+  });
+
+  document.getElementById('btnRestart').addEventListener('click', async (e) => {
+    const btn = e.currentTarget;
+    busy(btn, true, 'Restarting…');
+    notice('actionNotice', '', '');
+    try {
+      const r = await rpc('fips.restart');
+      notice('actionNotice', 'good', `Restarted ${escapeHtml(r.unit || 'fips service')}.`);
+      await loadStatus();
+    } catch (err) {
+      notice('actionNotice', 'error', escapeHtml(err.message));
+    } finally {
+      busy(btn, false);
+    }
+  });
+
+  document.getElementById('btnInstall').addEventListener('click', async (e) => {
+    const btn = e.currentTarget;
+    busy(btn, true, 'Installing…');
+    notice('actionNotice', '', '');
+    try {
+      const s = await rpc('fips.install');
+      renderStatus(s);
+      notice('actionNotice', 'good', 'Config and key re-materialised; service activated.');
+    } catch (err) {
+      notice('actionNotice', 'error', escapeHtml(err.message));
+    } finally {
+      busy(btn, false);
+    }
+  });
+
+  document.getElementById('btnCheck').addEventListener('click', async (e) => {
+    const btn = e.currentTarget;
+    busy(btn, true, 'Checking…');
+    notice('updateNotice', '', '');
+    const applyBtn = document.getElementById('btnApply');
+    try {
+      const c = await rpc('fips.check-update');
+      setText('uCurrent', c.current, 'not installed');
+      setText('uLatest', c.latest_version);
+      setHtml('uStatus', c.update_available ? pill('warn', 'update available') : pill('ok', 'up to date'));
+      applyBtn.disabled = !c.update_available;
+      notice('updateNotice', c.update_available ? 'info' : 'good', escapeHtml(c.notes || ''));
+    } catch (err) {
+      notice('updateNotice', 'error', escapeHtml(err.message));
+    } finally {
+      busy(btn, false);
+    }
+  });
+
+  document.getElementById('btnApply').addEventListener('click', async (e) => {
+    const btn = e.currentTarget;
+    busy(btn, true, 'Updating…');
+    notice('updateNotice', 'info', 'Downloading, verifying, and installing the new FIPS daemon, then restarting it…');
+    try {
+      await rpc('fips.apply-update');
+      notice('updateNotice', 'good', 'Update installed and daemon restarted.');
+      btn.disabled = true;
+      await loadStatus();
+      await rpc('fips.check-update').then(c => {
+        setText('uLatest', c.latest_version);
+        setHtml('uStatus', c.update_available ? pill('warn', 'update available') : pill('ok', 'up to date'));
+      }).catch(() => {});
+    } catch (err) {
+      notice('updateNotice', 'error', escapeHtml(err.message));
+      busy(btn, false);
+    }
+  });
+
+  document.getElementById('btnAddAnchor').addEventListener('click', async (e) => {
+    const btn = e.currentTarget;
+    const npub = document.getElementById('aNpub').value.trim();
+    const address = document.getElementById('aAddr').value.trim();
+    const transport = document.getElementById('aTransport').value;
+    const label = document.getElementById('aLabel').value.trim();
+    if (!npub.startsWith('npub1')) { notice('anchorNotice', 'error', 'npub must start with npub1…'); return; }
+    if (!address.includes(':')) { notice('anchorNotice', 'error', 'Address must be host:port (e.g. 192.0.2.12:8668).'); return; }
+    busy(btn, true, 'Adding…');
+    notice('anchorNotice', '', '');
+    try {
+      const r = await rpc('fips.add-seed-anchor', { npub, address, transport, label });
+      renderAnchors(r.seed_anchors);
+      const applied = (r.apply || []).find(x => x.npub === npub);
+      const ok = applied ? applied.ok : true;
+      notice('anchorNotice', ok ? 'good' : 'info',
+        ok ? 'Anchor added and pushed to the running daemon.' : `Anchor saved. Daemon push: ${escapeHtml(applied?.message || 'pending')}`);
+      ['aNpub','aAddr','aLabel'].forEach(id => document.getElementById(id).value = '');
+      await loadStatus();
+    } catch (err) {
+      notice('anchorNotice', 'error', escapeHtml(err.message));
+    } finally {
+      busy(btn, false);
+    }
+  });
+
+  document.getElementById('btnApplyAnchors').addEventListener('click', async (e) => {
+    const btn = e.currentTarget;
+    busy(btn, true, 'Applying…');
+    notice('anchorNotice', '', '');
+    try {
+      const r = await rpc('fips.apply-seed-anchors');
+      const okCount = (r.results || []).filter(x => x.ok).length;
+      notice('anchorNotice', 'good', `Re-applied ${okCount}/${r.applied || 0} anchors to the daemon.`);
+      await loadStatus();
+    } catch (err) {
+      notice('anchorNotice', 'error', escapeHtml(err.message));
+    } finally {
+      busy(btn, false);
+    }
+  });
+
+  // This node's own anchor address: the host the operator reached the
+  // dashboard at is, by definition, reachable for them — so it's the
+  // right dial hint. FIPS listens on UDP 8668.
+  const FIPS_PORT = 8668;
+  function isPrivateLan(host) {
+    return /^10\./.test(host)
+        || /^192\.168\./.test(host)
+        || /^172\.(1[6-9]|2\d|3[01])\./.test(host)
+        || host === 'localhost' || host === '127.0.0.1';
+  }
+  function populateOwnAnchor() {
+    const host = window.location.hostname;
+    const addr = `${host}:${FIPS_PORT}`;
+    document.getElementById('ownAddr').textContent = addr;
+    const reach = document.getElementById('ownReach');
+    if (/^100\./.test(host)) {
+      reach.innerHTML = 'This is a Tailscale address — reachable by any node on your tailnet, including over the internet.';
+    } else if (isPrivateLan(host)) {
+      reach.innerHTML = '⚠ This is a private LAN address — it only works for nodes on the same local network. For a node across the internet, share this node’s Tailscale (100.x) or public IP with UDP 8668 reachable, or have both nodes use a common public anchor instead.';
+    } else {
+      reach.innerHTML = 'This looks like a public address — reachable over the internet if UDP 8668 is open/forwarded to this node.';
+    }
+  }
+
+  document.querySelectorAll('[data-copy]').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      const text = document.getElementById(btn.dataset.copy)?.textContent || '';
+      if (!text || text === '—') return;
+      try {
+        await navigator.clipboard.writeText(text);
+        notice('copyNotice', 'good', 'Copied.');
+        setTimeout(() => notice('copyNotice', '', ''), 1500);
+      } catch {
+        notice('copyNotice', 'error', `Copy failed — select manually: ${escapeHtml(text)}`);
+      }
+    });
+  });
+
+  // initial load
+  populateOwnAnchor();
+  loadStatus();
+  loadAnchors();
+</script>
+</body>
+</html>

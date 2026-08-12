@@ -1,0 +1,79 @@
+---
+description: Animation principles - timing, easing, stagger, reduced motion
+globs: "**/*.vue,**/*.css"
+alwaysApply: false
+---
+
+# Animation & Motion Design
+
+## Philosophy
+Every animation serves a purpose: guide attention, provide feedback, show relationships, enhance perceived performance, or add delight. Never animate for decoration alone.
+
+## Duration Scale
+```
+100ms  - Instant: micro-feedback (hover states, button press)
+200ms  - Fast: small elements (tooltips, dropdowns)
+300ms  - Moderate: standard UI transitions (modals, cards)
+500ms  - Normal: page sections, complex components
+600ms  - Slow: hero animations, page transitions (max for UI)
+```
+Never exceed 600ms for UI element animations.
+
+## Easing Functions
+- **ease-out** (90% of animations): elements entering viewport
+- **ease-in**: elements exiting viewport
+- **ease-in-out**: elements moving within viewport
+- **spring**: playful interactions (button press, drag-and-drop)
+- **linear**: progress bars, loading spinners only
+
+Custom smooth deceleration: `cubic-bezier(0.16, 1, 0.3, 1)`
+
+## Common Patterns
+
+### Fade & Slide Up (entrance)
+```css
+@keyframes fadeSlideUp {
+  from { opacity: 0; transform: translateY(20px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+```
+
+### Scale & Fade (emphasis)
+```css
+@keyframes scaleIn {
+  from { opacity: 0; transform: scale(0.8); }
+  to { opacity: 1; transform: scale(1); }
+}
+```
+
+### Hover feedback
+```css
+.interactive {
+  transition: transform 0.1s ease, opacity 0.1s ease;
+}
+.interactive:active {
+  transform: scale(0.95);
+  opacity: 0.8;
+}
+```
+
+## Staggered Animations
+When animating multiple elements, stagger by 50-150ms per item:
+```css
+.card { animation-delay: calc(var(--index) * 0.1s); }
+```
+Max items in a stagger cascade: 6-8. Total cascade: under 1 second.
+
+## Reduced Motion
+Always respect `prefers-reduced-motion`. Provide instant transitions as fallback.
+
+## Performance
+- Only animate `transform` and `opacity` (GPU-composited)
+- Use `will-change` sparingly, remove after animation
+- Limit simultaneous animations
+- Use `requestAnimationFrame` for JS animations
+
+## Loading States
+- Skeleton shimmer: 2s infinite, `linear-gradient` sweep
+- Pulse: 2s infinite, opacity 1 → 0.5 → 1
+- Spinner: 1s infinite linear rotation

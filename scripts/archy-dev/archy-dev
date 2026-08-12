@@ -1,0 +1,65 @@
+#!/usr/bin/env bash
+# archy-dev — Archipelago App Developer CLI
+# Usage:
+#   archy-dev create <app-id>     — scaffold a new app manifest
+#   archy-dev validate <manifest> — validate manifest (calls validate-app-manifest.sh)
+#   archy-dev test <manifest>     — test app in sandbox container
+#   archy-dev publish <manifest>  — publish to marketplace (future)
+
+set -euo pipefail
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+CMD="${1:-help}"
+shift || true
+
+case "$CMD" in
+    create)
+        APP_ID="${1:?Usage: archy-dev create <app-id>}"
+        MANIFEST_DIR="apps/${APP_ID}"
+        mkdir -p "$MANIFEST_DIR"
+        cat > "${MANIFEST_DIR}/manifest.yml" << YAML
+id: ${APP_ID}
+title: "${APP_ID^}"
+version: "1.0.0"
+description: "Description of ${APP_ID}"
+author: "Your Name"
+image: "docker.io/library/${APP_ID}:1.0.0"
+ports:
+  - "8080:80"
+environment: {}
+memory: "256m"
+# Security: these are enforced by Archipelago
+# privileged: false (always)
+# cap_drop: ALL (always)
+# no_new_privileges: true (always)
+YAML
+        echo "Created ${MANIFEST_DIR}/manifest.yml"
+        echo "Next: edit the manifest, then run: archy-dev validate ${MANIFEST_DIR}/manifest.yml"
+        ;;
+    validate)
+        MANIFEST="${1:?Usage: archy-dev validate <manifest.yml>}"
+        exec "${SCRIPT_DIR}/../validate-app-manifest.sh" "$MANIFEST"
+        ;;
+    test)
+        MANIFEST="${1:?Usage: archy-dev test <manifest.yml>}"
+        echo "Sandbox testing not yet implemented."
+        echo "For now, validate with: archy-dev validate $MANIFEST"
+        ;;
+    publish)
+        echo "Marketplace publishing not yet implemented."
+        echo "Submit your app via PR to the Archipelago repository."
+        ;;
+    help|--help|-h|"")
+        echo "archy-dev — Archipelago App Developer CLI"
+        echo ""
+        echo "Commands:"
+        echo "  create <app-id>      Scaffold a new app manifest"
+        echo "  validate <manifest>  Validate a manifest file"
+        echo "  test <manifest>      Test app in sandbox (future)"
+        echo "  publish <manifest>   Publish to marketplace (future)"
+        ;;
+    *)
+        echo "Unknown command: $CMD"
+        echo "Run: archy-dev help"
+        exit 1
+        ;;
+esac

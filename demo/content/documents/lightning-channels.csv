@@ -1,0 +1,8 @@
+channel_id,peer_alias,capacity_sats,local_balance,remote_balance,status,opened_date
+ch_001,ACINQ,5000000,2450000,2550000,active,2024-11-15
+ch_002,WalletOfSatoshi,2000000,1200000,800000,active,2024-12-01
+ch_003,Voltage,10000000,4500000,5500000,active,2024-12-20
+ch_004,Kraken,3000000,1800000,1200000,active,2025-01-05
+ch_005,BitcoinBeach,1000000,500000,500000,active,2025-01-22
+ch_006,LNBig,8000000,3200000,4800000,active,2025-02-10
+ch_007,Breez,1500000,900000,600000,inactive,2025-02-28

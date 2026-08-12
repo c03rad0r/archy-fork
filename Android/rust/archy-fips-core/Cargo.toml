@@ -1,0 +1,48 @@
+# Embedded FIPS mesh node for the Archipelago companion app.
+#
+# Built for Android via cargo-ndk (see Android/app/build.gradle.kts, task
+# buildRustArm64) into app/src/main/jniLibs/arm64-v8a/libarchy_fips_core.so.
+# Also builds on the host so `cargo test` covers the non-JNI logic.
+#
+# `fips` is pinned to the fips-native fork rev that this integration was
+# developed against — the fork carries Android support upstream lacks
+# (Tun::from_fd for a VpnService-owned fd, cfg(target_os = "android") paths).
+# Override with a local checkout when hacking on fips itself:
+#   CARGO_NET_OFFLINE=false cargo ndk ... --config 'patch."https://github.com/9qeklajc/fips-native".fips.path="/path/to/fips-native/fips"'
+[package]
+name = "archy-fips-core"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+publish = false
+
+[lib]
+name = "archy_fips_core"
+# rlib for host tests; cdylib for the Android shared library.
+crate-type = ["lib", "cdylib"]
+
+[dependencies]
+# default-features drops the ratatui TUI; tun-support enables Node::start_with_tun_fd.
+# Zazawowow/fips-native `fast-join-pinned` = upstream pinned rev 46494a74 +
+# discovery re-fire on topology change (fresh 5G join: first route no longer
+# waits out doomed pre-join lookups). Upstream 9qeklajc denies pushes.
+fips = { git = "https://github.com/Zazawowow/fips-native", rev = "07d21d4482be56b14295d2525e41f8386d1bfe6f", default-features = false, features = ["tun-support"] }
+anyhow = "1.0"
+serde_json = "1.0"
+hex = "0.4"
+# OS CSPRNG for identity generation (crypto rule: no thread-local RNG for keys).
+getrandom = "0.2"
+tokio = { version = "1", features = ["rt-multi-thread", "sync", "time", "macros"] }
+tracing = "0.1"
+# fcntl: force the VpnService TUN fd into blocking mode (see mesh::start).
+libc = "0.2"
+
+# The JNI surface only exists on Android; host builds skip it and drive the
+# mesh module directly (tests).
+[target.'cfg(target_os = "android")'.dependencies]
+jni = "0.21"
+# Bridge `tracing` (ours + fips) to logcat: `adb logcat -s archy-fips`.
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+paranoid-android = "0.2"
+
+[workspace]

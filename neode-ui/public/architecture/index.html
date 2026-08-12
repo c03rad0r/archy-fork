@@ -1,0 +1,899 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Archipelago — LoRa & Mesh Functionality Guide</title>
+<style>
+  :root {
+    --bg: #000000;
+    --glass-card: rgba(0, 0, 0, 0.65);
+    --glass-dark: rgba(0, 0, 0, 0.35);
+    --glass-darker: rgba(0, 0, 0, 0.6);
+    --glass-border: rgba(255, 255, 255, 0.18);
+    --glass-highlight: rgba(255, 255, 255, 0.22);
+    --glass-blur: 18px;
+    --glass-blur-strong: 24px;
+    --shadow-glass: 0 8px 24px rgba(0, 0, 0, 0.45);
+    --shadow-glass-inset: inset 0 1px 0 rgba(255, 255, 255, 0.22);
+    --text: rgba(255, 255, 255, 0.9);
+    --text-muted: rgba(255, 255, 255, 0.6);
+    --accent: #fb923c;
+    --accent-dim: rgba(251, 146, 60, 0.15);
+    --green: #4ade80;
+    --green-dim: rgba(74, 222, 128, 0.15);
+    --red: #ef4444;
+    --red-dim: rgba(239, 68, 68, 0.12);
+    --blue: #3b82f6;
+    --blue-dim: rgba(59, 130, 246, 0.12);
+    --yellow: #facc15;
+    --yellow-dim: rgba(250, 204, 21, 0.12);
+    --purple: #a78bfa;
+    --purple-dim: rgba(167, 139, 250, 0.12);
+    --radius: 16px;
+    --radius-sm: 12px;
+    --transition: 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+  }
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  html { scroll-behavior: smooth; }
+
+  body {
+    font-family: 'Avenir Next', system-ui, -apple-system, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    line-height: 1.7;
+    font-size: 16px;
+  }
+
+  nav {
+    position: fixed;
+    top: 0; left: 0;
+    width: 280px;
+    height: 100vh;
+    background: var(--glass-card);
+    backdrop-filter: blur(var(--glass-blur-strong));
+    -webkit-backdrop-filter: blur(var(--glass-blur-strong));
+    border-right: 1px solid var(--glass-border);
+    box-shadow: var(--shadow-glass);
+    overflow-y: auto;
+    padding: 24px 0;
+    z-index: 100;
+    scrollbar-width: thin;
+    scrollbar-color: rgba(255,255,255,0.15) transparent;
+  }
+  nav .logo { padding: 0 24px 20px; margin-bottom: 16px; }
+  nav .logo h1 {
+    font-family: 'Montserrat', 'Avenir Next', sans-serif;
+    font-size: 18px; font-weight: 700;
+    color: var(--accent); letter-spacing: -0.02em;
+  }
+  nav .logo p { font-size: 12px; color: var(--text-muted); margin-top: 4px; }
+  nav .nav-section {
+    padding: 12px 16px 4px;
+    font-size: 10px; font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    color: var(--text-muted);
+  }
+  nav a {
+    display: block;
+    padding: 6px 24px;
+    color: var(--text-muted);
+    text-decoration: none;
+    font-size: 13px;
+    transition: all var(--transition);
+    border-left: 2px solid transparent;
+  }
+  nav a:hover, nav a.active {
+    color: var(--text);
+    background: rgba(255, 255, 255, 0.06);
+    border-left-color: var(--accent);
+  }
+
+  main {
+    margin-left: 280px;
+    max-width: 960px;
+    padding: 48px 48px 120px;
+  }
+
+  h2 {
+    font-family: 'Montserrat', 'Avenir Next', sans-serif;
+    font-size: 28px; font-weight: 700;
+    margin: 64px 0 8px;
+    padding-top: 24px;
+    color: var(--text);
+    letter-spacing: -0.02em;
+  }
+  h2:first-of-type { margin-top: 0; }
+  h3 {
+    font-family: 'Montserrat', 'Avenir Next', sans-serif;
+    font-size: 20px; font-weight: 600;
+    margin: 40px 0 12px;
+    color: var(--text);
+  }
+  h4 {
+    font-size: 16px; font-weight: 600;
+    margin: 24px 0 8px;
+    color: var(--accent);
+  }
+  p { margin: 8px 0 16px; color: var(--text); }
+  ul, ol { margin: 8px 0 16px 24px; color: var(--text); }
+  li { margin: 4px 0; }
+
+  .subtitle {
+    font-size: 15px;
+    color: var(--text-muted);
+    margin-bottom: 32px;
+  }
+
+  .hero { text-align: center; padding: 48px 0 56px; margin-bottom: 24px; }
+  .hero h1 {
+    font-family: 'Montserrat', 'Avenir Next', sans-serif;
+    font-size: 42px; font-weight: 800;
+    background: linear-gradient(135deg, var(--accent), #f59e0b);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    letter-spacing: -0.03em;
+  }
+  .hero .tagline {
+    font-size: 18px;
+    color: var(--text-muted);
+    margin: 12px auto 0;
+    max-width: 640px;
+  }
+  .hero .meta {
+    margin-top: 20px;
+    display: flex; gap: 16px;
+    justify-content: center; flex-wrap: wrap;
+  }
+  .hero .meta span {
+    font-size: 12px;
+    padding: 4px 12px;
+    border-radius: 999px;
+    background: var(--glass-dark);
+    backdrop-filter: blur(var(--glass-blur));
+    -webkit-backdrop-filter: blur(var(--glass-blur));
+    border: 1px solid var(--glass-border);
+    color: var(--text-muted);
+  }
+
+  .card {
+    background: var(--glass-card);
+    backdrop-filter: blur(var(--glass-blur));
+    -webkit-backdrop-filter: blur(var(--glass-blur));
+    border: 1px solid var(--glass-border);
+    box-shadow: var(--shadow-glass), var(--shadow-glass-inset);
+    border-radius: var(--radius);
+    padding: 24px;
+    margin: 16px 0;
+  }
+  .card-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+    gap: 16px;
+    margin: 16px 0;
+  }
+  .card-sm {
+    background: var(--glass-darker);
+    backdrop-filter: blur(var(--glass-blur-strong));
+    -webkit-backdrop-filter: blur(var(--glass-blur-strong));
+    border: 1px solid var(--glass-border);
+    box-shadow: var(--shadow-glass), var(--shadow-glass-inset);
+    border-radius: var(--radius);
+    padding: 16px 20px;
+    transition: transform var(--transition), box-shadow var(--transition);
+  }
+  .card-sm:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 12px 32px rgba(0, 0, 0, 0.6), inset 0 1px 0 rgba(255, 255, 255, 0.25);
+  }
+  .card-sm h4 { margin: 0 0 6px; font-size: 14px; }
+  .card-sm p { font-size: 13px; color: var(--text-muted); margin: 0; }
+
+  .badge {
+    display: inline-block;
+    font-size: 11px; font-weight: 600;
+    padding: 2px 10px;
+    border-radius: 999px;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+  }
+  .badge-green { background: var(--green-dim); color: var(--green); }
+  .badge-red { background: var(--red-dim); color: var(--red); }
+  .badge-yellow { background: var(--yellow-dim); color: var(--yellow); }
+  .badge-blue { background: var(--blue-dim); color: var(--blue); }
+  .badge-purple { background: var(--purple-dim); color: var(--purple); }
+  .badge-accent { background: var(--accent-dim); color: var(--accent); }
+
+  table {
+    width: 100%;
+    border-collapse: separate;
+    border-spacing: 0;
+    margin: 16px 0;
+    font-size: 13px;
+    background: var(--glass-card);
+    backdrop-filter: blur(var(--glass-blur));
+    -webkit-backdrop-filter: blur(var(--glass-blur));
+    border: 1px solid var(--glass-border);
+    border-radius: var(--radius-sm);
+    overflow: hidden;
+    box-shadow: var(--shadow-glass);
+  }
+  th {
+    text-align: left;
+    padding: 10px 14px;
+    background: rgba(0, 0, 0, 0.4);
+    color: var(--text-muted);
+    font-weight: 600;
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    border-bottom: 1px solid var(--glass-border);
+  }
+  td {
+    padding: 10px 14px;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+    vertical-align: top;
+  }
+  tr:last-child td { border-bottom: none; }
+  tr:hover td { background: rgba(255, 255, 255, 0.04); }
+
+  code {
+    font-family: 'Menlo', 'Monaco', 'Courier New', monospace;
+    font-size: 13px;
+    background: rgba(0, 0, 0, 0.4);
+    padding: 2px 6px;
+    border-radius: 4px;
+    color: var(--accent);
+  }
+  pre {
+    background: var(--glass-card);
+    backdrop-filter: blur(var(--glass-blur));
+    -webkit-backdrop-filter: blur(var(--glass-blur));
+    border: 1px solid var(--glass-border);
+    border-radius: var(--radius-sm);
+    padding: 20px;
+    overflow-x: auto;
+    margin: 16px 0;
+    font-size: 13px;
+    line-height: 1.6;
+    box-shadow: var(--shadow-glass);
+  }
+  pre code { background: none; padding: 0; color: var(--text); }
+
+  .diagram {
+    background: var(--glass-card);
+    backdrop-filter: blur(var(--glass-blur-strong));
+    -webkit-backdrop-filter: blur(var(--glass-blur-strong));
+    border: 1px solid var(--glass-border);
+    box-shadow: var(--shadow-glass), var(--shadow-glass-inset);
+    border-radius: var(--radius);
+    padding: 24px;
+    margin: 20px 0;
+    overflow-x: auto;
+    font-family: 'Menlo', 'Monaco', monospace;
+    font-size: 13px;
+    line-height: 1.5;
+    color: var(--text-muted);
+    white-space: pre;
+  }
+  .diagram .highlight { color: var(--accent); font-weight: 600; }
+  .diagram .green { color: var(--green); }
+  .diagram .blue { color: var(--blue); }
+  .diagram .red { color: var(--red); }
+  .diagram .purple { color: var(--purple); }
+
+  .callout {
+    background: var(--glass-card);
+    backdrop-filter: blur(var(--glass-blur));
+    -webkit-backdrop-filter: blur(var(--glass-blur));
+    border: 1px solid var(--glass-border);
+    border-radius: var(--radius-sm);
+    padding: 16px 20px;
+    margin: 16px 0;
+    font-size: 14px;
+    border-left: 3px solid;
+    box-shadow: var(--shadow-glass);
+  }
+  .callout-info { border-color: var(--blue); }
+  .callout-warn { border-color: var(--yellow); }
+  .callout-danger { border-color: var(--red); }
+  .callout-success { border-color: var(--green); }
+  .callout-learn {
+    border-color: var(--purple);
+    background: rgba(167, 139, 250, 0.06);
+    position: relative;
+    padding-top: 32px;
+  }
+  .callout-learn::before {
+    content: 'Layman Analogy';
+    position: absolute;
+    top: 10px; left: 20px;
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--purple);
+  }
+  .callout strong { display: block; margin-bottom: 4px; }
+
+  .score-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+    gap: 12px;
+    margin: 20px 0;
+  }
+  .score-card {
+    background: var(--glass-darker);
+    backdrop-filter: blur(var(--glass-blur));
+    -webkit-backdrop-filter: blur(var(--glass-blur));
+    border: 1px solid var(--glass-border);
+    box-shadow: var(--shadow-glass), var(--shadow-glass-inset);
+    border-radius: var(--radius);
+    padding: 16px;
+    text-align: center;
+    transition: transform var(--transition);
+  }
+  .score-card:hover { transform: translateY(-2px); }
+  .score-card .score {
+    font-family: 'Montserrat', 'Avenir Next', sans-serif;
+    font-size: 28px; font-weight: 800;
+    margin: 4px 0;
+    color: var(--accent);
+  }
+  .score-card .label {
+    font-size: 11px;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+  }
+
+  hr {
+    border: none;
+    border-top: 1px solid var(--glass-border);
+    margin: 48px 0;
+  }
+
+  @media (max-width: 900px) {
+    nav { display: none; }
+    main { margin-left: 0; padding: 20px; }
+    .hero h1 { font-size: 32px; }
+  }
+</style>
+</head>
+<body>
+
+<nav>
+  <div class="logo">
+    <h1>Archipelago</h1>
+    <p>LoRa &amp; Mesh Guide</p>
+  </div>
+
+  <div class="nav-section">Overview</div>
+  <a href="#intro">Introduction</a>
+  <a href="#layman">What is LoRa?</a>
+  <a href="#why">Why Archipelago uses it</a>
+
+  <div class="nav-section">Stack</div>
+  <a href="#hardware">Hardware &amp; Firmware</a>
+  <a href="#serial">USB Serial Transport</a>
+  <a href="#wire">Wire Format</a>
+  <a href="#crypto">Encryption Layers</a>
+  <a href="#fragmentation">Fragmentation</a>
+
+  <div class="nav-section">Routing</div>
+  <a href="#dual-transport">Dual Transport</a>
+  <a href="#addressing">Addressing</a>
+  <a href="#synthetic">Federation Contacts</a>
+
+  <div class="nav-section">Messages</div>
+  <a href="#msg-overview">All 23 Types</a>
+  <a href="#msg-text">Text / Reply / Edit</a>
+  <a href="#msg-social">Reactions &amp; Receipts</a>
+  <a href="#msg-content">Content / Files</a>
+  <a href="#msg-bitcoin">Bitcoin &amp; Lightning</a>
+  <a href="#msg-safety">Alerts &amp; Presence</a>
+  <a href="#msg-identity">Identity &amp; Keys</a>
+
+  <div class="nav-section">Operations</div>
+  <a href="#rpc">RPC API</a>
+  <a href="#ui">User Interface</a>
+  <a href="#listener">Listener Loop</a>
+  <a href="#files">File Map</a>
+</nav>
+
+<main>
+
+<section class="hero">
+  <h1>LoRa &amp; Mesh Functionality</h1>
+  <p class="tagline">How Archipelago sends encrypted messages, Bitcoin transactions, and emergency alerts over long-range radio when the internet is gone.</p>
+  <div class="meta">
+    <span>Meshcore Companion USB</span>
+    <span>Double Ratchet E2E</span>
+    <span>23 Message Types</span>
+    <span>160-byte LoRa Frame</span>
+  </div>
+</section>
+
+<h2 id="intro">Introduction</h2>
+<p>This document explains Archipelago's mesh subsystem — the code under <code>core/archipelago/src/mesh/</code> that lets nodes talk to each other over <strong>LoRa radio</strong> instead of (or alongside) the internet. It covers every message type, the transport layer that carries it, the cryptography that protects it, and the code paths that glue it all together.</p>
+<p>The goal: give you a mental model that works both ways. If you're an engineer, you can read this and know exactly which bytes get put on the wire for a given RPC call. If you're not, the purple "Layman Analogy" boxes translate each piece into familiar metaphors.</p>
+
+<h2 id="layman">What is LoRa? <span class="badge badge-purple">Layman</span></h2>
+<div class="callout callout-learn">
+  <strong>Think of LoRa as a whisper that travels 10 kilometers.</strong>
+  Normal Wi-Fi is a shout: loud, fast, lots of data, but only a few rooms away. LoRa is the opposite — a tiny, slow whisper that can cross an entire city because it's so narrow and patient that it slips through walls, trees, and hills. The tradeoff: you can only whisper about <strong>160 bytes</strong> at a time, and each whisper takes a second or two to complete.
+</div>
+<p>Technically, LoRa (Long Range) is a proprietary radio modulation by Semtech that uses <em>chirp spread spectrum</em> (CSS). It operates in unlicensed ISM bands (915 MHz in the Americas, 868 MHz in Europe) and trades bandwidth for sensitivity, allowing receivers to decode signals below the noise floor. Typical line-of-sight range is 5–15 km with a simple antenna; data rates are 0.3–50 kbps.</p>
+<p>Archipelago does not talk to a LoRa chipset directly. Instead it delegates to a small USB-attached device running <strong>Meshcore firmware</strong>, which handles the radio, the mesh routing, and the store-and-forward queue. Archipelago speaks to that device over USB serial.</p>
+
+<h2 id="why">Why Archipelago uses it</h2>
+<div class="card-grid">
+  <div class="card-sm">
+    <h4>Off-grid safety</h4>
+    <p>Dead-man switch and emergency alerts reach family without cell coverage.</p>
+  </div>
+  <div class="card-sm">
+    <h4>Censorship resistance</h4>
+    <p>No ISP, no DNS, no TLS termination — just radio waves between nodes.</p>
+  </div>
+  <div class="card-sm">
+    <h4>Bitcoin when internet is down</h4>
+    <p>Relay signed transactions and Lightning payments through on-grid peers.</p>
+  </div>
+  <div class="card-sm">
+    <h4>Truly peer-to-peer chat</h4>
+    <p>Text, replies, reactions, read-receipts — Telegram-quality UX, zero servers.</p>
+  </div>
+</div>
+
+<hr>
+
+<h2 id="hardware">Hardware &amp; Firmware</h2>
+<p>Archipelago expects a Meshcore-compatible radio board plugged into USB. The firmware handles RF, mesh forwarding, and contact management; Archipelago handles encryption, message types, and UI.</p>
+
+<table>
+<thead><tr><th>Component</th><th>Role</th><th>Examples</th></tr></thead>
+<tbody>
+<tr><td><strong>MCU</strong></td><td>Runs Meshcore firmware, talks USB serial</td><td>ESP32, nRF52840</td></tr>
+<tr><td><strong>Radio</strong></td><td>Semtech LoRa transceiver</td><td>SX1262, SX1276</td></tr>
+<tr><td><strong>Board</strong></td><td>MCU + radio + USB + antenna</td><td>Heltec V3, T-Beam, RAK WisBlock, Station G2</td></tr>
+<tr><td><strong>Firmware</strong></td><td>Mesh routing + Companion USB protocol</td><td>Meshcore</td></tr>
+<tr><td><strong>Connection</strong></td><td>USB CDC-ACM serial</td><td><code>/dev/mesh-radio</code> (udev symlink), <code>/dev/ttyUSB*</code>, <code>/dev/ttyACM*</code></td></tr>
+<tr><td><strong>Link params</strong></td><td>115200 baud, 8N1</td><td>Set in <code>mesh/serial.rs</code></td></tr>
+</tbody>
+</table>
+
+<div class="callout callout-learn">
+  <strong>It's a modem.</strong> Exactly like a 56k modem from the '90s plugged into your serial port, except the other end of the wire is a radio mesh network instead of a phone line. Archipelago tells it "send this to contact X", and it figures out which radios to hop through.
+</div>
+
+<h2 id="serial">USB Serial Transport</h2>
+<p>Every byte in and out of the radio is wrapped in a framed serial protocol. The host speaks with <code>'&lt;'</code> and listens for <code>'&gt;'</code>.</p>
+
+<div class="diagram">Host  → Device:  <span class="highlight">0x3C</span> '&lt;' │ <span class="blue">len_lo len_hi</span> │ <span class="green">frame_bytes...</span>
+Device → Host:  <span class="highlight">0x3E</span> '&gt;' │ <span class="blue">len_lo len_hi</span> │ <span class="green">frame_bytes...</span>
+
+Baud: 115200   Framing: 8N1   Source: mesh/serial.rs</div>
+
+<p>The frame body is a Meshcore <em>Companion</em> command or response. Archipelago builds these in <code>mesh/protocol.rs</code> and parses replies in <code>mesh/listener/decode.rs</code>.</p>
+
+<h3>Companion commands Archipelago uses</h3>
+<table>
+<thead><tr><th>Code</th><th>Name</th><th>Purpose</th></tr></thead>
+<tbody>
+<tr><td><code>0x01</code></td><td>APP_START</td><td>Handshake; device returns its node_id and name</td></tr>
+<tr><td><code>0x02</code></td><td>SEND_TXT_MSG</td><td>Send payload to a contact (targeted by 6-byte pubkey prefix)</td></tr>
+<tr><td><code>0x03</code></td><td>SEND_CHANNEL_TXT_MSG</td><td>Broadcast on a channel (no specific recipient)</td></tr>
+<tr><td><code>0x04</code></td><td>GET_CONTACTS</td><td>Pull the device's contact table</td></tr>
+<tr><td><code>0x06</code></td><td>SET_DEVICE_TIME</td><td>Sync Unix timestamp for message dating</td></tr>
+<tr><td><code>0x07</code></td><td>SEND_SELF_ADVERT</td><td>Broadcast our identity onto the mesh</td></tr>
+<tr><td><code>0x08</code></td><td>SET_ADVERT_NAME</td><td>Set our display name</td></tr>
+<tr><td><code>0x0A</code></td><td>SYNC_NEXT_MESSAGE</td><td>Pop the next queued inbound message</td></tr>
+<tr><td><code>0x0B</code></td><td>SET_RADIO_PARAMS</td><td>Frequency, spreading factor, bandwidth</td></tr>
+<tr><td><code>0x0C</code></td><td>SET_RADIO_TX_POWER</td><td>Transmit power (dBm)</td></tr>
+<tr><td><code>0x38</code></td><td>GET_STATS</td><td>Device statistics</td></tr>
+</tbody>
+</table>
+
+<h3>Responses and push notifications</h3>
+<p>Responses begin with a status byte. Codes <code>&lt; 0x80</code> are replies to a command we sent; codes <code>&gt;= 0x80</code> are asynchronous push events from the device.</p>
+
+<table>
+<thead><tr><th>Code</th><th>Name</th><th>Meaning</th></tr></thead>
+<tbody>
+<tr><td><code>0x00</code></td><td>RESP_OK</td><td>Command accepted</td></tr>
+<tr><td><code>0x01</code></td><td>RESP_ERR</td><td>Command failed + error code</td></tr>
+<tr><td><code>0x03</code></td><td>RESP_CONTACT</td><td>One contact entry (32-byte pubkey + metadata)</td></tr>
+<tr><td><code>0x05</code></td><td>RESP_SELF_INFO</td><td>Our node_id and name after APP_START</td></tr>
+<tr><td><code>0x10</code></td><td>RESP_CONTACT_MSG_V3</td><td>Direct inbound message (SNR + sender prefix + payload)</td></tr>
+<tr><td><code>0x11</code></td><td>RESP_CHANNEL_MSG_V3</td><td>Channel broadcast inbound</td></tr>
+<tr><td><code>0x83</code></td><td>PUSH_MESSAGES_WAITING</td><td>Async: new messages in queue, call SYNC_NEXT_MESSAGE</td></tr>
+</tbody>
+</table>
+
+<h2 id="wire">Wire Format — the payload byte 0</h2>
+<p>Once a frame reaches the message payload, Archipelago looks at the <strong>first byte</strong> to decide what kind of thing it's dealing with. This single-byte marker is the master switch of the entire mesh protocol.</p>
+
+<div class="diagram"><span class="highlight">0x00</span>  Plain text (legacy, unencrypted)
+<span class="highlight">0x01</span>  Identity broadcast (ARCHY:2 / ARCHY:3)
+<span class="highlight">0x02</span>  Typed CBOR envelope (plaintext, used for debug or intra-LAN)
+<span class="highlight">0xEE</span>  Encrypted typed  — ChaCha20-Poly1305 w/ static shared secret
+<span class="highlight">0xDD</span>  Ratcheted typed  — Double Ratchet, forward-secure</div>
+
+<p>Markers <code>0xEE</code> and <code>0xDD</code> are the interesting ones — they carry real production traffic. Everything else is either debug or identity bootstrap.</p>
+
+<h3>0xEE — static-key encrypted envelope</h3>
+<pre><code>[0xEE] [nonce: 12 bytes] [ciphertext...] [auth tag: 16 bytes]</code></pre>
+<ul>
+<li>Key: X25519 ECDH between our Ed25519 identity (converted) and the peer's.</li>
+<li>Cipher: ChaCha20-Poly1305 AEAD.</li>
+<li>Max plaintext: <code>160 − 1 − 12 − 16 = 131</code> bytes (see <code>crypto::MAX_ENCRYPTED_PLAINTEXT</code>).</li>
+<li>Properties: confidential + authenticated, <em>but</em> compromise of a key decrypts all history.</li>
+</ul>
+
+<h3>0xDD — Double Ratchet envelope</h3>
+<pre><code>[0xDD] [RatchetHeader: 40 bytes] [nonce: 12] [ciphertext] [tag: 16]</code></pre>
+<ul>
+<li>Per-message keys derived via DH ratchet + symmetric-key ratchet (HKDF-SHA256).</li>
+<li>Handles out-of-order delivery via a skipped-keys cache.</li>
+<li>Properties: forward secrecy + post-compromise recovery. Used for <code>mesh.*</code> chat once a session is established.</li>
+<li>Implementation: <code>mesh/ratchet.rs</code>, session load/save in <code>mesh/listener/session.rs</code>.</li>
+</ul>
+
+<div class="callout callout-learn">
+  <strong>Static key vs. ratchet = a safe vs. a self-shredding envelope.</strong>
+  The <code>0xEE</code> lane is like a locked safe: one key opens everything. The <code>0xDD</code> lane is like handing your friend a new envelope each time, and burning the old one — so even if someone steals next week's key, they can't read last week's messages.
+</div>
+
+<h2 id="crypto">Encryption Layers</h2>
+<p>Three cryptographic primitives combine to produce the <code>0xDD</code> ratchet flow:</p>
+
+<div class="card-grid">
+  <div class="card-sm">
+    <h4>X25519 ECDH</h4>
+    <p>Each Double Ratchet step generates a fresh keypair. Peers mix the new shared secret into the chain.</p>
+  </div>
+  <div class="card-sm">
+    <h4>HKDF-SHA256</h4>
+    <p>Derives root key, chain key, and message key at each ratchet step.</p>
+  </div>
+  <div class="card-sm">
+    <h4>ChaCha20-Poly1305</h4>
+    <p>Symmetric AEAD used for the actual payload encryption + authentication tag.</p>
+  </div>
+</div>
+
+<h3>Session bootstrap — X3DH-like handshake</h3>
+<p>Before the ratchet can start, peers exchange a <strong>PrekeyBundle</strong> (type 5) and a <strong>SessionInit</strong> (type 6). Those two messages are carried by the <code>0xEE</code> static-key envelope, because the ratchet session doesn't exist yet. Once <code>SessionInit</code> is processed, subsequent traffic switches to <code>0xDD</code>. See <code>mesh/x3dh.rs</code>.</p>
+
+<h2 id="fragmentation">Fragmentation — how a 500-byte message rides a 160-byte pipe</h2>
+<p>The LoRa frame budget is <strong>160 bytes</strong> (<code>protocol::MAX_MESSAGE_LEN</code>). Subtract the marker, nonce, ratchet header, and tag and you end up with ~90 usable plaintext bytes per frame. Anything bigger gets chunked.</p>
+
+<div class="diagram"><span class="highlight">Chunk header</span>  ┌──────────┬──────────┬────────────┐
+                 │ type (1) │ id   (1) │ total  (1) │
+                 └──────────┴──────────┴────────────┘
+<span class="highlight">Chunk body</span>    Up to 140 bytes of Base64-encoded payload
+
+Sender: compress → encrypt → split into 140-char chunks
+                 → send with tiny inter-chunk delay
+Receiver: accumulate by (sender, chunk_id) → reassemble
+                 → decrypt → decompress → dispatch</div>
+
+<p>For chat messages shorter than 160 bytes, none of this kicks in — the whole thing fits in one frame. For larger payloads (long messages, forwarded content, PSBTs), the sender splits and the receiver joins.</p>
+
+<div class="callout callout-info">
+  <strong>Escape hatch: federation fallback.</strong> If a peer is a synthetic federation contact and the message is bigger than 160 bytes, Archipelago <em>skips LoRa entirely</em> and routes the message over Tor federation instead. See the <code>ContentRef</code> path in <code>rpc/mesh/typed_messages.rs</code>.
+</div>
+
+<h2 id="dual-transport">Dual Transport — LoRa + Tor federation</h2>
+<p>Archipelago treats LoRa and Tor federation as <strong>two lanes of the same highway</strong>. A single chat window may receive some messages over radio and others over onion routing, and the UI doesn't distinguish. The mesh module picks the lane per-message based on the peer type and payload size.</p>
+
+<div class="diagram">       ┌──────────────────┐
+       │  mesh.send(...)  │
+       └────────┬─────────┘
+                │
+     ┌──────────┴──────────┐
+     │ Is peer synthetic?  │
+     └──────────┬──────────┘
+         No     │     Yes
+     ┌──────────┘     └──────────┐
+     ▼                           ▼
+ <span class="highlight">LoRa radio</span>                 <span class="blue">Tor federation</span>
+ (160-byte frame)           (unlimited, slower setup)
+     │                           │
+     │ if &gt; 160 B &amp;&amp; synth ──────┘  (fallback)
+     ▼
+ Chunked over LoRa
+ or refused if no fallback</div>
+
+<h2 id="addressing">Addressing</h2>
+<ul>
+<li><strong>Contact ID</strong> — 32-bit handle from Meshcore's contact table. Used by <code>SEND_TXT_MSG</code>.</li>
+<li><strong>Pubkey prefix</strong> — first 6 bytes of the peer's Ed25519 public key. Included on the wire so receivers can deduplicate and route replies.</li>
+<li><strong>DID / onion</strong> — used for federation peers; synthetic contacts carry the DID so the mesh layer can hand the message to the federation layer.</li>
+</ul>
+
+<h2 id="synthetic">Synthetic federation contacts</h2>
+<p>To let the chat list show federation peers <em>before</em> any message arrives, Archipelago inserts <strong>synthetic contacts</strong> into the mesh peer list. Their contact IDs live in the upper half of the 32-bit space (<code>≥ 0x8000_0000</code>), derived deterministically from the federation node's Ed25519 pubkey. Collisions with real LoRa contact IDs are impossible by construction.</p>
+
+<hr>
+
+<h2 id="msg-overview">All 23 Message Types</h2>
+<p>Every typed message is a CBOR envelope identified by a single <code>MeshMessageType</code> byte. The <strong>Transport</strong> column shows which marker carries it on the wire and which Companion command is used.</p>
+
+<table>
+<thead><tr>
+<th>ID</th><th>Type</th><th>Purpose</th><th>Marker</th><th>Cmd</th><th>Chunked?</th>
+</tr></thead>
+<tbody>
+<tr><td>0</td><td>Text</td><td>Plain chat message</td><td>0xDD</td><td>0x02</td><td>If &gt;160 B</td></tr>
+<tr><td>1</td><td>Alert</td><td>Emergency / dead-man heartbeat</td><td>0xDD</td><td>0x02/0x03</td><td>No (short)</td></tr>
+<tr><td>2</td><td>Invoice</td><td>Lightning / BOLT11 invoice</td><td>0xDD</td><td>0x02</td><td>Usually</td></tr>
+<tr><td>3</td><td>PsbtHash</td><td>Unsigned tx hash for co-signing</td><td>0xDD</td><td>0x02</td><td>No</td></tr>
+<tr><td>4</td><td>Coordinate</td><td>GPS location share</td><td>0xDD</td><td>0x02</td><td>No</td></tr>
+<tr><td>5</td><td>PrekeyBundle</td><td>X3DH bootstrap (pre-session)</td><td>0xEE</td><td>0x02</td><td>No</td></tr>
+<tr><td>6</td><td>SessionInit</td><td>Initial ratchet message</td><td>0xEE</td><td>0x02</td><td>No</td></tr>
+<tr><td>7</td><td>BlockHeader</td><td>Bitcoin block height/hash</td><td>0xDD</td><td>0x03</td><td>No</td></tr>
+<tr><td>8</td><td>TxRelay</td><td>Signed Bitcoin tx for on-grid peer to broadcast</td><td>0xDD</td><td>0x02</td><td>Yes</td></tr>
+<tr><td>9</td><td>TxRelayResponse</td><td>txid or error from the relay peer</td><td>0xDD</td><td>0x02</td><td>No</td></tr>
+<tr><td>10</td><td>LightningRelay</td><td>BOLT11 to pay via on-grid peer</td><td>0xDD</td><td>0x02</td><td>Yes</td></tr>
+<tr><td>11</td><td>LightningRelayResponse</td><td>payment_hash or error</td><td>0xDD</td><td>0x02</td><td>No</td></tr>
+<tr><td>12</td><td>TxConfirmation</td><td>Depth update (1/2/3 confs)</td><td>0xDD</td><td>0x02</td><td>No</td></tr>
+<tr><td>13</td><td>Reply</td><td>Quoted reply to a previous message</td><td>0xDD</td><td>0x02</td><td>If long</td></tr>
+<tr><td>14</td><td>Reaction</td><td>Emoji reaction on MessageKey</td><td>0xDD</td><td>0x02</td><td>No</td></tr>
+<tr><td>15</td><td>ReadReceipt</td><td>"Seen up to MessageKey X"</td><td>0xDD</td><td>0x02</td><td>No</td></tr>
+<tr><td>16</td><td>Forward</td><td>Re-forwarded original w/ provenance</td><td>0xDD</td><td>0x02</td><td>Yes</td></tr>
+<tr><td>17</td><td>Edit</td><td>In-place text replacement</td><td>0xDD</td><td>0x02</td><td>If long</td></tr>
+<tr><td>18</td><td>Delete</td><td>Tombstone for earlier message</td><td>0xDD</td><td>0x02</td><td>No</td></tr>
+<tr><td>19</td><td>ContentRef</td><td>CID of blob held by sender (file/image)</td><td>0xDD</td><td>0x02 or Tor</td><td>Federation fallback</td></tr>
+<tr><td>20</td><td>Presence</td><td>Heartbeat + last-activity epoch</td><td>0xDD</td><td>0x03</td><td>No</td></tr>
+<tr><td>21</td><td>ChannelInvite</td><td>Group membership announcement</td><td>0xDD</td><td>0x03</td><td>No</td></tr>
+<tr><td>22</td><td>ContactCard</td><td>Shareable federation node card</td><td>0xDD</td><td>0x02</td><td>Maybe</td></tr>
+</tbody>
+</table>
+
+<p>The remaining sections walk through each category and explain both the sender-side code path and what the bytes look like on the air.</p>
+
+<h2 id="msg-text">Text, Reply, Edit, Delete, Forward</h2>
+
+<h3>Text (type 0)</h3>
+<p><strong>Sender path.</strong> <code>rpc.mesh.send</code> → <code>typed_messages::send_text</code> → CBOR-encode the <code>Text{body}</code> variant → ratchet-encrypt → prefix <code>0xDD</code> → if under 160 B, send in one <code>SEND_TXT_MSG</code> frame; otherwise split into Base64 chunks and send sequentially with a small inter-frame sleep so the radio doesn't overflow its TX buffer.</p>
+
+<h3>Reply (type 13)</h3>
+<p>Same as Text, but the CBOR envelope carries a <code>MessageKey</code> pointing at the parent message (sender pubkey prefix + timestamp). The UI renders a quote banner; the wire cost is ~12 extra bytes.</p>
+
+<h3>Edit (type 17)</h3>
+<p>Envelope contains the original <code>MessageKey</code> plus the new body. Receiver updates its local store in-place and tags the entry "edited".</p>
+
+<h3>Delete (type 18)</h3>
+<p>Tombstone only: <code>MessageKey</code> with no body. Receivers keep the original bytes but mark the row deleted. Costs ~20 bytes on the wire.</p>
+
+<h3>Forward (type 16)</h3>
+<p>Wraps original <code>{sender_name, original_timestamp, body}</code> so the receiver can render "Forwarded from &lt;name&gt;". Because the body is nested, forwards are <em>almost always</em> chunked.</p>
+
+<h2 id="msg-social">Reaction, ReadReceipt, Presence</h2>
+
+<h3>Reaction (type 14)</h3>
+<p>Envelope: <code>{target: MessageKey, emoji: String}</code>. Single-frame, single-emoji. Receiver aggregates reactions per MessageKey and shows them as inline chips (see <code>MessageActions</code> in <code>neode-ui</code>).</p>
+
+<h3>ReadReceipt (type 15)</h3>
+<p>Envelope: <code>{up_to: MessageKey}</code>. Semantically "I've seen everything up to and including this message." One receipt covers all prior unread, so traffic is O(1) per read burst rather than O(n).</p>
+
+<h3>Presence (type 20)</h3>
+<p>Periodic heartbeat carrying <code>{last_activity_epoch}</code>. Broadcast on a channel (<code>SEND_CHANNEL_TXT_MSG</code>, cmd <code>0x03</code>) rather than to a specific peer, so every listener updates their "last seen" indicator in one shot.</p>
+
+<div class="callout callout-learn">
+  <strong>Like a lighthouse beacon.</strong> Presence doesn't go to anyone in particular — it's a flash that everyone in radio range can see. "I'm still here, last active two minutes ago." Cheap and unaddressed.
+</div>
+
+<h2 id="msg-content">ContentRef — files and images without bloating the radio</h2>
+<p>LoRa cannot move a 500 KB image. The <code>ContentRef</code> type (19) solves this by sending only a <strong>pointer</strong> — a content ID (CID) plus a tiny thumbnail or description — and letting the receiver fetch the full blob out-of-band over Tor federation.</p>
+
+<div class="diagram">Sender                              Receiver
+──────                              ────────
+store blob locally (CID)
+┌──────────────────────┐
+│ ContentRef {cid,     │  ──ratchet──▶
+│ mime, size,          │   0xDD
+│ thumb_hash}          │   over LoRa
+└──────────────────────┘
+                                    see CID in chat
+                                    click to fetch
+                                    ┌─────────────────┐
+                                    │ rpc.mesh.fetch- │
+                                    │ content(cid)    │
+                                    └────────┬────────┘
+                                             ▼
+                                    federation (Tor)
+                                    resolve DID → pull blob</div>
+
+<div class="callout callout-info">
+  <strong>Resolution bug fix note.</strong> An earlier revision of <code>ContentRef</code> routed the fetch via a name-match on the contact list, which broke when two peers had the same display name. The fix (see commit <code>5f7ebf14</code>) resolves the owning peer by DID and falls back to name-match only if DID lookup fails.
+</div>
+
+<h2 id="msg-bitcoin">Bitcoin &amp; Lightning over LoRa</h2>
+<p>Archipelago uses the mesh as a <strong>Bitcoin transport of last resort</strong>. Signed transactions travel from an offline signer, through the mesh, to a peer with internet, who then rebroadcasts them to the Bitcoin network and reports back.</p>
+
+<h3>TxRelay (8) → TxRelayResponse (9) → TxConfirmation (12)</h3>
+<div class="diagram">Offline signer                 On-grid relay peer            Bitcoin p2p
+──────────────                 ──────────────────            ───────────
+sign tx
+┌─────────────┐
+│ TxRelay     │ ─ratchet/LoRa▶ decrypt → validate
+│ {raw_tx}    │                  broadcast via bitcoind  ───▶ mempool
+└─────────────┘                      │
+                                     ▼
+                        ┌────────────────────────┐
+               ◀─ratchet│ TxRelayResponse{txid}  │
+                        └────────────────────────┘
+                              (or {error})
+
+later, as blocks arrive:
+                        ┌────────────────────────┐
+               ◀─ratchet│ TxConfirmation         │
+                        │ {txid, depth: 1..3}    │
+                        └────────────────────────┘</div>
+
+<p>The binary framing in <code>mesh/bitcoin_relay.rs</code> is intentionally tight — raw binary, not CBOR — to keep a signed 1-input/1-output tx inside one or two 160-byte frames. Confirmation updates are tiny (txid + depth byte) and ride in a single frame.</p>
+
+<h3>LightningRelay (10) → LightningRelayResponse (11)</h3>
+<p>Same shape but the payload is a BOLT11 invoice string. The relay peer pays the invoice from its own node and returns <code>payment_hash</code> or an error. Invoices are often long enough to chunk.</p>
+
+<h3>Invoice (2) and PsbtHash (3)</h3>
+<p>These are <em>not</em> relays — they're peer-to-peer handoffs. <code>Invoice</code> delivers a BOLT11 to be paid by the recipient. <code>PsbtHash</code> carries just the hash of an unsigned PSBT so the recipient can retrieve the full PSBT out-of-band and co-sign.</p>
+
+<h3>BlockHeader (7)</h3>
+<p>Off-grid nodes need a recent block height to avoid being fooled by stale data. A BlockHeader broadcast (sent via <code>SEND_CHANNEL_TXT_MSG</code>) lets anyone in range learn the latest height and hash from any peer with internet. Tiny payload: 4 bytes height + 32 bytes hash.</p>
+
+<h2 id="msg-safety">Alerts, Coordinates, Dead-Man</h2>
+
+<h3>Alert (type 1)</h3>
+<p>Envelope: <code>{kind, message, sender_contact_id}</code>. Kinds include <code>Emergency</code> and <code>Deadman</code>. Alerts can be sent direct-to-contact (for family) or channel-broadcast (for community).</p>
+
+<h3>Dead-man switch</h3>
+<p>A background task in <code>mesh/alerts.rs</code> sends a <code>Deadman</code> alert on a configurable interval (default 6 hours). If the user doesn't touch the UI within that window, the alert fires automatically and asks chosen recipients to check in. Powered off? The next peer to receive your last heartbeat notices the gap.</p>
+
+<h3>Coordinate (type 4)</h3>
+<p>Envelope: <code>{lat, lon, accuracy_m}</code> with lat/lon as fixed-point integers to stay under 16 bytes. Used for off-grid location sharing — hiking, sailing, field ops.</p>
+
+<h3>ChannelInvite (type 21)</h3>
+<p>Phase 5 group chat primitive. Announces a new channel and its membership so other nodes can subscribe. Broadcast via <code>SEND_CHANNEL_TXT_MSG</code>.</p>
+
+<h2 id="msg-identity">Identity, PrekeyBundle, ContactCard</h2>
+
+<h3>Identity broadcast (marker 0x01, ARCHY:2/3)</h3>
+<p>The handshake. Before any ratchet session exists, a node advertises its Ed25519 public key on the mesh with an identity packet prefixed <code>0x01</code>. This is how peers discover each other. The payload encodes protocol version (<code>ARCHY:2</code> or <code>ARCHY:3</code>) and the raw pubkey. Carried by <code>CMD_SEND_SELF_ADVERT</code> (<code>0x07</code>).</p>
+
+<h3>PrekeyBundle (type 5) and SessionInit (type 6)</h3>
+<p>X3DH handshake. <code>PrekeyBundle</code> advertises a signed prekey; <code>SessionInit</code> consumes it to derive the initial ratchet root key. Both ride on <code>0xEE</code> (static-key encryption), because the ratchet session they're creating doesn't yet exist.</p>
+
+<h3>ContactCard (type 22)</h3>
+<p>A shareable card containing <code>{did, onion_address, pubkey, display_name}</code>. When a receiver taps "add" on the card, Archipelago one-click federates with that node over Tor. This is the bridge that lets LoRa-discovered peers become full federation contacts.</p>
+
+<hr>
+
+<h2 id="rpc">RPC API — what callers actually invoke</h2>
+<p>Every user-facing action goes through the RPC dispatcher (<code>api/rpc/dispatcher.rs</code>, lines 287+) and ends in <code>api/rpc/mesh/typed_messages.rs</code>. The tables below show the public surface.</p>
+
+<h3>Core commands</h3>
+<table>
+<thead><tr><th>RPC</th><th>Effect</th></tr></thead>
+<tbody>
+<tr><td><code>mesh.status</code></td><td>Device info, peer count, enabled state</td></tr>
+<tr><td><code>mesh.peers</code></td><td>List all discovered peers with RSSI / SNR / hop count</td></tr>
+<tr><td><code>mesh.messages</code></td><td>Retrieve stored mesh messages</td></tr>
+<tr><td><code>mesh.send</code></td><td>Send plain text to a specific peer</td></tr>
+<tr><td><code>mesh.send-channel</code></td><td>Broadcast on a channel</td></tr>
+<tr><td><code>mesh.broadcast</code></td><td>Mesh-wide announcement</td></tr>
+<tr><td><code>mesh.configure</code></td><td>Set device params (name, power, channel)</td></tr>
+<tr><td><code>mesh.debug-dump</code></td><td>Raw state for debugging</td></tr>
+</tbody>
+</table>
+
+<h3>Rich message commands</h3>
+<table>
+<thead><tr><th>RPC</th><th>Msg Type</th><th>Notes</th></tr></thead>
+<tbody>
+<tr><td><code>mesh.send-invoice</code></td><td>Invoice (2)</td><td>Deliver BOLT11 to peer</td></tr>
+<tr><td><code>mesh.send-coordinate</code></td><td>Coordinate (4)</td><td>Single frame, fixed-point</td></tr>
+<tr><td><code>mesh.send-alert</code></td><td>Alert (1)</td><td>Emergency or deadman</td></tr>
+<tr><td><code>mesh.send-content</code></td><td>ContentRef (19)</td><td>Stores blob, sends CID</td></tr>
+<tr><td><code>mesh.fetch-content</code></td><td>—</td><td>Pulls blob via federation</td></tr>
+<tr><td><code>mesh.send-psbt</code></td><td>PsbtHash (3)</td><td>Hash only, full PSBT via fetch</td></tr>
+<tr><td><code>mesh.send-reply</code></td><td>Reply (13)</td><td>Quoted response</td></tr>
+<tr><td><code>mesh.send-reaction</code></td><td>Reaction (14)</td><td>Emoji</td></tr>
+<tr><td><code>mesh.send-read-receipt</code></td><td>ReadReceipt (15)</td><td>Cumulative "seen up to"</td></tr>
+<tr><td><code>mesh.forward-message</code></td><td>Forward (16)</td><td>Wraps original + provenance</td></tr>
+<tr><td><code>mesh.edit-message</code></td><td>Edit (17)</td><td>In-place text replacement</td></tr>
+<tr><td><code>mesh.delete-message</code></td><td>Delete (18)</td><td>Tombstone</td></tr>
+</tbody>
+</table>
+
+<h2 id="ui">User Interface</h2>
+<p>The Vue side lives under <code>neode-ui/src/views/mesh/</code> with state in <code>stores/mesh.ts</code>. Notable panels:</p>
+<div class="card-grid">
+  <div class="card-sm">
+    <h4>Mesh chat</h4>
+    <p>Telegram-style UI with reply banners, inline reaction chips, forward/edit/delete action menu, read-receipts, outbox status.</p>
+  </div>
+  <div class="card-sm">
+    <h4>MeshBitcoinPanel</h4>
+    <p>UI for TxRelay / LightningRelay submission and confirmation tracking.</p>
+  </div>
+  <div class="card-sm">
+    <h4>MeshDeadmanPanel</h4>
+    <p>Configure dead-man interval, pick recipients, show last heartbeat time.</p>
+  </div>
+  <div class="card-sm">
+    <h4>Unified inbox</h4>
+    <p>Federation and mesh chats appear side-by-side; the transport is invisible to the user.</p>
+  </div>
+</div>
+
+<h2 id="listener">Listener loop — how inbound traffic is decoded</h2>
+<p>A long-running async task in <code>mesh/listener/mod.rs</code> owns the serial device and feeds events into the rest of the system.</p>
+
+<div class="diagram">loop {
+  event = await serial_read()
+  match event {
+    <span class="green">PUSH_MESSAGES_WAITING</span>  → send SYNC_NEXT_MESSAGE until empty
+    <span class="green">RESP_CONTACT_MSG_V3</span>    → decode.rs extracts payload
+                              → match first byte:
+                                  <span class="highlight">0x00</span> plain text
+                                  <span class="highlight">0x01</span> identity → frames::parse_identity
+                                  <span class="highlight">0x02</span> typed CBOR plaintext
+                                  <span class="highlight">0xEE</span> → crypto::decrypt_static
+                                  <span class="highlight">0xDD</span> → session::load + ratchet::decrypt
+                              → dispatch.rs routes typed msg
+                                 to chat store / bitcoin relay /
+                                 alerts / presence / ...
+    <span class="green">RESP_CONTACT</span>           → contact list update
+    <span class="green">RESP_SELF_INFO</span>         → record our node_id
+  }
+}</div>
+
+<p>Chunk reassembly happens in <code>listener/session.rs</code>, keyed by <code>(sender_pubkey_prefix, chunk_id)</code>. Incomplete chunks expire after a timeout so a lost frame doesn't leak memory.</p>
+
+<h2 id="files">File Map</h2>
+<table>
+<thead><tr><th>File</th><th>Size</th><th>Role</th></tr></thead>
+<tbody>
+<tr><td><code>mesh/mod.rs</code></td><td>52 KB</td><td>Public API, send paths, federation integration</td></tr>
+<tr><td><code>mesh/protocol.rs</code></td><td>26 KB</td><td>Frame encoding/decoding, command builders</td></tr>
+<tr><td><code>mesh/serial.rs</code></td><td>15 KB</td><td>USB driver, device detection, handshake</td></tr>
+<tr><td><code>mesh/crypto.rs</code></td><td>10 KB</td><td>X25519 ECDH, ChaCha20-Poly1305, HKDF</td></tr>
+<tr><td><code>mesh/ratchet.rs</code></td><td>16 KB</td><td>Double Ratchet implementation</td></tr>
+<tr><td><code>mesh/message_types.rs</code></td><td>23 KB</td><td>23 typed message discriminators + CBOR schemas</td></tr>
+<tr><td><code>mesh/bitcoin_relay.rs</code></td><td>17 KB</td><td>TxRelay / LightningRelay binary framing</td></tr>
+<tr><td><code>mesh/listener/dispatch.rs</code></td><td>29 KB</td><td>Typed-message routing into chat/relay/alerts</td></tr>
+<tr><td><code>mesh/listener/session.rs</code></td><td>14 KB</td><td>Ratchet session persistence + chunk reassembly</td></tr>
+<tr><td><code>mesh/x3dh.rs</code></td><td>—</td><td>Prekey / SessionInit bootstrap</td></tr>
+<tr><td><code>mesh/outbox.rs</code></td><td>—</td><td>Retry queue for unacked sends</td></tr>
+<tr><td><code>mesh/steganography.rs</code></td><td>—</td><td>Weather/sensor framing for deniable traffic</td></tr>
+<tr><td><code>api/rpc/mesh/typed_messages.rs</code></td><td>—</td><td>All <code>mesh.*</code> RPC handlers</td></tr>
+<tr><td><code>neode-ui/src/stores/mesh.ts</code></td><td>14 KB</td><td>Pinia store consumed by all mesh Vue views</td></tr>
+</tbody>
+</table>
+
+<hr>
+
+<h2>Summary scoreboard</h2>
+<div class="score-grid">
+  <div class="score-card"><div class="score">23</div><div class="label">Message types</div></div>
+  <div class="score-card"><div class="score">160</div><div class="label">Bytes / frame</div></div>
+  <div class="score-card"><div class="score">2</div><div class="label">Transports</div></div>
+  <div class="score-card"><div class="score">5</div><div class="label">Wire markers</div></div>
+  <div class="score-card"><div class="score">~6k</div><div class="label">LoC in mesh/</div></div>
+  <div class="score-card"><div class="score">FS</div><div class="label">Forward-secure</div></div>
+</div>
+
+<div class="callout callout-success">
+  <strong>Bottom line.</strong> Archipelago's mesh isn't a chat toy. It's a complete off-grid transport with forward-secure end-to-end encryption, 23 typed message kinds, Bitcoin and Lightning relay, fragmentation, store-and-forward, and a seamless Tor federation fallback. From the user's perspective it looks like iMessage; from the wire's perspective it's a carefully budgeted 160 bytes of ChaCha20 ciphertext riding on a sub-kbps radio link.
+</div>
+
+</main>
+</body>
+</html>

@@ -1,0 +1,39 @@
+{
+  "backups": [
+    {
+      "id": "bkp-2025-03-01",
+      "timestamp": "2025-03-01T02:00:00Z",
+      "type": "full",
+      "apps": ["bitcoin-knots", "lnd", "mempool", "nextcloud"],
+      "size_mb": 2340,
+      "status": "success",
+      "encrypted": true,
+      "destination": "local-usb"
+    },
+    {
+      "id": "bkp-2025-02-15",
+      "timestamp": "2025-02-15T02:00:00Z",
+      "type": "incremental",
+      "apps": ["bitcoin-knots", "lnd"],
+      "size_mb": 156,
+      "status": "success",
+      "encrypted": true,
+      "destination": "local-usb"
+    },
+    {
+      "id": "bkp-2025-02-01",
+      "timestamp": "2025-02-01T02:00:00Z",
+      "type": "full",
+      "apps": ["bitcoin-knots", "lnd", "mempool", "nextcloud", "vaultwarden"],
+      "size_mb": 2890,
+      "status": "success",
+      "encrypted": true,
+      "destination": "local-usb"
+    }
+  ],
+  "schedule": {
+    "full": "1st of month, 02:00 UTC",
+    "incremental": "15th of month, 02:00 UTC"
+  },
+  "retention": "6 months"
+}

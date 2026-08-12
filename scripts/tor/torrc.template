@@ -1,0 +1,39 @@
+# Archipelago Tor Hidden Services
+# Each service gets its own .onion address
+# Tor runs with --network host so 127.0.0.1 refers to host ports
+# DataDirectory: use /var/lib/archipelago/tor so backend can read hostnames
+# SocksPort 9050: required for outbound .onion requests (peer messaging)
+
+SocksPort 9050
+ControlPort 0
+DataDirectory /var/lib/archipelago/tor
+
+# Archipelago main web UI (nginx port 80)
+HiddenServiceDir /var/lib/archipelago/tor/hidden_service_archipelago/
+HiddenServicePort 80 127.0.0.1:80
+
+# Bitcoin P2P (protocol service)
+HiddenServiceDir /var/lib/archipelago/tor/hidden_service_bitcoin/
+HiddenServicePort 8333 127.0.0.1:8333
+
+# ElectrumX (protocol service — wallet connections)
+HiddenServiceDir /var/lib/archipelago/tor/hidden_service_electrumx/
+HiddenServicePort 50001 127.0.0.1:50001
+
+# LND (protocol service — Lightning Network)
+HiddenServiceDir /var/lib/archipelago/tor/hidden_service_lnd/
+HiddenServicePort 80 127.0.0.1:8081
+HiddenServicePort 9735 127.0.0.1:9735
+HiddenServicePort 10009 127.0.0.1:10009
+
+# BTCPay Server
+HiddenServiceDir /var/lib/archipelago/tor/hidden_service_btcpay/
+HiddenServicePort 80 127.0.0.1:23000
+
+# Mempool (frontend)
+HiddenServiceDir /var/lib/archipelago/tor/hidden_service_mempool/
+HiddenServicePort 80 127.0.0.1:4080
+
+# Fedimint Guardian UI
+HiddenServiceDir /var/lib/archipelago/tor/hidden_service_fedimint/
+HiddenServicePort 80 127.0.0.1:8175

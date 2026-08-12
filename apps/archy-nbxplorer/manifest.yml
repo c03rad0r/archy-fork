@@ -1,0 +1,66 @@
+app:
+  id: archy-nbxplorer
+  name: NBXplorer
+  version: 2.6.0
+  description: BTCPay blockchain indexer service.
+
+  container:
+    image: source.archipelago-foundation.org/lfg2025/nbxplorer:2.6.0
+    pull_policy: if-not-present
+    network: archy-net
+    secret_env:
+      - key: NBXPLORER_BTCRPCPASSWORD
+        secret_file: bitcoin-rpc-password
+      - key: BTCPAY_DB_PASS
+        secret_file: btcpay-db-password
+
+  dependencies:
+    - app_id: bitcoin-core
+      version: ">=26.0"
+    - app_id: archy-btcpay-db
+      version: ">=15.17"
+
+  resources:
+    memory_limit: 2Gi
+    disk_limit: 20Gi
+
+  security:
+    capabilities: []
+    readonly_root: false
+    network_policy: isolated
+
+  ports:
+    - host: 32838
+      container: 32838
+      protocol: tcp
+      bind: 127.0.0.1
+      auth: local
+
+  volumes:
+    - type: bind
+      source: /var/lib/archipelago/nbxplorer
+      target: /data
+      options: [rw]
+
+  environment:
+    - NBXPLORER_DATADIR=/data
+    - NBXPLORER_NETWORK=mainnet
+    - NBXPLORER_CHAINS=btc
+    - NBXPLORER_BIND=0.0.0.0:32838
+    - NBXPLORER_BTCRPCURL=http://bitcoin-knots:8332
+    - NBXPLORER_BTCRPCUSER=archipelago
+    - NBXPLORER_BTCNODEENDPOINT=bitcoin-knots:8333
+    - NBXPLORER_NOAUTH=1
+    - NBXPLORER_POSTGRES=Username=btcpay;Password=${BTCPAY_DB_PASS};Host=archy-btcpay-db;Port=5432;Database=nbxplorer
+
+  health_check:
+    type: http
+    endpoint: http://localhost:32838
+    path: /
+    interval: 30s
+    timeout: 30s
+    retries: 5
+
+  bitcoin_integration:
+    rpc_access: read-only
+    sync_required: true

@@ -1,0 +1,83 @@
+server {
+    # Loopback ONLY. This container is host-networked, so this nginx binds the
+    # HOST's address directly — `listen 8334;` meant every interface, and the
+    # app gate could never stand in front of it (there is no podman publish to
+    # pin, and the manifest declared no port, so the gate neither protected it
+    # nor reported it — it served this page to anyone who asked, on LAN,
+    # Tailscale and the mesh alike). Binding loopback lets the daemon claim the
+    # external addresses and authenticate them; see appgate::listener.
+    listen 127.0.0.1:8334;
+    server_name _;
+    root /usr/share/nginx/html;
+    index index.html;
+    # Session gate for the credential-injecting proxy below. Internal: it can
+    # only be reached by nginx's own auth_request subrequest, never by a client.
+    location = /_session_check {
+        internal;
+        proxy_pass http://127.0.0.1:5678/auth/session-check;
+        proxy_pass_request_body off;
+        proxy_set_header Content-Length "";
+        proxy_set_header Host $host;
+        proxy_set_header Cookie $http_cookie;
+        proxy_set_header X-CSRF-Token $http_x_csrf_token;
+    }
+
+    # Bitcoin Core RPC. This proxy ADDS Bitcoin Core's Basic auth that the
+    # caller never supplied, so reaching this location at all is equivalent to
+    # holding the node's RPC credentials — which is why it must be gated here
+    # rather than anywhere upstream.
+    #
+    # It previously had no gate at all. This port (8334) binds 0.0.0.0 AND sits
+    # on the fips0 mesh allowlist (fips/app_ports.rs), so any mesh peer, LAN
+    # host or Tailscale peer could POST authenticated Bitcoin Core RPC —
+    # including wallet methods, with a wallet loaded. Verified live on
+    # a test node 2026-08-02.
+    #
+    # `Access-Control-Allow-Origin *` is also removed: paired with a proxy that
+    # injects credentials it let any web page a user visited drive this RPC.
+    location /bitcoin-rpc/ {
+        # Preflight carries no cookies by design — answer it before the gate,
+        # otherwise the browser reports an opaque CORS failure instead of a 401.
+        if ($request_method = OPTIONS) { return 204; }
+        auth_request /_session_check;
+        proxy_pass http://127.0.0.1:8332/;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header Authorization "Basic {{BITCOIN_RPC_AUTH}}";
+        add_header Access-Control-Allow-Origin $scheme://$http_host always;
+        add_header Access-Control-Allow-Credentials "true" always;
+        add_header Vary "Origin" always;
+        add_header Access-Control-Allow-Methods "POST, GET, OPTIONS" always;
+        add_header Access-Control-Allow-Headers "Content-Type, Authorization" always;
+    }
+    location /bitcoin-status {
+        proxy_pass http://127.0.0.1:5678/bitcoin-status;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        add_header Cache-Control "no-store";
+    }
+    location /rpc/v1 {
+        proxy_pass http://127.0.0.1:5678/rpc/v1;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header Cookie $http_cookie;
+        proxy_set_header X-CSRF-Token $http_x_csrf_token;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        add_header Cache-Control "no-store";
+    }
+    # no-cache so a rebuilt image is actually seen. Without this nginx sends
+    # only ETag/Last-Modified for index.html, and browsers apply heuristic
+    # caching to it — so an OTA that ships a new bitcoin-ui kept rendering the
+    # previous UI until the user hard-refreshed. docker/lnd-ui/nginx.conf has
+    # carried the same header for this reason. "no-cache" (revalidate), not
+    # "no-store", so the ETag still saves the transfer when nothing changed.
+    location / {
+        add_header Cache-Control "no-cache";
+        try_files $uri $uri/ /index.html;
+    }
+}

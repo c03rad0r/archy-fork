@@ -1,0 +1,83 @@
+name: Post-Install Tests
+
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: 'Target node IP or hostname'
+        required: true
+      password:
+        description: 'Node UI password (leave blank to use the NODE_UI_PASSWORD secret)'
+        required: false
+
+jobs:
+  post-install-tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Install SSH key
+        env:
+          SSH_KEY: ${{ secrets.NODE_SSH_KEY }}
+        run: |
+          if [ -z "$SSH_KEY" ]; then
+            echo "ERROR: repository secret NODE_SSH_KEY is not configured."
+            echo "Post-install tests authenticate by key; password auth is not supported."
+            exit 1
+          fi
+          mkdir -p ~/.ssh && chmod 700 ~/.ssh
+          printf '%s\n' "$SSH_KEY" > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+
+      - name: Run post-install tests on target
+        env:
+          TARGET: ${{ github.event.inputs.target }}
+          NODE_PASSWORD: ${{ github.event.inputs.password }}
+          NODE_UI_PASSWORD: ${{ secrets.NODE_UI_PASSWORD }}
+          SSH_USER: ${{ vars.NODE_SSH_USER }}
+        run: |
+          PASSWORD="${NODE_PASSWORD:-$NODE_UI_PASSWORD}"
+          if [ -z "$PASSWORD" ]; then
+            echo "ERROR: no node password supplied (input or NODE_UI_PASSWORD secret)."
+            exit 1
+          fi
+          USER_NAME="${SSH_USER:-archipelago}"
+
+          echo "══════════════════════════════════════════"
+          echo "Running post-install tests on $TARGET"
+          echo "══════════════════════════════════════════"
+
+          scp -o StrictHostKeyChecking=accept-new \
+            scripts/run-post-install-tests.sh \
+            "${USER_NAME}@${TARGET}:/tmp/run-post-install-tests.sh"
+
+          # Password is passed over stdin, never as an argv the node's process
+          # list (or this job's log) would expose.
+          printf '%s' "$PASSWORD" | ssh -o StrictHostKeyChecking=accept-new \
+            "${USER_NAME}@${TARGET}" \
+            "sudo bash /tmp/run-post-install-tests.sh --password-stdin"
+
+  frontend-tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Install dependencies
+        run: cd neode-ui && npm ci
+
+      - name: Type check
+        run: cd neode-ui && npx vue-tsc -b --noEmit
+
+      - name: Run tests
+        run: cd neode-ui && npx vitest run
+
+      - name: Audit dependencies
+        run: cd neode-ui && npm audit --omit=dev

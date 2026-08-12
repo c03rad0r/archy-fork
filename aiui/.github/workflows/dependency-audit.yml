@@ -1,0 +1,57 @@
+name: Weekly Dependency Audit
+
+on:
+  schedule:
+    - cron: '0 9 * * 1' # Every Monday at 9am UTC
+  workflow_dispatch:
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    permissions:
+      issues: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+
+      - name: Audit for vulnerabilities
+        id: audit
+        run: |
+          AUDIT_RESULT=$(pnpm audit --audit-level=moderate 2>&1) || true
+          echo "$AUDIT_RESULT"
+          if echo "$AUDIT_RESULT" | grep -q "critical"; then
+            echo "has_critical=true" >> $GITHUB_OUTPUT
+          else
+            echo "has_critical=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Check licenses
+        id: licenses
+        run: |
+          LICENSE_RESULT=$(npx license-checker --production --onlyAllow 'MIT;Apache-2.0;ISC;BSD-2-Clause;BSD-3-Clause;0BSD;CC0-1.0;Unlicense;CC-BY-4.0;Python-2.0;BlueOak-1.0.0' --excludePrivatePackages 2>&1) || true
+          echo "$LICENSE_RESULT"
+          if echo "$LICENSE_RESULT" | grep -q "FAIL"; then
+            echo "has_violations=true" >> $GITHUB_OUTPUT
+          else
+            echo "has_violations=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Create issue if violations found
+        if: steps.audit.outputs.has_critical == 'true' || steps.licenses.outputs.has_violations == 'true'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            await github.rest.issues.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              title: '⚠️ Dependency audit: violations found',
+              body: `The weekly dependency audit found issues:\n\n- Critical vulnerabilities: ${{ steps.audit.outputs.has_critical }}\n- License violations: ${{ steps.licenses.outputs.has_violations }}\n\nRun \`pnpm audit\` and \`npx license-checker\` locally for details.`,
+              labels: ['security', 'dependencies'],
+            })

@@ -1,0 +1,53 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Whole badge lives here (background renders to the mask edge with no
+     safe-zone cropping, unlike the foreground): dark fill + metallic ring pulled
+     inward to ~0.88 so the mask can't clip it + grid at ~0.58. Matches the
+     locally-rendered preview. Foreground is transparent. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:aapt="http://schemas.android.com/aapt"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="752"
+    android:viewportHeight="752">
+
+    <path
+        android:fillColor="#0A0A0A"
+        android:pathData="M0,0h752v752H0z" />
+
+    <!-- Ring matching logo.svg's gradient (#000->#666). Scale 0.65 places it at
+         the home-screen's visible edge (calibrated from a device home screenshot;
+         launcher3 crops less than the Settings App-info view). -->
+    <group
+        android:pivotX="376"
+        android:pivotY="376"
+        android:scaleX="0.65"
+        android:scaleY="0.65">
+        <path
+            android:fillColor="#00000000"
+            android:strokeWidth="22.8834"
+            android:pathData="M11.441,375.669a364.227,364.227 0 1,0 728.454,0a364.227,364.227 0 1,0 -728.454,0z">
+            <aapt:attr name="android:strokeColor">
+                <gradient
+                    android:type="linear"
+                    android:startX="751.337"
+                    android:startY="751.338"
+                    android:endX="0"
+                    android:endY="0.000976562">
+                    <item android:offset="0" android:color="#FF000000" />
+                    <item android:offset="1" android:color="#FF666666" />
+                </gradient>
+            </aapt:attr>
+        </path>
+    </group>
+
+    <!-- White Archipelago grid -->
+    <group
+        android:pivotX="376"
+        android:pivotY="376"
+        android:scaleX="0.55"
+        android:scaleY="0.55">
+        <path
+            android:fillColor="#FFFFFF"
+            android:pathData="M253.805,278.37V222.28H309.853V278.37H253.805ZM315.797,278.37V222.28H372.694V278.37H315.797ZM378.639,278.37V222.28H435.536V278.37H378.639ZM441.481,278.37V222.28H497.529V278.37H441.481ZM441.481,341.259V284.319H497.529V341.259H441.481ZM503.473,341.259V284.319H560.37V341.259H503.473ZM190.963,404.148V347.208H247.86V404.148H190.963ZM253.805,404.148V347.208H309.853V404.148H253.805ZM315.797,404.148V347.208H372.694V404.148H315.797ZM378.639,404.148V347.208H435.536V404.148H378.639ZM441.481,404.148V347.208H497.529V404.148H441.481ZM503.473,404.148V347.208H560.37V404.148H503.473ZM190.963,466.187V410.097H247.86V466.187H190.963ZM253.805,466.187V410.097H309.853V466.187H253.805ZM441.481,466.187V410.097H497.529V466.187H441.481ZM503.473,466.187V410.097H560.37V466.187H503.473ZM253.805,529.076V472.136H309.853V529.076H253.805ZM315.797,529.076V472.136H372.694V529.076H315.797ZM378.639,529.076V472.136H435.536V529.076H378.639ZM441.481,529.076V472.136H497.529V529.076H441.481Z" />
+    </group>
+</vector>

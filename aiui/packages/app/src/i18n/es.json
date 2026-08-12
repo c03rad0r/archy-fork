@@ -1,0 +1,89 @@
+{
+  "app": {
+    "name": "AIUI",
+    "tagline": "Chat IA con superficies de contenido enriquecidas"
+  },
+  "chat": {
+    "newChat": "Nuevo Chat",
+    "sendMessage": "Enviar mensaje",
+    "typeMessage": "Escribe un mensaje...",
+    "stopGenerating": "Detener generación",
+    "regenerate": "Regenerar",
+    "edit": "Editar",
+    "delete": "Eliminar",
+    "copy": "Copiar",
+    "reply": "Responder",
+    "branch": "Bifurcar desde aquí",
+    "search": "Buscar mensajes...",
+    "noMessages": "Sin mensajes aún",
+    "thinking": "Pensando..."
+  },
+  "content": {
+    "films": "Películas",
+    "music": "Música",
+    "books": "Libros",
+    "tv": "TV",
+    "images": "Imágenes",
+    "places": "Lugares",
+    "podcasts": "Podcasts",
+    "news": "Noticias",
+    "web": "Web",
+    "brief": "Resumen",
+    "code": "Código",
+    "design": "Diseño",
+    "nostr": "Nostr",
+    "favorites": "Favoritos",
+    "discover": "Descubrir"
+  },
+  "discover": {
+    "forYou": "Para Ti",
+    "recent": "Recientes",
+    "trending": "Tendencias",
+    "collections": "Colecciones",
+    "tags": "Etiquetas",
+    "playlists": "Listas",
+    "noFavorites": "Añade favoritos para sugerencias personalizadas",
+    "noRecent": "Sin elementos vistos recientemente",
+    "noTrending": "Sin tendencias aún",
+    "noCollections": "Sin colecciones aún",
+    "noTags": "Sin etiquetas aún"
+  },
+  "settings": {
+    "title": "Ajustes",
+    "appearance": "Apariencia",
+    "content": "Contenido",
+    "shortcuts": "Atajos",
+    "notifications": "Notificaciones",
+    "storage": "Almacenamiento",
+    "chat": "Chat",
+    "accentColor": "Color de acento",
+    "glassIntensity": "Intensidad del cristal",
+    "fontSize": "Tamaño de fuente",
+    "exportData": "Exportar todos los datos",
+    "wipeData": "Borrar todos los datos",
+    "wipeConfirm": "¿Estás seguro?",
+    "cancel": "Cancelar"
+  },
+  "nostr": {
+    "feed": "Feed",
+    "messages": "Mensajes",
+    "relays": "Relés",
+    "profile": "Perfil",
+    "lists": "Listas",
+    "articles": "Artículos",
+    "publish": "Publicar",
+    "signIn": "Iniciar sesión con Nostr"
+  },
+  "common": {
+    "loading": "Cargando...",
+    "error": "Error",
+    "save": "Guardar",
+    "cancel": "Cancelar",
+    "delete": "Eliminar",
+    "close": "Cerrar",
+    "search": "Buscar",
+    "back": "Atrás",
+    "next": "Siguiente",
+    "previous": "Anterior"
+  }
+}

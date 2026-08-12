@@ -1,0 +1,482 @@
+services:
+  # Bitcoin Core - signet mode (lightweight testnet, ~200MB sync)
+  bitcoin:
+    image: lncm/bitcoind:v27.0
+    container_name: archy-bitcoin
+    ports:
+      - "38332:38332"  # RPC
+      - "38333:38333"  # P2P
+    volumes:
+      - bitcoin-data:/data/.bitcoin
+    command: |
+      -signet
+      -server
+      -rpcuser=bitcoin
+      -rpcpassword=bitcoinpass
+      -rpcallowip=0.0.0.0/0
+      -rpcbind=0.0.0.0
+      -rpcport=38332
+      -txindex=1
+      -zmqpubrawblock=tcp://0.0.0.0:28332
+      -zmqpubrawtx=tcp://0.0.0.0:28333
+    restart: unless-stopped
+    networks:
+      - archy-net
+
+  # BTCPay Server
+  btcpay:
+    image: btcpayserver/btcpayserver:1.13.5
+    container_name: archy-btcpay
+    ports:
+      - "14142:49392"
+    environment:
+      BTCPAY_PROTOCOL: http
+      BTCPAY_HOST: localhost:14142
+      BTCPAY_CHAINS: btc
+      BTCPAY_BTCEXPLORERURL: http://mempool:4080
+      BTCPAY_BTCRPCURL: http://bitcoin:38332
+      BTCPAY_BTCRPCUSER: bitcoin
+      BTCPAY_BTCRPCPASSWORD: bitcoinpass
+    depends_on:
+      - bitcoin
+      - postgres-btcpay
+    restart: unless-stopped
+    networks:
+      - archy-net
+
+  postgres-btcpay:
+    image: postgres:15-alpine
+    container_name: archy-btcpay-db
+    environment:
+      POSTGRES_DB: btcpay
+      POSTGRES_USER: btcpay
+      POSTGRES_PASSWORD: btcpaypass
+    volumes:
+      - postgres-btcpay-data:/var/lib/postgresql/data
+    restart: unless-stopped
+    networks:
+      - archy-net
+
+  # Home Assistant
+  homeassistant:
+    image: homeassistant/home-assistant:2024.1
+    container_name: archy-homeassistant
+    ports:
+      - "8123:8123"
+    volumes:
+      - homeassistant-data:/config
+    environment:
+      TZ: America/New_York
+    restart: unless-stopped
+    networks:
+      - archy-net
+
+  # Grafana
+  grafana:
+    image: grafana/grafana:10.2.0
+    container_name: archy-grafana
+    ports:
+      - "3000:3000"
+    volumes:
+      - grafana-data:/var/lib/grafana
+    environment:
+      GF_SECURITY_ADMIN_PASSWORD: admin
+      GF_USERS_ALLOW_SIGN_UP: "false"
+    restart: unless-stopped
+    networks:
+      - archy-net
+
+  # Fedimint (v0.10+ with built-in Guardian UI)
+  fedimint:
+    image: fedimint/fedimintd:v0.10.0
+    container_name: archy-fedimint
+    platform: linux/amd64  # Emulate x86 on ARM Macs
+    ports:
+      - "8173:8173"   # P2P
+      - "8174:8174"   # API (JSON-RPC)
+      - "8175:8175"   # Built-in Guardian UI
+    volumes:
+      - fedimint-data:/data
+    environment:
+      FM_BITCOIND_URL: http://bitcoin:38332
+      FM_BITCOIND_USERNAME: bitcoin
+      FM_BITCOIND_PASSWORD: bitcoinpass
+      FM_BITCOIN_NETWORK: signet
+      FM_BIND_P2P: 0.0.0.0:8173
+      FM_BIND_API: 0.0.0.0:8174
+      FM_BIND_UI: 0.0.0.0:8175
+    depends_on:
+      - bitcoin
+    restart: unless-stopped
+    networks:
+      - archy-net
+
+  # Lightning Network Daemon (LND)
+  lnd:
+    image: lightninglabs/lnd:v0.17.4-beta
+    container_name: archy-lnd
+    ports:
+      - "9735:9735"  # P2P
+      - "8080:8080"  # REST
+      - "10009:10009" # gRPC
+    volumes:
+      - lnd-data:/root/.lnd
+    command: |
+      --bitcoin.active
+      --bitcoin.signet
+      --bitcoin.node=bitcoind
+      --bitcoind.rpchost=bitcoin:38332
+      --bitcoind.rpcuser=bitcoin
+      --bitcoind.rpcpass=bitcoinpass
+      --bitcoind.zmqpubrawblock=tcp://bitcoin:28332
+      --bitcoind.zmqpubrawtx=tcp://bitcoin:28333
+      --debuglevel=info
+      --rpclisten=0.0.0.0:10009
+      --restlisten=0.0.0.0:8080
+      --listen=0.0.0.0:9735
+      --alias=archy-dev
+      --color=#f7931a
+      --noseedbackup
+      --accept-keysend
+    depends_on:
+      - bitcoin
+    restart: unless-stopped
+    networks:
+      - archy-net
+
+  # ThunderHub - Lightning node management UI
+  thunderhub:
+    image: apotdevin/thunderhub:v0.13.31
+    container_name: archy-thunderhub
+    ports:
+      - "3010:3000"
+    volumes:
+      - lnd-data:/lnd-data:ro
+      - ./testnet/thunderhub-config.yaml:/data/thubConfig.yaml:ro
+    environment:
+      ACCOUNT_CONFIG_PATH: /data/thubConfig.yaml
+      LOG_LEVEL: info
+      THEME: dark
+      CURRENCY: BTC
+      FETCH_PRICES: "false"
+      FETCH_FEES: "true"
+    depends_on:
+      - lnd
+    restart: unless-stopped
+    networks:
+      - archy-net
+
+  # Mempool Explorer
+  mempool-web:
+    image: mempool/frontend:v2.5.0
+    container_name: archy-mempool-web
+    ports:
+      - "4080:8080"
+    environment:
+      FRONTEND_HTTP_PORT: 8080
+      BACKEND_MAINNET_HTTP_HOST: mempool-api
+    depends_on:
+      - mempool-api
+    restart: unless-stopped
+    networks:
+      - archy-net
+
+  mempool-api:
+    image: mempool/backend:v2.5.0
+    container_name: archy-mempool-api
+    environment:
+      MEMPOOL_BACKEND: electrum
+      ELECTRUM_HOST: bitcoin
+      ELECTRUM_PORT: 50001
+      ELECTRUM_TLS_ENABLED: "false"
+      CORE_RPC_HOST: bitcoin
+      CORE_RPC_PORT: 38332
+      CORE_RPC_USERNAME: bitcoin
+      CORE_RPC_PASSWORD: bitcoinpass
+      DATABASE_ENABLED: "true"
+      DATABASE_HOST: mysql-mempool
+      DATABASE_DATABASE: mempool
+      DATABASE_USERNAME: mempool
+      DATABASE_PASSWORD: mempoolpass
+    depends_on:
+      - bitcoin
+      - mysql-mempool
+    restart: unless-stopped
+    networks:
+      - archy-net
+
+  mysql-mempool:
+    image: mariadb:10.11
+    container_name: archy-mempool-db
+    environment:
+      MYSQL_DATABASE: mempool
+      MYSQL_USER: mempool
+      MYSQL_PASSWORD: mempoolpass
+      MYSQL_ROOT_PASSWORD: rootpass
+    volumes:
+      - mysql-mempool-data:/var/lib/mysql
+    restart: unless-stopped
+    networks:
+      - archy-net
+
+  # SearXNG
+  searxng:
+    image: searxng/searxng:latest
+    container_name: archy-searxng
+    ports:
+      - "8082:8080"
+    volumes:
+      - searxng-data:/etc/searxng
+    environment:
+      SEARXNG_BASE_URL: http://localhost:8082/
+    restart: unless-stopped
+    networks:
+      - archy-net
+
+  # OnlyOffice Document Server
+  onlyoffice:
+    image: onlyoffice/documentserver:7.5.1
+    container_name: archy-onlyoffice
+    ports:
+      - "8083:80"
+    volumes:
+      - onlyoffice-data:/var/www/onlyoffice/Data
+      - onlyoffice-logs:/var/log/onlyoffice
+    environment:
+      JWT_ENABLED: "false"
+    restart: unless-stopped
+    networks:
+      - archy-net
+
+  # Penpot - Design and prototyping platform
+  penpot-frontend:
+    image: penpotapp/frontend:latest
+    container_name: archy-penpot-frontend
+    ports:
+      - "9001:8080"
+    volumes:
+      - penpot-assets:/opt/data/assets
+    depends_on:
+      - penpot-backend
+      - penpot-exporter
+    restart: unless-stopped
+    networks:
+      - archy-net
+    environment:
+      PENPOT_FLAGS: disable-email-verification enable-login-with-password enable-registration disable-secure-session-cookies
+
+  penpot-backend:
+    image: penpotapp/backend:latest
+    container_name: archy-penpot-backend
+    volumes:
+      - penpot-assets:/opt/data/assets
+    depends_on:
+      penpot-postgres:
+        condition: service_healthy
+      penpot-valkey:
+        condition: service_healthy
+    restart: unless-stopped
+    networks:
+      - archy-net
+    environment:
+      PENPOT_FLAGS: disable-email-verification enable-login-with-password enable-registration enable-smtp disable-secure-session-cookies enable-prepl-server
+      PENPOT_PUBLIC_URI: http://localhost:9001
+      PENPOT_SECRET_KEY: dev_secret_key_change_in_production_base64_512bits
+      PENPOT_DATABASE_URI: postgresql://penpot-postgres/penpot
+      PENPOT_DATABASE_USERNAME: penpot
+      PENPOT_DATABASE_PASSWORD: penpot
+      PENPOT_REDIS_URI: redis://penpot-valkey/0
+      PENPOT_OBJECTS_STORAGE_BACKEND: fs
+      PENPOT_OBJECTS_STORAGE_FS_DIRECTORY: /opt/data/assets
+      PENPOT_TELEMETRY_ENABLED: false
+      PENPOT_SMTP_DEFAULT_FROM: no-reply@localhost
+      PENPOT_SMTP_DEFAULT_REPLY_TO: no-reply@localhost
+      PENPOT_SMTP_HOST: penpot-mailcatch
+      PENPOT_SMTP_PORT: 1025
+      PENPOT_SMTP_TLS: false
+      PENPOT_SMTP_SSL: false
+
+  penpot-exporter:
+    image: penpotapp/exporter:latest
+    container_name: archy-penpot-exporter
+    restart: unless-stopped
+    depends_on:
+      penpot-valkey:
+        condition: service_healthy
+    networks:
+      - archy-net
+    environment:
+      PENPOT_SECRET_KEY: dev_secret_key_change_in_production_base64_512bits
+      PENPOT_PUBLIC_URI: http://penpot-frontend:8080
+      PENPOT_REDIS_URI: redis://penpot-valkey/0
+
+  penpot-postgres:
+    image: postgres:15
+    container_name: archy-penpot-postgres
+    stop_signal: SIGINT
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U penpot"]
+      interval: 2s
+      timeout: 10s
+      retries: 5
+      start_period: 2s
+    volumes:
+      - penpot-postgres-data:/var/lib/postgresql/data
+    restart: unless-stopped
+    networks:
+      - archy-net
+    environment:
+      POSTGRES_INITDB_ARGS: --data-checksums
+      POSTGRES_DB: penpot
+      POSTGRES_USER: penpot
+      POSTGRES_PASSWORD: penpot
+
+  penpot-valkey:
+    image: valkey/valkey:8.1
+    container_name: archy-penpot-valkey
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "valkey-cli ping | grep PONG"]
+      interval: 1s
+      timeout: 3s
+      retries: 5
+      start_period: 3s
+    networks:
+      - archy-net
+    environment:
+      VALKEY_EXTRA_FLAGS: --maxmemory 128mb --maxmemory-policy volatile-lfu
+
+  penpot-mailcatch:
+    image: sj26/mailcatcher:latest
+    container_name: archy-penpot-mailcatch
+    restart: unless-stopped
+    expose:
+      - '1025'
+    ports:
+      - "1080:1080"
+    networks:
+      - archy-net
+
+  # Placeholder services for apps without direct Docker images
+  # These will show "coming soon" pages or simple status pages
+  
+  # Endurain - Self-hosted fitness tracking
+  endurain-db:
+    image: postgres:17-alpine
+    container_name: archy-endurain-db
+    environment:
+      POSTGRES_DB: endurain
+      POSTGRES_USER: endurain
+      POSTGRES_PASSWORD: endurain_dev_password
+    volumes:
+      - endurain-db-data:/var/lib/postgresql/data
+    restart: unless-stopped
+    networks:
+      - archy-net
+
+  endurain:
+    image: ghcr.io/endurain-project/endurain:latest
+    container_name: archy-endurain
+    ports:
+      - "8084:8080"
+    environment:
+      DB_HOST: endurain-db
+      DB_PORT: 5432
+      DB_NAME: endurain
+      DB_USER: endurain
+      DB_PASSWORD: endurain_dev_password
+      POSTGRES_DB: endurain
+      POSTGRES_USER: endurain
+      POSTGRES_PASSWORD: endurain_dev_password
+      SECRET_KEY: dev_secret_key_change_in_production_32chars
+      FERNET_KEY: 7NfMMRSCWcoNDSjqBX8WoYH9nTFk1VdQOdZY13po53Y=
+      TZ: America/New_York
+      ENDURAIN_HOST: http://localhost:8084
+      BEHIND_PROXY: "false"
+    volumes:
+      - endurain-data:/app/backend/data
+      - endurain-logs:/app/backend/logs
+    depends_on:
+      - endurain-db
+    restart: unless-stopped
+    networks:
+      - archy-net
+
+  # Morphos - Self-hosted file converter
+  morphos:
+    image: ghcr.io/danvergara/morphos-server:latest
+    container_name: archy-morphos
+    ports:
+      - "8081:8080"
+    volumes:
+      - /tmp:/tmp
+    healthcheck:
+      test: timeout 10s bash -c ':> /dev/tcp/127.0.0.1/8080' || exit 1
+      interval: 60s
+      retries: 3
+      start_period: 20s
+      timeout: 30s
+    restart: unless-stopped
+    networks:
+      - archy-net
+
+  # Nextcloud - Cloud storage and file management
+  nextcloud-db:
+    image: mariadb:11
+    container_name: archy-nextcloud-db
+    command: --transaction-isolation=READ-COMMITTED --log-bin=binlog --binlog-format=ROW
+    restart: unless-stopped
+    volumes:
+      - nextcloud-db-data:/var/lib/mysql
+    environment:
+      MYSQL_ROOT_PASSWORD: nextcloud_root_pass
+      MYSQL_DATABASE: nextcloud
+      MYSQL_USER: nextcloud
+      MYSQL_PASSWORD: nextcloud_pass
+    networks:
+      - archy-net
+
+  nextcloud:
+    image: nextcloud:latest
+    container_name: archy-nextcloud
+    ports:
+      - "8086:80"
+    restart: unless-stopped
+    volumes:
+      - nextcloud-data:/var/www/html
+    environment:
+      MYSQL_HOST: nextcloud-db
+      MYSQL_DATABASE: nextcloud
+      MYSQL_USER: nextcloud
+      MYSQL_PASSWORD: nextcloud_pass
+      NEXTCLOUD_ADMIN_USER: admin
+      NEXTCLOUD_ADMIN_PASSWORD: admin
+      NEXTCLOUD_TRUSTED_DOMAINS: localhost
+      OVERWRITEPROTOCOL: http
+    depends_on:
+      - nextcloud-db
+    networks:
+      - archy-net
+
+volumes:
+  bitcoin-data:
+  postgres-btcpay-data:
+  homeassistant-data:
+  grafana-data:
+  fedimint-data:
+  lnd-data:
+  mysql-mempool-data:
+  searxng-data:
+  onlyoffice-data:
+  onlyoffice-logs:
+  penpot-assets:
+  penpot-postgres-data:
+  endurain-db-data:
+  endurain-data:
+  endurain-logs:
+  nextcloud-db-data:
+  nextcloud-data:
+
+networks:
+  archy-net:
+    driver: bridge

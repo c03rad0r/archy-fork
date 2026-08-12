@@ -1,0 +1,27 @@
+[Unit]
+Description=Archipelago Private Nostr Relay
+After=network-online.target
+Wants=network-online.target
+Before=nostr-vpn.service
+# An ISO built without the relay binary (registry unreachable at build time)
+# must not crash-loop every 3s forever — skip cleanly instead.
+ConditionPathExists=/usr/local/bin/nostr-rs-relay
+
+[Service]
+Type=simple
+User=archipelago
+ExecStartPre=/bin/bash -c 'mkdir -p /var/lib/archipelago/nostr-relay'
+ExecStart=/usr/local/bin/nostr-rs-relay --config /var/lib/archipelago/nostr-relay/config.toml
+Restart=always
+RestartSec=3
+TimeoutStopSec=10
+
+# Resource limits — relay is lightweight (in-memory mode)
+MemoryMax=512M
+LimitNOFILE=4096
+
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

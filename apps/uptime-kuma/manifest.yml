@@ -1,0 +1,56 @@
+app:
+  id: uptime-kuma
+  name: Uptime Kuma
+  version: 1.23.0
+  description: Self-hosted uptime monitoring.
+
+  container:
+    image: source.archipelago-foundation.org/lfg2025/uptime-kuma:1
+    pull_policy: if-not-present
+    network: pasta
+    custom_args: ["--", "node", "server/server.js"]
+
+  dependencies:
+    - storage: 1Gi
+
+  resources:
+    memory_limit: 256Mi
+    disk_limit: 1Gi
+
+  security:
+    capabilities: [CHOWN, FOWNER, SETUID, SETGID]
+    readonly_root: false
+    network_policy: isolated
+
+  ports:
+    - host: 3002
+      container: 3001
+      protocol: tcp
+      bind: 127.0.0.1
+      auth: gated
+
+  volumes:
+    - type: bind
+      source: /var/lib/archipelago/uptime-kuma
+      target: /app/data
+      options: [rw]
+
+  environment:
+    - TZ=UTC
+
+  health_check:
+    type: http
+    endpoint: localhost:3001
+    path: /
+    interval: 30s
+    timeout: 5s
+    retries: 3
+
+  metadata:
+    icon: /assets/img/app-icons/uptime-kuma.webp
+    category: data
+    tier: recommended
+    author: Uptime Kuma
+    repo: https://github.com/louislam/uptime-kuma
+    launch:
+      open_in_new_tab: true

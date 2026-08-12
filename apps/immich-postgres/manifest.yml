@@ -1,0 +1,58 @@
+app:
+  id: immich-postgres
+  name: Immich Postgres
+  version: "14-vectorchord0.4.3-pgvectors0.2.0"
+  description: Postgres (pgvecto.rs / vectorchord) backend for Immich.
+
+  # Container named immich_postgres (underscore) to match the runtime's existing
+  # per-app references (lifecycle/health/crash-recovery/config) and serve as the
+  # server's DB_HOSTNAME alias. Top-level key → serde(flatten) → extensions →
+  # compute_container_name.
+  container_name: immich_postgres
+
+  container:
+    image: source.archipelago-foundation.org/lfg2025/immich-postgres:14-vectorchord0.4.3-pgvectors0.2.0
+    pull_policy: if-not-present
+    network: archy-net
+    # postgres drops to its own uid (container 999 → host 100998 under rootless),
+    # so the data dir must be owned by that mapped uid — mirrors archy-btcpay-db.
+    # Verified on .228: the live immich-db is owned 100998. Without this a FRESH
+    # install's dir would be service-user-owned and postgres would EACCES.
+    data_uid: "100998:100998"
+    generated_secrets:
+      - name: immich-db-password
+        kind: hex32
+    secret_env:
+      - key: POSTGRES_PASSWORD
+        secret_file: immich-db-password
+
+  dependencies:
+    - storage: 40Gi
+
+  resources:
+    memory_limit: 2Gi
+    disk_limit: 40Gi
+
+  security:
+    capabilities: [CHOWN, DAC_OVERRIDE, FOWNER, SETGID, SETUID]
+    readonly_root: false
+    network_policy: isolated
+
+  ports: []
+
+  volumes:
+    - type: bind
+      source: /var/lib/archipelago/immich-db
+      target: /var/lib/postgresql/data
+      options: [rw]
+
+  environment:
+    - POSTGRES_USER=postgres
+    - POSTGRES_DB=immich
+
+  health_check:
+    type: tcp
+    endpoint: localhost:5432
+    interval: 30s
+    timeout: 5s
+    retries: 3

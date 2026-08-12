@@ -1,0 +1,60 @@
+app:
+  id: nostr-rs-relay
+  name: Nostr Relay (Rust)
+  version: 0.8.0
+  description: High-performance Nostr relay written in Rust. Host your own decentralized social media relay and earn networking profits.
+  
+  container:
+    image: scsibug/nostr-rs-relay:0.8.9
+    image_signature: cosign://...
+    pull_policy: verify-signature
+    data_uid: "1000:1000"
+    
+  dependencies:
+    - storage: 10Gi  # For event storage
+    
+  resources:
+    cpu_limit: 2
+    memory_limit: 1Gi
+    disk_limit: 10Gi
+    
+  security:
+    capabilities: []
+    readonly_root: true
+    no_new_privileges: true
+    user: 1000
+    seccomp_profile: default
+    network_policy: isolated
+    apparmor_profile: nostr-relay
+    
+  ports:
+    - host: 18081
+      container: 8080
+      protocol: tcp  # HTTP/WebSocket
+      bind: 127.0.0.1
+      auth: gated
+    
+  volumes:
+    - type: bind
+      source: /var/lib/archipelago/nostr-relay
+      target: /usr/src/app/db
+      options: [rw]
+      
+  environment:
+    - RELAY_NAME=Archipelago Nostr Relay
+    - RELAY_DESCRIPTION=Self-hosted Nostr relay on Archipelago
+    - MAX_EVENTS=1000000
+    - MAX_SUBSCRIPTIONS=100
+    
+  health_check:
+    type: http
+    endpoint: http://localhost:8080
+    path: /
+    interval: 30s
+    timeout: 30s
+    retries: 5
+    
+  nostr_integration:
+    relay_type: public
+    monetization_enabled: true  # Earn networking profits
+    event_storage: sqlite

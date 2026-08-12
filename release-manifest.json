@@ -1,0 +1,32 @@
+{
+  "changelog": [
+    "**Every app is now supervised the same way — the last stragglers moved under systemd.** Five apps (Jellyfin, Nextcloud, Home Assistant, Uptime Kuma, Vaultwarden) still ran outside the node's per-app service management for a technical reason: their networking style died with whatever process started it, so they were kept alive by a separate workaround. That workaround is retired: these apps now migrate themselves onto the same managed units as everything else — own service, restart-on-anything, a ten-second breather between restarts so their networking can release its ports cleanly. The migration happens automatically on the node's next housekeeping pass, touches no app data, and was watched live on a real node: both test apps moved over on the first pass and came back healthy.",
+    "**Leftover companion screens are cleaned up again — driven by real records this time.** When an app is uninstalled, its helper screen (the UI tile that fronts it) should go too. That cleanup was switched off in an earlier release after it wrongly removed the Bitcoin screen from a node whose Bitcoin was installed — it had been guessing \"installed\" from what happened to be running, and a separate bug made a running app look absent. The node now keeps a durable record of what you have installed, written at install time and cleared only by a real uninstall, and the cleanup consults only that record. If the record can't be read, the cleanup does nothing at all — \"I couldn't check\" is never treated as \"nothing is installed\" — and a helper must be orphaned for a sustained period before it is touched.",
+    "**A warning that fired every minute on every node is gone.** The app catalog and the node disagreed about where Grafana's software comes from, so the node ignored the catalog's answer and logged a complaint roughly every 75 seconds, forever. The catalog was right — Grafana is served from the fleet's own registry, like Bitcoin Knots — and the node's records now agree with it.",
+    "**The federation map became a real map.** The network view is now a 3D orbital scene of your federation — nodes as a point-cloud globe with calm motion, auto-fit centring, and a 2D top-down toggle that portrait and mobile screens use by default, with the scene filling the viewport instead of sitting in a letterbox. Inbound peer requests appear live on the map as blinking nodes you can accept or reject in place, and revisiting the view no longer replays the whole intro — the scene updates in place.",
+    "**An app that's mid-restart shows a page that says so — and comes back by itself.** When an app's screen was briefly unreachable behind the gate, the browser got a bare error; it now gets a named page for that app that retries on its own until the app answers.",
+    "Known gaps, disclosed rather than buried: three voice-assistant ports remain open without authentication. Non-browser clients — phone apps for Vaultwarden, Home Assistant or Jellyfin, and git over the web — meet the login page and need an access token. The 5x real-node lifecycle gate was not run for this release; the supervision migration and the cleanup re-enable were verified live on one node (both apps migrated and healthy, cleanup correctly idle)."
+  ],
+  "components": [
+    {
+      "current_version": "1.7.129-alpha",
+      "download_url": "https://source.archipelago-foundation.org/lfg2025/archy/releases/download/v1.7.129-alpha/archipelago",
+      "name": "archipelago",
+      "new_version": "1.7.129-alpha",
+      "sha256": "675e7dafc855d59b38c5a12d8b9405894677ed8701580227beca95ec2912e3f2",
+      "size_bytes": 59531400
+    },
+    {
+      "current_version": "1.7.129-alpha",
+      "download_url": "https://source.archipelago-foundation.org/lfg2025/archy/releases/download/v1.7.129-alpha/archipelago-frontend-1.7.129-alpha.tar.gz",
+      "name": "archipelago-frontend-1.7.129-alpha.tar.gz",
+      "new_version": "1.7.129-alpha",
+      "sha256": "53af2743308f4ae6a627255aaa288706d331d567c99e1cb615684dc3abba534d",
+      "size_bytes": 95452033
+    }
+  ],
+  "release_date": "2026-08-10",
+  "signature": "902778710674486d5919e4abb1bf5540521c9ef55b50a44a9d64b750812738d51cc193f6675a9969b1c45ae86c2e9e44ab3d8daf8aa1d439799d7f7846e27d04",
+  "signed_by": "did:key:z6Mkfu5LT8d4DjETtrkATvHh9Dvcbnr7zBCUwfau8Sw7DLWT",
+  "version": "1.7.129-alpha"
+}

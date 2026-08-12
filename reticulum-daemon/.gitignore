@@ -1,0 +1,10 @@
+.venv/
+__pycache__/
+*.pyc
+dist/
+build/
+*.spec
+# never commit a real identity key or RNS state
+*.key
+node_key
+.archy-reticulum/

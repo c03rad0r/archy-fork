@@ -1,0 +1,985 @@
+//! Multi-identity manager: multiple Ed25519 identities with DID support.
+//! Each identity has a keypair, display name, purpose tag, and DID:key.
+//! Identities are stored as JSON files encrypted with the node's master key.
+
+use anyhow::{Context, Result};
+use ed25519_dalek::{Signature, Signer, SigningKey, Verifier, VerifyingKey};
+use rand::rngs::OsRng;
+use serde::{Deserialize, Serialize};
+use std::path::{Path, PathBuf};
+use std::time::Duration;
+use tokio::fs;
+
+use crate::identity::did_key_from_pubkey_hex;
+use nostr_sdk::ToBech32;
+
+const IDENTITIES_DIR: &str = "identities";
+const DEFAULT_MARKER: &str = ".default";
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum IdentityPurpose {
+    Personal,
+    Business,
+    Anonymous,
+}
+
+impl std::fmt::Display for IdentityPurpose {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            IdentityPurpose::Personal => write!(f, "personal"),
+            IdentityPurpose::Business => write!(f, "business"),
+            IdentityPurpose::Anonymous => write!(f, "anonymous"),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct IdentityRecord {
+    pub id: String,
+    pub name: String,
+    pub purpose: IdentityPurpose,
+    pub pubkey_hex: String,
+    pub did: String,
+    /// did:dht identifier (published to Mainline DHT for discoverability)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub dht_did: Option<String>,
+    pub created_at: String,
+    /// Nostr secp256k1 public key in hex format
+    pub nostr_pubkey: Option<String>,
+    /// Nostr public key in bech32 npub format (NIP-19)
+    pub nostr_npub: Option<String>,
+    /// Nostr profile metadata (NIP-01 kind 0)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub profile: Option<IdentityProfile>,
+}
+
+/// Nostr profile metadata fields (NIP-01 kind 0 + NIP-24 extra fields).
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct IdentityProfile {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub display_name: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub about: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub picture: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub banner: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub website: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub nip05: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub lud16: Option<String>,
+}
+
+/// On-disk format for identity storage (includes secret key bytes).
+#[derive(Serialize, Deserialize)]
+struct IdentityFile {
+    id: String,
+    name: String,
+    purpose: IdentityPurpose,
+    secret_key: Vec<u8>,
+    pubkey_hex: String,
+    did: String,
+    created_at: String,
+    #[serde(default)]
+    nostr_secret_hex: Option<String>,
+    #[serde(default)]
+    nostr_pubkey_hex: Option<String>,
+    /// Nostr profile metadata
+    #[serde(default)]
+    profile: Option<IdentityProfile>,
+    /// BIP-39 seed derivation index (if created from seed).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    derivation_index: Option<u32>,
+}
+
+pub struct IdentityManager {
+    identities_dir: PathBuf,
+}
+
+/// Result of a multi-relay profile broadcast.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct ProfilePublishOutcome {
+    pub event_id: String,
+    pub accepted: Vec<String>,
+    pub rejected: Vec<(String, String)>,
+}
+
+/// Relay URL equality that tolerates minor normalization differences
+/// (trailing slash, case). nostr-sdk canonicalises URLs internally and
+/// we compare on the surface strings, so be liberal about what matches.
+fn relay_url_matches(a: &str, b: &str) -> bool {
+    let norm = |s: &str| s.trim_end_matches('/').trim().to_ascii_lowercase();
+    norm(a) == norm(b)
+}
+
+impl IdentityManager {
+    pub async fn new(data_dir: &Path) -> Result<Self> {
+        let identities_dir = data_dir.join(IDENTITIES_DIR);
+        fs::create_dir_all(&identities_dir)
+            .await
+            .context("Failed to create identities directory")?;
+        Ok(Self { identities_dir })
+    }
+
+    /// List all identities (without secret keys).
+    pub async fn list(&self) -> Result<(Vec<IdentityRecord>, Option<String>)> {
+        let default_id = self.get_default_id().await;
+        let mut identities = Vec::new();
+
+        let mut entries = fs::read_dir(&self.identities_dir)
+            .await
+            .context("Failed to read identities directory")?;
+
+        while let Some(entry) = entries.next_entry().await? {
+            let path = entry.path();
+            if path.extension().and_then(|e| e.to_str()) != Some("json") {
+                continue;
+            }
+            match self.load_record(&path).await {
+                Ok(record) => identities.push(record),
+                Err(e) => {
+                    tracing::warn!("Skipping corrupt identity file {:?}: {}", path, e);
+                }
+            }
+        }
+
+        identities.sort_by(|a, b| a.created_at.cmp(&b.created_at));
+        Ok((identities, default_id))
+    }
+
+    /// Create a new identity.
+    pub async fn create(&self, name: String, purpose: IdentityPurpose) -> Result<IdentityRecord> {
+        let signing_key = SigningKey::generate(&mut OsRng);
+        let pubkey_hex = hex::encode(signing_key.verifying_key().as_bytes());
+        let did = did_key_from_pubkey_hex(&pubkey_hex)?;
+        let id = uuid::Uuid::new_v4().to_string();
+        let created_at = chrono::Utc::now().to_rfc3339();
+
+        // Every new identity gets a deterministic default avatar derived from
+        // its pubkey. Non-seed identities aren't the master node, so they use
+        // the 5×5 identicon (never the hexagonal node silhouette).
+        let default_profile = IdentityProfile {
+            picture: Some(crate::avatar::identicon(&pubkey_hex)),
+            ..Default::default()
+        };
+
+        let identity_file = IdentityFile {
+            id: id.clone(),
+            name: name.clone(),
+            purpose: purpose.clone(),
+            secret_key: signing_key.to_bytes().to_vec(),
+            pubkey_hex: pubkey_hex.clone(),
+            did: did.clone(),
+            created_at: created_at.clone(),
+            nostr_secret_hex: None,
+            nostr_pubkey_hex: None,
+            profile: Some(default_profile),
+            derivation_index: None,
+        };
+
+        let file_path = self.identities_dir.join(format!("{}.json", id));
+        let json =
+            serde_json::to_string_pretty(&identity_file).context("Failed to serialize identity")?;
+        fs::write(&file_path, json.as_bytes())
+            .await
+            .context("Failed to write identity file")?;
+
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(&file_path, std::fs::Permissions::from_mode(0o600))
+                .await
+                .context("Failed to set identity file permissions")?;
+        }
+
+        // If this is the first identity, make it the default
+        let (existing, _) = self.list().await?;
+        if existing.len() <= 1 {
+            self.set_default(&id).await?;
+        }
+
+        // Auto-generate Nostr keypair so every identity has both key types (legacy path)
+        let _ = self.create_nostr_key(&id).await;
+
+        // Re-read to pick up the Nostr keys
+        let record = self.get(&id).await?;
+
+        tracing::info!("Created identity '{}' ({})", name, purpose);
+
+        Ok(record)
+    }
+
+    /// Mirror an existing Ed25519 signing key as a manager-level identity.
+    ///
+    /// Used at boot to expose the node's own seed-derived key (the one that
+    /// backs `server_info.pubkey` and peer-to-peer connections) as an
+    /// entry in the Identities page, so all three surfaces — DID Status,
+    /// "Node" entry on Identities, and peer-connect DID — resolve to the
+    /// same DID. The id is deterministic (`node-<pubkey16>`), so repeated
+    /// calls on the same key are idempotent: if the file already exists
+    /// we return the existing record untouched.
+    pub async fn create_from_signing_key(
+        &self,
+        name: String,
+        purpose: IdentityPurpose,
+        signing_key: SigningKey,
+    ) -> Result<IdentityRecord> {
+        let pubkey_hex = hex::encode(signing_key.verifying_key().as_bytes());
+        let did = did_key_from_pubkey_hex(&pubkey_hex)?;
+        let id = format!("node-{}", &pubkey_hex[..16]);
+
+        // Idempotent: if we already mirrored this key, just return it.
+        let file_path = self.identities_dir.join(format!("{}.json", id));
+        if file_path.exists() {
+            return self.get(&id).await;
+        }
+
+        let created_at = chrono::Utc::now().to_rfc3339();
+        // Mark as the node (master) identity so it gets the hex SVG.
+        let default_profile = IdentityProfile {
+            picture: Some(crate::avatar::default_picture(&pubkey_hex, true)),
+            ..Default::default()
+        };
+
+        let identity_file = IdentityFile {
+            id: id.clone(),
+            name: name.clone(),
+            purpose: purpose.clone(),
+            secret_key: signing_key.to_bytes().to_vec(),
+            pubkey_hex: pubkey_hex.clone(),
+            did: did.clone(),
+            created_at,
+            nostr_secret_hex: None,
+            nostr_pubkey_hex: None,
+            profile: Some(default_profile),
+            derivation_index: Some(0),
+        };
+
+        let json =
+            serde_json::to_string_pretty(&identity_file).context("Failed to serialize identity")?;
+        fs::write(&file_path, json.as_bytes())
+            .await
+            .context("Failed to write identity file")?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(&file_path, std::fs::Permissions::from_mode(0o600))
+                .await
+                .context("Failed to set identity file permissions")?;
+        }
+
+        // First identity becomes the default.
+        let (existing, _) = self.list().await?;
+        if existing.len() <= 1 {
+            self.set_default(&id).await?;
+        }
+
+        tracing::info!(
+            "Mirrored node signing key as Node identity '{}' ({})",
+            name,
+            purpose
+        );
+
+        self.get(&id).await
+    }
+
+    /// Create a new identity with keys derived from a BIP-39 master seed.
+    /// The derivation index is auto-incremented and persisted.
+    pub async fn create_from_seed(
+        &self,
+        name: String,
+        purpose: IdentityPurpose,
+        seed: &crate::seed::MasterSeed,
+        data_dir: &std::path::Path,
+    ) -> Result<IdentityRecord> {
+        let index = crate::seed::load_identity_index(data_dir).await?;
+
+        let signing_key = crate::seed::derive_identity_ed25519(seed, index)?;
+        let pubkey_hex = hex::encode(signing_key.verifying_key().as_bytes());
+        let did = did_key_from_pubkey_hex(&pubkey_hex)?;
+        let id = uuid::Uuid::new_v4().to_string();
+        let created_at = chrono::Utc::now().to_rfc3339();
+
+        // Derive Nostr key from the same seed via BIP-32.
+        let nostr_keys = crate::seed::derive_nostr_identity_key(seed, index)?;
+        let nostr_secret_hex = nostr_keys.secret_key().display_secret().to_string();
+        let nostr_pubkey_hex = nostr_keys.public_key().to_hex();
+
+        // Derivation index 0 is the primary seed-derived identity — the
+        // "master" node identity — and gets the distinctive hexagonal SVG.
+        // Later indices get the standard identicon.
+        let default_profile = IdentityProfile {
+            picture: Some(crate::avatar::default_picture(&pubkey_hex, index == 0)),
+            ..Default::default()
+        };
+
+        let identity_file = IdentityFile {
+            id: id.clone(),
+            name: name.clone(),
+            purpose: purpose.clone(),
+            secret_key: signing_key.to_bytes().to_vec(),
+            pubkey_hex: pubkey_hex.clone(),
+            did: did.clone(),
+            created_at: created_at.clone(),
+            nostr_secret_hex: Some(nostr_secret_hex),
+            nostr_pubkey_hex: Some(nostr_pubkey_hex),
+            profile: Some(default_profile),
+            derivation_index: Some(index),
+        };
+
+        let file_path = self.identities_dir.join(format!("{}.json", id));
+        let json =
+            serde_json::to_string_pretty(&identity_file).context("Failed to serialize identity")?;
+        fs::write(&file_path, json.as_bytes())
+            .await
+            .context("Failed to write identity file")?;
+
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(&file_path, std::fs::Permissions::from_mode(0o600))
+                .await
+                .context("Failed to set identity file permissions")?;
+        }
+
+        // Increment the derivation index for next identity.
+        crate::seed::save_identity_index(data_dir, index + 1).await?;
+
+        // If first identity, make it the default.
+        let (existing, _) = self.list().await?;
+        if existing.len() <= 1 {
+            self.set_default(&id).await?;
+        }
+
+        let record = self.get(&id).await?;
+        tracing::info!(
+            "Created seed-derived identity '{}' ({}) at index {}",
+            name,
+            purpose,
+            index
+        );
+
+        Ok(record)
+    }
+
+    /// Get a single identity by ID (without secret key).
+    pub async fn get(&self, id: &str) -> Result<IdentityRecord> {
+        let file_path = self.identities_dir.join(format!("{}.json", id));
+        if !file_path.exists() {
+            return Err(anyhow::anyhow!("Identity not found: {}", id));
+        }
+        self.load_record(&file_path).await
+    }
+
+    /// Delete an identity.
+    pub async fn delete(&self, id: &str) -> Result<()> {
+        let file_path = self.identities_dir.join(format!("{}.json", id));
+        if !file_path.exists() {
+            return Err(anyhow::anyhow!("Identity not found: {}", id));
+        }
+
+        fs::remove_file(&file_path)
+            .await
+            .context("Failed to delete identity file")?;
+
+        // If this was the default, clear the marker
+        if let Some(default_id) = self.get_default_id().await {
+            if default_id == id {
+                let marker = self.identities_dir.join(DEFAULT_MARKER);
+                let _ = fs::remove_file(marker).await;
+
+                // Set a new default if other identities exist
+                let (remaining, _) = self.list().await?;
+                if let Some(first) = remaining.first() {
+                    self.set_default(&first.id).await?;
+                }
+            }
+        }
+
+        tracing::info!("Deleted identity {}", id);
+        Ok(())
+    }
+
+    /// Set the default identity.
+    pub async fn set_default(&self, id: &str) -> Result<()> {
+        // Verify it exists
+        let file_path = self.identities_dir.join(format!("{}.json", id));
+        if !file_path.exists() {
+            return Err(anyhow::anyhow!("Identity not found: {}", id));
+        }
+
+        let marker = self.identities_dir.join(DEFAULT_MARKER);
+        fs::write(&marker, id.as_bytes())
+            .await
+            .context("Failed to write default identity marker")?;
+        Ok(())
+    }
+
+    /// Get the Ed25519 signing key for an identity (for DHT publication).
+    pub async fn get_signing_key(&self, id: &str) -> Result<SigningKey> {
+        self.load_signing_key(id).await
+    }
+
+    /// Sign data with a specific identity.
+    pub async fn sign(&self, id: &str, data: &[u8]) -> Result<String> {
+        let signing_key = self.load_signing_key(id).await?;
+        Ok(hex::encode(signing_key.sign(data).to_bytes()))
+    }
+
+    /// Verify a signature against a DID's public key.
+    /// Works for any valid did:key (not just local identities).
+    pub async fn verify(&self, did: &str, data: &[u8], sig_hex: &str) -> Result<bool> {
+        // Extract pubkey from did:key directly — no local lookup needed
+        let pubkey_bytes = pubkey_bytes_from_did_key(did)?;
+        let verifying_key = VerifyingKey::from_bytes(
+            pubkey_bytes
+                .as_slice()
+                .try_into()
+                .map_err(|_| anyhow::anyhow!("Invalid pubkey length"))?,
+        )?;
+        let sig_bytes = hex::decode(sig_hex).context("Invalid signature hex")?;
+        let sig = Signature::from_bytes(
+            sig_bytes
+                .as_slice()
+                .try_into()
+                .map_err(|_| anyhow::anyhow!("Invalid signature length"))?,
+        );
+        Ok(verifying_key.verify(data, &sig).is_ok())
+    }
+
+    /// Create a Nostr keypair for an identity.
+    pub async fn create_nostr_key(&self, id: &str) -> Result<String> {
+        let file_path = self.identities_dir.join(format!("{}.json", id));
+        if !file_path.exists() {
+            return Err(anyhow::anyhow!("Identity not found: {}", id));
+        }
+        let data = fs::read(&file_path)
+            .await
+            .context("Failed to read identity file")?;
+        let mut file: IdentityFile =
+            serde_json::from_slice(&data).context("Failed to parse identity file")?;
+
+        if file.nostr_secret_hex.is_some() {
+            return Err(anyhow::anyhow!(
+                "Nostr key already exists for this identity"
+            ));
+        }
+
+        let keys = nostr_sdk::Keys::generate();
+        let secret_hex = keys.secret_key().display_secret().to_string();
+        let pubkey_hex = keys.public_key().to_hex();
+        let npub = keys.public_key().to_bech32().unwrap_or_default();
+
+        file.nostr_secret_hex = Some(secret_hex);
+        file.nostr_pubkey_hex = Some(pubkey_hex.clone());
+
+        let json = serde_json::to_string_pretty(&file).context("Failed to serialize identity")?;
+        fs::write(&file_path, json.as_bytes())
+            .await
+            .context("Failed to write identity file")?;
+
+        tracing::info!(
+            "Created Nostr key for identity {} (npub: {})",
+            id,
+            &npub[..20.min(npub.len())]
+        );
+        Ok(pubkey_hex)
+    }
+
+    /// Sign a Nostr event (NIP-01) with an identity's Nostr key.
+    /// Returns the signature hex string.
+    pub async fn nostr_sign(&self, id: &str, event_hash_hex: &str) -> Result<String> {
+        let file_path = self.identities_dir.join(format!("{}.json", id));
+        if !file_path.exists() {
+            return Err(anyhow::anyhow!("Identity not found: {}", id));
+        }
+        let data = fs::read(&file_path)
+            .await
+            .context("Failed to read identity file")?;
+        let file: IdentityFile =
+            serde_json::from_slice(&data).context("Failed to parse identity file")?;
+
+        let secret_hex = file
+            .nostr_secret_hex
+            .ok_or_else(|| anyhow::anyhow!("No Nostr key for this identity"))?;
+        let keys = nostr_sdk::Keys::parse(&secret_hex).context("Invalid Nostr secret key")?;
+
+        let hash_bytes = hex::decode(event_hash_hex).context("Invalid event hash hex")?;
+        if hash_bytes.len() != 32 {
+            return Err(anyhow::anyhow!("Event hash must be 32 bytes"));
+        }
+
+        let message = nostr_sdk::secp256k1::Message::from_digest(
+            hash_bytes
+                .try_into()
+                .map_err(|_| anyhow::anyhow!("Invalid hash length"))?,
+        );
+        let sig = keys.sign_schnorr(&message);
+        Ok(sig.to_string())
+    }
+
+    /// Load the Nostr secret key for an identity, returning the parsed Keys.
+    async fn load_nostr_keys(&self, id: &str) -> Result<nostr_sdk::Keys> {
+        let file_path = self.identities_dir.join(format!("{}.json", id));
+        if !file_path.exists() {
+            return Err(anyhow::anyhow!("Identity not found: {}", id));
+        }
+        let data = fs::read(&file_path)
+            .await
+            .context("Failed to read identity file")?;
+        let file: IdentityFile =
+            serde_json::from_slice(&data).context("Failed to parse identity file")?;
+        let secret_hex = file
+            .nostr_secret_hex
+            .ok_or_else(|| anyhow::anyhow!("No Nostr key for this identity"))?;
+        nostr_sdk::Keys::parse(&secret_hex).context("Invalid Nostr secret key")
+    }
+
+    /// NIP-04 encrypt plaintext for a peer pubkey.
+    pub async fn nostr_encrypt_nip04(
+        &self,
+        id: &str,
+        peer_pubkey_hex: &str,
+        plaintext: &str,
+    ) -> Result<String> {
+        let keys = self.load_nostr_keys(id).await?;
+        let peer_pk =
+            nostr_sdk::PublicKey::from_hex(peer_pubkey_hex).context("Invalid peer pubkey hex")?;
+        nostr_sdk::nips::nip04::encrypt(keys.secret_key(), &peer_pk, plaintext)
+            .context("NIP-04 encryption failed")
+    }
+
+    /// NIP-04 decrypt ciphertext from a peer pubkey.
+    pub async fn nostr_decrypt_nip04(
+        &self,
+        id: &str,
+        peer_pubkey_hex: &str,
+        ciphertext: &str,
+    ) -> Result<String> {
+        let keys = self.load_nostr_keys(id).await?;
+        let peer_pk =
+            nostr_sdk::PublicKey::from_hex(peer_pubkey_hex).context("Invalid peer pubkey hex")?;
+        nostr_sdk::nips::nip04::decrypt(keys.secret_key(), &peer_pk, ciphertext)
+            .context("NIP-04 decryption failed")
+    }
+
+    /// NIP-44 encrypt plaintext for a peer pubkey.
+    pub async fn nostr_encrypt_nip44(
+        &self,
+        id: &str,
+        peer_pubkey_hex: &str,
+        plaintext: &str,
+    ) -> Result<String> {
+        let keys = self.load_nostr_keys(id).await?;
+        let peer_pk =
+            nostr_sdk::PublicKey::from_hex(peer_pubkey_hex).context("Invalid peer pubkey hex")?;
+        nostr_sdk::nips::nip44::encrypt(
+            keys.secret_key(),
+            &peer_pk,
+            plaintext,
+            nostr_sdk::nips::nip44::Version::V2,
+        )
+        .context("NIP-44 encryption failed")
+    }
+
+    /// NIP-44 decrypt ciphertext from a peer pubkey.
+    pub async fn nostr_decrypt_nip44(
+        &self,
+        id: &str,
+        peer_pubkey_hex: &str,
+        ciphertext: &str,
+    ) -> Result<String> {
+        let keys = self.load_nostr_keys(id).await?;
+        let peer_pk =
+            nostr_sdk::PublicKey::from_hex(peer_pubkey_hex).context("Invalid peer pubkey hex")?;
+        nostr_sdk::nips::nip44::decrypt(keys.secret_key(), &peer_pk, ciphertext)
+            .context("NIP-44 decryption failed")
+    }
+
+    /// Update the profile metadata for an identity.
+    pub async fn update_profile(&self, id: &str, profile: IdentityProfile) -> Result<()> {
+        let file_path = self.identities_dir.join(format!("{}.json", id));
+        if !file_path.exists() {
+            return Err(anyhow::anyhow!("Identity not found: {}", id));
+        }
+        let data = fs::read(&file_path)
+            .await
+            .context("Failed to read identity file")?;
+        let mut file: IdentityFile =
+            serde_json::from_slice(&data).context("Failed to parse identity file")?;
+        file.profile = Some(profile);
+        let json = serde_json::to_string_pretty(&file).context("Failed to serialize identity")?;
+        fs::write(&file_path, json.as_bytes())
+            .await
+            .context("Failed to write identity file")?;
+        Ok(())
+    }
+
+    /// Publish kind 0 (metadata) event to one or more Nostr relays.
+    ///
+    /// Connects all relays in parallel, broadcasts the signed event to
+    /// every one of them, and reports back the event id plus per-relay
+    /// acceptance status. At least one successful relay is required —
+    /// if every relay rejects the event, this returns an error so the
+    /// UI can surface "publish failed" instead of silently succeeding.
+    pub async fn publish_profile(
+        &self,
+        id: &str,
+        relay_urls: &[String],
+    ) -> Result<ProfilePublishOutcome> {
+        let record = self.get(id).await?;
+        let keys = self.load_nostr_keys(id).await?;
+        let profile = record.profile.unwrap_or_default();
+
+        if relay_urls.is_empty() {
+            anyhow::bail!("No relays configured — add a relay under Manage Relays first");
+        }
+
+        // Build kind 0 content JSON (NIP-01 + NIP-24)
+        let mut content = serde_json::Map::new();
+        content.insert("name".to_string(), serde_json::json!(record.name));
+        if let Some(v) = &profile.display_name {
+            content.insert("display_name".to_string(), serde_json::json!(v));
+        }
+        if let Some(v) = &profile.about {
+            content.insert("about".to_string(), serde_json::json!(v));
+        }
+        if let Some(v) = &profile.picture {
+            content.insert("picture".to_string(), serde_json::json!(v));
+        }
+        if let Some(v) = &profile.banner {
+            content.insert("banner".to_string(), serde_json::json!(v));
+        }
+        if let Some(v) = &profile.website {
+            content.insert("website".to_string(), serde_json::json!(v));
+        }
+        if let Some(v) = &profile.nip05 {
+            content.insert("nip05".to_string(), serde_json::json!(v));
+        }
+        if let Some(v) = &profile.lud16 {
+            content.insert("lud16".to_string(), serde_json::json!(v));
+        }
+
+        let content_str =
+            serde_json::to_string(&content).context("Failed to serialize profile content")?;
+
+        let client = nostr_sdk::Client::new(keys);
+        for url in relay_urls {
+            if let Err(e) = client.add_relay(url).await {
+                tracing::warn!(relay = %url, error = %e, "Failed to add relay; continuing");
+            }
+        }
+        // 15s gives each relay a reasonable chance to hand-shake before we
+        // fire the publish. nostr-sdk's send_event_builder to "all relays"
+        // will only reach relays that have connected by then — some slow
+        // relays can miss the first publish but subsequent publishes hit
+        // them once the connection has settled.
+        if tokio::time::timeout(Duration::from_secs(15), client.connect())
+            .await
+            .is_err()
+        {
+            tracing::warn!("Nostr relay connection timed out after 15s, continuing anyway");
+        }
+
+        let builder =
+            nostr_sdk::prelude::EventBuilder::new(nostr_sdk::prelude::Kind::Metadata, &content_str);
+        let output = match client.send_event_builder(builder).await {
+            Ok(o) => o,
+            Err(e) => {
+                client.disconnect().await;
+                return Err(anyhow::anyhow!("Publish failed on every relay: {}", e));
+            }
+        };
+
+        let event_id = output.id().to_hex();
+        // `Output` has `success: HashSet<RelayUrl>` + `failed: HashMap<RelayUrl, String>`.
+        // Normalise to string comparisons (RelayUrl trims trailing slashes etc.).
+        let success_strs: std::collections::HashSet<String> =
+            output.success.iter().map(|u| u.to_string()).collect();
+        let failed_strs: std::collections::HashMap<String, String> = output
+            .failed
+            .iter()
+            .map(|(u, msg)| (u.to_string(), msg.clone()))
+            .collect();
+        let mut accepted: Vec<String> = Vec::new();
+        let mut rejected: Vec<(String, String)> = Vec::new();
+        for url in relay_urls {
+            let match_url = success_strs.iter().any(|s| relay_url_matches(s, url));
+            if match_url {
+                accepted.push(url.clone());
+            } else if let Some((_, reason)) =
+                failed_strs.iter().find(|(s, _)| relay_url_matches(s, url))
+            {
+                rejected.push((url.clone(), reason.clone()));
+            } else {
+                rejected.push((url.clone(), "(no ack from relay)".to_string()));
+            }
+        }
+        client.disconnect().await;
+
+        if accepted.is_empty() {
+            anyhow::bail!(
+                "Profile published on 0 relays — {} attempted. Failures: {:?}",
+                relay_urls.len(),
+                rejected
+            );
+        }
+
+        Ok(ProfilePublishOutcome {
+            event_id,
+            accepted,
+            rejected,
+        })
+    }
+
+    /// Export all keys for an identity (SENSITIVE — only call after password verification).
+    pub async fn export_keys(&self, id: &str) -> Result<serde_json::Value> {
+        let file_path = self.identities_dir.join(format!("{}.json", id));
+        if !file_path.exists() {
+            return Err(anyhow::anyhow!("Identity not found: {}", id));
+        }
+        let data = fs::read(&file_path)
+            .await
+            .context("Failed to read identity file")?;
+        let file: IdentityFile =
+            serde_json::from_slice(&data).context("Failed to parse identity file")?;
+
+        let ed25519_secret_hex = hex::encode(&file.secret_key);
+
+        let nostr_nsec = file.nostr_secret_hex.as_ref().and_then(|h| {
+            nostr_sdk::SecretKey::from_hex(h)
+                .ok()
+                .and_then(|sk| sk.to_bech32().ok())
+        });
+
+        Ok(serde_json::json!({
+            "ed25519_secret_hex": ed25519_secret_hex,
+            "nostr_secret_hex": file.nostr_secret_hex,
+            "nostr_nsec": nostr_nsec,
+        }))
+    }
+
+    // --- internal helpers ---
+}
+
+/// Extract Ed25519 pubkey bytes from a did:key string.
+/// Format: did:key:z<base58btc(0xed01 + 32-byte-pubkey)>
+fn pubkey_bytes_from_did_key(did: &str) -> Result<Vec<u8>> {
+    let z_part = did
+        .strip_prefix("did:key:z")
+        .ok_or_else(|| anyhow::anyhow!("Invalid did:key format: {}", did))?;
+    let decoded = bs58::decode(z_part)
+        .into_vec()
+        .context("Invalid base58 in did:key")?;
+    if decoded.len() != 34 || decoded[0] != 0xed || decoded[1] != 0x01 {
+        return Err(anyhow::anyhow!("Invalid Ed25519 did:key multicodec prefix"));
+    }
+    Ok(decoded[2..].to_vec())
+}
+
+impl IdentityManager {
+    async fn get_default_id(&self) -> Option<String> {
+        let marker = self.identities_dir.join(DEFAULT_MARKER);
+        fs::read_to_string(&marker)
+            .await
+            .ok()
+            .map(|s| s.trim().to_string())
+    }
+
+    async fn load_record(&self, path: &Path) -> Result<IdentityRecord> {
+        let data = fs::read(path)
+            .await
+            .context("Failed to read identity file")?;
+        let file: IdentityFile =
+            serde_json::from_slice(&data).context("Failed to parse identity file")?;
+
+        // Derive npub (bech32) from hex pubkey if available
+        let nostr_npub = file.nostr_pubkey_hex.as_ref().and_then(|hex| {
+            nostr_sdk::PublicKey::from_hex(hex)
+                .ok()
+                .and_then(|pk| pk.to_bech32().ok())
+        });
+
+        // Backfill a default avatar for identities created before the
+        // default-avatar feature shipped. The synthetic profile lives only
+        // in the returned record — we don't rewrite the file on disk,
+        // since a later explicit save will persist whatever the user
+        // actually chose. Master identities (seed index 0) get the hex
+        // node SVG; all other pre-existing identities get the identicon.
+        let profile = file.profile.or_else(|| {
+            let is_master = file.derivation_index == Some(0);
+            Some(IdentityProfile {
+                picture: Some(crate::avatar::default_picture(&file.pubkey_hex, is_master)),
+                ..Default::default()
+            })
+        });
+
+        Ok(IdentityRecord {
+            id: file.id,
+            name: file.name,
+            purpose: file.purpose,
+            pubkey_hex: file.pubkey_hex,
+            did: file.did,
+            dht_did: None,
+            created_at: file.created_at,
+            nostr_pubkey: file.nostr_pubkey_hex,
+            nostr_npub,
+            profile,
+        })
+    }
+
+    async fn load_signing_key(&self, id: &str) -> Result<SigningKey> {
+        let file_path = self.identities_dir.join(format!("{}.json", id));
+        if !file_path.exists() {
+            return Err(anyhow::anyhow!("Identity not found: {}", id));
+        }
+        let data = fs::read(&file_path)
+            .await
+            .context("Failed to read identity file")?;
+        let file: IdentityFile =
+            serde_json::from_slice(&data).context("Failed to parse identity file")?;
+        let arr: [u8; 32] = file
+            .secret_key
+            .try_into()
+            .map_err(|_| anyhow::anyhow!("Invalid secret key length"))?;
+        Ok(SigningKey::from_bytes(&arr))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tempfile::tempdir;
+
+    #[tokio::test]
+    async fn test_create_identity_did_key_format() {
+        let dir = tempdir().unwrap();
+        let mgr = IdentityManager::new(dir.path()).await.unwrap();
+        let record = mgr
+            .create("Test".to_string(), IdentityPurpose::Personal)
+            .await
+            .unwrap();
+        assert!(
+            record.did.starts_with("did:key:z6Mk"),
+            "DID should be did:key:z6Mk..., got {}",
+            record.did
+        );
+        assert!(!record.id.is_empty());
+        assert_eq!(record.name, "Test");
+    }
+
+    #[tokio::test]
+    async fn test_create_nostr_key_npub_format() {
+        let dir = tempdir().unwrap();
+        let mgr = IdentityManager::new(dir.path()).await.unwrap();
+        // `create()` auto-provisions a Nostr key for every identity, so the
+        // returned record should already have a valid bech32 npub.
+        let record = mgr
+            .create("Personal".to_string(), IdentityPurpose::Personal)
+            .await
+            .unwrap();
+        let npub = record.nostr_npub.expect("nostr npub should be populated");
+        assert!(
+            npub.starts_with("npub1"),
+            "npub should start with npub1, got {}",
+            npub
+        );
+    }
+
+    #[tokio::test]
+    async fn test_sign_and_verify() {
+        let dir = tempdir().unwrap();
+        let mgr = IdentityManager::new(dir.path()).await.unwrap();
+        let record = mgr
+            .create("Signer".to_string(), IdentityPurpose::Personal)
+            .await
+            .unwrap();
+        let data = b"hello archipelago";
+        let sig = mgr.sign(&record.id, data).await.unwrap();
+        let valid = mgr.verify(&record.did, data, &sig).await.unwrap();
+        assert!(valid, "Signature should verify");
+    }
+
+    #[tokio::test]
+    async fn test_sign_verify_wrong_data() {
+        let dir = tempdir().unwrap();
+        let mgr = IdentityManager::new(dir.path()).await.unwrap();
+        let record = mgr
+            .create("Signer".to_string(), IdentityPurpose::Personal)
+            .await
+            .unwrap();
+        let sig = mgr.sign(&record.id, b"correct").await.unwrap();
+        let valid = mgr.verify(&record.did, b"wrong", &sig).await.unwrap();
+        assert!(!valid, "Signature should not verify with wrong data");
+    }
+
+    #[tokio::test]
+    async fn test_list_identities() {
+        let dir = tempdir().unwrap();
+        let mgr = IdentityManager::new(dir.path()).await.unwrap();
+        mgr.create("One".to_string(), IdentityPurpose::Personal)
+            .await
+            .unwrap();
+        mgr.create("Two".to_string(), IdentityPurpose::Business)
+            .await
+            .unwrap();
+        let (list, _) = mgr.list().await.unwrap();
+        assert_eq!(list.len(), 2);
+    }
+
+    #[tokio::test]
+    async fn test_delete_identity() {
+        let dir = tempdir().unwrap();
+        let mgr = IdentityManager::new(dir.path()).await.unwrap();
+        let r1 = mgr
+            .create("First".to_string(), IdentityPurpose::Personal)
+            .await
+            .unwrap();
+        let r2 = mgr
+            .create("Second".to_string(), IdentityPurpose::Business)
+            .await
+            .unwrap();
+        mgr.delete(&r1.id).await.unwrap();
+        let (list, _) = mgr.list().await.unwrap();
+        assert_eq!(list.len(), 1);
+        assert_eq!(list[0].id, r2.id);
+    }
+
+    #[tokio::test]
+    async fn test_set_and_get_default() {
+        let dir = tempdir().unwrap();
+        let mgr = IdentityManager::new(dir.path()).await.unwrap();
+        let r1 = mgr
+            .create("First".to_string(), IdentityPurpose::Personal)
+            .await
+            .unwrap();
+        let r2 = mgr
+            .create("Second".to_string(), IdentityPurpose::Business)
+            .await
+            .unwrap();
+        mgr.set_default(&r2.id).await.unwrap();
+        let (_, default_id) = mgr.list().await.unwrap();
+        assert_eq!(default_id, Some(r2.id.clone()));
+        assert_ne!(default_id, Some(r1.id));
+    }
+
+    #[tokio::test]
+    async fn test_delete_default_shifts() {
+        let dir = tempdir().unwrap();
+        let mgr = IdentityManager::new(dir.path()).await.unwrap();
+        let r1 = mgr
+            .create("First".to_string(), IdentityPurpose::Personal)
+            .await
+            .unwrap();
+        mgr.create("Second".to_string(), IdentityPurpose::Business)
+            .await
+            .unwrap();
+        mgr.set_default(&r1.id).await.unwrap();
+        mgr.delete(&r1.id).await.unwrap();
+        let (list, _) = mgr.list().await.unwrap();
+        assert_eq!(list.len(), 1);
+    }
+}

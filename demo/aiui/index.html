@@ -1,0 +1,31 @@
+<!DOCTYPE html>
+<html lang="en" class="h-full overflow-hidden">
+  <head>
+    <meta charset="UTF-8" />
+    <!-- interactive-widget=resizes-content: when the soft keyboard opens,
+         Chrome (108+) resizes the LAYOUT viewport instead of only the visual
+         one, so window.innerHeight shrinks and full-height layouts scale to
+         the space above the keyboard rather than scrolling under it.
+         neode-ui's index.html already carries this; this adds parity for
+         AIUI's standalone mode. Ignored by iOS Safari and by Android WebView —
+         the companion app controls keyboard resize itself via
+         windowSoftInputMode/IME insets (see docs/companion-keyboard-viewport.md). -->
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, minimum-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover, interactive-widget=resizes-content" />
+    <meta name="theme-color" content="#0a0a0a" media="(prefers-color-scheme: dark)" />
+    <meta name="theme-color" content="#faf9f6" media="(prefers-color-scheme: light)" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="apple-mobile-web-app-title" content="AIUI" />
+    <meta name="description" content="AI chat interface with rich content surfaces" />
+    <!-- CSP set via HTTP headers in production nginx — not in HTML meta to avoid breaking Vite HMR -->
+    <link rel="icon" href="/aiui/favicon.svg" type="image/svg+xml" />
+    <link rel="apple-touch-icon" href="/aiui/apple-touch-icon-180x180.png" />
+    <title>AIUI</title>
+    <script type="module" crossorigin src="/aiui/assets/index-8cIrvc8q.js"></script>
+    <link rel="stylesheet" crossorigin href="/aiui/assets/index-BJkaQ2c4.css">
+  <link rel="manifest" href="/aiui/manifest.webmanifest"><script id="vite-plugin-pwa:register-sw" src="/aiui/registerSW.js"></script></head>
+  <body class="antialiased h-full overflow-hidden fixed w-full">
+    <div id="app"></div>
+  </body>
+</html>

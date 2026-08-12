@@ -1,0 +1,65 @@
+app:
+  id: lnd-ui
+  name: LND UI
+  version: 1.0.0
+  description: |
+    Archipelago-native HTTP frontend for LND. Runs nginx inside a
+    container and serves static assets. LND connection info is fetched
+    via an absolute URL that the host nginx routes to the archipelago
+    backend on 127.0.0.1:5678, so no upstream auth is baked in.
+
+  container:
+    build:
+      context: /opt/archipelago/docker/lnd-ui
+      dockerfile: Dockerfile
+      tag: localhost/lnd-ui:local
+
+  dependencies:
+    - app_id: lnd
+
+  resources:
+    memory_limit: 64Mi
+
+  security:
+    readonly_root: false
+    network_policy: host
+
+  # Host networking: the container's nginx listens on 18083 directly (see
+  # docker/lnd-ui/nginx.conf), because it has to proxy the archipelago backend
+  # on 127.0.0.1:5678 same-origin — a bridge container cannot reach that, and
+  # the cross-origin fallback broke the app on http-only nodes. `ports:` is
+  # intentionally empty because host networking bypasses port mapping, exactly
+  # as in apps/bitcoin-ui/manifest.yml.
+  #
+  # This previously declared `bridge` with 18083:80, which publishes the host
+  # port to a container port where nothing listens. scripts/container-specs.sh
+  # carried the identical mistake and was fixed alongside this; recreating from
+  # it on a test node left :18083 refusing connections.
+  # Declared so the APP GATE can see this port. Host networking means Podman
+  # publishes nothing (quadlet skips PublishPort in host mode), so `bind:` here
+  # is a statement of where the container's own nginx listens — 127.0.0.1 —
+  # not a publish instruction. Without this declaration the gate had no idea
+  # the port existed: it was neither protected nor listed as unprotected, and
+  # served the LND screen unauthenticated on every interface.
+  ports:
+    - host: 18083
+      container: 18083
+      protocol: tcp
+      bind: 127.0.0.1
+      auth: gated
+      # First-party companion UI: its nginx forwards the node session cookie
+      # to the daemon's authenticated endpoints; without passthrough the gate
+      # strips it and every data call 401s while the page shell renders.
+      session_passthrough: true
+
+  volumes: []
+
+  environment: []
+
+  health_check:
+    type: http
+    endpoint: http://127.0.0.1:18083
+    path: /
+    interval: 30s
+    timeout: 5s
+    retries: 3

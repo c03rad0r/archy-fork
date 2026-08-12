@@ -1,0 +1,47 @@
+---
+description: Expert rules for News content extraction, merge, and surfacing
+globs: "**/useContentPanel.ts,**/useRssFetch.ts,**/NewsGrid.vue,**/ArticleDetail.vue,**/vite-rss*"
+alwaysApply: false
+---
+
+# News Content Surface
+
+## Sources
+
+1. **Web search**: `message.webResults` from AI (with imgSrc, content)
+2. **RSS**: Fetched from website URLs only when `newsContext` is true
+
+## newsContext
+
+- `isNewsQuery(userQuery)` — "news", "latest", "what's happening", "what are people saying", etc.
+- `isNewsLikeResponse(text)` — "for instant news", "check these sources", "access to web search", etc.
+
+## Merge Rules
+
+- `mergeNewsResults(web, rss)` — dedupe by URL (normalized: lowercase, no trailing slash)
+- Web results take precedence when URL collision
+
+## RSS Fetch Guard
+
+- **Only fetch RSS when `newsContext` is true and `mergedWebsites.length > 0`** — avoid surfacing irrelevant RSS from docs/resource links when user asked "websites"
+- Max 8 URLs, 15 articles total, 5 sites tried
+- Timeout: 15s client, 5s per feed server-side
+
+## Display
+
+- NewsGrid (variant=news): articles open in **ArticleDetail** (in-panel)
+- Relevance sort when `query` provided
+- Search filter by title, content, url
+- imgSrc: validate with `isSafeImgUrl` (https only)
+
+## Known Limitations
+
+- **RSS language**: Feeds return whatever the site publishes; no query/language filtering — may surface non-English articles
+- **RSS relevance**: No semantic filtering; articles are shown as published
+
+## ArticleDetail Security
+
+- `sanitizeHtml`: allow only safe tags (p, br, a, strong, em, ul, ol, li, blockquote, h1-h4)
+- Strip script, style, iframe, object, embed
+- Links: `href` must be `https?://`, reject `javascript:`
+- Images: `src` must be `https?://`

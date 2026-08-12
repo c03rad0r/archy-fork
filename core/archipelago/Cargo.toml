@@ -1,0 +1,149 @@
+[package]
+name = "archipelago"
+version = "1.7.129-alpha"
+edition = "2021"
+license.workspace = true
+description = "Archipelago Bitcoin Node OS - Native backend"
+authors = ["Archipelago Team"]
+
+[[bin]]
+name = "archipelago"
+path = "src/main.rs"
+
+[features]
+default = []
+# DHT Phase 2: iroh-blobs peer swarm engine. OFF by default — it pulls a heavy
+# QUIC dependency tree, so it ships behind a flag for PoC/measurement on a
+# scratch node before any fleet rollout. With the flag off, swarm::providers()
+# is empty and every fetch goes straight to the origin HTTP path (today's
+# behaviour). Attach the optional iroh / iroh-blobs deps to this feature when
+# wiring the IrohProvider.
+iroh-swarm = ["dep:iroh", "dep:iroh-blobs"]
+
+[dependencies]
+# Core dependencies
+tokio = { version = "1", features = ["full"] }
+# Mesh port mirror: needs IPV6_V6ONLY on [::] listeners so they coexist with
+# the containers' own 0.0.0.0 binds (std/tokio don't expose the sockopt).
+socket2 = "0.5"
+libc = "0.2"   # process-group signalling for the supervised reticulum daemon
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+anyhow = "1.0"
+thiserror = "1.0"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+# HTTP and WebSocket
+hyper = { version = "0.14", features = ["full", "http1"] }
+hyper-util = { version = "0.1", features = ["full", "http1"] }
+http-body-util = "0.1"
+http-body = "1.0"
+tower = "0.5"
+tower-http = { version = "0.6", features = ["cors", "trace"] }
+hyper-ws-listener = "0.3.0"
+tokio-tungstenite = "0.20"
+futures-util = "0.3"
+
+# Our modules
+archipelago-container = { path = "../container" }
+archipelago-openwrt = { path = "../openwrt" }
+archipelago-security = { path = "../security" }
+archipelago-performance = { path = "../performance" }
+
+
+# Database (optional for now - can use SQLite or skip)
+# sqlx = { version = "0.7", features = ["sqlite", "runtime-tokio-rustls"] }
+
+# Authentication
+bcrypt = "0.15"
+sha2 = "0.10.9"
+blake3 = "1"
+hmac = "0.12.1"
+uuid = { version = "1.0", features = ["v4"] }
+regex = "1.10"
+
+# Node identity (Ed25519 + X25519 key agreement)
+ed25519-dalek = { version = "2.2.0", features = ["rand_core"] }
+curve25519-dalek = "4.1.3"
+rand = "0.8.5"
+hex = "0.4"
+bs58 = "0.5"
+chrono = "0.4"
+
+# BIP-39 mnemonic seed generation + BIP-32 HD key derivation
+bip39 = { version = "=2.1.0", features = ["rand"] }
+bitcoin = { version = "=0.32.5", features = ["rand-std"] }
+
+# Configuration
+toml = "0.8"
+serde_yaml = "0.9"
+
+# HTTP client (for LND REST proxy, Tor SOCKS for peer messaging)
+# Uses rustls-tls for cross-compilation (no OpenSSL dependency)
+# App-gate TLS. Pinned to the rustls 0.21 line that reqwest already resolves,
+# so this adds no new vendor and no second rustls major to the tree.
+tokio-rustls = "0.24"
+rustls-pemfile = "1.0"
+# Verifying that the gate's key actually pairs with its certificate; rustls
+# does not check this itself. Same version rustls 0.21 already resolves.
+webpki = { package = "rustls-webpki", version = "0.101" }
+reqwest = { version = "0.11", default-features = false, features = ["json", "socks", "rustls-tls", "stream"] }
+
+# Nostr (node discovery + NIP-44 encrypted peer handshake)
+nostr-sdk = { version = "0.44", features = ["nip04", "nip44"] }
+
+# Backup encryption (DID identity export) + TOTP 2FA encryption
+argon2 = "0.5.3"
+chacha20poly1305 = "0.10.1"
+base64 = "0.21"
+
+# Full system backup (tar archive + gzip compression)
+tar = "0.4"
+flate2 = "1.0"
+
+# TOTP 2FA
+totp-rs = { version = "5.7", features = ["otpauth", "gen_secret"] }
+qrcode = "0.14"
+data-encoding = "2.6"
+zeroize = { version = "1.8.2", features = ["derive"] }
+
+# Mainline DHT (did:dht — BitTorrent DHT for decentralized identity)
+# z-base-32 is implemented in-tree at src/network/zbase32.rs: the `zbase32`
+# crate is LGPL-3.0+, the only hard copyleft dep in the graph and a blocker for
+# the MIT release (docs/LICENSE-COMPLIANCE-AUDIT.md §2).
+mainline = "2"
+bytes = "1"
+
+# Mesh networking (Meshcore serial protocol over USB LoRa radios)
+serial2-tokio = "0.1"
+
+# LoRa radio firmware flashing: Meshtastic ships per-board images inside a
+# per-platform release zip (see mesh/flash.rs).
+zip = { version = "2", default-features = false, features = ["deflate"] }
+
+# Double Ratchet key derivation (Phase 3: encrypted mesh messaging)
+hkdf = "0.12.4"
+
+# Transport abstraction (Phase 2: mesh as federation transport)
+ciborium = "0.2.2"
+serde_bytes = "0.11"
+reed-solomon-erasure = "6.0"
+mdns-sd = "0.18"
+
+# Systemd watchdog notification
+sd-notify = "0.4"
+
+# Trait objects for async methods (container orchestrator trait, Step 4)
+async-trait = "0.1"
+
+# DHT Phase 2: iroh-blobs peer swarm engine. OPTIONAL — only pulled in by the
+# `iroh-swarm` feature (off by default). Heavy QUIC dep tree; kept behind the
+# flag so the default fleet build is unaffected until the PoC is measured.
+iroh = { version = "1", optional = true }
+iroh-blobs = { version = "0.103", optional = true }
+lofty = "0.24.0"
+
+[dev-dependencies]
+tokio-test = "0.4"
+tempfile = "3.10"

@@ -1,0 +1,98 @@
+app:
+  id: fedimint-gateway
+  name: Fedimint Gateway
+  version: 0.10.0
+  description: Fedimint gateway service with automatic LND-or-LDK backend selection.
+
+  container:
+    image: source.archipelago-foundation.org/lfg2025/gatewayd:v0.10.0
+    pull_policy: if-not-present
+    network: archy-net
+    entrypoint: ["sh", "-lc"]
+    # The bitcoind host comes from $FM_BITCOIND_URL, filled by the
+    # {{BITCOIN_HOST}} derived-env below — it resolves to whichever bitcoin
+    # container is actually running (Knots, Core, or any future distro archy
+    # ships), so the gateway is never pinned to one node's container name.
+    # (Was hardcoded http://host.archipelago:8332 — the host gateway IP where
+    # bitcoind does not listen — which crash-looped the gateway, 2026-07-22.)
+    custom_args:
+      - >-
+        if [ -f /lnd/tls.cert ] && [ -f /lnd/data/chain/bitcoin/mainnet/admin.macaroon ]; then
+          exec gatewayd --data-dir /data --listen 0.0.0.0:8176 --bcrypt-password-hash "$FEDI_HASH" --network bitcoin --bitcoind-url "$FM_BITCOIND_URL" --bitcoind-username "$FM_BITCOIND_USERNAME" --bitcoind-password "$FM_BITCOIND_PASSWORD" lnd --lnd-rpc-host lnd:10009 --lnd-tls-cert /lnd/tls.cert --lnd-macaroon /lnd/data/chain/bitcoin/mainnet/admin.macaroon;
+        else
+          exec gatewayd --data-dir /data --listen 0.0.0.0:8176 --bcrypt-password-hash "$FEDI_HASH" --network bitcoin --bitcoind-url "$FM_BITCOIND_URL" --bitcoind-username "$FM_BITCOIND_USERNAME" --bitcoind-password "$FM_BITCOIND_PASSWORD" ldk --ldk-lightning-port 9737 --ldk-alias archipelago-gateway;
+        fi
+    derived_env:
+      - key: FM_BITCOIND_URL
+        template: "http://{{BITCOIN_HOST}}:8332"
+    # The gateway's admin API is gated by a bcrypt password hash. Generate it on
+    # first install (random password + its bcrypt hash, both 0600 rootless-owned)
+    # so the app installs from its manifest alone — `fedimint-gateway-hash` holds
+    # the hash passed to gatewayd, `fedimint-gateway-hash.pw` the plaintext for
+    # any client that must authenticate. Self-heals a wrongly root-owned hash.
+    generated_secrets:
+      - name: fedimint-gateway-hash
+        kind: bcrypt
+    secret_env:
+      - key: FM_BITCOIND_PASSWORD
+        secret_file: bitcoin-rpc-password
+      - key: FEDI_HASH
+        secret_file: fedimint-gateway-hash
+    data_uid: "1000:1000"
+
+  dependencies:
+    - app_id: bitcoin-core
+      version: ">=26.0"
+    - app_id: fedimint
+      version: ">=0.10.0"
+
+  resources:
+    cpu_limit: 2
+    memory_limit: 2Gi
+    disk_limit: 10Gi
+
+  security:
+    capabilities: []
+    readonly_root: true
+    network_policy: isolated
+
+  ports:
+    - host: 8176
+      container: 8176
+      protocol: tcp
+      auth: none
+      auth_rationale: >-
+        Fedimint gateway API, protected by its own bcrypt password (--bcrypt-password-hash)
+        and reached by federation peers and clients that cannot hold a browser session.
+    - host: 9737
+      container: 9737
+      protocol: tcp
+      auth: none
+      auth_rationale: >-
+        LDK Lightning p2p for the gateway. The BOLT-8 noise handshake authenticates and
+        encrypts the connection itself.
+
+  volumes:
+    - type: bind
+      source: /var/lib/archipelago/fedimint-gateway
+      target: /data
+      options: [rw]
+    - type: bind
+      source: /var/lib/archipelago/lnd
+      target: /lnd
+      options: [ro]
+
+  environment:
+    - FM_BITCOIND_USERNAME=archipelago
+
+  health_check:
+    type: http
+    endpoint: http://localhost:8176
+    path: /
+    interval: 30s
+    timeout: 5s
+    retries: 3
+
+  bitcoin_integration:
+    rpc_access: admin
+    sync_required: true

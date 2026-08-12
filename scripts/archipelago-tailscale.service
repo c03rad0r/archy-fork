@@ -1,0 +1,15 @@
+[Unit]
+Description=Configure Nginx for Tailscale Access
+After=archipelago.service
+Requires=archipelago.service
+ConditionPathExists=/sys/class/net/tailscale0
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/opt/archipelago/scripts/configure-tailscale-nginx.sh
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

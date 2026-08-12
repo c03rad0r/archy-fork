@@ -1,0 +1,25 @@
+*.iml
+.gradle
+/local.properties
+/.idea
+.DS_Store
+/build
+/captures
+.externalNativeBuild
+.cxx
+local.properties
+/app/build
+/app/release
+*.apk
+*.aab
+*.jks
+*.keystore
+# Exception: the repo-dedicated *debug* keystore is committed on purpose so every
+# machine (and the published companion download) signs debug builds identically —
+# updates then install over the top without an uninstall. Debug keys are not
+# secret (well-known password "android"); never commit a real release keystore.
+!/app/debug.keystore
+
+# Rust build outputs (archy-fips-core → jniLibs via buildRustArm64)
+/rust/archy-fips-core/target
+/app/src/main/jniLibs

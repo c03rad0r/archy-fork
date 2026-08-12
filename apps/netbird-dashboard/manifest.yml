@@ -1,0 +1,77 @@
+app:
+  id: netbird-dashboard
+  name: NetBird Dashboard
+  version: "2.38.0"
+  description: NetBird management dashboard (SPA). Internal stack member served through the netbird proxy.
+  category: networking
+
+  # Hyphen name matches runtime references + the live container (adoption).
+  # Alias `netbird-dashboard` is the short hostname the proxy's nginx proxies to.
+  container_name: netbird-dashboard
+
+  container:
+    image: docker.io/netbirdio/dashboard:v2.38.0
+    pull_policy: if-not-present
+    network: netbird-net
+    network_aliases: [netbird-dashboard]
+    # The dashboard SPA bakes its API/OIDC base URL from these at container
+    # start. They must point at the proxy's public HTTPS origin (8087) so the
+    # browser uses a secure context (window.crypto.subtle / OIDC PKCE, #15).
+    # {{HOST_IP}} is the node's primary host IP, resolved at apply time.
+    derived_env:
+      - key: NETBIRD_MGMT_API_ENDPOINT
+        template: "https://{{HOST_IP}}:8087"
+      - key: NETBIRD_MGMT_GRPC_API_ENDPOINT
+        template: "https://{{HOST_IP}}:8087"
+      - key: AUTH_AUTHORITY
+        template: "https://{{HOST_IP}}:8087/oauth2"
+
+  dependencies:
+    - app_id: netbird-server
+
+  resources:
+    memory_limit: 256Mi
+
+  security:
+    # cap-drop=ALL is applied by the orchestrator. The dashboard image runs
+    # nginx (master as root, drops workers) binding :80 — needs the worker-drop
+    # caps + NET_BIND_SERVICE for the privileged port.
+    capabilities: [CHOWN, DAC_OVERRIDE, SETGID, SETUID, NET_BIND_SERVICE]
+    readonly_root: false
+    network_policy: isolated
+
+  # Internal only — reached container-to-container by the proxy via netbird-net.
+  ports: []
+
+  volumes: []
+
+  environment:
+    - AUTH_AUDIENCE=netbird-dashboard
+    - AUTH_CLIENT_ID=netbird-dashboard
+    - AUTH_CLIENT_SECRET=
+    - USE_AUTH0=false
+    - AUTH_SUPPORTED_SCOPES=openid profile email groups
+    - AUTH_REDIRECT_URI=/nb-auth
+    - AUTH_SILENT_REDIRECT_URI=/nb-silent-auth
+    - NETBIRD_TOKEN_SOURCE=idToken
+    - NGINX_SSL_PORT=443
+    - LETSENCRYPT_DOMAIN=none
+
+  health_check:
+    type: tcp
+    endpoint: localhost:80
+    interval: 30s
+    timeout: 5s
+    retries: 5
+    start_period: 20s
+
+  metadata:
+    author: NetBird
+    icon: /assets/img/app-icons/netbird.svg
+    website: https://netbird.io
+    repo: https://github.com/netbirdio/dashboard
+    license: BSD-3-Clause
+    tags:
+      - networking
+      - vpn
+      - dashboard

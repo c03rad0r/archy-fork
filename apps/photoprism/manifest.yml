@@ -1,0 +1,62 @@
+app:
+  id: photoprism
+  name: PhotoPrism
+  version: "240915"
+  description: AI-powered photo management with facial recognition.
+
+  container:
+    image: source.archipelago-foundation.org/lfg2025/photoprism:240915
+    pull_policy: if-not-present
+
+  dependencies:
+    - storage: 10Gi
+
+  resources:
+    memory_limit: 1Gi
+    disk_limit: 10Gi
+
+  security:
+    capabilities: [CHOWN, SETUID, SETGID]
+    readonly_root: false
+    network_policy: isolated
+
+  ports:
+    - host: 2342
+      container: 2342
+      protocol: tcp
+      bind: 127.0.0.1
+      auth: gated
+
+  volumes:
+    - type: bind
+      source: /var/lib/archipelago/photoprism
+      target: /photoprism/storage
+      options: [rw]
+
+  environment:
+    - PHOTOPRISM_ADMIN_PASSWORD=archipelago
+    - PHOTOPRISM_DEFAULT_LOCALE=en
+
+  health_check:
+    type: tcp
+    endpoint: localhost:2342
+    interval: 60s
+    timeout: 5s
+    retries: 3
+
+  interfaces:
+    main:
+      name: Web UI
+      description: PhotoPrism photo library
+      type: ui
+      port: 2342
+      protocol: http
+      path: /
+
+  metadata:
+    icon: /assets/img/app-icons/photoprism.svg
+    category: data
+    author: PhotoPrism
+    repo: https://github.com/photoprism/photoprism
+    launch:
+      open_in_new_tab: true

@@ -1,0 +1,66 @@
+app:
+  id: portainer
+  name: Portainer
+  version: 2.19.4
+  description: Container management web UI for the local Podman socket.
+  category: development
+
+  container:
+    image: source.archipelago-foundation.org/lfg2025/portainer:2.39.1
+    pull_policy: if-not-present
+    data_uid: "1000:1000"
+
+  dependencies:
+    - storage: 1Gi
+
+  resources:
+    memory_limit: 256Mi
+    disk_limit: 1Gi
+
+  security:
+    capabilities: [CHOWN, SETUID, SETGID, DAC_OVERRIDE]
+    readonly_root: false
+    no_new_privileges: true
+    network_policy: isolated
+
+  ports:
+    - host: 9000
+      container: 9000
+      protocol: tcp
+      bind: 127.0.0.1
+      auth: gated
+
+  volumes:
+    - type: bind
+      source: /var/lib/archipelago/portainer
+      target: /data
+      options: [rw]
+    - type: bind
+      source: /var/lib/archipelago/portainer/compose
+      target: /data/compose
+      options: [rw]
+    - type: bind
+      source: /run/user/1000/podman/podman.sock
+      target: /var/run/docker.sock
+      options: [rw]
+
+  environment: []
+
+  interfaces:
+    main:
+      name: Web UI
+      description: Portainer web interface
+      type: ui
+      port: 9000
+      protocol: http
+      path: /
+
+  metadata:
+    icon: /assets/img/app-icons/portainer.webp
+    tier: optional
+    launch:
+      open_in_new_tab: true
+    features:
+      - Container management dashboard
+      - Local Podman socket access
+      - Compose stack storage

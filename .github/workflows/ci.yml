@@ -1,0 +1,123 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+env:
+  RUST_VERSION: stable
+  NODE_VERSION: 20
+
+jobs:
+  rust:
+    name: Rust
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: core
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Rust
+        uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          toolchain: ${{ env.RUST_VERSION }}
+          components: rustfmt, clippy
+
+      - name: Format
+        run: cargo fmt --all -- --check
+
+      # KEY-05 layer (b) is enforced HERE, with no step of its own: core/clippy.toml
+      # bans the defaulted RNG entry points, and `-D warnings` already turns a
+      # `disallowed_methods` hit into a build failure. `--all-targets` covers tests
+      # too, deliberately. See docs/security/KEY-05-ENTROPY-ENFORCEMENT.md
+      - name: Clippy
+        run: cargo clippy --all-targets --all-features -- -D warnings
+
+      # KEY-05 layer (c) — see core/deny.toml for the policy and its rationale.
+      #
+      # The version is pinned deliberately. EmbarkStudios/cargo-deny-action exposes
+      # no input to pin the cargo-deny version, and an unpinned supply-chain checker
+      # is a contradiction in terms, so the tool is installed from crates.io — the
+      # source actually vetted at the 10-06 Task 5 legitimacy checkpoint — rather
+      # than by adding another unvetted action to this workflow.
+      #
+      # `check bans` ONLY: the advisories gate is not enabled (bans-only policy).
+      - name: Supply chain (cargo-deny)
+        run: |
+          cargo install --locked cargo-deny --version 0.20.2
+          cargo deny check bans
+
+      - name: Test
+        run: cargo test --all-features
+
+  frontend:
+    name: Frontend
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: neode-ui
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: neode-ui/package-lock.json
+
+      - name: Install
+        run: npm ci
+
+      - name: Type check
+        run: npm run type-check
+
+      - name: Test
+        run: npm test
+
+      - name: Build
+        run: npm run build
+
+  manifests:
+    name: App Manifests
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install YAML parser
+        run: python3 -m pip install --quiet pyyaml
+
+      - name: Validate manifests
+        run: |
+          for manifest in apps/*/manifest.yml; do
+            ./scripts/validate-app-manifest.sh --repo-audit "$manifest"
+          done
+
+      # The signed catalog overrides on-disk manifests on every node, so a
+      # catalog naming a registry host the deployed fleet does not trust breaks
+      # every install fleet-wide. Blocking, and cheap.
+      - name: Catalog registry trust floor
+        run: python3 scripts/check-catalog-registry-trust.py
+
+      # A stale image literal on the fallback install path deploys an old
+      # image after the manifest has moved on — how a withdrawn, vulnerable
+      # release gets installed post-fix. Blocking.
+      - name: Installer image pins
+        run: python3 scripts/check-installer-image-pins.py
+
+      # Advisory: shows where the release catalog has fallen behind the
+      # manifests in this repo. Not blocking, because the catalog can only be
+      # updated through the signing ceremony, so drift is expected between a
+      # manifest landing and the next signed release.
+      - name: Catalog drift (advisory)
+        continue-on-error: true
+        run: python3 scripts/check-app-catalog-drift.py --catalog releases/app-catalog.json --release

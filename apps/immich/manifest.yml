@@ -1,0 +1,82 @@
+app:
+  id: immich
+  name: Immich
+  version: "2.7.4"
+  description: Self-hosted photo and video backup with mobile apps and search.
+
+  # app_id "immich" = the user-facing launcher (matches the catalog entry's title
+  # + icon). The container is named "immich_server" so it matches the runtime's
+  # existing per-app container references (lifecycle/health/crash-recovery/ports);
+  # `container_name` is a top-level app key (captured by serde(flatten) into
+  # extensions, read by compute_container_name). It reaches its backends by their
+  # underscore aliases on archy-net (DB_HOSTNAME / REDIS_HOSTNAME below).
+  container_name: immich_server
+
+  container:
+    image: source.archipelago-foundation.org/lfg2025/immich-server:release
+    pull_policy: if-not-present
+    network: archy-net
+    secret_env:
+      - key: DB_PASSWORD
+        secret_file: immich-db-password
+
+  dependencies:
+    - app_id: immich-postgres
+    - app_id: immich-redis
+    - storage: 200Gi
+
+  resources:
+    memory_limit: 2Gi
+    disk_limit: 200Gi
+
+  security:
+    # Runs as container root over a data tree the legacy installer chowned
+    # to the subuid range (host 100000 = container uid 1). Without
+    # DAC_OVERRIDE the server EACCESes writing upload/encoded-video the
+    # moment the container is recreated against this manifest (latent until
+    # the 2026-07-05 secret-env migration recreated it). Same cap set as
+    # immich-postgres minus the setuid pair it doesn't use.
+    capabilities: [CHOWN, DAC_OVERRIDE, FOWNER]
+    readonly_root: false
+    network_policy: isolated
+
+  ports:
+    - host: 2283
+      container: 2283
+      protocol: tcp
+      bind: 127.0.0.1
+      auth: gated
+
+  volumes:
+    - type: bind
+      source: /var/lib/archipelago/immich
+      target: /usr/src/app/upload
+      options: [rw]
+
+  environment:
+    - DB_HOSTNAME=immich_postgres
+    - DB_USERNAME=postgres
+    - DB_DATABASE_NAME=immich
+    - REDIS_HOSTNAME=immich_redis
+    - UPLOAD_LOCATION=/usr/src/app/upload
+
+  health_check:
+    type: http
+    endpoint: http://localhost:2283
+    path: /api/server/ping
+    interval: 30s
+    timeout: 5s
+    retries: 20
+
+  interfaces:
+    main:
+      name: Web UI
+      description: Immich photo library
+      type: ui
+      port: 2283
+      protocol: http
+      path: /
+
+  metadata:
+    launch:
+      open_in_new_tab: true

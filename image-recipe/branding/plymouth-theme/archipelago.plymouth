@@ -1,0 +1,8 @@
+[Plymouth Theme]
+Name=Archipelago
+Description=Archipelago Bitcoin Node OS — cyberpunk boot splash
+ModuleName=script
+
+[script]
+ImageDir=/usr/share/plymouth/themes/archipelago
+ScriptFile=/usr/share/plymouth/themes/archipelago/archipelago.script

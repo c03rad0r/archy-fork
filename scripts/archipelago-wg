@@ -1,0 +1,58 @@
+#!/bin/bash
+# archipelago-wg — Privileged WireGuard helper for the Archipelago backend.
+# Installed to /usr/local/bin/archipelago-wg with a sudoers rule so the
+# unprivileged archipelago/debian service user can manage wg0 without
+# full root or disabling NoNewPrivileges.
+#
+# Usage:
+#   archipelago-wg setup <privkey-file>     — Create wg0 interface
+#   archipelago-wg add-peer <pubkey> <ip>   — Add peer to wg0
+#   archipelago-wg remove-peer <pubkey>     — Remove peer from wg0
+
+set -euo pipefail
+
+case "${1:-}" in
+    setup)
+        KEY_FILE="${2:?Usage: archipelago-wg setup <privkey-file>}"
+        [ -f "$KEY_FILE" ] || { echo "Key file not found: $KEY_FILE" >&2; exit 1; }
+
+        # Ensure kernel module is loaded
+        modprobe wireguard 2>/dev/null || true
+
+        # Create interface
+        ip link add dev wg0 type wireguard 2>/dev/null || true
+        wg set wg0 listen-port 51820 private-key "$KEY_FILE"
+        # Assign server address if not already set
+        ip address show dev wg0 | grep -q "10.44.0.1" || ip address add 10.44.0.1/16 dev wg0
+        ip link set up dev wg0
+
+        # NAT masquerade for VPN clients
+        iptables -t nat -C POSTROUTING -s 10.44.0.0/16 ! -o wg0 -j MASQUERADE 2>/dev/null ||
+            iptables -t nat -A POSTROUTING -s 10.44.0.0/16 ! -o wg0 -j MASQUERADE
+
+        # Open firewall port
+        if command -v ufw >/dev/null 2>&1 && ufw status | grep -q "Status: active"; then
+            ufw allow 51820/udp >/dev/null 2>&1 || true
+        fi
+
+        echo "wg0 configured"
+        ;;
+
+    add-peer)
+        PUBKEY="${2:?Usage: archipelago-wg add-peer <pubkey> <allowed-ip>}"
+        ALLOWED_IP="${3:?Usage: archipelago-wg add-peer <pubkey> <allowed-ip>}"
+        wg set wg0 peer "$PUBKEY" allowed-ips "$ALLOWED_IP"
+        echo "peer added"
+        ;;
+
+    remove-peer)
+        PUBKEY="${2:?Usage: archipelago-wg remove-peer <pubkey>}"
+        wg set wg0 peer "$PUBKEY" remove
+        echo "peer removed"
+        ;;
+
+    *)
+        echo "Usage: archipelago-wg {setup|add-peer|remove-peer}" >&2
+        exit 1
+        ;;
+esac

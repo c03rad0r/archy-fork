@@ -1,0 +1,56 @@
+{
+  "$schema": "https://raw.githubusercontent.com/nicolgit/tauri-docs/v2/tooling/cli/schema.json",
+  "productName": "AIUI",
+  "version": "0.1.0",
+  "identifier": "com.aiui.app",
+  "build": {
+    "frontendDist": "../dist",
+    "devUrl": "http://localhost:5173",
+    "beforeDevCommand": "pnpm dev:app",
+    "beforeBuildCommand": "pnpm build:app"
+  },
+  "app": {
+    "windows": [
+      {
+        "title": "AIUI",
+        "width": 1200,
+        "height": 800,
+        "minWidth": 800,
+        "minHeight": 600,
+        "decorations": false,
+        "transparent": true,
+        "resizable": true,
+        "center": true
+      }
+    ],
+    "security": {
+      "csp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; connect-src 'self' https: wss:"
+    },
+    "trayIcon": {
+      "iconPath": "icons/icon.png",
+      "iconAsTemplate": true
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": "all",
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.icns",
+      "icons/icon.ico"
+    ],
+    "macOS": {
+      "minimumSystemVersion": "10.15"
+    }
+  },
+  "plugins": {
+    "updater": {
+      "active": true,
+      "endpoints": [],
+      "pubkey": ""
+    },
+    "global-shortcut": {}
+  }
+}

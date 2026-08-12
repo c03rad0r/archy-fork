@@ -1,0 +1,37 @@
+THE SOVEREIGNTY MANIFESTO
+=========================
+
+We hold these truths to be self-evident:
+
+1. Your data belongs to you.
+   Not to corporations. Not to governments. Not to platforms.
+   To you.
+
+2. Your money should be uncensorable.
+   No one should have the power to freeze your funds,
+   reverse your transactions, or inflate away your savings.
+
+3. Your communications should be private.
+   End-to-end encryption is a right, not a feature.
+   Metadata collection is surveillance.
+
+4. Your compute should be sovereign.
+   Running your own server is not paranoia.
+   It's digital self-reliance.
+
+5. Your identity should be self-issued.
+   You don't need permission from a corporation
+   to prove who you are.
+
+---
+
+The tools exist. Bitcoin. Lightning. Tor. Nostr.
+Self-hosted infrastructure. Open source software.
+
+The question isn't whether it's possible.
+The question is whether you'll do it.
+
+Run your own node.
+Hold your own keys.
+Own your own data.
+Be sovereign.

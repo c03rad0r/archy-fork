@@ -1,0 +1,73 @@
+app:
+  id: pine-piper
+  name: Pine Piper (TTS)
+  version: "2.2.2"
+  description: Wyoming-protocol Piper text-to-speech engine. Internal Pine voice-assistant stack member — gives Home Assistant Assist a natural voice for spoken responses on the PineVoice satellite.
+  category: home
+
+  # Hyphen name matches the runtime references (stack member table / startup
+  # order) + the live container, so on an existing node the orchestrator ADOPTS
+  # the running engine rather than recreating it (downloaded voices under /data
+  # preserved).
+  container_name: pine-piper
+
+  container:
+    image: docker.io/rhasspy/wyoming-piper:2.2.2
+    pull_policy: if-not-present
+    network: archy-net
+    network_aliases: [pine-piper]
+    # The image entrypoint already binds tcp://0.0.0.0:10200; this arg only
+    # picks the voice (mirrors the pine ha-stack.yml compose command).
+    custom_args: ["--voice", "en_GB-alba-medium"]
+
+  dependencies:
+    - storage: 1Gi
+
+  resources:
+    memory_limit: 512Mi
+
+  security:
+    # cap-drop=ALL is applied by the orchestrator. A plain Python Wyoming server
+    # on an unprivileged port needs no added capabilities.
+    capabilities: []
+    readonly_root: false   # downloads the voice into /data on first run
+    no_new_privileges: true
+    network_policy: isolated
+
+  ports:
+    # Published so Home Assistant (on the pasta net) can reach the engine via
+    # host.containers.internal:10200 (the Wyoming integration endpoint).
+    - host: 10200
+      container: 10200
+      protocol: tcp
+      auth: none
+      auth_rationale: >-
+        Wyoming voice protocol, a binary local-only stream consumed by Home Assistant; not HTTP and not browser-reachable.
+
+  volumes:
+    - type: bind
+      source: /var/lib/archipelago/pine-piper
+      target: /data
+      options: [rw]
+
+  environment: []
+
+  health_check:
+    type: tcp
+    endpoint: localhost:10200
+    interval: 30s
+    timeout: 5s
+    retries: 5
+    start_period: 60s   # first start downloads the voice
+
+  metadata:
+    author: Rhasspy / Home Assistant
+    icon: /assets/img/app-icons/pine.svg
+    website: https://github.com/rhasspy/wyoming-piper
+    repo: https://github.com/rhasspy/wyoming-piper
+    license: MIT
+    tags:
+      - home
+      - voice
+      - text-to-speech
+      - wyoming

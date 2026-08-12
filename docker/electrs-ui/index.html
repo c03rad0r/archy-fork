@@ -1,0 +1,500 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+    <title>ElectrumX - Archipelago</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; min-height: 100vh; color: white; overflow-x: hidden; }
+        .bg-layer { position: fixed; inset: 0; z-index: -10; background: linear-gradient(135deg, rgba(0,0,0,0.9) 0%, rgba(30,30,50,0.95) 100%); }
+        .overlay { position: fixed; inset: 0; background: rgba(0, 0, 0, 0.8); z-index: -5; }
+        .glass-card { background: rgba(0, 0, 0, 0.6); backdrop-filter: blur(24px); -webkit-backdrop-filter: blur(24px); border-radius: 1rem; border: 1px solid rgba(255, 255, 255, 0.18); }
+        .info-card { background: rgba(0, 0, 0, 0.6); backdrop-filter: blur(24px); border-radius: 16px; padding: 12px; border: 1px solid rgba(255, 255, 255, 0.1); }
+        @keyframes progressGlow { 0%, 100% { box-shadow: 0 0 10px rgba(251, 146, 60, 0.5); } 50% { box-shadow: 0 0 20px rgba(251, 146, 60, 0.8); } }
+        .progress-glow { animation: progressGlow 2s ease-in-out infinite; }
+        @keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
+        .animate-spin-slow { animation: spin 3s linear infinite; }
+        .animate-pulse { animation: pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite; }
+        @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.5; } }
+        .container { max-width: 56rem; margin: 0 auto; padding: 2rem; }
+        .flex { display: flex; }
+        .flex-col { flex-direction: column; }
+        .items-center { align-items: center; }
+        .items-start { align-items: start; }
+        .gap-3 { gap: 0.75rem; }
+        .gap-4 { gap: 1rem; }
+        .flex-1 { flex: 1; }
+        .flex-shrink-0 { flex-shrink: 0; }
+        .mb-1 { margin-bottom: 0.25rem; }
+        .mb-2 { margin-bottom: 0.5rem; }
+        .mb-4 { margin-bottom: 1rem; }
+        .mb-6 { margin-bottom: 1.5rem; }
+        .p-6 { padding: 1.5rem; }
+        .grid { display: grid; }
+        .grid-cols-2 { grid-template-columns: repeat(2, 1fr); }
+        .rounded-lg { border-radius: 0.5rem; }
+        .rounded-full { border-radius: 9999px; }
+        .overflow-hidden { overflow: hidden; }
+        .transition-all { transition: all 0.5s ease; }
+        .text-xs { font-size: 0.75rem; }
+        .text-sm { font-size: 0.875rem; }
+        .text-lg { font-size: 1.125rem; }
+        .text-xl { font-size: 1.25rem; }
+        .text-2xl { font-size: 1.5rem; }
+        .font-bold { font-weight: 700; }
+        .font-semibold { font-weight: 600; }
+        .font-medium { font-weight: 500; }
+        .font-mono { font-family: monospace; }
+        .icon-box { width: 4rem; height: 4rem; border-radius: 0.5rem; background: rgba(249, 115, 22, 0.2); display: flex; align-items: center; justify-content: center; }
+        .icon-box-sm { width: 3rem; height: 3rem; border-radius: 0.5rem; background: rgba(249, 115, 22, 0.2); display: flex; align-items: center; justify-content: center; }
+        .status-dot { width: 0.75rem; height: 0.75rem; border-radius: 9999px; }
+        .progress-bar-bg { width: 100%; background: rgba(255,255,255,0.1); border-radius: 9999px; height: 0.75rem; overflow: hidden; }
+        .progress-bar { height: 100%; background: linear-gradient(to right, #f97316, #facc15); border-radius: 9999px; transition: width 0.5s ease; }
+        .text-white { color: white; }
+        .text-white-70 { color: rgba(255,255,255,0.7); }
+        .text-white-60 { color: rgba(255,255,255,0.6); }
+        .text-white-90 { color: rgba(255,255,255,0.9); }
+        .text-amber { color: #fbbf24; }
+        .text-green { color: #4ade80; }
+        .text-red { color: #f87171; }
+        .text-orange { color: #fb923c; }
+        .bg-amber { background: #fbbf24; }
+        .bg-green { background: #4ade80; }
+        .bg-red { background: #f87171; }
+        .bg-yellow { background: #facc15; }
+        .justify-between { justify-content: space-between; }
+        @media (min-width: 768px) {
+            .md-flex-row { flex-direction: row; }
+            .md-grid-cols-4 { grid-template-columns: repeat(4, 1fr); }
+            .md-grid-cols-5 { grid-template-columns: repeat(5, 1fr); }
+        }
+
+        /* Connection details */
+        .conn-tabs { display: flex; background: rgba(255,255,255,0.08); border-radius: 0.5rem; overflow: hidden; margin-bottom: 1.5rem; }
+        .conn-tab { flex: 1; padding: 0.625rem 1rem; text-align: center; font-size: 0.875rem; font-weight: 600; cursor: pointer; transition: all 0.2s ease; color: rgba(255,255,255,0.5); border: none; background: none; }
+        .conn-tab.active { background: rgba(74, 222, 128, 0.2); color: #4ade80; }
+        .conn-tab:hover:not(.active) { color: rgba(255,255,255,0.8); }
+        .conn-layout { display: flex; flex-direction: column; gap: 1.5rem; }
+        @media (min-width: 640px) { .conn-layout { flex-direction: row; } }
+        .qr-box { flex-shrink: 0; width: 196px; background: white; border-radius: 0.75rem; padding: 0.75rem; display: flex; align-items: center; justify-content: center; }
+        .qr-box img { width: 100%; height: auto; display: block; image-rendering: pixelated; }
+        .conn-fields { flex: 1; display: flex; flex-direction: column; gap: 0.75rem; }
+        .field-label { font-size: 0.6875rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; color: rgba(255,255,255,0.45); margin-bottom: 0.25rem; }
+        .field-row { display: flex; align-items: center; background: rgba(255,255,255,0.06); border: 1px solid rgba(255,255,255,0.1); border-radius: 0.5rem; overflow: hidden; }
+        .field-value { flex: 1; padding: 0.625rem 0.875rem; font-family: monospace; font-size: 0.9375rem; color: rgba(255,255,255,0.9); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+        .copy-btn { padding: 0.625rem 0.75rem; background: none; border: none; border-left: 1px solid rgba(255,255,255,0.1); cursor: pointer; color: rgba(255,255,255,0.4); transition: all 0.2s ease; display: flex; align-items: center; }
+        .copy-btn:hover { color: rgba(255,255,255,0.8); background: rgba(255,255,255,0.05); }
+        .copy-btn.copied { color: #4ade80; }
+        .field-row-split { display: flex; gap: 0.75rem; }
+        .field-row-split > div { flex: 1; }
+        .conn-disabled { text-align: center; padding: 2rem 1rem; }
+        .help-text { margin-top: 1.5rem; padding-top: 1.25rem; border-top: 1px solid rgba(255,255,255,0.08); font-size: 0.875rem; color: rgba(255,255,255,0.5); line-height: 1.5; }
+        .version-text { font-size: 0.75rem; color: rgba(255,255,255,0.4); }
+    </style>
+</head>
+<body>
+    <div class="bg-layer"></div>
+    <div class="overlay"></div>
+
+    <div class="container">
+        <!-- Header -->
+        <div class="glass-card p-6 mb-6">
+            <div class="flex flex-col md-flex-row items-center gap-4">
+                <div class="icon-box flex-shrink-0">
+                    <svg style="width:2rem;height:2rem;color:#f97316" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 7v10c0 2.21 3.582 4 8 4s8-1.79 8-4V7M4 7c0 2.21 3.582 4 8 4s8-1.79 8-4M4 7c0-2.21 3.582-4 8-4s8 1.79 8 4" />
+                    </svg>
+                </div>
+                <div class="flex-1">
+                    <div class="flex items-center gap-3">
+                        <h1 class="text-2xl font-bold text-white">ElectrumX</h1>
+                        <span class="version-text">v1.18.0</span>
+                    </div>
+                    <p class="text-white-70">Bitcoin Electrum server for wallet connections</p>
+                </div>
+                <div class="info-card flex items-center gap-3">
+                    <div id="statusDot" class="status-dot bg-yellow"></div>
+                    <div>
+                        <p class="text-xs text-white-60">Status</p>
+                        <p class="text-sm font-medium text-white" id="statusText">Checking...</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Sync Status -->
+        <div class="glass-card p-6 mb-6">
+            <div class="flex items-start gap-4 mb-4">
+                <div class="icon-box-sm flex-shrink-0">
+                    <svg id="syncIcon" style="width:1.5rem;height:1.5rem;color:#f97316" class="animate-spin-slow" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                    </svg>
+                </div>
+                <div class="flex-1">
+                    <h2 class="text-xl font-semibold text-white mb-1">Index Sync</h2>
+                    <p class="text-white-70 text-sm" id="syncStatusText">Checking sync status...</p>
+                </div>
+            </div>
+
+            <div class="mb-4">
+                <div class="flex justify-between text-sm text-white-60 mb-2">
+                    <span id="currentBlock">Block 0</span>
+                    <span id="syncPercentage">0%</span>
+                </div>
+                <div class="progress-bar-bg">
+                    <div class="progress-bar progress-glow" id="syncProgressBar" style="width: 0%"></div>
+                </div>
+            </div>
+
+            <div class="grid grid-cols-2 md-grid-cols-5 gap-3">
+                <div class="info-card">
+                    <p class="text-xs text-white-60 mb-1">Electrum Indexed</p>
+                    <p class="text-lg font-semibold text-white" id="indexedHeight">-</p>
+                </div>
+                <div class="info-card">
+                    <p class="text-xs text-white-60 mb-1">Bitcoin Node</p>
+                    <p class="text-lg font-semibold text-white" id="bitcoinHeight">-</p>
+                </div>
+                <div class="info-card">
+                    <p class="text-xs text-white-60 mb-1">Known Headers</p>
+                    <p class="text-lg font-semibold text-white" id="networkHeight">-</p>
+                </div>
+                <div class="info-card">
+                    <p class="text-xs text-white-60 mb-1">Index Size</p>
+                    <p class="text-lg font-semibold text-white" id="indexSize">-</p>
+                </div>
+                <div class="info-card">
+                    <p class="text-xs text-white-60 mb-1">Progress</p>
+                    <p class="text-lg font-semibold text-white" id="progressPct">-</p>
+                </div>
+            </div>
+        </div>
+
+        <!-- Connection Details -->
+        <div class="glass-card p-6">
+            <h2 class="text-xl font-semibold text-white mb-1">Connect Your Wallet</h2>
+            <p class="text-white-70 text-sm mb-4" id="connSubtitle">Use the following details to connect your wallet or application to ElectrumX.</p>
+
+            <div class="conn-tabs">
+                <button class="conn-tab active" id="tabLocal" onclick="switchTab('local')">Local Network</button>
+                <button class="conn-tab" id="tabTor" onclick="switchTab('tor')">Tor</button>
+            </div>
+
+            <!-- Local Network Tab -->
+            <div id="panelLocal" class="conn-layout">
+                <div class="qr-box" id="qrLocalBox"></div>
+                <div class="conn-fields">
+                    <div>
+                        <div class="field-label">Address</div>
+                        <div class="field-row">
+                            <span class="field-value" id="localAddress">-</span>
+                            <button class="copy-btn" onclick="copyField('localAddress', this)" title="Copy">
+                                <svg width="16" height="16" fill="none" stroke="currentColor" viewBox="0 0 24 24"><rect x="9" y="9" width="13" height="13" rx="2" ry="2" stroke-width="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1" stroke-width="2"/></svg>
+                            </button>
+                        </div>
+                    </div>
+                    <div class="field-row-split">
+                        <div>
+                            <div class="field-label">Port</div>
+                            <div class="field-row">
+                                <span class="field-value">50001</span>
+                                <button class="copy-btn" onclick="copyText('50001', this)" title="Copy">
+                                    <svg width="16" height="16" fill="none" stroke="currentColor" viewBox="0 0 24 24"><rect x="9" y="9" width="13" height="13" rx="2" ry="2" stroke-width="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1" stroke-width="2"/></svg>
+                                </button>
+                            </div>
+                        </div>
+                        <div>
+                            <div class="field-label">SSL</div>
+                            <div class="field-row">
+                                <span class="field-value">Disabled</span>
+                                <button class="copy-btn" onclick="copyText('Disabled', this)" title="Copy">
+                                    <svg width="16" height="16" fill="none" stroke="currentColor" viewBox="0 0 24 24"><rect x="9" y="9" width="13" height="13" rx="2" ry="2" stroke-width="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1" stroke-width="2"/></svg>
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Tor Tab -->
+            <div id="panelTor" style="display:none">
+                <div id="torAvailable" class="conn-layout" style="display:none">
+                    <div class="qr-box" id="qrTorBox"></div>
+                    <div class="conn-fields">
+                        <div>
+                            <div class="field-label">Onion Address</div>
+                            <div class="field-row">
+                                <span class="field-value" id="torAddress" style="font-size:0.75rem">-</span>
+                                <button class="copy-btn" onclick="copyField('torAddress', this)" title="Copy">
+                                    <svg width="16" height="16" fill="none" stroke="currentColor" viewBox="0 0 24 24"><rect x="9" y="9" width="13" height="13" rx="2" ry="2" stroke-width="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1" stroke-width="2"/></svg>
+                                </button>
+                            </div>
+                        </div>
+                        <div class="field-row-split">
+                            <div>
+                                <div class="field-label">Port</div>
+                                <div class="field-row">
+                                    <span class="field-value">50001</span>
+                                    <button class="copy-btn" onclick="copyText('50001', this)" title="Copy">
+                                        <svg width="16" height="16" fill="none" stroke="currentColor" viewBox="0 0 24 24"><rect x="9" y="9" width="13" height="13" rx="2" ry="2" stroke-width="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1" stroke-width="2"/></svg>
+                                    </button>
+                                </div>
+                            </div>
+                            <div>
+                                <div class="field-label">SSL</div>
+                                <div class="field-row">
+                                    <span class="field-value">Disabled</span>
+                                    <button class="copy-btn" onclick="copyText('Disabled', this)" title="Copy">
+                                        <svg width="16" height="16" fill="none" stroke="currentColor" viewBox="0 0 24 24"><rect x="9" y="9" width="13" height="13" rx="2" ry="2" stroke-width="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1" stroke-width="2"/></svg>
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                <div id="torUnavailable" class="conn-disabled">
+                    <svg style="width:2.5rem;height:2.5rem;color:rgba(255,255,255,0.25);margin:0 auto 0.75rem" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
+                    </svg>
+                    <p class="text-white-70" style="font-size:0.9375rem">Tor hidden service not configured for ElectrumX.</p>
+                    <p class="text-white-60 text-sm" style="margin-top:0.375rem">Enable Tor for ElectrumX in Settings to connect remotely.</p>
+                </div>
+            </div>
+
+            <div class="help-text">
+                Connect using <strong style="color:rgba(255,255,255,0.8)">Sparrow Wallet</strong>, <strong style="color:rgba(255,255,255,0.8)">Electrum</strong>, or any Electrum-protocol compatible wallet. Set the server to the address and port shown above with SSL disabled.
+            </div>
+        </div>
+    </div>
+
+    <script src="qrcode.js"></script>
+    <script>
+        var currentTab = 'local';
+        var torOnion = null;
+        var lastGoodData = null;
+        var consecutiveFailures = 0;
+        var pollTimer = null;
+        var POLL_ACTIVE = 5000;   // 5s while syncing/indexing/starting
+        var POLL_SYNCED = 30000;  // 30s when synced
+
+        function renderQR(containerId, text) {
+            var container = document.getElementById(containerId);
+            if (!container) return;
+            container.innerHTML = '';
+            try {
+                var qr = qrcode(0, 'M');
+                qr.addData(text);
+                qr.make();
+                container.innerHTML = qr.createImgTag(5, 0);
+            } catch(e) {
+                container.innerHTML = '<div style="color:#999;font-size:12px;text-align:center;padding:2rem">QR unavailable</div>';
+            }
+        }
+
+        function switchTab(tab) {
+            currentTab = tab;
+            document.getElementById('tabLocal').classList.toggle('active', tab === 'local');
+            document.getElementById('tabTor').classList.toggle('active', tab === 'tor');
+            document.getElementById('panelLocal').style.display = tab === 'local' ? '' : 'none';
+            document.getElementById('panelTor').style.display = tab === 'tor' ? '' : 'none';
+        }
+
+        var COPY_SVG = '<svg width="16" height="16" fill="none" stroke="currentColor" viewBox="0 0 24 24"><rect x="9" y="9" width="13" height="13" rx="2" ry="2" stroke-width="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1" stroke-width="2"/></svg>';
+        var CHECK_SVG = '<svg width="16" height="16" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/></svg>';
+
+        function flashCopied(btn) {
+            btn.classList.add('copied');
+            var orig = btn.innerHTML;
+            btn.innerHTML = CHECK_SVG;
+            setTimeout(function() {
+                btn.classList.remove('copied');
+                btn.innerHTML = orig;
+            }, 1500);
+        }
+
+        function copyField(id, btn) {
+            var text = document.getElementById(id).textContent.trim();
+            if (!text || text === '-') return;
+            navigator.clipboard.writeText(text).then(function() { flashCopied(btn); });
+        }
+
+        function copyText(text, btn) {
+            navigator.clipboard.writeText(text).then(function() { flashCopied(btn); });
+        }
+
+        function copyConnStr(type) {
+            var id = type === 'tor' ? 'torConnStr' : 'localConnStr';
+            var btn = type === 'tor' ? document.querySelector('#torAvailable .conn-string-copy') : document.getElementById('localCopyAll');
+            var text = document.getElementById(id).textContent.trim();
+            if (!text || text === '-') return;
+            navigator.clipboard.writeText(text).then(function() {
+                btn.classList.add('copied');
+                var orig = btn.textContent;
+                btn.textContent = 'Copied!';
+                setTimeout(function() {
+                    btn.classList.remove('copied');
+                    btn.textContent = orig;
+                }, 1500);
+            });
+        }
+
+        function updateConnectionInfo() {
+            var host = window.location.hostname;
+            document.getElementById('localAddress').textContent = host;
+            renderQR('qrLocalBox', host + ':50001:t');
+
+            if (torOnion) {
+                document.getElementById('torAvailable').style.display = '';
+                document.getElementById('torUnavailable').style.display = 'none';
+                document.getElementById('torAddress').textContent = torOnion;
+                renderQR('qrTorBox', torOnion + ':50001:t');
+            } else {
+                document.getElementById('torAvailable').style.display = 'none';
+                document.getElementById('torUnavailable').style.display = '';
+            }
+        }
+
+        function applyTorOnion(onion) {
+            if (onion) {
+                torOnion = onion;
+                updateConnectionInfo();
+            }
+        }
+
+        function schedulePoll(intervalMs) {
+            if (pollTimer) clearTimeout(pollTimer);
+            pollTimer = setTimeout(function() { updateStatus(); }, intervalMs);
+        }
+
+        function applyData(data) {
+            // Persist tor onion once discovered — never flicker back to "not configured"
+            if (data.tor_onion) {
+                applyTorOnion(data.tor_onion);
+            }
+
+            var indexedH = data.indexed_height || 0;
+            var bitcoinH = data.bitcoin_height || 0;
+            var reportedNetworkH = data.network_height || 0;
+            var knownHeaderH = Math.max(reportedNetworkH, indexedH, bitcoinH);
+            var targetH = bitcoinH > 0 ? bitcoinH : knownHeaderH;
+            var pct = data.progress_pct || 0;
+            var hasIndexedHeight = indexedH > 0 || data.stale;
+            var indexedLabel = hasIndexedHeight
+                ? indexedH.toLocaleString()
+                : (data.status === 'indexing' ? 'Pending' : '-');
+            var currentBlockLabel;
+            if (hasIndexedHeight && bitcoinH > 0 && indexedH > bitcoinH) {
+                currentBlockLabel = 'Bitcoin node ' + bitcoinH.toLocaleString()
+                    + (knownHeaderH > 0 ? ' of known headers ' + knownHeaderH.toLocaleString() : '')
+                    + '; Electrum index ' + indexedH.toLocaleString();
+            } else if (hasIndexedHeight) {
+                currentBlockLabel = 'Indexed ' + indexedH.toLocaleString() + ' of '
+                    + (targetH > 0 ? targetH.toLocaleString() : 'Bitcoin node height');
+            } else {
+                currentBlockLabel = data.index_size
+                    ? 'Index building from disk (' + data.index_size + ')'
+                    : 'Waiting for Electrum index height';
+            }
+
+            document.getElementById('indexedHeight').textContent = indexedLabel;
+            document.getElementById('bitcoinHeight').textContent = bitcoinH > 0 ? bitcoinH.toLocaleString() : 'Checking...';
+            document.getElementById('networkHeight').textContent = knownHeaderH > 0 ? knownHeaderH.toLocaleString() : 'Checking...';
+            document.getElementById('indexSize').textContent = data.index_size || '-';
+            document.getElementById('progressPct').textContent = (knownHeaderH > 0 || pct > 0) ? pct.toFixed(1) + '%' : '-';
+            document.getElementById('currentBlock').textContent = currentBlockLabel;
+            document.getElementById('syncPercentage').textContent = (knownHeaderH > 0 || pct > 0) ? pct.toFixed(1) + '%' : '0%';
+            document.getElementById('syncProgressBar').style.width = Math.max(pct, 0.5) + '%';
+
+            var statusTextEl = document.getElementById('syncStatusText');
+            var statusDot = document.getElementById('statusDot');
+            var syncIcon = document.getElementById('syncIcon');
+
+            if (data.status === 'starting' || data.status === 'waiting') {
+                statusTextEl.textContent = data.error || 'Starting up...';
+                statusTextEl.style.color = '#fbbf24';
+                statusDot.className = 'status-dot bg-yellow animate-pulse';
+                document.getElementById('statusText').textContent = data.status === 'waiting' ? 'Waiting' : 'Starting';
+                syncIcon.classList.add('animate-spin-slow');
+                document.getElementById('connSubtitle').textContent = 'Connections will be available once ElectrumX has completed syncing.';
+            } else if (data.status === 'indexing') {
+                statusTextEl.textContent = data.stale
+                    ? (data.error || 'ElectrumX is reconnecting; showing last known indexed height.')
+                    : (data.error || 'Building index. Indexed height will appear when Electrum RPC is ready.');
+                statusTextEl.style.color = '#fbbf24';
+                statusDot.className = 'status-dot bg-amber animate-pulse';
+                document.getElementById('statusText').textContent = data.stale ? 'Reconnecting' : 'Indexing';
+                syncIcon.classList.add('animate-spin-slow');
+                document.getElementById('connSubtitle').textContent = 'Connections will be available once ElectrumX has completed syncing.';
+            } else if (data.status === 'error') {
+                statusTextEl.textContent = data.error || 'Unknown error';
+                statusTextEl.style.color = '#f87171';
+                statusDot.className = 'status-dot bg-red';
+                document.getElementById('statusText').textContent = 'Error';
+                document.getElementById('connSubtitle').textContent = 'Connections will be available once ElectrumX has completed syncing.';
+            } else if (data.status === 'synced') {
+                statusTextEl.textContent = 'Fully synchronized with the network';
+                statusTextEl.style.color = '#4ade80';
+                statusDot.className = 'status-dot bg-green';
+                document.getElementById('statusText').textContent = 'Synced';
+                syncIcon.classList.remove('animate-spin-slow');
+                syncIcon.style.color = '#4ade80';
+                document.getElementById('connSubtitle').textContent = 'Use the following details to connect your wallet or application to ElectrumX.';
+            } else {
+                var remaining = Math.max(targetH - indexedH, 0);
+                statusTextEl.textContent = data.error || (targetH > 0
+                    ? 'Syncing... ' + remaining.toLocaleString() + ' blocks remaining'
+                    : 'Waiting for Bitcoin network height...');
+                statusTextEl.style.color = '#fb923c';
+                statusDot.className = 'status-dot bg-yellow';
+                document.getElementById('statusText').textContent = 'Syncing';
+                syncIcon.classList.add('animate-spin-slow');
+                document.getElementById('connSubtitle').textContent = 'Connections will be available once ElectrumX has completed syncing.';
+            }
+        }
+
+        async function updateStatus() {
+            try {
+                var resp = await fetch('/electrs-status', { cache: 'no-store' });
+                if (!resp.ok) {
+                    throw new Error('backend_unavailable');
+                }
+                var text = await resp.text();
+                if (text.trim().charAt(0) !== '{') {
+                    throw new Error('backend_starting');
+                }
+                var data = JSON.parse(text);
+
+                // Success — reset failure counter, save as last known good
+                consecutiveFailures = 0;
+                lastGoodData = data;
+                applyData(data);
+
+                // Adaptive polling — slower when synced
+                schedulePoll(data.status === 'synced' ? POLL_SYNCED : POLL_ACTIVE);
+            } catch (e) {
+                consecutiveFailures++;
+
+                if (lastGoodData && consecutiveFailures <= 3) {
+                    // Keep showing last known good data — don't flicker the UI
+                    // Just poll again sooner to recover
+                    schedulePoll(POLL_ACTIVE);
+                    return;
+                }
+
+                // No prior good data, or too many failures — show connecting state
+                document.getElementById('syncStatusText').textContent = 'Connecting to Archipelago...';
+                document.getElementById('syncStatusText').style.color = '#fbbf24';
+                document.getElementById('statusDot').className = 'status-dot bg-yellow animate-pulse';
+                document.getElementById('statusText').textContent = 'Connecting';
+
+                schedulePoll(POLL_ACTIVE);
+            }
+        }
+
+        updateStatus();
+        updateConnectionInfo();
+    </script>
+</body>
+</html>

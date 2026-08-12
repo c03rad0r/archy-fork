@@ -1,0 +1,68 @@
+FROM node:22-alpine AS builder
+
+WORKDIR /app
+
+# Copy package files
+COPY neode-ui/package*.json ./
+
+# Install all dependencies (including dev)
+RUN npm install
+
+# Copy source code
+COPY neode-ui/ ./
+
+# Clean up backup files and large unused assets before build
+RUN find public/assets -name "*backup*" -type f -delete || true && \
+    find public/assets -name "*1.47mb*" -type f -delete || true && \
+    find public/assets -name "bg-*.mp4" -type f -delete || true
+
+# Build the Vue app (skip type checking, just build)
+ENV DOCKER_BUILD=true
+ENV NODE_ENV=production
+
+# Public-demo build flag — inlined into the bundle (import.meta.env.VITE_DEMO).
+# Enables the per-day intro replay, the "entertoexit" login hint, and other
+# demo-only UI affordances. Override with --build-arg VITE_DEMO=0 for a plain build.
+ARG VITE_DEMO=1
+ENV VITE_DEMO=$VITE_DEMO
+
+# Use npm script which handles build better
+RUN npm run build:docker || (echo "Build failed! Listing files:" && ls -la && echo "Checking vite config:" && cat vite.config.ts && exit 1)
+
+# Demo builds must not leak the private release/registry server address anywhere
+# in the served bundle (JS constants, catalog.json, prose). Replace every
+# occurrence with a non-routable placeholder, then fail the build if any slipped
+# through. (The companion-QR URL is handled in source — it needs a URL that works.)
+RUN if [ "$VITE_DEMO" = "1" ] || [ "$VITE_DEMO" = "true" ]; then \
+      find dist -type f \( -name '*.js' -o -name '*.mjs' -o -name '*.css' -o -name '*.html' \
+        -o -name '*.json' -o -name '*.map' -o -name '*.txt' -o -name '*.webmanifest' \) \
+        -exec sed -i \
+          -e 's#146\.59\.87\.168:3000/lfg2025#registry.demo.internal/archy#g' \
+          -e 's#146\.59\.87\.168:3000#registry.demo.internal#g' \
+          -e 's#146\.59\.87\.168#registry.demo.internal#g' {} + && \
+      if grep -rq '146\.59\.87\.168' dist; then echo 'LEAK: release-server IP still in dist'; exit 1; fi; \
+    fi
+
+# Production stage
+FROM nginx:alpine
+
+# Copy built files to nginx
+COPY --from=builder /app/dist /usr/share/nginx/html
+
+# Copy AIUI pre-built dist
+COPY demo/aiui/ /usr/share/nginx/html/aiui/
+
+# Copy nginx config template and entrypoint
+COPY neode-ui/docker/nginx-demo.conf /etc/nginx/nginx.conf.template
+COPY neode-ui/docker/docker-entrypoint.sh /docker-entrypoint-custom.sh
+RUN chmod +x /docker-entrypoint-custom.sh
+
+# IndeeHub demo sign-in seeder, injected by the :2101 whole-origin proxy
+# (nginx-demo.conf). Demo image only — never in real-node artifacts.
+COPY neode-ui/docker/indee-demo-signin.js /usr/share/nginx/html/__demo/indee-demo-signin.js
+
+# Expose ports (80 = demo UI, 2101 = IndeeHub whole-origin demo proxy)
+EXPOSE 80 2101
+
+# Substitute ANTHROPIC_API_KEY at runtime, then start nginx
+ENTRYPOINT ["/docker-entrypoint-custom.sh"]

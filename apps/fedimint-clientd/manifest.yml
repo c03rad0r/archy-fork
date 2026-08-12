@@ -1,0 +1,102 @@
+app:
+  id: fedimint-clientd
+  name: Fedimint Client
+  version: 0.8.0
+  description: Fedimint ecash client daemon (fmcd). Lets the node hold Fedimint ecash and join federations; the wallet talks to it over a local REST API.
+
+  container:
+    # fmcd built from source (github.com/minmoto/fmcd v0.8.0, fedimint-client
+    # 0.8.2 — iroh-capable). No usable upstream image exists, so we build + push
+    # this to the node registry. Pin the tag to match the REST shapes coded in
+    # core/archipelago/src/wallet/fedimint_client.rs (validated against 0.8.2).
+    image: source.archipelago-foundation.org/lfg2025/fmcd:0.8.1
+    pull_policy: if-not-present
+    network: archy-net
+    # No entrypoint override: the image's resilient `fmcd-run` launcher loops
+    # fmcd and retries on join failure (fmcd needs >=1 federation to boot), so an
+    # unreachable default never crash-loops. All config comes from FMCD_* env
+    # below. Nodes can join more federations via wallet.fedimint-join.
+    # Auto-generated on first install (random hex, 0600, rootless-owned) so the
+    # app needs no host provisioning. The wallet bridge reads the same file.
+    generated_secrets:
+      - name: fmcd-password
+        kind: hex16
+    secret_env:
+      - key: FMCD_PASSWORD
+        secret_file: fmcd-password
+    data_uid: "1000:1000"
+
+  # NOTE: this is a CLIENT, not the guardian — it does not require the local
+  # `fedimint` app. It joins external federations (default below), so it can be
+  # bundled standalone on every node.
+  dependencies:
+    - storage: 2Gi
+
+  resources:
+    # fmcd's embedded iroh networking can hot-loop on relay/hole-punch retries
+    # on NAT'd nodes that reach the federation neither directly nor via iroh's
+    # public relays, pegging its whole allotment. Cap it low so a stuck instance
+    # can't starve the node (steady-state is <3% of a core; joins are brief);
+    # the fmcd-run watchdog additionally restarts a sustained-hot process.
+    cpu_limit: 1
+    memory_limit: 1Gi
+    disk_limit: 2Gi
+
+  security:
+    # fmcd's `fmcd-run` launcher chowns its /data (existing federation DB) on
+    # every start. With the default `cap_drop: ALL` and no caps added back, that
+    # chown fails and fmcd dies "Operation not permitted (os error 1)" — but ONLY
+    # once /data holds a joined federation (a fresh/empty dir needs no chown, so
+    # it appeared to work). Restore the standard container capability set so the
+    # startup chown succeeds (#7). Verified by bisection on .116: these caps make
+    # fmcd boot + serve /v2/*; DAC_OVERRIDE or SETUID/SETGID alone do NOT.
+    capabilities: ["CHOWN", "DAC_OVERRIDE", "FOWNER", "SETUID", "SETGID"]
+    readonly_root: true
+    # NOT isolated: fmcd needs outbound UDP + Mainline DHT (port 6881) + iroh
+    # relays to reach iroh-transport federations. `bridge` gives NAT'd outbound
+    # (UDP/DHT/iroh hole-punch all work) plus the published 8178→8080 port the
+    # wallet bridge targets. ("open" is not a valid policy — it made the loader
+    # skip this whole manifest, so fmcd never ran and federations never joined.)
+    # Lock down once the default federation's reachability model is finalized.
+    network_policy: bridge
+
+  ports:
+    # fmcd REST bound to 8080 in-container; 8080 collides with LND REST on the
+    # host, so map to 8178. The Rust bridge targets http://127.0.0.1:8178.
+    - host: 8178
+      container: 8080
+      protocol: tcp
+      bind: 127.0.0.1
+      auth: local
+
+  volumes:
+    # Same dir the first-boot bundled path uses + where the wallet bridge reads
+    # the password (/var/lib/archipelago/fmcd/password) — keep install paths aligned.
+    - type: bind
+      source: /var/lib/archipelago/fmcd
+      target: /data
+      options: [rw]
+
+  environment:
+    - FMCD_ADDR=0.0.0.0:8080
+    - FMCD_MODE=rest
+    - FMCD_DATA_DIR=/data
+    # Default federation joined out-of-the-box (guardian on .116, iroh
+    # transport; validated to join with fmcd 0.8.2). iroh does NAT traversal so
+    # it's reachable fleet-wide. Keep in sync with DEFAULT_FEDERATION_INVITE in
+    # core/.../wallet/fedimint_client.rs. CAVEAT: iroh is experimental — validate
+    # join reliability from a real second node before relying on auto-bundle.
+    - FMCD_INVITE_CODE=fed11qgqyj3mfwfhksw309uuxywtxxfjrjc35xuexverpxdsnxcnrxucxvenzveskgc3kvvun2c34xp3k2ep38yunzdpexcekxe3hvd3rvvmx8pnrvdenx5mnzvtzqqqjqt0t6pc3s5z0ynqjw9s4njf6svwgu59kweawc0vvrddcjeemw6yyn4pcdp
+
+  # fmcd serves only authenticated /v2/* routes — there is no unauthenticated
+  # /health endpoint, so an http probe to /health 404s forever and pins the
+  # container in "(starting)". fmcd's own image also ships neither curl nor wget.
+  # Use a TCP probe: the Quadlet renderer skips it (no HealthCmd emitted) and the
+  # host-side lifecycle layer verifies reachability, so the container reports
+  # "running" instead of a perpetual false-negative "(starting)".
+  health_check:
+    type: tcp
+    endpoint: localhost:8080
+    interval: 30s
+    timeout: 5s
+    retries: 3

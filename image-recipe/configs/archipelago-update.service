@@ -1,0 +1,19 @@
+[Unit]
+Description=Archipelago Self-Update
+After=network-online.target archipelago.service
+Wants=network-online.target
+ConditionPathExists=/home/archipelago/archy/.git
+
+[Service]
+Type=oneshot
+User=archipelago
+ExecStart=/home/archipelago/archy/scripts/self-update.sh
+TimeoutStartSec=600
+Environment="HOME=/home/archipelago"
+Environment="PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/home/archipelago/.cargo/bin"
+
+# Allow sudo for service restart and file install
+# Requires archipelago user in sudoers for specific commands
+
+StandardOutput=journal
+StandardError=journal

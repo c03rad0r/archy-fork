@@ -1,0 +1,341 @@
+import type { GoalDefinition, GoalStep } from '@/types/goals'
+
+/** Zeus (Olympus LSP) channel size limits, in sats */
+export const ZEUS_CHANNEL_MIN_SATS = 150_000
+export const ZEUS_CHANNEL_MAX_SATS = 1_500_000
+
+export const ZEUS_ICON = '/assets/img/app-icons/zeus.webp'
+
+/**
+ * Shared "fund the bitcoin wallet" step used by every Lightning goal. Gated on
+ * the blockchain being fully synced (IBD) — the wizard shows a live sync timer
+ * until then, and a "Fund Wallet" receive flow after.
+ */
+const FUND_WALLET_STEP: GoalStep = {
+  id: 'fund-wallet',
+  title: 'Fund Your Bitcoin Wallet',
+  description:
+    "Send bitcoin to your node's on-chain wallet so it can open a Lightning channel. Zeus channels: minimum 150,000 · maximum 1,500,000 on-chain sats required. Funding unlocks once your node finishes syncing the blockchain.",
+  action: 'fund',
+  isAutomatic: false,
+  icon: '/assets/img/app-icons/bitcoin-knots.webp',
+}
+
+export const GOALS: GoalDefinition[] = [
+  {
+    id: 'open-a-shop',
+    title: 'Open a Shop',
+    subtitle: 'Accept Bitcoin payments with your own online store',
+    icon: 'shop',
+    category: 'commerce',
+    requiredApps: ['bitcoin-knots', 'lnd', 'btcpay-server'],
+    steps: [
+      {
+        id: 'install-bitcoin',
+        title: 'Install Bitcoin Node',
+        description: 'Bitcoin Knots validates transactions and maintains the blockchain on your hardware. This is the foundation of your sovereign payment stack.',
+        appId: 'bitcoin-knots',
+        action: 'install',
+        isAutomatic: true,
+      },
+      {
+        id: 'install-lnd',
+        title: 'Install Lightning Network',
+        description: 'LND enables instant, low-fee Bitcoin payments through payment channels. Your customers can pay in seconds.',
+        appId: 'lnd',
+        action: 'install',
+        isAutomatic: true,
+      },
+      { ...FUND_WALLET_STEP },
+      {
+        id: 'open-zeus-channel',
+        title: 'Open a Channel with Zeus',
+        description:
+          'Open a channel with Zeus Olympus node and start sending and receiving Lightning payments. Minimum 150,000 · maximum 1,500,000 on-chain sats required.',
+        action: 'configure',
+        isAutomatic: false,
+        icon: ZEUS_ICON,
+        ctaLabel: 'Open a channel',
+      },
+      {
+        id: 'install-btcpay',
+        title: 'Install BTCPay Server',
+        description: 'BTCPay Server is your self-hosted payment processor. Create invoices, manage your store, and accept payments — all without middlemen.',
+        appId: 'btcpay-server',
+        action: 'install',
+        isAutomatic: true,
+      },
+      {
+        id: 'configure-store',
+        title: 'Set Up Your Store',
+        description: 'Create your store, set your currency, and customize your payment page. BTCPay will open so you can configure everything.',
+        appId: 'btcpay-server',
+        action: 'configure',
+        isAutomatic: false,
+      },
+    ],
+    estimatedTime: '~45 min + sync time',
+    difficulty: 'beginner',
+  },
+  {
+    id: 'accept-payments',
+    title: 'Accept Payments',
+    subtitle: 'Receive Bitcoin and Lightning payments directly',
+    icon: 'payments',
+    category: 'payments',
+    requiredApps: ['bitcoin-knots', 'lnd'],
+    steps: [
+      {
+        id: 'install-bitcoin',
+        title: 'Install Bitcoin Node',
+        description: 'Your own Bitcoin node verifies every transaction independently. No trust required.',
+        appId: 'bitcoin-knots',
+        action: 'install',
+        isAutomatic: true,
+      },
+      {
+        id: 'install-lnd',
+        title: 'Install Lightning Network',
+        description: 'Lightning enables instant payments with tiny fees. Perfect for everyday transactions.',
+        appId: 'lnd',
+        action: 'install',
+        isAutomatic: true,
+      },
+      { ...FUND_WALLET_STEP },
+      {
+        id: 'open-channel',
+        title: 'Open a Channel with Zeus',
+        description:
+          'Open a channel with Zeus Olympus node and start sending and receiving Lightning payments. Minimum 150,000 · maximum 1,500,000 on-chain sats required.',
+        action: 'configure',
+        isAutomatic: false,
+        icon: ZEUS_ICON,
+        ctaLabel: 'Open a channel',
+      },
+    ],
+    estimatedTime: '~30 min + sync time',
+    difficulty: 'beginner',
+  },
+  {
+    id: 'file-browser',
+    title: 'File Browser',
+    subtitle: 'Browse, upload, and manage files on your server',
+    icon: 'files',
+    category: 'storage',
+    requiredApps: ['filebrowser'],
+    steps: [
+      {
+        id: 'install-filebrowser',
+        title: 'Install FileBrowser',
+        description: 'FileBrowser is a lightweight web file manager. Upload, download, and organize files on your server from any browser.',
+        appId: 'filebrowser',
+        action: 'install',
+        isAutomatic: true,
+      },
+      {
+        id: 'configure-filebrowser',
+        title: 'Log In',
+        description: 'Open FileBrowser and log in. Change your password on first login, then start managing your files.',
+        appId: 'filebrowser',
+        action: 'configure',
+        isAutomatic: false,
+      },
+    ],
+    estimatedTime: '~5 min',
+    difficulty: 'beginner',
+  },
+  {
+    id: 'store-files',
+    title: 'Store My Files',
+    subtitle: 'Personal cloud storage and file sync',
+    icon: 'files',
+    category: 'storage',
+    requiredApps: ['nextcloud'],
+    steps: [
+      {
+        id: 'install-nextcloud',
+        title: 'Install Cloud Storage',
+        description: 'Nextcloud gives you a full cloud storage platform — files, calendars, contacts, and more. Like Dropbox, but sovereign.',
+        appId: 'nextcloud',
+        action: 'install',
+        isAutomatic: true,
+      },
+      {
+        id: 'configure-nextcloud',
+        title: 'Set Up Your Cloud',
+        description: 'Create your admin account and configure storage. Nextcloud will open for you to complete setup.',
+        appId: 'nextcloud',
+        action: 'configure',
+        isAutomatic: false,
+      },
+      {
+        id: 'sync-setup',
+        title: 'Sync Your Devices',
+        description: 'Install the Nextcloud app on your phone and computer to keep your files in sync across all devices.',
+        action: 'info',
+        isAutomatic: false,
+      },
+    ],
+    estimatedTime: '~20 min',
+    difficulty: 'beginner',
+  },
+  {
+    id: 'run-lightning-node',
+    title: 'Run a Lightning Node',
+    subtitle: 'Route payments and earn sats on the Lightning Network',
+    icon: 'lightning',
+    category: 'network',
+    requiredApps: ['bitcoin-knots', 'lnd'],
+    steps: [
+      {
+        id: 'install-bitcoin',
+        title: 'Install Bitcoin Node',
+        description: 'The Bitcoin blockchain is the settlement layer. Your node needs to sync the full chain before Lightning can start.',
+        appId: 'bitcoin-knots',
+        action: 'install',
+        isAutomatic: true,
+      },
+      {
+        id: 'install-lnd',
+        title: 'Install LND',
+        description: 'LND is a full Lightning Network node. You can route payments for others and earn routing fees.',
+        appId: 'lnd',
+        action: 'install',
+        isAutomatic: true,
+      },
+      { ...FUND_WALLET_STEP },
+      {
+        id: 'open-channels',
+        title: 'Open Payment Channels',
+        description:
+          'Open channels with well-connected nodes to start routing payments. A great first channel is Zeus Olympus (minimum 150,000 · maximum 1,500,000 on-chain sats) — it also puts your node in your pocket. More channels means more routing opportunities.',
+        action: 'configure',
+        isAutomatic: false,
+        icon: ZEUS_ICON,
+        ctaLabel: 'Open a channel',
+      },
+      {
+        id: 'verify-routing',
+        title: 'Verify Node is Routing',
+        description: 'Check that your node is visible on the network and ready to route payments.',
+        action: 'verify',
+        isAutomatic: true,
+      },
+    ],
+    estimatedTime: '~40 min + sync time',
+    difficulty: 'intermediate',
+  },
+  {
+    id: 'setup-fedimint',
+    title: 'Create a Community',
+    subtitle: 'Start a Fedimint federation for private, scalable Bitcoin',
+    icon: 'community',
+    category: 'community',
+    requiredApps: ['bitcoin-knots', 'fedimint'],
+    steps: [
+      {
+        id: 'install-bitcoin',
+        title: 'Install Bitcoin Node',
+        description: 'Bitcoin Knots provides the base layer that Fedimint connects to for on-chain transactions and consensus.',
+        appId: 'bitcoin-knots',
+        action: 'install',
+        isAutomatic: true,
+      },
+      {
+        id: 'install-fedimint',
+        title: 'Install Fedimint',
+        description: 'Fedimint is a federated Bitcoin mint. Guardians collectively manage funds using threshold signatures — no single point of failure.',
+        appId: 'fedimint',
+        action: 'install',
+        isAutomatic: true,
+      },
+      {
+        id: 'configure-guardian',
+        title: 'Set Up Guardian UI',
+        description: 'Open the Guardian UI (port 8175) to configure your federation name, set the guardian threshold, and initialize the mint.',
+        appId: 'fedimint',
+        action: 'configure',
+        isAutomatic: false,
+      },
+      {
+        id: 'share-invite',
+        title: 'Share Invite Code',
+        description: 'Generate and share your federation invite code with community members so they can join and start using ecash.',
+        action: 'info',
+        isAutomatic: false,
+      },
+    ],
+    estimatedTime: '~30 min + sync time',
+    difficulty: 'intermediate',
+  },
+  {
+    id: 'create-identity',
+    title: 'Create My Identity',
+    subtitle: 'Sovereign digital identity with DID and Nostr',
+    icon: 'identity',
+    category: 'identity',
+    requiredApps: [],
+    steps: [
+      {
+        id: 'generate-did',
+        title: 'Generate Your Identity',
+        description: 'Your server creates a cryptographic identity (DID) that you own and control. No company can revoke it.',
+        action: 'verify',
+        isAutomatic: true,
+      },
+      {
+        id: 'setup-nostr',
+        title: 'Set Up Nostr Profile',
+        description: 'Publish your identity to the Nostr network. This lets you sign into Nostr-compatible apps directly from your server.',
+        action: 'configure',
+        isAutomatic: false,
+      },
+      {
+        id: 'export-identity',
+        title: 'Export Your Identity',
+        description: 'Save your identity credentials for backup. This is your portable sovereign identity — take it anywhere.',
+        action: 'info',
+        isAutomatic: false,
+      },
+    ],
+    estimatedTime: '~5 min',
+    difficulty: 'beginner',
+  },
+  {
+    id: 'back-up-everything',
+    title: 'Back Up Everything',
+    subtitle: 'Encrypted backup of your entire node',
+    icon: 'backup',
+    category: 'backup',
+    requiredApps: [],
+    steps: [
+      {
+        id: 'create-passphrase',
+        title: 'Create a Passphrase',
+        description: 'Choose a strong passphrase to encrypt your backup. Without this passphrase, nobody can access your data — not even us.',
+        action: 'configure',
+        isAutomatic: false,
+      },
+      {
+        id: 'create-backup',
+        title: 'Create Encrypted Backup',
+        description: 'Your server will create a complete encrypted backup of all your data, keys, and configuration.',
+        action: 'verify',
+        isAutomatic: true,
+      },
+      {
+        id: 'save-backup',
+        title: 'Save Your Backup',
+        description: 'Download your encrypted backup file and store it somewhere safe. Consider keeping a copy on a USB drive and in the cloud.',
+        action: 'info',
+        isAutomatic: false,
+      },
+    ],
+    estimatedTime: '~10 min',
+    difficulty: 'beginner',
+  },
+]
+
+export function getGoalById(id: string): GoalDefinition | undefined {
+  return GOALS.find((g) => g.id === id)
+}

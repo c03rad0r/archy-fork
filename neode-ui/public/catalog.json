@@ -1,0 +1,552 @@
+{
+  "version": 2,
+  "updated": "2026-04-22T00:00:00Z",
+  "registry": "source.archipelago-foundation.org/lfg2025",
+  "featured": {
+    "id": "indeedhub",
+    "banner": "/assets/img/featured/indeedhub-banner.jpg",
+    "headline": "Stream Sovereignty",
+    "description": "Bitcoin documentaries with Nostr identity.",
+    "tag": "NOSTR IDENTITY // YOUR NODE"
+  },
+  "apps": [
+    {
+      "id": "bitcoin-knots",
+      "title": "Bitcoin Knots",
+      "version": "28.1.0",
+      "description": "Full Bitcoin Knots node with dynamic prune/full-mode startup based on host disk.",
+      "icon": "/assets/img/app-icons/bitcoin-knots.webp",
+      "author": "Bitcoin Knots",
+      "category": "money",
+      "tier": "core",
+      "dockerImage": "source.archipelago-foundation.org/lfg2025/bitcoin-knots:29.3.knots20260210",
+      "repoUrl": "https://github.com/bitcoinknots/bitcoin"
+    },
+    {
+      "id": "bitcoin-core",
+      "title": "Bitcoin Core",
+      "version": "28.4.0",
+      "description": "Reference Bitcoin Core node with dynamic prune/full-mode startup based on host disk.",
+      "icon": "/assets/img/app-icons/bitcoin-core.svg",
+      "author": "Bitcoin Core contributors",
+      "category": "money",
+      "tier": "optional",
+      "dockerImage": "source.archipelago-foundation.org/lfg2025/bitcoin:28.4",
+      "repoUrl": "https://github.com/bitcoin/bitcoin"
+    },
+    {
+      "id": "lnd",
+      "title": "LND",
+      "version": "0.18.4",
+      "description": "Lightning Network implementation by Lightning Labs. Enables instant, low-cost Bitcoin payments.",
+      "icon": "/assets/img/app-icons/lnd.png",
+      "author": "Lightning Labs",
+      "category": "money",
+      "tier": "core",
+      "dockerImage": "source.archipelago-foundation.org/lfg2025/lnd:v0.18.4-beta",
+      "repoUrl": "https://github.com/lightningnetwork/lnd",
+      "requires": [
+        "bitcoin-knots"
+      ]
+    },
+    {
+      "id": "btcpay-server",
+      "title": "BTCPay Server",
+      "version": "2.4.2",
+      "description": "Self-hosted Bitcoin payment processor. Accept Bitcoin payments without intermediaries.",
+      "icon": "/assets/img/app-icons/btcpay-server.png",
+      "author": "BTCPay Server Foundation",
+      "category": "commerce",
+      "tier": "core",
+      "dockerImage": "docker.io/btcpayserver/btcpayserver:2.4.2",
+      "repoUrl": "https://github.com/btcpayserver/btcpayserver",
+      "requires": [
+        "bitcoin-knots"
+      ]
+    },
+    {
+      "id": "mempool",
+      "title": "Mempool Explorer",
+      "version": "3.0.0",
+      "description": "Bitcoin mempool and blockchain explorer. Real-time transaction and block visualization.",
+      "icon": "/assets/img/app-icons/mempool.webp",
+      "author": "Mempool",
+      "category": "money",
+      "tier": "core",
+      "dockerImage": "source.archipelago-foundation.org/lfg2025/mempool-frontend:v3.0.1",
+      "repoUrl": "https://github.com/mempool/mempool",
+      "requires": [
+        "bitcoin-knots",
+        "electrumx"
+      ]
+    },
+    {
+      "id": "electrumx",
+      "title": "ElectrumX",
+      "version": "1.18.0",
+      "description": "Electrum server indexing Bitcoin chain data for lightweight wallet queries.",
+      "icon": "/assets/img/app-icons/electrumx.png",
+      "author": "Luke Childs",
+      "category": "money",
+      "tier": "core",
+      "dockerImage": "source.archipelago-foundation.org/lfg2025/electrumx:v1.18.0",
+      "repoUrl": "https://github.com/spesmilo/electrumx",
+      "requires": [
+        "bitcoin-knots"
+      ]
+    },
+    {
+      "id": "indeedhub",
+      "title": "IndeeHub",
+      "version": "1.0.0",
+      "description": "Bitcoin documentary streaming platform featuring God Bless Bitcoin and other educational content about Bitcoin, sovereignty, and decentralized technology. Sign in with your Nostr identity.",
+      "icon": "/assets/img/app-icons/indeedhub.png",
+      "author": "IndeeHub",
+      "category": "community",
+      "dockerImage": "source.archipelago-foundation.org/lfg2025/indeedhub:1.0.0",
+      "repoUrl": "https://github.com/indeedhub/indeedhub"
+    },
+    {
+      "id": "botfights",
+      "title": "BotFights",
+      "version": "1.2.11",
+      "description": "Bot competition arena with 2-player arcade fighting mode. AI bots battle in trivia challenges while humans duke it out with controllers. Built for Bitcoiners.",
+      "icon": "/assets/img/app-icons/botfights.svg",
+      "author": "BotFights",
+      "category": "community",
+      "dockerImage": "source.archipelago-foundation.org/lfg2025/botfights:1.2.11",
+      "repoUrl": "https://botfights.net",
+      "containerConfig": {
+        "ports": [
+          "9100:9100"
+        ],
+        "volumes": [
+          "/var/lib/archipelago/botfights:/app/server/data"
+        ],
+        "env": [
+          "NODE_ENV=production",
+          "PORT=9100",
+          "FIGHT_LOOP_ENABLED=true",
+          "ARCHY_EMBEDDED=1"
+        ]
+      }
+    },
+    {
+      "id": "gitea",
+      "title": "Gitea",
+      "version": "1.23",
+      "description": "Self-hosted Git service with built-in container registry, CI/CD, and package hosting.",
+      "icon": "/assets/img/app-icons/gitea.svg",
+      "author": "Gitea",
+      "category": "development",
+      "dockerImage": "docker.io/gitea/gitea:1.23",
+      "repoUrl": "https://gitea.com",
+      "containerConfig": {
+        "ports": [
+          "3001:3000",
+          "2222:22"
+        ],
+        "volumes": [
+          "/var/lib/archipelago/gitea/data:/data",
+          "/var/lib/archipelago/gitea/config:/etc/gitea"
+        ],
+        "env": [
+          "GITEA__database__DB_TYPE=sqlite3",
+          "GITEA__server__SSH_PORT=2222",
+          "GITEA__server__SSH_LISTEN_PORT=22",
+          "GITEA__server__LFS_START_SERVER=true",
+          "GITEA__packages__ENABLED=true",
+          "GITEA__repository__ENABLE_PUSH_CREATE_USER=true",
+          "GITEA__repository__ENABLE_PUSH_CREATE_ORG=true",
+          "GITEA__security__X_FRAME_OPTIONS="
+        ]
+      },
+      "tier": "optional"
+    },
+    {
+      "id": "filebrowser",
+      "title": "File Browser",
+      "version": "2.27.0",
+      "description": "Baseline Archipelago file manager service.",
+      "icon": "/assets/img/app-icons/file-browser.webp",
+      "author": "File Browser",
+      "category": "data",
+      "tier": "core",
+      "dockerImage": "source.archipelago-foundation.org/lfg2025/filebrowser:v2.27.0",
+      "repoUrl": "https://github.com/filebrowser/filebrowser",
+      "containerConfig": {
+        "ports": [
+          "8083:80"
+        ],
+        "volumes": [
+          "/var/lib/archipelago/filebrowser:/srv",
+          "/var/lib/archipelago/filebrowser-data:/data"
+        ],
+        "args": [
+          "--database=/data/database.db",
+          "--root=/srv",
+          "--address=0.0.0.0",
+          "--port=80"
+        ]
+      }
+    },
+    {
+      "id": "nostr-rs-relay",
+      "title": "Nostr Relay (Rust)",
+      "version": "0.8.0",
+      "description": "High-performance Nostr relay written in Rust. Host your own decentralized social media relay and earn networking profits.",
+      "icon": "/assets/img/app-icons/nostrudel.svg",
+      "author": "Nostr RS Relay",
+      "category": "community",
+      "tier": "recommended",
+      "dockerImage": "scsibug/nostr-rs-relay:0.8.9",
+      "repoUrl": "https://github.com/scsibug/nostr-rs-relay",
+      "containerConfig": {
+        "ports": [
+          "8081:8080"
+        ],
+        "volumes": [
+          "/var/lib/archipelago/nostr-relay:/usr/src/app/db"
+        ],
+        "env": [
+          "RELAY_NAME=Archipelago Nostr Relay",
+          "RELAY_DESCRIPTION=Self-hosted Nostr relay on Archipelago"
+        ]
+      }
+    },
+    {
+      "id": "vaultwarden",
+      "title": "Vaultwarden",
+      "version": "1.30.0",
+      "description": "Self-hosted password vault with zero-knowledge encryption.",
+      "icon": "/assets/img/app-icons/vaultwarden.webp",
+      "author": "Vaultwarden",
+      "category": "data",
+      "tier": "recommended",
+      "dockerImage": "source.archipelago-foundation.org/lfg2025/vaultwarden:1.30.0-alpine",
+      "repoUrl": "https://github.com/dani-garcia/vaultwarden",
+      "containerConfig": {
+        "ports": [
+          "8082:80"
+        ],
+        "volumes": [
+          "/var/lib/archipelago/vaultwarden:/data"
+        ]
+      }
+    },
+    {
+      "id": "searxng",
+      "title": "SearXNG",
+      "version": "1.0.0",
+      "description": "Privacy-respecting metasearch engine. Search the web without tracking.",
+      "icon": "/assets/img/app-icons/searxng.png",
+      "author": "SearXNG",
+      "category": "data",
+      "tier": "recommended",
+      "dockerImage": "source.archipelago-foundation.org/lfg2025/searxng:latest",
+      "repoUrl": "https://github.com/searxng/searxng",
+      "containerConfig": {
+        "ports": [
+          "8888:8080"
+        ],
+        "volumes": [
+          "/var/lib/archipelago/searxng:/etc/searxng"
+        ]
+      }
+    },
+    {
+      "id": "fedimint",
+      "title": "Fedimint Guardian",
+      "version": "0.10.0",
+      "description": "Federated Bitcoin minting service with built-in Guardian UI. Privacy-preserving Bitcoin custody.",
+      "icon": "/assets/img/app-icons/fedimint.png",
+      "author": "Fedimint",
+      "category": "money",
+      "dockerImage": "source.archipelago-foundation.org/lfg2025/fedimintd:v0.10.0",
+      "repoUrl": "https://github.com/fedimint/fedimint"
+    },
+    {
+      "id": "fedimint-clientd",
+      "title": "Fedimint Client",
+      "version": "0.8.0",
+      "description": "Fedimint ecash client daemon (fmcd). Lets the node hold Fedimint ecash and join federations; the wallet talks to it over a local REST API.",
+      "icon": "/assets/img/app-icons/fedimint.png",
+      "author": "Fedimint",
+      "category": "money",
+      "tier": "core",
+      "dockerImage": "source.archipelago-foundation.org/lfg2025/fmcd:0.8.1",
+      "repoUrl": "https://github.com/minmoto/fmcd"
+    },
+    {
+      "id": "fedimint-gateway",
+      "title": "Fedimint Gateway",
+      "version": "0.10.0",
+      "description": "Fedimint gateway service with automatic LND-or-LDK backend selection.",
+      "icon": "/assets/img/app-icons/fedimint.png",
+      "author": "Fedimint",
+      "category": "money",
+      "dockerImage": "source.archipelago-foundation.org/lfg2025/gatewayd:v0.10.0",
+      "repoUrl": "https://github.com/fedimint/fedimint",
+      "containerConfig": {
+        "ports": [
+          "8176:8176",
+          "9737:9737"
+        ],
+        "volumes": [
+          "/var/lib/archipelago/fedimint-gateway:/data",
+          "/var/lib/archipelago/lnd:/lnd:ro"
+        ]
+      }
+    },
+    {
+      "id": "barkd",
+      "title": "Ark Wallet",
+      "version": "0.3.0",
+      "description": "Ark protocol wallet daemon (barkd). Lets the node hold self-custodial off-chain bitcoin via an Ark server; the wallet talks to it over a local REST API. Signet by default while Ark matures.",
+      "icon": "/assets/img/app-icons/bark.png",
+      "author": "Second",
+      "category": "money",
+      "dockerImage": "source.archipelago-foundation.org/lfg2025/barkd:0.3.0",
+      "repoUrl": "https://gitlab.com/ark-bitcoin/bark",
+      "containerConfig": {
+        "ports": [
+          "3535:3535"
+        ],
+        "volumes": [
+          "/var/lib/archipelago/barkd:/data"
+        ]
+      }
+    },
+    {
+      "id": "jellyfin",
+      "title": "Jellyfin",
+      "version": "10.8.13",
+      "description": "Free media server. Stream movies, music, and photos.",
+      "icon": "/assets/img/app-icons/jellyfin.webp",
+      "author": "Jellyfin",
+      "category": "data",
+      "dockerImage": "source.archipelago-foundation.org/lfg2025/jellyfin:10.8.13",
+      "repoUrl": "https://github.com/jellyfin/jellyfin",
+      "containerConfig": {
+        "ports": [
+          "8096:8096"
+        ],
+        "volumes": [
+          "/var/lib/archipelago/jellyfin/config:/config",
+          "/var/lib/archipelago/jellyfin/cache:/cache"
+        ]
+      }
+    },
+    {
+      "id": "immich",
+      "title": "Immich",
+      "version": "2.7.4",
+      "description": "Self-hosted photo and video backup with mobile apps and search.",
+      "icon": "/assets/img/app-icons/immich.png",
+      "author": "Immich",
+      "category": "data",
+      "dockerImage": "source.archipelago-foundation.org/lfg2025/immich-server:release",
+      "repoUrl": "https://github.com/immich-app/immich"
+    },
+    {
+      "id": "homeassistant",
+      "title": "Home Assistant",
+      "version": "2026.7.3",
+      "description": "Open source home automation platform. Control and monitor your smart home devices.",
+      "icon": "/assets/img/app-icons/homeassistant.png",
+      "author": "Home Assistant",
+      "category": "home",
+      "dockerImage": "source.archipelago-foundation.org/lfg2025/home-assistant:2026.7.3",
+      "repoUrl": "https://github.com/home-assistant/core",
+      "containerConfig": {
+        "ports": [
+          "8123:8123"
+        ],
+        "volumes": [
+          "/var/lib/archipelago/home-assistant:/config"
+        ],
+        "env": [
+          "TZ=UTC"
+        ]
+      }
+    },
+    {
+      "id": "pine",
+      "title": "Pine",
+      "version": "1.3.0",
+      "description": "A private voice assistant for your home. Pine runs speech-to-text (Whisper), text-to-speech (Piper) and wake-word detection (openWakeWord) on your own node and pairs with a PineVoice satellite speaker, so Home Assistant Assist works locally with nothing sent to the cloud. Ask it about your node — block height, sync, peers, Lightning balance — and, when a Claude API key is set, anything else.",
+      "icon": "/assets/img/app-icons/pine.svg",
+      "author": "Archipelago",
+      "category": "home",
+      "dockerImage": "docker.io/library/nginx:1.27-alpine",
+      "repoUrl": "https://github.com/rhasspy/wyoming"
+    },
+    {
+      "id": "grafana",
+      "title": "Grafana",
+      "version": "10.2.0",
+      "description": "Analytics and monitoring platform. Visualize metrics and create dashboards.",
+      "icon": "/assets/img/app-icons/grafana.png",
+      "author": "Grafana Labs",
+      "category": "data",
+      "tier": "recommended",
+      "dockerImage": "source.archipelago-foundation.org/lfg2025/grafana:10.2.0",
+      "repoUrl": "https://github.com/grafana/grafana",
+      "containerConfig": {
+        "ports": [
+          "3000:3000"
+        ],
+        "volumes": [
+          "/var/lib/archipelago/grafana:/var/lib/grafana"
+        ],
+        "env": [
+          "GF_PATHS_DATA=/var/lib/grafana",
+          "GF_USERS_ALLOW_SIGN_UP=false"
+        ]
+      }
+    },
+    {
+      "id": "tailscale",
+      "title": "Tailscale",
+      "version": "1.78.0",
+      "description": "Zero-config VPN with WireGuard mesh networking.",
+      "icon": "/assets/img/app-icons/tailscale.webp",
+      "author": "Tailscale",
+      "category": "networking",
+      "tier": "recommended",
+      "dockerImage": "source.archipelago-foundation.org/lfg2025/tailscale:stable",
+      "repoUrl": "https://github.com/tailscale/tailscale",
+      "containerConfig": {
+        "ports": [
+          "8240:8240"
+        ],
+        "volumes": [
+          "/var/lib/archipelago/tailscale:/var/lib/tailscale"
+        ],
+        "env": [
+          "TS_STATE_DIR=/var/lib/tailscale"
+        ],
+        "args": [
+          "sh",
+          "-c",
+          "tailscaled --tun=userspace-networking & for i in $(seq 1 30); do [ -S /var/run/tailscale/tailscaled.sock ] && break; sleep 1; done; tailscale web --listen 0.0.0.0:8240 & wait"
+        ]
+      }
+    },
+    {
+      "id": "portainer",
+      "title": "Portainer",
+      "version": "2.19.4",
+      "description": "Container management web UI for the local Podman socket.",
+      "icon": "/assets/img/app-icons/portainer.webp",
+      "author": "Portainer",
+      "category": "development",
+      "tier": "optional",
+      "dockerImage": "source.archipelago-foundation.org/lfg2025/portainer:2.39.1",
+      "repoUrl": "https://github.com/portainer/portainer",
+      "containerConfig": {
+        "ports": [
+          "9000:9000"
+        ],
+        "volumes": [
+          "/var/lib/archipelago/portainer:/data",
+          "/run/user/1000/podman/podman.sock:/var/run/docker.sock"
+        ],
+        "notes": "Uses the manifest-owned Podman socket bind mount preparation path."
+      }
+    },
+    {
+      "id": "netbird",
+      "title": "NetBird",
+      "version": "2.38.0",
+      "description": "Self-hosted WireGuard mesh VPN control plane with dashboard, embedded identity provider, management API, signal, relay, and STUN. The user-facing entry point — a TLS proxy in front of the dashboard + server.",
+      "icon": "/assets/img/app-icons/netbird.svg",
+      "author": "NetBird",
+      "category": "networking",
+      "tier": "recommended",
+      "dockerImage": "docker.io/library/nginx:1.27-alpine",
+      "repoUrl": "https://github.com/netbirdio/netbird",
+      "containerConfig": {
+        "ports": [
+          "8087:80",
+          "8086:80",
+          "3478:3478/udp"
+        ],
+        "volumes": [
+          "/var/lib/archipelago/netbird:/var/lib/netbird"
+        ],
+        "notes": "Installed as a two-container stack: netbird dashboard on 8087 and netbird-server control plane on 8086 plus UDP 3478. For production clients, publish a DNS name over HTTPS with gRPC/WebSocket routing."
+      }
+    },
+    {
+      "id": "uptime-kuma",
+      "title": "Uptime Kuma",
+      "version": "1.23.0",
+      "description": "Self-hosted uptime monitoring.",
+      "icon": "/assets/img/app-icons/uptime-kuma.webp",
+      "author": "Uptime Kuma",
+      "category": "data",
+      "tier": "recommended",
+      "dockerImage": "source.archipelago-foundation.org/lfg2025/uptime-kuma:1",
+      "repoUrl": "https://github.com/louislam/uptime-kuma",
+      "containerConfig": {
+        "ports": [
+          "3002:3001"
+        ],
+        "volumes": [
+          "/var/lib/archipelago/uptime-kuma:/app/data"
+        ],
+        "env": [
+          "TZ=UTC"
+        ],
+        "args": [
+          "--",
+          "node",
+          "server/server.js"
+        ]
+      }
+    },
+    {
+      "id": "photoprism",
+      "title": "PhotoPrism",
+      "version": "240915",
+      "description": "AI-powered photo management with facial recognition.",
+      "icon": "/assets/img/app-icons/photoprism.svg",
+      "author": "PhotoPrism",
+      "category": "data",
+      "dockerImage": "source.archipelago-foundation.org/lfg2025/photoprism:240915",
+      "repoUrl": "https://github.com/photoprism/photoprism",
+      "containerConfig": {
+        "ports": [
+          "2342:2342"
+        ],
+        "volumes": [
+          "/var/lib/archipelago/photoprism:/photoprism/storage"
+        ],
+        "env": [
+          "PHOTOPRISM_ADMIN_PASSWORD=archipelago",
+          "PHOTOPRISM_DEFAULT_LOCALE=en"
+        ]
+      }
+    },
+    {
+      "id": "nextcloud",
+      "title": "Nextcloud",
+      "version": "29",
+      "description": "Your own private cloud. File sync, calendars, contacts.",
+      "icon": "/assets/img/app-icons/nextcloud.webp",
+      "author": "Nextcloud",
+      "category": "data",
+      "dockerImage": "source.archipelago-foundation.org/lfg2025/nextcloud:29",
+      "repoUrl": "https://github.com/nextcloud/server",
+      "containerConfig": {
+        "ports": [
+          "8085:80"
+        ],
+        "volumes": [
+          "/var/lib/archipelago/nextcloud:/var/www/html"
+        ]
+      }
+    }
+  ]
+}

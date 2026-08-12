@@ -1,0 +1,80 @@
+#!/bin/sh
+# Resilient launcher for fmcd, with a stuck-CPU watchdog.
+#
+# fmcd requires >=1 federation to boot — if the default federation is
+# unreachable at first boot it exits non-zero. Rather than let the container
+# crash-loop (and on a node, spam restarts), retry here with a backoff so the
+# join happens in the background once the federation becomes reachable. Once
+# fmcd is up it runs forever; this loop only re-runs it on exit.
+#
+# All config comes from FMCD_* env (FMCD_ADDR, FMCD_MODE, FMCD_DATA_DIR,
+# FMCD_INVITE_CODE, FMCD_PASSWORD), so fmcd needs no CLI args here.
+#
+# WATCHDOG: on NAT'd nodes that can reach the iroh federation neither directly
+# nor via iroh's public relays, fmcd's embedded iroh networking enters a
+# relay/hole-punch reconnect hot-loop that pegs its entire CPU allotment
+# indefinitely (observed: ~1 core sustained for 4 days on a Tailscale node,
+# while LAN nodes that reach the guardian directly stay <3%). fmcd exposes no
+# iroh/relay knobs, but a restart demonstrably clears the stuck iroh state
+# (a fresh process idles at <1%). So we sample fmcd's own CPU usage and, if it
+# stays near its full allotment for a sustained window, restart it. Real work
+# (federation joins, ecash ops) is bursty and measured in seconds — it never
+# flat-pegs a core for many consecutive minutes — so the threshold below does
+# not fire on legitimate load.
+set -u
+
+CLK=$(getconf CLK_TCK 2>/dev/null || echo 100)
+WATCH_SAMPLE="${FMCD_WATCH_SAMPLE:-60}"     # seconds between CPU samples
+WATCH_CORES="${FMCD_WATCH_CORES:-0.18}"     # cores; "hot" if usage exceeds this
+WATCH_HITS="${FMCD_WATCH_HITS:-15}"         # consecutive hot samples -> restart (~15 min)
+
+# Total CPU ticks (utime+stime, fields 14+15 of /proc/PID/stat) for $1; 0 if gone.
+cpu_ticks() {
+    awk '{print $14 + $15}' "/proc/$1/stat" 2>/dev/null || echo 0
+}
+
+# Watch fmcd ($1). Returns (so the caller can kill it) once fmcd has been hot
+# for WATCH_HITS consecutive samples; exits quietly if fmcd dies on its own.
+watchdog() {
+    pid="$1"
+    hot=0
+    prev=$(cpu_ticks "$pid")
+    while kill -0 "$pid" 2>/dev/null; do
+        sleep "$WATCH_SAMPLE"
+        cur=$(cpu_ticks "$pid")
+        cores=$(awk -v c="$cur" -v p="$prev" -v clk="$CLK" -v s="$WATCH_SAMPLE" \
+            'BEGIN{ d=c-p; if (d<0) d=0; printf "%.3f", d/clk/s }')
+        prev="$cur"
+        if [ "$(awk -v c="$cores" -v t="$WATCH_CORES" 'BEGIN{print (c>t)?1:0}')" = "1" ]; then
+            hot=$((hot + 1))
+            echo "[fmcd-run] watchdog: fmcd hot (${cores} cores) ${hot}/${WATCH_HITS}" >&2
+            if [ "$hot" -ge "$WATCH_HITS" ]; then
+                echo "[fmcd-run] watchdog: fmcd stuck high-CPU — restarting to clear iroh state" >&2
+                kill -TERM "$pid" 2>/dev/null
+                sleep 5
+                kill -KILL "$pid" 2>/dev/null
+                return 0
+            fi
+        else
+            hot=0
+        fi
+    done
+    return 0
+}
+
+# Forward container stop signals to the running fmcd (FMCD_PID is reread when
+# the trap fires, so it always targets the current child).
+FMCD_PID=
+trap 'kill -TERM "$FMCD_PID" 2>/dev/null; exit 0' TERM INT
+
+while true; do
+    fmcd &
+    FMCD_PID=$!
+    watchdog "$FMCD_PID" &
+    WD_PID=$!
+    wait "$FMCD_PID" 2>/dev/null
+    kill -TERM "$WD_PID" 2>/dev/null
+    wait "$WD_PID" 2>/dev/null
+    echo "[fmcd-run] fmcd exited (federation unreachable or watchdog restart); retrying in 30s" >&2
+    sleep 30
+done

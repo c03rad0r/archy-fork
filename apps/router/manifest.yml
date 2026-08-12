@@ -1,0 +1,75 @@
+app:
+  id: router
+  name: Mesh Router
+  version: 1.0.0
+  description: Mesh routing and local network management. Provides device discovery, routing, and network topology visualization.
+  
+  container:
+    image: archipelago/router:1.0.0
+    image_signature: cosign://...
+    pull_policy: if-not-present
+    
+  dependencies:
+    - storage: 500Mi
+    
+  resources:
+    cpu_limit: 2
+    memory_limit: 512Mi
+    disk_limit: 500Mi
+    
+  security:
+    capabilities: [NET_ADMIN, NET_RAW]  # Required for network management
+    readonly_root: true
+    no_new_privileges: true
+    user: 1000
+    seccomp_profile: default
+    network_policy: host  # Requires host network for routing
+    apparmor_profile: router
+    
+  ports:
+    - host: 8084
+      container: 8080
+      protocol: tcp  # Web UI
+      bind: 127.0.0.1
+      auth: gated
+    - host: 5353
+      container: 5353
+      protocol: udp  # mDNS/Bonjour
+      auth: none
+      auth_rationale: >-
+        mDNS is UDP multicast service discovery; gating it would break .local name resolution for every device on the LAN.
+    - host: 1900
+      container: 1900
+      protocol: udp  # SSDP
+      auth: none
+      auth_rationale: >-
+        SSDP/UPnP discovery is UDP multicast — there is no HTTP request to gate and no client that could hold a session.
+    
+  volumes:
+    - type: bind
+      source: /var/lib/archipelago/router
+      target: /app/data
+      options: [rw]
+    - type: bind
+      source: /var/run/dbus
+      target: /var/run/dbus
+      options: [ro]
+      
+  environment:
+    - NETWORK_INTERFACE=eth0
+    - MESH_ENABLED=true
+    - DEVICE_DISCOVERY=true
+    
+  health_check:
+    type: http
+    endpoint: http://localhost:8084
+    path: /health
+    interval: 30s
+    timeout: 5s
+    retries: 3
+    
+  networking:
+    mesh_enabled: true
+    local_network_access: true
+    device_discovery: true
+    routing_protocols: [olsr, babel]

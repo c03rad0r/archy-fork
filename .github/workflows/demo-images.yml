@@ -1,0 +1,74 @@
+name: Demo images
+
+# Builds and pushes the public-demo images on every change to the UI / mock
+# backend, so the separated `archy-demo` Portainer stack auto-tracks the real
+# code (see demo-deploy/ and docs/demo-deployment-design.md).
+#
+# Required repo configuration:
+#   vars.DEMO_REGISTRY        e.g. source.archipelago-foundation.org/lfg2025
+#   vars.DEMO_REGISTRY_HOST   registry host for docker login (no org suffix)
+#   secrets.DEMO_REGISTRY_USER
+#   secrets.DEMO_REGISTRY_TOKEN
+# Optional:
+#   secrets.PORTAINER_WEBHOOK  redeploy hook called after a successful push
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'neode-ui/**'
+      - 'docker-compose.demo.yml'
+      - '.github/workflows/demo-images.yml'
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: Build & push demo images
+    runs-on: ubuntu-latest
+    # Skip cleanly on forks / before registry config is set.
+    if: ${{ vars.DEMO_REGISTRY != '' }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+        with:
+          # The demo registry is plain HTTP — teach buildkit to push without TLS
+          # (the host docker daemon needs it in insecure-registries for login too).
+          buildkitd-config-inline: |
+            [registry."${{ vars.DEMO_REGISTRY_HOST || vars.DEMO_REGISTRY }}"]
+              http = true
+
+      - name: Log in to registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ vars.DEMO_REGISTRY_HOST || vars.DEMO_REGISTRY }}
+          username: ${{ secrets.DEMO_REGISTRY_USER }}
+          password: ${{ secrets.DEMO_REGISTRY_TOKEN }}
+
+      - name: Build & push backend
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: neode-ui/Dockerfile.backend
+          push: true
+          tags: |
+            ${{ vars.DEMO_REGISTRY }}/archy-demo-backend:demo
+            ${{ vars.DEMO_REGISTRY }}/archy-demo-backend:${{ github.sha }}
+
+      - name: Build & push web
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: neode-ui/Dockerfile.web
+          push: true
+          build-args: |
+            VITE_DEMO=1
+          tags: |
+            ${{ vars.DEMO_REGISTRY }}/archy-demo-web:demo
+            ${{ vars.DEMO_REGISTRY }}/archy-demo-web:${{ github.sha }}
+
+      - name: Trigger Portainer redeploy
+        if: ${{ success() && secrets.PORTAINER_WEBHOOK != '' }}
+        run: curl -fsS -X POST "${{ secrets.PORTAINER_WEBHOOK }}"

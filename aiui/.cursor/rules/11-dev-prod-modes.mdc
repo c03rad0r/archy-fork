@@ -1,0 +1,101 @@
+---
+description: Development vs production configuration, feature flags, mock data patterns
+globs: "**/*"
+alwaysApply: false
+---
+
+# Dev & Prod Modes
+
+## Development Mode
+
+### Environment
+```env
+# .env.local (gitignored)
+VITE_OPENROUTER_API_KEY=sk-or-...
+VITE_TMDB_API_KEY=...
+VITE_DEV_MODE=true
+VITE_MOCK_MEDIA_SOURCES=true
+VITE_DISABLE_CRYPTO=true
+```
+
+### What's Enabled
+- Hot reload via Vite HMR
+- Debug panel overlay (AI context, plugin status, renderer registry, message data)
+- Mock media source plugins (Plex, YouTube, Nextcloud from JSON fixtures)
+- OpenRouter AI connection (real API, free models available)
+- Component playground (Storybook/Histoire)
+- Verbose logging
+- TypeScript strict mode
+- All renderers available without lazy loading (for dev speed)
+
+### What's Disabled
+- E2E encryption (plain text messages for debugging)
+- Storage encryption (plain IndexedDB)
+- Tauri features (dev runs as pure web app)
+- Production optimizations (tree-shaking, minification)
+- Service worker / offline mode
+
+### Mock Data
+- Film fixtures: 50-100 films with real TMDB poster URLs
+- Media source mocks: JSON files returning fake Plex/YouTube/Nextcloud responses
+- Located in: `packages/app/src/mocks/`
+- Auto-loaded when `VITE_MOCK_MEDIA_SOURCES=true`
+- Mock data must match production data interfaces exactly
+
+### Dev Scripts
+```
+pnpm dev              # Web dev server
+pnpm dev:desktop      # Tauri dev (when needed)
+pnpm storybook        # Component playground
+pnpm test             # Vitest
+pnpm lint             # ESLint + Prettier
+pnpm typecheck        # TypeScript
+pnpm build            # Production build
+pnpm turbo build      # Turborepo cached build
+```
+
+## Production Mode
+
+### What's Enabled
+- E2E encryption for all messages
+- Encrypted local storage
+- Key management via OS keychain (Tauri) or encrypted IndexedDB (web)
+- User-configured AI providers (settings page)
+- Real media source connections (Plex API, YouTube, etc.)
+- Optimized builds (tree-shaken, code-split, minified)
+- Lazy loading for all heavy renderers
+- Service worker for offline support
+- Auto-update (Tauri)
+
+### What's Disabled
+- Debug panels
+- Mock data
+- Dev logging
+- Source maps (in distributed builds)
+- `VITE_DISABLE_CRYPTO` flag (must not exist)
+
+### Build Targets
+- Web: Static SPA bundle (< 250KB initial gzipped)
+- Desktop: Tauri app (macOS .dmg, Windows .msi, Linux .AppImage)
+- Mobile: Tauri mobile (iOS .ipa, Android .apk)
+
+## Feature Flags
+Use composable `useFeatureFlags()`:
+```typescript
+const { isDev, isTauri, isMobile, isCryptoEnabled, isMockData } = useFeatureFlags()
+```
+
+Gate platform-specific features:
+```typescript
+if (isTauri()) {
+  // Native file system access
+} else {
+  // File System Access API or file picker
+}
+```
+
+## Environment Variable Rules
+- All env vars prefixed with `VITE_` (Vite requirement)
+- Secrets only in `.env.local` (gitignored)
+- `.env.example` committed with placeholder values
+- Never read `process.env` directly — use typed config module

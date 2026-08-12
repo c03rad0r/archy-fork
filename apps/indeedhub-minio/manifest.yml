@@ -1,0 +1,60 @@
+app:
+  id: indeedhub-minio
+  name: IndeedHub MinIO
+  version: "RELEASE.2024-11-07T00-52-20Z"
+  description: MinIO S3-compatible object storage for IndeedHub media.
+  category: community
+
+  # Hyphen name matches runtime references + the live container (adoption);
+  # alias `minio` is the short hostname the api/ffmpeg use (S3_ENDPOINT=
+  # http://minio:9000) AND the frontend nginx proxies to (http://minio:9000).
+  container_name: indeedhub-minio
+
+  container:
+    image: source.archipelago-foundation.org/lfg2025/minio:RELEASE.2024-11-07T00-52-20Z
+    pull_policy: if-not-present
+    network: indeedhub-net
+    network_aliases: [minio]
+    # `server /data` — the minio entrypoint args from the legacy installer.
+    custom_args: [server, /data]
+    generated_secrets:
+      - name: indeedhub-minio-password
+        kind: hex32
+    secret_env:
+      - key: MINIO_ROOT_PASSWORD
+        secret_file: indeedhub-minio-password
+
+  dependencies:
+    - storage: 50Gi
+
+  resources:
+    memory_limit: 1Gi
+    disk_limit: 50Gi
+
+  security:
+    capabilities: []
+    readonly_root: false
+    network_policy: isolated
+
+  ports: []
+
+  # Named volume matches the live indeedhub-minio-data volume on .228.
+  volumes:
+    - type: volume
+      source: indeedhub-minio-data
+      target: /data
+      options: [rw]
+
+  # MINIO_ROOT_USER "indeeadmin" is the fixed admin identity baked by the legacy
+  # installer (api/ffmpeg use it as AWS_ACCESS_KEY); the password is the
+  # generated secret above. Not secret, so it stays a plain env value.
+  environment:
+    - MINIO_ROOT_USER=indeeadmin
+
+  health_check:
+    type: http
+    endpoint: http://localhost:9000
+    path: /minio/health/live
+    interval: 30s
+    timeout: 5s
+    retries: 5

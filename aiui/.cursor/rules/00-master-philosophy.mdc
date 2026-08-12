@@ -1,0 +1,65 @@
+---
+description: Core development philosophy for AIUI - the foundational rules that govern all code and design decisions
+globs: "**/*"
+alwaysApply: true
+---
+
+# Master Philosophy
+
+## Mission
+Build the next-generation AI content surface UI — a paradigm where AI responses are rendered as rich, interactive content, not plain text. Delivered as a reusable component library (@aiui/core) and a reference application (AIUI App).
+
+## Philosophical Pillars
+
+### 1. Open Source Only
+Every dependency must be OSS (MIT, Apache-2.0, GPL-compatible). No proprietary SDKs, no vendor-locked services. Before adding any dependency, verify its license.
+
+### 2. Decentralized-First
+No hard dependency on any centralized service. AI backends, messaging protocols, storage, search — all connect through pluggable adapter interfaces. Users choose their own providers.
+
+### 3. Bitcoin Only
+Bitcoin is the only monetary unit. On-chain, Lightning, ecash (Cashu, Fedimint/Fedi). No fiat payment rails, no altcoins, no stablecoins — anywhere in the UI or codebase. AIUI is never a wallet and never handles funds directly. See `10-bitcoin-only.mdc` for full rules.
+
+### 4. Cryptography for Everything Sensitive
+E2E encryption for messages, encrypted local storage, proper key management. Privacy is not a feature — it is a requirement.
+
+### 5. Mobile-First, Everywhere-Perfect
+Every component works flawlessly on mobile, tablet, and desktop. Mobile is the foundation, not an afterthought. Touch targets, viewport management, and safe areas are first-class citizens.
+
+### 6. Consistency is Sacred
+Mobile and desktop versions show identical content and functionality unless explicitly designed otherwise. Design tokens ensure visual consistency across all breakpoints.
+
+### 7. Theme-First Architecture
+Theming is a core architectural decision from day one. Themes are CSS-based with reactive state management. Dark mode and light mode are equals.
+
+### 8. Utility-First, Component-Second
+Tailwind CSS utilities in templates for maximum flexibility. Component classes only for truly reusable patterns. Extract components when you repeat, not before.
+
+### 9. Performance as a Feature
+Initial load < 250KB gzipped. Lazy load everything that isn't immediately visible. CSS transforms for GPU acceleration. SVG over raster images. Code splitting by default.
+
+### 10. Plugin-Everything
+Every external integration connects through a typed plugin interface. AI providers, media sources, messaging protocols, wallets, social embeds — all pluggable.
+
+### 11. Accessibility is Not Optional
+WCAG AA compliance minimum. Keyboard navigation everywhere. Screen reader friendly. Color contrast tested and validated.
+
+### 12. MCP-Native
+First-class Model Context Protocol support for AI tool interoperability.
+
+## Anti-Patterns to Avoid
+
+- Desktop-first thinking
+- Hardcoded values (use design tokens)
+- Premature abstraction (build three times before abstracting)
+- Magic numbers without comments
+- Invisible state (user should always know what's happening)
+- Handling funds or private keys
+- Loading third-party tracking scripts
+- Proprietary dependencies
+
+## The Ultimate Goal
+
+When someone uses AIUI, they should think: "This feels incredibly polished", "Everything just works", "My data is safe", "I control my own setup."
+
+When a developer reads the code: "This is well organized", "I understand exactly what's happening", "Adding a new renderer is straightforward."

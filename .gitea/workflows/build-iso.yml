@@ -1,0 +1,62 @@
+name: Build Archipelago release ISO (gated)
+
+# Resurrected from image-recipe/_archived/.gitea-workflows/build-iso-dev.yml.
+# Dispatch-only on purpose: the ISO is cut per release, not per push, and
+# the iso-builder runner is a live node — builds are deliberate events.
+on:
+  workflow_dispatch:
+
+jobs:
+  build-iso:
+    runs-on: iso-builder
+    timeout-minutes: 180
+    steps:
+      - name: Sync source to workspace
+        run: |
+          # Direct fetch + sync (actions/checkout token is broken on this Gitea)
+          REPO_DIR="$HOME/Projects/archy"
+          [ -d "$REPO_DIR" ] || REPO_DIR="$HOME/archy"
+          cd "$REPO_DIR" && git fetch origin main && git reset --hard origin/main
+          echo "=== Source at commit: $(git log --oneline -1) ==="
+
+      - name: Install ISO build dependencies
+        run: |
+          if dpkg -s debootstrap squashfs-tools xorriso isolinux syslinux-common mtools \
+               grub-efi-amd64-bin grub-pc-bin grub-common >/dev/null 2>&1; then
+            echo "ISO build deps already installed, skipping apt"
+          else
+            sudo apt-get update -qq
+            sudo apt-get install -y -qq \
+              debootstrap squashfs-tools xorriso \
+              isolinux syslinux-common mtools \
+              grub-efi-amd64-bin grub-pc-bin grub-common
+          fi
+
+      - name: Build backend + frontend if stale
+        run: |
+          REPO_DIR="$HOME/Projects/archy"
+          [ -d "$REPO_DIR" ] || REPO_DIR="$HOME/archy"
+          cd "$REPO_DIR"
+          . "$HOME/.cargo/env" 2>/dev/null || true
+          VERSION=$(grep -m1 '^version' core/archipelago/Cargo.toml | sed 's/.*"\(.*\)".*/\1/')
+          if ! strings core/target/release/archipelago 2>/dev/null | grep -qF "$VERSION"; then
+            cargo build --release --manifest-path core/Cargo.toml -p archipelago
+          fi
+          if ! grep -rqoF "$VERSION" web/dist/neode-ui/assets/*.js 2>/dev/null; then
+            (cd neode-ui && npm ci && npm run build)
+          fi
+
+      - name: Gated ISO build (gates + build + smoke + qemu)
+        run: |
+          REPO_DIR="$HOME/Projects/archy"
+          [ -d "$REPO_DIR" ] || REPO_DIR="$HOME/archy"
+          cd "$REPO_DIR"
+          . "$HOME/.cargo/env" 2>/dev/null || true
+          bash scripts/build-iso-release.sh
+
+      - name: Report artifacts
+        if: always()
+        run: |
+          REPO_DIR="$HOME/Projects/archy"
+          [ -d "$REPO_DIR" ] || REPO_DIR="$HOME/archy"
+          ls -lh "$REPO_DIR"/image-recipe/results/*.iso 2>/dev/null | tail -3 || echo "no ISO produced"

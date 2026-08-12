@@ -1,0 +1,51 @@
+app:
+  id: searxng
+  name: SearXNG
+  version: 1.0.0
+  description: Privacy-respecting metasearch engine. Search the web without tracking.
+  
+  container:
+    image: source.archipelago-foundation.org/lfg2025/searxng:latest
+    pull_policy: if-not-present
+    
+  dependencies:
+    - storage: 2Gi
+    
+  resources:
+    cpu_limit: 2
+    memory_limit: 1Gi
+    disk_limit: 2Gi
+    
+  security:
+    capabilities: []
+    readonly_root: true
+    no_new_privileges: true
+    user: 1000
+    seccomp_profile: default
+    network_policy: isolated
+    apparmor_profile: searxng
+    
+  ports:
+    - host: 8888
+      container: 8080
+      protocol: tcp  # Web UI
+      bind: 127.0.0.1
+      auth: gated
+    
+  volumes:
+    - type: bind
+      source: /var/lib/archipelago/searxng
+      target: /etc/searxng
+      options: [rw]
+      
+  environment:
+    - SEARXNG_HOSTNAME=localhost
+    - SEARXNG_BIND_ADDRESS=0.0.0.0:8080
+    
+  health_check:
+    type: http
+    endpoint: http://localhost:8080
+    path: /
+    interval: 30s
+    timeout: 30s
+    retries: 5
