@@ -24,7 +24,7 @@ app:
     network_policy: bridge
 
   ports:
-    - host: 8087
+    - host: 8187
       container: 8080
       protocol: tcp
       bind: 127.0.0.1
@@ -56,7 +56,7 @@ app:
       name: Web UI
       description: Alby Hub wallet interface
       type: ui
-      port: 8087
+      port: 8187
       protocol: http
 
   metadata:
