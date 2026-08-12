@@ -35,6 +35,16 @@ doc. See [`ROADMAP.md`](ROADMAP.md) for the curated, public-facing direction.
 ## App ecosystem
 
 - Full pass testing every app in the catalog; expect issues across the board.
+- App update strategy — finalize the update policy referenced in
+  [`app-developer-guide.md`](app-developer-guide.md) (pinned vs. mutable
+  tags, catalog-vs-disk precedence, rollout/rollback).
+- App wishlist — candidates not yet packaged: Cashu wallet, phoenixd.
+  (CLN is already shipped as `apps/core-lightning`.)
+
+## Access & security
+
+- SSH access strategy — define the access model (keys, rotation, recovery
+  path, remote-support access).
 
 ## Observability
 
