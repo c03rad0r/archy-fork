@@ -406,19 +406,62 @@ curl http://localhost:8180/health
 podman logs my-app
 ```
 
-### On an Archipelago Node
+### On an Archipelago Node (before your app is in the catalog)
 
-1. Install via the marketplace UI or RPC:
-   ```bash
-   curl -b cookies.txt -X POST http://archipelago.local/rpc/v1 \
-     -d '{"method":"package.install","params":{"id":"my-app","dockerImage":"docker.io/myorg/my-app:1.0.0"}}'
-   ```
-2. Verify the container is running:
-   ```bash
-   curl -b cookies.txt -X POST http://archipelago.local/rpc/v1 \
-     -d '{"method":"container-list"}'
-   ```
-3. Check the UI. The app's detail page is `http://archipelago.local/dashboard/apps/my-app`; the embedded launch surface is `http://archipelago.local/dashboard/app-session/my-app`
+The App Store lists **signed-catalog apps and Nostr-discovered apps only** —
+a manifest on the node's disk never appears in the store by itself. That is
+deliberate: the store is a trust surface. But the orchestrator installs from
+disk manifests just fine, so you can test the complete install/run/uninstall
+lifecycle on your own node before your app is published anywhere.
+
+**1. Stage the manifest where it survives reboots.**
+
+`/opt/archipelago/apps/` is *rebuilt on every backend start* from the runtime
+payload that ships inside the frontend bundle
+(`/opt/archipelago/web-ui/archipelago-runtime/apps/`). If you copy your
+manifest only into `/opt/archipelago/apps/`, the next restart silently deletes
+it. Stage into the payload directory instead — the boot sync then promotes it
+for you:
+
+```bash
+sudo mkdir -p /opt/archipelago/web-ui/archipelago-runtime/apps/my-app
+sudo cp apps/my-app/manifest.yml /opt/archipelago/web-ui/archipelago-runtime/apps/my-app/
+sudo systemctl restart archipelago   # manifests are loaded at startup
+```
+
+Watch `journalctl -u archipelago` after the restart — the orchestrator
+validates every manifest on load and tells you about problems immediately
+(for example a host-port collision with another installed app).
+
+**2. Install over JSON-RPC.**
+
+The repo ships the same session helper the release lifecycle gate uses:
+
+```bash
+export ARCHY_PASSWORD='<your dashboard password>'
+# Stock nodes serve HTTPS on 443; dev boxes behind plain nginx use:
+#   export ARCHY_HOST=127.0.0.1 ARCHY_SCHEME=http
+source tests/lifecycle/lib/rpc.bash
+rpc_login
+rpc_call package.install '{"id":"my-app"}'
+```
+
+**3. Verify the lifecycle, not just the install:**
+
+```bash
+rpc_call package.status '{"id":"my-app"}'        # state + health
+podman ps --filter name=my-app                   # container is up
+rpc_call package.stop '{"id":"my-app"}'          # …and start, restart
+sudo systemctl restart archipelago               # app must survive this
+rpc_call package.uninstall '{"id":"my-app","preserve_data":true}'
+rpc_call package.install '{"id":"my-app"}'       # data still there?
+```
+
+The app's detail page is `https://<node>/dashboard/apps/my-app`; a gated web
+UI is reachable through the app gate on its manifest port once running.
+
+Only after this loop is green does the app belong in a catalog submission —
+catalog inclusion is what makes it appear in the App Store.
 
 ### Validate Manifest
 
