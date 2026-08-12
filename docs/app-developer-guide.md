@@ -435,21 +435,32 @@ validates every manifest on load and tells you about problems immediately
 
 **2. Install over JSON-RPC.**
 
-The repo ships the same session helper the release lifecycle gate uses:
+The repo ships the same session helper the release lifecycle gate uses.
+Three things to know before using it: it needs `jq`; it reuses a cached
+session from `/tmp/archy-rpc-session-<uid>` unless `ARCHY_FORCE_LOGIN=1` is
+set (a stale cache fails every call quietly); and it sets `set -euo pipefail`,
+so run it inside a script or subshell — sourcing it into your interactive
+shell makes the first failed step kill the whole chain without printing
+anything.
 
 ```bash
-export ARCHY_PASSWORD='<your dashboard password>'
+bash <<'EOF'
+export ARCHY_PASSWORD='<your dashboard password>' ARCHY_FORCE_LOGIN=1
 # Stock nodes serve HTTPS on 443; dev boxes behind plain nginx use:
 #   export ARCHY_HOST=127.0.0.1 ARCHY_SCHEME=http
 source tests/lifecycle/lib/rpc.bash
-rpc_login
-rpc_call package.install '{"id":"my-app"}'
+rpc_login && echo "login ok"
+# Both fields are required: `dockerImage` is normally supplied by the App
+# Store from the signed catalog — pre-catalog, you pass your manifest's
+# image yourself (it must match, and must come from a trusted registry).
+rpc_call package.install '{"id":"my-app","dockerImage":"docker.io/myorg/my-app:1.0.0"}'
+EOF
 ```
 
 **3. Verify the lifecycle, not just the install:**
 
 ```bash
-rpc_call package.status '{"id":"my-app"}'        # state + health
+rpc_call package.status '{"id":"my-app"}'        # state + health (run inside the same subshell pattern)
 podman ps --filter name=my-app                   # container is up
 rpc_call package.stop '{"id":"my-app"}'          # …and start, restart
 sudo systemctl restart archipelago               # app must survive this
