@@ -1128,16 +1128,6 @@ html.controller-nav [data-controller-container]:focus {
     z-index: 0;
   }
 
-  /* KAMMERGUT GLOSS TEST (2026-08-12) — black gloss paint on the badge's
-     inner circle, lifted from plan-b's Kammergut wordmark (.paint-3d
-     gradient + #paintGloss filter, defs injected in App.vue). Revert:
-     delete this block + the svg defs block in App.vue (one commit). */
-  .logo-gradient-border::after {
-    background: linear-gradient(180deg, #2a2a26 0%, #1a1a18 45%, #060604 100%);
-    filter: url(#paintGloss);
-    -webkit-filter: url(#paintGloss);
-  }
-
   .logo-gradient-border img,
   .logo-gradient-border svg {
     border-radius: 9999px;

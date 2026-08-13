@@ -1,39 +1,5 @@
 <template>
   <div id="app">
-    <!-- KAMMERGUT GLOSS TEST (2026-08-12): SVG paint filter lifted verbatim
-         from plan-b's Kammergut wordmark (#paintGloss). Consumed by the
-         .logo-gradient-border::after override in style.css. Revert by
-         deleting this svg block + that css block (one commit). -->
-    <svg width="0" height="0" style="position:absolute" aria-hidden="true" focusable="false">
-      <defs>
-        <filter id="paintGloss" x="-12%" y="-30%" width="124%" height="160%" color-interpolation-filters="sRGB">
-          <feMorphology in="SourceAlpha" operator="dilate" radius="2.5" result="dilated"/>
-          <feGaussianBlur in="dilated" stdDeviation="6" result="puddle"/>
-          <feFlood flood-color="#fff4dc" flood-opacity="0.85" result="puddleColor"/>
-          <feComposite in="puddleColor" in2="puddle" operator="in" result="puddleHi"/>
-          <feFlood flood-color="#1A1A18" flood-opacity="0.18" result="puddleShadowColor"/>
-          <feComposite in="puddleShadowColor" in2="puddle" operator="in" result="puddleShadow"/>
-          <feOffset in="puddleShadow" dx="0" dy="3" result="puddleShadowOff"/>
-          <feGaussianBlur in="SourceAlpha" stdDeviation="1.4" result="bump"/>
-          <feSpecularLighting in="bump" surfaceScale="4" specularConstant="0.9"
-                              specularExponent="40" lighting-color="#fff2d4" result="spec2">
-            <fePointLight x="600" y="-200" z="380"/>
-          </feSpecularLighting>
-          <feComposite in="spec2" in2="SourceAlpha" operator="in" result="specClip2"/>
-          <feGaussianBlur in="SourceAlpha" stdDeviation="4" result="dsBlur"/>
-          <feOffset in="dsBlur" dx="0" dy="6" result="dsOff"/>
-          <feComponentTransfer in="dsOff" result="dsFinal">
-            <feFuncA type="linear" slope="0.45"/>
-          </feComponentTransfer>
-          <feMerge>
-            <feMergeNode in="dsFinal"/>
-            <feMergeNode in="SourceGraphic"/>
-            <feMergeNode in="specClip2"/>
-          </feMerge>
-        </filter>
-      </defs>
-    </svg>
-
     <!-- Splash Screen (only on first visit) -->
     <SplashScreen v-if="showSplash" @complete="handleSplashComplete" />
 
