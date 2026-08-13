@@ -853,7 +853,25 @@ function render() {
   }
 }
 
+/** Kiosk TVs run the kiosk image's conservative rasterizer (single raster
+ *  thread, GPU raster off — the June choppy-audio tuning), so a 60fps
+ *  SVG-attribute animation at 4K froze the browser outright (framework-pt,
+ *  2026-08-12). On kiosks the ticker renders every OTHER frame (~30fps at a
+ *  60Hz panel) with the skipped frame's delta carried over so spin speed is
+ *  unchanged — at couch distance the half rate is invisible, the paint cost
+ *  halves. */
+const kioskLowPower =
+  typeof document !== 'undefined' && document.documentElement.classList.contains('kiosk-mode')
+let lowPowerPhase = 0
+let carriedDeltaMS = 0
+
 function tick(_time: number, deltaMS: number) {
+  if (kioskLowPower) {
+    carriedDeltaMS += deltaMS
+    if ((lowPowerPhase++ & 1) === 1) return
+    deltaMS = carriedDeltaMS
+    carriedDeltaMS = 0
+  }
   elapsed += deltaMS / 1000
   if (!dragging) cam.rotY += cam.spin * (deltaMS / 1000)
   render()
@@ -1169,11 +1187,14 @@ function initialBuild() {
   applyGraph()
 
   // First measurement decides the default projection: saved preference wins,
-  // otherwise portrait containers (phone/companion) open in the flat 2D view.
+  // otherwise portrait containers (phone/companion) AND kiosk TVs open in the
+  // flat 2D view — the depth view stays one tap away and is remembered. The
+  // kiosk default exists for the same reason as the half-rate ticker above.
   modeInitialized = true
   let saved: string | null = null
   try { saved = localStorage.getItem('federation-map-projection') } catch { /* private mode */ }
-  viewMode.value = saved === '2d' || saved === '3d' ? saved : (height > width ? '2d' : '3d')
+  viewMode.value =
+    saved === '2d' || saved === '3d' ? saved : (kioskLowPower || height > width ? '2d' : '3d')
   applyMode(viewMode.value, false)
 
   if (staticMode) {

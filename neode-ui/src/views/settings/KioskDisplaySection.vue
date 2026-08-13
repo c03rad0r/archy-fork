@@ -6,6 +6,7 @@ import { rpcClient } from '@/api/rpc-client'
 // have a kiosk display (has_kiosk from the backend).
 const hasKiosk = ref(false)
 const preset = ref('auto')
+const graphics = ref('auto')
 const applying = ref(false)
 const error = ref('')
 
@@ -32,11 +33,35 @@ const presets = [
   },
 ]
 
+// Graphics tier: which browser rendering flags the on-screen display runs
+// with. Auto classifies the hardware (older kiosk boxes keep the proven
+// conservative flags; modern chips get GPU rendering); the two overrides
+// exist for troubleshooting and unclassified hardware.
+const graphicsModes = [
+  {
+    id: 'auto',
+    label: 'Auto (recommended)',
+    description: 'Detect this machine’s graphics hardware and pick the right rendering mode for it.',
+  },
+  {
+    id: 'performance',
+    label: 'Compatibility',
+    description: 'Most conservative rendering — use if the screen stutters, tears, or the audio crackles.',
+  },
+  {
+    id: 'quality',
+    label: 'Quality',
+    description: 'Full GPU rendering — smoothest animations on capable hardware. If unsure, use Auto.',
+  },
+]
+
 onMounted(async () => {
   try {
-    const res = await rpcClient.call<{ has_kiosk: boolean; preset: string }>({ method: 'system.kiosk-display.get' })
+    const res = await rpcClient.call<{ has_kiosk: boolean; preset: string; graphics?: string }>({ method: 'system.kiosk-display.get' })
     hasKiosk.value = res.has_kiosk
     preset.value = res.preset
+    // Older backend without the graphics field: hide nothing, default Auto.
+    graphics.value = res.graphics ?? 'auto'
   } catch { /* backend without the RPC — leave the section hidden */ }
 })
 
@@ -51,6 +76,22 @@ async function apply(id: string) {
   } catch (e: unknown) {
     preset.value = prev
     error.value = e instanceof Error ? e.message : 'Failed to apply display setting'
+  } finally {
+    applying.value = false
+  }
+}
+
+async function applyGraphics(id: string) {
+  if (applying.value || id === graphics.value) return
+  applying.value = true
+  error.value = ''
+  const prev = graphics.value
+  graphics.value = id
+  try {
+    await rpcClient.call({ method: 'system.kiosk-display.set', params: { graphics: id }, timeout: 20000 })
+  } catch (e: unknown) {
+    graphics.value = prev
+    error.value = e instanceof Error ? e.message : 'Failed to apply graphics setting'
   } finally {
     applying.value = false
   }
@@ -77,6 +118,25 @@ async function apply(id: string) {
         <p class="text-sm text-white/60">{{ p.description }}</p>
       </button>
     </div>
+
+    <h3 class="text-lg font-semibold text-white/96 mt-8 mb-2">Graphics</h3>
+    <p class="text-sm text-white/60 mb-6">
+      How the on-screen display uses this machine&rsquo;s graphics hardware. Changing this restarts the on-screen display.
+    </p>
+    <div data-controller-container tabindex="0" class="grid grid-cols-1 md:grid-cols-3 gap-4">
+      <button
+        v-for="g in graphicsModes"
+        :key="g.id"
+        :disabled="applying"
+        @click="applyGraphics(g.id)"
+        class="path-option-card text-left p-5 disabled:opacity-60"
+        :class="{ 'path-option-card--selected': graphics === g.id }"
+      >
+        <div class="font-medium text-white/90 mb-1">{{ g.label }}</div>
+        <p class="text-sm text-white/60">{{ g.description }}</p>
+      </button>
+    </div>
+
     <div v-if="error" class="mt-4 alert-error text-sm">{{ error }}</div>
   </div>
 </template>

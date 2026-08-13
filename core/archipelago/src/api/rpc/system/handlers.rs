@@ -1268,7 +1268,14 @@ impl RpcHandler {
         } else {
             "auto"
         };
-        Ok(serde_json::json!({ "has_kiosk": has_kiosk, "preset": preset }))
+        let graphics = if conf.contains("KIOSK_GRAPHICS=performance") {
+            "performance"
+        } else if conf.contains("KIOSK_GRAPHICS=quality") {
+            "quality"
+        } else {
+            "auto"
+        };
+        Ok(serde_json::json!({ "has_kiosk": has_kiosk, "preset": preset, "graphics": graphics }))
     }
 
     /// system.kiosk-display.set — Write the kiosk display preset and restart
@@ -1279,23 +1286,55 @@ impl RpcHandler {
         params: Option<serde_json::Value>,
     ) -> Result<serde_json::Value> {
         let params = params.ok_or_else(|| anyhow::anyhow!("Missing params"))?;
-        let preset = params
-            .get("preset")
-            .and_then(|v| v.as_str())
-            .ok_or_else(|| anyhow::anyhow!("Missing preset"))?;
+        let preset = params.get("preset").and_then(|v| v.as_str());
+        let graphics = params.get("graphics").and_then(|v| v.as_str());
+        if preset.is_none() && graphics.is_none() {
+            anyhow::bail!("Missing preset or graphics");
+        }
 
-        let conf = match preset {
+        // The conf carries two independent settings (display scale preset +
+        // graphics tier). A set of one must not clobber the other, so the
+        // half not being changed is carried over from the file as-is.
+        let existing = tokio::fs::read_to_string(KIOSK_DISPLAY_CONF)
+            .await
+            .unwrap_or_default();
+
+        let display_part = match preset {
             // Resolution-derived default: 4K -> 2.0 (1920-wide layout),
             // 1080p TV -> 1.5, laptop panels -> 1.0.
-            "auto" => String::new(),
+            Some("auto") => String::new(),
             // Biggest UI: every panel targets a 1280-wide layout.
-            "large" => "ARCHIPELAGO_KIOSK_TARGET_CSS_WIDTH=1280\n".to_string(),
+            Some("large") => "ARCHIPELAGO_KIOSK_TARGET_CSS_WIDTH=1280\n".to_string(),
             // Full-HD layout on any panel that can carry it.
-            "balanced" => "ARCHIPELAGO_KIOSK_TARGET_CSS_WIDTH=1920\n".to_string(),
+            Some("balanced") => "ARCHIPELAGO_KIOSK_TARGET_CSS_WIDTH=1920\n".to_string(),
             // No scaling: native CSS viewport, most content, smallest UI.
-            "native" => "ARCHIPELAGO_KIOSK_SCALE=1\n".to_string(),
-            other => anyhow::bail!("Unknown display preset: {other}"),
+            Some("native") => "ARCHIPELAGO_KIOSK_SCALE=1\n".to_string(),
+            Some(other) => anyhow::bail!("Unknown display preset: {other}"),
+            None => existing
+                .lines()
+                .filter(|l| l.starts_with("ARCHIPELAGO_KIOSK_"))
+                .map(|l| format!("{l}\n"))
+                .collect(),
         };
+
+        let graphics_part = match graphics {
+            // Auto: the launcher classifies the hardware itself (CPU/iGPU
+            // generation) — legacy boxes keep the choppy-audio-safe flags,
+            // modern iGPUs get GPU rasterization.
+            Some("auto") => String::new(),
+            // Force the conservative legacy flag set (troubleshooting).
+            Some("performance") => "KIOSK_GRAPHICS=performance\n".to_string(),
+            // Force the modern flag set even on unclassified hardware.
+            Some("quality") => "KIOSK_GRAPHICS=quality\n".to_string(),
+            Some(other) => anyhow::bail!("Unknown graphics mode: {other}"),
+            None => existing
+                .lines()
+                .find(|l| l.starts_with("KIOSK_GRAPHICS="))
+                .map(|l| format!("{l}\n"))
+                .unwrap_or_default(),
+        };
+
+        let conf = format!("{display_part}{graphics_part}");
 
         host_sudo(&["/usr/bin/mkdir", "-p", "/etc/archipelago"]).await?;
         if conf.is_empty() {
@@ -1332,8 +1371,8 @@ impl RpcHandler {
         ])
         .await;
 
-        info!(preset, "Kiosk display preset applied");
-        Ok(serde_json::json!({ "preset": preset, "applied": true }))
+        info!(?preset, ?graphics, "Kiosk display settings applied");
+        Ok(serde_json::json!({ "preset": preset, "graphics": graphics, "applied": true }))
     }
 }
 

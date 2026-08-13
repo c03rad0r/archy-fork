@@ -172,23 +172,70 @@ xset s noblank 2>/dev/null || true
 pkill -u archipelago -f 'chromium.*localhost' 2>/dev/null || true
 sleep 1
 
-# GPU vs headless (#36, choppy-audio incident 2026-06-28). --enable-gpu-rasterization
-# spins a dedicated GPU process at 55-92% CPU even on real GPU hardware (Intel HD 5500)
-# because under X11 it falls back to software compositing anyway — that CPU
-# starvation is what caused choppy HDMI audio. --in-process-gpu avoids the
-# separate process; GpuRasterization is also disabled via --disable-features below.
-# On a GPU-less / headless server (no /dev/dri), disable GPU entirely instead.
+# ── Graphics tier ────────────────────────────────────────────────────────
+# One flag set does not fit all kiosk hardware. The June-2026 choppy-audio
+# incident (#36) proved HD 5500-era boxes melt with GPU rasterization on
+# (under X11 they fall back to software compositing while a GPU process
+# burns 55-92% CPU) — but holding MODERN iGPUs to those same defensive
+# flags (single raster thread, raster ban) froze framework-pt outright on
+# the animated network map at 4K (2026-08-13). So: two tiers.
+#
+#   legacy — the proven HD 5500 tuning: --in-process-gpu, ONE raster
+#            thread, GpuRasterization banned via --disable-features.
+#   modern — --in-process-gpu, Chromium's default raster threads,
+#            GpuRasterization allowed.
+#
+# KIOSK_GRAPHICS in /etc/archipelago/kiosk-display.conf overrides:
+#   auto (default) | performance (force legacy) | quality (force modern)
+# Set from Settings → Display; sourced with the rest of the conf above.
+#
+# Auto classifies by CPU model string — transparent and greppable, and the
+# iGPU generation tracks the CPU generation on this hardware. Rules:
+#   * "NNth Gen Intel"      → only stamped on gen 10+ model names → modern
+#   * AMD Ryzen             → modern
+#   * Intel iN-NNNNN (5 dig)→ gen 10+ desktop → modern
+#   * Intel iN-8xxx/9xxx    → gen 8/9 → modern
+#   * anything else         → legacy (fail conservative: slow-but-stable)
+detect_graphics_tier() {
+    case "${KIOSK_GRAPHICS:-auto}" in
+        performance) echo legacy; return ;;
+        quality)     echo modern; return ;;
+    esac
+    _cpu=$(grep -m1 '^model name' /proc/cpuinfo 2>/dev/null || true)
+    case "$_cpu" in
+        *"Gen Intel"*) echo modern; return ;;
+        *AMD*Ryzen*)   echo modern; return ;;
+    esac
+    _num=$(printf '%s' "$_cpu" | grep -oE 'i[3579]-[0-9]{4,5}' | head -1 | cut -d- -f2)
+    case "$_num" in
+        [0-9][0-9][0-9][0-9][0-9]) echo modern; return ;;  # 5 digits = gen 10+
+        [89][0-9][0-9][0-9])       echo modern; return ;;  # gen 8/9
+    esac
+    echo legacy
+}
+
 if [ -e /dev/dri/card0 ] || [ -e /dev/dri/renderD128 ]; then
-    GPU_FLAGS="--in-process-gpu --num-raster-threads=1"
-    # Hardware VIDEO DECODE (VA-API) on GPU hardware. Orthogonal to the
-    # GpuRasterization ban above: decode offload REDUCES the CPU pressure
-    # that caused the choppy-audio incident, it doesn't re-create it.
-    # Falls back silently to software decode when the platform lacks a
-    # va driver — never a black player. IgnoreDriverChecks: older Intel
-    # gens (HD 5500-era kiosks) are wrongly blocklisted upstream.
+    GRAPHICS_TIER=$(detect_graphics_tier)
+    if [ "$GRAPHICS_TIER" = "modern" ]; then
+        GPU_FLAGS="--in-process-gpu"
+        EXTRA_DISABLED_FEATURES=""
+    else
+        GPU_FLAGS="--in-process-gpu --num-raster-threads=1"
+        EXTRA_DISABLED_FEATURES=",GpuRasterization"
+    fi
+    # Hardware VIDEO DECODE (VA-API) on GPU hardware — both tiers. Decode
+    # offload REDUCES the CPU pressure that caused the choppy-audio
+    # incident, it doesn't re-create it. Falls back silently to software
+    # decode when the platform lacks a va driver — never a black player.
+    # IgnoreDriverChecks: older Intel gens (HD 5500-era kiosks) are wrongly
+    # blocklisted upstream.
     ENABLE_FEATURES="OverlayScrollbar,VaapiVideoDecodeLinuxGL,VaapiIgnoreDriverChecks"
+    echo "archipelago-kiosk: graphics tier=$GRAPHICS_TIER (KIOSK_GRAPHICS=${KIOSK_GRAPHICS:-auto})"
 else
+    # GPU-less / headless server (no /dev/dri): no GPU at all.
+    GRAPHICS_TIER=headless
     GPU_FLAGS="--disable-gpu --num-raster-threads=1"
+    EXTRA_DISABLED_FEATURES=",GpuRasterization"
     ENABLE_FEATURES="OverlayScrollbar"
 fi
 
@@ -224,7 +271,7 @@ while true; do
       --disable-translate \
       --no-first-run \
       --check-for-update-interval=31536000 \
-      --disable-features=TranslateUI,MetricsReporting,AutofillServerCommunication,PasswordManagerEnabled,GpuRasterization \
+      --disable-features=TranslateUI,MetricsReporting,AutofillServerCommunication,PasswordManagerEnabled${EXTRA_DISABLED_FEATURES} \
       --enable-features=$ENABLE_FEATURES \
       --disable-session-crashed-bubble \
       --disable-save-password-bubble \
