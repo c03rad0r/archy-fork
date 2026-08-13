@@ -1,7 +1,7 @@
 {
   "apps": {
     "adguardhome": {
-      "image": "146.59.87.168:3000/lfg2025/adguardhome:v0.107.55",
+      "image": "source.archipelago-foundation.org/lfg2025/adguardhome:v0.107.55",
       "version": "v0.107.55"
     },
     "aiui": {
@@ -51,6 +51,93 @@
       },
       "version": "0.1.0"
     },
+    "alby-hub": {
+      "manifest": {
+        "app": {
+          "category": "money",
+          "container": {
+            "image": "source.archipelago-foundation.org/lfg2025/alby-hub:v1.23.0",
+            "pull_policy": "if-not-present"
+          },
+          "dependencies": [
+            {
+              "storage": "1Gi"
+            }
+          ],
+          "description": "Self-custodial Lightning wallet hub. Runs its own Lightning node on your Archipelago and connects your apps to it over Nostr Wallet Connect — one hub, every app pays through it.",
+          "environment": [
+            "WORK_DIR=/data",
+            "PORT=8080",
+            "LOG_LEVEL=info"
+          ],
+          "health_check": {
+            "endpoint": "http://localhost:8080",
+            "interval": "30s",
+            "path": "/",
+            "retries": 5,
+            "timeout": "5s",
+            "type": "http"
+          },
+          "id": "alby-hub",
+          "interfaces": {
+            "main": {
+              "description": "Alby Hub wallet interface",
+              "name": "Web UI",
+              "port": 8187,
+              "protocol": "http",
+              "type": "ui"
+            }
+          },
+          "metadata": {
+            "features": [
+              "Self-custodial Lightning node (LDK) with a friendly wallet UI",
+              "Connect wallets and apps via Nostr Wallet Connect (NWC)",
+              "Per-app budgets and isolated sub-wallets",
+              "Works with the Alby browser extension and mobile app"
+            ],
+            "icon": "/assets/img/app-icons/alby-hub.svg",
+            "launch": {
+              "open_in_new_tab": false
+            },
+            "repo": "https://github.com/getAlby/hub",
+            "tier": "optional"
+          },
+          "name": "Alby Hub",
+          "ports": [
+            {
+              "auth": "gated",
+              "bind": "127.0.0.1",
+              "container": 8080,
+              "host": 8187,
+              "protocol": "tcp"
+            }
+          ],
+          "resources": {
+            "cpu_limit": 1,
+            "disk_limit": "2Gi",
+            "memory_limit": "512Mi"
+          },
+          "security": {
+            "capabilities": [],
+            "network_policy": "bridge",
+            "no_new_privileges": true,
+            "readonly_root": true
+          },
+          "version": "1.23.0",
+          "volumes": [
+            {
+              "options": [
+                "rw"
+              ],
+              "source": "/var/lib/archipelago/alby-hub",
+              "target": "/data",
+              "type": "bind"
+            }
+          ]
+        }
+      },
+      "version": "1.23.0"
+    },
     "archy-btcpay-db": {
       "manifest": {
         "app": {
@@ -60,7 +147,7 @@
           },
           "container": {
             "data_uid": "100998:100998",
-            "image": "146.59.87.168:3000/lfg2025/postgres:15.17",
+            "image": "source.archipelago-foundation.org/lfg2025/postgres:15.17",
             "network": "archy-net",
             "pull_policy": "if-not-present",
             "secret_env": [
@@ -129,7 +216,7 @@
           },
           "container": {
             "data_uid": "100998:100998",
-            "image": "146.59.87.168:3000/lfg2025/mariadb:11.4.10",
+            "image": "source.archipelago-foundation.org/lfg2025/mariadb:11.4.10",
             "network": "archy-net",
             "pull_policy": "if-not-present",
             "secret_env": [
@@ -201,7 +288,7 @@
             "sync_required": false
           },
           "container": {
-            "image": "146.59.87.168:3000/lfg2025/mempool-frontend:v3.0.1",
+            "image": "source.archipelago-foundation.org/lfg2025/mempool-frontend:v3.0.1",
             "network": "archy-net",
             "pull_policy": "if-not-present"
           },
@@ -257,7 +344,7 @@
             "sync_required": true
           },
           "container": {
-            "image": "146.59.87.168:3000/lfg2025/nbxplorer:2.6.0",
+            "image": "source.archipelago-foundation.org/lfg2025/nbxplorer:2.6.0",
             "network": "archy-net",
             "pull_policy": "if-not-present",
             "secret_env": [
@@ -347,7 +434,7 @@
                 "name": "barkd-secret"
               }
             ],
-            "image": "146.59.87.168:3000/lfg2025/barkd:0.3.0",
+            "image": "source.archipelago-foundation.org/lfg2025/barkd:0.3.0",
             "network": "archy-net",
             "pull_policy": "if-not-present",
             "secret_env": [
@@ -434,7 +521,7 @@
               "sh",
               "-lc"
             ],
-            "image": "146.59.87.168:3000/lfg2025/bitcoin:28.4",
+            "image": "source.archipelago-foundation.org/lfg2025/bitcoin:28.4",
             "network": "archy-net",
             "pull_policy": "if-not-present",
             "secret_env": [
@@ -516,47 +603,47 @@
       "versions": [
         {
           "default": true,
-          "image": "146.59.87.168:3000/lfg2025/bitcoin:latest",
+          "image": "source.archipelago-foundation.org/lfg2025/bitcoin:latest",
           "version": "latest"
         },
         {
-          "image": "146.59.87.168:3000/lfg2025/bitcoin:31.0",
+          "image": "source.archipelago-foundation.org/lfg2025/bitcoin:31.0",
           "version": "31.0"
         },
         {
-          "image": "146.59.87.168:3000/lfg2025/bitcoin:30.2",
+          "image": "source.archipelago-foundation.org/lfg2025/bitcoin:30.2",
           "version": "30.2"
         },
         {
-          "image": "146.59.87.168:3000/lfg2025/bitcoin:29.3",
+          "image": "source.archipelago-foundation.org/lfg2025/bitcoin:29.3",
           "version": "29.3"
         },
         {
-          "image": "146.59.87.168:3000/lfg2025/bitcoin:29.2",
+          "image": "source.archipelago-foundation.org/lfg2025/bitcoin:29.2",
           "version": "29.2"
         },
         {
-          "image": "146.59.87.168:3000/lfg2025/bitcoin:28.4",
+          "image": "source.archipelago-foundation.org/lfg2025/bitcoin:28.4",
           "version": "28.4.0"
         },
         {
-          "image": "146.59.87.168:3000/lfg2025/bitcoin:27.2",
+          "image": "source.archipelago-foundation.org/lfg2025/bitcoin:27.2",
           "version": "27.2"
         },
         {
           "deprecated": true,
-          "image": "146.59.87.168:3000/lfg2025/bitcoin:26.2",
+          "image": "source.archipelago-foundation.org/lfg2025/bitcoin:26.2",
           "version": "26.2"
         },
         {
           "deprecated": true,
-          "image": "146.59.87.168:3000/lfg2025/bitcoin:25.2",
+          "image": "source.archipelago-foundation.org/lfg2025/bitcoin:25.2",
           "version": "25.2"
         }
       ]
     },
     "bitcoin-knots": {
-      "image": "146.59.87.168:3000/lfg2025/bitcoin-knots:29.3.knots20260210",
+      "image": "source.archipelago-foundation.org/lfg2025/bitcoin-knots:29.3.knots20260210",
       "manifest": {
         "app": {
           "bitcoin_integration": {
@@ -580,7 +667,7 @@
               "sh",
               "-lc"
             ],
-            "image": "146.59.87.168:3000/lfg2025/bitcoin-knots:29.3.knots20260210",
+            "image": "source.archipelago-foundation.org/lfg2025/bitcoin-knots:29.3.knots20260210",
             "network": "archy-net",
             "pull_policy": "if-not-present",
             "secret_env": [
@@ -662,25 +749,25 @@
       "versions": [
         {
           "default": true,
-          "image": "146.59.87.168:3000/lfg2025/bitcoin-knots:29.3.knots20260210",
+          "image": "source.archipelago-foundation.org/lfg2025/bitcoin-knots:29.3.knots20260210",
           "version": "29.3.knots20260210"
         },
         {
-          "image": "146.59.87.168:3000/lfg2025/bitcoin-knots:29.3.knots20260508",
+          "image": "source.archipelago-foundation.org/lfg2025/bitcoin-knots:29.3.knots20260508",
           "version": "29.3.knots20260508"
         },
         {
-          "image": "146.59.87.168:3000/lfg2025/bitcoin-knots:29.3.knots20260507",
+          "image": "source.archipelago-foundation.org/lfg2025/bitcoin-knots:29.3.knots20260507",
           "version": "29.3.knots20260507"
         },
         {
-          "image": "146.59.87.168:3000/lfg2025/bitcoin-knots:29.2.knots20251110",
+          "image": "source.archipelago-foundation.org/lfg2025/bitcoin-knots:29.2.knots20251110",
           "version": "29.2.knots20251110"
         }
       ]
     },
     "bitcoin-ui": {
-      "image": "146.59.87.168:3000/lfg2025/bitcoin-ui:1.7.123-alpha",
+      "image": "source.archipelago-foundation.org/lfg2025/bitcoin-ui:1.7.123-alpha",
       "manifest": {
         "app": {
           "container": {
@@ -751,7 +838,7 @@
                 "name": "botfights-jwt-secret"
               }
             ],
-            "image": "146.59.87.168:3000/lfg2025/botfights:1.2.11",
+            "image": "source.archipelago-foundation.org/lfg2025/botfights:1.2.11",
             "pull_policy": "always",
             "secret_env": [
               {
@@ -856,8 +943,8 @@
     "btcpay": {
       "image": "docker.io/btcpayserver/btcpayserver:2.4.2",
       "images": {
-        "archy-btcpay-db": "146.59.87.168:3000/lfg2025/postgres:15.17",
-        "archy-nbxplorer": "146.59.87.168:3000/lfg2025/nbxplorer:2.6.0",
+        "archy-btcpay-db": "source.archipelago-foundation.org/lfg2025/postgres:15.17",
+        "archy-nbxplorer": "source.archipelago-foundation.org/lfg2025/nbxplorer:2.6.0",
         "btcpay-server": "docker.io/btcpayserver/btcpayserver:2.4.2"
       },
       "version": "2.4.2"
@@ -1069,7 +1156,7 @@
       "version": "23.08.2"
     },
     "cryptpad": {
-      "image": "146.59.87.168:3000/lfg2025/cryptpad:2024.12.0",
+      "image": "source.archipelago-foundation.org/lfg2025/cryptpad:2024.12.0",
       "version": "2024.12.0"
     },
     "did-wallet": {
@@ -1143,7 +1230,7 @@
       "version": "1.0.0"
     },
     "electrs-ui": {
-      "image": "146.59.87.168:3000/lfg2025/electrs-ui:1.7.123-alpha",
+      "image": "source.archipelago-foundation.org/lfg2025/electrs-ui:1.7.123-alpha",
       "manifest": {
         "app": {
           "container": {
@@ -1190,7 +1277,7 @@
       "version": "1.7.123-alpha"
     },
     "electrumx": {
-      "image": "146.59.87.168:3000/lfg2025/electrumx:v1.18.0",
+      "image": "source.archipelago-foundation.org/lfg2025/electrumx:v1.18.0",
       "manifest": {
         "app": {
           "bitcoin_integration": {
@@ -1207,7 +1294,7 @@
               "sh",
               "-lc"
             ],
-            "image": "146.59.87.168:3000/lfg2025/electrumx:v1.18.0",
+            "image": "source.archipelago-foundation.org/lfg2025/electrumx:v1.18.0",
             "network": "archy-net",
             "pull_policy": "if-not-present",
             "secret_env": [
@@ -1291,7 +1378,7 @@
       "version": "v1.18.0"
     },
     "fedimint": {
-      "image": "146.59.87.168:3000/lfg2025/fedimintd:v0.10.0",
+      "image": "source.archipelago-foundation.org/lfg2025/fedimintd:v0.10.0",
       "manifest": {
         "app": {
           "bitcoin_integration": {
@@ -1321,7 +1408,7 @@
               "sh",
               "-lc"
             ],
-            "image": "146.59.87.168:3000/lfg2025/fedimintd:v0.10.0",
+            "image": "source.archipelago-foundation.org/lfg2025/fedimintd:v0.10.0",
             "network": "archy-net",
             "pull_policy": "if-not-present",
             "secret_env": [
@@ -1428,7 +1515,7 @@
                 "name": "fmcd-password"
               }
             ],
-            "image": "146.59.87.168:3000/lfg2025/fmcd:0.8.1",
+            "image": "source.archipelago-foundation.org/lfg2025/fmcd:0.8.1",
             "network": "archy-net",
             "pull_policy": "if-not-present",
             "secret_env": [
@@ -1500,7 +1587,7 @@
       "version": "0.8.0"
     },
     "fedimint-gateway": {
-      "image": "146.59.87.168:3000/lfg2025/gatewayd:v0.10.0",
+      "image": "source.archipelago-foundation.org/lfg2025/gatewayd:v0.10.0",
       "manifest": {
         "app": {
           "bitcoin_integration": {
@@ -1528,7 +1615,7 @@
                 "name": "fedimint-gateway-hash"
               }
             ],
-            "image": "146.59.87.168:3000/lfg2025/gatewayd:v0.10.0",
+            "image": "source.archipelago-foundation.org/lfg2025/gatewayd:v0.10.0",
             "network": "archy-net",
             "pull_policy": "if-not-present",
             "secret_env": [
@@ -1616,7 +1703,7 @@
       "version": "v0.10.0"
     },
     "filebrowser": {
-      "image": "146.59.87.168:3000/lfg2025/filebrowser:v2.27.0",
+      "image": "source.archipelago-foundation.org/lfg2025/filebrowser:v2.27.0",
       "manifest": {
         "app": {
           "bitcoin_integration": {
@@ -1629,7 +1716,7 @@
               "/data/.filebrowser.json"
             ],
             "data_uid": "100000:100000",
-            "image": "146.59.87.168:3000/lfg2025/filebrowser:v2.27.0",
+            "image": "source.archipelago-foundation.org/lfg2025/filebrowser:v2.27.0",
             "network": "archy-net",
             "pull_policy": "if-not-present"
           },
@@ -1699,7 +1786,7 @@
       "version": "v2.27.0"
     },
     "fips": {
-      "image": "146.59.87.168:3000/lfg2025/fips:v0.1.0",
+      "image": "source.archipelago-foundation.org/lfg2025/fips:v0.1.0",
       "version": "v0.1.0"
     },
     "fips-ui": {
@@ -1870,12 +1957,12 @@
       "version": "1.23"
     },
     "grafana": {
-      "image": "146.59.87.168:3000/lfg2025/grafana:10.2.0",
+      "image": "source.archipelago-foundation.org/lfg2025/grafana:10.2.0",
       "manifest": {
         "app": {
           "container": {
             "data_uid": "472:472",
-            "image": "grafana/grafana:10.2.0",
+            "image": "source.archipelago-foundation.org/lfg2025/grafana:10.2.0",
             "image_signature": "cosign://...",
             "pull_policy": "if-not-present"
           },
@@ -1945,11 +2032,11 @@
       "version": "10.2.0"
     },
     "homeassistant": {
-      "image": "146.59.87.168:3000/lfg2025/home-assistant:2026.7.3",
+      "image": "source.archipelago-foundation.org/lfg2025/home-assistant:2026.7.3",
       "manifest": {
         "app": {
           "container": {
-            "image": "146.59.87.168:3000/lfg2025/home-assistant:2026.7.3",
+            "image": "source.archipelago-foundation.org/lfg2025/home-assistant:2026.7.3",
             "network": "pasta",
             "pull_policy": "if-not-present"
           },
@@ -2038,16 +2125,16 @@
       "version": "2026.7.3"
     },
     "immich": {
-      "image": "146.59.87.168:3000/lfg2025/immich-server:release",
+      "image": "source.archipelago-foundation.org/lfg2025/immich-server:release",
       "images": {
-        "immich_postgres": "146.59.87.168:3000/lfg2025/immich-postgres:14-vectorchord0.4.3-pgvectors0.2.0",
-        "immich_redis": "146.59.87.168:3000/lfg2025/redis:7.4.8",
-        "immich_server": "146.59.87.168:3000/lfg2025/immich-server:release"
+        "immich_postgres": "source.archipelago-foundation.org/lfg2025/immich-postgres:14-vectorchord0.4.3-pgvectors0.2.0",
+        "immich_redis": "source.archipelago-foundation.org/lfg2025/redis:7.4.8",
+        "immich_server": "source.archipelago-foundation.org/lfg2025/immich-server:release"
       },
       "manifest": {
         "app": {
           "container": {
-            "image": "146.59.87.168:3000/lfg2025/immich-server:release",
+            "image": "source.archipelago-foundation.org/lfg2025/immich-server:release",
             "network": "archy-net",
             "pull_policy": "if-not-present",
             "secret_env": [
@@ -2150,7 +2237,7 @@
                 "name": "immich-db-password"
               }
             ],
-            "image": "146.59.87.168:3000/lfg2025/immich-postgres:14-vectorchord0.4.3-pgvectors0.2.0",
+            "image": "source.archipelago-foundation.org/lfg2025/immich-postgres:14-vectorchord0.4.3-pgvectors0.2.0",
             "network": "archy-net",
             "pull_policy": "if-not-present",
             "secret_env": [
@@ -2215,7 +2302,7 @@
       "manifest": {
         "app": {
           "container": {
-            "image": "146.59.87.168:3000/lfg2025/valkey:7-alpine",
+            "image": "source.archipelago-foundation.org/lfg2025/valkey:7-alpine",
             "network": "archy-net",
             "pull_policy": "if-not-present"
           },
@@ -2251,17 +2338,17 @@
       "version": "7-alpine"
     },
     "indeedhub": {
-      "image": "146.59.87.168:3000/lfg2025/indeedhub:1.0.0",
+      "image": "source.archipelago-foundation.org/lfg2025/indeedhub:1.0.0",
       "images": {
-        "indeedhub": "146.59.87.168:3000/lfg2025/indeedhub:1.0.0",
-        "indeedhub-api": "146.59.87.168:3000/lfg2025/indeedhub-api:1.0.0",
-        "indeedhub-ffmpeg": "146.59.87.168:3000/lfg2025/indeedhub-ffmpeg:1.0.0"
+        "indeedhub": "source.archipelago-foundation.org/lfg2025/indeedhub:1.0.0",
+        "indeedhub-api": "source.archipelago-foundation.org/lfg2025/indeedhub-api:1.0.0",
+        "indeedhub-ffmpeg": "source.archipelago-foundation.org/lfg2025/indeedhub-ffmpeg:1.0.0"
       },
       "manifest": {
         "app": {
           "category": "community",
           "container": {
-            "image": "146.59.87.168:3000/lfg2025/indeedhub:1.0.0",
+            "image": "source.archipelago-foundation.org/lfg2025/indeedhub:1.0.0",
             "network": "indeedhub-net",
             "pull_policy": "if-not-present"
           },
@@ -2404,7 +2491,7 @@
                 "name": "indeedhub-jwt"
               }
             ],
-            "image": "146.59.87.168:3000/lfg2025/indeedhub-api:1.0.0",
+            "image": "source.archipelago-foundation.org/lfg2025/indeedhub-api:1.0.0",
             "network": "indeedhub-net",
             "network_aliases": [
               "api"
@@ -2485,7 +2572,7 @@
         "app": {
           "category": "community",
           "container": {
-            "image": "146.59.87.168:3000/lfg2025/indeedhub-ffmpeg:1.0.0",
+            "image": "source.archipelago-foundation.org/lfg2025/indeedhub-ffmpeg:1.0.0",
             "network": "indeedhub-net",
             "pull_policy": "if-not-present",
             "secret_env": [
@@ -2553,7 +2640,7 @@
                 "name": "indeedhub-minio-password"
               }
             ],
-            "image": "146.59.87.168:3000/lfg2025/minio:RELEASE.2024-11-07T00-52-20Z",
+            "image": "source.archipelago-foundation.org/lfg2025/minio:RELEASE.2024-11-07T00-52-20Z",
             "network": "indeedhub-net",
             "network_aliases": [
               "minio"
@@ -2622,7 +2709,7 @@
                 "name": "indeedhub-db-password"
               }
             ],
-            "image": "146.59.87.168:3000/lfg2025/postgres:16.13-alpine",
+            "image": "source.archipelago-foundation.org/lfg2025/postgres:16.13-alpine",
             "network": "indeedhub-net",
             "network_aliases": [
               "postgres"
@@ -2691,7 +2778,7 @@
         "app": {
           "category": "community",
           "container": {
-            "image": "146.59.87.168:3000/lfg2025/redis:7.4.8-alpine",
+            "image": "source.archipelago-foundation.org/lfg2025/redis:7.4.8-alpine",
             "network": "indeedhub-net",
             "network_aliases": [
               "redis"
@@ -2749,7 +2836,7 @@
         "app": {
           "category": "community",
           "container": {
-            "image": "146.59.87.168:3000/lfg2025/nostr-rs-relay:0.9.0",
+            "image": "source.archipelago-foundation.org/lfg2025/nostr-rs-relay:0.9.0",
             "network": "indeedhub-net",
             "network_aliases": [
               "relay"
@@ -2799,11 +2886,11 @@
       "version": "0.9.0"
     },
     "jellyfin": {
-      "image": "146.59.87.168:3000/lfg2025/jellyfin:10.8.13",
+      "image": "source.archipelago-foundation.org/lfg2025/jellyfin:10.8.13",
       "manifest": {
         "app": {
           "container": {
-            "image": "146.59.87.168:3000/lfg2025/jellyfin:10.8.13",
+            "image": "source.archipelago-foundation.org/lfg2025/jellyfin:10.8.13",
             "network": "pasta",
             "pull_policy": "if-not-present"
           },
@@ -2983,7 +3070,7 @@
       "version": "0.12.0"
     },
     "lnd": {
-      "image": "146.59.87.168:3000/lfg2025/lnd:v0.18.4-beta",
+      "image": "source.archipelago-foundation.org/lfg2025/lnd:v0.18.4-beta",
       "manifest": {
         "app": {
           "bitcoin_integration": {
@@ -2998,7 +3085,7 @@
                 "template": "{{BITCOIN_HOST}}"
               }
             ],
-            "image": "146.59.87.168:3000/lfg2025/lnd:v0.18.4-beta",
+            "image": "source.archipelago-foundation.org/lfg2025/lnd:v0.18.4-beta",
             "network": "archy-net",
             "pull_policy": "if-not-present",
             "secret_env": [
@@ -3088,7 +3175,7 @@
       "version": "v0.18.4-beta"
     },
     "lnd-ui": {
-      "image": "146.59.87.168:3000/lfg2025/lnd-ui:1.7.123-alpha",
+      "image": "source.archipelago-foundation.org/lfg2025/lnd-ui:1.7.123-alpha",
       "manifest": {
         "app": {
           "container": {
@@ -3139,11 +3226,11 @@
       "version": "1.7.123-alpha"
     },
     "mempool": {
-      "image": "146.59.87.168:3000/lfg2025/mempool-frontend:v3.0.1",
+      "image": "source.archipelago-foundation.org/lfg2025/mempool-frontend:v3.0.1",
       "images": {
-        "archy-mempool-db": "146.59.87.168:3000/lfg2025/mariadb:11.4.10",
-        "archy-mempool-web": "146.59.87.168:3000/lfg2025/mempool-frontend:v3.0.1",
-        "mempool-api": "146.59.87.168:3000/lfg2025/mempool-backend:v3.0.0"
+        "archy-mempool-db": "source.archipelago-foundation.org/lfg2025/mariadb:11.4.10",
+        "archy-mempool-web": "source.archipelago-foundation.org/lfg2025/mempool-frontend:v3.0.1",
+        "mempool-api": "source.archipelago-foundation.org/lfg2025/mempool-backend:v3.0.0"
       },
       "manifest": {
         "app": {
@@ -3152,7 +3239,7 @@
             "sync_required": true
           },
           "container": {
-            "image": "146.59.87.168:3000/lfg2025/mempool-frontend:v3.0.1",
+            "image": "source.archipelago-foundation.org/lfg2025/mempool-frontend:v3.0.1",
             "image_signature": "cosign://...",
             "pull_policy": "if-not-present"
           },
@@ -3237,7 +3324,7 @@
                 "template": "{{BITCOIN_HOST}}"
               }
             ],
-            "image": "146.59.87.168:3000/lfg2025/mempool-backend:v3.0.0",
+            "image": "source.archipelago-foundation.org/lfg2025/mempool-backend:v3.0.0",
             "network": "archy-net",
             "pull_policy": "if-not-present",
             "secret_env": [
@@ -3713,11 +3800,11 @@
       "version": "0.71.2"
     },
     "nextcloud": {
-      "image": "146.59.87.168:3000/lfg2025/nextcloud:29",
+      "image": "source.archipelago-foundation.org/lfg2025/nextcloud:29",
       "manifest": {
         "app": {
           "container": {
-            "image": "146.59.87.168:3000/lfg2025/nextcloud:29",
+            "image": "source.archipelago-foundation.org/lfg2025/nextcloud:29",
             "network": "pasta",
             "pull_policy": "if-not-present"
           },
@@ -3796,11 +3883,11 @@
       "version": "29"
     },
     "nginx-proxy-manager": {
-      "image": "146.59.87.168:3000/lfg2025/nginx-proxy-manager:latest",
+      "image": "source.archipelago-foundation.org/lfg2025/nginx-proxy-manager:latest",
       "version": "latest"
     },
     "nostr-rs-relay": {
-      "image": "146.59.87.168:3000/lfg2025/nostr-rs-relay:0.9.0",
+      "image": "source.archipelago-foundation.org/lfg2025/nostr-rs-relay:0.9.0",
       "manifest": {
         "app": {
           "container": {
@@ -3875,30 +3962,104 @@
       "version": "0.9.0"
     },
     "nostr-vpn": {
-      "image": "146.59.87.168:3000/lfg2025/nostr-vpn:v0.3.7",
+      "image": "source.archipelago-foundation.org/lfg2025/nostr-vpn:v0.3.7",
       "version": "v0.3.7"
     },
     "ollama": {
-      "image": "146.59.87.168:3000/lfg2025/ollama:latest",
+      "image": "source.archipelago-foundation.org/lfg2025/ollama:latest",
       "version": "latest"
     },
     "penpot": {
-      "image": "146.59.87.168:3000/lfg2025/penpot-frontend:2.4",
+      "image": "source.archipelago-foundation.org/lfg2025/penpot-frontend:2.4",
       "images": {
-        "penpot-backend": "146.59.87.168:3000/lfg2025/penpot-backend:2.4",
-        "penpot-exporter": "146.59.87.168:3000/lfg2025/penpot-exporter:2.4",
-        "penpot-frontend": "146.59.87.168:3000/lfg2025/penpot-frontend:2.4",
-        "penpot-postgres": "146.59.87.168:3000/lfg2025/postgres:15",
-        "penpot-valkey": "146.59.87.168:3000/lfg2025/valkey:8.1"
+        "penpot-backend": "source.archipelago-foundation.org/lfg2025/penpot-backend:2.4",
+        "penpot-exporter": "source.archipelago-foundation.org/lfg2025/penpot-exporter:2.4",
+        "penpot-frontend": "source.archipelago-foundation.org/lfg2025/penpot-frontend:2.4",
+        "penpot-postgres": "source.archipelago-foundation.org/lfg2025/postgres:15",
+        "penpot-valkey": "source.archipelago-foundation.org/lfg2025/valkey:8.1"
       },
       "version": "2.4"
     },
+    "phoenixd": {
+      "manifest": {
+        "app": {
+          "category": "money",
+          "container": {
+            "data_uid": "1000:1000",
+            "image": "source.archipelago-foundation.org/lfg2025/phoenixd:0.9.0",
+            "pull_policy": "if-not-present"
+          },
+          "dependencies": [
+            {
+              "storage": "500Mi"
+            }
+          ],
+          "description": "Headless Lightning daemon by ACINQ (the Phoenix wallet team). No screen of its own — it exposes a small local API that other apps and tools use to send and receive Lightning payments. Channel liquidity is managed automatically for a fee.",
+          "environment": [
+            "PHOENIX_DATADIR=/data"
+          ],
+          "health_check": {
+            "endpoint": "localhost:9740",
+            "interval": "30s",
+            "retries": 5,
+            "timeout": "5s",
+            "type": "tcp"
+          },
+          "id": "phoenixd",
+          "metadata": {
+            "features": [
+              "Ultra-light Lightning node — no bitcoin node required",
+              "Automated channel and liquidity management (fees apply)",
+              "Simple HTTP API + websockets for payments",
+              "Backed by the team behind the Phoenix mobile wallet"
+            ],
+            "icon": "/assets/img/app-icons/phoenixd.svg",
+            "repo": "https://github.com/ACINQ/phoenixd",
+            "tier": "optional"
+          },
+          "name": "phoenixd",
+          "ports": [
+            {
+              "auth": "none",
+              "auth_rationale": "Loopback-only JSON API, not a web page. Every request is authenticated by the http password phoenixd generates in its own data directory on first run; the app gate's browser login page would break the API clients this port exists for.",
+              "bind": "127.0.0.1",
+              "container": 9740,
+              "host": 9740,
+              "protocol": "tcp"
+            }
+          ],
+          "resources": {
+            "cpu_limit": 1,
+            "disk_limit": "1Gi",
+            "memory_limit": "512Mi"
+          },
+          "security": {
+            "capabilities": [],
+            "network_policy": "bridge",
+            "no_new_privileges": true,
+            "readonly_root": true
+          },
+          "version": "0.9.0",
+          "volumes": [
+            {
+              "options": [
+                "rw"
+              ],
+              "source": "/var/lib/archipelago/phoenixd",
+              "target": "/data",
+              "type": "bind"
+            }
+          ]
+        }
+      },
+      "version": "0.9.0"
+    },
     "photoprism": {
-      "image": "146.59.87.168:3000/lfg2025/photoprism:240915",
+      "image": "source.archipelago-foundation.org/lfg2025/photoprism:240915",
       "manifest": {
         "app": {
           "container": {
-            "image": "146.59.87.168:3000/lfg2025/photoprism:240915",
+            "image": "source.archipelago-foundation.org/lfg2025/photoprism:240915",
             "pull_policy": "if-not-present"
           },
           "dependencies": [
@@ -4377,13 +4538,13 @@
       "version": "3.4.2"
     },
     "portainer": {
-      "image": "146.59.87.168:3000/lfg2025/portainer:2.39.1",
+      "image": "source.archipelago-foundation.org/lfg2025/portainer:2.39.1",
       "manifest": {
         "app": {
           "category": "development",
           "container": {
             "data_uid": "1000:1000",
-            "image": "146.59.87.168:3000/lfg2025/portainer:2.39.1",
+            "image": "source.archipelago-foundation.org/lfg2025/portainer:2.39.1",
             "pull_policy": "if-not-present"
           },
           "dependencies": [
@@ -4574,15 +4735,15 @@
       "version": "1.0.0"
     },
     "routstr": {
-      "image": "146.59.87.168:3000/lfg2025/routstr:v0.4.3",
+      "image": "source.archipelago-foundation.org/lfg2025/routstr:v0.4.3",
       "version": "v0.4.3"
     },
     "searxng": {
-      "image": "146.59.87.168:3000/lfg2025/searxng:latest",
+      "image": "source.archipelago-foundation.org/lfg2025/searxng:latest",
       "manifest": {
         "app": {
           "container": {
-            "image": "146.59.87.168:3000/lfg2025/searxng:latest",
+            "image": "source.archipelago-foundation.org/lfg2025/searxng:latest",
             "pull_policy": "if-not-present"
           },
           "dependencies": [
@@ -4724,11 +4885,11 @@
       "version": "0.9.0"
     },
     "tailscale": {
-      "image": "146.59.87.168:3000/lfg2025/tailscale:stable",
+      "image": "source.archipelago-foundation.org/lfg2025/tailscale:stable",
       "version": "stable"
     },
     "uptime-kuma": {
-      "image": "146.59.87.168:3000/lfg2025/uptime-kuma:1",
+      "image": "source.archipelago-foundation.org/lfg2025/uptime-kuma:1",
       "manifest": {
         "app": {
           "container": {
@@ -4737,7 +4898,7 @@
               "node",
               "server/server.js"
             ],
-            "image": "146.59.87.168:3000/lfg2025/uptime-kuma:1",
+            "image": "source.archipelago-foundation.org/lfg2025/uptime-kuma:1",
             "network": "pasta",
             "pull_policy": "if-not-present"
           },
@@ -4809,11 +4970,11 @@
       "version": "1"
     },
     "vaultwarden": {
-      "image": "146.59.87.168:3000/lfg2025/vaultwarden:1.30.0-alpine",
+      "image": "source.archipelago-foundation.org/lfg2025/vaultwarden:1.30.0-alpine",
       "manifest": {
         "app": {
           "container": {
-            "image": "146.59.87.168:3000/lfg2025/vaultwarden:1.30.0-alpine",
+            "image": "source.archipelago-foundation.org/lfg2025/vaultwarden:1.30.0-alpine",
             "network": "pasta",
             "pull_policy": "if-not-present"
           },
@@ -4893,7 +5054,7 @@
     }
   },
   "schema": 1,
-  "signature": "c7b1901c5b67b7f83140cc12fc96c8bb17a696272afc1915a4df72d1c38c5c8d8691c528af102a3d34b00daa40317a08c394d51f806c6e67262b232dd2bb220a",
+  "signature": "0aaf681435434b6e325269745d1fc3f90686c5391525d6b591666d6e36097bef0e5b999e2b9fe37d7a945e59aa40db74ed618824ab78c7fc6af73271c62ff20a",
   "signed_by": "did:key:z6Mkfu5LT8d4DjETtrkATvHh9Dvcbnr7zBCUwfau8Sw7DLWT",
-  "updated": "2026-08-09"
+  "updated": "2026-08-13"
 }

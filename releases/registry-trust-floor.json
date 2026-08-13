@@ -21,13 +21,16 @@
     "docker.io",
     "ghcr.io",
     "localhost",
-    "146.59.87.168:3000"
+    "146.59.87.168:3000",
+    "source.archipelago-foundation.org"
   ],
-  "pending": {
+  "pending": {},
+  "promotions": {
     "source.archipelago-foundation.org": {
-      "trusted_from_binary": "unreleased",
-      "note": "Added to TRUSTED_REGISTRIES 2026-08-07. Not yet shipped in any OTA, so no deployed node accepts it. Promote to `hosts` only after the fleet is confirmed on a binary that includes it."
+      "trusted_from_binary": "1.8.0-alpha",
+      "confirmed": "2026-08-13",
+      "note": "Fleet confirmed on 1.8.0-alpha (TRUSTED_REGISTRIES includes this host since 2026-08-07): archi-dev-box, zaza-optiplex, archipelago-1, shorty-s, austin-sapien all report current_version 1.8.0-alpha via update_state.json on 2026-08-13. Exception: archy-x250-beta is stranded pre-v1.7.122 (old release-root pin, cannot OTA at all) and needs a full re-image — it cannot install catalog apps from ANY host today, so it does not hold the floor down."
     }
   },
-  "updated": "2026-08-07"
+  "updated": "2026-08-13"
 }
