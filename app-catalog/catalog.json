@@ -374,7 +374,7 @@
       "id": "pine",
       "title": "Pine",
       "version": "1.3.0",
-      "description": "A private voice assistant for your home. Pine runs speech-to-text (Whisper), text-to-speech (Piper) and wake-word detection (openWakeWord) on your own node and pairs with a PineVoice satellite speaker, so Home Assistant Assist works locally with nothing sent to the cloud. Ask it about your node — block height, sync, peers, Lightning balance — and, when a Claude API key is set, anything else.",
+      "description": "A private voice assistant for your home. Pine runs speech-to-text (Whisper), text-to-speech (Piper) and wake-word detection (openWakeWord) on your own node and pairs with a PineVoice satellite speaker, so Home Assistant Assist works locally with nothing sent to the cloud. Ask it about your node \u2014 block height, sync, peers, Lightning balance \u2014 and, when a Claude API key is set, anything else.",
       "icon": "/assets/img/app-icons/pine.svg",
       "author": "Archipelago",
       "category": "home",
@@ -459,7 +459,7 @@
       "id": "netbird",
       "title": "NetBird",
       "version": "2.38.0",
-      "description": "Self-hosted WireGuard mesh VPN control plane with dashboard, embedded identity provider, management API, signal, relay, and STUN. The user-facing entry point — a TLS proxy in front of the dashboard + server.",
+      "description": "Self-hosted WireGuard mesh VPN control plane with dashboard, embedded identity provider, management API, signal, relay, and STUN. The user-facing entry point \u2014 a TLS proxy in front of the dashboard + server.",
       "icon": "/assets/img/app-icons/netbird.svg",
       "author": "NetBird",
       "category": "networking",
@@ -547,6 +547,30 @@
           "/var/lib/archipelago/nextcloud:/var/www/html"
         ]
       }
+    },
+    {
+      "id": "alby-hub",
+      "title": "Alby Hub",
+      "version": "1.23.0",
+      "description": "Self-custodial Lightning wallet hub. Runs its own Lightning node on your Archipelago and connects your apps to it over Nostr Wallet Connect \u2014 one hub, every app pays through it.",
+      "icon": "/assets/img/app-icons/alby-hub.svg",
+      "author": "Alby",
+      "category": "money",
+      "tier": "optional",
+      "dockerImage": "source.archipelago-foundation.org/lfg2025/alby-hub:v1.23.0",
+      "repoUrl": "https://github.com/getAlby/hub"
+    },
+    {
+      "id": "phoenixd",
+      "title": "phoenixd",
+      "version": "0.9.0",
+      "description": "Headless Lightning daemon by ACINQ (the Phoenix wallet team). No screen of its own \u2014 it exposes a small local API that other apps and tools use to send and receive Lightning payments. Channel liquidity is managed automatically for a fee.",
+      "icon": "/assets/img/app-icons/phoenixd.svg",
+      "author": "ACINQ",
+      "category": "money",
+      "tier": "optional",
+      "dockerImage": "source.archipelago-foundation.org/lfg2025/phoenixd:0.9.0",
+      "repoUrl": "https://github.com/ACINQ/phoenixd"
     }
   ]
 }
