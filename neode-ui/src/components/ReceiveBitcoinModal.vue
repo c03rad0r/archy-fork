@@ -21,11 +21,25 @@
             <label class="text-white/60 text-sm block mb-1">{{ t('receiveBitcoin.memoOptional') }}</label>
             <input v-model="invoiceMemo" type="text" :placeholder="t('receiveBitcoin.memoPlaceholder')" class="w-full input-glass" />
           </div>
-          <div v-if="invoiceResult" class="mb-3 p-3 bg-white/5 rounded-lg text-center">
+          <!-- Paid: the invoice did its job — straight to the green check
+               (no broadcast step: Lightning settlement is final) -->
+          <div v-if="invoicePaid" class="mb-3 p-6 bg-white/5 rounded-lg text-center">
+            <div class="flex justify-center mb-4">
+              <div class="w-16 h-16 rounded-full flex items-center justify-center bg-green-500/15">
+                <svg class="w-8 h-8 text-green-400" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+                  <path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7" />
+                </svg>
+              </div>
+            </div>
+            <p class="text-lg font-semibold text-white mb-1">{{ t('receiveBitcoin.paymentConfirmed') }}</p>
+            <p v-if="invoicePaid.amountSats > 0" class="text-2xl font-semibold text-white/95 mb-2">
+              {{ invoicePaid.amountSats.toLocaleString() }} sats
+            </p>
+          </div>
+          <div v-else-if="invoiceResult" class="mb-3 p-3 bg-white/5 rounded-lg text-center">
             <canvas ref="lightningQrCanvas" class="mx-auto mb-3 rounded-lg" style="image-rendering: pixelated;"></canvas>
-            <p class="text-white/50 text-xs mb-1">{{ t('receiveBitcoin.invoiceShareLabel') }}</p>
-            <p class="text-xs font-mono text-white/80 break-all">{{ invoiceResult }}</p>
-            <CopyButton :value="invoiceResult" :label="t('common.copy')" class="mt-2" />
+            <p class="text-white/50 text-xs mb-2">{{ t('receiveBitcoin.invoiceShareLabel') }}</p>
+            <CopyButton :value="invoiceResult" :label="t('common.copy')" />
           </div>
         </div>
 
@@ -147,6 +161,9 @@ watch(() => props.show, (open) => {
     return
   }
   paymentSeen.value = null
+  invoicePaid.value = null
+  invoiceRHash.value = ''
+  stopWatchingInvoice()
   // Blank slate on every open: a leftover amount/memo/token or a previous
   // invoice quietly carrying into a new receive flow is exactly the stale-
   // state class the operator flagged on the send modal (2026-08-05).
@@ -238,6 +255,46 @@ async function checkForPayment() {
 
 onUnmounted(stopWatchingPayment)
 
+// Lightning settlement watch — the on-chain pattern minus the broadcast
+// step: an invoice is either open or SETTLED (final), so the success view
+// goes straight to the green check.
+const invoicePaid = ref<null | { amountSats: number }>(null)
+const invoiceRHash = ref('')
+let invoiceTimer: ReturnType<typeof setInterval> | null = null
+
+function stopWatchingInvoice() {
+  if (invoiceTimer) {
+    clearInterval(invoiceTimer)
+    invoiceTimer = null
+  }
+}
+
+function startWatchingInvoice() {
+  stopWatchingInvoice()
+  invoiceTimer = setInterval(() => void checkInvoice(), 3000)
+}
+
+async function checkInvoice() {
+  if (!props.show || !invoiceRHash.value) {
+    stopWatchingInvoice()
+    return
+  }
+  try {
+    const res = await rpcClient.call<{ settled: boolean; amt_paid_sat: number }>({
+      method: 'lnd.invoicestatus',
+      params: { r_hash_hex: invoiceRHash.value },
+    })
+    if (!res.settled) return
+    invoicePaid.value = { amountSats: res.amt_paid_sat || invoiceAmount.value }
+    stopWatchingInvoice()
+    emit('received')
+  } catch {
+    // Transient poll failure — keep watching.
+  }
+}
+
+onUnmounted(stopWatchingInvoice)
+
 async function renderQr(data: string, canvas: HTMLCanvasElement | null, prefix = '') {
   if (!canvas || !data) return
   try {
@@ -272,11 +329,14 @@ async function receive() {
       // lnd.createinvoice fail with connection-refused (FED-08 follow-up).
       if (!(await lightning.requireLightningReady('receive'))) return
       if (!invoiceAmount.value) { error.value = t('receiveBitcoin.enterAnAmount'); return }
-      const res = await rpcClient.call<{ payment_request: string }>({
+      const res = await rpcClient.call<{ payment_request: string; r_hash_hex?: string }>({
         method: 'lnd.createinvoice',
         params: { amount_sats: invoiceAmount.value, memo: invoiceMemo.value || undefined },
       })
       invoiceResult.value = res.payment_request
+      invoiceRHash.value = res.r_hash_hex || ''
+      invoicePaid.value = null
+      if (invoiceRHash.value) startWatchingInvoice()
       nextTick(() => renderQr(res.payment_request, lightningQrCanvas.value, 'lightning:'))
     } else if (receiveMethod.value === 'onchain') {
       const res = await rpcClient.call<{ address: string }>({ method: 'lnd.newaddress' })

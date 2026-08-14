@@ -202,11 +202,7 @@
           </div>
           <div v-if="arkAddress" class="mt-2 flex items-center gap-2 p-3 bg-white/5 rounded-lg">
             <span class="text-xs font-mono text-white/90 break-all flex-1">{{ arkAddress }}</span>
-            <button @click="copyArkAddress" class="p-2 rounded-lg hover:bg-white/10 text-white/50 hover:text-white shrink-0" :title="arkCopied ? 'Copied' : 'Copy'">
-              <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
-              </svg>
-            </button>
+            <CopyButton :value="arkAddress" icon-only class="shrink-0" />
           </div>
         </div>
 
@@ -277,6 +273,7 @@
 </template>
 
 <script setup lang="ts">
+import CopyButton from '@/components/CopyButton.vue'
 import { computed, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { rpcClient } from '@/api/rpc-client'
@@ -349,7 +346,6 @@ const arkStatus = ref<ArkStatus | null>(null)
 const arkBalance = ref<ArkBalance | null>(null)
 const arkConfig = ref({ network: 'signet', ark_server: '', esplora: '' })
 const arkAddress = ref('')
-const arkCopied = ref(false)
 const loadingArk = ref(false)
 const savingArk = ref(false)
 const arkBoarding = ref(false)
@@ -505,19 +501,8 @@ async function fetchArkAddress(onchain: boolean) {
       params: { onchain },
     })
     arkAddress.value = res.address
-    arkCopied.value = false
   } catch (err: unknown) {
     arkError.value = err instanceof Error ? err.message : 'Failed to get address'
-  }
-}
-
-async function copyArkAddress() {
-  if (!arkAddress.value) return
-  try {
-    await navigator.clipboard.writeText(arkAddress.value)
-    arkCopied.value = true
-  } catch {
-    /* clipboard unavailable (http) — the address is selectable */
   }
 }
 

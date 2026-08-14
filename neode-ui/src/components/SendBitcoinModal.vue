@@ -227,7 +227,7 @@
             <canvas ref="tokenQrCanvas" class="rounded-lg bg-white p-2"></canvas>
           </div>
           <p class="text-xs font-mono text-white/80 break-all">{{ ecashToken }}</p>
-          <button @click="copyText(ecashToken)" class="mt-2 text-xs text-orange-400 hover:text-orange-300">{{ t('common.copy') }}</button>
+          <CopyButton :value="ecashToken" :label="t('common.copy')" size="sm" class="mt-2" />
         </div>
 
         <div v-if="error" class="mb-3 alert-error">{{ error }}</div>
@@ -602,10 +602,6 @@ function sendAnother() {
   amount.value = 0
   sendAll.value = false
   error.value = ''
-}
-
-function copyText(text: string) {
-  navigator.clipboard.writeText(text).catch(() => {})
 }
 
 const tokenQrCanvas = ref<HTMLCanvasElement | null>(null)

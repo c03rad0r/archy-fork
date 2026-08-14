@@ -607,9 +607,77 @@ impl RpcHandler {
             .unwrap_or("")
             .to_string();
 
+        // LND returns r_hash base64-encoded; the lookup endpoint the Receive
+        // flow polls (`lnd.invoicestatus`) wants it hex — hand the UI the
+        // ready-to-use form.
+        let r_hash_hex = {
+            use base64::Engine as _;
+            body.get("r_hash")
+                .and_then(|v| v.as_str())
+                .and_then(|b64| base64::engine::general_purpose::STANDARD.decode(b64).ok())
+                .map(hex::encode)
+                .unwrap_or_default()
+        };
+
         Ok(serde_json::json!({
             "payment_request": payment_request,
             "amount_sats": amount_sats,
+            "r_hash_hex": r_hash_hex,
+        }))
+    }
+
+    /// lnd.invoicestatus — is this invoice settled yet? Polled by the wallet's
+    /// Receive flow so a Lightning payment gets the same "money has arrived"
+    /// success screen as on-chain (minus the broadcast step: settlement is
+    /// final). Params: `{ "r_hash_hex": string }`.
+    pub(in crate::api::rpc) async fn handle_lnd_invoicestatus(
+        &self,
+        params: Option<serde_json::Value>,
+    ) -> Result<serde_json::Value> {
+        let params = params.ok_or_else(|| anyhow::anyhow!("Missing params"))?;
+        let r_hash_hex = params
+            .get("r_hash_hex")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| anyhow::anyhow!("Missing 'r_hash_hex' parameter"))?;
+        if r_hash_hex.len() != 64 || !r_hash_hex.chars().all(|c| c.is_ascii_hexdigit()) {
+            return Err(anyhow::anyhow!("r_hash_hex must be 64 hex characters"));
+        }
+
+        let (client, macaroon_hex) = self.lnd_client().await?;
+        let resp = client
+            .get(format!("{LND_REST_BASE_URL}/v1/invoice/{r_hash_hex}"))
+            .header("Grpc-Metadata-macaroon", &macaroon_hex)
+            .send()
+            .await
+            .context("Failed to query invoice")?;
+        let status = resp.status();
+        let body: serde_json::Value = resp
+            .json()
+            .await
+            .context("Failed to parse invoice lookup response")?;
+        if !status.is_success() {
+            let msg = body
+                .get("message")
+                .and_then(|v| v.as_str())
+                .unwrap_or("Unknown error");
+            return Err(anyhow::anyhow!("Invoice lookup failed: {}", msg));
+        }
+
+        let settled = body
+            .get("state")
+            .and_then(|v| v.as_str())
+            .map(|s| s == "SETTLED")
+            .unwrap_or_else(|| body.get("settled").and_then(|v| v.as_bool()).unwrap_or(false));
+        let amt_paid_sat = body
+            .get("amt_paid_sat")
+            .and_then(|v| v.as_str())
+            .and_then(|s| s.parse::<i64>().ok())
+            .or_else(|| body.get("amt_paid_sat").and_then(|v| v.as_i64()))
+            .unwrap_or(0);
+
+        Ok(serde_json::json!({
+            "settled": settled,
+            "amt_paid_sat": amt_paid_sat,
         }))
     }
 

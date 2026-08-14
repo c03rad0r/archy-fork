@@ -133,6 +133,7 @@ impl RpcHandler {
             "lnd.sendcoins" => self.handle_lnd_sendcoins(params).await,
             "lnd.estimatefee" => self.handle_lnd_estimatefee(params).await,
             "lnd.createinvoice" => self.handle_lnd_createinvoice(params).await,
+            "lnd.invoicestatus" => self.handle_lnd_invoicestatus(params).await,
             "lnd.payinvoice" => self.handle_lnd_payinvoice(params).await,
             "lnd.paymentstatus" => self.handle_lnd_paymentstatus(params).await,
             "lnd.create-psbt" => self.handle_lnd_create_psbt(params).await,
