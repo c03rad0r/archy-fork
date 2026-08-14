@@ -531,6 +531,20 @@ The broader app update policy for `1.8-alpha` is still being finalized. Until th
 
 ## App Icon
 
+- **The tile plate (dark rounded background, border, sheen) is applied by
+  the system** — every surface renders your icon with the house
+  `archy-app-icon` treatment automatically. What the system deliberately
+  does NOT add is an inner margin (icons that already carry whitespace
+  would double-margin), so your file needs it baked in: **square canvas,
+  ~12% margin per side**. Edge-to-edge marks look wrong next to every
+  other tile. Don't hand-tune it: run your mark through the normalizer
+  and commit its output —
+  ```bash
+  scripts/normalize-app-icon.py your-mark.svg apps-icon-output.svg
+  ```
+  It wraps any SVG (full-bleed upstream logos included) onto the house
+  canvas with the standard margin, preserving the original artwork
+  untouched inside.
 - Provide a URL to your app icon (PNG, WebP, or SVG)
 - Recommended size: 256x256 pixels
 - Square aspect ratio

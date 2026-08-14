@@ -23,7 +23,7 @@
             v-if="app.icon"
             :src="app.icon"
             :alt="app.title"
-            class="w-20 h-20 rounded-xl shadow-xl flex-shrink-0"
+            class="w-20 h-20 rounded-xl shadow-xl flex-shrink-0 archy-app-icon"
             @error="handleImageError"
           />
           <div v-else class="w-20 h-20 rounded-xl bg-white/10 flex items-center justify-center flex-shrink-0">
@@ -99,7 +99,7 @@
               v-if="app.icon"
               :src="app.icon"
               :alt="app.title"
-              class="w-20 h-20 rounded-xl shadow-xl"
+              class="w-20 h-20 rounded-xl shadow-xl archy-app-icon"
               @error="handleImageError"
             />
             <div v-else class="w-20 h-20 rounded-xl bg-white/10 flex items-center justify-center">
