@@ -6,6 +6,7 @@ mod node_message;
 mod proxy;
 mod remote_input;
 mod remote_relay;
+mod routstr_proxy;
 mod websocket;
 
 use crate::api::rpc::RpcHandler;
@@ -447,6 +448,14 @@ impl ApiHandler {
                     || p.starts_with("/aiui/api/web-search") =>
             {
                 self.handle_model_proxy(req_with_bytes, p).await
+            }
+
+            // AIUI Routstr proxy — the explicit, user-selected Routstr
+            // provider (model catalog + Cashu-paid completions), same
+            // session-gate discipline as the model proxy above. D-05: paid
+            // requests are refused unless the operator has armed a budget.
+            (_, p) if p.starts_with("/aiui/api/routstr/") => {
+                self.handle_routstr_proxy(req_with_bytes, p).await
             }
 
             // Health — unauthenticated, returns JSON with service status

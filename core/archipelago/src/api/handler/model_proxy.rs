@@ -84,14 +84,14 @@ async fn route_model_proxy(
 /// call back into `ApiHandler::is_authenticated` — keeping this small and
 /// dependency-free is what makes the 401 behaviour unit-testable without
 /// paying for a full `ApiHandler` in every test.
-async fn is_authenticated(session_store: &SessionStore, headers: &HeaderMap) -> bool {
+pub(super) async fn is_authenticated(session_store: &SessionStore, headers: &HeaderMap) -> bool {
     match session::extract_session_cookie(headers) {
         Some(token) => session_store.validate(&token).await,
         None => false,
     }
 }
 
-fn unauthorized() -> Response<Body> {
+pub(super) fn unauthorized() -> Response<Body> {
     let body = serde_json::json!({ "error": "Unauthorized" });
     Response::builder()
         .status(StatusCode::UNAUTHORIZED)
@@ -119,7 +119,7 @@ fn key_not_configured() -> Response<Body> {
 /// backends' egress screen never sees the forwarder path — the standalone
 /// frontend posts FULL history and images straight here — so the forwarder
 /// screens for itself. 400, plain-language, never naming what matched.
-fn blocked_secret_shaped() -> Response<Body> {
+pub(super) fn blocked_secret_shaped() -> Response<Body> {
     let body = serde_json::json!({
         "error": "Blocked: this request contained secret-shaped content (e.g. a seed phrase, key, or token). It was not sent anywhere."
     });
@@ -134,12 +134,12 @@ fn blocked_secret_shaped() -> Response<Body> {
 /// the assistant's secret-shape rules (G-B1) with this node's own secrets
 /// as the deny corpus. Returns Some(kind) — kind only, never the value —
 /// when the content must not leave.
-async fn forward_screen(text: &str, data_dir: &Path) -> Option<&'static str> {
+pub(super) async fn forward_screen(text: &str, data_dir: &Path) -> Option<&'static str> {
     let secrets = crate::assistant::egress::load_known_secrets(&data_dir.join("secrets")).await;
     crate::assistant::egress::scan_secret_shapes(text, &secrets)
 }
 
-fn bad_gateway(msg: &str) -> Response<Body> {
+pub(super) fn bad_gateway(msg: &str) -> Response<Body> {
     let body = serde_json::json!({ "error": msg });
     Response::builder()
         .status(StatusCode::BAD_GATEWAY)
@@ -331,7 +331,7 @@ async fn forward(
 /// same shape as `proxy.rs`'s peer-content Range streamer — so a
 /// token-by-token reply doesn't wait for the full response before the first
 /// byte reaches the browser.
-fn stream_response(resp: reqwest::Response) -> Result<Response<Body>> {
+pub(super) fn stream_response(resp: reqwest::Response) -> Result<Response<Body>> {
     let status = resp.status().as_u16();
     let headers = resp.headers().clone();
     let mut builder = Response::builder().status(status);
