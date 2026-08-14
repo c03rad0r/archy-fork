@@ -1182,7 +1182,15 @@ function measure() {
 }
 
 function initialBuild() {
-  staticMode = prefersReducedMotion()
+  // Kiosk TVs get the fully static map: no entrance animation, no ticker.
+  // The GSAP intro needs healthy rAF delivery to ever reach opacity 1 — on
+  // a paint-starved kiosk it stalls and the screen reads as BLANK until a
+  // lucky refresh (framework-pt, 2026-08-14). Half-rate ticking (below)
+  // helped but any continuous SVG animation is still the single biggest
+  // load on the kiosk's compositor, and at TV distance the still map loses
+  // nothing. Everything lands in place immediately, graph updates apply
+  // instantly, and the 2D/3D toggle still works.
+  staticMode = prefersReducedMotion() || kioskLowPower
   built = true
   applyGraph()
 
