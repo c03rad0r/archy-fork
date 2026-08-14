@@ -1,29 +1,29 @@
 {
   "changelog": [
-    "**Apps that refused to open inside the dashboard now embed like everything else.** Some apps ship browser headers that forbid being shown inside another page — correct hardening on the open web, but inside Archipelago it produced a dead grey pane when you opened them from My Apps (Alby Hub was the first to hit it). The app gate, which already checks your login on every request to an app, now removes just those framing headers on the way through; each app's own content-security rules pass through untouched. No more per-app proxy workarounds.",
-    "**The network map no longer freezes kiosk TVs.** The animated federation map at 4K was too much for the deliberately conservative graphics settings the on-screen display used on every machine — settings chosen years back to stop audio crackle on much older hardware. Two fixes: on kiosk screens the map now opens in its flat 2D view (the 3D globe is one tap away, and remembered) and animates at half rate — invisible from the couch, half the work. And the display itself now recognizes what machine it runs on: older kiosk boxes keep the proven careful settings, modern ones finally get real GPU rendering.",
-    "**New Settings → Display → Graphics choice for the on-screen display.** Auto (recommended) picks the right rendering mode for the machine by itself; Compatibility forces the most conservative mode if a screen ever stutters, tears, or crackles; Quality forces full GPU rendering on hardware the automatic detection doesn't recognize. Changing it restarts the on-screen display, like the size presets."
+    "**An app that can't be shown inside the dashboard now becomes a tab app by itself.** A few apps refuse to render inside another page no matter what — they break out with their own code or insist on owning the whole browser window. Opening one used to mean staring at a grey pane. Now the dashboard notices, offers the app in its own tab, and remembers: from then on that app's button opens a tab directly (with the little launch icon that tab apps carry), first click, every time. If a later update makes the app embeddable after all, the dashboard notices that too and goes back to embedding it.",
+    "**The logo emblem got its glossy black paint finish — properly this time.** The circle behind the A on the screensaver, intro, and login now wears a deep wet-paint look: warm light blooming from the top edge, fine grain so the dark tones stay smooth instead of banding, and no more ring border. (An earlier rougher version of this experiment briefly shipped by accident and then vanished depending on which screen you were on — this is the finished, deliberate one, everywhere.)",
+    "**New app icons now match the store's look, on every screen.** Alby Hub and phoenixd arrived with edge-to-edge logos that ignored the breathing room every other app icon has, and the app detail page skipped the icon backdrop entirely. Both icons are re-set on the standard canvas, the detail page now applies the same icon treatment as the store tiles, and app developers get a one-command tool that puts any logo onto the house canvas automatically."
   ],
   "components": [
     {
-      "current_version": "1.8.1-alpha",
-      "download_url": "https://source.archipelago-foundation.org/lfg2025/archy/releases/download/v1.8.1-alpha/archipelago",
+      "current_version": "1.8.2-alpha",
+      "download_url": "https://source.archipelago-foundation.org/lfg2025/archy/releases/download/v1.8.2-alpha/archipelago",
       "name": "archipelago",
-      "new_version": "1.8.1-alpha",
-      "sha256": "50fe97705717f8176afc03285a3a459b1d4e219dba0442aa4ee5b8cea8e3ec30",
-      "size_bytes": 59896032
+      "new_version": "1.8.2-alpha",
+      "sha256": "505a456d94a17ef336b8573e1423edc2295463e603b0af89131144297cffd5ca",
+      "size_bytes": 59898960
     },
     {
-      "current_version": "1.8.1-alpha",
-      "download_url": "https://source.archipelago-foundation.org/lfg2025/archy/releases/download/v1.8.1-alpha/archipelago-frontend-1.8.1-alpha.tar.gz",
-      "name": "archipelago-frontend-1.8.1-alpha.tar.gz",
-      "new_version": "1.8.1-alpha",
-      "sha256": "ae77c97e8f1ec7d1044f7d565319ddc503f6f5b87dbc9a524fa9cc9639b04f29",
-      "size_bytes": 97611693
+      "current_version": "1.8.2-alpha",
+      "download_url": "https://source.archipelago-foundation.org/lfg2025/archy/releases/download/v1.8.2-alpha/archipelago-frontend-1.8.2-alpha.tar.gz",
+      "name": "archipelago-frontend-1.8.2-alpha.tar.gz",
+      "new_version": "1.8.2-alpha",
+      "sha256": "531ea4c5fc6c1116a3c09e0fc81f16acb91a86a0ad25fb4883de499713c530da",
+      "size_bytes": 97617354
     }
   ],
-  "release_date": "2026-08-13",
-  "signature": "7a8932503d1c33156f79d11671bb275a2bb63347988da02562c3dd138287e7ed77c7d4cb0a1f6bcbcf8665da506fafedd2d81bb844de0cbcbaf2b9045210ca0b",
+  "release_date": "2026-08-14",
+  "signature": "e2b5c85707121444aff6ca2150fe04dd7d73ef4f9a183eb962986554f34a20128f087c138250a42043801380f50f2e0aebe48869d1577d0171dfe4cf0ff0ac08",
   "signed_by": "did:key:z6Mkfu5LT8d4DjETtrkATvHh9Dvcbnr7zBCUwfau8Sw7DLWT",
-  "version": "1.8.1-alpha"
+  "version": "1.8.2-alpha"
 }
