@@ -119,7 +119,7 @@
       <Transition name="picker">
         <div
           v-if="showModelPicker"
-          class="fixed z-[9999] path-glass-card header-overlay-panel p-3 space-y-3 animate-fade-up-fast shadow-2xl min-w-[220px]"
+          class="fixed z-[9999] path-glass-card header-overlay-panel p-3 space-y-3 animate-fade-up-fast shadow-2xl min-w-[220px] max-h-[70vh] overflow-y-auto"
           :style="modelPickerDropdownStyle"
           @click.stop
         >
@@ -332,7 +332,7 @@ const modelDisplayName = computed(() => {
 })
 
 function selectModel(providerId: string, modelId: string) {
-  setProvider(providerId as 'claude' | 'openrouter' | 'mock')
+  setProvider(providerId as 'routstr' | 'claude' | 'openrouter' | 'mock')
   setModel(modelId)
   showModelPicker.value = false
 }

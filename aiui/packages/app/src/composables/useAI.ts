@@ -13,12 +13,14 @@ import { useCodeContext } from '@/composables/useCodeContext'
 import { apiFetch } from '@/utils/api-fetch'
 import { useSettingsStore } from '@/stores/settings'
 
-type Provider = 'claude' | 'openrouter' | 'mock'
+type Provider = 'routstr' | 'claude' | 'openrouter' | 'mock'
 
 // API paths are relative to the base URL so they work both in dev (/) and Archy (/aiui/)
 const BASE = import.meta.env.BASE_URL || '/'
 const CLAUDE_PATH = `${BASE}api/claude/v1/messages`
 const OPENROUTER_PATH = `${BASE}api/openrouter`
+const ROUTSTR_MODELS_PATH = `${BASE}api/routstr/models`
+const ROUTSTR_CHAT_PATH = `${BASE}api/routstr/chat/completions`
 
 import { mockFilms } from '@/mocks/films'
 import { mockSongs } from '@/mocks/songs'
@@ -148,8 +150,41 @@ function looksLikeMissingApiKey(err: string): boolean {
   )
 }
 
+// ─── Routstr model catalog (fetched from the node's session-gated proxy) ───
+// The node forwards the live Routstr aggregator's /v1/models; entries carry
+// sats_pricing so completions are Cashu-paid against the operator's budget.
+const routstrModels = ref<{ id: string; name: string }[]>([])
+let routstrModelsFetched = false
+
+async function refreshRoutstrModels() {
+  if (routstrModelsFetched) return
+  routstrModelsFetched = true
+  try {
+    const res = await apiFetch(ROUTSTR_MODELS_PATH)
+    if (!res.ok) return
+    const data = await res.json()
+    if (Array.isArray(data?.data)) {
+      routstrModels.value = data.data
+        .filter((m: Record<string, unknown>) => typeof m.id === 'string')
+        .map((m: Record<string, unknown>) => ({
+          id: m.id as string,
+          name: (m.name as string) || (m.id as string),
+        }))
+    }
+  } catch {
+    routstrModelsFetched = false // allow a retry on the next send/open
+  }
+}
+
 const availableProviders = computed(() => {
   const providers: { id: Provider; name: string; models: { id: string; name: string }[] }[] = [
+    {
+      id: 'routstr',
+      name: 'Routstr (sats)',
+      models: routstrModels.value.length > 0
+        ? routstrModels.value
+        : [{ id: 'routstr-unavailable', name: 'No models — node offline?' }],
+    },
     {
       id: 'claude',
       name: 'Claude (Max)',
@@ -379,6 +414,71 @@ async function streamOpenRouter(
       if (delta) onToken(delta)
     } catch { /* malformed SSE chunk */ }
   }, onError, signal)
+}
+
+/**
+ * Routstr: one paid, NON-streaming, OpenAI-shaped completion through the
+ * node's session-gated `/aiui/api/routstr/` forwarder. The node quotes a
+ * price from the live catalog, pays with a Cashu token against the
+ * operator's budget (Settings → System → Routstr AI budget), redeems the
+ * change, and passes the provider's JSON back. The full answer is emitted
+ * as a single token — streaming across a paid hop is the planned follow-up.
+ */
+async function streamRoutstr(
+  messages: ChatMessage[],
+  onToken: (text: string) => void,
+  onError: (err: string) => void,
+  systemPrompt: string,
+  signal?: AbortSignal,
+): Promise<void> {
+  const wireMessages = [
+    { role: 'system' as const, content: systemPrompt },
+    ...messages.map((m) => ({ role: m.role as 'user' | 'assistant', content: m.content })),
+  ]
+
+  const res = await apiFetch(ROUTSTR_CHAT_PATH, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      model: activeModel.value,
+      messages: wireMessages,
+      stream: false,
+    }),
+    signal,
+  })
+
+  const bodyText = await res.text().catch(() => '')
+  if (!res.ok) {
+    // The node's refusals carry a plain-language error.message (budget not
+    // set, budget spent, wallet can't fund) — surface it verbatim.
+    let msg = `Routstr error ${res.status}`
+    try {
+      const parsed = JSON.parse(bodyText)
+      // Node refusals use {error:{message}}; the upstream provider nests
+      // its own as {detail:{error:{message}}} or a plain {detail:"..."}.
+      const detail = parsed?.detail
+      msg =
+        parsed?.error?.message ??
+        detail?.error?.message ??
+        (typeof detail === 'string' ? detail : undefined) ??
+        msg
+    } catch { /* keep the status-only message */ }
+    onError(msg)
+    return
+  }
+
+  if (signal?.aborted) return
+  try {
+    const parsed = JSON.parse(bodyText)
+    const text = parsed?.choices?.[0]?.message?.content
+    if (typeof text === 'string' && text.length > 0) {
+      onToken(text)
+    } else {
+      onError('Routstr returned an empty response')
+    }
+  } catch {
+    onError('Routstr returned a malformed response')
+  }
 }
 
 /**
@@ -619,7 +719,11 @@ export async function streamWithModel(
   activeModel.value = model
 
   try {
-    if (useArchy().isEmbedded.value) {
+    if (provider === 'routstr') {
+      // Explicitly chosen Routstr wins even embedded in Archy — the whole
+      // point of the picker entry is that it is a selection, not a fallback.
+      await streamRoutstr(history, onToken, onError, 'You are a helpful assistant.', signal)
+    } else if (useArchy().isEmbedded.value) {
       // D-17: embedded mode delegates the loop, the tools and the key to
       // Archy — provider/model selection here doesn't apply node-side.
       await streamViaArchy(history, onToken, onError, signal)
@@ -638,8 +742,9 @@ export async function streamWithModel(
 export function useAI() {
   const chatStore = useChatStore()
 
-  // Fetch Wavlake catalog on first use (non-blocking)
+  // Fetch Wavlake + Routstr catalogs on first use (non-blocking)
   refreshWavlakeCatalog()
+  refreshRoutstrModels()
 
   function stopGeneration() {
     if (currentAbort) {
@@ -712,7 +817,11 @@ export function useAI() {
     const genParams = getConversationParams(chatStore)
 
     try {
-      if (useArchy().isEmbedded.value) {
+      if (provider === 'routstr') {
+        // Explicitly chosen Routstr wins even embedded in Archy — a
+        // selection, not a fallback.
+        await streamRoutstr(history, onToken, onError, systemPrompt, signal)
+      } else if (useArchy().isEmbedded.value) {
         // D-17: embedded mode delegates the loop, the tools and the key to
         // Archy — provider/model selection here doesn't apply node-side.
         await streamViaArchy(history, onToken, onError, signal)
@@ -828,7 +937,11 @@ export function useAI() {
     const genParams = getConversationParams(chatStore)
 
     try {
-      if (useArchy().isEmbedded.value) {
+      if (provider === 'routstr') {
+        // Explicitly chosen Routstr wins even embedded in Archy — a
+        // selection, not a fallback.
+        await streamRoutstr(history, onToken, onError, systemPrompt, signal)
+      } else if (useArchy().isEmbedded.value) {
         // D-17: embedded mode delegates the loop, the tools and the key to
         // Archy — provider/model selection here doesn't apply node-side.
         await streamViaArchy(history, onToken, onError, signal)

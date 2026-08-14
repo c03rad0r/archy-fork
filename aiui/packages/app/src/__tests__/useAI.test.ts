@@ -93,10 +93,11 @@ describe('useAI', () => {
       expect(activeModel.value).toBe('echo')
     })
 
-    it('lists available providers with models', () => {
+    it('lists available providers with models, Routstr first', () => {
       const { availableProviders } = useAI()
-      expect(availableProviders.value.length).toBe(3)
+      expect(availableProviders.value.length).toBe(4)
       const ids = availableProviders.value.map(p => p.id)
+      expect(ids[0]).toBe('routstr')
       expect(ids).toContain('claude')
       expect(ids).toContain('openrouter')
       expect(ids).toContain('mock')
