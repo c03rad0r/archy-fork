@@ -1128,6 +1128,57 @@ html.controller-nav [data-controller-container]:focus {
     z-index: 0;
   }
 
+  /* KAMMERGUT GLOSS v3 TEST (2026-08-14, UNCOMMITTED until approved) —
+     wet black paint, PURE CSS (the SVG text filter embosses badly on a
+     disc; headless A/B renders picked this). Borderless per operator:
+     the painted disc IS the badge. Layers: warm ambient top sheen, wet
+     lower reflection arc, bottom depth vignette, paint-black base; inset
+     rim lights; and a curved liquid "window streak" on ::before (under
+     the badge's z-1 content, above the paint). Revert: delete this block. */
+  .logo-gradient-border {
+    background: none;
+    box-shadow: none;
+    padding: 0;
+    overflow: hidden;
+  }
+  .logo-gradient-border::after {
+    inset: 0;
+    /* Dense intermediate stops + a fine turbulence grain (top layer,
+       overlay-blended) dither the near-black falloffs — without them the
+       big disc shows visible banding rings. */
+    background:
+      url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3C/filter%3E%3Crect width='160' height='160' filter='url(%23n)' opacity='0.5'/%3E%3C/svg%3E"),
+      radial-gradient(115% 60% at 50% -10%, rgba(255,244,220,0.22) 0%, rgba(255,244,220,0.14) 18%, rgba(255,244,220,0.08) 32%, rgba(255,244,220,0.04) 43%, rgba(255,244,220,0.015) 52%, rgba(255,244,220,0) 62%),
+      radial-gradient(90% 34% at 50% 108%, rgba(255,238,200,0.12) 0%, rgba(255,238,200,0.07) 30%, rgba(255,238,200,0.03) 48%, rgba(255,238,200,0) 68%),
+      radial-gradient(140% 120% at 50% 135%, rgba(0,0,0,0.9) 0%, rgba(0,0,0,0.62) 22%, rgba(0,0,0,0.36) 36%, rgba(0,0,0,0.16) 46%, rgba(0,0,0,0.05) 52%, rgba(0,0,0,0) 58%),
+      linear-gradient(180deg, #26261f 0%, #20201b 22%, #141412 44%, #0b0b09 68%, #040403 100%);
+    background-blend-mode: overlay, normal, normal, normal, normal;
+    box-shadow:
+      inset 0 2px 2px rgba(255,246,224,0.42),
+      inset 0 -1px 1px rgba(255,238,200,0.16),
+      inset 0 -10px 22px rgba(0,0,0,0.82),
+      inset 0 0 0 1px rgba(255,242,212,0.08),
+      0 12px 34px rgba(0,0,0,0.65);
+  }
+  .logo-gradient-border::before {
+    content: '';
+    position: absolute;
+    left: 8%;
+    right: 8%;
+    top: 3%;
+    height: 46%;
+    z-index: 1;
+    border-radius: 50% / 62%;
+    /* Radial (2D) falloff, not linear: a linear streak is equally bright
+       across its full width, so its left/right TIPS end in a hard seam
+       against the rim (operator screenshot, 2026-08-14). The ellipse
+       fades toward every edge — no tips, no seam, and the lower edge
+       dissolves long before the clipped shape ends. */
+    background: radial-gradient(75% 105% at 50% -6%, rgba(255,250,236,0.55) 0%, rgba(255,246,224,0.30) 34%, rgba(255,246,224,0.12) 55%, rgba(255,244,220,0.04) 72%, rgba(255,244,220,0) 86%);
+    filter: blur(2px);
+    pointer-events: none;
+  }
+
   .logo-gradient-border img,
   .logo-gradient-border svg {
     border-radius: 9999px;
