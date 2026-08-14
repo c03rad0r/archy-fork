@@ -4,6 +4,7 @@ import type { Ref } from 'vue'
 import { computed } from 'vue'
 import { PackageState, type PackageDataEntry } from '@/types/api'
 import { resolveAppUrl } from '../appSession/appSessionConfig'
+import { isAutoTabApp } from '@/utils/autoTabApps'
 
 export type AppsTab = 'apps' | 'websites' | 'services'
 
@@ -173,7 +174,10 @@ export const TAB_LAUNCH_APPS = new Set([
 ])
 
 export function opensInTab(id: string): boolean {
-  return TAB_LAUNCH_APPS.has(id)
+  // The launch icon and launch behavior follow the dynamic verdict too:
+  // apps observed refusing the iframe (remembered by the app session) show
+  // the same tab-launch affordance as the statically-known tab apps.
+  return TAB_LAUNCH_APPS.has(id) || isAutoTabApp(id)
 }
 
 // Backend services that ship no icon of their own reuse their PARENT app's icon

@@ -105,6 +105,7 @@ import { useAppLauncherStore } from '@/stores/appLauncher'
 import { useAppStore } from '@/stores/app'
 import { useScreensaverStore } from '@/stores/screensaver'
 import NostrIdentityPicker from '@/components/NostrIdentityPicker.vue'
+import { isAutoTabApp, rememberAutoTabApp, forgetAutoTabApp } from '@/utils/autoTabApps'
 import AppSessionHeader from './appSession/AppSessionHeader.vue'
 import AppSessionFrame from './appSession/AppSessionFrame.vue'
 import MobileGamepad from './appSession/MobileGamepad.vue'
@@ -199,8 +200,26 @@ function updateIsMobile() { isMobile.value = window.innerWidth < 768 }
 // same-origin by the mock backend, so the prod new-tab list doesn't apply.
 const mustOpenNewTab = computed(() =>
   (NEW_TAB_APPS.has(appId.value) && !(IS_DEMO && isDemoApp(appId.value))) ||
+  // Remembered embed-refusers (frame-busting, top-level-origin apps): the
+  // first blocked encounter records them, every later launch is a tab app.
+  isAutoTabApp(appId.value) ||
   (IS_DEMO && isDemoExternal(appId.value))
 )
+
+// The auto-tab detector: the load-timeout marked the frame blocked, the
+// warming-up retry loop has given up, and the backend says the app is
+// actually RUNNING — that combination is the embed-refusal signature (a
+// down app is "warming up" or shows a blocked reason instead). Remember it
+// so this app never shows the dead pane again; a later successful iframe
+// load (onLoad) clears the memory, and entries expire on their own.
+watch([iframeBlocked, warmingUp], ([blocked, warming]) => {
+  if (
+    blocked && !warming && !blockedReason.value &&
+    (packageEntry.value?.state === PackageState.Running)
+  ) {
+    rememberAutoTabApp(appId.value)
+  }
+})
 
 // ElectrumX shows a sync screen before its real UI (the Electrum server only
 // serves clients once its index is built). Poll /electrs-status while this is
@@ -344,6 +363,10 @@ function onLoad() {
   loading.value = false
   isRefreshing.value = false
   autoRetryCount.value = 0
+  // A frame that loads embeds fine — heal any stale auto-tab memory (for
+  // example an app remembered as blocked before the gate learned to strip
+  // frame headers).
+  forgetAutoTabApp(appId.value)
   // TV/keyboard: hand focus to the app so keys (incl. the gamepad bridge's
   // virtual keyboard) flow into the iframe without needing a pointer click.
   try { frameRef.value?.iframeRef?.focus() } catch { /* cross-origin is fine */ }

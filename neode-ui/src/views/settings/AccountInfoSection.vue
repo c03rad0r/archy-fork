@@ -362,6 +362,17 @@ init()
               </button>
             </div>
             <div class="overflow-y-auto flex-1 min-h-0 space-y-6 pr-1">
+              <!-- v1.8.2-alpha -->
+              <div>
+                <div class="flex items-center gap-2 mb-3">
+                  <span class="text-xs font-mono px-2 py-0.5 rounded bg-orange-500/20 text-orange-300">v1.8.2-alpha</span>
+                  <span class="text-xs text-white/40">August 13, 2026</span>
+                </div>
+                <div class="space-y-3 text-sm text-white/80 pl-3 border-l border-white/10">
+                  <p>**An app that can't be shown inside the dashboard now becomes a tab app by itself.** A few apps refuse to render inside another page no matter what — they break out with their own code or insist on owning the whole browser window. Opening one used to mean staring at a grey pane. Now the dashboard notices, offers the app in its own tab, and remembers: from then on that app's button opens a tab directly (with the little launch icon that tab apps carry), first click, every time. If a later update makes the app embeddable after all, the dashboard notices that too and goes back to embedding it.</p>
+                  <p>**The screensaver and login emblem are back to their clean black finish.** A glossy paint experiment on the circle behind the logo shipped by mistake in the previous update; it's removed everywhere.</p>
+                </div>
+              </div>
               <!-- v1.8.1-alpha -->
               <div>
                 <div class="flex items-center gap-2 mb-3">

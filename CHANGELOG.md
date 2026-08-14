@@ -1,5 +1,10 @@
 # Changelog
 
+## v1.8.2-alpha (2026-08-13)
+
+- **An app that can't be shown inside the dashboard now becomes a tab app by itself.** A few apps refuse to render inside another page no matter what — they break out with their own code or insist on owning the whole browser window. Opening one used to mean staring at a grey pane. Now the dashboard notices, offers the app in its own tab, and remembers: from then on that app's button opens a tab directly (with the little launch icon that tab apps carry), first click, every time. If a later update makes the app embeddable after all, the dashboard notices that too and goes back to embedding it.
+- **The screensaver and login emblem are back to their clean black finish.** A glossy paint experiment on the circle behind the logo shipped by mistake in the previous update; it's removed everywhere.
+
 ## v1.8.1-alpha (2026-08-13)
 
 - **Apps that refused to open inside the dashboard now embed like everything else.** Some apps ship browser headers that forbid being shown inside another page — correct hardening on the open web, but inside Archipelago it produced a dead grey pane when you opened them from My Apps (Alby Hub was the first to hit it). The app gate, which already checks your login on every request to an app, now removes just those framing headers on the way through; each app's own content-security rules pass through untouched. No more per-app proxy workarounds.

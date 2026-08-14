@@ -159,6 +159,14 @@ the top-level origin (OAuth redirect flows, WebAuthn), or sets
 in the real embedded app session, **not** a plain browser tab: tabs don't
 enforce framing headers, so a tab proves nothing about the iframe.
 
+**The dashboard also self-heals**: if a running app's frame fails to load,
+the session offers "open in tab" and *remembers the app as a tab app* — every
+later launch opens a tab directly, with the tab-launch icon on its button.
+The memory clears itself when the app later embeds successfully, and expires
+weekly so fixes get re-probed. This safety net is not a licence to skip the
+manifest flag: declaring `open_in_new_tab: true` up front spares your users
+the one dead-pane encounter the detector needs.
+
 (Historical note: before the gate handled this, embeddable-but-blocking apps
 each carried a hand-built nginx strip proxy — gitea's port-3000 proxy is the
 surviving example. Do not copy that pattern for new apps.)
