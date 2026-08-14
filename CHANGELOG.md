@@ -1,5 +1,11 @@
 # Changelog
 
+## v1.8.3-alpha (2026-08-14)
+
+- **The network map on TVs: no more blank page, no more frozen page — and it moves again.** The map's entrance animation needed a smoothness that TV kiosk hardware can't always deliver, so the page could sit blank until a refresh; the previous fix cured the freeze by stopping the animation entirely, which went too far. Now the map appears instantly with everything already in place, then resumes its calm orbital motion at a gentler pace suited to TVs. Resizing or rotating any screen also redraws the map properly instead of leaving it tiny, stretched, or empty.
+- **The dashboard's corner logo is back to normal.** The new glossy paint finish was meant for the big emblem on the screensaver, intro, and login screens — it had quietly spread to the small logo in the dashboard header, where it looked wrong. Each screen now gets exactly the treatment intended for it.
+- **App icons no longer vanish in My Apps.** The freshly restyled Alby Hub and phoenixd icons could render as blank squares in some views — a subtlety in how the icon files declared their size. Fixed at the source, and the icon tool app developers use now produces immune files.
+
 ## v1.8.2-alpha (2026-08-13)
 
 - **An app that can't be shown inside the dashboard now becomes a tab app by itself.** A few apps refuse to render inside another page no matter what — they break out with their own code or insist on owning the whole browser window. Opening one used to mean staring at a grey pane. Now the dashboard notices, offers the app in its own tab, and remembers: from then on that app's button opens a tab directly (with the little launch icon that tab apps carry), first click, every time. If a later update makes the app embeddable after all, the dashboard notices that too and goes back to embedding it.
