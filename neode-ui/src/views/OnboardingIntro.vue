@@ -4,7 +4,7 @@
       <div class="glass-card p-8 pt-16 sm:p-12 sm:pt-20 text-center relative overflow-visible onb-card">
         <!-- Logo - half in, half out of container -->
         <div class="absolute -top-8 sm:-top-10 left-0 right-0 flex justify-center z-10 onb-logo">
-          <div class="logo-gradient-border w-16 h-16 sm:w-20 sm:h-20">
+          <div class="logo-gradient-border logo-gloss w-16 h-16 sm:w-20 sm:h-20">
             <AnimatedLogo no-border fit />
           </div>
         </div>

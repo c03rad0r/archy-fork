@@ -878,7 +878,9 @@ function tick(_time: number, deltaMS: number) {
 }
 
 function attachTicker() {
-  if (tickerAttached || staticMode) return
+  // Kiosks run staticMode for PLACEMENT (instant, intro-free) but still get
+  // the calm orbit — half-rate via the kioskLowPower frame-skip in tick().
+  if (tickerAttached || (staticMode && !kioskLowPower)) return
   gsap.ticker.add(tick)
   tickerAttached = true
 }
@@ -1179,17 +1181,19 @@ function measure() {
   }
   // Resize: snap to the current mode's fit (no tween — tracks the drag)
   applyMode(viewMode.value, false)
+  // No ticker (reduced-motion) means nobody repaints after this resize —
+  // without an explicit render the map keeps its stale (possibly zero-size)
+  // projection: the "loads blank / wrong scale until refresh" bug.
+  if (built && !tickerAttached) render()
 }
 
 function initialBuild() {
-  // Kiosk TVs get the fully static map: no entrance animation, no ticker.
-  // The GSAP intro needs healthy rAF delivery to ever reach opacity 1 — on
-  // a paint-starved kiosk it stalls and the screen reads as BLANK until a
-  // lucky refresh (framework-pt, 2026-08-14). Half-rate ticking (below)
-  // helped but any continuous SVG animation is still the single biggest
-  // load on the kiosk's compositor, and at TV distance the still map loses
-  // nothing. Everything lands in place immediately, graph updates apply
-  // instantly, and the 2D/3D toggle still works.
+  // Kiosk TVs take the static PLACEMENT path (the GSAP entrance intro needs
+  // healthy rAF delivery to reach opacity 1 — on a paint-starved kiosk it
+  // stalls and the screen reads as BLANK until a lucky refresh,
+  // framework-pt 2026-08-14) but keep the calm orbital motion: the ticker
+  // re-attaches below at half rate. Fully-static-everything was tried and
+  // rejected — it also killed the animation on screens that could carry it.
   staticMode = prefersReducedMotion() || kioskLowPower
   built = true
   applyGraph()
@@ -1208,6 +1212,8 @@ function initialBuild() {
   if (staticMode) {
     introPlayed = true
     playIntro() // static branch: everything lands in place
+    attachTicker() // no-op for reduced-motion; kiosks resume the calm orbit
+    render() // paint the landed state now — nothing else repaints until a tick
     return
   }
   attachTicker()

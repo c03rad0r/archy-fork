@@ -67,7 +67,7 @@ def main() -> int:
     inner = re.sub(r"^\s*<\?xml[^>]*\?>\s*", "", svg)
 
     out = (
-        f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {canvas:g} {canvas:g}">\n'
+        f'<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 {canvas:g} {canvas:g}">\n'
         f'  <!-- normalized by scripts/normalize-app-icon.py: margin={args.margin:g} per side -->\n'
         f'  <svg x="{x:.3f}" y="{y:.3f}" width="{scale_w:.3f}" height="{scale_h:.3f}" '
         f'viewBox="{inner_viewbox}" preserveAspectRatio="xMidYMid meet">\n'

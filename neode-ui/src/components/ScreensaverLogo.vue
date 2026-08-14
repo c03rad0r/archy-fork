@@ -1,5 +1,5 @@
 <template>
-  <div class="logo-gradient-border screensaver-logo-cycle relative w-48 h-48 sm:w-64 sm:h-64 md:w-80 md:h-80 flex items-center justify-center overflow-hidden">
+  <div class="logo-gradient-border logo-gloss screensaver-logo-cycle relative w-48 h-48 sm:w-64 sm:h-64 md:w-80 md:h-80 flex items-center justify-center overflow-hidden">
     <!-- Squares logo -->
     <div class="screensaver-logo-squares absolute inset-[3px] flex items-center justify-center">
       <AnimatedLogo size="xl" no-border fit />
