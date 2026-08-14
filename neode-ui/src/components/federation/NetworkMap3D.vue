@@ -702,11 +702,22 @@ function applyGraph() {
   const reqs = [...(props.requests ?? [])].sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0))
   const reqRing = requestRingRadius(peerNodes.length)
   const seenReqs = new Set<string>()
+  // Requests are a call to action: cluster them tightly at one stage angle
+  // (instead of spread around the orbit, where they could sit BEHIND the
+  // globe — reading as a mis-scaled chart the user had to rotate by hand)
+  // and steer the camera to face them when a new one arrives.
+  const REQUEST_STAGE_ANGLE = 0.35
+  const reqSpacing = Math.min(0.5, (Math.PI * 0.9) / Math.max(reqs.length, 1))
+  let newRequestArrived = false
   reqs.forEach((req, i) => {
     seenReqs.add(req.id)
-    const slot = { angle: (i / reqs.length) * Math.PI * 2 + 0.35, ringRadius: reqRing }
+    const slot = {
+      angle: REQUEST_STAGE_ANGLE + (i - (reqs.length - 1) / 2) * reqSpacing,
+      ringRadius: reqRing,
+    }
     const existing = reqMap.get(req.id)
     if (!existing) {
+      newRequestArrived = true
       const vis = createRequest(req, slot)
       if (introPlayed) {
         if (staticMode) vis.p = 1
@@ -737,6 +748,20 @@ function applyGraph() {
   })
   for (const [id, vis] of reqMap) {
     if (!seenReqs.has(id)) killRequest(vis)
+  }
+  // Face the request cluster when a new one arrives. Depth for a node at
+  // world angle a is proportional to sin(a − rotY): front-center (nearest
+  // to the viewer, horizontally centred) is a − rotY = −π/2. Only on
+  // ARRIVAL, so a user who rotates away afterwards isn't fought.
+  if (newRequestArrived && introPlayed) {
+    const target = nearestAngle(cam.rotY, REQUEST_STAGE_ANGLE + Math.PI / 2)
+    for (const t of spinTween) t.kill()
+    if (staticMode && !tickerAttached) {
+      cam.rotY = target
+      render()
+    } else {
+      gsap.to(cam, { rotY: target, duration: 1.1, ease: motionTokens.ease.inOut, overwrite: 'auto' })
+    }
   }
 
   // --- orbit guide rings ---
