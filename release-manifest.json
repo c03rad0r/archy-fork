@@ -1,29 +1,29 @@
 {
   "changelog": [
-    "**An app that can't be shown inside the dashboard now becomes a tab app by itself.** A few apps refuse to render inside another page no matter what — they break out with their own code or insist on owning the whole browser window. Opening one used to mean staring at a grey pane. Now the dashboard notices, offers the app in its own tab, and remembers: from then on that app's button opens a tab directly (with the little launch icon that tab apps carry), first click, every time. If a later update makes the app embeddable after all, the dashboard notices that too and goes back to embedding it.",
-    "**The logo emblem got its glossy black paint finish — properly this time.** The circle behind the A on the screensaver, intro, and login now wears a deep wet-paint look: warm light blooming from the top edge, fine grain so the dark tones stay smooth instead of banding, and no more ring border. (An earlier rougher version of this experiment briefly shipped by accident and then vanished depending on which screen you were on — this is the finished, deliberate one, everywhere.)",
-    "**New app icons now match the store's look, on every screen.** Alby Hub and phoenixd arrived with edge-to-edge logos that ignored the breathing room every other app icon has, and the app detail page skipped the icon backdrop entirely. Both icons are re-set on the standard canvas, the detail page now applies the same icon treatment as the store tiles, and app developers get a one-command tool that puts any logo onto the house canvas automatically."
+    "**The network map on TVs: no more blank page, no more frozen page — and it moves again.** The map's entrance animation needed a smoothness that TV kiosk hardware can't always deliver, so the page could sit blank until a refresh; the previous fix cured the freeze by stopping the animation entirely, which went too far. Now the map appears instantly with everything already in place, then resumes its calm orbital motion at a gentler pace suited to TVs. Resizing or rotating any screen also redraws the map properly instead of leaving it tiny, stretched, or empty.",
+    "**The dashboard's corner logo is back to normal.** The new glossy paint finish was meant for the big emblem on the screensaver, intro, and login screens — it had quietly spread to the small logo in the dashboard header, where it looked wrong. Each screen now gets exactly the treatment intended for it.",
+    "**App icons no longer vanish in My Apps.** The freshly restyled Alby Hub and phoenixd icons could render as blank squares in some views — a subtlety in how the icon files declared their size. Fixed at the source, and the icon tool app developers use now produces immune files."
   ],
   "components": [
     {
-      "current_version": "1.8.2-alpha",
-      "download_url": "https://source.archipelago-foundation.org/lfg2025/archy/releases/download/v1.8.2-alpha/archipelago",
+      "current_version": "1.8.3-alpha",
+      "download_url": "https://source.archipelago-foundation.org/lfg2025/archy/releases/download/v1.8.3-alpha/archipelago",
       "name": "archipelago",
-      "new_version": "1.8.2-alpha",
-      "sha256": "505a456d94a17ef336b8573e1423edc2295463e603b0af89131144297cffd5ca",
-      "size_bytes": 59898960
+      "new_version": "1.8.3-alpha",
+      "sha256": "23b608bfce575212edb873ded3e125505f42be0db6dc06ce5f9c1e51c232c22d",
+      "size_bytes": 59900696
     },
     {
-      "current_version": "1.8.2-alpha",
-      "download_url": "https://source.archipelago-foundation.org/lfg2025/archy/releases/download/v1.8.2-alpha/archipelago-frontend-1.8.2-alpha.tar.gz",
-      "name": "archipelago-frontend-1.8.2-alpha.tar.gz",
-      "new_version": "1.8.2-alpha",
-      "sha256": "531ea4c5fc6c1116a3c09e0fc81f16acb91a86a0ad25fb4883de499713c530da",
-      "size_bytes": 97617354
+      "current_version": "1.8.3-alpha",
+      "download_url": "https://source.archipelago-foundation.org/lfg2025/archy/releases/download/v1.8.3-alpha/archipelago-frontend-1.8.3-alpha.tar.gz",
+      "name": "archipelago-frontend-1.8.3-alpha.tar.gz",
+      "new_version": "1.8.3-alpha",
+      "sha256": "13ca772e9a36c266b67e6eff2d51366616cdbedeab3a05ba5eba340332d3d6d4",
+      "size_bytes": 97615528
     }
   ],
   "release_date": "2026-08-14",
-  "signature": "e2b5c85707121444aff6ca2150fe04dd7d73ef4f9a183eb962986554f34a20128f087c138250a42043801380f50f2e0aebe48869d1577d0171dfe4cf0ff0ac08",
+  "signature": "35d5f56ef77cda1866051a3ff06f6e09ff0a23ac7b000a1ac4cf24e04cecabff00be7f3e240fc82ec605bff80c5690c55c296a300018562940d71ffc5df26c00",
   "signed_by": "did:key:z6Mkfu5LT8d4DjETtrkATvHh9Dvcbnr7zBCUwfau8Sw7DLWT",
-  "version": "1.8.2-alpha"
+  "version": "1.8.3-alpha"
 }
