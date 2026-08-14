@@ -1248,6 +1248,30 @@ impl RpcHandler {
         }
     }
 
+    /// system.node-ca.generate — run the node's (idempotent) CA setup so the
+    /// dashboard can offer certificate generation as a button. WebUI rule:
+    /// users must never be pointed at a terminal; the script reuses an
+    /// existing CA and only reissues the leaf, so re-running is safe.
+    pub(in crate::api::rpc) async fn handle_system_node_ca_generate(
+        &self,
+    ) -> Result<serde_json::Value> {
+        let script = "/opt/archipelago/scripts/setup-node-ca.sh";
+        if tokio::fs::metadata(script).await.is_err() {
+            anyhow::bail!(
+                "The certificate setup script is not on this node yet — it arrives with the next update."
+            );
+        }
+        let status = host_sudo(&["/usr/bin/bash", script]).await?;
+        if !status.success() {
+            anyhow::bail!(
+                "Certificate generation failed (exit {:?}) — see the node log for detail",
+                status.code()
+            );
+        }
+        info!("Node CA generated/reissued via dashboard");
+        Ok(serde_json::json!({ "generated": true }))
+    }
+
     /// system.kiosk-display.get — Current kiosk display preset + whether this
     /// node has a kiosk at all (no kiosk unit -> the Settings section hides).
     pub(in crate::api::rpc) async fn handle_system_kiosk_display_get(

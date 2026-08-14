@@ -16,8 +16,8 @@ import SystemDangerZone from '@/views/settings/SystemDangerZone.vue'
   <InterfaceModeSection />
   <KioskDisplaySection />
   <ClaudeAuthSection />
-  <AIDataAccessSection />
   <RoutstrBudgetSection />
+  <AIDataAccessSection />
   <WebhookSection />
   <TelemetrySection />
   <NodeCertificateSection />

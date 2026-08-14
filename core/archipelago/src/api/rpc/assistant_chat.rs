@@ -344,6 +344,7 @@ impl RpcHandler {
             "content.indeehub-projects" => self.handle_content_indeehub_projects().await,
             "system.settings.get" => self.handle_system_settings_get(params).await,
             "system.settings.set" => self.handle_system_settings_set(params).await,
+            "system.node-ca.generate" => self.handle_system_node_ca_generate().await,
             "system.kiosk-display.get" => self.handle_system_kiosk_display_get().await,
             "system.kiosk-display.set" => self.handle_system_kiosk_display_set(params).await,
             "bitcoin.relay-update-settings" => {

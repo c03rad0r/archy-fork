@@ -26,7 +26,30 @@ async function computeFingerprint(pem: string): Promise<string> {
     .join(':')
 }
 
-onMounted(async () => {
+const generating = ref(false)
+const generateError = ref('')
+
+// WebUI rule: never point a user at a terminal — the backend runs the
+// (idempotent) CA setup script for us.
+async function generateCa() {
+  generating.value = true
+  generateError.value = ''
+  try {
+    const { rpcClient } = await import('@/api/rpc-client')
+    await rpcClient.call({ method: 'system.node-ca.generate', timeout: 60000 })
+    loading.value = true
+    await probe()
+    if (!caAvailable.value) {
+      generateError.value = 'Generation reported success but the certificate is not being served yet — try reloading in a few seconds.'
+    }
+  } catch (e: unknown) {
+    generateError.value = e instanceof Error ? e.message : 'Certificate generation failed'
+  } finally {
+    generating.value = false
+  }
+}
+
+async function probe() {
   try {
     const res = await fetch('/ca.crt', { cache: 'no-store' })
     if (!res.ok) throw new Error(`HTTP ${res.status}`)
@@ -48,7 +71,9 @@ onMounted(async () => {
   } finally {
     loading.value = false
   }
-})
+}
+
+onMounted(probe)
 </script>
 
 <template>
@@ -70,9 +95,13 @@ onMounted(async () => {
       v-else-if="!caAvailable"
       class="p-3 bg-white/5 border border-white/10 rounded-lg text-sm text-white/70"
     >
-      This node has not generated a certificate authority yet. Run
-      <code class="px-1 py-0.5 bg-black/30 rounded text-xs">scripts/setup-node-ca.sh</code>
-      on the node, then reload this page.
+      <p class="mb-3">This node has not generated its certificate yet.</p>
+      <button
+        :disabled="generating"
+        @click="generateCa"
+        class="px-4 py-2 glass-button rounded-lg text-sm font-semibold disabled:opacity-60"
+      >{{ generating ? 'Generating…' : 'Generate certificate' }}</button>
+      <p v-if="generateError" class="mt-2 text-xs text-orange-300/90">{{ generateError }}</p>
     </div>
 
     <div v-else class="space-y-4">
