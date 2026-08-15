@@ -302,9 +302,24 @@ async fn check_tor_connectivity() -> bool {
 }
 
 /// Check DNS resolution works.
+///
+/// `to_socket_addrs` is blocking glibc resolution with no app-level bound:
+/// against a dead or stale resolver — the moved-network case — it can block
+/// 5–40s (timeout × attempts × nameservers). This runs on every Server-tab
+/// load via `network.diagnostics`, so inline it parked a tokio worker each
+/// refresh. Off the runtime, and bounded so the tile reports "no DNS"
+/// instead of hanging.
 async fn check_dns() -> bool {
-    use std::net::ToSocketAddrs;
-    "cloudflare.com:443".to_socket_addrs().is_ok()
+    let probe = tokio::task::spawn_blocking(|| {
+        use std::net::ToSocketAddrs;
+        "cloudflare.com:443".to_socket_addrs().is_ok()
+    });
+    match tokio::time::timeout(std::time::Duration::from_secs(5), probe).await {
+        Ok(Ok(ok)) => ok,
+        // Timed out or the task failed: the blocking resolve may still be
+        // running on the pool, but the caller is no longer waiting on it.
+        _ => false,
+    }
 }
 
 // --- Router Compatibility Abstraction ---

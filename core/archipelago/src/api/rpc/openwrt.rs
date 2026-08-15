@@ -38,7 +38,16 @@ impl RpcHandler {
             .unwrap_or("")
             .to_string();
 
-        let routers = detect::scan_subnet(subnet, prefix, &ssh_user, &ssh_password).await;
+        // scan_subnet is `async` in name only: up to 255 SEQUENTIAL blocking
+        // TCP probes at 500ms each (~2 min on a /24 that silently drops),
+        // plus a blocking SSH verify per candidate. Inline, one click of
+        // "scan for routers" held a tokio worker for that whole time.
+        let routers = tokio::task::spawn_blocking(move || {
+            tokio::runtime::Handle::current()
+                .block_on(detect::scan_subnet(subnet, prefix, &ssh_user, &ssh_password))
+        })
+        .await
+        .context("openwrt scan task")?;
         let ips: Vec<String> = routers.iter().map(|ip| ip.to_string()).collect();
 
         Ok(serde_json::json!({ "routers": ips }))
@@ -245,9 +254,21 @@ impl RpcHandler {
             enabled: p.get("enabled").and_then(|v| v.as_bool()).unwrap_or(true),
         };
 
-        let router = Router::connect_password(&host, 22, &ssh_user, &ssh_password)?;
-        router.verify_openwrt()?;
-        tollgate::provision(&router, &config).await?;
+        // Blocking SSH session, and provision runs `opkg install` over it —
+        // minutes of held worker if the router stalls mid-exchange.
+        {
+            let host = host.clone();
+            let ssh_user = ssh_user.clone();
+            let ssh_password = ssh_password.clone();
+            let config = config.clone();
+            tokio::task::spawn_blocking(move || -> Result<()> {
+                let router = Router::connect_password(&host, 22, &ssh_user, &ssh_password)?;
+                router.verify_openwrt()?;
+                tokio::runtime::Handle::current().block_on(tollgate::provision(&router, &config))
+            })
+            .await
+            .context("openwrt provision task")??;
+        }
 
         Ok(serde_json::json!({
             "ok": true,
@@ -296,10 +317,20 @@ impl RpcHandler {
             .or_else(|| saved.password.clone())
             .unwrap_or_default();
 
-        let router = Router::connect_password(&host, 22, &ssh_user, &ssh_password)?;
-        router.verify_openwrt()?;
-
-        let networks = wifi_scan::scan_networks(&router)?;
+        // A radio scan is seconds of SSH round-trips even on a healthy
+        // router; keep it off the runtime.
+        let networks = {
+            let host = host.clone();
+            let ssh_user = ssh_user.clone();
+            let ssh_password = ssh_password.clone();
+            tokio::task::spawn_blocking(move || -> Result<Vec<wifi_scan::ScannedNetwork>> {
+                let router = Router::connect_password(&host, 22, &ssh_user, &ssh_password)?;
+                router.verify_openwrt()?;
+                wifi_scan::scan_networks(&router)
+            })
+            .await
+            .context("openwrt wifi scan task")??
+        };
         let result: Vec<serde_json::Value> = networks
             .iter()
             .map(|n| {
@@ -374,9 +405,6 @@ impl RpcHandler {
         let dhcp_limit = p.get("dhcp_limit").and_then(|v| v.as_u64()).unwrap_or(150) as u32;
         let masq = p.get("masq").and_then(|v| v.as_bool()).unwrap_or(true);
 
-        let router = Router::connect_password(&host, 22, &ssh_user, &ssh_password)?;
-        router.verify_openwrt()?;
-
         let config = wan::WispConfig {
             ssid: ssid.clone(),
             password,
@@ -385,7 +413,20 @@ impl RpcHandler {
             dhcp_limit,
             masq,
         };
-        wan::configure_wisp(&router, &config)?;
+        // Reconfiguring WAN drops and re-establishes the router's uplink, so
+        // the SSH exchange can stall for its full timeout budget mid-command.
+        {
+            let host = host.clone();
+            let ssh_user = ssh_user.clone();
+            let ssh_password = ssh_password.clone();
+            tokio::task::spawn_blocking(move || -> Result<()> {
+                let router = Router::connect_password(&host, 22, &ssh_user, &ssh_password)?;
+                router.verify_openwrt()?;
+                wan::configure_wisp(&router, &config)
+            })
+            .await
+            .context("openwrt configure-wan task")??;
+        }
 
         Ok(serde_json::json!({ "ok": true, "host": host, "ssid": ssid }))
     }
