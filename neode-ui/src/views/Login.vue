@@ -8,7 +8,7 @@
       >
         <!-- Logo - half in, half out of container -->
         <div class="absolute -top-10 left-1/2 -translate-x-1/2 z-10">
-          <div class="logo-gradient-border logo-gloss w-20 h-20">
+          <div class="logo-gradient-border w-20 h-20">
             <AnimatedLogo no-border fit />
           </div>
         </div>
