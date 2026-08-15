@@ -178,6 +178,18 @@ pub async fn ensure_doctor_installed() {
         Ok(false) => debug!("Console welcome banner already current (or not an ISO node)"),
         Err(e) => warn!("Welcome banner sync failed (non-fatal): {:#}", e),
     }
+    match run_ha_rpc_proxy_bind_repair().await {
+        Ok(true) => info!(
+            "HA bitcoind RPC forwarder rebound dynamically — survives network moves now"
+        ),
+        Ok(false) => debug!("HA bitcoind RPC forwarder absent or already dynamic"),
+        Err(e) => warn!("HA RPC forwarder bind repair failed (non-fatal): {:#}", e),
+    }
+    match run_pull_never_image_repair().await {
+        Ok(n) if n > 0 => info!(retagged = n, "Healed quadlet image refs orphaned by registry rename"),
+        Ok(_) => debug!("All quadlet image refs resolve locally"),
+        Err(e) => warn!("Quadlet image ref repair failed (non-fatal): {:#}", e),
+    }
     match run_tor_torrc_repair().await {
         Ok(true) => info!("Tor healed at boot (torrc rebuilt and/or daemon restarted)"),
         Ok(false) => debug!("Tor healthy and torrc in sync — no heal needed"),
@@ -660,6 +672,167 @@ exit 2
 /// would have shipped to nobody. Same include_str! pattern as the doctor.
 const TOR_HELPER_SH: &str = include_str!("../../../scripts/tor-helper.sh");
 const TOR_HELPER_PATH: &str = "/opt/archipelago/scripts/tor-helper.sh";
+
+/// Heal socat forwarder units that were generated with the node's LAN IP
+/// baked into `bind=`.
+///
+/// `archy-ha-btc-rpc-proxy.service` (written on-node during the Pine/HA
+/// integration) bound socat to the box's DHCP address at generation time —
+/// pasta containers reach the host via its LAN address, so that was the
+/// address that worked. Move the box to a new network and the address no
+/// longer exists: `bind()` fails and the unit restart-loops forever
+/// (framework-pt after relocating, 2026-08-15: restart counter 2446, and
+/// Home Assistant's bitcoind sensor dead with it).
+///
+/// The rewrite computes the bind address at every service start instead, so
+/// `Restart=always` itself becomes the heal: plug the box into any network
+/// and the next restart binds to the new address.
+const HA_RPC_PROXY_UNIT_PATH: &str = "/etc/systemd/system/archy-ha-btc-rpc-proxy.service";
+
+/// Parse `TCP-LISTEN:<port>,bind=<ipv4>` + trailing `TCP:<target>` out of a
+/// socat ExecStart line. Returns (listen_port, target).
+fn parse_socat_static_bind(exec_line: &str) -> Option<(String, String)> {
+    let after_listen = exec_line.split("TCP-LISTEN:").nth(1)?;
+    let port = after_listen.split(',').next()?.trim();
+    if port.is_empty() || !port.chars().all(|c| c.is_ascii_digit()) {
+        return None;
+    }
+    // Only rewrite units pinned to a concrete address; a unit already using
+    // a computed bind (or none) needs no heal.
+    let bind = after_listen.split("bind=").nth(1)?.split(',').next()?.trim();
+    if !bind.chars().all(|c| c.is_ascii_digit() || c == '.') || bind.starts_with("127.") {
+        return None;
+    }
+    let target = exec_line.rsplit(" TCP:").next()?.trim();
+    if target.is_empty() || target == exec_line {
+        return None;
+    }
+    Some((port.to_string(), target.to_string()))
+}
+
+fn dynamic_bind_execstart(listen_port: &str, target: &str) -> String {
+    // `$$` survives systemd's own expansion as a literal `$`, so the command
+    // substitution runs in the shell at ExecStart time. If the box has no
+    // default route yet, exit non-zero and let Restart=always retry.
+    format!(
+        "ExecStart=/bin/sh -c 'IP=$$(ip -4 route get 1.1.1.1 | sed -n \"s/.*src \\([0-9.]*\\).*/\\1/p\"); \
+         [ -n \"$$IP\" ] || exit 1; \
+         exec /usr/bin/socat TCP-LISTEN:{listen_port},bind=$$IP,fork,reuseaddr TCP:{target}'"
+    )
+}
+
+async fn run_ha_rpc_proxy_bind_repair() -> Result<bool> {
+    let unit = match tokio::fs::read_to_string(HA_RPC_PROXY_UNIT_PATH).await {
+        Ok(s) => s,
+        Err(_) => return Ok(false), // node never grew the forwarder
+    };
+    let Some(exec_line) = unit.lines().find(|l| l.trim_start().starts_with("ExecStart=")) else {
+        return Ok(false);
+    };
+    let Some((port, target)) = parse_socat_static_bind(exec_line) else {
+        return Ok(false); // already dynamic (or not the shape we heal)
+    };
+    let healed = unit.replace(exec_line, &dynamic_bind_execstart(&port, &target));
+    let staged = "/var/lib/archipelago/ha-rpc-proxy.staged";
+    if let Some(dir) = Path::new(staged).parent() {
+        tokio::fs::create_dir_all(dir).await.ok();
+    }
+    tokio::fs::write(staged, &healed)
+        .await
+        .context("stage ha-rpc-proxy unit")?;
+    let script = format!(
+        "set -eu\ninstall -m 0644 {staged} {dest}\nsystemctl daemon-reload\nsystemctl restart archy-ha-btc-rpc-proxy 2>/dev/null || true\nexit 0\n",
+        staged = staged,
+        dest = HA_RPC_PROXY_UNIT_PATH
+    );
+    host_sudo(&["sh", "-lc", &script])
+        .await
+        .context("install ha-rpc-proxy unit")?;
+    Ok(true)
+}
+
+/// Re-point `--pull never` quadlets whose image ref no longer matches local
+/// storage.
+///
+/// The catalog signing pass rewrites image refs (bare-IP registry → domain),
+/// so a quadlet regenerated with the new ref points at an image the local
+/// store only holds under the old name. With `--pull never` the app can
+/// never start again on its own — Home Assistant looped 761 restarts on
+/// "image not known" (framework-pt, 2026-08-15) while an identical
+/// `name:tag` sat in storage under the bare-IP ref. If any local image
+/// shares the wanted `name:tag`, retag it; pulling is deliberately NOT
+/// attempted here (offline nodes, metered links — the doctor handles pulls).
+async fn run_pull_never_image_repair() -> Result<usize> {
+    let home = std::env::var("HOME").unwrap_or_else(|_| "/home/archipelago".to_string());
+    let quadlet_dir = format!("{home}/.config/containers/systemd");
+    let mut wanted: Vec<String> = Vec::new();
+    let mut entries = match tokio::fs::read_dir(&quadlet_dir).await {
+        Ok(e) => e,
+        Err(_) => return Ok(0),
+    };
+    while let Ok(Some(entry)) = entries.next_entry().await {
+        let path = entry.path();
+        if path.extension().and_then(|e| e.to_str()) != Some("container") {
+            continue;
+        }
+        let Ok(text) = tokio::fs::read_to_string(&path).await else {
+            continue;
+        };
+        for line in text.lines() {
+            if let Some(image) = line.trim().strip_prefix("Image=") {
+                let image = image.trim();
+                if !image.is_empty() {
+                    wanted.push(image.to_string());
+                }
+            }
+        }
+    }
+    if wanted.is_empty() {
+        return Ok(0);
+    }
+    let local = podman_stdout(&["images", "--format", "{{.Repository}}:{{.Tag}}"]).await;
+    let local: Vec<&str> = local
+        .lines()
+        .map(str::trim)
+        .filter(|l| !l.is_empty() && !l.contains("<none>"))
+        .collect();
+    let mut retagged = 0usize;
+    for want in wanted {
+        if local.iter().any(|l| *l == want) {
+            continue;
+        }
+        // Same `name:tag`, any registry prefix, is the rename we heal.
+        let Some(name_tag) = want.rsplit('/').next() else {
+            continue;
+        };
+        if !name_tag.contains(':') {
+            continue;
+        }
+        let suffix = format!("/{name_tag}");
+        let Some(src) = local.iter().find(|l| l.ends_with(&suffix)) else {
+            continue;
+        };
+        let status = tokio::process::Command::new("podman")
+            .args(["tag", src, &want])
+            .status()
+            .await;
+        match status {
+            Ok(s) if s.success() => {
+                info!(from = %src, to = %want, "Retagged image for a --pull never quadlet");
+                retagged += 1;
+            }
+            _ => warn!(from = %src, to = %want, "Image retag failed (non-fatal)"),
+        }
+    }
+    Ok(retagged)
+}
+
+async fn podman_stdout(args: &[&str]) -> String {
+    match tokio::process::Command::new("podman").args(args).output().await {
+        Ok(out) if out.status.success() => String::from_utf8_lossy(&out.stdout).into_owned(),
+        _ => String::new(),
+    }
+}
 
 /// The console welcome banner, embedded so the OTA can fix it on deployed
 /// nodes. `/etc/profile.d/archipelago.sh` is baked by the ISO installer and
@@ -1471,6 +1644,39 @@ mod tests {
         assert!(
             heal_stale_web_search_block("location / { try_files $uri /index.html; }").is_none()
         );
+    }
+
+    /// The exact ExecStart framework-pt shipped with must parse, and the
+    /// rewrite must preserve its listen port and forward target.
+    #[test]
+    fn static_socat_bind_is_parsed_and_rewritten_dynamically() {
+        let line = "ExecStart=/usr/bin/socat TCP-LISTEN:18332,bind=192.168.1.249,fork,reuseaddr TCP:127.0.0.1:8332";
+        let (port, target) = parse_socat_static_bind(line).expect("must parse");
+        assert_eq!(port, "18332");
+        assert_eq!(target, "127.0.0.1:8332");
+        let dynamic = dynamic_bind_execstart(&port, &target);
+        assert!(dynamic.contains("TCP-LISTEN:18332,bind=$$IP"));
+        assert!(dynamic.contains("TCP:127.0.0.1:8332"));
+        assert!(dynamic.contains("route get 1.1.1.1"));
+        // The heal is idempotent: its own output no longer parses as a
+        // static bind (bind=$$IP is not a concrete address).
+        assert!(parse_socat_static_bind(&dynamic).is_none());
+    }
+
+    #[test]
+    fn socat_units_that_need_no_heal_are_left_alone() {
+        // Loopback bind is intentional (Tor bootstrap forwarder) — not ours.
+        assert!(parse_socat_static_bind(
+            "ExecStart=/usr/bin/socat TCP-LISTEN:18332,bind=127.0.0.1,reuseaddr,fork SOCKS4A:127.0.0.1:x.onion:8332,socksport=9050"
+        )
+        .is_none());
+        // No bind at all.
+        assert!(parse_socat_static_bind(
+            "ExecStart=/usr/bin/socat TCP-LISTEN:18332,fork,reuseaddr TCP:127.0.0.1:8332"
+        )
+        .is_none());
+        // Not a socat line.
+        assert!(parse_socat_static_bind("ExecStart=/usr/bin/true").is_none());
     }
 }
 
