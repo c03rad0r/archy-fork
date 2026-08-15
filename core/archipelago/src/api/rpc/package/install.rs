@@ -2525,7 +2525,7 @@ async fn wait_for_adopted_container(package_id: &str, container_name: &str) -> R
 // bitcoin_data_volume_gb removed with write_bitcoin_conf: it only fed that
 // function's volume-aware `prune=` line, which bitcoind never read either
 // (see remove_stale_bitcoin_conf). The manifest's shell entrypoint already
-// computes DISK_GB_VALUE and hardcodes -prune=550 on small volumes — a
+// computes DISK_GB_VALUE and hardcodes -prune=50000 on small volumes — a
 // real volume-aware prune fix belongs there, not in a conf file nothing
 // reads. Tracked as follow-up in bitcoin-conf-crash-patch.md.
 
