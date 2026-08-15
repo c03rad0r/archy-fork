@@ -731,6 +731,71 @@ fn icon_markup(app: &GatedPort) -> String {
     format!(r#"<div class="tile">{inner}</div>"#)
 }
 
+/// The dashboard login's badge, reproduced square-for-square: the same 20
+/// white rects AnimatedLogo.vue draws, with the same 100ms stagger, inside
+/// the same gradient ring. Inline rather than an `<img>` because the shipped
+/// `favico-black-v2.svg` bakes its own ring into the artwork — wrapping it in
+/// the CSS ring drew a ring inside a ring, which is not what /login shows.
+/// (x, y, width, height) as they appear in AnimatedLogo.vue.
+const LOGO_RECTS: [(f32, f32, f32, f32); 20] = [
+    (357.614, 318.0, 71.007, 70.936),
+    (436.152, 318.0, 72.082, 70.936),
+    (515.766, 318.0, 72.082, 70.936),
+    (595.379, 318.0, 71.007, 70.936),
+    (595.379, 396.46, 71.007, 72.011),
+    (673.917, 396.46, 72.083, 72.011),
+    (278.0, 475.994, 72.083, 72.012),
+    (357.614, 475.994, 71.007, 72.012),
+    (436.152, 475.994, 72.082, 72.012),
+    (515.766, 475.994, 72.082, 72.012),
+    (595.379, 475.994, 71.007, 72.012),
+    (673.917, 475.994, 72.083, 72.012),
+    (278.0, 555.529, 72.083, 70.936),
+    (357.614, 555.529, 71.007, 70.936),
+    (595.379, 555.529, 71.007, 70.936),
+    (673.917, 555.529, 72.083, 70.936),
+    (357.614, 633.989, 71.007, 72.011),
+    (436.152, 633.989, 72.082, 72.011),
+    (515.766, 633.989, 72.082, 72.011),
+    (595.379, 633.989, 71.007, 72.011),
+];
+
+fn logo_markup() -> String {
+    let rects: String = LOGO_RECTS
+        .iter()
+        .enumerate()
+        .map(|(i, (x, y, w, h))| {
+            format!(
+                r#"<rect x="{x}" y="{y}" width="{w}" height="{h}" fill="white" class="sq" style="--d:{delay}ms"/>"#,
+                delay = i * 100,
+            )
+        })
+        .collect();
+    format!(
+        r##"<div class="logo"><svg viewBox="0 0 1024 1024" role="img" aria-label="Archipelago" xmlns="http://www.w3.org/2000/svg"><rect width="1024" height="1024" fill="#030202"/>{rects}</svg></div>"##
+    )
+}
+
+/// The main login's in-button spinner, verbatim from Login.vue.
+const SPINNER_SVG: &str = r#"<svg class="spin" viewBox="0 0 24 24" fill="none" aria-hidden="true"><circle style="opacity:.25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path style="opacity:.75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>"#;
+
+/// Submit feedback: flip the pressed button into its loading face and stop a
+/// second press, exactly as /login does. This is the only script on the page,
+/// and the CSP admits it by hash — not `'unsafe-inline'` — so an injected
+/// `<script>` still cannot run. Everything works without it (the form is a
+/// plain POST); losing JS costs only the spinner.
+const SUBMIT_FEEDBACK_JS: &str = "document.addEventListener('submit',function(e){var b=e.target.querySelector('button');if(b){b.classList.add('loading');b.disabled=true;}});";
+
+/// `'sha256-…'` CSP source expression for [`SUBMIT_FEEDBACK_JS`]. Computed
+/// from the constant itself so the two can never drift apart.
+fn submit_feedback_csp_hash() -> String {
+    use sha2::{Digest, Sha256};
+    format!(
+        "'sha256-{}'",
+        base64_encode(&Sha256::digest(SUBMIT_FEEDBACK_JS.as_bytes()))
+    )
+}
+
 /// Icons live with the web UI. Only files under the icon directory are read,
 /// and only known image extensions — the path comes from a manifest, which is
 /// signed, but treating it as untrusted costs nothing.
@@ -782,7 +847,9 @@ const LOGIN_BACKGROUNDS: [&str; 4] = [
 /// join: the name arrives in a URL, and the gate answers before any
 /// authentication, so nothing here may be caller-controlled beyond this set.
 fn read_ui_asset(name: &str) -> Option<(Vec<u8>, &'static str)> {
-    let allowed = LOGIN_BACKGROUNDS.contains(&name) || name == "favico-black-v2.svg";
+    // Only the rotating backgrounds: the logo badge is inline SVG now, so no
+    // image asset backs it.
+    let allowed = LOGIN_BACKGROUNDS.contains(&name);
     if !allowed {
         return None;
     }
@@ -904,8 +971,15 @@ main {{ position:relative; z-index:1; width:min(92vw,28rem); }}
   width:5rem; height:5rem; border-radius:9999px; padding:3px;
   background:linear-gradient(135deg, rgba(255,255,255,.6) 0%, rgba(0,0,0,.8) 100%);
   box-shadow:0 8px 24px rgba(0,0,0,.5); }}
-.logo img {{ width:100%; height:100%; border-radius:9999px; display:block;
-  background:#000; padding:.5rem; }}
+.logo::after {{ content:''; position:absolute; inset:3px; border-radius:9999px;
+  background:#000; z-index:0; }}
+.logo svg {{ position:relative; z-index:1; width:100%; height:100%;
+  border-radius:9999px; display:block; }}
+/* AnimatedLogo.vue's reveal, timing intact: each square fades in on its own
+   100ms-step delay over a 3s loop. */
+.logo .sq {{ opacity:0; animation:logo-square-in 3s ease-out infinite;
+  animation-delay:var(--d,0ms); animation-fill-mode:both; }}
+@keyframes logo-square-in {{ 0% {{ opacity:0; }} 15% {{ opacity:1; }} 100% {{ opacity:1; }} }}
 /* The app's own tile, in the My Apps shape: 18px-rounded square on dark
    glass with the same inner highlight and drop shadow. */
 .tile {{ width:60px; height:60px; border-radius:18px; margin:0 auto .75rem;
@@ -926,22 +1000,42 @@ input {{ width:100%; padding:.75rem 1rem; margin-bottom:1rem; border-radius:.5re
 input::placeholder {{ color:rgba(255,255,255,.4); }}
 input:focus {{ outline:none; border-color:rgba(255,255,255,.4);
   box-shadow:0 0 0 1px rgba(255,255,255,.2); }}
-button {{ width:100%; min-height:44px; padding:.75rem 1.25rem; border:none;
-  border-radius:.75rem; background:rgba(0,0,0,.6);
+/* .glass-button, longhand — the lift, the lightening and the rim glow on
+   hover are what make the dashboard's buttons feel alive; the old flat
+   darken-only hover here read as broken next to /login. */
+button {{ position:relative; display:inline-flex; align-items:center;
+  justify-content:center; width:100%; min-height:44px; padding:.75rem 1.25rem;
+  border:none; border-radius:.75rem; background:rgba(0,0,0,.6);
   backdrop-filter:blur(24px); -webkit-backdrop-filter:blur(24px);
   box-shadow:0 8px 24px rgba(0,0,0,.45), inset 0 1px 0 rgba(255,255,255,.22);
   color:rgba(255,255,255,.9); font-size:1rem; font-weight:500; cursor:pointer;
-  transition:background-color .2s ease, transform .3s cubic-bezier(.4,0,.2,1); }}
-button:hover {{ background:rgba(0,0,0,.7); }}
+  transition:transform .3s cubic-bezier(.4,0,.2,1), background-color .2s ease,
+    box-shadow .3s ease; }}
+button::before {{ content:''; position:absolute; inset:0; border-radius:inherit;
+  padding:2px; background:linear-gradient(135deg, rgba(0,0,0,.8), transparent);
+  -webkit-mask:linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+  -webkit-mask-composite:xor; mask-composite:exclude; pointer-events:none; }}
+button:hover {{ transform:translateY(-2px); background:rgba(0,0,0,.35);
+  box-shadow:0 12px 32px rgba(0,0,0,.6), inset 0 1px 0 rgba(255,255,255,.25); }}
+button:hover::before {{ background:linear-gradient(135deg, rgba(255,255,255,.3), transparent); }}
 button:active {{ transform:translateY(1px); }}
+button:disabled {{ opacity:.5; cursor:not-allowed; transform:none; }}
+/* Two faces per button; the submit-feedback script flips .loading on. */
+button .busy {{ display:none; }}
+button.loading .idle {{ display:none; }}
+button.loading .busy {{ display:inline-flex; align-items:center; gap:.5rem; }}
+.spin {{ width:1.25rem; height:1.25rem; animation:spin 1s linear infinite; }}
+@keyframes spin {{ to {{ transform:rotate(360deg); }} }}
 .err {{ background:rgba(239,68,68,.2); border:1px solid rgba(239,68,68,.4);
   color:#fecaca; padding:.75rem; border-radius:.5rem; margin-bottom:1rem;
   font-size:.875rem; text-align:left; }}
 </style></head>
-<body>{backgrounds}<main><div class="card">{body}</div></main></body></html>"#,
+<body>{backgrounds}<main><div class="card">{body}</div></main>
+<script>{submit_feedback}</script></body></html>"#,
         title = esc(title),
         app_name = esc(&app.app_name),
         body = body,
+        submit_feedback = SUBMIT_FEEDBACK_JS,
         backgrounds = background_layers(),
         cycle = LOGIN_BACKGROUNDS.len() as u32 * 9,
         hold = 100 / LOGIN_BACKGROUNDS.len() as u32,
@@ -961,10 +1055,16 @@ button:active {{ transform:translateY(1px); }}
         // login, on any port or scheme, which is exactly the dashboard.
         // Anything else — another site embedding it to harvest the node
         // password — is still refused.
+        // script-src admits exactly one script, by hash: the submit-feedback
+        // snippet above. Injected markup (an app name, an error string) still
+        // cannot execute — its hash would not match.
         .header(
             "Content-Security-Policy",
-            "default-src 'none'; img-src 'self' data:; style-src 'unsafe-inline'; \
-             form-action 'self'; frame-ancestors 'self' http://*:* https://*:*",
+            format!(
+                "default-src 'none'; img-src 'self' data:; style-src 'unsafe-inline'; \
+                 script-src {hash}; form-action 'self'; frame-ancestors 'self' http://*:* https://*:*",
+                hash = submit_feedback_csp_hash(),
+            ),
         )
         .body(Body::from(html))
         .expect("static response builds")
@@ -975,15 +1075,17 @@ button:active {{ transform:translateY(1px); }}
 /// password by an unexplained page.
 fn login_page(app: &GatedPort, error: Option<&str>, status: StatusCode) -> Response<Body> {
     let body = format!(
-        r#"<div class="logo"><img src="{prefix}asset/favico-black-v2.svg" alt="Archipelago"></div>
+        r#"{logo}
 {icon}
 <h1>Sign in to open {name}</h1>
 <p class="sub">This app is protected by your node password.</p>
 {err}
 <form method="post" action="{prefix}login">
 <input type="password" name="password" placeholder="Node password" autocomplete="current-password" autofocus required>
-<button type="submit">Sign in</button>
+<button type="submit"><span class="idle">Sign in</span><span class="busy">{spinner}Signing in…</span></button>
 </form>"#,
+        logo = logo_markup(),
+        spinner = SPINNER_SVG,
         icon = icon_markup(app),
         name = esc(&app.app_name),
         err = error
@@ -1004,8 +1106,9 @@ fn totp_page(app: &GatedPort, error: Option<&str>, status: StatusCode) -> Respon
 {err}
 <form method="post" action="{prefix}totp">
 <input type="text" name="code" inputmode="numeric" pattern="[0-9]*" autocomplete="one-time-code" placeholder="000000" autofocus required>
-<button type="submit">Verify</button>
+<button type="submit"><span class="idle">Verify</span><span class="busy">{spinner}Verifying…</span></button>
 </form>"#,
+        spinner = SPINNER_SVG,
         icon = icon_markup(app),
         name = esc(&app.app_name),
         err = error
@@ -1200,25 +1303,48 @@ mod tests {
     }
 
     /// The login page must render entirely from the gate's own origin: the
-    /// CSP allows no external host, so a background or logo that 404s leaves
-    /// a black page rather than the dashboard's art.
+    /// CSP allows no external host, so a background that 404s leaves a black
+    /// page rather than the dashboard's art. The badge itself is inline SVG —
+    /// the same 20 squares as the dashboard login's AnimatedLogo — so it can
+    /// never 404 at all.
     #[tokio::test]
     async fn login_page_sources_its_art_from_the_gate() {
         let resp = login_page(&app(), None, StatusCode::UNAUTHORIZED);
         let body = hyper::body::to_bytes(resp.into_body()).await.unwrap();
         let html = String::from_utf8_lossy(&body).to_string();
-        assert!(html.contains(&format!("{GATE_PREFIX}asset/favico-black-v2.svg")));
+        assert_eq!(
+            html.matches(r#"class="sq""#).count(),
+            LOGO_RECTS.len(),
+            "the badge must draw every AnimatedLogo square inline"
+        );
         for name in LOGIN_BACKGROUNDS {
             assert!(
                 html.contains(&format!("{GATE_PREFIX}asset/{name}")),
                 "background {name} is not referenced"
             );
         }
-        // Every referenced asset must be one the gate will actually serve.
-        // The logo is the sidebar A mark (favico-black-v2.svg) since the
-        // 2026-08-05 login-page rework — the old wordmark is off the
-        // allowlist on purpose.
-        assert!(read_ui_asset("favico-black-v2.svg").is_some() || cfg!(not(debug_assertions)));
+    }
+
+    /// The only script the challenge pages may run is the submit-feedback
+    /// snippet, admitted by hash. The page must carry exactly that script,
+    /// and the CSP must name its hash — anything injected has a different
+    /// hash and stays inert.
+    #[tokio::test]
+    async fn submit_feedback_script_is_present_and_hash_pinned() {
+        let resp = login_page(&app(), None, StatusCode::UNAUTHORIZED);
+        let csp = resp.headers()["Content-Security-Policy"]
+            .to_str()
+            .unwrap()
+            .to_string();
+        assert!(csp.contains(&format!("script-src {}", submit_feedback_csp_hash())));
+        assert!(!csp.contains("script-src 'unsafe-inline'"));
+        let body = hyper::body::to_bytes(resp.into_body()).await.unwrap();
+        let html = String::from_utf8_lossy(&body);
+        assert!(html.contains(&format!("<script>{SUBMIT_FEEDBACK_JS}</script>")));
+        // Both button faces render: idle label and the spinner face.
+        assert!(html.contains(r#"<span class="idle">Sign in</span>"#));
+        assert!(html.contains("Signing in…"));
+        assert!(html.contains(r#"class="spin""#));
     }
 
     /// The allowlist is the whole security boundary for asset serving: the
