@@ -97,42 +97,53 @@ async fn get_wan_ip() -> Option<String> {
 }
 
 /// Check if UPnP is available by attempting SSDP discovery.
+///
+/// The socket is a blocking `std::net::UdpSocket`, and on a network with no
+/// UPnP gateway — the normal case right after a node moves — the recv runs
+/// out its full read timeout. Inline on the runtime that parked a tokio
+/// worker for those 3s on every call, the same failure shape (smaller blast
+/// radius) as the OpenWrt SSH connect that stalled the API on framework-pt.
+/// Keep it on the blocking pool.
 async fn check_upnp_available() -> bool {
-    use std::net::UdpSocket;
+    tokio::task::spawn_blocking(|| {
+        use std::net::UdpSocket;
 
-    let ssdp_request = "M-SEARCH * HTTP/1.1\r\n\
-        HOST: 239.255.255.250:1900\r\n\
-        MAN: \"ssdp:discover\"\r\n\
-        MX: 2\r\n\
-        ST: urn:schemas-upnp-org:device:InternetGatewayDevice:1\r\n\r\n";
+        let ssdp_request = "M-SEARCH * HTTP/1.1\r\n\
+            HOST: 239.255.255.250:1900\r\n\
+            MAN: \"ssdp:discover\"\r\n\
+            MX: 2\r\n\
+            ST: urn:schemas-upnp-org:device:InternetGatewayDevice:1\r\n\r\n";
 
-    let socket = match UdpSocket::bind("0.0.0.0:0") {
-        Ok(s) => s,
-        Err(_) => return false,
-    };
+        let socket = match UdpSocket::bind("0.0.0.0:0") {
+            Ok(s) => s,
+            Err(_) => return false,
+        };
 
-    if socket
-        .set_read_timeout(Some(std::time::Duration::from_secs(3)))
-        .is_err()
-    {
-        return false;
-    }
-
-    if socket
-        .send_to(ssdp_request.as_bytes(), "239.255.255.250:1900")
-        .is_err()
-    {
-        return false;
-    }
-
-    let mut buf = [0u8; 2048];
-    match socket.recv_from(&mut buf) {
-        Ok((len, _)) => {
-            let response = String::from_utf8_lossy(&buf[..len]);
-            response.contains("InternetGatewayDevice") || response.contains("200 OK")
+        if socket
+            .set_read_timeout(Some(std::time::Duration::from_secs(3)))
+            .is_err()
+        {
+            return false;
         }
-        Err(_) => false,
-    }
+
+        if socket
+            .send_to(ssdp_request.as_bytes(), "239.255.255.250:1900")
+            .is_err()
+        {
+            return false;
+        }
+
+        let mut buf = [0u8; 2048];
+        match socket.recv_from(&mut buf) {
+            Ok((len, _)) => {
+                let response = String::from_utf8_lossy(&buf[..len]);
+                response.contains("InternetGatewayDevice") || response.contains("200 OK")
+            }
+            Err(_) => false,
+        }
+    })
+    .await
+    .unwrap_or(false)
 }
 
 /// Add a port forward (stored locally; actual UPnP mapping done on request).
