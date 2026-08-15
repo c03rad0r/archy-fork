@@ -381,18 +381,43 @@ onMounted(async () => {
     await pollServerStartup()
   }
 
-  // Check if password has been set up — show setup form if not
+  // Check if password has been set up — show setup form if not.
+  //
+  // An RPC failure is NOT evidence of a fresh node: a backend still warming
+  // up (or a transient proxy blip) used to land here and flip a
+  // fully-onboarded node into "Set Up Your Node" — seen on framework-pt
+  // right after a network move (2026-08-15), the same fail-open class
+  // RootRedirect fixed for the intro. Fail toward the ordinary login form
+  // and keep re-probing until the backend answers; a genuinely fresh node
+  // flips to setup the moment the first probe lands (and could not have
+  // completed setup against a dead backend anyway).
   try {
     const result = await rpcClient.call<boolean>({ method: 'auth.isSetup', params: {}, timeout: 8000 })
     isSetup.value = Boolean(result)
     isSetupMode.value = !isSetup.value
   } catch {
-    isSetup.value = false
-    isSetupMode.value = true
+    isSetup.value = true
+    isSetupMode.value = false
+    void retrySetupProbe()
   } finally {
     isCheckingSetup.value = false
   }
 })
+
+/** Re-probe auth.isSetup until it answers, then honour the real state. */
+async function retrySetupProbe() {
+  for (let i = 0; i < 10; i++) {
+    await new Promise((r) => setTimeout(r, Math.min(2000 * (i + 1), 8000)))
+    try {
+      const result = await rpcClient.call<boolean>({ method: 'auth.isSetup', params: {}, timeout: 8000 })
+      isSetup.value = Boolean(result)
+      isSetupMode.value = !isSetup.value
+      return
+    } catch {
+      // still unreachable — keep the login form up and try again
+    }
+  }
+}
 
 
 function handleSetupWithSound() {
