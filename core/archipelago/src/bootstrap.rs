@@ -171,6 +171,13 @@ pub async fn ensure_doctor_installed() {
         Ok(false) => debug!("tor-helper.sh already current"),
         Err(e) => warn!("tor-helper sync failed (non-fatal): {:#}", e),
     }
+    match run_welcome_banner_sync().await {
+        Ok(true) => info!(
+            "Console welcome banner synchronized (LAN address + .local name, not the WG tunnel IP)"
+        ),
+        Ok(false) => debug!("Console welcome banner already current (or not an ISO node)"),
+        Err(e) => warn!("Welcome banner sync failed (non-fatal): {:#}", e),
+    }
     match run_tor_torrc_repair().await {
         Ok(true) => info!("Tor healed at boot (torrc rebuilt and/or daemon restarted)"),
         Ok(false) => debug!("Tor healthy and torrc in sync — no heal needed"),
@@ -653,6 +660,44 @@ exit 2
 /// would have shipped to nobody. Same include_str! pattern as the doctor.
 const TOR_HELPER_SH: &str = include_str!("../../../scripts/tor-helper.sh");
 const TOR_HELPER_PATH: &str = "/opt/archipelago/scripts/tor-helper.sh";
+
+/// The console welcome banner, embedded so the OTA can fix it on deployed
+/// nodes. `/etc/profile.d/archipelago.sh` is baked by the ISO installer and
+/// no OTA path touched it, so every node kept whatever its ISO generation
+/// shipped — including banners that print the node's own WireGuard address
+/// (10.44.0.1, present on EVERY node) as the "web ui", which is unreachable
+/// off-tunnel and actively misleading after a move to a new network
+/// (framework-pt, 2026-08-15). Canonical copy: scripts/welcome-banner.sh;
+/// the ISO builder inlines the same content for fresh installs.
+const WELCOME_BANNER_SH: &str = include_str!("../../../scripts/welcome-banner.sh");
+const WELCOME_BANNER_PATH: &str = "/etc/profile.d/archipelago.sh";
+
+async fn run_welcome_banner_sync() -> Result<bool> {
+    let current = tokio::fs::read_to_string(WELCOME_BANNER_PATH)
+        .await
+        .unwrap_or_default();
+    // Only refresh a banner the installer put there: a dev machine running
+    // the backend from a checkout has no business growing one in /etc.
+    if current.is_empty() || current == WELCOME_BANNER_SH {
+        return Ok(false);
+    }
+    let staged = "/var/lib/archipelago/welcome-banner.staged";
+    if let Some(dir) = Path::new(staged).parent() {
+        tokio::fs::create_dir_all(dir).await.ok();
+    }
+    tokio::fs::write(staged, WELCOME_BANNER_SH)
+        .await
+        .context("stage welcome banner")?;
+    let script = format!(
+        "set -eu\ninstall -m 0755 {staged} {dest}\nexit 0\n",
+        staged = staged,
+        dest = WELCOME_BANNER_PATH
+    );
+    host_sudo(&["sh", "-lc", &script])
+        .await
+        .context("install welcome banner")?;
+    Ok(true)
+}
 
 async fn run_tor_helper_sync() -> Result<bool> {
     let current = tokio::fs::read_to_string(TOR_HELPER_PATH)

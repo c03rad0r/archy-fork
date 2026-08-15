@@ -3244,10 +3244,22 @@ esac
 if [ -t 0 ] && [ -z "$ARCHIPELAGO_WELCOMED" ]; then
     export ARCHIPELAGO_WELCOMED=1
 
-    # Wait for network (DHCP may not be ready yet on first boot)
+    # Wait for network (DHCP may not be ready yet on first boot).
+    # The address shown must be one a LAN user can actually reach: the
+    # default route's source address. `hostname -I` lists addresses in
+    # interface order, so a node with WireGuard up advertised 10.44.0.1 —
+    # its own tunnel address, present on EVERY node — as its "web ui",
+    # which is unreachable off-tunnel and actively misleading after a
+    # move to a new network (framework-pt, 2026-08-15).
     IP=""
     for i in 1 2 3 4 5; do
-        IP=$(hostname -I 2>/dev/null | awk '{print $1}')
+        IP=$(ip -4 route get 1.1.1.1 2>/dev/null | sed -n 's/.*src \([0-9.]*\).*/\1/p' | head -n1)
+        # Offline LAN (no default route): first address that is not a
+        # tunnel (10.44/16 WireGuard), CGNAT (100.64/10 Tailscale), or
+        # loopback one.
+        [ -n "$IP" ] || IP=$(hostname -I 2>/dev/null | tr ' ' '\n' \
+            | grep -vE '^(10\.44\.|100\.(6[4-9]|[7-9][0-9]|1[01][0-9]|12[0-7])\.|127\.)' | head -n1)
+        [ -n "$IP" ] || IP=$(hostname -I 2>/dev/null | awk '{print $1}')
         [ -n "$IP" ] && break
         sleep 2
     done
@@ -3269,6 +3281,11 @@ if [ -t 0 ] && [ -z "$ARCHIPELAGO_WELCOMED" ]; then
     echo -e "                              ${OD}bitcoin node os${N}"
     if [ -n "$IP" ]; then
         echo -e "  ${W}web ui    http://$IP${N}"
+        # The mDNS name survives any DHCP change — it is the address to
+        # give people for a headless box that moves between networks.
+        if systemctl is-active avahi-daemon >/dev/null 2>&1; then
+            echo -e "  ${W}          http://$(hostname).local${N}"
+        fi
         echo -e "  ${W}ssh       archipelago@$IP${N}"
         echo -e "  ${W}password  archipelago (SSH)${N}"
         echo -e "  ${OD}web ui asks you to create a password on first visit${N}"
