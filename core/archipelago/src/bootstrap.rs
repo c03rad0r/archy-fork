@@ -178,6 +178,11 @@ pub async fn ensure_doctor_installed() {
         Ok(false) => debug!("Console welcome banner already current (or not an ISO node)"),
         Err(e) => warn!("Welcome banner sync failed (non-fatal): {:#}", e),
     }
+    match run_nginx_listener_repair().await {
+        Ok(true) => info!("nginx HTTPS listeners retargeted to this host's current addresses"),
+        Ok(false) => debug!("nginx listeners already match this host's addresses"),
+        Err(e) => warn!("nginx listener repair failed (non-fatal): {:#}", e),
+    }
     match run_ha_rpc_proxy_bind_repair().await {
         Ok(true) => info!(
             "HA bitcoind RPC forwarder rebound dynamically — survives network moves now"
@@ -832,6 +837,153 @@ async fn podman_stdout(args: &[&str]) -> String {
         Ok(out) if out.status.success() => String::from_utf8_lossy(&out.stdout).into_owned(),
         _ => String::new(),
     }
+}
+
+/// Keep nginx's per-address HTTPS listeners in step with the addresses the
+/// host actually has, and get nginx running if a boot race killed it.
+///
+/// `scripts/setup-node-ca.sh` writes one `listen <addr>:443 ssl;` per LAN
+/// address at the moment it runs (per-address rather than wildcard on
+/// purpose: Tailscale holds :443 on the tailnet address). Its idempotency
+/// guard then never revisits them. Two ways that takes the WHOLE web UI
+/// down — nginx refuses to start if any listen address is missing, so this
+/// is not merely an HTTPS outage:
+///   1. The node moves networks and the old address no longer exists.
+///   2. Even in place, nginx starts before DHCP has assigned the address —
+///      and nginx.service ships no `Restart=`, so that single failure is
+///      permanent until a human intervenes.
+/// Both observed on archi-dev-box, 2026-08-15: nginx dead since boot with
+/// `bind() to 192.168.63.240:443 failed (99: Cannot assign requested
+/// address)`, and the dashboard simply unreachable.
+const NGINX_SITES: [&str; 2] = [
+    "/etc/nginx/sites-available/archipelago-http",
+    "/etc/nginx/sites-available/archipelago",
+];
+const NGINX_RESTART_DROPIN: &str = "/etc/systemd/system/nginx.service.d/10-archipelago-restart.conf";
+
+/// Global IPv4 addresses on this host, minus Tailscale CGNAT (100.64/10) —
+/// the same exclusion `setup-node-ca.sh` applies, for the same reason.
+async fn host_lan_addrs() -> Vec<String> {
+    let out = tokio::process::Command::new("ip")
+        .args(["-o", "-4", "addr", "show", "scope", "global"])
+        .output()
+        .await;
+    let Ok(out) = out else { return Vec::new() };
+    String::from_utf8_lossy(&out.stdout)
+        .lines()
+        .filter_map(|l| l.split_whitespace().nth(3))
+        .filter_map(|cidr| cidr.split('/').next())
+        .filter(|a| !is_cgnat(a))
+        .map(str::to_string)
+        .collect()
+}
+
+fn is_cgnat(addr: &str) -> bool {
+    let mut parts = addr.split('.');
+    let (Some(100), Some(second)) = (
+        parts.next().and_then(|p| p.parse::<u8>().ok()),
+        parts.next().and_then(|p| p.parse::<u8>().ok()),
+    ) else {
+        return false;
+    };
+    (64..=127).contains(&second)
+}
+
+/// Rewrite the `listen <ip>:443 ssl;` set for one config's text. Returns the
+/// new text when it differs. Lines for absent addresses are dropped and one
+/// line per present address is kept, preserving the file's indentation.
+fn retarget_https_listeners(text: &str, present: &[String]) -> Option<String> {
+    let listen_of = |l: &str| -> Option<String> {
+        let t = l.trim();
+        let rest = t.strip_prefix("listen ")?.strip_suffix(":443 ssl;")?;
+        // Only per-address listeners; `listen 443 ssl ...` has no address.
+        rest.split('.').count().eq(&4).then(|| rest.to_string())
+    };
+    if !text.lines().any(|l| listen_of(l).is_some()) {
+        return None; // wildcard-only config; nothing address-pinned to heal
+    }
+    let stale: Vec<String> = text
+        .lines()
+        .filter_map(listen_of)
+        .filter(|a| !present.contains(a))
+        .collect();
+    let existing: Vec<String> = text.lines().filter_map(listen_of).collect();
+    let missing: Vec<&String> = present.iter().filter(|a| !existing.contains(a)).collect();
+    if stale.is_empty() && missing.is_empty() {
+        return None;
+    }
+    let indent = text
+        .lines()
+        .find(|l| listen_of(l).is_some())
+        .map(|l| l[..l.len() - l.trim_start().len()].to_string())
+        .unwrap_or_else(|| "    ".to_string());
+    let mut out: Vec<String> = Vec::new();
+    let mut wrote_block = false;
+    for line in text.lines() {
+        match listen_of(line) {
+            Some(_) if !wrote_block => {
+                wrote_block = true;
+                for a in present {
+                    out.push(format!("{indent}listen {a}:443 ssl;"));
+                }
+            }
+            Some(_) => {} // subsequent old listen lines are replaced by the block
+            None => out.push(line.to_string()),
+        }
+    }
+    Some(out.join("\n"))
+}
+
+async fn run_nginx_listener_repair() -> Result<bool> {
+    let present = host_lan_addrs().await;
+    if present.is_empty() {
+        return Ok(false); // no network yet; a later boot pass will do it
+    }
+    let mut changed = false;
+    for site in NGINX_SITES {
+        let Ok(text) = tokio::fs::read_to_string(site).await else {
+            continue;
+        };
+        let Some(healed) = retarget_https_listeners(&text, &present) else {
+            continue;
+        };
+        let staged = "/var/lib/archipelago/nginx-listeners.staged";
+        if let Some(dir) = Path::new(staged).parent() {
+            tokio::fs::create_dir_all(dir).await.ok();
+        }
+        tokio::fs::write(staged, &healed)
+            .await
+            .context("stage nginx listeners")?;
+        // Install behind `nginx -t`, and roll back if the test fails — a bad
+        // config here would take the dashboard down, which is the very
+        // failure this repair exists to prevent.
+        let script = format!(
+            "set -eu\ncp {site} {site}.bak-listeners\ninstall -m 0644 {staged} {site}\n\
+             if ! nginx -t 2>/dev/null; then cp {site}.bak-listeners {site}; exit 3; fi\nexit 0\n"
+        );
+        let status = host_sudo(&["sh", "-lc", &script]).await?;
+        match status.code() {
+            Some(0) => changed = true,
+            Some(3) => warn!(site, "nginx listener repair failed its config test — rolled back"),
+            _ => warn!(site, "nginx listener repair helper failed"),
+        }
+    }
+    // Whether or not the config changed: if nginx is down (the boot race, or
+    // it died on an address that has since arrived), start it. And give it a
+    // restart policy so the race stops being fatal in the first place.
+    let script = format!(
+        "set -eu\nmkdir -p $(dirname {dropin})\n\
+         cat > {dropin} <<'EOF'\n[Service]\nRestart=on-failure\nRestartSec=5\n\
+         [Unit]\nStartLimitIntervalSec=300\nStartLimitBurst=10\nEOF\n\
+         systemctl daemon-reload\n\
+         if ! systemctl is-active --quiet nginx; then systemctl reset-failed nginx 2>/dev/null || true; systemctl start nginx 2>/dev/null || true; \
+         elif [ \"${{RELOAD:-1}}\" = 1 ]; then systemctl reload nginx 2>/dev/null || true; fi\nexit 0\n",
+        dropin = NGINX_RESTART_DROPIN
+    );
+    host_sudo(&["sh", "-lc", &script])
+        .await
+        .context("nginx restart policy + start")?;
+    Ok(changed)
 }
 
 /// The console welcome banner, embedded so the OTA can fix it on deployed
@@ -1661,6 +1813,41 @@ mod tests {
         // The heal is idempotent: its own output no longer parses as a
         // static bind (bind=$$IP is not a concrete address).
         assert!(parse_socat_static_bind(&dynamic).is_none());
+    }
+
+    /// The archi-dev-box config: one stale address (old network) beside the
+    /// WireGuard one. The stale listener must go — nginx refuses to START
+    /// while it names an address the host lacks — and the current LAN
+    /// address must appear.
+    #[test]
+    fn stale_https_listeners_are_retargeted_to_present_addresses() {
+        let cfg = "server {\n    listen 80 default_server;\n    listen 10.44.0.1:443 ssl;\n    listen 192.168.63.240:443 ssl;\n    ssl_certificate /x;\n}\n";
+        let present = vec!["10.44.0.1".to_string(), "192.168.1.50".to_string()];
+        let healed = retarget_https_listeners(cfg, &present).expect("must heal");
+        assert!(healed.contains("listen 192.168.1.50:443 ssl;"));
+        assert!(healed.contains("listen 10.44.0.1:443 ssl;"));
+        assert!(!healed.contains("192.168.63.240"), "stale listener must be dropped");
+        // Untouched lines survive, and the repair is idempotent.
+        assert!(healed.contains("listen 80 default_server;"));
+        assert!(healed.contains("ssl_certificate /x;"));
+        assert!(retarget_https_listeners(&healed, &present).is_none());
+    }
+
+    #[test]
+    fn wildcard_only_configs_and_cgnat_are_left_alone() {
+        // No address-pinned listener → nothing to heal (the ISO's own config).
+        assert!(retarget_https_listeners(
+            "server {\n    listen 443 ssl default_server;\n}\n",
+            &["192.168.1.50".to_string()]
+        )
+        .is_none());
+        // Tailscale CGNAT must never become an nginx listener: tailscaled
+        // already holds :443 there, and binding it would fail nginx outright.
+        assert!(is_cgnat("100.69.68.39"));
+        assert!(is_cgnat("100.127.255.1"));
+        assert!(!is_cgnat("100.128.0.1"));
+        assert!(!is_cgnat("192.168.1.50"));
+        assert!(!is_cgnat("10.44.0.1"));
     }
 
     #[test]
