@@ -1,6 +1,6 @@
 use super::RpcHandler;
 use crate::network::router as net_router;
-use anyhow::Result;
+use anyhow::{Context, Result};
 use archipelago_openwrt::{
     detect,
     router::Router,
@@ -87,8 +87,80 @@ impl RpcHandler {
             .or_else(|| saved.password.clone())
             .unwrap_or_default();
 
-        let router = Router::connect_password(&host, 22, &ssh_user, &ssh_password)?;
-        router.verify_openwrt()?;
+        // The SSH session is blocking (ssh2 over std TcpStream). Run it on the
+        // blocking pool: inline it used to park a tokio worker for the whole
+        // exchange, and against an unreachable router (the gateway that stayed
+        // behind after a node moved networks) the periodic dashboard poll
+        // stalled unrelated RPCs for tens of seconds — long enough that TOTP
+        // codes expired in flight (framework-pt, 2026-08-15).
+        let status = {
+            let host = host.clone();
+            let ssh_user = ssh_user.clone();
+            let ssh_password = ssh_password.clone();
+            tokio::task::spawn_blocking(move || -> Result<serde_json::Value> {
+                let router = Router::connect_password(&host, 22, &ssh_user, &ssh_password)?;
+                router.verify_openwrt()?;
+
+                // System info
+                let release = router
+                    .run_ok("cat /etc/openwrt_release")
+                    .unwrap_or_default();
+                let hostname = router
+                    .uci_get("system.@system[0].hostname")
+                    .unwrap_or_else(|_| "unknown".into());
+                let uptime_secs: u64 = router
+                    .run_ok("cat /proc/uptime")
+                    .unwrap_or_default()
+                    .split_whitespace()
+                    .next()
+                    .and_then(|s| s.split('.').next())
+                    .and_then(|s| s.parse().ok())
+                    .unwrap_or(0);
+
+                // TollGate — check via opkg (≤24.x) or binary presence (25.x apk-native).
+                // The service binary is /usr/bin/tollgate-wrt (per its init.d script),
+                // not /usr/bin/tollgate-module-basic-go — that's only the opkg/apk
+                // *package* name, never an on-disk filename.
+                let tollgate_installed = router
+                    .run("/usr/bin/opkg list-installed 2>/dev/null | grep -q '^tollgate-module-basic-go ' || \
+                          test -f /usr/bin/tollgate-wrt 2>/dev/null")
+                    .map(|(_, code)| code == 0)
+                    .unwrap_or(false);
+
+                let tollgate = if tollgate_installed {
+                    serde_json::json!({
+                        "installed": true,
+                        "enabled":       router.uci_get("tollgate.main.enabled").map(|v| v == "1").unwrap_or(false),
+                        "metric":        router.uci_get("tollgate.main.metric").unwrap_or_default(),
+                        "step_size_ms":  router.uci_get("tollgate.main.step_size").ok().and_then(|v| v.parse::<u64>().ok()).unwrap_or(0),
+                        "price_per_step":router.uci_get("tollgate.main.price_per_step").ok().and_then(|v| v.parse::<u64>().ok()).unwrap_or(0),
+                        "min_steps":     router.uci_get("tollgate.main.min_steps").ok().and_then(|v| v.parse::<u32>().ok()).unwrap_or(1),
+                        "currency":      router.uci_get("tollgate.main.currency").unwrap_or_default(),
+                        "mint_url":      router.uci_get("tollgate.main.mint_url").unwrap_or_default(),
+                    })
+                } else {
+                    serde_json::json!({ "installed": false })
+                };
+
+                // WiFi interfaces
+                let wifi_raw = router.run_ok("uci show wireless").unwrap_or_default();
+                let wifi_interfaces = parse_wifi_interfaces(&wifi_raw);
+
+                let wan_status = wan::get_wan_status(&router);
+
+                Ok(serde_json::json!({
+                    "host": host,
+                    "hostname": hostname,
+                    "uptime_secs": uptime_secs,
+                    "release": parse_release(&release),
+                    "tollgate": tollgate,
+                    "wifi_interfaces": wifi_interfaces,
+                    "wan": wan_status,
+                }))
+            })
+            .await
+            .context("openwrt status task")??
+        };
 
         // Persist the connection so other views (e.g. the Home dashboard's
         // Network tile) can poll `openwrt.get-status` with no params instead
@@ -107,62 +179,7 @@ impl RpcHandler {
             .await;
         }
 
-        // System info
-        let release = router
-            .run_ok("cat /etc/openwrt_release")
-            .unwrap_or_default();
-        let hostname = router
-            .uci_get("system.@system[0].hostname")
-            .unwrap_or_else(|_| "unknown".into());
-        let uptime_secs: u64 = router
-            .run_ok("cat /proc/uptime")
-            .unwrap_or_default()
-            .split_whitespace()
-            .next()
-            .and_then(|s| s.split('.').next())
-            .and_then(|s| s.parse().ok())
-            .unwrap_or(0);
-
-        // TollGate — check via opkg (≤24.x) or binary presence (25.x apk-native).
-        // The service binary is /usr/bin/tollgate-wrt (per its init.d script),
-        // not /usr/bin/tollgate-module-basic-go — that's only the opkg/apk
-        // *package* name, never an on-disk filename.
-        let tollgate_installed = router
-            .run("/usr/bin/opkg list-installed 2>/dev/null | grep -q '^tollgate-module-basic-go ' || \
-                  test -f /usr/bin/tollgate-wrt 2>/dev/null")
-            .map(|(_, code)| code == 0)
-            .unwrap_or(false);
-
-        let tollgate = if tollgate_installed {
-            serde_json::json!({
-                "installed": true,
-                "enabled":       router.uci_get("tollgate.main.enabled").map(|v| v == "1").unwrap_or(false),
-                "metric":        router.uci_get("tollgate.main.metric").unwrap_or_default(),
-                "step_size_ms":  router.uci_get("tollgate.main.step_size").ok().and_then(|v| v.parse::<u64>().ok()).unwrap_or(0),
-                "price_per_step":router.uci_get("tollgate.main.price_per_step").ok().and_then(|v| v.parse::<u64>().ok()).unwrap_or(0),
-                "min_steps":     router.uci_get("tollgate.main.min_steps").ok().and_then(|v| v.parse::<u32>().ok()).unwrap_or(1),
-                "currency":      router.uci_get("tollgate.main.currency").unwrap_or_default(),
-                "mint_url":      router.uci_get("tollgate.main.mint_url").unwrap_or_default(),
-            })
-        } else {
-            serde_json::json!({ "installed": false })
-        };
-
-        // WiFi interfaces
-        let wifi_raw = router.run_ok("uci show wireless").unwrap_or_default();
-        let wifi_interfaces = parse_wifi_interfaces(&wifi_raw);
-
-        let wan_status = wan::get_wan_status(&router);
-
-        Ok(serde_json::json!({
-            "host": host,
-            "hostname": hostname,
-            "uptime_secs": uptime_secs,
-            "release": parse_release(&release),
-            "tollgate": tollgate,
-            "wifi_interfaces": wifi_interfaces,
-            "wan": wan_status,
-        }))
+        Ok(status)
     }
 
     /// Provision TollGate on an OpenWrt router and create the "archipelago" SSID.

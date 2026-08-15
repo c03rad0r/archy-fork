@@ -13,10 +13,30 @@ pub struct Router {
 }
 
 impl Router {
+    /// Bounded TCP connect. The OS default connect timeout against an
+    /// unreachable RFC1918 address is ~2 minutes; a router that stayed
+    /// behind when its node moved networks turned every status poll into a
+    /// worker-thread hostage for that long, stalling unrelated RPCs
+    /// (framework-pt, 2026-08-15 — even TOTP codes expired in flight).
+    /// Read/write timeouts bound the session the same way once connected.
+    fn bounded_tcp(host: &str, port: u16) -> Result<TcpStream> {
+        use std::net::ToSocketAddrs;
+        let addr = format!("{}:{}", host, port);
+        let resolved = addr
+            .to_socket_addrs()
+            .with_context(|| format!("resolve {}", addr))?
+            .next()
+            .with_context(|| format!("no address for {}", addr))?;
+        let tcp = TcpStream::connect_timeout(&resolved, std::time::Duration::from_secs(5))
+            .with_context(|| format!("TCP connect to {}", addr))?;
+        tcp.set_read_timeout(Some(std::time::Duration::from_secs(30))).ok();
+        tcp.set_write_timeout(Some(std::time::Duration::from_secs(30))).ok();
+        Ok(tcp)
+    }
+
     /// Connect to an OpenWrt router via SSH using a private key.
     pub fn connect(host: &str, port: u16, user: &str, key_path: &Path) -> Result<Self> {
-        let addr = format!("{}:{}", host, port);
-        let tcp = TcpStream::connect(&addr).with_context(|| format!("TCP connect to {}", addr))?;
+        let tcp = Self::bounded_tcp(host, port)?;
 
         let mut session = Session::new().context("create SSH session")?;
         session.set_tcp_stream(tcp);
@@ -34,8 +54,7 @@ impl Router {
 
     /// Connect using a password (fallback for routers not yet provisioned with a key).
     pub fn connect_password(host: &str, port: u16, user: &str, password: &str) -> Result<Self> {
-        let addr = format!("{}:{}", host, port);
-        let tcp = TcpStream::connect(&addr).with_context(|| format!("TCP connect to {}", addr))?;
+        let tcp = Self::bounded_tcp(host, port)?;
 
         let mut session = Session::new().context("create SSH session")?;
         session.set_tcp_stream(tcp);
