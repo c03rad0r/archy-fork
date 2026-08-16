@@ -579,7 +579,7 @@
     "appGateRequireLogin": "Require dashboard login (app gate)",
     "appGateOnNote": "Every visit to this app must sign in with your node password first. The app's own login (if any) comes after.",
     "appGateOffNote": "This app is served directly with its own login. The node still fronts the connection (embedding fixes, retry page, Tor), but does not ask for your dashboard password.",
-    "appGateOffWarning": "Anyone who can reach this node — LAN, Tailscale, Tor — reaches this app's own login page. Only turn this off for apps with a real login of their own (Gitea, BTCPay).",
+    "appGateOffWarning": "Anyone who can reach this node — LAN, Tailscale, Tor, FIPS — reaches this app's own login page. Only turn this off for apps with a real login of their own (Gitea, BTCPay).",
     "appGateApply": "Apply",
     "runningVersion": "Running version",
     "selectVersion": "Version",
