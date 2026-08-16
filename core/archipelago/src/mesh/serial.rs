@@ -515,17 +515,33 @@ impl MeshcoreDevice {
 
 // ─── Device detection ───────────────────────────────────────────────────
 
-/// Candidate serial device paths to check on Linux.
-/// /dev/mesh-radio is a stable udev symlink (see 99-mesh-radio.rules).
-const SERIAL_CANDIDATES: &[&str] = &[
-    "/dev/mesh-radio",
-    "/dev/ttyUSB0",
-    "/dev/ttyUSB1",
-    "/dev/ttyUSB2",
-    "/dev/ttyACM0",
-    "/dev/ttyACM1",
-    "/dev/ttyACM2",
-];
+/// Enumerate candidate serial device paths on Linux.
+/// /dev/mesh-radio is a stable udev symlink (see 99-mesh-radio.rules) and is
+/// always listed first so it wins the alias dedup in `detect_serial_devices`.
+/// The rest is a live scan of /dev for ttyUSB*/ttyACM* nodes — the previous
+/// fixed ttyUSB0-2/ttyACM0-2 list made any radio that enumerated at index 3+
+/// (multi-adapter boxes, replug races) permanently invisible to detection.
+async fn serial_candidate_paths() -> Vec<String> {
+    let mut candidates = vec!["/dev/mesh-radio".to_string()];
+    let mut ttys: Vec<(u32, String)> = Vec::new();
+    if let Ok(mut dir) = tokio::fs::read_dir("/dev").await {
+        while let Ok(Some(entry)) = dir.next_entry().await {
+            let name = entry.file_name().to_string_lossy().to_string();
+            for (group, prefix) in [(0u32, "ttyUSB"), (1 << 16, "ttyACM")] {
+                if let Some(num) = name.strip_prefix(prefix) {
+                    if let Ok(n) = num.parse::<u32>() {
+                        // ttyUSB* before ttyACM*, each numerically ordered, so
+                        // probe order stays deterministic across boots.
+                        ttys.push((group | n, format!("/dev/{name}")));
+                    }
+                }
+            }
+        }
+    }
+    ttys.sort();
+    candidates.extend(ttys.into_iter().map(|(_, p)| p));
+    candidates
+}
 
 const SKIP_SERIAL_MODEL_SUBSTRINGS: &[&str] = &["Sierra_Wireless", "Z-Wave", "Zooz"];
 
@@ -570,14 +586,15 @@ fn likely_non_mesh_serial_device(path: &str) -> bool {
 /// (and DTR/RTS-reset) the exact port the live session was mid-conversation
 /// with — a continuous, UI-driven reset loop that only ran while that view
 /// was open (matches the reported "stops when I leave, resumes when I come
-/// back"). SERIAL_CANDIDATES lists `/dev/mesh-radio` first, so it wins the
+/// back"). `serial_candidate_paths` lists `/dev/mesh-radio` first, so it wins the
 /// dedup and is what's reported when both alias and target are present.
 /// (Independently re-discovered and fixed on main 2026-07-26 — both sides
 /// of the 2026-07-28 merge carried an equivalent implementation.)
 pub async fn detect_serial_devices() -> Vec<String> {
     let mut devices = Vec::new();
     let mut seen_real_paths = std::collections::HashSet::new();
-    for path in SERIAL_CANDIDATES {
+    for path in serial_candidate_paths().await {
+        let path = path.as_str();
         if tokio::fs::metadata(path).await.is_ok() {
             if likely_non_mesh_serial_device(path) {
                 debug!(path = %path, "Skipping known non-mesh serial device");

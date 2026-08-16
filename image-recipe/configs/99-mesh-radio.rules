@@ -7,3 +7,8 @@ SUBSYSTEM=="tty", ATTRS{idVendor}=="1a86", ATTRS{idProduct}=="7523", SYMLINK+="m
 SUBSYSTEM=="tty", ATTRS{idVendor}=="0403", ATTRS{idProduct}=="6001", SYMLINK+="mesh-radio", MODE="0660", GROUP="dialout"
 SUBSYSTEM=="tty", ATTRS{idVendor}=="239a", KERNEL=="ttyACM[0-9]*", SYMLINK+="mesh-radio", MODE="0660", GROUP="dialout"
 SUBSYSTEM=="tty", ATTRS{idVendor}=="2e8a", KERNEL=="ttyACM[0-9]*", SYMLINK+="mesh-radio", MODE="0660", GROUP="dialout"
+# Espressif native-USB (ESP32-S2/S3/C3 "USB JTAG/serial debug unit", e.g.
+# Heltec V3 / T-Deck class RNode boards plugged in via native USB). Without
+# this a replugged radio has no stable alias and a persisted /dev/mesh-radio
+# device_path dangles forever (observed live on a fleet node 2026-08-16).
+SUBSYSTEM=="tty", ATTRS{idVendor}=="303a", KERNEL=="ttyACM[0-9]*", SYMLINK+="mesh-radio", MODE="0660", GROUP="dialout"

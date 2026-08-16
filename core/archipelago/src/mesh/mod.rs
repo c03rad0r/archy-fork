@@ -531,6 +531,18 @@ pub async fn save_config(data_dir: &Path, config: &MeshConfig) -> Result<()> {
     Ok(())
 }
 
+/// Two /dev paths refer to the same serial device if their symlink-resolved
+/// targets match (e.g. `/dev/mesh-radio` vs the `/dev/ttyUSBn` it points at).
+/// Paths that fail to resolve fall back to a plain string comparison.
+async fn same_serial_device(a: &str, b: &str) -> bool {
+    if a == b {
+        return true;
+    }
+    let ra = fs::canonicalize(a).await.unwrap_or_else(|_| PathBuf::from(a));
+    let rb = fs::canonicalize(b).await.unwrap_or_else(|_| PathBuf::from(b));
+    ra == rb
+}
+
 pub async fn load_ignored_radio_contacts(data_dir: &Path) -> Vec<String> {
     let path = data_dir.join(MESH_IGNORED_RADIO_FILE);
     if !path.exists() {
@@ -2267,6 +2279,30 @@ impl MeshService {
     /// Update mesh configuration.
     pub async fn configure(&mut self, config: MeshConfig) -> Result<()> {
         save_config(&self.data_dir, &config).await?;
+
+        // An operator-set RNode serial-port override (rnode-rf-settings.json)
+        // outranks `device_path` when the Reticulum session opens the radio.
+        // When a *different* device path is being configured (hot-swap, or
+        // "Keep As Is" on a newly detected radio), a stale override pinned to
+        // the old port would silently veto the choice the user just made —
+        // clear it so the explicit device selection wins. Same-device aliases
+        // (/dev/mesh-radio vs its ttyUSBn target) are left alone.
+        if let Some(new_path) = config.device_path.as_deref() {
+            let mut rf = rnode_settings::RNodeRfSettings::load(&self.data_dir).await;
+            if let Some(port) = rf.port.clone() {
+                if !same_serial_device(&port, new_path).await {
+                    info!(
+                        old_port = %port,
+                        new_path = %new_path,
+                        "Clearing stale RNode serial-port override — configured device path changed"
+                    );
+                    rf.port = None;
+                    if let Err(e) = rf.save(&self.data_dir).await {
+                        warn!("Failed to clear stale RNode port override: {e}");
+                    }
+                }
+            }
+        }
 
         let was_enabled = self.config.enabled;
         let needs_session_restart = session_config_changed(&self.config, &config);
