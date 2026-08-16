@@ -553,6 +553,15 @@ impl Server {
                 // heavy load) don't fire a burst of catch-up ticks back-to-back,
                 // just resume the cadence from now.
                 interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+                // Peers that never list us back would otherwise be re-notified
+                // every 90s forever (e.g. they hold us at Observer and their
+                // exported hints are Trusted-only, so `they_list_us` can never
+                // become true). Back off per peer, doubling toward a daily
+                // re-assert; reset the moment they do list us.
+                let mut notify_backoff: std::collections::HashMap<
+                    String,
+                    (u32, tokio::time::Instant),
+                > = std::collections::HashMap::new();
                 loop {
                     interval.tick().await;
                     // Zero federated nodes is a clean no-op: nothing is read
@@ -568,21 +577,27 @@ impl Server {
                         }
                     };
                     let (snap, _) = state.get_snapshot().await;
-                    let local_did =
-                        match crate::identity::did_key_from_pubkey_hex(&snap.server_info.pubkey) {
-                            Ok(d) => d,
-                            Err(_) => continue,
-                        };
                     let identity_dir = data_dir.join("identity");
                     let node_identity =
                         match crate::identity::NodeIdentity::load_or_create(&identity_dir).await {
                             Ok(id) => id,
                             Err(_) => continue,
                         };
+                    // Advertise the SAME key we sign with. server_info.pubkey
+                    // is only seeded at boot; onboarding/seed-restore rewrite
+                    // identity/node_key on disk without touching the snapshot,
+                    // and a peer-joined that advertises the stale boot key
+                    // while signing with the new seed-derived key is
+                    // deterministically rejected ("Invalid signature") by
+                    // every receiver, once per tick, forever (2026-08-16).
+                    let local_pubkey = node_identity.pubkey_hex();
+                    let local_did = match crate::identity::did_key_from_pubkey_hex(&local_pubkey) {
+                        Ok(d) => d,
+                        Err(_) => continue,
+                    };
                     // Our own identity, for re-asserting membership to any peer
                     // that doesn't list us back (asymmetry self-heal, below).
                     let local_onion = snap.server_info.tor_address.clone().unwrap_or_default();
-                    let local_pubkey = snap.server_info.pubkey.clone();
                     let local_name = snap.server_info.name.clone();
                     let local_fips_npub = crate::identity::fips_npub(&identity_dir)
                         .await
@@ -618,24 +633,44 @@ impl Server {
                                 // re-add (the "peer missing everywhere" case).
                                 let they_list_us =
                                     state.federated_peers.iter().any(|h| h.did == local_did);
-                                if !they_list_us && !local_onion.is_empty() {
-                                    crate::federation::notify_join(
-                                        &node.onion,
-                                        node.fips_npub.as_deref(),
-                                        &local_did,
-                                        &local_onion,
-                                        &local_pubkey,
-                                        local_fips_npub.as_deref(),
-                                        local_name.as_deref(),
-                                        // Re-assert at the level WE hold for
-                                        // this peer; no invite token on heal.
-                                        None,
-                                        node.trust_level,
-                                        |b| node_identity.sign(b),
-                                    )
-                                    .await
-                                    .ok();
-                                    healed += 1;
+                                if they_list_us {
+                                    notify_backoff.remove(&node.did);
+                                } else if !local_onion.is_empty() {
+                                    let now = tokio::time::Instant::now();
+                                    let due = notify_backoff
+                                        .get(&node.did)
+                                        .map(|(_, next)| *next <= now)
+                                        .unwrap_or(true);
+                                    if due {
+                                        crate::federation::notify_join(
+                                            &node.onion,
+                                            node.fips_npub.as_deref(),
+                                            &local_did,
+                                            &local_onion,
+                                            &local_pubkey,
+                                            local_fips_npub.as_deref(),
+                                            local_name.as_deref(),
+                                            // Re-assert at the level WE hold for
+                                            // this peer; no invite token on heal.
+                                            None,
+                                            node.trust_level,
+                                            |b| node_identity.sign(b),
+                                        )
+                                        .await
+                                        .ok();
+                                        healed += 1;
+                                        let attempts = notify_backoff
+                                            .get(&node.did)
+                                            .map(|(a, _)| *a)
+                                            .unwrap_or(0)
+                                            + 1;
+                                        let delay =
+                                            (90u64 << attempts.min(10)).min(86_400);
+                                        notify_backoff.insert(
+                                            node.did.clone(),
+                                            (attempts, now + Duration::from_secs(delay)),
+                                        );
+                                    }
                                 }
                             }
                             Err(e) => {

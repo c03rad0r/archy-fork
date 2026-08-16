@@ -696,6 +696,22 @@ impl RpcHandler {
             anyhow::bail!("Refusing to peer with self");
         }
 
+        // Bind the DID to the advertised pubkey. Without this the signature
+        // check below is self-referential (the caller signs over a pubkey it
+        // also supplies), so a consistent-but-unrelated keypair would pass.
+        // The DID-rotation handler already enforces the same invariant.
+        match identity::did_key_from_pubkey_hex(pubkey) {
+            Ok(derived) if derived == did => {}
+            Ok(derived) => {
+                tracing::warn!(peer_did = %did, derived_did = %derived, "Rejected peer-joined: DID does not match pubkey");
+                anyhow::bail!("DID does not match pubkey");
+            }
+            Err(e) => {
+                tracing::warn!(peer_did = %did, error = %e, "Rejected peer-joined: invalid pubkey");
+                anyhow::bail!("Invalid pubkey");
+            }
+        }
+
         // Verify ed25519 signature to prevent federation spoofing (H2 security fix)
         let signature = params.get("signature").and_then(|v| v.as_str());
         match signature {
@@ -703,8 +719,14 @@ impl RpcHandler {
                 let sign_data = format!("peer-joined:{}:{}:{}", did, onion, pubkey);
                 match identity::NodeIdentity::verify(pubkey, sign_data.as_bytes(), sig) {
                     Ok(true) => {}
-                    _ => {
+                    Ok(false) => {
                         tracing::warn!(peer_did = %did, "Rejected peer-joined: invalid signature");
+                        anyhow::bail!("Invalid signature");
+                    }
+                    Err(e) => {
+                        // Malformed hex / wrong length — distinguish from a
+                        // genuine mismatch so the log tells us which it was.
+                        tracing::warn!(peer_did = %did, error = %e, "Rejected peer-joined: malformed signature");
                         anyhow::bail!("Invalid signature");
                     }
                 }

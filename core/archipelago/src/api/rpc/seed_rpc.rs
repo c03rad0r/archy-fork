@@ -176,6 +176,29 @@ pub(in crate::api::rpc) async fn restore_node_identity_from_words(
 }
 
 impl RpcHandler {
+    /// Push the on-disk node identity's pubkey into the live `server_info`
+    /// snapshot. `seed.generate` / `seed.restore` rewrite `identity/node_key`,
+    /// but `server_info.pubkey` was only seeded at boot — until the next
+    /// restart every federation peer-joined advertised the stale boot key
+    /// while signing with the new seed-derived key, so receivers rejected it
+    /// ("Invalid signature") on every 90s heal tick (2026-08-16). Mirrors the
+    /// DID-rotation handler, which already does this refresh.
+    async fn refresh_server_pubkey_from_disk(&self) {
+        let identity_dir = self.config.data_dir.join("identity");
+        let identity = match crate::identity::NodeIdentity::load_or_create(&identity_dir).await {
+            Ok(id) => id,
+            Err(e) => {
+                tracing::warn!(error = %e, "Could not reload node identity after seed write — server_info.pubkey stays stale until restart");
+                return;
+            }
+        };
+        let (mut data, _) = self.state_manager.get_snapshot().await;
+        if data.server_info.pubkey != identity.pubkey_hex() {
+            data.server_info.pubkey = identity.pubkey_hex();
+            self.state_manager.update_data(data).await;
+        }
+    }
+
     /// Generate a new 24-word BIP-39 mnemonic, derive and persist node keys.
     /// Returns the words for the user to write down.
     pub(in crate::api::rpc) async fn handle_seed_generate(&self) -> Result<serde_json::Value> {
@@ -241,6 +264,10 @@ impl RpcHandler {
 
         // Initialize identity index at 0.
         crate::seed::save_identity_index(&self.config.data_dir, 0).await?;
+
+        // The node key on disk just changed — keep the live snapshot's pubkey
+        // in lockstep (see refresh_server_pubkey_from_disk for why).
+        self.refresh_server_pubkey_from_disk().await;
 
         // fips_key is now on disk — auto-activate FIPS so the user doesn't
         // have to hit a manual Start button. Detached task;
@@ -350,7 +377,11 @@ impl RpcHandler {
         )
         .context("Invalid words array")?;
 
-        restore_node_identity_from_words(&self.config.data_dir, &self.auth_manager, &words).await
+        let result =
+            restore_node_identity_from_words(&self.config.data_dir, &self.auth_manager, &words)
+                .await?;
+        self.refresh_server_pubkey_from_disk().await;
+        Ok(result)
     }
 
     /// Encrypt and save the mnemonic to disk for convenience backup.

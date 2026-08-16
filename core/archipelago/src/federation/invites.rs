@@ -326,6 +326,26 @@ pub(crate) async fn notify_join(
             .await;
             match res {
                 Ok((resp, transport)) if resp.status().is_success() => {
+                    // A JSON-RPC-level rejection still arrives as HTTP 200
+                    // (the RPC layer returns errors in-band), so checking the
+                    // status alone logged "delivered" for calls the peer had
+                    // just rejected. Read the body: an in-band error is
+                    // terminal — the signed payload is deterministic, so
+                    // retrying identical bytes can never succeed.
+                    let body = resp.text().await.unwrap_or_default();
+                    let rpc_err = serde_json::from_str::<serde_json::Value>(&body)
+                        .ok()
+                        .and_then(|v| v.get("error").cloned())
+                        .filter(|e| !e.is_null());
+                    if let Some(err) = rpc_err {
+                        tracing::warn!(
+                            attempt,
+                            transport = %transport,
+                            error = %err,
+                            "peer-joined notification rejected by peer — giving up (retrying identical payload cannot succeed)"
+                        );
+                        return;
+                    }
                     tracing::info!(
                         attempt,
                         transport = %transport,
