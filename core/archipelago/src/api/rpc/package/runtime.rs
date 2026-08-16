@@ -1405,6 +1405,14 @@ async fn repair_before_package_start(container_name: &str) {
         "nginx-proxy-manager" => repair_nginx_proxy_manager_container().await,
         _ => {}
     }
+    // Reap this app's ghost containers before anything tries to start it.
+    // A ghost (process tree alive, podman record gone) still owns the
+    // published port and the data-dir file locks, so the replacement either
+    // fails to bind (`address already in use`) or starts and dies on the
+    // lock — and `Restart=always` loops it there forever. Ordered before
+    // the port cleanup below: killing the owner is what actually frees the
+    // port, and the port sweep alone cannot tell a ghost from a live app.
+    crate::container::ghost_reaper::reap_for_app(container_name).await;
     cleanup_runtime_host_ports(container_name).await;
 }
 

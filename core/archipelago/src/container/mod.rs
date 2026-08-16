@@ -7,6 +7,7 @@ pub mod data_manager;
 pub mod dev_orchestrator;
 pub mod docker_packages;
 pub mod filebrowser;
+pub mod ghost_reaper;
 pub mod hooks;
 pub mod image_policy;
 pub mod image_versions;

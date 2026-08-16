@@ -312,10 +312,32 @@ function launchApp() {
 }
 
 
+/**
+ * Hold the just-clicked action until the node's own state confirms it picked
+ * the work up (or we give up waiting).
+ *
+ * The lifecycle RPCs return in milliseconds and do the real work in the
+ * background, so clearing `pendingAction` on the promise left the buttons idle
+ * while the app was still down — the operator sees a flash and assumes the
+ * click did nothing. The hero section keeps the spinner running off the
+ * backend's transitional state; this only has to bridge the gap until that
+ * first state push lands. The timeout means a node that never reports back
+ * still releases the controls instead of wedging them.
+ */
+async function holdUntilBackendPicksUp(timeoutMs = 12000) {
+  const started = Date.now()
+  while (Date.now() - started < timeoutMs) {
+    const s = pkg.value?.state
+    if (s === 'starting' || s === 'stopping' || s === 'restarting' || s === 'updating') return
+    await new Promise((r) => setTimeout(r, 250))
+  }
+}
+
 async function startApp() {
   pendingAction.value = 'start'
   try {
     await store.startPackage(appId.value)
+    await holdUntilBackendPicksUp()
   } catch (err) {
     showActionError(`Failed to start: ${err instanceof Error ? err.message : 'Unknown error'}`)
   } finally {
@@ -330,6 +352,7 @@ async function stopApp() {
     // Stopping the app can take its admin credentials offline — invalidate
     // rather than show a stale "healthy" credentials card (T-02-12).
     credentialsResource.invalidate()
+    await holdUntilBackendPicksUp()
   } catch (err) {
     showActionError(`Failed to stop: ${err instanceof Error ? err.message : 'Unknown error'}`)
   } finally {
@@ -344,6 +367,7 @@ async function restartApp() {
     // A restart can rotate credentials/admin URLs — invalidate so the next
     // read is fresh rather than the pre-restart cache (T-02-12).
     credentialsResource.invalidate()
+    await holdUntilBackendPicksUp()
   } catch (err) {
     showActionError(`Failed to restart: ${err instanceof Error ? err.message : 'Unknown error'}`)
   } finally {

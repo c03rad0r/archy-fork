@@ -35,10 +35,14 @@
           :key="`top-${action.key}`"
           type="button"
           :disabled="controlsDisabled"
-          :class="['app-detail-action-btn px-4 py-2.5 rounded-lg text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed', action.class]"
+          :class="['app-detail-action-btn px-4 py-2.5 rounded-lg text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed inline-flex items-center justify-center gap-2', action.class]"
           @click="emitAction(action.emit)"
         >
-          {{ action.label }}
+          <svg v-if="action.busy" class="w-4 h-4 animate-spin shrink-0" fill="none" viewBox="0 0 24 24" aria-hidden="true">
+            <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+            <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+          </svg>
+          <span>{{ action.label }}</span>
         </button>
       </div>
     </div>
@@ -57,13 +61,17 @@
         type="button"
         :disabled="controlsDisabled"
         :class="[
-          'mobile-card-action rounded-lg text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed',
+          'mobile-card-action rounded-lg text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed inline-flex items-center justify-center gap-2',
           action.class,
           actionItems.length === 1 || action.full ? 'col-span-2' : '',
         ]"
         @click="emitAction(action.emit)"
       >
-        {{ action.label }}
+        <svg v-if="action.busy" class="w-4 h-4 animate-spin shrink-0" fill="none" viewBox="0 0 24 24" aria-hidden="true">
+          <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+          <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+        </svg>
+        <span>{{ action.label }}</span>
       </button>
     </div>
   </div>
@@ -90,7 +98,39 @@ const props = defineProps<{
 }>()
 
 const icon = computed(() => resolveAppIcon(props.pkg.manifest?.id || props.appId, props.pkg))
-const controlsDisabled = computed(() => props.pendingAction !== null || props.pkg.state === 'updating')
+
+// The lifecycle RPCs are fire-and-forget: package.restart returns
+// {"status":"restarting"} in milliseconds and does the real work in the
+// background. Keying the button purely off the RPC promise made
+// "Restarting..." flash and vanish while the app was still down, which reads
+// as "nothing happened" (or worse, "it's broken"). The backend's own state —
+// pushed over the WebSocket — is what actually says when the app is back, so
+// the busy state is driven from there, with `pendingAction` covering only the
+// gap before the first state push arrives.
+const backendBusy = computed(() => {
+  const s = props.pkg.state
+  if (s === 'starting' || s === 'stopping' || s === 'restarting' || s === 'updating') return true
+  // Container is up but the app hasn't passed its health check yet — still
+  // not usable, so keep the spinner rather than declaring victory early.
+  return s === 'running' && props.pkg.health === 'starting'
+})
+
+const isBusy = computed(() => props.pendingAction !== null || backendBusy.value)
+const controlsDisabled = computed(() => isBusy.value || props.pkg.state === 'updating')
+
+// What the node is doing right now, for the button label. Prefers the
+// operator's just-clicked action so the label is instant, then falls back to
+// whatever the backend reports (covers a restart started from another device).
+const busyLabel = computed(() => {
+  const s = props.pkg.state
+  if (props.pendingAction === 'restart' || s === 'restarting') return 'Restarting…'
+  if (props.pendingAction === 'start' || s === 'starting') return 'Starting…'
+  if (props.pendingAction === 'stop' || s === 'stopping') return 'Stopping…'
+  if (props.pendingAction === 'update' || s === 'updating') return 'Updating…'
+  if (props.pendingAction === 'uninstall') return 'Uninstalling…'
+  if (s === 'running' && props.pkg.health === 'starting') return 'Starting…'
+  return ''
+})
 
 const emit = defineEmits<{
   launch: []
@@ -105,7 +145,14 @@ const emit = defineEmits<{
 type ActionEmit = 'launch' | 'start' | 'stop' | 'restart' | 'uninstall' | 'update' | 'channels'
 
 const actionItems = computed(() => {
-  const actions: Array<{ key: string; emit: ActionEmit; label: string; class: string; full?: boolean }> = []
+  const actions: Array<{
+    key: string
+    emit: ActionEmit
+    label: string
+    class: string
+    full?: boolean
+    busy?: boolean
+  }> = []
 
   if (props.pkg['available-update'] && props.pkg.state !== 'updating') {
     actions.push({
@@ -157,7 +204,11 @@ const actionItems = computed(() => {
     actions.push({
       key: 'restart',
       emit: 'restart',
-      label: props.pendingAction === 'restart' ? 'Restarting...' : t('common.restart'),
+      // While anything is in flight this button carries the status for the
+      // whole card (it is the one action always present), so the operator
+      // sees a spinner + "Restarting…" for as long as the node is working.
+      label: isBusy.value ? busyLabel.value || t('common.restart') : t('common.restart'),
+      busy: isBusy.value,
       class: 'glass-button',
     })
 

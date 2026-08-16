@@ -221,6 +221,12 @@ impl BootReconciler {
     }
 
     async fn tick(&self) {
+        // Sweep ghost containers first: a process tree podman has forgotten
+        // still holds its app's ports and data locks, so reconcile would keep
+        // restarting that app into the same wall (752 restarts on a fleet
+        // node, 2026-08-10). Nothing else in the stack can see them —
+        // every podman-level stop/rm misses a container podman lost.
+        crate::container::ghost_reaper::reap_all().await;
         let report = self.orchestrator.reconcile_existing().await;
         Self::log_report(&report);
     }
