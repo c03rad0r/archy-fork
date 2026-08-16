@@ -91,6 +91,38 @@
       </div>
     </div>
 
+    <!-- App gate card: per-app login-challenge toggle. Shown only for apps
+         the gate actually fronts (has gate-claimed ports). -->
+    <div v-if="gatePorts.length" class="glass-card p-6">
+      <h3 class="text-lg font-bold text-white mb-4">{{ t('appDetails.appGate') }}</h3>
+      <div class="space-y-3">
+        <label class="flex items-center justify-between gap-3 cursor-pointer">
+          <span class="text-white/80 text-sm">{{ t('appDetails.appGateRequireLogin') }}</span>
+          <input
+            type="checkbox"
+            v-model="gateEnabled"
+            :disabled="gateBusy"
+            class="h-4 w-4 accent-orange-500"
+          />
+        </label>
+        <p class="text-white/40 text-xs leading-relaxed">
+          {{ gateEnabled ? t('appDetails.appGateOnNote') : t('appDetails.appGateOffNote') }}
+        </p>
+        <div v-if="!gateEnabled" class="rounded-lg border border-orange-400/40 bg-orange-500/10 p-3">
+          <p class="text-orange-200 text-xs leading-relaxed">⚠️ {{ t('appDetails.appGateOffWarning') }}</p>
+        </div>
+        <button
+          type="button"
+          class="w-full glass-button glass-button-warning rounded-lg disabled:opacity-50 text-sm font-medium py-2"
+          :disabled="gateBusy || !gateDirty"
+          @click="applyGate"
+        >
+          {{ gateBusy ? t('appDetails.applyingVersion') : t('appDetails.appGateApply') }}
+        </button>
+        <p v-if="gateError" class="text-red-300 text-xs">{{ gateError }}</p>
+      </div>
+    </div>
+
     <!-- Fedimint Services Card -->
     <div v-if="packageKey === 'fedimint'" class="glass-card p-6">
       <h3 class="text-lg font-bold text-white mb-4">{{ t('appDetails.services') }}</h3>
@@ -250,7 +282,7 @@
 import { computed, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import type { AppCredentialsResponse } from '@/types/api'
-import { rpcClient, type PackageVersionsResponse, type CatalogVersionInfo } from '../../api/rpc-client'
+import { rpcClient, type PackageVersionsResponse, type CatalogVersionInfo, type AppGatePortStatus } from '../../api/rpc-client'
 import { displayVersion } from '@/utils/version'
 
 const { t } = useI18n()
@@ -406,10 +438,51 @@ function cancelDowngrade() {
   if (info) selectedVersion.value = pickSelection(info)
 }
 
+// ---- App gate (per-app login-challenge toggle) -----------------------------
+const gatePorts = ref<AppGatePortStatus[]>([])
+const gateEnabled = ref(true)
+const gateBusy = ref(false)
+const gateError = ref('')
+
+const gateDirty = computed(() => {
+  const current = gatePorts.value[0]?.gate_enabled
+  return current !== undefined && gateEnabled.value !== current
+})
+
+async function loadGate(appId: string) {
+  gatePorts.value = []
+  gateError.value = ''
+  try {
+    const status = await rpcClient.getAppGateStatus()
+    gatePorts.value = status.gated.filter((g) => g.app_id === appId)
+    const first = gatePorts.value[0]
+    if (first) gateEnabled.value = first.gate_enabled
+  } catch (err) {
+    if (import.meta.env.DEV) console.warn('[AppSidebar] getAppGateStatus failed:', err)
+  }
+}
+
+async function applyGate() {
+  if (!props.packageKey || !gatePorts.value.length) return
+  gateBusy.value = true
+  gateError.value = ''
+  try {
+    await rpcClient.setAppGate(props.packageKey, gateEnabled.value)
+    await loadGate(props.packageKey)
+  } catch (err: unknown) {
+    gateError.value = err instanceof Error ? err.message : String(err)
+  } finally {
+    gateBusy.value = false
+  }
+}
+
 watch(
   () => props.packageKey,
   (key) => {
-    if (key) void loadVersions(key)
+    if (key) {
+      void loadVersions(key)
+      void loadGate(key)
+    }
   },
   { immediate: true },
 )

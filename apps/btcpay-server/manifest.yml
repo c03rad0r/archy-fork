@@ -46,7 +46,17 @@ app:
       container: 49392
       protocol: tcp
       bind: 127.0.0.1
-      auth: gated
+      # open, not gated: BTCPay has its own account system, and its public
+      # surfaces (checkout/invoice pages, payment buttons, webhooks) must be
+      # reachable by anonymous payers and machines — a dashboard login in
+      # front of a checkout link breaks the product. The gate still fronts
+      # the port; the operator can force the dashboard login back on from
+      # Settings → BTCPay Server → Access control.
+      auth: open
+      auth_rationale: >-
+        BTCPay enforces its own login for administration, and its checkout,
+        invoice and webhook endpoints are designed to be reached by
+        anonymous payers and payment processors.
 
   volumes:
     - type: bind

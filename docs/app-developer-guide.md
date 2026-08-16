@@ -152,6 +152,21 @@ know the mechanics:
   policy, only its framing policy. You do not need a bespoke reverse proxy,
   header patches, or app config to be embeddable.
 
+### Apps with their own login: `auth: open`
+
+If your app carries a complete account system of its own — and especially if
+non-browser clients must reach it (git over HTTP, mobile apps, payment
+webhooks) — declare its gated port `auth: open` with an `auth_rationale`
+instead of `auth: gated`. The daemon still fronts the port exactly like a
+gated one (loopback pin, external binds, frame-header fixes, retry page,
+Tor onion), but serves it without the dashboard-login challenge, so your
+app's own authentication is the one users and API clients meet. Gitea and
+BTCPay Server ship this way. The node operator can override your default in
+either direction at runtime (Settings → app → Access control), so never
+treat the gate as your app's authorization layer — enforce your own auth on
+every sensitive route regardless. See “Ports & the app gate” in
+[`app-manifest-spec.md`](app-manifest-spec.md).
+
 Set `metadata.launch.open_in_new_tab: true` only when embedding is broken by
 things headers can't fix — the app frame-busts in JavaScript, requires being
 the top-level origin (OAuth redirect flows, WebAuthn), or sets

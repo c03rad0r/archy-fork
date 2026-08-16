@@ -489,6 +489,7 @@ impl RpcHandler {
 
             // System monitoring
             "security.app-gate-status" => self.handle_app_gate_status().await,
+            "security.set-app-gate" => self.handle_set_app_gate(params).await,
             "system.get-hostname" => self.handle_system_get_hostname().await,
             "system.stats" => self.handle_system_stats().await,
             "system.processes" => self.handle_system_processes().await,

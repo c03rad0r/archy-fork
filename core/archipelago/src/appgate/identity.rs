@@ -40,6 +40,15 @@ pub struct GatedPort {
     /// companion UIs proxy that cookie to the daemon's authenticated
     /// endpoints; for every other app the gate strips its own credential.
     pub session_passthrough: bool,
+    /// Does the gate challenge for the dashboard login on this port?
+    ///
+    /// Default comes from the manifest (`auth: gated`/undeclared → true,
+    /// `auth: open` → false); the operator's runtime override
+    /// (`app_gate_config`, Settings → app → App gate) wins over both.
+    /// False does NOT release the port — the gate keeps binding and
+    /// proxying (frame-header fixes, app-down page, Tor upstream); it just
+    /// forwards every request to the app's own authentication.
+    pub auth_enabled: bool,
 }
 
 /// A port deliberately left unauthenticated, and the manifest's stated reason.
@@ -187,6 +196,18 @@ pub fn build_port_map() -> PortMap {
         }
     }
 
+    // The operator's runtime override wins over the manifest default, in
+    // both directions: un-gate an app that fronts its own login, or force
+    // the challenge back onto an `auth: open` port. Overrides only toggle
+    // the challenge on gate-fronted ports — they never bind or release
+    // anything, so a stale override cannot expose or strand a port.
+    let overrides = crate::container::app_gate_config::all_gate_overrides();
+    for gp in map.gated.values_mut() {
+        if let Some(enabled) = overrides.get(&gp.app_id) {
+            gp.auth_enabled = *enabled;
+        }
+    }
+
     map.exempt.sort_by_key(|e| e.port);
     map
 }
@@ -229,7 +250,10 @@ fn classify_manifest(manifest: &AppManifest, map: &mut PortMap) {
             // Explicit opt-in: the app is on loopback and the daemon
             // owns the external addresses. This is the ONLY way a
             // port gets bound by the gate, regardless of `bind`.
-            PortAuth::Gated => {
+            // `open` is the same takeover with the login challenge
+            // defaulted off — the app fronts its own authentication
+            // (rationale-required, see PortAuth::Open).
+            PortAuth::Gated | PortAuth::Open => {
                 map.gated.insert(
                     port.host,
                     GatedPort {
@@ -239,6 +263,7 @@ fn classify_manifest(manifest: &AppManifest, map: &mut PortMap) {
                         icon: icon.clone(),
                         declared: true,
                         session_passthrough: port.session_passthrough,
+                        auth_enabled: port.auth_policy() == PortAuth::Gated,
                     },
                 );
             }
@@ -289,6 +314,10 @@ fn classify_manifest(manifest: &AppManifest, map: &mut PortMap) {
                         // An undeclared port never gets the node session —
                         // passthrough is an explicit manifest opt-in only.
                         session_passthrough: false,
+                        // Undeclared ports are challenged wherever the gate
+                        // can stand: reporting-and-protecting is the safe
+                        // default (operator override still applies below).
+                        auth_enabled: true,
                     },
                 );
             }

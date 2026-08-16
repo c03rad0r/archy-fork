@@ -44,6 +44,24 @@ export interface PackageVersionsResponse {
   versions: CatalogVersionInfo[]
 }
 
+export interface AppGatePortStatus {
+  port: number
+  app_id: string
+  app_name: string
+  /** Login challenge active right now (manifest default + operator override, resolved). */
+  gate_enabled: boolean
+  /** Operator override on record; null/undefined = manifest default applies. */
+  override?: boolean | null
+}
+
+export interface AppGateStatusResponse {
+  fully_enforced: boolean
+  claimed: [number, string][]
+  unprotected: { port: number; app_id: string; app_name: string; reason: string }[]
+  gated: AppGatePortStatus[]
+  exempt: { port: number; app_id: string; protocol: string; rationale: string }[]
+}
+
 export interface SetPackageConfigResponse {
   status: 'ok' | 'confirm_required'
   id: string
@@ -755,6 +773,29 @@ class RPCClient {
       method: 'package.set-config',
       params: { id, ...opts },
       timeout: 600000,
+    })
+  }
+
+  // What the app gate enforces: which app ports are fronted, whether each
+  // one's login challenge is active, exemptions with their rationale.
+  async getAppGateStatus(): Promise<AppGateStatusResponse> {
+    return this.call({
+      method: 'security.app-gate-status',
+      timeout: 15000,
+    })
+  }
+
+  // Per-app gate toggle. enabled=true forces the login challenge, false
+  // serves the app on its own authentication, null clears the override so
+  // the manifest default applies. Live on the next request — no restart.
+  async setAppGate(
+    id: string,
+    enabled: boolean | null,
+  ): Promise<{ id: string; override: boolean | null; ports: { port: number; gate_enabled: boolean }[] }> {
+    return this.call({
+      method: 'security.set-app-gate',
+      params: { id, enabled },
+      timeout: 15000,
     })
   }
 

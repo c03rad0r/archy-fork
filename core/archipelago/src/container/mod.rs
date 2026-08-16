@@ -1,4 +1,5 @@
 pub mod app_catalog;
+pub mod app_gate_config;
 pub mod bitcoin_ui;
 pub mod boot_reconciler;
 pub mod companion;

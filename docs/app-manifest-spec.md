@@ -29,7 +29,7 @@ reusable manifest primitive.
 | `dependencies` | list | — | `- storage: "10GB"`, `- { app_id: bitcoin, version: … }`, or a bare string. |
 | `resources` | ResourceLimits | — | `cpu_limit` (int), `memory_limit` (e.g. `"512m"`), `disk_limit`. |
 | `security` | SecurityPolicy | — | See [Security](#security). |
-| `ports` | list of PortMapping | — | `- { host: 8080, container: 80, protocol: tcp }`. |
+| `ports` | list of PortMapping | — | See [Ports & the app gate](#ports--the-app-gate). |
 | `volumes` | list of Volume | — | See [Volumes](#volumes). |
 | `files` | list of GeneratedFile | — | Config files written before create: `{ path, content, overwrite }`. `path` must sit under a declared bind mount. |
 | `environment` | list of string | — | `- KEY=value` pairs (static). |
@@ -81,6 +81,57 @@ Validation (enforced at `AppManifest::validate()`):
 - `derived_env` templates may only use the placeholder allow-list;
   `secret_env`/`generated_secrets` names must be bare filenames.
 - Hook steps are validated against the hook allow-list (below).
+
+## Ports & the app gate
+
+```yaml
+ports:
+  - host: 3001               # host port your app is reachable on
+    container: 3000
+    protocol: tcp            # default tcp
+    bind: 127.0.0.1          # empty = all interfaces
+    auth: gated              # session | none | local | gated | open
+    auth_rationale: "…"      # REQUIRED for auth: none and auth: open
+    session_passthrough: false
+```
+
+| Field | Notes |
+|-------|-------|
+| `bind` | Host address for the publish. Empty = all interfaces. List the same host/container pair twice with different binds to serve several addresses. |
+| `auth` | The port's authentication policy — see below. **Absent means "no instruction"**: the daemon reports on the port but never changes how it is published. |
+| `auth_rationale` | Why the port is safe without the gate's login. Required for `none` and `open`, rejected elsewhere. |
+| `session_passthrough` | Forward the node session cookie to the app on authorised requests. First-party companion UIs only; the gate otherwise strips its own credential. Only meaningful on `auth: gated`. |
+
+### `auth` policies
+
+- **`session`** (default when declared): the app gate authenticates every
+  connection — node session cookie or an app-scoped bearer token.
+- **`gated`**: the app publishes on loopback **only** (`bind: 127.0.0.1`) and
+  the daemon owns the external addresses: it binds them, authenticates every
+  connection, fixes frame-blocking headers so the app embeds in the
+  dashboard, serves a retrying page while the app is down, and fronts the
+  Tor onion for the port. This is the migrated end state for most apps.
+- **`open`**: same daemon takeover as `gated` — loopback pin, external
+  binds, header fixes, retry page, Tor — but **no dashboard login
+  challenge**. For apps that carry a complete login of their own and are
+  broken by an upstream challenge: Gitea (git clients speak basic-auth, not
+  cookies), BTCPay (checkout pages must be reachable by anonymous payers).
+  Requires `auth_rationale`.
+- **`none`**: the gate does not touch the port at all. Only for protocols
+  that authenticate themselves (LND macaroons, TLS client certs) or where a
+  login page is meaningless (p2p gossip). Requires `auth_rationale`.
+- **`local`**: host-local by intent — the gate must never bind or expose
+  this port anywhere (e.g. Bitcoin RPC).
+
+### Runtime override
+
+The manifest sets the **default**. The node operator can flip any
+gate-fronted app between `gated` and `open` behaviour at runtime from
+**Settings → app → Access control** (RPC `security.set-app-gate`), stored
+per-app on the node (`app-configs/<id>.json`, key `gateEnabled`). The
+override wins over the manifest in both directions and applies on the next
+request — your app cannot assume the gate is or isn't in front of it, so it
+must always enforce its own authorization for sensitive operations.
 
 ## Volumes
 

@@ -27,7 +27,16 @@ app:
       container: 3000
       protocol: tcp
       bind: 127.0.0.1
-      auth: gated
+      # open, not gated: Gitea carries a complete login of its own, and git
+      # clients speak HTTP basic-auth — a cookie challenge in front of
+      # git-over-HTTP breaks every clone/push. The gate still fronts the
+      # port (iframe header fixes, retry page, Tor); the operator can force
+      # the dashboard login back on from Settings → Gitea → Access control.
+      auth: open
+      auth_rationale: >-
+        Gitea enforces its own account login on every page and API route;
+        git clients authenticate with basic-auth/tokens and cannot complete
+        a browser login challenge.
     - host: 2222
       container: 22
       protocol: tcp

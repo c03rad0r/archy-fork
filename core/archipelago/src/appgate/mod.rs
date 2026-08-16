@@ -139,6 +139,14 @@ impl AppGate {
         app: &GatedPort,
         client_ip: IpAddr,
     ) -> Response<Body> {
+        // The accept loop captured its GatedPort at bind time; per-request
+        // policy (the operator's gate on/off toggle, session_passthrough)
+        // must come from the live map or a Settings change would only apply
+        // to ports (re)bound after the next sweep. Falls back to the bound
+        // snapshot when the port momentarily leaves the map mid-refresh.
+        let live = self.port_map.read().await.gated(app.port).cloned();
+        let app = live.as_ref().unwrap_or(app);
+
         let path = req.uri().path().to_string();
 
         if let Some(action) = path.strip_prefix(GATE_PREFIX) {
@@ -167,6 +175,17 @@ impl AppGate {
             // riding along is unverified as far as the gate is concerned —
             // drop it rather than hand an unexamined token to the app.
             return proxy_to_app(req, app, true).await;
+        }
+
+        // Gate challenge disabled for this app (manifest `auth: open`, or
+        // the operator's Settings toggle): forward everything to the app's
+        // own authentication. The Authorization header passes through
+        // untouched — git clients speak basic-auth to Gitea, API clients
+        // carry the app's own tokens. Gate cookies are still stripped in
+        // proxy_to_app (an ungated app must never see the node session),
+        // and the frame fixes / app-down page still apply.
+        if !app.auth_enabled {
+            return proxy_to_app(req, app, false).await;
         }
 
         match self.authorize(req.headers(), &app.app_id).await {
@@ -1164,6 +1183,7 @@ mod tests {
             icon: None,
             declared: true,
             session_passthrough: false,
+            auth_enabled: true,
         }
     }
 

@@ -561,6 +561,21 @@ pub enum PortAuth {
     /// manifest to say so means the loopback pin and the daemon takeover
     /// ship together, atomically, and a stale manifest fails safe.
     Gated,
+    /// Like `gated` — loopback-pinned app, daemon owns the external
+    /// addresses — but the gate does NOT require the dashboard login.
+    ///
+    /// For apps that carry a complete login of their own and are broken by
+    /// an upstream challenge: Gitea (git clients speak basic-auth, not
+    /// cookies), BTCPay (checkout pages must be reachable by anonymous
+    /// payers). The gate still fronts the port — frame-header neutralising,
+    /// the app-down retry page, the Tor upstream — it just lets every
+    /// request through to the app's own authentication. Requires
+    /// `auth_rationale`, exactly like `none`: an unchallenged surface nobody
+    /// can explain is one nobody reviewed. The operator can flip any
+    /// gate-fronted app between `gated` and `open` behaviour at runtime
+    /// (Settings → app → App gate; stored node-side, manifest sets the
+    /// default).
+    Open,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1154,6 +1169,20 @@ fn validate_ports(ports: &[PortMapping]) -> Result<(), ManifestError> {
                     "ports[{i}].auth_rationale cannot be empty"
                 )));
             }
+            // `open` serves the app without the gate's login challenge, so it
+            // carries the same burden of proof as `none`.
+            (PortAuth::Open, None) => {
+                return Err(ManifestError::Invalid(format!(
+                    "ports[{i}] sets auth: open but no auth_rationale — a port served \
+                     without the gate's login must state why (typically: the app \
+                     enforces its own authentication)"
+                )));
+            }
+            (PortAuth::Open, Some(rationale)) if rationale.trim().is_empty() => {
+                return Err(ManifestError::Invalid(format!(
+                    "ports[{i}].auth_rationale cannot be empty"
+                )));
+            }
             // A rationale on a gated port means the author wrote an
             // exemption and did not get one. Silently keeping the port
             // protected would be safe but misleading, so say so.
@@ -1717,6 +1746,12 @@ app:
             }
         }
         exempt.sort();
+        // 26 as of 2026-08-16: the 25 below plus phoenixd 9740, a
+        // loopback-only JSON API whose own generated http password
+        // authenticates every request (added with the phoenixd onboarding,
+        // which did not update this count — exactly the drift this test
+        // exists to catch).
+        //
         // 25 as of the v1.7.123 port-policy round: bitcoin p2p (8333 ×2),
         // core-lightning 9736/9835, electrumx 50001, fedimint 8173/8174,
         // fedimint-gateway 8176/9737, gitea ssh 2222, lightning-stack
@@ -1727,8 +1762,47 @@ app:
         // stage timed out that cycle, so the count here lagged at 17.
         assert_eq!(
             exempt.len(),
-            25,
+            26,
             "unauthenticated port set changed — review before updating this count: {exempt:?}"
+        );
+    }
+
+    /// `auth: open` ports are served by the gate WITHOUT its login challenge,
+    /// so they are the second unauthenticated-by-the-gate surface and get the
+    /// same review guard as `auth: none`. Each one must be an app that
+    /// enforces a real login of its own.
+    #[test]
+    fn gate_open_ports_are_all_accounted_for() {
+        let apps = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../apps");
+        let Ok(entries) = std::fs::read_dir(&apps) else {
+            return;
+        };
+        let mut open: Vec<(String, u16)> = Vec::new();
+        for entry in entries.flatten() {
+            let manifest = entry.path().join("manifest.yml");
+            if !manifest.is_file() {
+                continue;
+            }
+            let yaml = std::fs::read_to_string(&manifest).expect("manifest readable");
+            let parsed = AppManifest::parse(&yaml).expect("manifest valid");
+            for port in &parsed.app.ports {
+                if port.auth_policy() == PortAuth::Open {
+                    open.push((parsed.app.id.clone(), port.host));
+                }
+            }
+        }
+        open.sort();
+        // Gitea 3001 (git clients speak basic-auth, not browser cookies) and
+        // BTCPay 23000 (checkout/invoice/webhook endpoints must be reachable
+        // by anonymous payers). Both enforce their own account login, and an
+        // operator can re-gate either from Settings → Access control.
+        assert_eq!(
+            open,
+            vec![
+                ("btcpay-server".to_string(), 23000u16),
+                ("gitea".to_string(), 3001u16)
+            ],
+            "gate-open port set changed — every entry must be an app with its own login"
         );
     }
 
