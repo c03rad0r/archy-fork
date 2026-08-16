@@ -41,6 +41,10 @@
     <MeshDeviceSetupModal />
     <ExternalExplorerModal />
 
+    <!-- In-app confirm() replacement — native browser dialogs block the JS
+         event loop and freeze companion remote input (see useAppConfirm) -->
+    <AppConfirmModal />
+
     <!-- Nudge to back up the Lightning seed once a wallet exists (any page) -->
     <LndSeedBackupPrompt />
 
@@ -102,6 +106,7 @@ import HelpGuideModal from './components/HelpGuideModal.vue'
 import GlobalAudioPlayer from './components/GlobalAudioPlayer.vue'
 import MeshDeviceSetupModal from './components/mesh/MeshDeviceSetupModal.vue'
 import ExternalExplorerModal from './components/ExternalExplorerModal.vue'
+import AppConfirmModal from './components/AppConfirmModal.vue'
 import LndSeedBackupPrompt from './components/LndSeedBackupPrompt.vue'
 import LightningRequiredModal from './components/LightningRequiredModal.vue'
 import { useMeshStore } from './stores/mesh'

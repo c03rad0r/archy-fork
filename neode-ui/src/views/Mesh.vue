@@ -13,6 +13,7 @@ import MeshDevicePanel from '@/views/mesh/MeshDevicePanel.vue'
 import MeshAssistantPanel from '@/views/mesh/MeshAssistantPanel.vue'
 import HopVizModal from '@/views/mesh/HopVizModal.vue'
 import { rpcClient } from '@/api/rpc-client'
+import { appConfirm } from '@/composables/useAppConfirm'
 import { wsClient } from '@/api/websocket'
 import { IMAGE_COMPRESSION_PRESETS, compressImage, makeThumbnail, type ImageCompressionPreset } from '@/utils/imageCompression'
 import MediaLightbox from '@/components/cloud/MediaLightbox.vue'
@@ -281,7 +282,13 @@ async function refreshOutboxCount() {
 }
 
 async function clearAllMesh() {
-  if (!window.confirm('Clear all mesh peers, messages, and chat history? This cannot be undone.')) return
+  const ok = await appConfirm({
+    title: 'Clear mesh data',
+    message: 'Clear all mesh peers, messages, and chat history? This cannot be undone.',
+    confirmLabel: 'Clear everything',
+    danger: true,
+  })
+  if (!ok) return
   try {
     await rpcClient.call({ method: 'mesh.clear-all' })
     await mesh.refreshAll()
@@ -1419,7 +1426,13 @@ function clearPendingEdit() {
 }
 async function deleteOwnMessage(msg: MeshMessage) {
   if (msg.direction !== 'sent' || msg.sender_seq == null || !activeChatPeer.value) return
-  if (!window.confirm('Delete this message? Peers already received it — this only marks it as deleted.')) return
+  const ok = await appConfirm({
+    title: 'Delete message',
+    message: 'Delete this message? Peers already received it — this only marks it as deleted.',
+    confirmLabel: 'Delete',
+    danger: true,
+  })
+  if (!ok) return
   try {
     await mesh.deleteMessage(activeChatPeer.value.contact_id, msg.sender_seq)
   } catch (e) {

@@ -2,6 +2,7 @@
 import { ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { rpcClient } from '@/api/rpc-client'
+import { appConfirm } from '@/composables/useAppConfirm'
 import SeedRevealPanel from '@/components/SeedRevealPanel.vue'
 
 const { t } = useI18n()
@@ -114,7 +115,12 @@ async function restoreBackup() {
 }
 
 async function deleteBackup(id: string) {
-  if (!confirm(t('settings.deleteBackupConfirm'))) return
+  const ok = await appConfirm({
+    message: t('settings.deleteBackupConfirm'),
+    confirmLabel: t('common.delete'),
+    danger: true,
+  })
+  if (!ok) return
   deletingBackupId.value = id
   try {
     await rpcClient.call({ method: 'backup.delete', params: { id } })
@@ -229,7 +235,11 @@ async function backupToUsb(backupId: string) {
       return
     }
     const label = target.label || target.device
-    if (!confirm(`Copy backup to USB drive "${label}" at ${target.mount_point}?`)) return
+    const ok = await appConfirm({
+      message: `Copy backup to USB drive "${label}" at ${target.mount_point}?`,
+      confirmLabel: 'Copy',
+    })
+    if (!ok) return
     await rpcClient.call({ method: 'backup.to-usb', params: { id: backupId, mount_point: target.mount_point } })
     showBackupStatus(t('settings.backupCopiedToUsb', { path: target.mount_point }), 'success')
   } catch {

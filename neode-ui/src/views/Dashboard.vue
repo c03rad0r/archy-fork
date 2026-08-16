@@ -119,6 +119,7 @@ import { computed, ref, watch, onMounted, onBeforeUnmount } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { useAppStore } from '../stores/app'
 import { useAppLauncherStore } from '../stores/appLauncher'
+import { appConfirm } from '@/composables/useAppConfirm'
 import AppSession from '@/views/AppSession.vue'
 import { useLoginTransitionStore } from '../stores/loginTransition'
 import { playDashboardLoadOomph } from '@/composables/useLoginSounds'
@@ -376,9 +377,10 @@ function handleKioskShortcuts(e: KeyboardEvent) {
       router.push('/dashboard')
     } else if (e.key === 'Q' || e.key === 'q') {
       e.preventDefault()
-      if (confirm('Reboot the server?')) {
+      appConfirm({ title: 'Reboot', message: 'Reboot the server?', confirmLabel: 'Reboot', danger: true }).then((ok) => {
+        if (!ok) return
         fetch('/rpc/', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ method: 'system.reboot' }) }).catch(() => {})
-      }
+      })
     }
   }
 }

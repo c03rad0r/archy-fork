@@ -125,6 +125,7 @@ import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { useContainerStore } from '@/stores/container'
+import { appConfirm } from '@/composables/useAppConfirm'
 import { type ContainerStatus as ContainerStatusData } from '@/api/container-client'
 import ContainerStatus from '@/components/ContainerStatus.vue'
 import BackButton from '@/components/BackButton.vue'
@@ -325,7 +326,12 @@ onUnmounted(() => {
 })
 
 async function handleRemove() {
-  if (!confirm(t('apps.uninstallConfirm', { name: appName.value }))) {
+  const ok = await appConfirm({
+    message: t('apps.uninstallConfirm', { name: appName.value }),
+    confirmLabel: t('apps.uninstallTitle'),
+    danger: true,
+  })
+  if (!ok) {
     return
   }
   
