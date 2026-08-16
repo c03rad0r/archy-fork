@@ -291,7 +291,14 @@ while true; do
       --disable-metrics-reporting \
       --disable-domain-reliability \
       --js-flags="--max-old-space-size=256" \
+      --remote-debugging-port=9222 \
       --user-data-dir=/var/lib/archipelago/chromium-kiosk
+      # --remote-debugging-port binds to 127.0.0.1 only. It feeds the
+      # backend's CDP input bridge (api/handler/cdp.rs), which dispatches
+      # companion-app remote input as TRUSTED browser events — the only way
+      # taps/keys/scrolls reach inside cross-origin app iframes. Chromium's
+      # default origin check stays on (no --remote-allow-origins), so web
+      # pages cannot open the debug socket.
     sleep 3
 done
 

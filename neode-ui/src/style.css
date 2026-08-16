@@ -1730,6 +1730,15 @@ html.kiosk-mode::before {
   will-change: auto !important;
 }
 
+/* While the companion app is actively driving input, hide the native OS
+   pointer — it sits dead wherever the physical mouse left it and reads as
+   a second cursor next to the companion's virtual one. remote-relay.ts
+   toggles this class and clears it 30s after the last companion event. */
+html.companion-input-active,
+html.companion-input-active * {
+  cursor: none !important;
+}
+
 /* Dashboard: full viewport width, no letterboxing, no body scroll */
 body.dashboard-active {
   overflow: hidden;

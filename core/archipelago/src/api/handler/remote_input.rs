@@ -212,6 +212,7 @@ impl ApiHandler {
         req: Request<hyper::Body>,
         relay_tx: broadcast::Sender<String>,
         mut external_open_rx: broadcast::Receiver<String>,
+        cdp_bridge: super::cdp::CdpBridge,
     ) -> Result<Response<hyper::Body>> {
         // Extract optional player ID from query string: /ws/remote-input?p=1
         let player_id: Option<u8> = req
@@ -317,9 +318,20 @@ impl ApiHandler {
                                     } else {
                                         text.clone()
                                     };
-                                    let _ = relay_tx.send(relay_text);
+                                    let validation = handle_input(&text).await;
+                                    let _ = relay_tx.send(relay_text.clone());
+                                    // Trusted-input path: while the kiosk CDP
+                                    // bridge is live, also dispatch validated
+                                    // input into the kiosk Chromium so it
+                                    // lands inside cross-origin app iframes
+                                    // (the web relay above can't cross that
+                                    // boundary; the kiosk subscriber mutes its
+                                    // own DOM synthesis — remote_relay.rs).
+                                    if matches!(validation, Ok(None)) && cdp_bridge.is_active() {
+                                        cdp_bridge.send(&relay_text);
+                                    }
 
-                                    match handle_input(&text).await {
+                                    match validation {
                                         Ok(Some(reply)) => {
                                             let _ = tx.send(Message::Text(reply)).await;
                                         }

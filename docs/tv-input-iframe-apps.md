@@ -66,9 +66,16 @@ packaging docs; never required for an app to be usable.
 
 ## What NOT to do
 
-- ❌ CDP (`--remote-debugging-port` + Input.dispatchKeyEvent): works but adds
-  a privileged debug port to the kiosk and a daemon↔browser coupling; the
-  uinput route gets the same result at kernel level with no attack surface.
+- ⚠️ **Scope update 2026-08-16:** the "no CDP" rule below still holds for
+  *gamepad keys* (uinput remains their path). But companion **pointer input**
+  (tap at coordinates, scroll, focus-then-type inside cross-origin app
+  iframes) has no uinput equivalent that survives hit-testing across frames,
+  so the kiosk now runs `--remote-debugging-port=9222` (loopback-only, default
+  origin check intact) feeding the backend CDP bridge in
+  `core/archipelago/src/api/handler/cdp.rs`.
+- ❌ CDP for gamepad keys (`Input.dispatchKeyEvent` for the NES pad): the
+  uinput route gets the same result at kernel level with no daemon↔browser
+  coupling; keep gamepads on uinput.
 - ❌ Per-app nav scripts injected into iframes: cross-origin makes this
   impossible for most apps, and it's exactly the per-app hack the requirement
   rules out.

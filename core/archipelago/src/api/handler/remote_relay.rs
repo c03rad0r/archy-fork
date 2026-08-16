@@ -21,7 +21,16 @@ impl ApiHandler {
         req: Request<hyper::Body>,
         mut relay_rx: broadcast::Receiver<String>,
         external_open_tx: broadcast::Sender<String>,
+        cdp_bridge: super::cdp::CdpBridge,
     ) -> Result<Response<hyper::Body>> {
+        // The kiosk browser self-identifies with ?kiosk=1 so we can suppress
+        // its DOM-synthesis path while the CDP bridge delivers trusted input
+        // (otherwise every key/click/scroll would apply twice). A remote
+        // browser claiming kiosk=1 only mutes its own input — harmless.
+        let is_kiosk = req
+            .uri()
+            .query()
+            .is_some_and(|q| q.split('&').any(|s| s == "kiosk=1"));
         let (response, ws_fut_opt) = hyper_ws_listener::create_ws(req)
             .map_err(|e| anyhow::anyhow!("WebSocket upgrade failed: {}", e))?;
 
@@ -60,6 +69,19 @@ impl ApiHandler {
                         msg = relay_rx.recv() => {
                             match msg {
                                 Ok(text) => {
+                                    // Kiosk + live CDP bridge: keys/clicks/
+                                    // scrolls arrive as trusted browser input
+                                    // via CDP; forward only cursor moves (the
+                                    // on-screen cursor is drawn by the page)
+                                    // so nothing applies twice.
+                                    if is_kiosk && cdp_bridge.is_active() {
+                                        let tag = serde_json::from_str::<serde_json::Value>(&text)
+                                            .ok()
+                                            .and_then(|v| v.get("t").and_then(|t| t.as_str().map(str::to_string)));
+                                        if !matches!(tag.as_deref(), Some("m") | Some("o") | Some("p")) {
+                                            continue;
+                                        }
+                                    }
                                     if tx.send(Message::Text(text)).await.is_err() {
                                         break;
                                     }

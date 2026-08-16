@@ -53,15 +53,30 @@ let cursorX = typeof window !== 'undefined' ? window.innerWidth / 2 : 0
 let cursorY = typeof window !== 'undefined' ? window.innerHeight / 2 : 0
 let cursorHideTimer: ReturnType<typeof setTimeout> | null = null
 
+/**
+ * While the companion is actively driving input, suppress the other visible
+ * pointer: the native OS cursor sitting wherever the physical mouse left it
+ * reads as a second, dead cursor next to the companion's virtual one
+ * (user request 2026-08-16). Restores automatically when the companion goes
+ * quiet (same 30s window as `companionActive`).
+ */
+function setNativeCursorSuppressed(on: boolean) {
+  document.documentElement.classList.toggle('companion-input-active', on)
+}
+
 function markCompanionActive() {
   companionActive.value = true
   companionInputActive.value = true
+  setNativeCursorSuppressed(true)
 
   if (inputFlickerTimeout) clearTimeout(inputFlickerTimeout)
   inputFlickerTimeout = setTimeout(() => { companionInputActive.value = false }, 200)
 
   if (companionTimeout) clearTimeout(companionTimeout)
-  companionTimeout = setTimeout(() => { companionActive.value = false }, 30_000)
+  companionTimeout = setTimeout(() => {
+    companionActive.value = false
+    setNativeCursorSuppressed(false)
+  }, 30_000)
 }
 
 function createCursor(): HTMLDivElement {
@@ -333,7 +348,14 @@ function doConnect() {
   }
 
   const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
-  const url = `${protocol}//${window.location.host}/ws/remote-relay`
+  // The kiosk self-identifies so the backend can mute this subscriber's
+  // key/click/scroll messages while the CDP bridge delivers them as trusted
+  // browser input (cursor moves still arrive so the on-screen cursor draws).
+  // Same three-way predicate as App.vue's isKiosk.
+  const isKiosk = localStorage.getItem('kiosk') === 'true'
+    || new URLSearchParams(window.location.search).has('kiosk')
+    || window.location.pathname === '/kiosk'
+  const url = `${protocol}//${window.location.host}/ws/remote-relay${isKiosk ? '?kiosk=1' : ''}`
 
   ws = new WebSocket(url)
 
@@ -405,6 +427,7 @@ export function stopRemoteRelay() {
   if (cursorHideTimer) { clearTimeout(cursorHideTimer); cursorHideTimer = null }
   if (ws) { ws.onclose = null; ws.close(); ws = null }
   if (cursorEl) { cursorEl.remove(); cursorEl = null }
+  setNativeCursorSuppressed(false)
   relayConnected.value = false
   companionActive.value = false
   companionInputActive.value = false

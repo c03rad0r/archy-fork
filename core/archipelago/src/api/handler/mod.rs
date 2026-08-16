@@ -1,4 +1,5 @@
 mod blob;
+mod cdp;
 mod content;
 mod dwn;
 mod model_proxy;
@@ -51,6 +52,10 @@ pub struct ApiHandler {
     /// to the phone's default browser. Lets "open in external browser" apps —
     /// which the kiosk can't usefully open itself — launch on the controller.
     external_open_tx: broadcast::Sender<String>,
+    /// Bridge that dispatches companion input into the local kiosk Chromium
+    /// as trusted CDP events (reaches inside cross-origin app iframes).
+    /// Inert (never connects) on nodes without a kiosk.
+    cdp_bridge: cdp::CdpBridge,
     /// Content-addressed blob store for attachments shared over mesh/federation.
     blob_store: Arc<BlobStore>,
     /// Our own node pubkey (hex) — used to self-sign debug/test capabilities.
@@ -79,6 +84,7 @@ impl ApiHandler {
         );
         let (input_relay_tx, _) = broadcast::channel(64);
         let (external_open_tx, _) = broadcast::channel(16);
+        let cdp_bridge = cdp::CdpBridge::spawn();
 
         // Derive a blob-store capability key from the node's Ed25519 signing
         // key. SHA-256 domain-separated so rotating the identity rotates
@@ -109,6 +115,7 @@ impl ApiHandler {
             session_store,
             input_relay_tx,
             external_open_tx,
+            cdp_bridge,
             blob_store,
             self_pubkey_hex,
         })
@@ -402,6 +409,7 @@ impl ApiHandler {
                 req,
                 self.input_relay_tx.clone(),
                 self.external_open_tx.subscribe(),
+                self.cdp_bridge.clone(),
             )
             .await;
         }
@@ -416,6 +424,7 @@ impl ApiHandler {
                 req,
                 self.input_relay_tx.subscribe(),
                 self.external_open_tx.clone(),
+                self.cdp_bridge.clone(),
             )
             .await;
         }
