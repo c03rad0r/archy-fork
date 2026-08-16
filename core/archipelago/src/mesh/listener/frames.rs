@@ -421,7 +421,7 @@ async fn handle_channel_payload(
             let contact_id = super::super::federation_peer_contact_id(&ed_hex);
             handle_identity_received(
                 contact_id,
-                0,
+                None,
                 &did,
                 &ed_hex,
                 &x_hex,

@@ -507,7 +507,13 @@ pub(super) fn strip_ai_trigger(text: &str) -> Option<&str> {
 #[allow(dead_code)]
 pub(super) async fn handle_identity_received(
     contact_id: u32,
-    rssi: i16,
+    // None = signal strength unknown at this layer (identity adverts arrive
+    // through the transport-agnostic channel path, which carries no phy
+    // stats). The periodic refresh_contacts pass fills in the real value for
+    // transports that report one; hardcoding 0 here made every discovery
+    // read as "0 dBm" — indistinguishable from a real (if implausible)
+    // reading and from "no radio at all" (2026-08-16).
+    rssi: Option<i16>,
     did: &str,
     ed_pubkey_hex: &str,
     x25519_pubkey_hex: &str,
@@ -517,7 +523,7 @@ pub(super) async fn handle_identity_received(
     info!(
         contact_id,
         did = %did,
-        rssi,
+        rssi = ?rssi,
         "Archipelago peer discovered over mesh"
     );
 
@@ -592,7 +598,7 @@ pub(super) async fn handle_identity_received(
         // (which rewrites pubkey_hex to the firmware routing key) can't drop it.
         arch_pubkey_hex: Some(ed_pubkey_hex.to_string()),
         x25519_pubkey: Some(x25519_bytes),
-        rssi: Some(rssi),
+        rssi,
         snr: None,
         last_heard: chrono::Utc::now().to_rfc3339(),
         hops: 0,

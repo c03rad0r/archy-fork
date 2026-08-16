@@ -295,6 +295,14 @@ class ReticulumDaemon:
                 "title": message.title_as_string() if hasattr(message, "title_as_string") else "",
                 "app_data": app_data.hex(),
                 "stamp": getattr(message, "timestamp", None),
+                # LXMF populates these from the delivery packet's phy stats on
+                # direct RNode hops; they are None over TCP or multi-hop relay.
+                # That None-vs-number difference is the RF/TCP discriminator
+                # the UI needs (a TCP-fed mesh used to show rssi=0 and look
+                # like working RF, 2026-08-16).
+                "rssi": getattr(message, "rssi", None),
+                "snr": getattr(message, "snr", None),
+                "q": getattr(message, "q", None),
             }
             # Native LXMF attachment fields (Sideband/NomadNet/stock clients use
             # these, NOT our own typed-envelope wire format) — a stock client's
@@ -631,7 +639,12 @@ class _AnnounceHandler:
         self.daemon = daemon
         self.receive_path_responses = True
 
-    def received_announce(self, destination_hash, announced_identity, app_data):
+    def received_announce(self, destination_hash, announced_identity, app_data,
+                          announce_packet_hash=None):
+        # The 4-arg signature makes RNS.Transport hand us the announce packet
+        # hash (it dispatches by arity), which unlocks per-announce RSSI/SNR
+        # via Reticulum's local packet-stat cache. The default keeps a
+        # hypothetical 3-arg dispatch working.
         # Decode what we can here (both the LXMF-standard display name and our
         # appended ARCHY identity blob — see _announce_app_data) so the Rust
         # side gets clean typed fields instead of re-implementing msgpack.
@@ -661,12 +674,25 @@ class _AnnounceHandler:
                 archy_blob = raw.decode("ascii", "ignore")
         except Exception:
             archy_blob = None
+        rssi = None
+        snr = None
+        try:
+            if announce_packet_hash is not None and self.daemon.reticulum is not None:
+                rssi = self.daemon.reticulum.get_packet_rssi(announce_packet_hash)
+                snr = self.daemon.reticulum.get_packet_snr(announce_packet_hash)
+        except Exception:
+            rssi = None
+            snr = None
         self.daemon._emit_threadsafe({
             "event": "announce",
             "dest_hash": destination_hash.hex(),
             "app_data": raw.hex(),
             "display_name": display_name,
             "archy_blob": archy_blob,
+            # None over TCP interfaces / multi-hop; real numbers only on a
+            # direct RNode reception — see the recv-event comment.
+            "rssi": rssi,
+            "snr": snr,
         })
 
 

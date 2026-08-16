@@ -294,6 +294,13 @@ struct ReticulumPeer {
     /// In-memory only (a persisted value would be stale by definition) —
     /// `0` after a restart until the peer re-announces.
     last_advert_at: u64,
+    /// Signal stats of the last announce/message heard from this peer.
+    /// `Some` only for direct RNode (RF) receptions — the sidecar reports
+    /// `null` for TCP interfaces and multi-hop relays, which is exactly the
+    /// RF-vs-internet discriminator the UI needs (a TCP-fed mesh used to
+    /// surface every peer as rssi=0 and look like working RF, 2026-08-16).
+    last_rssi: Option<i16>,
+    last_snr: Option<f32>,
 }
 
 /// On-disk shape of `ReticulumPeer` — `[u8; 16]` can't be a JSON object key,
@@ -619,6 +626,8 @@ impl ReticulumLink {
                     // start conservative and let the first real event refresh it.
                     reachable: false,
                     last_advert_at: 0,
+                    last_rssi: None,
+                    last_snr: None,
                 },
             );
         }
@@ -854,12 +863,13 @@ impl ReticulumLink {
                 // which has no Reticulum analogue (always true, tracked
                 // elsewhere via `take_rx_encrypted`), so leave it false here.
                 pkc_capable: false,
-                // RSSI/SNR/position are Meshtastic-only for now (see the
-                // Meshtastic 1.8.0 backlog plan) — RNS doesn't expose
-                // per-packet signal quality through LXMF, and there's no
-                // Reticulum position-sharing convention wired up.
-                rssi: None,
-                snr: None,
+                // Signal stats from the last direct RNode reception (the
+                // sidecar reports them per announce/message; None over TCP
+                // or multi-hop, which is the honest answer there). Position
+                // stays Meshtastic-only — no Reticulum position-sharing
+                // convention is wired up.
+                rssi: p.last_rssi,
+                snr: p.last_snr,
                 lat: None,
                 lon: None,
                 arch_pubkey_hex: p.arch_pubkey_hex.clone(),
@@ -1057,6 +1067,16 @@ impl ReticulumLink {
 
                 let announced_name =
                     pick_announced_name(explicit_name, app_data_text, is_legacy_blob);
+                // Per-announce signal stats from the sidecar: real numbers on
+                // a direct RNode reception, null over TCP or multi-hop. Only
+                // overwrite the cached value when the sidecar reports one —
+                // an announce relayed over TCP must not blank out the last
+                // real RF reading.
+                let rssi = ev
+                    .get("rssi")
+                    .and_then(Value::as_i64)
+                    .and_then(|v| i16::try_from(v).ok());
+                let snr = ev.get("snr").and_then(Value::as_f64).map(|v| v as f32);
                 let now = std::time::SystemTime::now()
                     .duration_since(std::time::UNIX_EPOCH)
                     .unwrap_or_default()
@@ -1072,6 +1092,12 @@ impl ReticulumLink {
                         if arch_pubkey_hex.is_some() {
                             p.arch_pubkey_hex = arch_pubkey_hex.clone();
                         }
+                        if rssi.is_some() {
+                            p.last_rssi = rssi;
+                        }
+                        if snr.is_some() {
+                            p.last_snr = snr;
+                        }
                     })
                     .or_insert_with(|| ReticulumPeer {
                         dest_hash: hash,
@@ -1080,6 +1106,8 @@ impl ReticulumLink {
                         arch_pubkey_hex,
                         reachable: true,
                         last_advert_at: now,
+                        last_rssi: rssi,
+                        last_snr: snr,
                     });
                 self.persist_peers();
             }
@@ -1099,6 +1127,11 @@ impl ReticulumLink {
                 // existing entry is proof of life too: mark it reachable so a
                 // restart-restored (reachable=false) peer that DMs us doesn't
                 // stay red-dotted until its next announce.
+                let rssi = ev
+                    .get("rssi")
+                    .and_then(Value::as_i64)
+                    .and_then(|v| i16::try_from(v).ok());
+                let snr = ev.get("snr").and_then(Value::as_f64).map(|v| v as f32);
                 match self.peers.entry(source_hash) {
                     std::collections::hash_map::Entry::Vacant(e) => {
                         e.insert(ReticulumPeer {
@@ -1107,11 +1140,20 @@ impl ReticulumLink {
                             arch_pubkey_hex: None,
                             reachable: true,
                             last_advert_at: 0,
+                            last_rssi: rssi,
+                            last_snr: snr,
                         });
                         self.persist_peers();
                     }
                     std::collections::hash_map::Entry::Occupied(mut e) => {
-                        e.get_mut().reachable = true;
+                        let p = e.get_mut();
+                        p.reachable = true;
+                        if rssi.is_some() {
+                            p.last_rssi = rssi;
+                        }
+                        if snr.is_some() {
+                            p.last_snr = snr;
+                        }
                     }
                 }
 
@@ -1208,6 +1250,10 @@ impl ReticulumLink {
                             arch_pubkey_hex: None,
                             reachable: true,
                             last_advert_at: 0,
+                            // Resource transfers ride an established Link —
+                            // the sidecar reports no per-packet phy stats here.
+                            last_rssi: None,
+                            last_snr: None,
                         });
                         self.persist_peers();
                     }
