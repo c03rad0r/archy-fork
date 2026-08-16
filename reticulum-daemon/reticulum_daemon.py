@@ -429,6 +429,13 @@ class ReticulumDaemon:
                     # Live utilisation, when the interface tracks it.
                     "airtime_short": getattr(iface, "airtime_short", None),
                     "airtime_long": getattr(iface, "airtime_long", None),
+                    # Last received packet's signal stats as reported by the
+                    # radio firmware (CMD_STAT_RSSI/SNR). None until the first
+                    # reception — and stays None on firmware that doesn't
+                    # report per-packet stats, which is exactly what this
+                    # field lets us diagnose.
+                    "r_stat_rssi": getattr(iface, "r_stat_rssi", None),
+                    "r_stat_snr": getattr(iface, "r_stat_snr", None),
                 })
                 break
         except Exception:
