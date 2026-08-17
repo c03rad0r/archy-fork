@@ -142,6 +142,19 @@ def latest_dockerhub(repo: str, current: str = "") -> str:
     return _highest([t["name"] for t in results], current)
 
 
+PRERELEASE = re.compile(r"(^|[-.])(rc|alpha|beta|dev|pre|snapshot|nightly|canary|test)([-.\d]|$)", re.I)
+
+
+def is_prerelease(tag: str) -> bool:
+    """Does this tag advertise itself as not-yet-stable?
+
+    Needed because ordering ignores the suffix: `13.0.1-ubi10-rc` outranks
+    every stable MariaDB tag numerically, so the first run of this script
+    recommended shipping a release candidate to the fleet.
+    """
+    return bool(PRERELEASE.search(tag.strip().lstrip("vV")))
+
+
 def _variant(tag: str) -> str:
     """The non-numeric suffix of a tag: `1.27-alpine` → `alpine`."""
     core = tag.strip().lstrip("vV")
@@ -159,6 +172,14 @@ def _highest(tags: list[str], current: str = "") -> str:
     """
     ranked = [(version_parts(t), t) for t in tags]
     ranked = [(p, t) for p, t in ranked if p is not None]
+
+    # Never propose a pre-release to someone on a stable tag. The exception is
+    # a project whose stable line *is* suffixed — LND ships `-beta` and always
+    # has, so excluding those outright would report it as permanently current.
+    if not is_prerelease(current):
+        stable = [(p, t) for p, t in ranked if not is_prerelease(t)]
+        if stable:
+            ranked = stable
     if not ranked:
         return ""
 
@@ -232,6 +253,7 @@ def check(pin: AppPin, offline: bool) -> dict[str, Any]:
         "upstream_kind": pin.upstream.get("kind", ""),
         "latest": "",
         "status": "",
+        "jump": "",
         "note": "",
     }
 
@@ -289,6 +311,16 @@ def check(pin: AppPin, offline: bool) -> dict[str, Any]:
         row["note"] = "opaque tag — compare by hand"
     elif theirs > ours:
         row["status"] = "BEHIND"
+        # How big a jump matters more than the fact of one. A major bump is
+        # where data migrations live — Postgres will refuse to start on an
+        # older cluster, Nextcloud requires one major at a time — so these are
+        # a different piece of work from a patch bump, not a longer version of
+        # the same one.
+        row["jump"] = "major" if theirs[0] != ours[0] else (
+            "minor" if len(theirs) > 1 and len(ours) > 1 and theirs[1] != ours[1] else "patch"
+        )
+        if row["jump"] == "major":
+            row["note"] = "major version — check for a data migration before bumping"
     elif theirs < ours:
         row["status"] = "AHEAD"
         row["note"] = "we ship newer than upstream's latest release"
@@ -316,7 +348,8 @@ def main() -> int:
     else:
         width = max(len(r["app"]) for r in rows)
         for r in sorted(rows, key=lambda r: (r["status"] != "BEHIND", r["app"])):
-            line = f"{r['app']:<{width}}  {r['status']:<13} {r['shipped'] or '-':<18}"
+            status = r["status"] + (f"/{r['jump']}" if r.get("jump") else "")
+            line = f"{r['app']:<{width}}  {status:<19} {r['shipped'] or '-':<18}"
             if r["latest"]:
                 line += f"→ {r['latest']:<18}"
             if r["note"]:
@@ -327,8 +360,12 @@ def main() -> int:
         untracked = [r["app"] for r in rows if r["status"] == "UNTRACKED"]
         print()
         print(f"{len(rows)} apps · {len(behind)} behind · {len(untracked)} untracked")
+        majors = [r["app"] for r in rows if r["status"] == "BEHIND" and r.get("jump") == "major"]
         if behind:
             print("Behind: " + ", ".join(behind))
+            if majors:
+                print(f"Of those, {len(majors)} are MAJOR jumps that may need a data "
+                      f"migration, not just a pin bump: " + ", ".join(majors))
             print("Bump the pin, regenerate and re-sign the catalog, and nodes will offer the update.")
         if untracked:
             print("Untracked apps cannot ever be reported as behind — add an app.upstream block.")
