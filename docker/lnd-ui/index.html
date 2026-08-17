@@ -196,8 +196,8 @@
            not a loading state, and it is the one number that frightens
            people. It inherits currentColor, so each tile shimmers in its own
            rail colour. */
-        .bal-pixels { display: inline-grid; grid-template-columns: repeat(14, 4px); grid-auto-rows: 4px; gap: 1px; vertical-align: 0.15em; }
-        .bal-pixels i { width: 4px; height: 4px; border-radius: 0.5px; background: currentColor; opacity: 0.16; animation: bal-pixel-scan 1.4s ease-in-out infinite; }
+        .bal-pixels { display: inline-grid; grid-auto-flow: column; grid-template-rows: repeat(3, 4px); grid-auto-columns: 4px; gap: 1px; vertical-align: 0.1em; }
+        .bal-pixels i { width: 4px; height: 4px; border-radius: 0.5px; background: currentColor; opacity: 0.16; animation: bal-pixel-scan 1.6s ease-in-out infinite; }
         @keyframes bal-pixel-scan { 0%, 70%, 100% { opacity: 0.16; } 25% { opacity: 1; } 45% { opacity: 0.42; } }
         @media (prefers-reduced-motion: reduce) { .bal-pixels i { animation: none; opacity: 0.35; } }
         .bg-green { background: #4ade80; } .bg-yellow { background: #facc15; } .bg-red { background: #f87171; }
@@ -1083,9 +1083,11 @@
 
         // 28 cells = 14 columns x 2 rows, delays staggered so the lit column
         // travels across the matrix.
+        // 14 columns x 3 rows, laid out column-first so the three cells of a
+        // column share a delay and the lit column scans across as one line.
         const BAL_PIXELS = '<span class="bal-pixels" role="status" aria-label="Loading balance">' +
-            Array.from({ length: 28 }, function (_, i) {
-                return '<i style="animation-delay:' + (i * 45) + 'ms"></i>';
+            Array.from({ length: 42 }, function (_, i) {
+                return '<i style="animation-delay:' + (Math.floor(i / 3) * 55) + 'ms"></i>';
             }).join('') + '</span>';
 
         // Render a balance, or the pixel readout when it is not known yet.

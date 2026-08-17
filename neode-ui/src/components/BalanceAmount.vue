@@ -34,9 +34,18 @@ const props = withDefaults(
   { suffix: 'sats', label: 'balance' },
 )
 
-// 14 columns × 2 rows. Enough to read as a matrix rather than a spinner, and
-// close to the width of a five-figure sat amount.
-const CELLS = 28
+// 14 columns × 3 rows, laid out column-first so all three cells of a column
+// share a delay and the lit column travels across as a single scan line —
+// that is what makes it read as a readout rather than a progress bar.
+const COLUMNS = 14
+const ROWS = 3
+const CELLS = COLUMNS * ROWS
+const STEP_MS = 55
+
+/** Delay for cell `i` (1-based), constant within a column. */
+function cellDelay(i: number): string {
+  return `${Math.floor((i - 1) / ROWS) * STEP_MS}ms`
+}
 
 /**
  * Built as one string rather than interpolated around a `<template>`, so the
@@ -59,7 +68,7 @@ const display = computed(() => {
     :aria-label="`Loading ${props.label}`"
     :title="`Loading ${props.label}…`"
   >
-    <span v-for="i in CELLS" :key="i" class="balance-pixel" :style="{ '--i': i }" />
+    <span v-for="i in CELLS" :key="i" class="balance-pixel" :style="{ animationDelay: cellDelay(i) }" />
   </span>
   <span v-else>{{ display }}</span>
 </template>
@@ -67,12 +76,15 @@ const display = computed(() => {
 <style scoped>
 .balance-pixels {
   display: inline-grid;
-  grid-template-columns: repeat(14, 3px);
-  grid-auto-rows: 3px;
+  /* Column-first: children fill top-to-bottom, then across, so consecutive
+     cells share a column and the delay below scans horizontally. */
+  grid-auto-flow: column;
+  grid-template-rows: repeat(3, 3px);
+  grid-auto-columns: 3px;
   gap: 1px;
-  /* Sit on the text baseline so a row's height doesn't change when the real
-     figure replaces this. */
-  vertical-align: -1px;
+  /* Centred on the text it stands in for, so the row height is unchanged when
+     the real figure replaces it. */
+  vertical-align: 0.05em;
 }
 
 .balance-pixel {
@@ -81,10 +93,7 @@ const display = computed(() => {
   border-radius: 0.5px;
   background: currentColor;
   opacity: 0.16;
-  /* The wave runs left-to-right across columns; the two rows of a column are
-     offset slightly so it reads as a scan rather than a marching block. */
-  animation: balance-pixel-scan 1.4s ease-in-out infinite;
-  animation-delay: calc(var(--i) * 45ms);
+  animation: balance-pixel-scan 1.6s ease-in-out infinite;
 }
 
 @keyframes balance-pixel-scan {

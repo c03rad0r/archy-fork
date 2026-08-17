@@ -59,9 +59,17 @@ describe('BalanceAmount', () => {
     expect(w.html()).not.toMatch(/background:\s*#|rgb\(/)
   })
 
-  it('renders enough cells to read as a matrix', () => {
+  it('renders a 14x3 matrix scanned column by column', () => {
+    // Column-first layout is what makes the lit column travel across as one
+    // scan line; per-cell delays would make it crawl diagonally instead.
     const w = mount(BalanceAmount, { props: { sats: null } })
-    expect(w.findAll('.balance-pixel').length).toBe(28)
+    const cells = w.findAll('.balance-pixel')
+    expect(cells.length).toBe(42)
+    // The three cells of a column share a delay; the next column steps on.
+    const delay = (i: number) => cells[i]?.attributes('style') ?? ''
+    expect(delay(0)).toBe(delay(1))
+    expect(delay(1)).toBe(delay(2))
+    expect(delay(3)).not.toBe(delay(2))
   })
 })
 
