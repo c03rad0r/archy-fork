@@ -246,6 +246,131 @@ impl RpcHandler {
         }))
     }
 
+    /// `wallet.ecash-seed-status` — whether this wallet has a NUT-13 phrase
+    /// yet, and therefore whether its coins can be restored at all.
+    ///
+    /// Deliberately says nothing secret. `active: false` is the honest answer
+    /// for a node that predates NUT-13: its existing proofs live in exactly one
+    /// file and nothing can bring them back, which the UI needs to be able to
+    /// say plainly rather than implying a backup exists.
+    pub(super) async fn handle_wallet_ecash_seed_status(&self) -> Result<serde_json::Value> {
+        let data_dir = &self.config.data_dir;
+        let active = crate::wallet::nut13::seed_exists(data_dir);
+        let source = match crate::wallet::nut13::load_seed(data_dir).await {
+            Ok(Some(seed)) => Some(seed.source()),
+            _ => None,
+        };
+        // Whether the node has an encrypted master seed decides whether the
+        // "set up" path can derive from it, which is what the operator is
+        // promised: your node's 24 words already cover your ecash.
+        Ok(serde_json::json!({
+            "active": active,
+            "source": source,
+            "can_activate": crate::seed::seed_exists(data_dir),
+        }))
+    }
+
+    /// `wallet.ecash-seed-reveal` — show the ecash wallet's 24 words, and
+    /// establish them from the node's master seed if this is the first time.
+    ///
+    /// Gated exactly like `seed.reveal` and `lnd.seed-reveal`: authenticated
+    /// session, password re-verification, TOTP when enabled. The words are
+    /// returned to the caller only and never logged.
+    ///
+    /// Reveal doubles as activation because the master seed is encrypted at
+    /// rest: this password prompt is the only moment the node can legitimately
+    /// open it, so it is also the only moment the ecash phrase can be derived
+    /// from it. A node that has never been here mints valid but unrecoverable
+    /// proofs; one visit fixes that for every proof minted afterwards.
+    pub(super) async fn handle_wallet_ecash_seed_reveal(
+        &self,
+        params: Option<serde_json::Value>,
+    ) -> Result<serde_json::Value> {
+        use zeroize::Zeroize;
+
+        let params = params.unwrap_or_default();
+        let data_dir = &self.config.data_dir;
+
+        let mut password = self.verify_reveal_auth(&params, "the ecash seed").await?;
+
+        // Already established: just open it. No master seed needed, so this
+        // still works on a node whose backup passphrase has been forgotten.
+        if let Some(seed) = crate::wallet::nut13::load_seed(data_dir).await? {
+            password.zeroize();
+            let words = seed.words();
+            return Ok(serde_json::json!({
+                "words": words,
+                "word_count": words.len(),
+                "source": seed.source(),
+                "newly_activated": false,
+            }));
+        }
+
+        if !crate::seed::seed_exists(data_dir) {
+            password.zeroize();
+            anyhow::bail!(
+                "This node has no encrypted seed backup, so an ecash recovery \
+                 phrase cannot be derived from it."
+            );
+        }
+
+        // The backup passphrase may differ from the login password — same
+        // fallback `seed.reveal` uses.
+        let passphrase = params
+            .get("passphrase")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string())
+            .unwrap_or_else(|| password.clone());
+        let master = crate::seed::load_seed_encrypted(data_dir, &passphrase).await;
+        password.zeroize();
+        let mnemonic = master.map_err(|_| {
+            anyhow::anyhow!(
+                "Could not decrypt the saved seed. If you set a separate backup \
+                 passphrase during setup, enter that passphrase."
+            )
+        })?;
+        let master = crate::seed::MasterSeed::from_mnemonic(&mnemonic);
+        let seed = crate::wallet::nut13::establish_from_master(data_dir, &master).await?;
+
+        let words = seed.words();
+        Ok(serde_json::json!({
+            "words": words,
+            "word_count": words.len(),
+            "source": seed.source(),
+            "newly_activated": true,
+        }))
+    }
+
+    /// `wallet.ecash-restore` — rebuild the wallet's coins from its NUT-13
+    /// phrase by asking a mint which re-derived secrets it has signed.
+    ///
+    /// Defaults to the wallet's own mint; `mint_url` targets another one, for
+    /// a wallet whose coins were spread across mints.
+    pub(super) async fn handle_wallet_ecash_restore(
+        &self,
+        params: Option<serde_json::Value>,
+    ) -> Result<serde_json::Value> {
+        let params = params.unwrap_or_default();
+        let mint_url = match params.get("mint_url").and_then(|v| v.as_str()) {
+            Some(url) if !url.trim().is_empty() => url.trim().to_string(),
+            _ => {
+                crate::wallet::ecash::load_wallet(&self.config.data_dir)
+                    .await?
+                    .mint_url
+            }
+        };
+
+        let outcome =
+            crate::wallet::ecash::restore_from_seed(&self.config.data_dir, &mint_url).await?;
+        Ok(serde_json::json!({
+            "mint_url": mint_url,
+            "recovered_sats": outcome.recovered_sats,
+            "recovered_proofs": outcome.recovered_proofs,
+            "already_spent": outcome.already_spent,
+            "keysets_scanned": outcome.keysets_scanned,
+        }))
+    }
+
     pub(super) async fn handle_wallet_networking_profits(&self) -> Result<serde_json::Value> {
         let summary = profits::get_networking_profits(&self.config.data_dir).await?;
         Ok(serde_json::json!({

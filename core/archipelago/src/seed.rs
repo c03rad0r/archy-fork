@@ -39,6 +39,7 @@ const NODE_NOSTR_INFO: &[u8] = b"archipelago/nostr-node/secp256k1/v1";
 const FIPS_KEY_INFO: &[u8] = b"archipelago/fips/secp256k1/v1";
 const LND_ENTROPY_INFO: &[u8] = b"archipelago/lnd/entropy/v1";
 const RELEASE_ROOT_ED25519_INFO: &[u8] = b"archipelago/release/root/ed25519/v1";
+const CASHU_ENTROPY_INFO: &[u8] = b"archipelago/cashu/bip39-entropy/v1";
 
 // ─── MasterSeed ─────────────────────────────────────────────────────────
 
@@ -298,6 +299,30 @@ pub fn derive_lnd_entropy(seed: &MasterSeed) -> Result<[u8; 16]> {
     let mut entropy = [0u8; 16];
     entropy.copy_from_slice(&derived);
     Ok(entropy)
+}
+
+/// Derive the ecash (Cashu, NUT-13) wallet's own 24-word BIP-39 mnemonic.
+///
+/// The ecash wallet gets a **separate mnemonic** rather than being handed the
+/// node's own 24 words, and both halves of that matter:
+///
+/// - it is still covered by the node's recovery phrase, because it is derived
+///   from the master seed over a fixed domain-separated path — restore the
+///   node from its words and the same ecash wallet comes back, with nothing
+///   extra for the operator to write down;
+/// - but it is *portable*. NUT-13 is a standard, so these words restore the
+///   ecash in Minibits, Nutstash or `cdk-cli`. Showing the node seed here
+///   would have made "back up my ecash" and "hand over the key to the entire
+///   node" the same action.
+///
+/// One-way by construction: HKDF cannot be run backwards, so a leaked ecash
+/// mnemonic does not expose the master seed or any other derived key.
+pub fn derive_cashu_mnemonic(seed: &MasterSeed) -> Result<bip39::Mnemonic> {
+    let mut entropy = hkdf_derive_32(seed.as_bytes(), CASHU_ENTROPY_INFO)?;
+    let mnemonic = bip39::Mnemonic::from_entropy(&entropy)
+        .map_err(|e| anyhow::anyhow!("Failed to derive the ecash mnemonic: {}", e));
+    entropy.zeroize();
+    mnemonic
 }
 
 // ─── Encrypted Seed Storage ─────────────────────────────────────────────
@@ -655,6 +680,39 @@ mod tests {
         let e2 = derive_lnd_entropy(&seed).unwrap();
         assert_eq!(e1, e2);
         assert_eq!(e1.len(), 16);
+    }
+
+    /// The ecash mnemonic must be reproducible from the node's words alone —
+    /// that reproducibility is the entire backup story ("your 24 words already
+    /// cover your ecash").
+    #[test]
+    fn cashu_mnemonic_is_reproducible_from_the_node_seed() {
+        let (_, seed) = MasterSeed::from_mnemonic_words(TEST_MNEMONIC).unwrap();
+        let a = derive_cashu_mnemonic(&seed).unwrap();
+        let b = derive_cashu_mnemonic(&seed).unwrap();
+        assert_eq!(a.to_string(), b.to_string());
+        assert_eq!(a.word_count(), 24);
+
+        // A different node seed must yield a different ecash wallet, or two
+        // nodes would derive each other's coins.
+        let (other_words, _) = MasterSeed::generate().unwrap();
+        let (_, other_seed) = MasterSeed::from_mnemonic_words(&other_words.to_string()).unwrap();
+        assert_ne!(a.to_string(), derive_cashu_mnemonic(&other_seed).unwrap().to_string());
+    }
+
+    /// It must NOT be the node's own phrase. Restoring ecash into a
+    /// third-party wallet means handing these words over, and that must never
+    /// be the same as handing over the node.
+    #[test]
+    fn cashu_mnemonic_is_not_the_node_mnemonic() {
+        let (node_mnemonic, seed) = MasterSeed::from_mnemonic_words(TEST_MNEMONIC).unwrap();
+        let cashu = derive_cashu_mnemonic(&seed).unwrap();
+        assert_ne!(cashu.to_string(), node_mnemonic.to_string());
+
+        // And knowing the ecash words must not re-derive the node seed: they
+        // are a one-way HKDF descendant, so the seeds they expand to differ.
+        let cashu_seed = MasterSeed::from_mnemonic(&cashu);
+        assert_ne!(cashu_seed.as_bytes(), seed.as_bytes());
     }
 
     #[test]

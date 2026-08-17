@@ -7,4 +7,5 @@ pub mod cashu;
 pub mod ecash;
 pub mod fedimint_client;
 pub mod mint_client;
+pub mod nut13;
 pub mod profits;

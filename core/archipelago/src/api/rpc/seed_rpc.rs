@@ -52,6 +52,18 @@ pub(in crate::api::rpc) async fn save_pending_seed_encrypted(
         .parse()
         .context("Invalid mnemonic in memory")?;
     crate::seed::save_seed_encrypted(data_dir, &mnemonic, passphrase).await?;
+
+    // Establish the ecash wallet's NUT-13 phrase here too — this is the last
+    // moment the master seed exists in plaintext during onboarding, and the
+    // ecash wallet needs its own phrase on disk to mint restorable proofs
+    // without a password prompt on every background swap. Best-effort: a node
+    // that fails here still onboards, mints valid coins, and can establish the
+    // phrase later from Settings → Back up ecash.
+    let master = crate::seed::MasterSeed::from_mnemonic(&mnemonic);
+    if let Err(e) = crate::wallet::nut13::establish_from_master(data_dir, &master).await {
+        tracing::warn!("Could not establish the ecash wallet phrase at onboarding: {e:#}");
+    }
+
     *state = None;
     Ok(true)
 }

@@ -12,9 +12,11 @@ use super::cashu::{
     amount_to_denominations, is_truncated_v2_keyset_id, BlindSignature, BlindedMessageRequest,
     CashuToken, KeysetInfo, MintKeyset, Proof,
 };
+use super::nut13::RecoverySource;
 use anyhow::{Context, Result};
+use bitcoin::secp256k1;
 use serde::{Deserialize, Serialize};
-use tracing::debug;
+use tracing::{debug, warn};
 
 /// Default timeout for mint API calls.
 const MINT_TIMEOUT_SECS: u64 = 10;
@@ -130,10 +132,19 @@ fn mint_error(op: &str, status: reqwest::StatusCode, body: &str) -> anyhow::Erro
 pub struct MintClient {
     url: String,
     client: reqwest::Client,
+    /// NUT-13 output source. When set, every proof this client creates has a
+    /// secret derived from the wallet's phrase and is therefore restorable;
+    /// when absent, secrets are random and live only in `wallet/ecash.json`.
+    recovery: Option<RecoverySource>,
 }
 
 impl MintClient {
     /// Create a new mint client for the given mint URL.
+    ///
+    /// Proofs minted through a client built this way are **not** recoverable
+    /// from the wallet phrase. Prefer `ecash::mint_client`, which attaches the
+    /// NUT-13 source; this stays for callers with no data directory (probes,
+    /// keyset lookups, tests).
     pub fn new(mint_url: &str) -> Result<Self> {
         let client = reqwest::Client::builder()
             .timeout(std::time::Duration::from_secs(MINT_TIMEOUT_SECS))
@@ -143,6 +154,7 @@ impl MintClient {
         Ok(Self {
             url: mint_url.trim_end_matches('/').to_string(),
             client,
+            recovery: None,
         })
     }
 
@@ -151,11 +163,65 @@ impl MintClient {
         Self {
             url: mint_url.trim_end_matches('/').to_string(),
             client,
+            recovery: None,
         }
+    }
+
+    /// Derive this client's blinded outputs from the wallet's NUT-13 phrase,
+    /// so the proofs it creates can be restored from those words.
+    pub fn with_recovery(mut self, recovery: Option<RecoverySource>) -> Self {
+        self.recovery = recovery;
+        self
     }
 
     pub fn url(&self) -> &str {
         &self.url
+    }
+
+    /// Build the blinded messages for a batch of output amounts, together with
+    /// the `(secret, blinding factor, amount)` needed to unblind the mint's
+    /// signatures afterwards.
+    ///
+    /// Prefers NUT-13 derivation so the resulting proofs are restorable. Falls
+    /// back to random secrets when this wallet has no phrase yet, or when the
+    /// keyset id is one NUT-13 cannot address — a random secret still mints a
+    /// perfectly valid, spendable proof, so refusing here would break the
+    /// wallet to protect a backup that does not exist.
+    async fn blinded_outputs(
+        &self,
+        keyset_id: &str,
+        amounts: &[u64],
+    ) -> Result<(Vec<BlindedMessageRequest>, Vec<(Vec<u8>, secp256k1::SecretKey, u64)>)> {
+        let derived = match &self.recovery {
+            Some(source) => match source.next_outputs(keyset_id, amounts.len()).await {
+                Ok(pairs) => Some(pairs),
+                Err(e) => {
+                    warn!("Minting unrecoverable proofs — NUT-13 derivation failed: {e:#}");
+                    None
+                }
+            },
+            None => None,
+        };
+
+        let mut blinded_messages = Vec::with_capacity(amounts.len());
+        let mut blinding_data = Vec::with_capacity(amounts.len());
+
+        for (i, &amount) in amounts.iter().enumerate() {
+            let (secret, r) = match &derived {
+                Some(pairs) => pairs[i].clone(),
+                None => (bdhke::generate_secret(), bdhke::random_blinding_factor()),
+            };
+            let blinded = bdhke::blind_message(&secret, &r)?;
+
+            blinded_messages.push(BlindedMessageRequest {
+                amount,
+                id: keyset_id.to_string(),
+                b_prime: hex::encode(blinded.b_prime.serialize()),
+            });
+            blinding_data.push((secret, r, amount));
+        }
+
+        Ok((blinded_messages, blinding_data))
     }
 
     // ── Keyset discovery (NUT-01, NUT-02) ──
@@ -208,6 +274,36 @@ impl MintClient {
         )
         .context("Failed to parse keyset list")?;
         Ok(keysets)
+    }
+
+    /// Fetch one keyset's public keys by id (NUT-01 `GET /v1/keys/{id}`).
+    ///
+    /// `/v1/keys` returns only what the mint will still *sign* with, but a
+    /// restore has to unblind signatures made by keysets that have since been
+    /// retired — those coins are still spendable, and skipping their keysets
+    /// would quietly leave money behind.
+    pub async fn get_keyset(&self, keyset_id: &str) -> Result<MintKeyset> {
+        let url = format!("{}/v1/keys/{}", self.url, keyset_id);
+        let res = self
+            .client
+            .get(&url)
+            .send()
+            .await
+            .context("Failed to fetch a mint keyset")?;
+        if !res.status().is_success() {
+            anyhow::bail!("Mint keyset request failed: {}", res.status());
+        }
+        let body: serde_json::Value = res.json().await.context("Failed to parse mint keyset")?;
+        let keysets: Vec<MintKeyset> = serde_json::from_value(
+            body.get("keysets")
+                .cloned()
+                .unwrap_or(serde_json::json!([])),
+        )
+        .context("Failed to parse keyset")?;
+        keysets
+            .into_iter()
+            .find(|k| k.id == keyset_id)
+            .ok_or_else(|| anyhow::anyhow!("Mint did not return keyset {keyset_id}"))
     }
 
     /// Get the active keyset for the "sat" unit.
@@ -276,21 +372,8 @@ impl MintClient {
         let keyset = self.get_active_sat_keyset().await?;
         let denominations = amount_to_denominations(amount);
 
-        let mut blinded_messages = Vec::new();
-        let mut blinding_data = Vec::new(); // (secret, blinding_factor, amount)
-
-        for &denom in &denominations {
-            let secret = bdhke::generate_secret();
-            let r = bdhke::random_blinding_factor();
-            let blinded = bdhke::blind_message(&secret, &r)?;
-
-            blinded_messages.push(BlindedMessageRequest {
-                amount: denom,
-                id: keyset.id.clone(),
-                b_prime: hex::encode(blinded.b_prime.serialize()),
-            });
-            blinding_data.push((secret, r, denom));
-        }
+        let (blinded_messages, blinding_data) =
+            self.blinded_outputs(&keyset.id, &denominations).await?;
 
         let url = format!("{}/v1/mint/bolt11", self.url);
         let client = reqwest::Client::builder()
@@ -434,21 +517,8 @@ impl MintClient {
             target_amounts
         };
 
-        let mut blinded_messages = Vec::new();
-        let mut blinding_data = Vec::new();
-
-        for &amount in target_amounts {
-            let secret = bdhke::generate_secret();
-            let r = bdhke::random_blinding_factor();
-            let blinded = bdhke::blind_message(&secret, &r)?;
-
-            blinded_messages.push(BlindedMessageRequest {
-                amount,
-                id: keyset.id.clone(),
-                b_prime: hex::encode(blinded.b_prime.serialize()),
-            });
-            blinding_data.push((secret, r, amount));
-        }
+        let (blinded_messages, blinding_data) =
+            self.blinded_outputs(&keyset.id, target_amounts).await?;
 
         let url = format!("{}/v1/swap", self.url);
         let res = self
@@ -541,6 +611,78 @@ impl MintClient {
                 .context("Failed to parse proof states")?;
 
         Ok(states)
+    }
+
+    // ── Restore (NUT-09) ──
+
+    /// Ask the mint which of a batch of blinded messages it has signed before,
+    /// and hand back its signatures for those.
+    ///
+    /// This is the half of the backup story the mint owns. A NUT-13 phrase can
+    /// re-derive every secret this wallet ever used, but not the mint's
+    /// signature over them — without that a re-derived secret is not yet money.
+    /// `/v1/restore` closes the gap: send the blinded messages again, get back
+    /// the signatures the mint already issued, unblind, and the proofs exist
+    /// again.
+    ///
+    /// The response echoes the subset of `outputs` it recognised alongside the
+    /// matching `signatures`, so the caller matches on `B_` rather than
+    /// assuming positions line up — mints are free to return fewer, and
+    /// assuming otherwise would pair a signature with the wrong secret and
+    /// silently produce unspendable proofs.
+    pub async fn restore(
+        &self,
+        outputs: &[BlindedMessageRequest],
+    ) -> Result<Vec<(String, BlindSignature)>> {
+        if outputs.is_empty() {
+            return Ok(Vec::new());
+        }
+        let url = format!("{}/v1/restore", self.url);
+        let res = self
+            .client
+            .post(&url)
+            .json(&serde_json::json!({ "outputs": outputs }))
+            .send()
+            .await
+            .context("Failed to ask the mint to restore outputs")?;
+
+        if !res.status().is_success() {
+            let status = res.status();
+            let body = res.text().await.unwrap_or_default();
+            return Err(mint_error("Restore", status, &body));
+        }
+
+        let body: serde_json::Value = res
+            .json()
+            .await
+            .context("Failed to parse the mint's restore response")?;
+
+        let echoed: Vec<BlindedMessageRequest> = serde_json::from_value(
+            body.get("outputs")
+                .cloned()
+                .unwrap_or(serde_json::json!([])),
+        )
+        .context("Failed to parse restored outputs")?;
+        let signatures: Vec<BlindSignature> = serde_json::from_value(
+            body.get("signatures")
+                .cloned()
+                .unwrap_or(serde_json::json!([])),
+        )
+        .context("Failed to parse restored signatures")?;
+
+        if echoed.len() != signatures.len() {
+            anyhow::bail!(
+                "Mint restored {} outputs but {} signatures — refusing to pair them",
+                echoed.len(),
+                signatures.len()
+            );
+        }
+
+        Ok(echoed
+            .into_iter()
+            .map(|o| o.b_prime)
+            .zip(signatures)
+            .collect())
     }
 
     /// Receive a CashuToken by swapping its proofs for fresh ones.

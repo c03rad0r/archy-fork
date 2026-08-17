@@ -4,6 +4,7 @@ import { useI18n } from 'vue-i18n'
 import { rpcClient } from '@/api/rpc-client'
 import { appConfirm } from '@/composables/useAppConfirm'
 import SeedRevealPanel from '@/components/SeedRevealPanel.vue'
+import EcashSeedBackup from '@/components/EcashSeedBackup.vue'
 
 const { t } = useI18n()
 
@@ -316,6 +317,11 @@ defineExpose({ loadBackups })
       >Reveal</button>
     </div>
   </div>
+
+  <!-- Ecash backup phrase — sits beside the node phrase because it IS
+       derived from it; an operator asking "what do I need to write down?"
+       should find both answers in one place. -->
+  <EcashSeedBackup />
 
   <!-- Reveal recovery phrase modal -->
   <Teleport to="body">
