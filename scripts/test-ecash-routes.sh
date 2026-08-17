@@ -160,6 +160,14 @@ if [ "${BAL:-0}" -ge 4 ] 2>/dev/null; then
   if [ -n "$TOKEN" ]; then
     ok "ecash-send produced a token (${#TOKEN} chars, ${TOKEN:0:7}…)"
 
+    # cashuB (V4) is what we emit now; cashuA remains valid but is only the
+    # fallback, so seeing it here means V4 encoding silently failed.
+    case "$TOKEN" in
+      cashuB*) ok "token is cashuB (V4)" ;;
+      cashuA*) bad "token is cashuA — cashuB encoding fell back, check the journal" ;;
+      *)       bad "token has an unknown prefix: ${TOKEN:0:8}" ;;
+    esac
+
     res="$(rpc wallet.ecash-receive "{\"token\":\"$TOKEN\"}")"
     got="$(printf '%s' "$res" | jqf result.received_sats)"
     [ -n "$got" ] && ok "ecash-receive redeemed ${got} sats" \
@@ -174,6 +182,63 @@ if [ "${BAL:-0}" -ge 4 ] 2>/dev/null; then
   fi
 else
   log "  (skipping send/receive — balance ${BAL:-0} sats too low)"
+fi
+
+# ── NUT-13 backup phrase + restore ────────────────────────────────────────
+# The wallet's backup story: without a phrase the coins live in exactly one
+# file and nothing can bring them back, so "is it active" is the check that
+# matters most here.
+res="$(rpc wallet.ecash-seed-status)"
+SEED_ACTIVE="$(printf '%s' "$res" | jqf result.active)"
+if [ -n "$SEED_ACTIVE" ]; then
+  ok "ecash-seed-status reports active=$SEED_ACTIVE"
+else
+  bad "ecash-seed-status: $(printf '%s' "$res" | err_of)"
+fi
+
+# Reveal doubles as activation on a node that predates NUT-13 — the password
+# prompt is the only moment the encrypted master seed can be opened. It never
+# overwrites an established phrase, so this is safe to run repeatedly.
+res="$(rpc wallet.ecash-seed-reveal "{\"password\":\"$ARCHY_PASSWORD\"}")"
+WORDS="$(printf '%s' "$res" | jqf result.word_count)"
+if [ "$WORDS" = "24" ]; then
+  ok "ecash-seed-reveal returned 24 words (source: $(printf '%s' "$res" | jqf result.source))"
+else
+  bad "ecash-seed-reveal: $(printf '%s' "$res" | err_of)"
+fi
+
+# Reveal must stay gated. A wrong password returning words would make the
+# phrase readable by anyone with a session.
+res="$(rpc wallet.ecash-seed-reveal '{"password":"definitely-not-the-password"}')"
+[ -z "$(printf '%s' "$res" | jqf result.word_count)" ] \
+  && ok "seed reveal refuses a wrong password" || bad "SEED REVEALED WITH A WRONG PASSWORD"
+
+# The phrase must be stable: a second reveal returning different words would
+# mean the wallet re-derived a new one and orphaned every coin minted so far.
+w1="$(rpc wallet.ecash-seed-reveal "{\"password\":\"$ARCHY_PASSWORD\"}" | jqf result.words)"
+w2="$(rpc wallet.ecash-seed-reveal "{\"password\":\"$ARCHY_PASSWORD\"}" | jqf result.words)"
+if [ -n "$w1" ] && [ "$w1" = "$w2" ]; then
+  ok "the backup phrase is stable across reveals"
+else
+  bad "the backup phrase CHANGED between reveals"
+fi
+
+# Restore is additive and idempotent, so it is safe against a live wallet.
+# Running it twice must not double the balance — that would mean re-adding
+# coins already held.
+res="$(rpc wallet.ecash-restore)"
+if [ -z "$(printf '%s' "$res" | err_of)" ]; then
+  ok "ecash-restore scanned $(printf '%s' "$res" | jqf result.keysets_scanned) keyset(s), recovered $(printf '%s' "$res" | jqf result.recovered_sats) sats"
+  AFTER_FIRST="$(rpc wallet.ecash-balance | jqf result.cashu_sats)"
+  rpc wallet.ecash-restore >/dev/null
+  AFTER_SECOND="$(rpc wallet.ecash-balance | jqf result.cashu_sats)"
+  if [ "$AFTER_FIRST" = "$AFTER_SECOND" ]; then
+    ok "restore is idempotent (balance steady at ${AFTER_FIRST} sats)"
+  else
+    bad "restore is NOT idempotent: ${AFTER_FIRST} -> ${AFTER_SECOND} sats"
+  fi
+else
+  bad "ecash-restore: $(printf '%s' "$res" | err_of)"
 fi
 
 # ── malformed input handling ──────────────────────────────────────────────
