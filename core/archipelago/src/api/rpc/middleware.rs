@@ -172,6 +172,20 @@ pub(super) fn sanitize_error_message(msg: &str) -> String {
         "No pending seed generation",
         "Submitted words",
         "Already set up",
+        // Ecash backup phrase — these two ARE the feature's safety rails, and
+        // masking them made it dangerous rather than merely opaque. "That is
+        // not a valid BIP-39 recovery phrase… check for typos" is the whole
+        // help someone gets when a pasted phrase has a bad word; and "This
+        // wallet already has a backup phrase… reveal and write down the
+        // current phrase first, then confirm to replace it" is the warning
+        // that stops an operator orphaning the words their balance was minted
+        // under. Behind "check server logs" the first is unactionable and the
+        // second is invisible.
+        "That is not a valid BIP-39",
+        "This wallet already has a backup phrase",
+        "This wallet has no backup phrase yet",
+        // Restore against a mint that never implemented NUT-09.
+        "This mint does not support restoring",
     ];
     for prefix in &user_facing_prefixes {
         if msg.starts_with(prefix) {
@@ -194,6 +208,27 @@ pub(super) fn sanitize_error_message(msg: &str) -> String {
 #[cfg(test)]
 mod sanitize_tests {
     use super::sanitize_error_message;
+
+    /// The ecash import errors are the feature's safety rails. If the
+    /// sanitizer eats them, a bad paste gives no hint and — worse — the
+    /// warning about replacing an established phrase never reaches the person
+    /// about to do it.
+    #[test]
+    fn ecash_backup_phrase_errors_reach_the_operator() {
+        for msg in [
+            "That is not a valid BIP-39 recovery phrase: invalid checksum. Check for typos",
+            "This wallet already has a backup phrase. Importing a different one means coins \
+             minted under the current phrase will no longer be restorable from words",
+            "This wallet has no backup phrase yet, so there is nothing to restore from.",
+            "This mint does not support restoring from a backup phrase (NUT-09).",
+        ] {
+            let out = sanitize_error_message(msg);
+            assert_ne!(
+                out, "Operation failed. Check server logs for details.",
+                "swallowed: {msg}"
+            );
+        }
+    }
 
     #[test]
     fn password_required_sentinel_passes_through_verbatim() {
