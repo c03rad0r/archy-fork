@@ -198,7 +198,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed } from 'vue'
+import { ref, computed, watch } from 'vue'
 import BalanceAmount from '@/components/BalanceAmount.vue'
 import { useI18n } from 'vue-i18n'
 
@@ -270,12 +270,67 @@ function isOnchain(tx: WalletTransaction): boolean {
 // what marks them seen, which is the same unread model the mesh inbox uses.
 // On-chain is unchanged — a confirmation count is a real signal and does the
 // job by itself.
-const seenIncoming = ref(new Set<string>())
+//
+// "Seen" has to outlive the page, or this is worse than the timer it
+// replaced: held only in component state, every refresh forgot the
+// acknowledgement and the whole ecash history came back as new. It is stored
+// per-node in localStorage, capped so it cannot grow without bound.
+const SEEN_KEY = 'archy-seen-incoming-v1'
+const SEEN_CAP = 300
+// On a browser that has never stored an acknowledgement, treating the entire
+// history as unseen would greet the user with a wall of old receipts. Only
+// what arrived in the last few minutes is genuinely news on a first run.
+const FIRST_RUN_GRACE_SECS = 5 * 60
+
+function loadSeen(): { seen: Set<string>; firstRun: boolean } {
+  try {
+    const raw = localStorage.getItem(SEEN_KEY)
+    if (raw === null) return { seen: new Set(), firstRun: true }
+    const parsed: unknown = JSON.parse(raw)
+    return { seen: new Set(Array.isArray(parsed) ? (parsed as string[]) : []), firstRun: false }
+  } catch {
+    // Unreadable storage must not resurrect the history — treat it as a fresh
+    // start rather than as "nothing acknowledged".
+    return { seen: new Set(), firstRun: true }
+  }
+}
+
+const initial = loadSeen()
+const seenIncoming = ref(initial.seen)
+let needsFirstRunSeeding = initial.firstRun
+
+function persistSeen() {
+  try {
+    // Keep the newest entries; the oldest can never resurface anyway, because
+    // an instant-rail receipt that far back is long gone from the history the
+    // backend returns.
+    const keys = [...seenIncoming.value].slice(-SEEN_CAP)
+    seenIncoming.value = new Set(keys)
+    localStorage.setItem(SEEN_KEY, JSON.stringify(keys))
+  } catch { /* storage full or unavailable — acknowledgement stays in-session */ }
+}
 
 function txKey(tx: WalletTransaction): string {
   // Instant rails have no txid to key on, so fall back to rail+time+amount.
   return tx.tx_hash || `${tx.kind ?? 'onchain'}:${tx.time_stamp}:${tx.amount_sats}`
 }
+
+// Seed the first run once history actually arrives — at mount the list is
+// still empty, so there is nothing to judge yet.
+watch(
+  () => props.walletTransactions,
+  (txs) => {
+    if (!needsFirstRunSeeding || txs.length === 0) return
+    needsFirstRunSeeding = false
+    const cutoff = Math.floor(Date.now() / 1000) - FIRST_RUN_GRACE_SECS
+    for (const tx of txs) {
+      if (tx.direction !== 'incoming' || isOnchain(tx)) continue
+      if (tx.time_stamp < cutoff) seenIncoming.value.add(txKey(tx))
+    }
+    persistSeen()
+  },
+  { immediate: true },
+)
 
 const incomingTransactions = computed(() =>
   props.walletTransactions.filter(tx => {
@@ -296,6 +351,7 @@ function toggleIncomingPanel() {
     }
     // Vue tracks Set mutations, but reassigning keeps the dependency obvious.
     seenIncoming.value = new Set(seenIncoming.value)
+    persistSeen()
     showIncomingTxPanel.value = false
     return
   }

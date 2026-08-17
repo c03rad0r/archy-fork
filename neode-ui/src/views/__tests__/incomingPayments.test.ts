@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest'
+import { describe, it, expect, beforeEach } from 'vitest'
 import { mount } from '@vue/test-utils'
 import i18n from '@/i18n'
 import HomeWalletCard from '@/views/home/HomeWalletCard.vue'
@@ -49,10 +49,16 @@ const mountCard = (transactions: ReturnType<typeof tx>[]) =>
     global: { plugins: [i18n] },
   })
 
+// Acknowledgement is stored per-browser, so each case starts from a clean
+// slate — otherwise one test's "seen" set silently satisfies the next.
+beforeEach(() => localStorage.clear())
+
 describe('incoming payments', () => {
-  it('keeps an hours-old instant receipt in the badge until it is seen', async () => {
-    // The regression: two hours past the old five-minute window. Nobody has
-    // looked at it yet, so it is still news.
+  it('retires a receipt on acknowledgement, never on age alone', async () => {
+    // On a browser that has acknowledged before, an unacknowledged receipt
+    // stays put however old it is — age is not the signal, being seen is.
+    // (A brand-new browser is the separate first-run case below.)
+    localStorage.setItem('archy-seen-incoming-v1', JSON.stringify(['some-earlier-receipt']))
     const w = mountCard([tx({ time_stamp: now() - 7200 })])
     expect(w.text()).toContain('Incoming 1')
   })
@@ -67,6 +73,7 @@ describe('incoming payments', () => {
   })
 
   it('marks it seen once the panel is closed again', async () => {
+    localStorage.setItem('archy-seen-incoming-v1', JSON.stringify([]))
     const w = mountCard([tx()])
     const badge = w.find('button')
     await badge.trigger('click')   // open
@@ -106,6 +113,46 @@ describe('incoming payments', () => {
       tx({ amount_sats: 3000, time_stamp: now() - 30, kind: 'fedimint' }),
     ])
     expect(w.text()).toContain('Incoming 3')
+  })
+
+  it('does not show a receipt again after a refresh', async () => {
+    // The bug this whole model was supposed to prevent, and briefly caused:
+    // "seen" lived in component state, so every page load forgot it and the
+    // entire ecash history came back as new. Remounting is a refresh.
+    const received = tx({ amount_sats: 4200, time_stamp: now() - 30 })
+    const first = mountCard([received])
+    const badge = first.find('button')
+    await badge.trigger('click')
+    await badge.trigger('click')
+    expect(first.text()).not.toContain('Incoming 1')
+
+    const afterRefresh = mountCard([received])
+    expect(afterRefresh.text()).not.toContain('Incoming 1')
+  })
+
+  it('does not greet a brand-new browser with the whole history', () => {
+    // Nothing acknowledged yet and a long history: treating all of it as
+    // unseen would be the same wall of old receipts, just from the other
+    // direction. Only what is genuinely recent counts as news on a first run.
+    const old = [
+      tx({ amount_sats: 100, time_stamp: now() - 86400 }),
+      tx({ amount_sats: 200, time_stamp: now() - 3600 }),
+      tx({ amount_sats: 300, time_stamp: now() - 600 }),
+    ]
+    expect(mountCard(old).text()).not.toContain('Incoming')
+
+    // …but a receipt from moments ago still is.
+    localStorage.clear()
+    expect(mountCard([...old, tx({ amount_sats: 400, time_stamp: now() - 5 })]).text())
+      .toContain('Incoming 1')
+  })
+
+  it('survives unreadable storage without resurrecting the history', () => {
+    // A corrupt value must not read as "nothing has been acknowledged" — that
+    // is precisely the refresh bug wearing a different hat.
+    localStorage.setItem('archy-seen-incoming-v1', '{not json')
+    const w = mountCard([tx({ amount_sats: 100, time_stamp: now() - 86400 })])
+    expect(w.text()).not.toContain('Incoming')
   })
 
   it('does not silently turn into a navigation button while the panel is open', async () => {

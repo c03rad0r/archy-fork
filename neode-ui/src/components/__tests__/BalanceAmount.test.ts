@@ -24,6 +24,18 @@ describe('BalanceAmount', () => {
     expect(w.find('.balance-pixels').exists()).toBe(true)
   })
 
+  it('never prints NaN at a person', () => {
+    // Arithmetic over a missing field produces NaN, which is not caught by a
+    // null check and renders as the literal text "NaN sats" — worse than the
+    // zero this component exists to prevent, because at least a zero looks
+    // like a number.
+    for (const bad of [NaN, Infinity, -Infinity]) {
+      const w = mount(BalanceAmount, { props: { sats: bad } })
+      expect(w.find('.balance-pixels').exists()).toBe(true)
+      expect(w.text()).toBe('')
+    }
+  })
+
   it('shows a genuine zero as a figure, not as loading', () => {
     // The inverse mistake: a node that really has no coins must be told so
     // plainly, not left shimmering forever.

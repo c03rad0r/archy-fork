@@ -52,16 +52,26 @@ function cellDelay(i: number): string {
  * space before the unit cannot be eaten by Vue's whitespace condensing — and
  * so a test reading `.text()` sees exactly what a person reads on screen.
  */
+/**
+ * Is there a figure to show at all?
+ *
+ * `null`/`undefined` mean "not known yet" — but so does a NaN or an Infinity,
+ * which is what arithmetic on a missing field quietly produces. Those render
+ * as the literal text "NaN sats", which is worse than the zero this component
+ * exists to prevent: at least a zero looks like a number.
+ */
+const known = computed(() => props.sats != null && Number.isFinite(props.sats))
+
 const display = computed(() => {
-  if (props.sats == null) return ''
-  const figure = props.sats.toLocaleString()
+  if (!known.value) return ''
+  const figure = (props.sats as number).toLocaleString()
   return props.suffix ? `${figure} ${props.suffix}` : figure
 })
 </script>
 
 <template>
   <span
-    v-if="props.sats == null"
+    v-if="!known"
     class="balance-pixels"
     role="status"
     aria-live="polite"
