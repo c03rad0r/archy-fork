@@ -308,6 +308,29 @@ pub struct KeysetInfo {
     pub id: String,
     pub unit: String,
     pub active: bool,
+    /// NUT-02 input fee, in parts-per-thousand of a proof. A mint charges
+    /// this per *input* on a swap/melt; zero at fee-free mints, which is why
+    /// ignoring it went unnoticed against Minibits.
+    #[serde(default)]
+    pub input_fee_ppk: u64,
+}
+
+/// NUT-02 swap fee for a set of inputs: the summed per-proof parts-per-
+/// thousand, rounded **up** to whole units. Inputs whose keyset the mint
+/// didn't list contribute nothing — the mint is the authority, and guessing
+/// high would silently burn the sender's coins.
+pub fn swap_fee_for(proofs: &[Proof], keysets: &[KeysetInfo]) -> u64 {
+    let ppk: u64 = proofs
+        .iter()
+        .map(|p| {
+            keysets
+                .iter()
+                .find(|k| k.id == p.id)
+                .map(|k| k.input_fee_ppk)
+                .unwrap_or(0)
+        })
+        .sum();
+    ppk.div_ceil(1000)
 }
 
 /// Mint keyset: maps denomination amounts to public keys.

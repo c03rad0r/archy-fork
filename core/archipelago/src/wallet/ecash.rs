@@ -310,7 +310,27 @@ pub async fn load_wallet(data_dir: &Path) -> Result<WalletState> {
     let content = fs::read_to_string(&path)
         .await
         .context("Failed to read wallet file")?;
-    let mut wallet: WalletState = serde_json::from_str(&content).unwrap_or_default();
+
+    // An empty file is a legitimate "nothing here yet" (a create that never
+    // got its first write); anything else that fails to parse is a damaged
+    // purse and must NOT be read as an empty one.
+    //
+    // This used to be `unwrap_or_default()`, which turned a truncated file
+    // into a zero balance — and because the very next operation saves the
+    // wallet back, that empty state was then written over the only copy of
+    // the proofs. Failing here keeps the damaged file intact so the coins
+    // can still be recovered from it (or from a backup) by hand.
+    let mut wallet: WalletState = if content.trim().is_empty() {
+        WalletState::default()
+    } else {
+        serde_json::from_str(&content).with_context(|| {
+            format!(
+                "Ecash wallet file {} is damaged and was NOT overwritten — your coins are \
+                 still in it. Restore it from a backup, or move it aside to start empty.",
+                path.display()
+            )
+        })?
+    };
 
     // Set default mint URL if empty
     if wallet.mint_url.is_empty() {
@@ -318,6 +338,30 @@ pub async fn load_wallet(data_dir: &Path) -> Result<WalletState> {
     }
 
     Ok(wallet)
+}
+
+/// Write `content` to `path` without ever leaving a half-written file there.
+///
+/// Writes a sibling temp file, flushes it to the platter, then renames over
+/// the target — rename is atomic within a filesystem, so a crash or power cut
+/// leaves either the old file or the new one, never a truncated one. The
+/// previous plain write truncated the real file first, which is precisely how
+/// a wallet ends up unparseable.
+async fn write_file_atomically(path: &Path, content: &str) -> Result<()> {
+    let tmp = path.with_extension("json.tmp");
+    let mut f = fs::File::create(&tmp)
+        .await
+        .with_context(|| format!("Failed to create {}", tmp.display()))?;
+    use tokio::io::AsyncWriteExt;
+    f.write_all(content.as_bytes())
+        .await
+        .context("Failed to write wallet temp file")?;
+    f.sync_all().await.context("Failed to flush wallet file")?;
+    drop(f);
+    fs::rename(&tmp, path)
+        .await
+        .with_context(|| format!("Failed to replace {}", path.display()))?;
+    Ok(())
 }
 
 /// Save wallet state to disk.
@@ -328,9 +372,7 @@ pub async fn save_wallet(data_dir: &Path, wallet: &WalletState) -> Result<()> {
         .context("Failed to create wallet dir")?;
     let path = data_dir.join(load_network(data_dir).await.wallet_file());
     let content = serde_json::to_string_pretty(wallet).context("Failed to serialize wallet")?;
-    fs::write(&path, content)
-        .await
-        .context("Failed to write wallet file")?;
+    write_file_atomically(&path, &content).await?;
     Ok(())
 }
 
@@ -346,9 +388,18 @@ pub async fn load_accepted_mints(data_dir: &Path) -> Result<AcceptedMints> {
     let content = fs::read_to_string(&path)
         .await
         .context("Failed to read accepted mints")?;
-    let mints: AcceptedMints = serde_json::from_str(&content).unwrap_or(AcceptedMints {
-        mints: vec![network.default_mint()],
-    });
+    // A damaged mint list must not silently become "trust only the default"
+    // — that would reject perfectly good tokens from mints the operator
+    // added. Empty file is still a legitimate fresh state.
+    let mints: AcceptedMints = if content.trim().is_empty() {
+        AcceptedMints {
+            mints: vec![network.default_mint()],
+        }
+    } else {
+        serde_json::from_str(&content).with_context(|| {
+            format!("Accepted-mints file {} is damaged", path.display())
+        })?
+    };
     Ok(mints)
 }
 
@@ -361,9 +412,7 @@ pub async fn save_accepted_mints(data_dir: &Path, mints: &AcceptedMints) -> Resu
     let path = data_dir.join(load_network(data_dir).await.mints_file());
     let content =
         serde_json::to_string_pretty(mints).context("Failed to serialize accepted mints")?;
-    fs::write(&path, content)
-        .await
-        .context("Failed to write accepted mints")?;
+    write_file_atomically(&path, &content).await?;
     Ok(())
 }
 
@@ -2039,5 +2088,98 @@ mod tests {
         assert_eq!(back.balance(), 1000, "real funds must survive a round trip");
         assert_eq!(back.proofs.len(), 1);
         assert_eq!(back.proofs[0].proof.secret, "real");
+    }
+
+
+    #[tokio::test]
+    async fn a_damaged_wallet_file_fails_loudly_and_is_left_on_disk() {
+        let tmp = TempDir::new().unwrap();
+        let dir = tmp.path();
+        std::fs::create_dir_all(dir.join("wallet")).unwrap();
+
+        // A truncated file — what a crash mid-write used to leave behind.
+        let damaged = r#"{"proofs":[{"amount":1000,"id":"009a1f293253e41e","secr"#;
+        let path = dir.join("wallet/ecash.json");
+        std::fs::write(&path, damaged).unwrap();
+
+        // It must NOT read as an empty wallet: that is what caused the real
+        // balance to be overwritten with nothing on the next save.
+        let err = load_wallet(dir).await.expect_err("damaged wallet must error");
+        assert!(
+            err.to_string().contains("damaged"),
+            "error should name the problem: {err}"
+        );
+
+        // And the bytes must still be there for recovery.
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), damaged);
+    }
+
+    #[tokio::test]
+    async fn an_empty_wallet_file_is_treated_as_a_fresh_wallet() {
+        let tmp = TempDir::new().unwrap();
+        let dir = tmp.path();
+        std::fs::create_dir_all(dir.join("wallet")).unwrap();
+        std::fs::write(dir.join("wallet/ecash.json"), "   \n").unwrap();
+        // A create that never got its first write is not damage.
+        let w = load_wallet(dir).await.expect("empty file is a fresh wallet");
+        assert_eq!(w.balance(), 0);
+    }
+
+    #[tokio::test]
+    async fn saving_leaves_no_temp_file_and_round_trips() {
+        let tmp = TempDir::new().unwrap();
+        let dir = tmp.path();
+        let mut w = load_wallet(dir).await.unwrap();
+        w.proofs.push(StoredProof {
+            proof: Proof {
+                amount: 21,
+                id: "009a1f293253e41e".into(),
+                secret: "s".into(),
+                c: "02".into(),
+            },
+            mint_url: default_mint_url(),
+            spent: false,
+            reserved: false,
+            created_at: "2026-01-01T00:00:00Z".into(),
+        });
+        save_wallet(dir, &w).await.unwrap();
+
+        assert_eq!(load_wallet(dir).await.unwrap().balance(), 21);
+        // The atomic write must not litter, or the next reader could find it.
+        assert!(!dir.join("wallet/ecash.json.tmp").exists());
+    }
+
+    /// The exact shape a pre-update node has on disk, parsed by the current
+    /// code. Guards the on-disk contract: an update must never strand funds.
+    #[tokio::test]
+    async fn a_pre_update_wallet_file_still_loads_with_its_balance() {
+        let tmp = TempDir::new().unwrap();
+        let dir = tmp.path();
+        std::fs::create_dir_all(dir.join("wallet")).unwrap();
+        // Verbatim shape from a live node (proof fields flattened, capital C,
+        // spent/reserved flags, RFC-3339 created_at, lowercase tx type).
+        let legacy = r#"{
+          "proofs": [
+            {"amount": 2, "id": "00107937db0cc865", "secret": "9b4bdb0e", "C": "030391",
+             "mint_url": "https://mint.minibits.cash/Bitcoin", "spent": true,
+             "reserved": false, "created_at": "2026-07-23T19:49:42.468773802+00:00"},
+            {"amount": 512, "id": "00107937db0cc865", "secret": "aa11", "C": "0322",
+             "mint_url": "https://mint.minibits.cash/Bitcoin", "spent": false,
+             "reserved": false, "created_at": "2026-07-23T19:49:42.468773802+00:00"}
+          ],
+          "transactions": [
+            {"id": "8f14e45f", "tx_type": "receive", "amount_sats": 512,
+             "timestamp": "2026-07-23T19:49:42+00:00", "description": "",
+             "mint_url": "https://mint.minibits.cash/Bitcoin", "peer": ""}
+          ],
+          "mint_url": "https://mint.minibits.cash/Bitcoin"
+        }"#;
+        std::fs::write(dir.join("wallet/ecash.json"), legacy).unwrap();
+
+        let w = load_wallet(dir).await.expect("pre-update wallet must load");
+        assert_eq!(w.balance(), 512, "spendable balance must survive an update");
+        assert_eq!(w.proofs.len(), 2, "spent proofs are retained too");
+        assert_eq!(w.transactions.len(), 1);
+        assert_eq!(w.mint_url, "https://mint.minibits.cash/Bitcoin");
     }
 }

@@ -405,6 +405,35 @@ impl MintClient {
     pub async fn swap(&self, inputs: &[Proof], target_amounts: &[u64]) -> Result<SwapResult> {
         let keyset = self.get_active_sat_keyset().await?;
 
+        // NUT-02: a mint may charge a per-input fee, and it rejects the swap
+        // outright unless outputs == inputs - fee (`11005 Transaction inputs
+        // should equal outputs less fee`). Applied here rather than at each
+        // call site so send, receive and cross-mint swaps are all covered.
+        // Fee-free mints (Minibits) compute 0 and are unaffected.
+        let inputs_total: u64 = inputs.iter().map(|p| p.amount).sum();
+        let fee = match self.get_keysets().await {
+            Ok(ks) => super::cashu::swap_fee_for(inputs, &ks),
+            Err(e) => {
+                debug!("Could not read keyset fees ({e:#}) — assuming fee-free mint");
+                0
+            }
+        };
+        let spendable = inputs_total.saturating_sub(fee);
+        let requested: u64 = target_amounts.iter().sum();
+        let owned_targets: Vec<u64>;
+        let target_amounts: &[u64] = if requested > spendable {
+            if spendable == 0 {
+                anyhow::bail!(
+                    "The mint's fee ({fee} sat) consumes this whole amount — nothing would be left"
+                );
+            }
+            debug!("Reducing swap outputs {requested} -> {spendable} to cover a {fee} sat mint fee");
+            owned_targets = amount_to_denominations(spendable);
+            &owned_targets
+        } else {
+            target_amounts
+        };
+
         let mut blinded_messages = Vec::new();
         let mut blinding_data = Vec::new();
 
