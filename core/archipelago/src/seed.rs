@@ -1033,4 +1033,43 @@ mod tests {
             "release-root public key KAT"
         );
     }
+
+    /// The node's whole identity hangs off `Mnemonic::to_seed("")`, so this
+    /// pins that derivation to the BIP-39 specification vectors rather than to
+    /// whatever the `bip39` crate happens to do today.
+    ///
+    /// It exists because the crate is not version-pinned any more: the exact
+    /// `=2.1.0` pin was relaxed to `"2.1"` in 2026-08 so the `cashu` crate
+    /// could resolve (the pin transitively froze `unicode-normalization` at a
+    /// version with no common solution). A bump that changed derivation would
+    /// silently re-key every node on the fleet and orphan every existing
+    /// backup, which no amount of code review reliably catches — this does.
+    #[test]
+    fn seed_derivation_matches_the_bip39_specification_vectors() {
+        let words = "abandon abandon abandon abandon abandon abandon abandon \
+                     abandon abandon abandon abandon about"
+            .split_whitespace()
+            .collect::<Vec<_>>()
+            .join(" ");
+        let mnemonic: bip39::Mnemonic = words.parse().expect("valid test mnemonic");
+
+        // Empty passphrase — exactly how MasterSeed::from_mnemonic derives.
+        assert_eq!(
+            hex::encode(mnemonic.to_seed("")),
+            "5eb00bbddcf069084889a8ab9155568165f5c453ccb85e70811aaed6f6da5fc1\
+             9a5ac40b389cd370d086206dec8aa6c43daea6690f20ad3d8d48b2d2ce9e38e4"
+                .replace(['\n', ' '], ""),
+            "BIP-39 seed derivation changed — every node's keys would move"
+        );
+
+        // With a passphrase, where NFKD normalisation actually participates;
+        // this is the arm a `unicode-normalization` change could disturb.
+        assert_eq!(
+            hex::encode(mnemonic.to_seed("TREZOR")),
+            "c55257c360c07c72029aebc1b53c05ed0362ada38ead3e3e9efa3708e5349553\
+             1f09a6987599d18264c1e1c92f2cf141630c7a3c4ab7c81b2f001698e7463b04"
+                .replace(['\n', ' '], ""),
+            "BIP-39 passphrase normalisation changed"
+        );
+    }
 }

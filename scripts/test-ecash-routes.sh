@@ -123,8 +123,21 @@ QUOTE="$(printf '%s' "$res" | jqf result.quote_id)"
 [ -n "$QUOTE" ] && ok "ecash-mint issued quote ${QUOTE:0:12}…" \
                 || bad "ecash-mint: $(printf '%s' "$res" | err_of)"
 
-# The test mint pays its own quotes, so the claim can be attempted directly.
-# On mainnet this is expected to stay unpaid — that is not a failure.
+# The test mint settles its own invoices, but not instantly — poll the quote
+# state at the mint before claiming, or the claim races the settlement and
+# fails with "Quote not paid". On mainnet the invoice is real and nobody pays
+# it here, so staying unpaid is the expected outcome, not a failure.
+if [ -n "$QUOTE" ] && [ "$NETWORK" = testnet ]; then
+  for _ in $(seq 1 20); do
+    state="$(curl -s --max-time 15 "$MINT/v1/mint/quote/bolt11/$QUOTE" \
+             | python3 -c "import json,sys; print((json.load(sys.stdin) or {}).get('state',''))" 2>/dev/null)"
+    [ "$state" = PAID ] && break
+    sleep 3
+  done
+  [ "$state" = PAID ] && ok "test mint settled the quote" \
+                      || log "  (quote still $state — claim will likely fail)"
+fi
+
 if [ -n "$QUOTE" ]; then
   res="$(rpc wallet.ecash-mint-claim "{\"quote_id\":\"$QUOTE\",\"amount_sats\":16}")"
   claimed="$(printf '%s' "$res" | jqf result.amount_sats)"

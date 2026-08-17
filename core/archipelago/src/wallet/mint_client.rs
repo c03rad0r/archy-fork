@@ -213,13 +213,20 @@ impl MintClient {
     /// Get the active keyset for the "sat" unit.
     pub async fn get_active_sat_keyset(&self) -> Result<MintKeyset> {
         let keysets = self.get_keys().await?;
+        // Must be a *sat* keyset, not merely the first one with keys. A
+        // multi-unit mint answers /v1/keys with usd/eur/msat keysets too, and
+        // whichever came first would then sign sat-denominated requests —
+        // the mint rejects that with `11013 Unit unsupported` (seen against
+        // testnut.cashu.space, 2026-08-17). Sat-only mints omit the field
+        // entirely and default to "sat", so this stays correct for them.
         keysets
             .into_iter()
-            .find(|k| {
-                // Find active sat keyset — check keys map is non-empty
-                !k.keys.is_empty()
+            .filter(|k| !k.keys.is_empty() && k.unit.eq_ignore_ascii_case("sat"))
+            // Prefer a keyset the mint will still sign with.
+            .max_by_key(|k| k.active)
+            .ok_or_else(|| {
+                anyhow::anyhow!("No active sat keyset found at mint {}", self.url)
             })
-            .ok_or_else(|| anyhow::anyhow!("No active keyset found at mint {}", self.url))
     }
 
     // ── Mint quotes (NUT-04) ──

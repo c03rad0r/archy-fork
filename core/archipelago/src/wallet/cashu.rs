@@ -314,8 +314,26 @@ pub struct KeysetInfo {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MintKeyset {
     pub id: String,
+    /// Currency unit this keyset signs for ("sat", "usd", "eur", "msat"…).
+    ///
+    /// Defaulted rather than required: a mint that omits it is sat-only in
+    /// practice, and refusing to parse would break wallets against mints that
+    /// predate multi-unit support.
+    #[serde(default = "default_unit")]
+    pub unit: String,
+    /// Whether the mint will still sign with this keyset.
+    #[serde(default = "default_true")]
+    pub active: bool,
     /// Map of amount (as string) to hex-encoded public key.
     pub keys: std::collections::HashMap<String, String>,
+}
+
+fn default_unit() -> String {
+    "sat".to_string()
+}
+
+fn default_true() -> bool {
+    true
 }
 
 impl MintKeyset {
