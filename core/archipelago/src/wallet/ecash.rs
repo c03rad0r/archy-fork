@@ -6,6 +6,7 @@
 
 use super::cashu::{amount_to_denominations, CashuToken, Proof};
 use super::mint_client::MintClient;
+use super::nut13::RecoverySource;
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use std::path::Path;
@@ -416,13 +417,26 @@ pub async fn save_accepted_mints(data_dir: &Path, mints: &AcceptedMints) -> Resu
     Ok(())
 }
 
+/// Build a mint client whose proofs are **restorable from the wallet phrase**.
+///
+/// Every output such a client creates has its secret derived via NUT-13
+/// (`wallet/nut13.rs`) rather than drawn from randomness, so the coins can be
+/// re-derived and re-claimed if `wallet/ecash.json` is ever lost. That is the
+/// only difference from `MintClient::new`, and it is the reason this wallet
+/// has a backup story at all — so every mint/swap path in this module goes
+/// through here. On a node with no phrase yet the source is absent and the
+/// behaviour is exactly as it was before: valid proofs, no backup.
+async fn mint_client(data_dir: &Path, mint_url: &str) -> Result<MintClient> {
+    Ok(MintClient::new(mint_url)?.with_recovery(RecoverySource::load(data_dir).await))
+}
+
 /// Request a mint quote — returns a Lightning invoice to pay.
 pub async fn mint_quote(
     data_dir: &Path,
     amount_sats: u64,
 ) -> Result<super::mint_client::MintQuote> {
     let wallet = load_wallet(data_dir).await?;
-    let client = MintClient::new(&wallet.mint_url)?;
+    let client = mint_client(data_dir, &wallet.mint_url).await?;
     client.mint_quote(amount_sats).await
 }
 
@@ -430,7 +444,7 @@ pub async fn mint_quote(
 pub async fn mint_tokens(data_dir: &Path, quote_id: &str, amount_sats: u64) -> Result<u64> {
     let mut wallet = load_wallet(data_dir).await?;
     let mint_url = wallet.mint_url.clone();
-    let client = MintClient::new(&mint_url)?;
+    let client = mint_client(data_dir, &mint_url).await?;
 
     let result = client.mint_tokens(quote_id, amount_sats).await?;
     let minted: u64 = result.proofs.iter().map(|p| p.amount).sum();
@@ -452,7 +466,7 @@ pub async fn mint_tokens(data_dir: &Path, quote_id: &str, amount_sats: u64) -> R
 /// Request a melt quote — how much to pay a Lightning invoice with ecash.
 pub async fn melt_quote(data_dir: &Path, bolt11: &str) -> Result<super::mint_client::MeltQuote> {
     let wallet = load_wallet(data_dir).await?;
-    let client = MintClient::new(&wallet.mint_url)?;
+    let client = mint_client(data_dir, &wallet.mint_url).await?;
     client.melt_quote(bolt11).await
 }
 
@@ -460,7 +474,7 @@ pub async fn melt_quote(data_dir: &Path, bolt11: &str) -> Result<super::mint_cli
 pub async fn melt_tokens(data_dir: &Path, quote_id: &str, bolt11: &str) -> Result<u64> {
     let mut wallet = load_wallet(data_dir).await?;
     let mint_url = wallet.mint_url.clone();
-    let client = MintClient::new(&mint_url)?;
+    let client = mint_client(data_dir, &mint_url).await?;
 
     // Get the melt quote to know the amount needed
     let quote = client.melt_quote(bolt11).await?;
@@ -583,8 +597,8 @@ pub async fn swap_between_mints(
         );
     }
 
-    let from = MintClient::new(from_mint)?;
-    let to = MintClient::new(to_mint)?;
+    let from = mint_client(data_dir, from_mint).await?;
+    let to = mint_client(data_dir, to_mint).await?;
 
     // 1. Mint quote on the target → invoice to pay.
     let mint_quote = to
@@ -722,13 +736,13 @@ async fn wait_for_mint_quote_paid(client: &MintClient, quote_id: &str) -> Result
     )
 }
 
-/// Create a cashuA token string to send to a peer, drawing from the home mint.
+/// Create an ecash token string to send to a peer, drawing from the home mint.
 pub async fn send_token(data_dir: &Path, amount_sats: u64) -> Result<String> {
     let mint_url = load_wallet(data_dir).await?.mint_url;
     send_token_at(data_dir, &mint_url, amount_sats).await
 }
 
-/// Create a cashuA token denominated in a specific mint's tokens.
+/// Create an ecash token denominated in a specific mint's tokens.
 ///
 /// Used by the payer-side cross-mint flow: after `swap_between_mints` lands value
 /// on the seeder's accepted mint, we send a token from *that* mint so the seeder
@@ -755,7 +769,7 @@ pub async fn send_token_at(data_dir: &Path, mint_url: &str, amount_sats: u64) ->
 
     // If there's overpayment, swap to get exact change
     let send_proofs = if overpayment > 0 {
-        let client = MintClient::new(&mint_url)?;
+        let client = mint_client(data_dir, &mint_url).await?;
         let send_denoms = amount_to_denominations(amount_sats);
         let change_denoms = amount_to_denominations(overpayment);
 
@@ -804,9 +818,20 @@ pub async fn send_token_at(data_dir: &Path, mint_url: &str, amount_sats: u64) ->
         selected_proofs
     };
 
-    // Serialize as cashuA token
+    // Emit cashuB (V4) — what Minibits, Nutstash and cdk-cli read by default.
+    // cashuA stays the fallback rather than the default: it is still valid and
+    // every wallet accepts it, so a token this wallet cannot express in V4 is
+    // worth sending in V3 rather than failing the send outright. The warning
+    // exists so that never happens silently — at this point in `send_token_at`
+    // the proofs are already marked spent.
     let token = CashuToken::new(&mint_url, send_proofs);
-    let token_str = token.serialize()?;
+    let token_str = match token.serialize_v4() {
+        Ok(v4) => v4,
+        Err(e) => {
+            warn!("Falling back to a cashuA token — cashuB encoding failed: {e:#}");
+            token.serialize()?
+        }
+    };
 
     wallet.record_tx(
         TransactionType::Send,
@@ -898,7 +923,7 @@ fn plan_payment(
     PaymentPlan::Insufficient
 }
 
-/// Build a cashuA token to pay a seeder `amount_sats`, denominated in one of the
+/// Build an ecash token to pay a seeder `amount_sats`, denominated in one of the
 /// seeder's `accepted_mints`. Auto-swaps across mints (up to `max_fee_sats`) when
 /// we don't already hold the right mint. Returns the token string ready to send.
 ///
@@ -1018,7 +1043,7 @@ pub async fn resume_pending_swaps(data_dir: &Path) -> Result<u64> {
     let pending = load_pending_swaps(data_dir).await?;
     let mut reclaimed = 0u64;
     for swap in pending {
-        let to = match MintClient::new(&swap.to_mint) {
+        let to = match mint_client(data_dir, &swap.to_mint).await {
             Ok(c) => c,
             Err(e) => {
                 warn!(
@@ -1151,7 +1176,7 @@ fn target_liquidity_score(liq: &SwapLiquidity, to_mint: &str) -> i64 {
         .sum()
 }
 
-/// Receive a cashuA token from a peer — swaps proofs at the mint for fresh ones.
+/// Receive a Cashu token from a peer — swaps proofs at the mint for fresh ones.
 pub async fn receive_token(data_dir: &Path, token_str: &str) -> Result<u64> {
     // Handle legacy format for backwards compatibility
     if token_str.starts_with("cashuSend_") {
@@ -1184,7 +1209,7 @@ pub async fn receive_token(data_dir: &Path, token_str: &str) -> Result<u64> {
 
     // Swap proofs at each mint
     for entry in &token.token {
-        let client = MintClient::new(&entry.mint)?;
+        let client = mint_client(data_dir, &entry.mint).await?;
         match client.receive_token(&token).await {
             Ok(new_proofs) => {
                 let amount: u64 = new_proofs.iter().map(|p| p.amount).sum();
@@ -1300,7 +1325,7 @@ pub async fn verify_and_receive_payment(
         return Ok(received);
     }
 
-    // Parse and validate cashuA token
+    // Parse and validate the token (cashuA or cashuB)
     let token = CashuToken::deserialize(token_str)?;
     let total = token.total_amount();
 
@@ -1325,7 +1350,7 @@ pub async fn verify_and_receive_payment(
     let mut received_total = 0u64;
 
     for entry in &token.token {
-        let client = MintClient::new(&entry.mint)?;
+        let client = mint_client(data_dir, &entry.mint).await?;
         let entry_total: u64 = entry.proofs.iter().map(|p| p.amount).sum();
         let target_amounts = amount_to_denominations(entry_total);
 
@@ -1359,6 +1384,232 @@ pub async fn verify_and_receive_payment(
     save_wallet(data_dir, &wallet).await?;
 
     Ok(received_total)
+}
+
+// ── Restore from the NUT-13 phrase ─────────────────────────────────────────
+
+/// How many counters to probe per `/v1/restore` call.
+const RESTORE_BATCH: u32 = 100;
+/// How many consecutive empty batches end a keyset's scan.
+///
+/// Counters are consumed in order but gaps happen: a reservation is persisted
+/// before the mint call, so any failed mint or swap burns its counters. Three
+/// empty batches is 300 unused counters in a row — far beyond any realistic
+/// run of failures, while still terminating quickly on a fresh wallet.
+const RESTORE_GAP_BATCHES: u32 = 3;
+
+/// What a restore found.
+#[derive(Debug, Default, Clone, serde::Serialize)]
+pub struct RestoreOutcome {
+    /// Sats recovered and added to the wallet.
+    pub recovered_sats: u64,
+    /// Proofs added.
+    pub recovered_proofs: usize,
+    /// Proofs the mint had signed but which are already spent — the wallet's
+    /// history, not its balance. Reported because "found nothing" and "found
+    /// only coins you already spent" mean very different things to someone
+    /// staring at an empty balance.
+    pub already_spent: usize,
+    /// Keysets scanned at the mint.
+    pub keysets_scanned: usize,
+}
+
+/// Rebuild this wallet's proofs from its NUT-13 phrase by asking a mint which
+/// of the re-derived secrets it has signed.
+///
+/// This is the half of the backup that cannot be done offline. The phrase
+/// re-derives every secret the wallet ever used, but a secret alone is not
+/// money — the mint's signature over it is. `/v1/restore` returns those
+/// signatures, and unblinding them reconstitutes the proofs.
+///
+/// Additive and idempotent by design: proofs already in the wallet are skipped
+/// by secret, and anything the mint reports as spent is counted but not added.
+/// So a restore can be run against a *working* wallet without duplicating
+/// coins or resurrecting spent ones, which matters because the most likely
+/// time to press this button is when something already looks wrong.
+pub async fn restore_from_seed(data_dir: &Path, mint_url: &str) -> Result<RestoreOutcome> {
+    let recovery = RecoverySource::load(data_dir).await.ok_or_else(|| {
+        anyhow::anyhow!(
+            "This wallet has no backup phrase yet, so there is nothing to restore from. \
+             Set one up in Settings → Ecash backup phrase."
+        )
+    })?;
+
+    let client = MintClient::new(mint_url)?;
+    // Every keyset, not just the active one: coins signed by a retired keyset
+    // are still spendable, and skipping it would leave them behind.
+    let keysets: Vec<_> = client
+        .get_keysets()
+        .await
+        .context("Could not list the mint's keysets")?
+        .into_iter()
+        .collect();
+
+    let mut wallet = load_wallet(data_dir).await?;
+    let known_secrets: std::collections::HashSet<String> = wallet
+        .proofs
+        .iter()
+        .map(|p| p.proof.secret.clone())
+        .collect();
+
+    let mut outcome = RestoreOutcome::default();
+    let mut found: Vec<Proof> = Vec::new();
+
+    for keyset in &keysets {
+        // The mint's public keys for this keyset — needed to unblind.
+        let keys = match client.get_keyset(&keyset.id).await {
+            Ok(k) => k,
+            Err(e) => {
+                warn!("Skipping keyset {} during restore: {e:#}", keyset.id);
+                continue;
+            }
+        };
+        if !keys.unit.eq_ignore_ascii_case("sat") {
+            continue;
+        }
+        outcome.keysets_scanned += 1;
+
+        let mut counter = 0u32;
+        let mut empty_batches = 0u32;
+        let mut highest_seen: Option<u32> = None;
+
+        while empty_batches < RESTORE_GAP_BATCHES {
+            // Re-derive this batch's outputs. The amount is deliberately 0:
+            // the mint matches a restore on the blinded message `B_` alone and
+            // returns the true amount in its signature — we do not know what
+            // denomination each counter was used for, and guessing would be
+            // wrong for most of them.
+            let mut derived = Vec::with_capacity(RESTORE_BATCH as usize);
+            let mut outputs = Vec::with_capacity(RESTORE_BATCH as usize);
+            for i in 0..RESTORE_BATCH {
+                let n = counter + i;
+                let (secret, r) = match recovery.derive_at(&keyset.id, n) {
+                    Ok(pair) => pair,
+                    // A keyset id NUT-13 cannot address — nothing was ever
+                    // derived for it, so there is nothing to find.
+                    Err(e) => {
+                        debug!("Cannot derive for keyset {}: {e:#}", keyset.id);
+                        break;
+                    }
+                };
+                let blinded = super::bdhke::blind_message(&secret, &r)?;
+                outputs.push(super::cashu::BlindedMessageRequest {
+                    amount: 0,
+                    id: keyset.id.clone(),
+                    b_prime: hex::encode(blinded.b_prime.serialize()),
+                });
+                derived.push((n, secret, r, hex::encode(blinded.b_prime.serialize())));
+            }
+            if outputs.is_empty() {
+                break;
+            }
+
+            let restored = client.restore(&outputs).await?;
+            if restored.is_empty() {
+                empty_batches += 1;
+                counter += RESTORE_BATCH;
+                continue;
+            }
+            empty_batches = 0;
+
+            for (b_prime, sig) in restored {
+                let Some((n, secret, r, _)) = derived.iter().find(|(_, _, _, b)| *b == b_prime)
+                else {
+                    warn!("Mint restored an output we did not send — ignoring");
+                    continue;
+                };
+                let mint_key = match keys.key_for_amount(sig.amount) {
+                    Ok(k) => k,
+                    Err(e) => {
+                        warn!("Restored a {} sat output with no matching key: {e:#}", sig.amount);
+                        continue;
+                    }
+                };
+                let c_prime = sig.c_prime_as_pubkey()?;
+                let c = super::bdhke::unblind_signature(&c_prime, r, &mint_key)?;
+
+                highest_seen = Some(highest_seen.map_or(*n, |h: u32| h.max(*n)));
+                let secret = String::from_utf8_lossy(secret).to_string();
+                if known_secrets.contains(&secret) {
+                    continue; // already in the wallet
+                }
+                found.push(Proof {
+                    amount: sig.amount,
+                    id: keyset.id.clone(),
+                    secret,
+                    c: hex::encode(c.serialize()),
+                });
+            }
+            counter += RESTORE_BATCH;
+        }
+
+        // Never hand out a counter this keyset has already used. The scan may
+        // have found coins beyond where the counter file thought we were —
+        // reusing those would mint proofs that collide with existing ones.
+        if let Some(highest) = highest_seen {
+            if let Err(e) =
+                super::nut13::advance_counter_to(data_dir, &keyset.id, highest + 1).await
+            {
+                warn!("Could not advance the NUT-13 counter after restore: {e:#}");
+            }
+        }
+    }
+
+    if found.is_empty() {
+        return Ok(outcome);
+    }
+
+    // Only unspent proofs are money. The mint signed every one of these at
+    // some point, including the ones already spent — adding those would
+    // inflate the balance with coins that fail on first use.
+    let states = client
+        .check_state(&found)
+        .await
+        .context("Could not check which restored coins are still unspent")?;
+    // NUT-07 answers in request order. Insist on that rather than assuming it:
+    // a mismatched length would pair a proof with someone else's verdict and
+    // credit spent coins as spendable.
+    if states.len() != found.len() {
+        anyhow::bail!(
+            "Mint returned {} proof states for {} restored coins — refusing to \
+             decide which are spendable",
+            states.len(),
+            found.len()
+        );
+    }
+
+    let mut keep = Vec::new();
+    for (proof, state) in found.iter().zip(states.iter()) {
+        if state.state.eq_ignore_ascii_case("UNSPENT") {
+            keep.push(proof.clone());
+        } else {
+            outcome.already_spent += 1;
+        }
+    }
+
+    outcome.recovered_sats = keep.iter().map(|p| p.amount).sum();
+    outcome.recovered_proofs = keep.len();
+
+    if !keep.is_empty() {
+        wallet.add_proofs(mint_url, keep);
+        wallet.record_tx(
+            TransactionType::Receive,
+            outcome.recovered_sats,
+            &format!(
+                "Restored {} sats from the backup phrase",
+                outcome.recovered_sats
+            ),
+            mint_url,
+            "",
+        );
+        save_wallet(data_dir, &wallet).await?;
+        info!(
+            "Restored {} sats ({} proofs) from the ecash backup phrase",
+            outcome.recovered_sats, outcome.recovered_proofs
+        );
+    }
+
+    Ok(outcome)
 }
 
 /// Check the wallet balance.

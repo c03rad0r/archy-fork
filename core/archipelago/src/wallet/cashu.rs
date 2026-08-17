@@ -1,22 +1,22 @@
 //! Cashu token format (NUT-00) — serialization and deserialization.
 //!
-//! Emits the cashuA (V3) token format:
-//!   cashuA<base64url_encoded_json>
+//! Reads and writes both wire versions:
 //!
-//! Token JSON structure:
-//! {
-//!   "token": [{ "mint": "<url>", "proofs": [{ "amount": u64, "id": "<keyset>", "secret": "<str>", "C": "<hex>" }] }],
-//!   "memo": "<optional>"
-//! }
+//! - **cashuA (V3)** — `cashuA<base64url_encoded_json>`, whose JSON is the
+//!   structs below verbatim:
+//!   ```text
+//!   { "token": [{ "mint": "<url>", "proofs": [{ "amount": u64, "id": "<keyset>",
+//!     "secret": "<str>", "C": "<hex>" }] }], "memo": "<optional>" }
+//!   ```
+//! - **cashuB (V4)** — `cashuB<base64url_encoded_cbor>`, a CBOR map keyed by
+//!   the spec's single letters (t/i/p/a/s/c/m/u/d/w) rather than the JSON
+//!   names above, with the keyset id (`i`) and signature (`c`) as raw bytes.
+//!   Those are hex-encoded into `Proof` on the way in so the rest of the
+//!   wallet never has to know which version a token arrived in.
 //!
-//! Also accepts (decode-only) the cashuB (V4) CBOR format many wallets emit
-//! by default now:
-//!   cashuB<base64url_encoded_cbor>
-//! CBOR map keys are the spec's single-letter names (t/i/p/a/s/c/m/u/d/w),
-//! not the JSON names above. `i` (keyset id) and `c` (signature) are raw
-//! bytes on the wire; we hex-encode them into `Proof` to match the V3
-//! convention so the rest of the wallet doesn't need to know which version
-//! a token arrived in.
+//! `serialize_v4` is what we emit — most wallets default to cashuB now —
+//! with `serialize` (cashuA) kept for older receivers and as the fallback
+//! for the one token shape V4 cannot express (multi-mint).
 
 use anyhow::{Context, Result};
 use bitcoin::secp256k1::PublicKey;
@@ -24,10 +24,16 @@ use bitcoin::secp256k1::PublicKey;
 // itself is built on). Used for the parts of NUT-00/02 that move with the
 // spec — token parsing and keyset ids — while the structs below stay ours
 // because they are also the on-disk format (see docs/cashu-cdk-migration-plan.md).
+use cashu::nuts::nut00::{Proof as CdkProof, Token as CdkToken};
+use cashu::nuts::nut01::PublicKey as CdkPublicKey;
 use cashu::nuts::nut02::{
     Id as CdkId, KeySetInfo as CdkKeySetInfo, ShortKeysetId as CdkShortKeysetId,
 };
+use cashu::nuts::CurrencyUnit as CdkCurrencyUnit;
+use cashu::secret::Secret as CdkSecret;
+use cashu::{Amount as CdkAmount, MintUrl as CdkMintUrl};
 use serde::{Deserialize, Serialize};
+use std::str::FromStr;
 
 /// Prefix for V3 (JSON) tokens.
 const CASHU_A_PREFIX: &str = "cashuA";
@@ -146,6 +152,58 @@ impl CashuToken {
         use base64::Engine;
         let encoded = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(json.as_bytes());
         Ok(format!("{}{}", CASHU_A_PREFIX, encoded))
+    }
+
+    /// Encode as a cashuB (V4, CBOR) token string — the format most wallets
+    /// default to today.
+    ///
+    /// Built through the reference implementation rather than by hand. The V4
+    /// envelope puts the keyset id and the signature on the wire as raw CBOR
+    /// bytes under single-letter keys, and a token that is subtly wrong there
+    /// is money the receiver cannot redeem — so upstream owns the encoding,
+    /// the same way it owns keyset-id resolution.
+    ///
+    /// V4 is single-mint by construction, so a multi-mint token — which only
+    /// our internal plumbing ever builds — has no V4 form and is refused
+    /// here; `send_token_at` falls back to cashuA for it.
+    pub fn serialize_v4(&self) -> Result<String> {
+        let entry = match self.token.as_slice() {
+            [only] => only,
+            [] => anyhow::bail!("Token has no entries"),
+            many => anyhow::bail!(
+                "cashuB carries one mint per token; this token spans {}",
+                many.len()
+            ),
+        };
+
+        let mint_url = CdkMintUrl::from_str(&entry.mint)
+            .with_context(|| format!("Token has an unusable mint URL: {}", entry.mint))?;
+        // `unit` is optional on our struct and on V3; V4 requires one. Every
+        // proof this wallet holds is denominated in sats (the mint's SAT
+        // keyset is selected explicitly at signing time), so that is the
+        // right default rather than a guess.
+        let unit = CdkCurrencyUnit::from_str(self.unit.as_deref().unwrap_or("sat"))
+            .with_context(|| format!("Token has an unusable unit: {:?}", self.unit))?;
+
+        let proofs = entry
+            .proofs
+            .iter()
+            .map(|p| {
+                let keyset_id = CdkId::from_str(&p.id).with_context(|| {
+                    format!("Proof carries a keyset id cashuB cannot encode: {}", p.id)
+                })?;
+                let c = CdkPublicKey::from_hex(&p.c)
+                    .context("Proof carries an unparseable signature C")?;
+                Ok(CdkProof::new(
+                    CdkAmount::from(p.amount),
+                    keyset_id,
+                    CdkSecret::new(p.secret.clone()),
+                    c,
+                ))
+            })
+            .collect::<Result<Vec<_>>>()?;
+
+        Ok(CdkToken::new(mint_url, proofs, self.memo.clone(), unit).to_string())
     }
 
     /// Decode a cashuA (V3 JSON) or cashuB (V4 CBOR) token string.
@@ -551,6 +609,107 @@ mod tests {
         assert_eq!(decoded.token[0].proofs[0].id, hex::encode(&keyset_id));
         assert_eq!(decoded.token[0].proofs[0].c, hex::encode(&sig));
         assert_eq!(decoded.memo, Some("test token".to_string()));
+    }
+
+    #[test]
+    fn a_v4_token_we_emit_is_readable_by_our_own_v4_decoder() {
+        // Cross-implementation check: upstream's encoder writes the CBOR,
+        // our hand-written decoder reads it back. Agreement between two
+        // independent implementations is the evidence that matters here —
+        // a round trip through one codec would prove nothing about the wire.
+        let token = CashuToken {
+            token: vec![TokenEntry {
+                mint: "https://testnut.cashu.space".to_string(),
+                proofs: vec![
+                    Proof {
+                        amount: 8,
+                        id: "009a1f293253e41e".to_string(),
+                        secret: "abcdef1234567890".to_string(),
+                        c: "02a9acc1e48c25eeeb9289b5031cc57da9fe72f3fe2861d94ec4da0e7f6c2b4e24"
+                            .to_string(),
+                    },
+                    Proof {
+                        amount: 2,
+                        id: "009a1f293253e41e".to_string(),
+                        secret: "fedcba0987654321".to_string(),
+                        c: "0279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798"
+                            .to_string(),
+                    },
+                ],
+            }],
+            memo: Some("ten sats".to_string()),
+            unit: Some("sat".to_string()),
+        };
+
+        let encoded = token.serialize_v4().expect("V4 encoding must succeed");
+        assert!(encoded.starts_with("cashuB"), "{encoded}");
+
+        let decoded = CashuToken::deserialize(&encoded).expect("our decoder must read it");
+        assert_eq!(decoded.total_amount(), 10);
+        assert_eq!(decoded.token[0].mint, "https://testnut.cashu.space");
+        assert_eq!(decoded.memo, Some("ten sats".to_string()));
+
+        // Every proof survives byte-for-byte, including the hex convention we
+        // impose on the raw-bytes CBOR fields.
+        let mut got: Vec<_> = decoded
+            .all_proofs()
+            .iter()
+            .map(|p| (p.amount, p.id.clone(), p.secret.clone(), p.c.clone()))
+            .collect();
+        got.sort();
+        let mut want: Vec<_> = token
+            .all_proofs()
+            .iter()
+            .map(|p| (p.amount, p.id.clone(), p.secret.clone(), p.c.clone()))
+            .collect();
+        want.sort();
+        assert_eq!(got, want);
+    }
+
+    #[test]
+    fn a_multi_mint_token_has_no_v4_form_and_says_so() {
+        // V4 is single-mint by construction. `send_token_at` relies on this
+        // failing (rather than silently dropping an entry) to fall back to
+        // cashuA — the proofs are already spent by the time it serializes.
+        let one = |mint: &str| TokenEntry {
+            mint: mint.to_string(),
+            proofs: vec![Proof {
+                amount: 1,
+                id: "009a1f293253e41e".to_string(),
+                secret: "s".to_string(),
+                c: "0279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798".to_string(),
+            }],
+        };
+        let token = CashuToken {
+            token: vec![one("https://mint-a.example"), one("https://mint-b.example")],
+            memo: None,
+            unit: Some("sat".to_string()),
+        };
+
+        let err = token
+            .serialize_v4()
+            .expect_err("two mints cannot be one V4 token");
+        assert!(err.to_string().contains("one mint per token"), "{err}");
+
+        // …and cashuA, the fallback, still carries it.
+        assert!(token.serialize().unwrap().starts_with("cashuA"));
+    }
+
+    #[test]
+    fn a_truncated_keyset_id_is_refused_by_the_v4_encoder() {
+        // The framework-pt case. A short v2 id is only resolvable against the
+        // mint's keyset list, so it must never be baked into a token we emit.
+        let token = CashuToken::new(
+            "https://mint.minibits.cash/Bitcoin",
+            vec![Proof {
+                amount: 1,
+                id: "01fc0ec0e59cd6fa".to_string(),
+                secret: "s".to_string(),
+                c: "0279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798".to_string(),
+            }],
+        );
+        let err = token.serialize_v4().expect_err("short id must not encode");
+        assert!(err.to_string().contains("keyset id"), "{err}");
     }
 
     #[test]

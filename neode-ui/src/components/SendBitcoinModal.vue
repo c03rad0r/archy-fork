@@ -2,47 +2,16 @@
   <BaseModal :show="show" :title="t('web5.sendBitcoinTitle')" max-width="max-w-2xl" content-class="max-h-[90vh] overflow-y-auto" @close="close">
         <!-- ============ SUCCESS PANE — the payment's moment, not a footnote ============ -->
         <template v-if="successInfo">
-          <div class="text-center py-4">
-            <div class="send-success-badge mx-auto mb-6">
-              <ScreensaverRing size="badge" />
-              <div class="send-success-burst">
-                <div class="burst-core">
-                  <svg class="w-14 h-14 text-green-400 burst-check" fill="none" stroke="currentColor" stroke-width="3" viewBox="0 0 24 24">
-                    <path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7" />
-                  </svg>
-                </div>
-              </div>
-            </div>
-
-            <div v-if="successInfo.amount > 0" class="text-5xl font-black text-green-400 mb-1">
-              {{ successInfo.amount.toLocaleString() }}<span class="text-2xl font-bold text-green-400/70"> sats</span>
-            </div>
-            <div class="text-2xl font-bold tracking-widest text-white mb-1">SENT</div>
-            <p class="text-sm text-white/50 mb-6">{{ successInfo.methodLabel }}</p>
-
-            <div v-if="successInfo.hash || successInfo.txid || successInfo.note" class="p-4 bg-white/5 rounded-xl text-left space-y-4 mb-6">
-              <div v-if="successInfo.hash">
-                <p class="text-xs text-white/50 mb-1">Payment hash</p>
-                <div class="flex items-center gap-2">
-                  <p class="flex-1 text-xs font-mono text-white/80 break-all">{{ successInfo.hash }}</p>
-                  <CopyButton class="shrink-0" :value="successInfo.hash" />
-                </div>
-              </div>
-              <div v-if="successInfo.txid">
-                <p class="text-xs text-white/50 mb-1">Transaction ID</p>
-                <div class="flex items-center gap-2">
-                  <p class="flex-1 text-xs font-mono text-white/80 break-all">{{ successInfo.txid }}</p>
-                  <CopyButton class="shrink-0" :value="successInfo.txid" />
-                </div>
-              </div>
-              <p v-if="successInfo.note" class="text-xs text-white/60">{{ successInfo.note }}</p>
-            </div>
-
-            <div class="flex gap-3">
-              <button @click="sendAnother" class="flex-1 glass-button px-4 py-3 rounded-xl text-sm font-medium">Send another</button>
-              <button @click="close" class="flex-1 glass-button glass-button-warning px-4 py-3 rounded-xl text-sm font-semibold">Done</button>
-            </div>
-          </div>
+          <PaymentSuccessPane
+            :amount="successInfo.amount"
+            verb="SENT"
+            :method-label="successInfo.methodLabel"
+            :rows="successRows"
+            :note="successInfo.note"
+            again-label="Send another"
+            @again="sendAnother"
+            @done="close"
+          />
         </template>
 
         <!-- ============ CONFIRM PANE (second step, mirrors the scan flow) ============ -->
@@ -255,7 +224,7 @@ import { rpcClient } from '@/api/rpc-client'
 import { useLightningRequired } from '@/composables/useLightningRequired'
 import BaseModal from '@/components/BaseModal.vue'
 import CopyButton from '@/components/CopyButton.vue'
-import ScreensaverRing from '@/components/ScreensaverRing.vue'
+import PaymentSuccessPane, { type SuccessRow } from '@/components/PaymentSuccessPane.vue'
 
 const { t } = useI18n()
 const lightning = useLightningRequired()
@@ -319,6 +288,18 @@ const successInfo = ref<{
   note?: string
 } | null>(null)
 const ecashToken = ref('')
+
+// The identifiers worth keeping from a completed send, in the shape the
+// shared success pane takes. Which ones exist depends on the rail: Lightning
+// has a payment hash, on-chain has a txid.
+const successRows = computed<SuccessRow[]>(() => {
+  const info = successInfo.value
+  if (!info) return []
+  const rows: SuccessRow[] = []
+  if (info.hash) rows.push({ label: 'Payment hash', value: info.hash })
+  if (info.txid) rows.push({ label: 'Transaction ID', value: info.txid })
+  return rows
+})
 
 // "Send all funds" — sweeps the whole on-chain balance (explicit on-chain tab only)
 const sendAll = ref(false)
@@ -711,57 +692,3 @@ async function send() {
   }
 }
 </script>
-
-<style scoped>
-/* Success badge (FED-06) — the branded ScreensaverRing carries the motion,
-   with the emerald pop-in check centred over it. */
-.send-success-badge {
-  position: relative;
-  width: 160px;
-  height: 160px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-}
-@media (min-width: 768px) {
-  .send-success-badge {
-    width: 192px;
-    height: 192px;
-  }
-}
-.send-success-burst {
-  position: absolute;
-  top: 50%;
-  left: 50%;
-  transform: translate(-50%, -50%);
-  width: 7rem;
-  height: 7rem;
-}
-.burst-core {
-  position: absolute;
-  inset: 0;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  border-radius: 9999px;
-  background: rgba(16, 185, 129, 0.12);
-  box-shadow: 0 0 48px rgba(16, 185, 129, 0.3);
-  animation: burst-pop 0.5s cubic-bezier(0.175, 0.885, 0.32, 1.4) both;
-}
-.burst-check {
-  stroke-dasharray: 32;
-  stroke-dashoffset: 32;
-  animation: burst-draw 0.45s ease-out 0.25s forwards;
-}
-@keyframes burst-pop {
-  from { transform: scale(0.3); opacity: 0; }
-  to { transform: scale(1); opacity: 1; }
-}
-@keyframes burst-draw {
-  to { stroke-dashoffset: 0; }
-}
-@media (prefers-reduced-motion: reduce) {
-  .burst-core, .burst-check { animation: none; }
-  .burst-check { stroke-dashoffset: 0; }
-}
-</style>
