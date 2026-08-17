@@ -37,13 +37,24 @@ ok()  { PASS=$((PASS+1)); printf '  \033[32mPASS\033[0m %s\n' "$*"; }
 bad() { FAIL=$((FAIL+1)); printf '  \033[31mFAIL\033[0m %s\n' "$*"; }
 
 cleanup() {
-  # Put the wallet back before anything else — this is the only step whose
-  # failure could actually cost someone coins.
+  # Network first, while the service is still up: the restart below tears the
+  # RPC out from under us, and an ecash-set-network fired at a socket that
+  # isn't listening yet fails silently — which left the node parked on testnet
+  # after an otherwise green run.
+  [ -n "$ORIGINAL_NETWORK" ] && rpc wallet.ecash-set-network "{\"network\":\"$ORIGINAL_NETWORK\"}" >/dev/null 2>&1
+
+  # Then put the wallet back. This is the only step whose failure could
+  # actually cost someone coins, so it is not conditional on the above.
   if [ -n "$BACKUP" ] && [ -f "$BACKUP" ]; then
     sudo mv -f "$BACKUP" "$WALLET" && printf 'restored the testnet wallet file\n'
     sudo systemctl restart archipelago >/dev/null 2>&1
+    # Wait for it back, so a caller running another check straight after
+    # doesn't meet a dead socket.
+    for _ in $(seq 1 30); do
+      curl -s --max-time 3 -o /dev/null "$BASE/" && break
+      sleep 2
+    done
   fi
-  [ -n "$ORIGINAL_NETWORK" ] && rpc wallet.ecash-set-network "{\"network\":\"$ORIGINAL_NETWORK\"}" >/dev/null 2>&1
   rm -f "$JAR"
 }
 trap cleanup EXIT
