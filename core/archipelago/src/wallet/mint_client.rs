@@ -9,7 +9,8 @@
 
 use super::bdhke;
 use super::cashu::{
-    amount_to_denominations, BlindSignature, BlindedMessageRequest, CashuToken, MintKeyset, Proof,
+    amount_to_denominations, is_truncated_v2_keyset_id, BlindSignature, BlindedMessageRequest,
+    CashuToken, KeysetInfo, MintKeyset, Proof,
 };
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
@@ -181,6 +182,31 @@ impl MintClient {
         )
         .context("Failed to parse keysets")?;
 
+        Ok(keysets)
+    }
+
+    /// List the mint's keysets (NUT-02 `GET /v1/keysets`) — ids and status
+    /// only, no public keys. Unlike `/v1/keys` this includes *inactive*
+    /// keysets, which a received token may well reference: coins from a
+    /// retired keyset stay spendable.
+    pub async fn get_keysets(&self) -> Result<Vec<KeysetInfo>> {
+        let url = format!("{}/v1/keysets", self.url);
+        let res = self
+            .client
+            .get(&url)
+            .send()
+            .await
+            .context("Failed to fetch mint keysets")?;
+        if !res.status().is_success() {
+            anyhow::bail!("Mint keysets request failed: {}", res.status());
+        }
+        let body: serde_json::Value = res.json().await.context("Failed to parse mint keysets")?;
+        let keysets: Vec<KeysetInfo> = serde_json::from_value(
+            body.get("keysets")
+                .cloned()
+                .unwrap_or(serde_json::json!([])),
+        )
+        .context("Failed to parse keyset list")?;
         Ok(keysets)
     }
 
@@ -483,6 +509,61 @@ impl MintClient {
 
     /// Receive a CashuToken by swapping its proofs for fresh ones.
     /// This prevents double-spend and ensures only we can spend the new proofs.
+    /// Repair proofs whose keyset id is a truncated NUT-02 **v2** id.
+    ///
+    /// A v2 keyset id is 33 bytes (version byte `0x01` + 32-byte hash), but
+    /// wallets written against the original 8-byte format truncate it when
+    /// they build a token. The mint then reads the `0x01` version, expects 33
+    /// bytes, and rejects the swap — reported as
+    /// `inputs[0].id: NUT02: ID length invalid` behind a bare 422 (seen with
+    /// a Minibits-issued token, 2026-08-17).
+    ///
+    /// The id only names which keyset signed the proof, so restoring the full
+    /// id the mint advertises is exactly what the sender meant. It is also
+    /// safe to attempt: an id that names the wrong keyset fails signature
+    /// verification at the mint and no coins move. Anything already valid, or
+    /// with no unambiguous match, is passed through untouched so the mint's
+    /// own error is what the operator sees.
+    async fn resolve_truncated_keyset_ids(&self, proofs: &[Proof]) -> Vec<Proof> {
+        let needs_repair = proofs.iter().any(|p| is_truncated_v2_keyset_id(&p.id));
+        if !needs_repair {
+            return proofs.to_vec();
+        }
+
+        let known = match self.get_keysets().await {
+            Ok(k) => k,
+            Err(e) => {
+                debug!("Could not list keysets to repair truncated keyset ids: {e:#}");
+                return proofs.to_vec();
+            }
+        };
+
+        proofs
+            .iter()
+            .cloned()
+            .map(|mut p| {
+                if !is_truncated_v2_keyset_id(&p.id) {
+                    return p;
+                }
+                // Prefer an active keyset when a prefix somehow matches more
+                // than one; ambiguity beyond that is left to the mint.
+                let mut matches = known
+                    .iter()
+                    .filter(|k| k.id.len() == 66 && k.id.starts_with(&p.id))
+                    .collect::<Vec<_>>();
+                matches.sort_by_key(|k| !k.active);
+                if let Some(full) = matches.first() {
+                    debug!(
+                        "Expanded truncated v2 keyset id {} to {} for swap",
+                        p.id, full.id
+                    );
+                    p.id = full.id.clone();
+                }
+                p
+            })
+            .collect()
+    }
+
     pub async fn receive_token(&self, token: &CashuToken) -> Result<Vec<Proof>> {
         let mut all_new_proofs = Vec::new();
 
@@ -498,7 +579,8 @@ impl MintClient {
             let total: u64 = entry.proofs.iter().map(|p| p.amount).sum();
             let target_amounts = amount_to_denominations(total);
 
-            let result = self.swap(&entry.proofs, &target_amounts).await?;
+            let proofs = self.resolve_truncated_keyset_ids(&entry.proofs).await;
+            let result = self.swap(&proofs, &target_amounts).await?;
             all_new_proofs.extend(result.new_proofs);
         }
 
