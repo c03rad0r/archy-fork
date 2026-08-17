@@ -17,7 +17,7 @@ app:
   container_name: indeedhub-relay
 
   container:
-    image: source.archipelago-foundation.org/lfg2025/nostr-rs-relay:0.9.0
+    image: source.archipelago-foundation.org/lfg2025/nostr-rs-relay:0.10.0
     pull_policy: if-not-present
     network: indeedhub-net
     network_aliases: [relay]

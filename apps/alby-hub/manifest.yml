@@ -12,7 +12,7 @@ app:
   category: money
 
   container:
-    image: source.archipelago-foundation.org/lfg2025/alby-hub:v1.23.0
+    image: source.archipelago-foundation.org/lfg2025/alby-hub:v1.24.0
     pull_policy: if-not-present
 
   dependencies:

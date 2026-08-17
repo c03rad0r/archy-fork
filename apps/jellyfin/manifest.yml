@@ -11,7 +11,7 @@ app:
   description: Free media server. Stream movies, music, and photos.
 
   container:
-    image: source.archipelago-foundation.org/lfg2025/jellyfin:10.8.13
+    image: source.archipelago-foundation.org/lfg2025/jellyfin:10.11.11
     pull_policy: if-not-present
     network: pasta
 

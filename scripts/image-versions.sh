@@ -32,8 +32,8 @@ LND_IMAGE="$ARCHY_REGISTRY/lnd:v0.18.4-beta"
 ELECTRUMX_IMAGE="$ARCHY_REGISTRY/electrumx:v1.18.0"
 
 # Mempool stack
-MEMPOOL_BACKEND_IMAGE="$ARCHY_REGISTRY/mempool-backend:v3.0.0"
-MEMPOOL_WEB_IMAGE="$ARCHY_REGISTRY/mempool-frontend:v3.0.1"
+MEMPOOL_BACKEND_IMAGE="$ARCHY_REGISTRY/mempool-backend:v3.3.1"
+MEMPOOL_WEB_IMAGE="$ARCHY_REGISTRY/mempool-frontend:v3.3.1"
 MARIADB_IMAGE="$ARCHY_REGISTRY/mariadb:11.4.10"
 
 # BTCPay
@@ -43,13 +43,13 @@ POSTGRES_IMAGE="$ARCHY_REGISTRY/postgres:15.17"
 BTCPAY_POSTGRES_IMAGE="$ARCHY_REGISTRY/postgres:15.17"
 
 # Apps
-HOMEASSISTANT_IMAGE="$ARCHY_REGISTRY/home-assistant:2026.7.3"
+HOMEASSISTANT_IMAGE="$ARCHY_REGISTRY/home-assistant:2026.8.2"
 GRAFANA_IMAGE="$ARCHY_REGISTRY/grafana:10.2.0"
 UPTIME_KUMA_IMAGE="$ARCHY_REGISTRY/uptime-kuma:1"
-JELLYFIN_IMAGE="$ARCHY_REGISTRY/jellyfin:10.8.13"
+JELLYFIN_IMAGE="$ARCHY_REGISTRY/jellyfin:10.11.11"
 PHOTOPRISM_IMAGE="$ARCHY_REGISTRY/photoprism:240915"
 OLLAMA_IMAGE="$ARCHY_REGISTRY/ollama:latest"
-VAULTWARDEN_IMAGE="$ARCHY_REGISTRY/vaultwarden:1.30.0-alpine"
+VAULTWARDEN_IMAGE="$ARCHY_REGISTRY/vaultwarden:1.37.1-alpine"
 NEXTCLOUD_IMAGE="$ARCHY_REGISTRY/nextcloud:29"
 SEARXNG_IMAGE="$ARCHY_REGISTRY/searxng:latest"
 # OnlyOffice removed — incompatible with rootless Podman (internal postgres/rabbitmq fail)
@@ -63,7 +63,7 @@ NPM_IMAGE="$ARCHY_REGISTRY/nginx-proxy-manager:latest"
 # container was recreated: "database schema version does not align with the
 # server version" — it migrates a DB forward, never backward. Pinned
 # forward and published as a concrete tag so this is reproducible.
-PORTAINER_IMAGE="$ARCHY_REGISTRY/portainer:2.39.1"
+PORTAINER_IMAGE="$ARCHY_REGISTRY/portainer:2.39.6"
 
 # Networking
 TAILSCALE_IMAGE="$ARCHY_REGISTRY/tailscale:stable"
@@ -74,8 +74,8 @@ ALPINE_TOR_IMAGE="$ARCHY_REGISTRY/alpine-tor:0.4.8.13"
 ADGUARDHOME_IMAGE="$ARCHY_REGISTRY/adguardhome:v0.107.55"
 
 # Fedimint
-FEDIMINT_IMAGE="$ARCHY_REGISTRY/fedimintd:v0.10.0"
-FEDIMINT_GATEWAY_IMAGE="$ARCHY_REGISTRY/gatewayd:v0.10.0"
+FEDIMINT_IMAGE="$ARCHY_REGISTRY/fedimintd:v0.10.1"
+FEDIMINT_GATEWAY_IMAGE="$ARCHY_REGISTRY/gatewayd:v0.10.1"
 # fmcd = Fedimint client daemon (iroh-capable, fedimint-client 0.8.2). Built
 # from minmoto/fmcd. Bundled on the ISO in BOTH modes (full CONTAINER_IMAGES
 # list and the unbundled core bundle) and auto-created by first-boot as a
@@ -97,7 +97,7 @@ REDIS_IMAGE="$ARCHY_REGISTRY/redis:7.4.8"
 VALKEY_IMAGE="$ARCHY_REGISTRY/valkey:8.1.6"
 
 # Nostr
-NOSTR_RS_RELAY_IMAGE="$ARCHY_REGISTRY/nostr-rs-relay:0.9.0"
+NOSTR_RS_RELAY_IMAGE="$ARCHY_REGISTRY/nostr-rs-relay:0.10.0"
 STRFRY_IMAGE="$ARCHY_REGISTRY/strfry:1.0.4"
 NOSTR_VPN_IMAGE="$ARCHY_REGISTRY/nostr-vpn:v0.3.7"
 NOSTR_VPN_UI_IMAGE="$ARCHY_REGISTRY/nostr-vpn-ui:latest"
