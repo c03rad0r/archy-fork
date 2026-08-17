@@ -116,6 +116,23 @@
     <div class="glass-card p-6 w-full max-w-2xl mx-4 max-h-[90vh] overflow-y-auto" role="dialog" aria-modal="true" aria-labelledby="receive-bitcoin-title">
       <h2 id="receive-bitcoin-title" class="text-lg font-bold text-white mb-4">{{ t('web5.receiveBitcoinTitle') }}</h2>
 
+      <!-- The payment's moment — the same screen the on-chain and Lightning
+           flows use, so ecash isn't a second-class receipt. Replaces the form
+           until dismissed, and carries the identifiers a person would need if
+           the payment is ever questioned. -->
+      <PaymentSuccessPane
+        v-if="ecashSuccess"
+        :amount="ecashSuccess.amount"
+        :verb="ecashSuccess.verb"
+        :method-label="ecashSuccess.methodLabel"
+        :rows="ecashSuccess.rows"
+        again-label="Receive another"
+        @again="ecashSuccess = null"
+        @done="closeUnifiedReceiveModal"
+      />
+
+      <template v-else>
+
       <div class="flex gap-1 mb-4 p-1 bg-white/5 rounded-lg">
         <button
           v-for="m in (['onchain', 'lightning', 'ecash'] as const)"
@@ -171,6 +188,7 @@
           {{ unifiedReceiveProcessing ? 'Processing...' : receiveMethod === 'onchain' ? 'Generate Address' : receiveMethod === 'lightning' ? 'Create Invoice' : 'Receive' }}
         </button>
       </div>
+      </template>
     </div>
   </div>
   </Teleport>
@@ -180,6 +198,7 @@
 import { ref, computed, nextTick } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { rpcClient } from '@/api/rpc-client'
+import PaymentSuccessPane, { type SuccessRow } from '@/components/PaymentSuccessPane.vue'
 import { useLightningRequired } from '@/composables/useLightningRequired'
 import { useTransportStore } from '@/stores/transport'
 import { useMeshStore } from '@/stores/mesh'
@@ -228,6 +247,14 @@ const unifiedReceiveProcessing = ref(false)
 const unifiedReceiveError = ref('')
 const ecashReceiveToken = ref('')
 const ecashReceiveResult = ref('')
+// Details of the last successful ecash receive, for the success screen.
+// Null = nothing to celebrate yet, so the form shows.
+const ecashSuccess = ref<{
+  amount: number
+  verb: string
+  methodLabel: string
+  rows: SuccessRow[]
+} | null>(null)
 
 const effectiveSendMethod = computed(() => {
   if (sendMethod.value !== 'auto') return sendMethod.value
@@ -258,6 +285,7 @@ function closeUnifiedReceiveModal() {
   receiveOnchainAddress.value = ''
   ecashReceiveToken.value = ''
   ecashReceiveResult.value = ''
+  ecashSuccess.value = null
   unifiedReceiveError.value = ''
 }
 
@@ -493,12 +521,24 @@ async function unifiedReceive() {
         unifiedReceiveError.value = t('web5.pasteEcashToken')
         return
       }
-      const res = await rpcClient.call<{ received_sats: number; kind?: string }>({
+      const res = await rpcClient.call<{ received_sats: number; kind?: string; mint_url?: string }>({
         method: 'wallet.ecash-receive',
         params: { token: ecashReceiveToken.value.trim() },
       })
       const label = res.kind === 'fedimint' ? 'Fedimint' : 'Cashu'
       ecashReceiveResult.value = `Received ${res.received_sats} sats (${label})!`
+      // Ecash leaves no public ledger entry behind, so the issuer and the
+      // redeemed token are the only things a person can quote later if the
+      // payment is ever questioned. Capture them before clearing the box.
+      const rows: SuccessRow[] = []
+      if (res.mint_url) rows.push({ label: 'Mint', value: res.mint_url })
+      rows.push({
+        label: label === 'Fedimint' ? 'Notes redeemed' : 'Token redeemed',
+        value: ecashReceiveToken.value.trim(),
+        hint: 'Keep this if you ever need to show what you redeemed.',
+        truncate: true,
+      })
+      ecashSuccess.value = { amount: res.received_sats, verb: 'RECEIVED', methodLabel: label, rows }
       ecashReceiveToken.value = ''
       emit('balancesChanged')
     }

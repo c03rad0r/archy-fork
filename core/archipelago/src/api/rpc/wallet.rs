@@ -206,10 +206,17 @@ impl RpcHandler {
         // (redeemed at the mint) or Fedimint notes (reissued via the fmcd
         // sidecar). Detect by prefix and route accordingly.
         if is_cashu_token(token) {
+            // Which mint issued it, for the success screen. Ecash leaves no
+            // public trace once redeemed, so the mint URL is the only thing a
+            // person can quote later if the payment is ever disputed.
+            let mint_url = crate::wallet::cashu::CashuToken::deserialize(token)
+                .ok()
+                .and_then(|t| t.mint_urls().first().map(|m| m.to_string()));
             let amount = ecash::receive_token(&self.config.data_dir, token).await?;
             return Ok(serde_json::json!({
                 "received_sats": amount,
                 "kind": "cashu",
+                "mint_url": mint_url,
             }));
         }
 

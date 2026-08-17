@@ -36,16 +36,26 @@
                 : 'Real, spendable sats.' }}
             </p>
           </div>
-          <label class="flex items-center gap-2 cursor-pointer shrink-0">
+          <div class="flex items-center gap-2 shrink-0">
             <span class="text-white/60 text-xs">Test mode</span>
-            <input
-              type="checkbox"
-              :checked="ecashIsTest"
+            <!-- Switch, not a checkbox: this changes which purse the wallet
+                 is looking at, so it should read as a mode you are in. -->
+            <button
+              type="button"
+              role="switch"
+              :aria-checked="ecashIsTest"
+              aria-label="Test mode"
               :disabled="switchingNetwork"
-              class="h-4 w-4 accent-orange-500"
-              @change="setEcashNetwork(($event.target as HTMLInputElement).checked)"
-            />
-          </label>
+              class="relative inline-flex h-6 w-11 shrink-0 items-center rounded-full transition-colors disabled:opacity-50 disabled:cursor-not-allowed focus:outline-none focus:ring-2 focus:ring-orange-400/60"
+              :class="ecashIsTest ? 'bg-orange-500' : 'bg-white/15'"
+              @click="setEcashNetwork(!ecashIsTest)"
+            >
+              <span
+                class="inline-block h-4 w-4 transform rounded-full bg-white shadow transition-transform"
+                :class="ecashIsTest ? 'translate-x-6' : 'translate-x-1'"
+              ></span>
+            </button>
+          </div>
         </div>
         <p v-if="ecashIsTest" class="mt-2 text-xs text-orange-200">
           Your real ecash balance is safe and untouched — it reappears when you turn test mode off.
