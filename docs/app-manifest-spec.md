@@ -17,6 +17,45 @@ orchestrator code rather than a per-app installer, but it is not
 manifest-declared, and the direction of travel is to replace each case with a
 reusable manifest primitive.
 
+
+## Upstream tracking
+
+A node only offers an app update when the signed catalog pins a newer image
+than the one running. That works — but nothing was telling *us* when upstream
+had shipped something new, because a manifest records only our mirror
+(`source.archipelago-foundation.org/lfg2025/fedimintd:v0.10.0`), which says
+nothing about the project it was mirrored from. So a pin could sit still for
+months while every node in the fleet correctly reported "up to date".
+
+`upstream` closes that loop. It is metadata for the release process, never
+read by the orchestrator:
+
+```yaml
+app:
+  id: fedimint
+  version: 0.10.0
+  upstream:
+    kind: github          # github | dockerhub | internal | manual
+    repo: fedimint/fedimint
+```
+
+| `kind` | Meaning | Needs |
+|--------|---------|-------|
+| `github` | Watch a project's releases, then its tags. | `repo: owner/name` |
+| `dockerhub` | Watch a Docker Hub repository's tags. | `repo: namespace/name` |
+| `internal` | Built by this project — there is no upstream feed. | — |
+| `manual` | Has releases, but not anywhere machine-readable. | `url:` for a human |
+
+`scripts/check-upstream-releases.py` reads these and prints what is behind;
+it exits non-zero when anything tracked has fallen behind, so a release pass
+can gate on it. Export `GITHUB_TOKEN` first — a full sweep needs more than
+GitHub's 60-per-hour anonymous quota.
+
+An app with **no** `upstream` block is reported as `UNTRACKED` rather than
+skipped: silently skipping unknowns is exactly how this gap stayed invisible.
+Leaving it out is therefore fine and honest; guessing a wrong `repo` is not,
+because a wrong source produces a confident wrong verdict.
+
 ## Top-level fields (`app:`)
 
 | Field | Type | Required | Notes |
@@ -37,6 +76,7 @@ reusable manifest primitive.
 | `devices` | list of string | — | Host device paths; must start with `/dev/`. |
 | `interfaces` | map | — | Launch surfaces, keyed by name (`main`): `{ name, description, type, port, protocol, path }`. |
 | `hooks` | LifecycleHooks | — | Allow-listed lifecycle hooks. See [Hooks](#hooks). |
+| `upstream` | UpstreamSource | — | Where the app comes from, so release tooling can tell when the pin has fallen behind. See [Upstream tracking](#upstream-tracking). |
 | _anything else_ | — | — | Unknown keys are absorbed into an `extensions` map (serde flatten) and treated as transitional metadata — e.g. `container_name`, `metadata`, `category`, `bitcoin_integration`, `lightning_integration`. These are **not** typed schema; do not rely on them being validated. |
 
 ## `container:` (ContainerConfig)

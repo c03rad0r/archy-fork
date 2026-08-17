@@ -2,6 +2,9 @@ app:
   id: aiui
   name: AI Assistant
   version: 0.1.0
+  # Built by this project — there is no upstream release feed to watch.
+  upstream:
+    kind: internal
   description: Conversational AI interface for Archipelago. Quarantined — communicates only via context broker.
   internal: true  # System-managed, not shown in App Store
 

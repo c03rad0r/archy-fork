@@ -2,6 +2,9 @@ app:
   id: morphos-server
   name: MorphOS Server
   version: 1.0.0
+  # Built by this project — there is no upstream release feed to watch.
+  upstream:
+    kind: internal
   description: MorphOS server platform. Decentralized application server.
   
   container:

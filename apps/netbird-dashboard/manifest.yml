@@ -2,6 +2,12 @@ app:
   id: netbird-dashboard
   name: NetBird Dashboard
   version: "2.38.0"
+  # Where this app comes from, so scripts/check-upstream-releases.py can
+  # tell us when the pin below has fallen behind. Without it nothing can:
+  # container.image names our mirror, not the project it was mirrored from.
+  upstream:
+    kind: github
+    repo: netbirdio/dashboard
   description: NetBird management dashboard (SPA). Internal stack member served through the netbird proxy.
   category: networking
 

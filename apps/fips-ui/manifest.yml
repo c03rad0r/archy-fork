@@ -2,6 +2,9 @@ app:
   id: fips-ui
   name: FIPS Mesh
   version: 1.0.0
+  # Built by this project — there is no upstream release feed to watch.
+  upstream:
+    kind: internal
   description: |
     Archipelago-native dashboard for the FIPS mesh transport. Runs nginx
     inside a container with host networking, serves a static dashboard on

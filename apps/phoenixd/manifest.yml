@@ -2,6 +2,12 @@ app:
   id: phoenixd
   name: phoenixd
   version: 0.9.0
+  # Where this app comes from, so scripts/check-upstream-releases.py can
+  # tell us when the pin below has fallen behind. Without it nothing can:
+  # container.image names our mirror, not the project it was mirrored from.
+  upstream:
+    kind: github
+    repo: ACINQ/phoenixd
   description: Headless Lightning daemon by ACINQ (the Phoenix wallet team). No screen of its own — it exposes a small local API that other apps and tools use to send and receive Lightning payments. Channel liquidity is managed automatically for a fee.
   category: money
 

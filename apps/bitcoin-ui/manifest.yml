@@ -2,6 +2,9 @@ app:
   id: bitcoin-ui
   name: Bitcoin UI
   version: 1.0.0
+  # Built by this project — there is no upstream release feed to watch.
+  upstream:
+    kind: internal
   description: |
     Archipelago-native HTTP proxy + static site for interacting with the
     Bitcoin Core / Bitcoin Knots JSON-RPC. Runs nginx inside a container

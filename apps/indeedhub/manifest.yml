@@ -2,6 +2,9 @@ app:
   id: indeedhub
   name: IndeeHub
   version: "1.0.0"
+  # Built by this project — there is no upstream release feed to watch.
+  upstream:
+    kind: internal
   description: Bitcoin documentary streaming platform featuring God Bless Bitcoin and other educational content about Bitcoin, sovereignty, and decentralized technology. Sign in with your Nostr identity.
   category: community
 

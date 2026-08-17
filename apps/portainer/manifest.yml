@@ -2,6 +2,12 @@ app:
   id: portainer
   name: Portainer
   version: 2.19.4
+  # Where this app comes from, so scripts/check-upstream-releases.py can
+  # tell us when the pin below has fallen behind. Without it nothing can:
+  # container.image names our mirror, not the project it was mirrored from.
+  upstream:
+    kind: github
+    repo: portainer/portainer
   description: Container management web UI for the local Podman socket.
   category: development
 

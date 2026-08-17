@@ -2,6 +2,9 @@ app:
   id: did-wallet
   name: Web5 DID Wallet
   version: 1.0.0
+  # Built by this project — there is no upstream release feed to watch.
+  upstream:
+    kind: internal
   description: Web5 wallet with Decentralized Identifier (DID) support. Manage your digital identity and Web5 assets.
   
   container:

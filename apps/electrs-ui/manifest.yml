@@ -2,6 +2,9 @@ app:
   id: electrs-ui
   name: Electrs UI
   version: 1.0.0
+  # Built by this project — there is no upstream release feed to watch.
+  upstream:
+    kind: internal
   description: |
     Archipelago-native HTTP frontend for electrs/electrumx status. Runs
     nginx inside a container, serves static assets, and proxies

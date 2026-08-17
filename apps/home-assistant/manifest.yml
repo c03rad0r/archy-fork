@@ -2,6 +2,12 @@ app:
   id: homeassistant
   name: Home Assistant
   version: 2026.7.3
+  # Where this app comes from, so scripts/check-upstream-releases.py can
+  # tell us when the pin below has fallen behind. Without it nothing can:
+  # container.image names our mirror, not the project it was mirrored from.
+  upstream:
+    kind: github
+    repo: home-assistant/core
   description: Open source home automation platform. Control and monitor your smart home devices.
   
   container:

@@ -2,6 +2,12 @@ app:
   id: immich
   name: Immich
   version: "2.7.4"
+  # Where this app comes from, so scripts/check-upstream-releases.py can
+  # tell us when the pin below has fallen behind. Without it nothing can:
+  # container.image names our mirror, not the project it was mirrored from.
+  upstream:
+    kind: github
+    repo: immich-app/immich
   description: Self-hosted photo and video backup with mobile apps and search.
 
   # app_id "immich" = the user-facing launcher (matches the catalog entry's title

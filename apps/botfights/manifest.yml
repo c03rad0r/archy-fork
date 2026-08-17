@@ -2,6 +2,9 @@ app:
   id: botfights
   name: BotFights
   version: 1.2.11
+  # Built by this project — there is no upstream release feed to watch.
+  upstream:
+    kind: internal
   description: Bot competition arena with 2-player arcade fighting mode. AI bots battle in trivia challenges while humans duke it out with controllers. Built for Bitcoiners.
   category: community
 

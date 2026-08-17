@@ -2,6 +2,12 @@ app:
   id: strfry
   name: Strfry Nostr Relay
   version: 0.9.0
+  # Where this app comes from, so scripts/check-upstream-releases.py can
+  # tell us when the pin below has fallen behind. Without it nothing can:
+  # container.image names our mirror, not the project it was mirrored from.
+  upstream:
+    kind: github
+    repo: hoytech/strfry
   description: Lightweight Nostr relay written in C++. Alternative to nostr-rs-relay with lower resource usage.
 
   container:

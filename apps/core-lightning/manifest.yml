@@ -2,6 +2,12 @@ app:
   id: core-lightning
   name: Core Lightning (CLN)
   version: 23.08.2
+  # Where this app comes from, so scripts/check-upstream-releases.py can
+  # tell us when the pin below has fallen behind. Without it nothing can:
+  # container.image names our mirror, not the project it was mirrored from.
+  upstream:
+    kind: github
+    repo: ElementsProject/lightning
   description: Lightning Network implementation in C. Lightweight alternative to LND.
   
   container:

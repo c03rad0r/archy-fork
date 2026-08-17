@@ -2,6 +2,9 @@ app:
   id: lnd-ui
   name: LND UI
   version: 1.0.0
+  # Built by this project — there is no upstream release feed to watch.
+  upstream:
+    kind: internal
   description: |
     Archipelago-native HTTP frontend for LND. Runs nginx inside a
     container and serves static assets. LND connection info is fetched

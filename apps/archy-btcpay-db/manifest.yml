@@ -2,6 +2,12 @@ app:
   id: archy-btcpay-db
   name: BTCPay Postgres
   version: "15.17"
+  # Where this app comes from, so scripts/check-upstream-releases.py can
+  # tell us when the pin below has fallen behind. Without it nothing can:
+  # container.image names our mirror, not the project it was mirrored from.
+  upstream:
+    kind: dockerhub
+    repo: library/postgres
   description: Postgres backend for BTCPay and NBXplorer.
 
   container:

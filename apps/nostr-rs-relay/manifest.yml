@@ -2,6 +2,12 @@ app:
   id: nostr-rs-relay
   name: Nostr Relay (Rust)
   version: 0.8.0
+  # Where this app comes from, so scripts/check-upstream-releases.py can
+  # tell us when the pin below has fallen behind. Without it nothing can:
+  # container.image names our mirror, not the project it was mirrored from.
+  upstream:
+    kind: github
+    repo: scsibug/nostr-rs-relay
   description: High-performance Nostr relay written in Rust. Host your own decentralized social media relay and earn networking profits.
   
   container:

@@ -2,6 +2,12 @@ app:
   id: pine
   name: Pine
   version: "1.3.0"
+  # Where this app comes from, so scripts/check-upstream-releases.py can
+  # tell us when the pin below has fallen behind. Without it nothing can:
+  # container.image names our mirror, not the project it was mirrored from.
+  upstream:
+    kind: dockerhub
+    repo: library/nginx
   description: A private voice assistant for your home. Pine runs speech-to-text (Whisper), text-to-speech (Piper) and wake-word detection (openWakeWord) on your own node and pairs with a PineVoice satellite speaker, so Home Assistant Assist works locally with nothing sent to the cloud. Ask it about your node — block height, sync, peers, Lightning balance — and, when a Claude API key is set, anything else.
   category: home
 
