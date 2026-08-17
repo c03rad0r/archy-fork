@@ -282,7 +282,9 @@ pub async fn establish_independent(data_dir: &Path) -> Result<EcashSeed> {
 pub async fn import_mnemonic(data_dir: &Path, words: &str, confirm: bool) -> Result<EcashSeed> {
     let mnemonic: bip39::Mnemonic = words.split_whitespace().collect::<Vec<_>>().join(" ").parse()
         .map_err(|e| anyhow::anyhow!(
-            "That is not a valid BIP-39 recovery phrase: {e}. Check for typos —              every word must come from the BIP-39 word list, and the phrase as a              whole carries a checksum."
+            "That is not a valid BIP-39 recovery phrase: {e}. Check for typos — \
+             every word must come from the BIP-39 word list, and the phrase as \
+             a whole carries a checksum."
         ))?;
 
     if let Some(existing) = load_seed(data_dir).await? {
@@ -293,7 +295,11 @@ pub async fn import_mnemonic(data_dir: &Path, words: &str, confirm: bool) -> Res
         }
         if !confirm {
             anyhow::bail!(
-                "This wallet already has a backup phrase. Importing a different one                  means coins minted under the current phrase will no longer be                  restorable from words — they stay spendable, but a restore will not                  find them. Reveal and write down the current phrase first, then                  confirm to replace it."
+                "This wallet already has a backup phrase. Importing a different one \
+                 means coins minted under the current phrase will no longer be \
+                 restorable from words — they stay spendable, but a restore will \
+                 not find them. Reveal and write down the current phrase first, \
+                 then confirm to replace it."
             );
         }
         archive_seed(data_dir).await?;
