@@ -266,6 +266,8 @@ impl RpcHandler {
             "wallet.ecash-send" => self.handle_wallet_ecash_send(params).await,
             "wallet.ecash-receive" => self.handle_wallet_ecash_receive(params).await,
             "wallet.ecash-history" => self.handle_wallet_ecash_history().await,
+            "wallet.ecash-network" => self.handle_wallet_ecash_network().await,
+            "wallet.ecash-set-network" => self.handle_wallet_ecash_set_network(params).await,
             "wallet.networking-profits" => self.handle_wallet_networking_profits().await,
             // Fedimint ecash (via fedimint-clientd sidecar)
             "wallet.fedimint-list" => self.handle_wallet_fedimint_list().await,

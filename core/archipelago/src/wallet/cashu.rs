@@ -20,6 +20,13 @@
 
 use anyhow::{Context, Result};
 use bitcoin::secp256k1::PublicKey;
+// Protocol types from the reference implementation (`cashu`, the crate CDK
+// itself is built on). Used for the parts of NUT-00/02 that move with the
+// spec — token parsing and keyset ids — while the structs below stay ours
+// because they are also the on-disk format (see docs/cashu-cdk-migration-plan.md).
+use cashu::nuts::nut02::{
+    Id as CdkId, KeySetInfo as CdkKeySetInfo, ShortKeysetId as CdkShortKeysetId,
+};
 use serde::{Deserialize, Serialize};
 
 /// Prefix for V3 (JSON) tokens.
@@ -220,6 +227,26 @@ impl CashuToken {
         }
         Ok(())
     }
+}
+
+/// Resolve a token's (possibly short) keyset id against the mint's keyset
+/// list, using the reference implementation's NUT-02 rules.
+///
+/// A v1 id is complete at 8 bytes; a v2 id is 33 bytes and may legitimately
+/// travel in a token as a shorter prefix, which only the mint's keyset list
+/// can expand. Upstream `Id::from_short_keyset_id` implements exactly that,
+/// including the "8 bytes but `0x01`-versioned" case that a wallet written
+/// against the old format produces (framework-pt, 2026-08-17).
+///
+/// Returns the full hex id to send to the mint, or `None` when the id is
+/// already complete or cannot be resolved — the caller passes those through
+/// untouched so the mint's own error still reaches the operator.
+pub fn resolve_keyset_id(id_hex: &str, mint_keysets: &[CdkKeySetInfo]) -> Option<String> {
+    let bytes = hex::decode(id_hex).ok()?;
+    let short = CdkShortKeysetId::from_bytes(&bytes).ok()?;
+    let full = CdkId::from_short_keyset_id(&short, mint_keysets).ok()?;
+    let full_hex = hex::encode(full.to_bytes());
+    (full_hex != id_hex).then_some(full_hex)
 }
 
 /// NUT-02 keyset ID: hex for either 8 bytes (v1, the `00…` short form) or

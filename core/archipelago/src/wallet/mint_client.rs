@@ -530,7 +530,9 @@ impl MintClient {
             return proofs.to_vec();
         }
 
-        let known = match self.get_keysets().await {
+        // The mint's own keyset list, in the reference implementation's shape
+        // so its NUT-02 resolver can consume it directly.
+        let known = match self.get_cdk_keysets().await {
             Ok(k) => k,
             Err(e) => {
                 debug!("Could not list keysets to repair truncated keyset ids: {e:#}");
@@ -542,26 +544,40 @@ impl MintClient {
             .iter()
             .cloned()
             .map(|mut p| {
-                if !is_truncated_v2_keyset_id(&p.id) {
-                    return p;
-                }
-                // Prefer an active keyset when a prefix somehow matches more
-                // than one; ambiguity beyond that is left to the mint.
-                let mut matches = known
-                    .iter()
-                    .filter(|k| k.id.len() == 66 && k.id.starts_with(&p.id))
-                    .collect::<Vec<_>>();
-                matches.sort_by_key(|k| !k.active);
-                if let Some(full) = matches.first() {
-                    debug!(
-                        "Expanded truncated v2 keyset id {} to {} for swap",
-                        p.id, full.id
-                    );
-                    p.id = full.id.clone();
+                if let Some(full) = super::cashu::resolve_keyset_id(&p.id, &known) {
+                    debug!("Expanded short keyset id {} to {} for swap", p.id, full);
+                    p.id = full;
                 }
                 p
             })
             .collect()
+    }
+
+    /// The mint's keysets as upstream `KeySetInfo`, for NUT-02 id resolution.
+    async fn get_cdk_keysets(&self) -> Result<Vec<cashu::nuts::nut02::KeySetInfo>> {
+        let url = format!("{}/v1/keysets", self.url);
+        let res = self
+            .client
+            .get(&url)
+            .send()
+            .await
+            .context("Failed to fetch mint keysets")?;
+        if !res.status().is_success() {
+            anyhow::bail!("Mint keysets request failed: {}", res.status());
+        }
+        let body: serde_json::Value = res.json().await.context("Failed to parse mint keysets")?;
+        // Deserialize per-entry and keep what parses: a mint may advertise a
+        // keyset in a unit or format this build doesn't model, and one such
+        // entry must not block resolving the id we actually need.
+        let list = body
+            .get("keysets")
+            .and_then(|v| v.as_array())
+            .cloned()
+            .unwrap_or_default();
+        Ok(list
+            .into_iter()
+            .filter_map(|v| serde_json::from_value::<cashu::nuts::nut02::KeySetInfo>(v).ok())
+            .collect())
     }
 
     pub async fn receive_token(&self, token: &CashuToken) -> Result<Vec<Proof>> {

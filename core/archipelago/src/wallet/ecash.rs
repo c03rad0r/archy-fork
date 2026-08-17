@@ -14,6 +14,7 @@ use tracing::{debug, info, warn};
 
 const WALLET_FILE: &str = "wallet/ecash.json";
 const MINTS_FILE: &str = "wallet/accepted_mints.json";
+const NETWORK_FILE: &str = "wallet/network.json";
 
 /// Transaction type for history tracking.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -213,12 +214,96 @@ impl WalletState {
     }
 }
 
+/// Which ecash network this node's wallet is operating on.
+///
+/// Cashu itself has no notion of a testnet — a "test" wallet is simply one
+/// pointed at a mint that issues valueless coins (the public `testnut` mint).
+/// Modelling it as a network setting rather than "just add a mint" matters
+/// because the two must never share a purse: test proofs and real proofs in
+/// one file would be spendable interchangeably, and a balance would be a lie.
+///
+/// So each network gets its own wallet and its own accepted-mints list.
+/// **Mainnet keeps the original filenames**, so an existing node's funds file
+/// is untouched by this feature and by switching back and forth.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum EcashNetwork {
+    #[default]
+    Mainnet,
+    Testnet,
+}
+
+impl EcashNetwork {
+    fn wallet_file(&self) -> &'static str {
+        match self {
+            Self::Mainnet => WALLET_FILE,
+            Self::Testnet => "wallet/ecash.testnet.json",
+        }
+    }
+
+    fn mints_file(&self) -> &'static str {
+        match self {
+            Self::Mainnet => MINTS_FILE,
+            Self::Testnet => "wallet/accepted_mints.testnet.json",
+        }
+    }
+
+    /// The mint a fresh wallet on this network starts out trusting.
+    pub fn default_mint(&self) -> String {
+        match self {
+            Self::Mainnet => default_mint_url(),
+            // Public test mint: issues coins with no monetary value, and hands
+            // them out freely, so every route (mint/melt/send/receive/swap)
+            // can be exercised end to end without risking real sats.
+            Self::Testnet => "https://testnut.cashu.space".to_string(),
+        }
+    }
+
+    pub fn is_test(&self) -> bool {
+        matches!(self, Self::Testnet)
+    }
+}
+
+/// Read the node's ecash network. Absent file = mainnet, so nodes that never
+/// touch this setting behave exactly as before.
+pub async fn load_network(data_dir: &Path) -> EcashNetwork {
+    let path = data_dir.join(NETWORK_FILE);
+    let Ok(content) = fs::read_to_string(&path).await else {
+        return EcashNetwork::Mainnet;
+    };
+    serde_json::from_str::<NetworkConfig>(&content)
+        .map(|c| c.network)
+        .unwrap_or_default()
+}
+
+/// Switch the node's ecash network. The other network's wallet is left on
+/// disk untouched, so switching is reversible and loses nothing.
+pub async fn save_network(data_dir: &Path, network: EcashNetwork) -> Result<()> {
+    let dir = data_dir.join("wallet");
+    fs::create_dir_all(&dir)
+        .await
+        .context("Failed to create wallet dir")?;
+    let content = serde_json::to_string_pretty(&NetworkConfig { network })
+        .context("Failed to serialize ecash network")?;
+    fs::write(data_dir.join(NETWORK_FILE), content)
+        .await
+        .context("Failed to write ecash network")?;
+    Ok(())
+}
+
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize)]
+struct NetworkConfig {
+    #[serde(default)]
+    network: EcashNetwork,
+}
+
 /// Load wallet state from disk.
 pub async fn load_wallet(data_dir: &Path) -> Result<WalletState> {
-    let path = data_dir.join(WALLET_FILE);
+    let network = load_network(data_dir).await;
+    let path = data_dir.join(network.wallet_file());
     if !path.exists() {
         return Ok(WalletState {
-            mint_url: default_mint_url(),
+            mint_url: network.default_mint(),
             ..Default::default()
         });
     }
@@ -229,7 +314,7 @@ pub async fn load_wallet(data_dir: &Path) -> Result<WalletState> {
 
     // Set default mint URL if empty
     if wallet.mint_url.is_empty() {
-        wallet.mint_url = default_mint_url();
+        wallet.mint_url = network.default_mint();
     }
 
     Ok(wallet)
@@ -241,7 +326,7 @@ pub async fn save_wallet(data_dir: &Path, wallet: &WalletState) -> Result<()> {
     fs::create_dir_all(&dir)
         .await
         .context("Failed to create wallet dir")?;
-    let path = data_dir.join(WALLET_FILE);
+    let path = data_dir.join(load_network(data_dir).await.wallet_file());
     let content = serde_json::to_string_pretty(wallet).context("Failed to serialize wallet")?;
     fs::write(&path, content)
         .await
@@ -251,17 +336,18 @@ pub async fn save_wallet(data_dir: &Path, wallet: &WalletState) -> Result<()> {
 
 /// Load accepted mints list.
 pub async fn load_accepted_mints(data_dir: &Path) -> Result<AcceptedMints> {
-    let path = data_dir.join(MINTS_FILE);
+    let network = load_network(data_dir).await;
+    let path = data_dir.join(network.mints_file());
     if !path.exists() {
         return Ok(AcceptedMints {
-            mints: vec![default_mint_url()],
+            mints: vec![network.default_mint()],
         });
     }
     let content = fs::read_to_string(&path)
         .await
         .context("Failed to read accepted mints")?;
     let mints: AcceptedMints = serde_json::from_str(&content).unwrap_or(AcceptedMints {
-        mints: vec![default_mint_url()],
+        mints: vec![network.default_mint()],
     });
     Ok(mints)
 }
@@ -272,7 +358,7 @@ pub async fn save_accepted_mints(data_dir: &Path, mints: &AcceptedMints) -> Resu
     fs::create_dir_all(&dir)
         .await
         .context("Failed to create wallet dir")?;
-    let path = data_dir.join(MINTS_FILE);
+    let path = data_dir.join(load_network(data_dir).await.mints_file());
     let content =
         serde_json::to_string_pretty(mints).context("Failed to serialize accepted mints")?;
     fs::write(&path, content)
@@ -1884,5 +1970,74 @@ mod tests {
             PaymentPlan::Swap { to_mint, .. } => assert_eq!(to_mint, "https://liquid"),
             other => panic!("expected swap into liquid target, got {:?}", other),
         }
+    }
+
+    #[tokio::test]
+    async fn ecash_network_defaults_to_mainnet_and_leaves_files_alone() {
+        let tmp = TempDir::new().unwrap();
+        let dir = tmp.path();
+        assert_eq!(load_network(dir).await, EcashNetwork::Mainnet);
+        // A node that never touches this setting has no new file.
+        assert!(!dir.join(NETWORK_FILE).exists());
+        assert_eq!(
+            load_wallet(dir).await.unwrap().mint_url,
+            default_mint_url(),
+            "mainnet must keep the original default mint"
+        );
+    }
+
+    #[tokio::test]
+    async fn switching_to_testnet_uses_a_separate_purse_and_test_mint() {
+        let tmp = TempDir::new().unwrap();
+        let dir = tmp.path();
+
+        // Put real coins in the mainnet wallet.
+        let mut real = load_wallet(dir).await.unwrap();
+        real.proofs.push(StoredProof {
+            proof: Proof {
+                amount: 1000,
+                id: "009a1f293253e41e".into(),
+                secret: "real".into(),
+                c: "02".into(),
+            },
+            mint_url: default_mint_url(),
+            spent: false,
+            reserved: false,
+            created_at: "2026-01-01T00:00:00Z".into(),
+        });
+        save_wallet(dir, &real).await.unwrap();
+        assert_eq!(load_wallet(dir).await.unwrap().balance(), 1000);
+
+        // Switching to testnet must show an EMPTY purse pointed at the test
+        // mint — never the real coins.
+        save_network(dir, EcashNetwork::Testnet).await.unwrap();
+        let test_wallet = load_wallet(dir).await.unwrap();
+        assert_eq!(test_wallet.balance(), 0, "test wallet must not see real coins");
+        assert!(test_wallet.mint_url.contains("testnut"));
+        assert!(load_accepted_mints(dir).await.unwrap().mints[0].contains("testnut"));
+
+        // Test coins are written to their own file...
+        let mut t = test_wallet;
+        t.proofs.push(StoredProof {
+            proof: Proof {
+                amount: 7,
+                id: "009a1f293253e41e".into(),
+                secret: "test".into(),
+                c: "02".into(),
+            },
+            mint_url: EcashNetwork::Testnet.default_mint(),
+            spent: false,
+            reserved: false,
+            created_at: "2026-01-01T00:00:00Z".into(),
+        });
+        save_wallet(dir, &t).await.unwrap();
+        assert!(dir.join("wallet/ecash.testnet.json").exists());
+
+        // ...and switching back finds the real balance exactly as it was.
+        save_network(dir, EcashNetwork::Mainnet).await.unwrap();
+        let back = load_wallet(dir).await.unwrap();
+        assert_eq!(back.balance(), 1000, "real funds must survive a round trip");
+        assert_eq!(back.proofs.len(), 1);
+        assert_eq!(back.proofs[0].proof.secret, "real");
     }
 }

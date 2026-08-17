@@ -36,6 +36,51 @@ impl RpcHandler {
         }))
     }
 
+    /// `wallet.ecash-network` — which ecash network this node is on, and the
+    /// balance sitting in the *other* one so the UI can say what switching
+    /// would reveal rather than appearing to lose money.
+    pub(super) async fn handle_wallet_ecash_network(&self) -> Result<serde_json::Value> {
+        let current = ecash::load_network(&self.config.data_dir).await;
+        let wallet = ecash::load_wallet(&self.config.data_dir).await?;
+        Ok(serde_json::json!({
+            "network": current,
+            "is_test": current.is_test(),
+            "mint_url": wallet.mint_url,
+            "balance_sats": wallet.balance(),
+        }))
+    }
+
+    /// `wallet.ecash-set-network` — switch between real and test ecash.
+    ///
+    /// Each network keeps its own wallet file, so this never moves, merges or
+    /// deletes coins: switching away parks the current balance and switching
+    /// back finds it exactly as it was.
+    pub(super) async fn handle_wallet_ecash_set_network(
+        &self,
+        params: Option<serde_json::Value>,
+    ) -> Result<serde_json::Value> {
+        let params = params.ok_or_else(|| anyhow::anyhow!("Missing params"))?;
+        let requested = params
+            .get("network")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| anyhow::anyhow!("Missing network ('mainnet' or 'testnet')"))?;
+        let network = match requested {
+            "mainnet" => ecash::EcashNetwork::Mainnet,
+            "testnet" => ecash::EcashNetwork::Testnet,
+            other => anyhow::bail!("Unknown ecash network '{other}' — use 'mainnet' or 'testnet'"),
+        };
+
+        ecash::save_network(&self.config.data_dir, network).await?;
+        let wallet = ecash::load_wallet(&self.config.data_dir).await?;
+        tracing::info!(?network, "ecash network switched by operator");
+        Ok(serde_json::json!({
+            "network": network,
+            "is_test": network.is_test(),
+            "mint_url": wallet.mint_url,
+            "balance_sats": wallet.balance(),
+        }))
+    }
+
     pub(super) async fn handle_wallet_ecash_mint(
         &self,
         params: Option<serde_json::Value>,

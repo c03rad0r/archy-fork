@@ -24,6 +24,35 @@
 
     <!-- ===================== Cashu Mints ===================== -->
     <div v-show="activeTab === 'cashu'">
+      <!-- Real vs test ecash. Each network keeps its own wallet, so switching
+           parks one balance and reveals the other — it never merges them. -->
+      <div class="mb-4 rounded-lg border border-white/10 bg-white/[0.04] p-3">
+        <div class="flex items-center justify-between gap-3">
+          <div>
+            <p class="text-white/80 text-sm font-medium">{{ ecashIsTest ? 'Test ecash' : 'Real ecash' }}</p>
+            <p class="text-white/40 text-xs mt-0.5">
+              {{ ecashIsTest
+                ? 'Practice coins with no value, from a public test mint.'
+                : 'Real, spendable sats.' }}
+            </p>
+          </div>
+          <label class="flex items-center gap-2 cursor-pointer shrink-0">
+            <span class="text-white/60 text-xs">Test mode</span>
+            <input
+              type="checkbox"
+              :checked="ecashIsTest"
+              :disabled="switchingNetwork"
+              class="h-4 w-4 accent-orange-500"
+              @change="setEcashNetwork(($event.target as HTMLInputElement).checked)"
+            />
+          </label>
+        </div>
+        <p v-if="ecashIsTest" class="mt-2 text-xs text-orange-200">
+          Your real ecash balance is safe and untouched — it reappears when you turn test mode off.
+        </p>
+        <p v-if="networkError" class="mt-2 text-xs text-red-300">{{ networkError }}</p>
+      </div>
+
       <p class="text-white/60 text-sm mb-4">
         Cashu ecash tokens can only be received from mints in this list. Add a mint's URL to accept tokens issued by it.
       </p>
@@ -359,11 +388,47 @@ watch(
   (open) => {
     if (open) {
       loadMints()
+      loadEcashNetwork()
       if (fedimintBackendReady) loadFederations()
       loadArk()
     }
   },
 )
+
+// ---- Ecash network (real vs test coins) ----
+const ecashIsTest = ref(false)
+const switchingNetwork = ref(false)
+const networkError = ref('')
+
+async function loadEcashNetwork() {
+  try {
+    const res = await rpcClient.call<{ is_test: boolean }>({ method: 'wallet.ecash-network' })
+    ecashIsTest.value = !!res.is_test
+  } catch {
+    // Older node without the setting: treat as real ecash, which is the
+    // safe reading — never imply a real balance is "test".
+    ecashIsTest.value = false
+  }
+}
+
+async function setEcashNetwork(test: boolean) {
+  switchingNetwork.value = true
+  networkError.value = ''
+  try {
+    await rpcClient.call({
+      method: 'wallet.ecash-set-network',
+      params: { network: test ? 'testnet' : 'mainnet' },
+    })
+    ecashIsTest.value = test
+    // The mint list is per-network, so it must be re-read after a switch.
+    await loadMints()
+  } catch (err: unknown) {
+    networkError.value = err instanceof Error ? err.message : 'Failed to switch network'
+    await loadEcashNetwork()
+  } finally {
+    switchingNetwork.value = false
+  }
+}
 
 async function loadMints() {
   loadingMints.value = true
