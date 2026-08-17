@@ -22,7 +22,7 @@
           </div>
           <div class="flex items-center gap-2">
             <button
-              @click="incomingTxCount > 0 ? (showIncomingTxPanel = !showIncomingTxPanel) : $emit('showTransactions')"
+              @click="incomingTxCount > 0 || showIncomingTxPanel ? toggleIncomingPanel() : $emit('showTransactions')"
               :class="incomingTxCount > 0 ? 'incoming-tx-badge' : 'text-white/50 hover:text-white/80 text-xs px-2 py-1 rounded-lg bg-white/5 hover:bg-white/10 transition-colors'"
               class="shrink-0"
             >
@@ -59,14 +59,14 @@
           <div v-if="showIncomingTxPanel && incomingTransactions.length > 0" class="mb-4 rounded-xl overflow-hidden border border-green-500/20">
             <div class="px-4 py-2.5 bg-green-500/10 border-b border-green-500/15 flex items-center justify-between">
               <span class="text-xs font-medium text-green-400 uppercase tracking-wide">Incoming Transactions</span>
-              <button @click="showIncomingTxPanel = false" class="text-white/40 hover:text-white/70 transition-colors">
+              <button @click="toggleIncomingPanel" class="text-white/40 hover:text-white/70 transition-colors">
                 <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" /></svg>
               </button>
             </div>
             <div class="divide-y divide-white/5">
               <div
                 v-for="tx in incomingTransactions"
-                :key="tx.tx_hash"
+                :key="txKey(tx)"
                 class="flex items-center justify-between gap-3 px-4 py-3 hover:bg-white/5 transition-colors"
                 :class="isOnchain(tx) ? 'cursor-pointer' : ''"
                 @click="isOnchain(tx) && $emit('openInMempool', tx.tx_hash)"
@@ -198,7 +198,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted, onUnmounted } from 'vue'
+import { ref, computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 
 const { t } = useI18n()
@@ -249,23 +249,50 @@ function isOnchain(tx: WalletTransaction): boolean {
   return !tx.kind || tx.kind === 'onchain'
 }
 
-// Instant rails (lightning/cashu/fedimint/ark) settle immediately — there is
-// no confirmation to wait for, so they only get the "incoming" treatment for
-// a short window after receipt instead of sitting in the badge forever.
-const INSTANT_INCOMING_WINDOW_SECS = 5 * 60
-const nowSecs = ref(Math.floor(Date.now() / 1000))
-let nowTimer: ReturnType<typeof setInterval> | null = null
-onMounted(() => { nowTimer = setInterval(() => { nowSecs.value = Math.floor(Date.now() / 1000) }, 30000) })
-onUnmounted(() => { if (nowTimer) clearInterval(nowTimer) })
+// Instant rails (lightning/cashu/fedimint/ark) settle immediately, so there is
+// no confirmation to wait for and no natural moment for them to leave the
+// badge. They used to drop out on a five-minute wall clock, which meant a
+// receipt could appear and then silently disappear before anyone looked at it
+// — and if you opened the panel a few minutes late, the payment you came to
+// check on had already evaporated. For ecash that is the worst case
+// available: it leaves no public ledger entry, so this panel was the only
+// place the receipt was ever shown.
+//
+// So they stay until they have actually been *seen*. Opening the panel is
+// what marks them seen, which is the same unread model the mesh inbox uses.
+// On-chain is unchanged — a confirmation count is a real signal and does the
+// job by itself.
+const seenIncoming = ref(new Set<string>())
+
+function txKey(tx: WalletTransaction): string {
+  // Instant rails have no txid to key on, so fall back to rail+time+amount.
+  return tx.tx_hash || `${tx.kind ?? 'onchain'}:${tx.time_stamp}:${tx.amount_sats}`
+}
 
 const incomingTransactions = computed(() =>
   props.walletTransactions.filter(tx => {
     if (tx.direction !== 'incoming') return false
     if (isOnchain(tx)) return tx.num_confirmations < 3
-    return nowSecs.value - tx.time_stamp < INSTANT_INCOMING_WINDOW_SECS
+    return !seenIncoming.value.has(txKey(tx))
   })
 )
 const incomingTxCount = computed(() => incomingTransactions.value.length)
+
+/// Open or close the panel. Closing is what acknowledges the instant-rail
+/// receipts currently listed — marking them on *open* would make a row vanish
+/// under the cursor of someone still reading it.
+function toggleIncomingPanel() {
+  if (showIncomingTxPanel.value) {
+    for (const tx of incomingTransactions.value) {
+      if (!isOnchain(tx)) seenIncoming.value.add(txKey(tx))
+    }
+    // Vue tracks Set mutations, but reassigning keeps the dependency obvious.
+    seenIncoming.value = new Set(seenIncoming.value)
+    showIncomingTxPanel.value = false
+    return
+  }
+  showIncomingTxPanel.value = true
+}
 
 function railBadge(tx: WalletTransaction): string {
   if (tx.kind === 'lightning') return '⚡ Instant'
