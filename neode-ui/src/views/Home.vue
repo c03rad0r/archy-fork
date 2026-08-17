@@ -678,9 +678,19 @@ const showScanModal = ref(false); const showSendModal = ref(false); const showRe
 
 async function devFaucet() { try { await rpcClient.call({ method: 'dev.faucet', params: { amount_sats: 1_000_000 } }); await loadWeb5Status() } catch { /* ignore */ } }
 
-const walletConnected = ref(false); const walletOnchain = ref(0); const walletLightning = ref(0); const walletEcash = ref(0); const walletFedimint = ref(0)
+// Balances start as `null`, not 0. Zero is a *number*, and it is the one
+// number that frightens people — rendering it before any call has returned
+// told someone opening the dashboard, in the wallet's own typeface, that
+// their money was gone. `null` means "not known yet" and paints a pixel
+// readout instead; a rail only becomes a number when a call actually
+// succeeds, so a real 0 is still a real 0.
+const walletConnected = ref(false)
+const walletOnchain = ref<number | null>(null)
+const walletLightning = ref<number | null>(null)
+const walletEcash = ref<number | null>(null)
+const walletFedimint = ref<number | null>(null)
 let walletInfoFailures = 0
-const walletArk = ref(0)
+const walletArk = ref<number | null>(null)
 const walletTransactions = ref<WalletTransaction[]>([])
 
 // Overlay the local Mempool app when it's running; otherwise route through
@@ -728,11 +738,13 @@ function hydrateWalletSnapshot() {
     const raw = localStorage.getItem(WALLET_SNAPSHOT_KEY)
     if (!raw) return
     const s = JSON.parse(raw)
-    walletOnchain.value = s.onchain ?? 0
-    walletLightning.value = s.lightning ?? 0
-    walletEcash.value = s.ecash ?? 0
-    walletFedimint.value = s.fedimint ?? 0
-    walletArk.value = s.ark ?? 0
+    // A snapshot key that isn't there was never known — leave it unknown
+    // rather than inventing a zero for it.
+    walletOnchain.value = s.onchain ?? null
+    walletLightning.value = s.lightning ?? null
+    walletEcash.value = s.ecash ?? null
+    walletFedimint.value = s.fedimint ?? null
+    walletArk.value = s.ark ?? null
     walletConnected.value = s.connected === true
     if (Array.isArray(s.transactions)) walletTransactions.value = s.transactions
   } catch { /* corrupt/absent snapshot — fresh load fills in */ }

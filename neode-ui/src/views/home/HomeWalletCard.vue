@@ -117,7 +117,7 @@
               <span class="text-lg text-orange-500 font-bold">&#x20bf;</span>
               <span class="text-sm font-medium text-white">{{ t('web5.totalBitcoin') }}</span>
             </div>
-            <span class="text-white text-sm font-semibold">{{ walletTotal.toLocaleString() }} sats</span>
+            <span class="text-white text-sm font-semibold"><BalanceAmount :sats="walletTotal" label="total balance" /></span>
           </div>
           <div class="flex items-center justify-between p-3 bg-white/5 rounded-lg">
             <div class="flex items-center gap-3">
@@ -126,7 +126,7 @@
               </svg>
               <span class="text-sm text-white/80">{{ t('web5.onChain') }}</span>
             </div>
-            <span class="text-orange-500 text-sm font-medium">{{ walletOnchain.toLocaleString() }} sats</span>
+            <span class="text-orange-500 text-sm font-medium"><BalanceAmount :sats="walletOnchain" label="on-chain balance" /></span>
           </div>
           <div class="flex items-center justify-between p-3 bg-white/5 rounded-lg">
             <div class="flex items-center gap-3">
@@ -135,7 +135,7 @@
               </svg>
               <span class="text-sm text-white/80">{{ t('web5.lightning') }}</span>
             </div>
-            <span class="text-yellow-400 text-sm font-medium">{{ walletLightning.toLocaleString() }} sats</span>
+            <span class="text-yellow-400 text-sm font-medium"><BalanceAmount :sats="walletLightning" label="Lightning balance" /></span>
           </div>
           <div class="flex items-center justify-between p-3 bg-white/5 rounded-lg">
             <div class="flex items-center gap-3">
@@ -146,7 +146,7 @@
               </svg>
               <span class="text-sm text-white/80">Cashu</span>
             </div>
-            <span class="text-purple-400 text-sm font-medium">{{ walletEcash.toLocaleString() }} sats</span>
+            <span class="text-purple-400 text-sm font-medium"><BalanceAmount :sats="walletEcash" label="Cashu balance" /></span>
           </div>
           <div class="flex items-center justify-between p-3 bg-white/5 rounded-lg">
             <div class="flex items-center gap-3">
@@ -155,7 +155,7 @@
               </svg>
               <span class="text-sm text-white/80">Fedimint</span>
             </div>
-            <span class="text-blue-400 text-sm font-medium">{{ walletFedimint.toLocaleString() }} sats</span>
+            <span class="text-blue-400 text-sm font-medium"><BalanceAmount :sats="walletFedimint" label="Fedimint balance" /></span>
           </div>
           <!-- Only rendered once barkd reports a balance — most nodes don't run the Ark sidecar -->
           <div v-if="(walletArk ?? 0) > 0" class="flex items-center justify-between p-3 bg-white/5 rounded-lg">
@@ -165,7 +165,7 @@
               </svg>
               <span class="text-sm text-white/80">Ark</span>
             </div>
-            <span class="text-teal-400 text-sm font-medium">{{ (walletArk ?? 0).toLocaleString() }} sats</span>
+            <span class="text-teal-400 text-sm font-medium"><BalanceAmount :sats="walletArk" label="Ark balance" /></span>
           </div>
         </div>
         <div class="home-card-buttons flex gap-2 mt-auto pt-4 shrink-0">
@@ -199,6 +199,7 @@
 
 <script setup lang="ts">
 import { ref, computed } from 'vue'
+import BalanceAmount from '@/components/BalanceAmount.vue'
 import { useI18n } from 'vue-i18n'
 
 const { t } = useI18n()
@@ -220,11 +221,13 @@ export interface WalletTransaction {
 const props = defineProps<{
   animate: boolean
   walletConnected: boolean
-  walletOnchain: number
-  walletLightning: number
-  walletEcash: number
-  walletFedimint: number
-  walletArk?: number
+  // `null` = not loaded yet, `0` = genuinely empty. Keeping those apart is
+  // what lets the card show a pixel readout instead of claiming a figure.
+  walletOnchain: number | null
+  walletLightning: number | null
+  walletEcash: number | null
+  walletFedimint: number | null
+  walletArk?: number | null
   walletTransactions: WalletTransaction[]
   isDev: boolean
 }>()
@@ -241,9 +244,14 @@ defineEmits<{
 
 const showIncomingTxPanel = ref(false)
 
-const walletTotal = computed(() =>
-  props.walletOnchain + props.walletLightning + props.walletEcash + props.walletFedimint + (props.walletArk ?? 0)
-)
+// The total is only a number once every rail that makes it up is. Summing
+// with nulls treated as 0 would quietly under-report the balance — a total
+// smaller than the rails beneath it is worse than showing nothing.
+const walletTotal = computed<number | null>(() => {
+  const rails = [props.walletOnchain, props.walletLightning, props.walletEcash, props.walletFedimint]
+  if (rails.some(v => v == null)) return null
+  return rails.reduce((a: number, b) => a + (b as number), 0) + (props.walletArk ?? 0)
+})
 
 function isOnchain(tx: WalletTransaction): boolean {
   return !tx.kind || tx.kind === 'onchain'

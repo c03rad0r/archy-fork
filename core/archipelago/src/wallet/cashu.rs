@@ -620,19 +620,23 @@ mod tests {
         let token = CashuToken {
             token: vec![TokenEntry {
                 mint: "https://testnut.cashu.space".to_string(),
+                // Real curve points (G and 2G). The V3 codec never parses `C`,
+                // so its tests get away with a plausible-looking hex string —
+                // the V4 encoder hands it to the reference implementation,
+                // which checks the point is actually on secp256k1.
                 proofs: vec![
                     Proof {
                         amount: 8,
                         id: "009a1f293253e41e".to_string(),
                         secret: "abcdef1234567890".to_string(),
-                        c: "02a9acc1e48c25eeeb9289b5031cc57da9fe72f3fe2861d94ec4da0e7f6c2b4e24"
+                        c: "0279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798"
                             .to_string(),
                     },
                     Proof {
                         amount: 2,
                         id: "009a1f293253e41e".to_string(),
                         secret: "fedcba0987654321".to_string(),
-                        c: "0279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798"
+                        c: "02c6047f9441ed7d6d3045406e95c07cd85c778e4b8cef3ca7abac09b95c709ee5"
                             .to_string(),
                     },
                 ],

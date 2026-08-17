@@ -221,15 +221,15 @@
         <div v-if="arkStatus?.available" class="grid grid-cols-3 gap-2 mb-4">
           <div class="p-3 bg-white/5 rounded-lg text-center">
             <p class="text-[11px] text-white/40 mb-1">Spendable</p>
-            <p class="text-sm text-teal-400 font-medium">{{ (arkBalance?.spendable_sats ?? 0).toLocaleString() }} sats</p>
+            <p class="text-sm text-teal-400 font-medium"><BalanceAmount :sats="arkBalance?.spendable_sats" label="spendable Ark balance" /></p>
           </div>
           <div class="p-3 bg-white/5 rounded-lg text-center">
             <p class="text-[11px] text-white/40 mb-1">Pending</p>
-            <p class="text-sm text-white/70 font-medium">{{ (arkBalance?.pending_sats ?? 0).toLocaleString() }} sats</p>
+            <p class="text-sm text-white/70 font-medium"><BalanceAmount :sats="arkBalance?.pending_sats" label="pending Ark balance" /></p>
           </div>
           <div class="p-3 bg-white/5 rounded-lg text-center">
             <p class="text-[11px] text-white/40 mb-1">On-chain</p>
-            <p class="text-sm text-white/70 font-medium">{{ (arkBalance?.onchain_sats ?? 0).toLocaleString() }} sats</p>
+            <p class="text-sm text-white/70 font-medium"><BalanceAmount :sats="arkBalance?.onchain_sats" label="on-chain Ark balance" /></p>
           </div>
         </div>
 
@@ -318,6 +318,7 @@ import { useI18n } from 'vue-i18n'
 import { rpcClient } from '@/api/rpc-client'
 import BaseModal from '@/components/BaseModal.vue'
 import LightningChannelsPanel from '@/components/LightningChannelsPanel.vue'
+import BalanceAmount from '@/components/BalanceAmount.vue'
 import { useTxExplorer, EXPLORER_PLACEHOLDER } from '@/composables/useTxExplorer'
 
 const { t } = useI18n()

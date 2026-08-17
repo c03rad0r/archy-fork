@@ -68,7 +68,9 @@ describe('AppHeroSection', () => {
   it('disables app controls while a container action is running', () => {
     const wrapper = mountHero({ pendingAction: 'restart' })
 
-    expect(wrapper.text()).toContain('Restarting...')
+    // A real ellipsis, not three dots — the label changed in 9ccc325a and
+    // this assertion was left behind.
+    expect(wrapper.text()).toContain('Restarting…')
     expect(wrapper.findAll('button').every(button => button.attributes('disabled') !== undefined)).toBe(true)
   })
 

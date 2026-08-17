@@ -121,8 +121,8 @@
                       <div class="p-3 rounded-lg bg-white/5 border border-white/10">
                         <div class="flex items-center justify-between gap-3">
                           <span class="text-xs text-white/60">On-chain wallet balance</span>
-                          <span class="text-sm font-mono" :class="walletOnchainSats >= ZEUS_CHANNEL_MIN_SATS ? 'text-green-400' : 'text-white/85'">
-                            {{ walletOnchainSats.toLocaleString() }} sats
+                          <span class="text-sm font-mono" :class="(walletOnchainSats ?? 0) >= ZEUS_CHANNEL_MIN_SATS ? 'text-green-400' : 'text-white/85'">
+                            <BalanceAmount :sats="walletOnchainSats" label="on-chain balance" />
                           </span>
                         </div>
                         <p class="text-xs text-white/45 mt-1">Minimum 150,000 · maximum 1,500,000 on-chain sats required.</p>
@@ -136,10 +136,10 @@
                         </button>
                         <button
                           @click="completeFundStep(step)"
-                          :disabled="walletOnchainSats <= 0"
+                          :disabled="(walletOnchainSats ?? 0) <= 0"
                           class="glass-button glass-button-sm rounded-lg px-5 py-2 text-sm font-medium disabled:opacity-40"
                         >
-                          {{ walletOnchainSats > 0 ? 'Continue' : 'Waiting for funds…' }}
+                          {{ walletOnchainSats == null ? 'Checking balance…' : walletOnchainSats > 0 ? 'Continue' : 'Waiting for funds…' }}
                         </button>
                       </div>
                     </template>
@@ -224,6 +224,7 @@
 
 <script setup lang="ts">
 import { computed, onUnmounted, ref, watch } from 'vue'
+import BalanceAmount from '@/components/BalanceAmount.vue'
 import { useRoute, useRouter, RouterLink } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { useAppStore } from '@/stores/app'
@@ -435,7 +436,10 @@ function goBack() {
 // ── Fund-wallet step: live sync status + on-chain balance ───────────────────
 
 const showFundModal = ref(false)
-const walletOnchainSats = ref(0)
+// null while the first balance call is still out — "0 sats" and "we haven't
+// asked yet" must not look the same on a screen that then says
+// "Waiting for funds…".
+const walletOnchainSats = ref<number | null>(null)
 
 const hasFundStep = computed(() => goal.value?.steps.some((s) => s.action === 'fund') ?? false)
 const fundStepActive = computed(() => {

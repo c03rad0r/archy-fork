@@ -190,6 +190,16 @@
         .text-white-40 { color: rgba(255,255,255,0.4); }
         .text-green { color: #4ade80; } .text-orange { color: #fb923c; } .text-red { color: #f87171; }
         .text-purple { color: #a78bfa; } .text-yellow { color: #facc15; } .text-btc { color: #f7931a; }
+
+        /* Pixel readout shown in place of a balance that isn't known yet.
+           An unloaded balance used to render as "0 sats" — zero is a number,
+           not a loading state, and it is the one number that frightens
+           people. It inherits currentColor, so each tile shimmers in its own
+           rail colour. */
+        .bal-pixels { display: inline-grid; grid-template-columns: repeat(14, 4px); grid-auto-rows: 4px; gap: 1px; vertical-align: 0.15em; }
+        .bal-pixels i { width: 4px; height: 4px; border-radius: 0.5px; background: currentColor; opacity: 0.16; animation: bal-pixel-scan 1.4s ease-in-out infinite; }
+        @keyframes bal-pixel-scan { 0%, 70%, 100% { opacity: 0.16; } 25% { opacity: 1; } 45% { opacity: 0.42; } }
+        @media (prefers-reduced-motion: reduce) { .bal-pixels i { animation: none; opacity: 0.35; } }
         .bg-green { background: #4ade80; } .bg-yellow { background: #facc15; } .bg-red { background: #f87171; }
         .bg-grey { background: rgba(255,255,255,0.35); }
 
@@ -1070,6 +1080,23 @@
         }
 
         function setText(id, text) { const el = document.getElementById(id); if (el) el.textContent = text; }
+
+        // 28 cells = 14 columns x 2 rows, delays staggered so the lit column
+        // travels across the matrix.
+        const BAL_PIXELS = '<span class="bal-pixels" role="status" aria-label="Loading balance">' +
+            Array.from({ length: 28 }, function (_, i) {
+                return '<i style="animation-delay:' + (i * 45) + 'ms"></i>';
+            }).join('') + '</span>';
+
+        // Render a balance, or the pixel readout when it is not known yet.
+        // `sats` must be null/undefined for "not loaded" — passing 0 here
+        // means the node genuinely has nothing, and says so.
+        function setBalance(id, sats) {
+            const el = document.getElementById(id);
+            if (!el) return;
+            if (sats === null || sats === undefined) { el.innerHTML = BAL_PIXELS; return; }
+            el.textContent = fmtAmount(sats);
+        }
         function setHtml(id, html) { const el = document.getElementById(id); if (el) el.innerHTML = html; }
 
         // Classify a peer address the way Umbrel's peers table does.
@@ -1216,12 +1243,22 @@
             const lnRemote = num(cb && ((cb.remote_balance && cb.remote_balance.sat) ?? 0));
             const lnPending = num(cb && ((cb.pending_open_local_balance && cb.pending_open_local_balance.sat) ?? 0));
 
-            setText('balTotal', fmtAmount(onchainConfirmed + lnLocal));
-            setText('balTotalSub', state.onchain || cb ? 'on-chain + lightning' : 'balances unavailable');
-            setText('balLightning', fmtAmount(lnLocal));
-            setText('balLightningSub', lnPending > 0 ? fmtAmount(lnPending) + ' pending open' : 'spendable over channels');
-            setText('balOnchain', fmtAmount(onchainConfirmed));
-            setText('balOnchainSub', onchainUnconfirmed > 0 ? fmtAmount(onchainUnconfirmed) + ' unconfirmed' : 'confirmed');
+            // This function runs on every poll, including before the first
+            // response lands — at which point `state.onchain`/`state.chanbal`
+            // are still null and every figure below computed to 0. The tiles
+            // therefore claimed a zero balance on load. A rail with no data
+            // yet gets the pixel readout instead.
+            const haveOnchain = !!state.onchain;
+            const haveChan = !!cb;
+
+            setBalance('balTotal', haveOnchain || haveChan ? onchainConfirmed + lnLocal : null);
+            setText('balTotalSub', haveOnchain || haveChan ? 'on-chain + lightning' : 'waiting for LND');
+            setBalance('balLightning', haveChan ? lnLocal : null);
+            setText('balLightningSub', !haveChan ? 'waiting for LND'
+                : lnPending > 0 ? fmtAmount(lnPending) + ' pending open' : 'spendable over channels');
+            setBalance('balOnchain', haveOnchain ? onchainConfirmed : null);
+            setText('balOnchainSub', !haveOnchain ? 'waiting for LND'
+                : onchainUnconfirmed > 0 ? fmtAmount(onchainUnconfirmed) + ' unconfirmed' : 'confirmed');
 
             setText('liqLocal', fmtAmount(lnLocal));
             setText('liqRemote', fmtAmount(lnRemote));
