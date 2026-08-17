@@ -87,9 +87,39 @@ and it should not introduce a second thing for the operator to write down:
 - Surface it in the UI the way the node seed already is: a "back up / restore
   ecash" path that states plainly that the node's recovery phrase covers it.
 
-**Open question for the operator:** whether to *also* allow an independent
-wallet mnemonic, for someone who wants ecash separable from the node identity.
-Default should be derived-from-node.
+### The words we show, and why they are their own mnemonic
+
+Derive a **dedicated BIP-39 mnemonic for the Cashu wallet** from the node
+master seed (deterministic, fixed path), rather than showing the node's own 24
+words. Both properties matter:
+
+- it is still covered by the node's recovery phrase — a restored node
+  re-derives the same ecash wallet, nothing extra to write down;
+- but it is *portable*: the operator can restore their ecash in any NUT-13
+  wallet (Minibits, Nutstash, `cdk-cli`) **without handing over the node's
+  master seed**. Showing the node seed here would make "back up my ecash" and
+  "expose the key to everything" the same action.
+
+### Where it appears — the existing seed-reveal pattern, unchanged
+
+Mirror the Lightning seed backup exactly; do not invent a second pattern.
+
+| Piece | Lightning (existing) | Ecash (to build) |
+|---|---|---|
+| Shared UI | `components/SeedRevealPanel.vue` (`:words`, Words/QR tabs, tap-to-reveal blur, SeedQR) | same component, reused as-is |
+| App detail page | `views/appDetails/LndSeedBackup.vue`, rendered from `AppDetails.vue:22` when `packageKey === 'lnd' && pkg.installed` | `views/appDetails/EcashSeedBackup.vue`, rendered the same way for the ecash-bearing app |
+| Settings | `views/settings/BackupSection.vue:352` | same section, a panel beside it |
+| Status RPC | `lnd.seed-backup-status` | `wallet.ecash-seed-status` |
+| Reveal RPC | `lnd.seed-reveal` | `wallet.ecash-seed-reveal` |
+| Auth gate | `verify_reveal_auth(&params, "the Lightning seed")` — password re-entry | same helper, `"the ecash seed"` |
+
+Pass `SeedRevealPanel` **without** the `aezeed` flag: unlike LND's aezeed, this
+is standard BIP-39, so the SeedQR tab works and third-party wallets can consume
+it.
+
+**Open question for the operator:** whether to *also* allow importing an
+externally generated ecash mnemonic (bring-your-own, breaking the
+derived-from-node link). Default should be derived-from-node.
 
 ## Options this unlocks (worth considering, not committed)
 
@@ -109,7 +139,9 @@ Default should be derived-from-node.
    keeping every public signature and the on-disk contract. Existing tests in
    both modules stay as the regression net; add upstream's DLEQ vectors.
 3. Emit `cashuB` (V4) by default, keep `cashuA` for compatibility.
-4. NUT-13 deterministic secrets + node-seed derivation + the restore path.
+4. NUT-13 deterministic secrets + node-seed derivation, the reveal/restore
+   surfaces above (app detail page **and** Settings), and a restore-from-words
+   path so a wallet can be rebuilt from the mnemonic alone.
 5. Then reconsider `cdk-mintd` and NUT-11 as separate features.
 
 Verify each step against a real mint on a test node before the fleet, and keep
