@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
+import { ref, computed, onMounted } from 'vue'
 import { rpcClient } from '@/api/rpc-client'
 import SeedRevealPanel from '@/components/SeedRevealPanel.vue'
 
@@ -20,7 +20,7 @@ import SeedRevealPanel from '@/components/SeedRevealPanel.vue'
 
 type SeedStatus = {
   active: boolean
-  source: 'node-seed' | 'independent' | null
+  source: 'node-seed' | 'independent' | 'imported' | null
   can_activate: boolean
   /** Whether a phrase can be *derived* from the node's recovery phrase. When
    *  false the wallet still gets a backup — it is just independent, and the
@@ -105,6 +105,60 @@ async function copyRevealedWords() {
   } catch { /* clipboard unavailable */ }
 }
 
+// ── Import ─────────────────────────────────────────────────────────────────
+// Bring-your-own: point this wallet at another NUT-13 wallet's derivation, so
+// coins held in Minibits, Nutstash or cdk-cli become restorable here.
+//
+// Replacing an established phrase is the one lossy thing on this screen. The
+// coins already held stay spendable — they are proofs, not derivations — but
+// they were minted under the old phrase, so a restore will no longer find
+// them. Hence the explicit confirmation, and the reminder to write the
+// current phrase down first.
+const showImportModal = ref(false)
+const importWords = ref('')
+const importPassword = ref('')
+const importCode = ref('')
+const importConfirm = ref(false)
+const importing = ref(false)
+const importError = ref('')
+const importDone = ref(false)
+
+const importWordCount = computed(
+  () => importWords.value.trim().split(/\s+/).filter(Boolean).length,
+)
+
+function openImport() {
+  importWords.value = ''
+  importPassword.value = ''
+  importCode.value = ''
+  importConfirm.value = false
+  importError.value = ''
+  importDone.value = false
+  showImportModal.value = true
+}
+
+async function submitImport() {
+  if (importing.value || !importPassword.value || importWordCount.value === 0) return
+  importing.value = true
+  importError.value = ''
+  try {
+    const params: Record<string, string | boolean> = {
+      words: importWords.value.trim(),
+      password: importPassword.value,
+      confirm: importConfirm.value,
+    }
+    if (importCode.value) params.code = importCode.value
+    await rpcClient.call({ method: 'wallet.ecash-seed-import', params })
+    importDone.value = true
+    importWords.value = ''
+    await loadStatus()
+  } catch (e: unknown) {
+    importError.value = e instanceof Error ? e.message : 'Import failed'
+  } finally {
+    importing.value = false
+  }
+}
+
 // ── Restore ────────────────────────────────────────────────────────────────
 // The other half of the backup. Safe to run against a working wallet: the
 // backend skips coins already held and never re-adds spent ones, so this is
@@ -182,10 +236,10 @@ async function restoreFromPhrase() {
           </template>
         </p>
 
-        <p v-if="status?.source === 'independent'" class="mt-2 text-xs text-orange-300/90">
+        <p v-if="status?.source === 'independent' || status?.source === 'imported'" class="mt-2 text-xs text-orange-300/90">
           This wallet's phrase was <strong>not</strong> derived from the node's recovery
-          phrase — restoring the node will not bring the ecash back. Write these words down
-          separately.
+          phrase{{ status?.source === 'imported' ? ' — it was imported' : '' }}, so restoring
+          the node will not bring the ecash back. Only these words will.
         </p>
 
       </div>
@@ -216,7 +270,86 @@ async function restoreFromPhrase() {
       <p v-if="restoreMsg" role="status" aria-live="polite" class="mt-3 text-xs alert-success px-3 py-2 rounded-lg">{{ restoreMsg }}</p>
       <p v-if="restoreError" role="alert" class="mt-3 text-xs alert-error px-3 py-2 rounded-lg">{{ restoreError }}</p>
     </div>
+
+    <div class="mt-4 pt-4 border-t border-white/10">
+      <div class="flex items-start justify-between gap-4">
+        <p class="text-sm text-white/60 min-w-0">
+          <span class="text-white/80 font-medium">Use a phrase from another wallet.</span>
+          Point this wallet at a phrase you already have — from Minibits, Nutstash or
+          <span class="font-mono">cdk-cli</span> — so its coins can be restored here.
+        </p>
+        <button
+          type="button"
+          class="shrink-0 glass-button rounded-lg px-4 py-2 text-sm font-medium"
+          @click="openImport"
+        >Import</button>
+      </div>
+    </div>
   </div>
+
+  <Teleport to="body">
+    <div
+      v-if="showImportModal"
+      class="fixed inset-0 z-[3000] flex items-center justify-center p-4 bg-black/60 backdrop-blur-md"
+      @click.self="showImportModal = false"
+    >
+      <div class="glass-card p-6 w-full max-w-md" role="dialog" aria-modal="true" aria-labelledby="import-ecash-seed-title">
+        <h3 id="import-ecash-seed-title" class="text-lg font-semibold text-white mb-1">Import an ecash phrase</h3>
+
+        <template v-if="importDone">
+          <p class="text-sm text-white/70 my-4">
+            Imported. This wallet now derives its coins from that phrase — run
+            <span class="text-white/90 font-medium">Restore</span> to pull in the coins it
+            owns at your mint.
+          </p>
+          <button type="button" @click="showImportModal = false" class="w-full glass-button rounded-lg px-4 py-2 text-sm font-medium bg-orange-500/20 border-orange-400/30">Done</button>
+        </template>
+
+        <template v-else>
+          <p class="text-sm text-white/60 mb-4">
+            Paste the 24-word phrase from the other wallet. The coins already in this wallet
+            stay spendable either way.
+          </p>
+          <form @submit.prevent="submitImport" class="space-y-3">
+            <div>
+              <label class="block text-xs text-white/60 mb-1">
+                Recovery phrase
+                <span class="text-white/30">({{ importWordCount }} word{{ importWordCount === 1 ? '' : 's' }})</span>
+              </label>
+              <textarea v-model="importWords" rows="3" spellcheck="false" autocapitalize="none" autocomplete="off" class="w-full px-3 py-2 rounded-lg bg-white/5 border border-white/10 text-white text-sm font-mono focus:outline-none focus:border-white/30" placeholder="abandon abandon abandon …"></textarea>
+            </div>
+            <div>
+              <label class="block text-xs text-white/60 mb-1">Password</label>
+              <input v-model="importPassword" type="password" autocomplete="current-password" class="w-full px-3 py-2 rounded-lg bg-white/5 border border-white/10 text-white text-sm focus:outline-none focus:border-white/30" placeholder="Your login password" />
+            </div>
+            <div>
+              <label class="block text-xs text-white/60 mb-1">2FA code <span class="text-white/30">(if enabled)</span></label>
+              <input v-model="importCode" inputmode="numeric" autocomplete="one-time-code" class="w-full px-3 py-2 rounded-lg bg-white/5 border border-white/10 text-white text-sm font-mono tracking-widest focus:outline-none focus:border-white/30" placeholder="123456" />
+            </div>
+
+            <label v-if="status?.active" class="flex items-start gap-2 text-xs text-orange-300/90 bg-orange-500/10 border border-orange-400/20 rounded-lg px-3 py-2">
+              <input type="checkbox" v-model="importConfirm" class="mt-0.5 shrink-0" />
+              <span>
+                Replace this wallet's current phrase. Coins minted under the old one stay
+                spendable but a restore will no longer find them — reveal and write the
+                current phrase down first. The old phrase is archived on the node, not deleted.
+              </span>
+            </label>
+
+            <p v-if="importError" role="alert" class="text-xs text-red-300 bg-red-500/10 border border-red-400/20 rounded-lg px-3 py-2">{{ importError }}</p>
+            <div class="flex gap-2 pt-1">
+              <button type="button" @click="showImportModal = false" class="flex-1 glass-button rounded-lg px-4 py-2 text-sm font-medium">Cancel</button>
+              <button
+                type="submit"
+                :disabled="importing || !importPassword || importWordCount === 0 || (status?.active && !importConfirm)"
+                class="flex-1 glass-button rounded-lg px-4 py-2 text-sm font-medium bg-orange-500/20 border-orange-400/30 disabled:opacity-50"
+              >{{ importing ? 'Importing…' : 'Import' }}</button>
+            </div>
+          </form>
+        </template>
+      </div>
+    </div>
+  </Teleport>
 
   <Teleport to="body">
     <div

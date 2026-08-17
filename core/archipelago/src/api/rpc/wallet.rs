@@ -354,6 +354,45 @@ impl RpcHandler {
         }))
     }
 
+    /// `wallet.ecash-seed-import` — adopt a phrase from another NUT-13 wallet.
+    ///
+    /// Gated like every other route that touches key material. Replacing an
+    /// established phrase additionally needs `confirm: true`, because coins
+    /// minted under the old one stop being restorable from words — they stay
+    /// spendable, but a restore will not find them. The old phrase is archived
+    /// beside the wallet rather than overwritten.
+    pub(super) async fn handle_wallet_ecash_seed_import(
+        &self,
+        params: Option<serde_json::Value>,
+    ) -> Result<serde_json::Value> {
+        use zeroize::Zeroize;
+
+        let params = params.unwrap_or_default();
+        let words = params
+            .get("words")
+            .and_then(|v| v.as_str())
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .ok_or_else(|| anyhow::anyhow!("A recovery phrase is required"))?
+            .to_string();
+        let confirm = params
+            .get("confirm")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
+
+        let mut password = self
+            .verify_reveal_auth(&params, "the ecash seed")
+            .await?;
+        password.zeroize();
+
+        let seed =
+            crate::wallet::nut13::import_mnemonic(&self.config.data_dir, &words, confirm).await?;
+        Ok(serde_json::json!({
+            "source": seed.source(),
+            "word_count": seed.words().len(),
+        }))
+    }
+
     /// `wallet.ecash-restore` — rebuild the wallet's coins from its NUT-13
     /// phrase by asking a mint which re-derived secrets it has signed.
     ///

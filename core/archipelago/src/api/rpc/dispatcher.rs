@@ -271,6 +271,7 @@ impl RpcHandler {
             "wallet.ecash-seed-status" => self.handle_wallet_ecash_seed_status().await,
             "wallet.ecash-seed-reveal" => self.handle_wallet_ecash_seed_reveal(params).await,
             "wallet.ecash-restore" => self.handle_wallet_ecash_restore(params).await,
+            "wallet.ecash-seed-import" => self.handle_wallet_ecash_seed_import(params).await,
             "wallet.networking-profits" => self.handle_wallet_networking_profits().await,
             // Fedimint ecash (via fedimint-clientd sidecar)
             "wallet.fedimint-list" => self.handle_wallet_fedimint_list().await,

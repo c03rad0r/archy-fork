@@ -89,6 +89,19 @@ pub enum SeedSource {
     /// NUT-13 wallet, but restoring the node from its recovery phrase will
     /// *not* bring it back — only these words will.
     Independent,
+    /// Supplied by the operator, from another NUT-13 wallet. Same caveat as
+    /// `Independent` — the node's recovery phrase does not cover it — but it
+    /// is worth telling apart, because these words exist somewhere else too
+    /// and the operator already knows where.
+    Imported,
+}
+
+impl SeedSource {
+    /// Does restoring the *node* from its recovery phrase bring this wallet
+    /// back? Only a derived phrase can promise that.
+    pub fn covered_by_node_seed(&self) -> bool {
+        matches!(self, Self::NodeSeed)
+    }
 }
 
 /// A loaded ecash wallet seed, ready to derive secrets from.
@@ -245,6 +258,69 @@ pub async fn establish_independent(data_dir: &Path) -> Result<EcashSeed> {
          ecash wallet — only the phrase itself will."
     );
     Ok(EcashSeed::from_mnemonic(mnemonic, SeedSource::Independent))
+}
+
+/// Adopt a phrase the operator supplies, from another NUT-13 wallet.
+///
+/// This is the "bring your own" path: it points the wallet at someone else's
+/// derivation, which is what makes coins held in Minibits, Nutstash or
+/// `cdk-cli` restorable here.
+///
+/// Replacing a phrase is the one genuinely lossy thing this module can do.
+/// Coins already in `wallet/ecash.json` stay spendable — they are proofs, not
+/// derivations, and nothing here touches them — but they were minted under
+/// the *old* phrase, so a future restore will no longer find them. The old
+/// phrase is therefore archived rather than overwritten, and replacing an
+/// established one needs `confirm`. An operator who imports by mistake must
+/// not lose the only copy of the words their balance was minted under.
+///
+/// Counters are deliberately left alone. They are per-keyset and seed-
+/// relative, so under a new seed they merely start high — which costs nothing,
+/// since a restore scans from zero regardless. Resetting them would be the
+/// dangerous choice if the imported phrase turned out to be the one already
+/// in use.
+pub async fn import_mnemonic(data_dir: &Path, words: &str, confirm: bool) -> Result<EcashSeed> {
+    let mnemonic: bip39::Mnemonic = words.split_whitespace().collect::<Vec<_>>().join(" ").parse()
+        .map_err(|e| anyhow::anyhow!(
+            "That is not a valid BIP-39 recovery phrase: {e}. Check for typos —              every word must come from the BIP-39 word list, and the phrase as a              whole carries a checksum."
+        ))?;
+
+    if let Some(existing) = load_seed(data_dir).await? {
+        if existing.mnemonic == mnemonic {
+            // Importing the phrase already in use: nothing to do, and
+            // certainly nothing to archive.
+            return Ok(existing);
+        }
+        if !confirm {
+            anyhow::bail!(
+                "This wallet already has a backup phrase. Importing a different one                  means coins minted under the current phrase will no longer be                  restorable from words — they stay spendable, but a restore will not                  find them. Reveal and write down the current phrase first, then                  confirm to replace it."
+            );
+        }
+        archive_seed(data_dir).await?;
+    }
+
+    write_seed(data_dir, &mnemonic, SeedSource::Imported).await?;
+    warn!("Ecash backup phrase REPLACED by an imported one (the previous phrase, if any, was archived)");
+    Ok(EcashSeed::from_mnemonic(mnemonic, SeedSource::Imported))
+}
+
+/// Move the current seed file aside, timestamped, before it is replaced.
+///
+/// Never deleted and never overwritten: this file may be the last copy of the
+/// words a balance was minted under, and the whole point of the module is that
+/// such a thing is not casually destroyed.
+async fn archive_seed(data_dir: &Path) -> Result<()> {
+    let from = seed_path(data_dir);
+    if !from.exists() {
+        return Ok(());
+    }
+    let stamp = chrono::Utc::now().format("%Y%m%dT%H%M%SZ");
+    let to = data_dir.join(format!("wallet/cashu_seed.replaced-{stamp}.json"));
+    fs::rename(&from, &to)
+        .await
+        .with_context(|| format!("Could not archive the previous ecash phrase to {}", to.display()))?;
+    warn!("Previous ecash phrase archived to {}", to.display());
+    Ok(())
 }
 
 /// Write the seed file at 0600, creating the wallet directory if needed.
@@ -522,6 +598,108 @@ mod tests {
             third.words(),
             "an established ecash phrase must never be silently replaced"
         );
+    }
+
+    /// A phrase from another wallet must derive that wallet's secrets — that
+    /// is the entire point of importing one.
+    #[tokio::test]
+    async fn an_imported_phrase_derives_the_other_wallets_secrets() {
+        let dir = tempfile::tempdir().unwrap();
+        let d = dir.path();
+
+        // Stand in for the other wallet: a known phrase and what it derives.
+        let theirs: bip39::Mnemonic = TEST_MNEMONIC.parse().unwrap();
+        let expected =
+            EcashSeed::from_mnemonic(theirs.clone(), SeedSource::Imported)
+                .derive_output(V1_KEYSET, 3)
+                .unwrap();
+
+        let imported = import_mnemonic(d, TEST_MNEMONIC, false).await.unwrap();
+        assert_eq!(imported.source(), SeedSource::Imported);
+        assert!(!imported.source().covered_by_node_seed());
+        assert_eq!(imported.derive_output(V1_KEYSET, 3).unwrap().0, expected.0);
+
+        // And it is what the wallet uses from now on.
+        let reloaded = load_seed(d).await.unwrap().expect("persisted");
+        assert_eq!(reloaded.words(), imported.words());
+    }
+
+    #[tokio::test]
+    async fn importing_over_an_established_phrase_needs_confirmation() {
+        let dir = tempfile::tempdir().unwrap();
+        let d = dir.path();
+        let (_, master) = MasterSeed::from_mnemonic_words(TEST_MNEMONIC).unwrap();
+        let original = establish_from_master(d, &master).await.unwrap();
+        let original_words = original.words();
+
+        // Refused without confirmation — replacing a phrase silently would
+        // orphan every coin minted under it.
+        let (other, _) = MasterSeed::generate().unwrap();
+        let err = import_mnemonic(d, &other.to_string(), false)
+            .await
+            .expect_err("must not replace without confirmation");
+        assert!(err.to_string().contains("already has a backup phrase"), "{err}");
+        assert_eq!(
+            load_seed(d).await.unwrap().unwrap().words(),
+            original_words,
+            "a refused import must change nothing"
+        );
+
+        // Confirmed: replaced, and the old phrase archived rather than lost.
+        import_mnemonic(d, &other.to_string(), true).await.unwrap();
+        assert_eq!(
+            load_seed(d).await.unwrap().unwrap().words(),
+            other.words().map(|w| w.to_string()).collect::<Vec<_>>()
+        );
+        let archived: Vec<_> = std::fs::read_dir(d.join("wallet"))
+            .unwrap()
+            .filter_map(|e| e.ok())
+            .filter(|e| e.file_name().to_string_lossy().starts_with("cashu_seed.replaced-"))
+            .collect();
+        assert_eq!(archived.len(), 1, "the replaced phrase must be kept");
+    }
+
+    /// Re-importing the phrase already in use is a no-op, not a replacement —
+    /// it must not archive anything or churn the file.
+    #[tokio::test]
+    async fn importing_the_current_phrase_changes_nothing() {
+        let dir = tempfile::tempdir().unwrap();
+        let d = dir.path();
+        let first = import_mnemonic(d, TEST_MNEMONIC, false).await.unwrap();
+        let again = import_mnemonic(d, TEST_MNEMONIC, false).await.unwrap();
+        assert_eq!(first.words(), again.words());
+        let archived = std::fs::read_dir(d.join("wallet"))
+            .unwrap()
+            .filter_map(|e| e.ok())
+            .filter(|e| e.file_name().to_string_lossy().starts_with("cashu_seed.replaced-"))
+            .count();
+        assert_eq!(archived, 0);
+    }
+
+    #[tokio::test]
+    async fn a_malformed_phrase_is_refused_with_something_actionable() {
+        let dir = tempfile::tempdir().unwrap();
+        let d = dir.path();
+        // Right shape, wrong checksum — the commonest real mistake.
+        let bad = TEST_MNEMONIC.replace(" art", " abandon");
+        let err = import_mnemonic(d, &bad, false).await.expect_err("checksum");
+        assert!(err.to_string().contains("BIP-39"), "{err}");
+        assert!(!seed_exists(d), "a rejected phrase must not be written");
+
+        assert!(import_mnemonic(d, "not a phrase", false).await.is_err());
+        assert!(import_mnemonic(d, "", false).await.is_err());
+    }
+
+    /// Whitespace and casing vary wildly in what people paste out of other
+    /// wallets; the words are what matter.
+    #[tokio::test]
+    async fn a_pasted_phrase_survives_untidy_whitespace() {
+        let dir = tempfile::tempdir().unwrap();
+        let d = dir.path();
+        let messy = format!("  {}  ", TEST_MNEMONIC.replace(' ', "\n  "));
+        let imported = import_mnemonic(d, &messy, false).await.unwrap();
+        assert_eq!(imported.words().len(), 24);
+        assert_eq!(imported.words().join(" "), TEST_MNEMONIC);
     }
 
     #[tokio::test]
