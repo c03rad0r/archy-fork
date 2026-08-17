@@ -22,6 +22,11 @@ type SeedStatus = {
   active: boolean
   source: 'node-seed' | 'independent' | null
   can_activate: boolean
+  /** Whether a phrase can be *derived* from the node's recovery phrase. When
+   *  false the wallet still gets a backup — it is just independent, and the
+   *  operator has to keep it themselves. Saying which one they are about to
+   *  get, before they write anything down, is the whole point of this flag. */
+  derivable_from_node_seed: boolean
 }
 
 const status = ref<SeedStatus | null>(null)
@@ -153,17 +158,28 @@ async function restoreFromPhrase() {
       <div class="min-w-0">
         <h2 class="text-xl font-semibold text-white/96 mb-1">Ecash backup phrase</h2>
 
-        <p v-if="status?.active" class="text-sm text-white/60">
+        <p v-if="status?.active && status?.source === 'node-seed'" class="text-sm text-white/60">
           Your ecash wallet has its own 24-word phrase, derived from this node's recovery
           phrase — so the words you already wrote down cover your ecash too. Reveal it here
           if you want to restore your ecash into another wallet (Minibits, Nutstash,
           <span class="font-mono">cdk-cli</span>) without handing over the node's own seed.
         </p>
+        <p v-else-if="status?.active" class="text-sm text-white/60">
+          Your ecash wallet has its own 24-word phrase. Reveal it to write it down, or to
+          restore your ecash into another wallet (Minibits, Nutstash,
+          <span class="font-mono">cdk-cli</span>).
+        </p>
         <p v-else class="text-sm text-white/60">
           Ecash is a bearer instrument: the coins live in a file on this node, and right now
           nothing can bring them back if that file is lost. Setting up a backup phrase fixes
-          that for every coin minted from then on. It's derived from this node's recovery
-          phrase, so there's nothing new to write down.
+          that for every coin minted from then on.
+          <template v-if="status?.derivable_from_node_seed">
+            It's derived from this node's recovery phrase, so there's nothing new to write down.
+          </template>
+          <template v-else>
+            This node has no encrypted seed backup to derive from, so the phrase will be its
+            own — you'll need to write these words down and keep them.
+          </template>
         </p>
 
         <p v-if="status?.source === 'independent'" class="mt-2 text-xs text-orange-300/90">
@@ -171,16 +187,13 @@ async function restoreFromPhrase() {
           phrase — restoring the node will not bring the ecash back. Write these words down
           separately.
         </p>
-        <p v-if="!status?.active && !status?.can_activate" class="mt-2 text-xs text-orange-300/90">
-          This node has no encrypted seed backup, so a phrase can't be derived from it.
-        </p>
+
       </div>
 
       <button
         type="button"
         class="shrink-0 glass-button rounded-lg px-4 py-2 text-sm font-medium"
         :class="!status?.active ? 'bg-orange-500/20 border-orange-400/30' : ''"
-        :disabled="!status?.active && !status?.can_activate"
         @click="openReveal"
       >{{ status?.active ? 'Reveal' : 'Set up backup' }}</button>
     </div>

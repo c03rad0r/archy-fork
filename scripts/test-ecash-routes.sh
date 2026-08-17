@@ -140,7 +140,9 @@ fi
 
 if [ -n "$QUOTE" ]; then
   res="$(rpc wallet.ecash-mint-claim "{\"quote_id\":\"$QUOTE\",\"amount_sats\":16}")"
-  claimed="$(printf '%s' "$res" | jqf result.amount_sats)"
+  # The handler answers with `minted_sats`; reading `amount_sats` here made a
+  # working claim look like a failure (it was one of the two reds on 2026-08-17).
+  claimed="$(printf '%s' "$res" | jqf result.minted_sats)"
   if [ -n "$claimed" ]; then
     ok "ecash-mint-claim minted ${claimed} sats"
   elif [ "$NETWORK" = mainnet ]; then

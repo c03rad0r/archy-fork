@@ -648,6 +648,18 @@ impl MintClient {
 
         if !res.status().is_success() {
             let status = res.status();
+            // NUT-09 is optional. A mint that never implemented it answers 404
+            // or 405, which `mint_error` would render as "mint returned 404
+            // with no further detail" — true, and useless to someone trying to
+            // get their coins back. Name the actual limitation instead.
+            if matches!(status.as_u16(), 404 | 405 | 501) {
+                anyhow::bail!(
+                    "This mint does not support restoring from a backup phrase (NUT-09). \
+                     Your coins are safe, but they can only be recovered from a wallet \
+                     file backup while they stay at {}",
+                    self.url
+                );
+            }
             let body = res.text().await.unwrap_or_default();
             return Err(mint_error("Restore", status, &body));
         }

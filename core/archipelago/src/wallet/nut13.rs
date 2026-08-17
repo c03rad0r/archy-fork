@@ -215,6 +215,38 @@ pub async fn establish_from_master(
     Ok(EcashSeed::from_mnemonic(derived, SeedSource::NodeSeed))
 }
 
+/// Establish a wallet seed that is **not** derived from the node's master
+/// seed, for a node that has no encrypted master seed to derive from.
+///
+/// Plenty of nodes are in that position: `identity/master_seed.enc` is written
+/// during onboarding, and any node onboarded before that step existed simply
+/// does not have one. The choice there is not "derived phrase or independent
+/// phrase" — it is "independent phrase or **no backup at all**", and a wallet
+/// whose coins can be restored from words the operator holds is strictly
+/// better than one whose coins die with a single file.
+///
+/// The cost is stated plainly rather than hidden: the phrase is recorded as
+/// [`SeedSource::Independent`], and every surface that shows it says that
+/// restoring the node will *not* bring this wallet back — only these words
+/// will. That is a real obligation on the operator, so it must never be the
+/// silent default when derivation was possible; [`establish_from_master`] is
+/// what a node with a master seed gets.
+pub async fn establish_independent(data_dir: &Path) -> Result<EcashSeed> {
+    if let Some(existing) = load_seed(data_dir).await? {
+        return Ok(existing);
+    }
+    // Same guarded generation path as the node's own seed: a named CSPRNG and
+    // the degenerate-entropy check, not a dependency's default (KEY-05).
+    let (mnemonic, _seed) = crate::seed::MasterSeed::generate()?;
+    write_seed(data_dir, &mnemonic, SeedSource::Independent).await?;
+    warn!(
+        "Established an INDEPENDENT ecash backup phrase: this node has no encrypted \
+         master seed to derive one from, so restoring the node will not restore this \
+         ecash wallet — only the phrase itself will."
+    );
+    Ok(EcashSeed::from_mnemonic(mnemonic, SeedSource::Independent))
+}
+
 /// Write the seed file at 0600, creating the wallet directory if needed.
 async fn write_seed(
     data_dir: &Path,

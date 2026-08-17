@@ -260,13 +260,16 @@ impl RpcHandler {
             Ok(Some(seed)) => Some(seed.source()),
             _ => None,
         };
-        // Whether the node has an encrypted master seed decides whether the
-        // "set up" path can derive from it, which is what the operator is
-        // promised: your node's 24 words already cover your ecash.
+        // A phrase can always be established. Whether the node has an
+        // encrypted master seed decides only *which kind*: derived from it
+        // (the node's 24 words already cover the ecash), or independent (the
+        // phrase is the only copy). The UI needs both facts to set the right
+        // expectation before the operator commits to writing something down.
         Ok(serde_json::json!({
             "active": active,
             "source": source,
-            "can_activate": crate::seed::seed_exists(data_dir),
+            "can_activate": true,
+            "derivable_from_node_seed": crate::seed::seed_exists(data_dir),
         }))
     }
 
@@ -306,12 +309,22 @@ impl RpcHandler {
             }));
         }
 
+        // No encrypted master seed to derive from — common on nodes onboarded
+        // before that step existed. The choice here is not "derived or
+        // independent", it is "independent or no backup at all", so we make
+        // one and label it honestly. Every surface that shows an
+        // `independent` phrase says the node's own recovery phrase does not
+        // cover it.
         if !crate::seed::seed_exists(data_dir) {
             password.zeroize();
-            anyhow::bail!(
-                "This node has no encrypted seed backup, so an ecash recovery \
-                 phrase cannot be derived from it."
-            );
+            let seed = crate::wallet::nut13::establish_independent(data_dir).await?;
+            let words = seed.words();
+            return Ok(serde_json::json!({
+                "words": words,
+                "word_count": words.len(),
+                "source": seed.source(),
+                "newly_activated": true,
+            }));
         }
 
         // The backup passphrase may differ from the login password — same
