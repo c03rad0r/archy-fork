@@ -667,7 +667,11 @@ impl RpcHandler {
             .get("state")
             .and_then(|v| v.as_str())
             .map(|s| s == "SETTLED")
-            .unwrap_or_else(|| body.get("settled").and_then(|v| v.as_bool()).unwrap_or(false));
+            .unwrap_or_else(|| {
+                body.get("settled")
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(false)
+            });
         let amt_paid_sat = body
             .get("amt_paid_sat")
             .and_then(|v| v.as_str())

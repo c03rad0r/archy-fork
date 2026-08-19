@@ -184,14 +184,17 @@ pub async fn ensure_doctor_installed() {
         Err(e) => warn!("nginx listener repair failed (non-fatal): {:#}", e),
     }
     match run_ha_rpc_proxy_bind_repair().await {
-        Ok(true) => info!(
-            "HA bitcoind RPC forwarder rebound dynamically — survives network moves now"
-        ),
+        Ok(true) => {
+            info!("HA bitcoind RPC forwarder rebound dynamically — survives network moves now")
+        }
         Ok(false) => debug!("HA bitcoind RPC forwarder absent or already dynamic"),
         Err(e) => warn!("HA RPC forwarder bind repair failed (non-fatal): {:#}", e),
     }
     match run_pull_never_image_repair().await {
-        Ok(n) if n > 0 => info!(retagged = n, "Healed quadlet image refs orphaned by registry rename"),
+        Ok(n) if n > 0 => info!(
+            retagged = n,
+            "Healed quadlet image refs orphaned by registry rename"
+        ),
         Ok(_) => debug!("All quadlet image refs resolve locally"),
         Err(e) => warn!("Quadlet image ref repair failed (non-fatal): {:#}", e),
     }
@@ -704,7 +707,12 @@ fn parse_socat_static_bind(exec_line: &str) -> Option<(String, String)> {
     }
     // Only rewrite units pinned to a concrete address; a unit already using
     // a computed bind (or none) needs no heal.
-    let bind = after_listen.split("bind=").nth(1)?.split(',').next()?.trim();
+    let bind = after_listen
+        .split("bind=")
+        .nth(1)?
+        .split(',')
+        .next()?
+        .trim();
     if !bind.chars().all(|c| c.is_ascii_digit() || c == '.') || bind.starts_with("127.") {
         return None;
     }
@@ -731,7 +739,10 @@ async fn run_ha_rpc_proxy_bind_repair() -> Result<bool> {
         Ok(s) => s,
         Err(_) => return Ok(false), // node never grew the forwarder
     };
-    let Some(exec_line) = unit.lines().find(|l| l.trim_start().starts_with("ExecStart=")) else {
+    let Some(exec_line) = unit
+        .lines()
+        .find(|l| l.trim_start().starts_with("ExecStart="))
+    else {
         return Ok(false);
     };
     let Some((port, target)) = parse_socat_static_bind(exec_line) else {
@@ -833,7 +844,11 @@ async fn run_pull_never_image_repair() -> Result<usize> {
 }
 
 async fn podman_stdout(args: &[&str]) -> String {
-    match tokio::process::Command::new("podman").args(args).output().await {
+    match tokio::process::Command::new("podman")
+        .args(args)
+        .output()
+        .await
+    {
         Ok(out) if out.status.success() => String::from_utf8_lossy(&out.stdout).into_owned(),
         _ => String::new(),
     }
@@ -859,7 +874,8 @@ const NGINX_SITES: [&str; 2] = [
     "/etc/nginx/sites-available/archipelago-http",
     "/etc/nginx/sites-available/archipelago",
 ];
-const NGINX_RESTART_DROPIN: &str = "/etc/systemd/system/nginx.service.d/10-archipelago-restart.conf";
+const NGINX_RESTART_DROPIN: &str =
+    "/etc/systemd/system/nginx.service.d/10-archipelago-restart.conf";
 
 /// Global IPv4 addresses on this host, minus Tailscale CGNAT (100.64/10) —
 /// the same exclusion `setup-node-ca.sh` applies, for the same reason.
@@ -964,7 +980,10 @@ async fn run_nginx_listener_repair() -> Result<bool> {
         let status = host_sudo(&["sh", "-lc", &script]).await?;
         match status.code() {
             Some(0) => changed = true,
-            Some(3) => warn!(site, "nginx listener repair failed its config test — rolled back"),
+            Some(3) => warn!(
+                site,
+                "nginx listener repair failed its config test — rolled back"
+            ),
             _ => warn!(site, "nginx listener repair helper failed"),
         }
     }
@@ -1826,7 +1845,10 @@ mod tests {
         let healed = retarget_https_listeners(cfg, &present).expect("must heal");
         assert!(healed.contains("listen 192.168.1.50:443 ssl;"));
         assert!(healed.contains("listen 10.44.0.1:443 ssl;"));
-        assert!(!healed.contains("192.168.63.240"), "stale listener must be dropped");
+        assert!(
+            !healed.contains("192.168.63.240"),
+            "stale listener must be dropped"
+        );
         // Untouched lines survive, and the repair is idempotent.
         assert!(healed.contains("listen 80 default_server;"));
         assert!(healed.contains("ssl_certificate /x;"));

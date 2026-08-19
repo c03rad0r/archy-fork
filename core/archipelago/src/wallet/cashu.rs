@@ -765,7 +765,10 @@ mod tests {
         let short = "01fc0ec0e59cd6fa";
         let full = "01fc0ec0e59cd6fa01b7a88f8cd77fce81fd1e64bca67d752e984992b7a3c3a821";
         assert!(is_truncated_v2_keyset_id(short));
-        assert!(full.starts_with(short), "short form must prefix the full id");
+        assert!(
+            full.starts_with(short),
+            "short form must prefix the full id"
+        );
         // It must survive token validation so the swap path can repair it,
         // rather than being rejected as malformed.
         assert!(validate_keyset_id(short).is_ok());
@@ -784,7 +787,10 @@ mod tests {
         let err = validate_keyset_id("00112233445566778899")
             .expect_err("9-byte keyset id must be rejected");
         let msg = err.to_string();
-        assert!(msg.contains("10-byte") || msg.contains("unsupported keyset id"), "{msg}");
+        assert!(
+            msg.contains("10-byte") || msg.contains("unsupported keyset id"),
+            "{msg}"
+        );
 
         // Non-hex ids (the original base64 keyset format) are named as such
         // rather than reported as a length problem.

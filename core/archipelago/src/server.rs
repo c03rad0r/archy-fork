@@ -664,8 +664,7 @@ impl Server {
                                             .map(|(a, _)| *a)
                                             .unwrap_or(0)
                                             + 1;
-                                        let delay =
-                                            (90u64 << attempts.min(10)).min(86_400);
+                                        let delay = (90u64 << attempts.min(10)).min(86_400);
                                         notify_backoff.insert(
                                             node.did.clone(),
                                             (attempts, now + Duration::from_secs(delay)),

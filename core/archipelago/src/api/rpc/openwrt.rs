@@ -43,8 +43,12 @@ impl RpcHandler {
         // plus a blocking SSH verify per candidate. Inline, one click of
         // "scan for routers" held a tokio worker for that whole time.
         let routers = tokio::task::spawn_blocking(move || {
-            tokio::runtime::Handle::current()
-                .block_on(detect::scan_subnet(subnet, prefix, &ssh_user, &ssh_password))
+            tokio::runtime::Handle::current().block_on(detect::scan_subnet(
+                subnet,
+                prefix,
+                &ssh_user,
+                &ssh_password,
+            ))
         })
         .await
         .context("openwrt scan task")?;

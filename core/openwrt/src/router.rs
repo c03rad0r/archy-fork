@@ -29,8 +29,10 @@ impl Router {
             .with_context(|| format!("no address for {}", addr))?;
         let tcp = TcpStream::connect_timeout(&resolved, std::time::Duration::from_secs(5))
             .with_context(|| format!("TCP connect to {}", addr))?;
-        tcp.set_read_timeout(Some(std::time::Duration::from_secs(30))).ok();
-        tcp.set_write_timeout(Some(std::time::Duration::from_secs(30))).ok();
+        tcp.set_read_timeout(Some(std::time::Duration::from_secs(30)))
+            .ok();
+        tcp.set_write_timeout(Some(std::time::Duration::from_secs(30)))
+            .ok();
         Ok(tcp)
     }
 

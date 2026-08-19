@@ -280,12 +280,18 @@ pub async fn establish_independent(data_dir: &Path) -> Result<EcashSeed> {
 /// dangerous choice if the imported phrase turned out to be the one already
 /// in use.
 pub async fn import_mnemonic(data_dir: &Path, words: &str, confirm: bool) -> Result<EcashSeed> {
-    let mnemonic: bip39::Mnemonic = words.split_whitespace().collect::<Vec<_>>().join(" ").parse()
-        .map_err(|e| anyhow::anyhow!(
-            "That is not a valid BIP-39 recovery phrase: {e}. Check for typos — \
+    let mnemonic: bip39::Mnemonic = words
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+        .parse()
+        .map_err(|e| {
+            anyhow::anyhow!(
+                "That is not a valid BIP-39 recovery phrase: {e}. Check for typos — \
              every word must come from the BIP-39 word list, and the phrase as \
              a whole carries a checksum."
-        ))?;
+            )
+        })?;
 
     if let Some(existing) = load_seed(data_dir).await? {
         if existing.mnemonic == mnemonic {
@@ -322,19 +328,18 @@ async fn archive_seed(data_dir: &Path) -> Result<()> {
     }
     let stamp = chrono::Utc::now().format("%Y%m%dT%H%M%SZ");
     let to = data_dir.join(format!("wallet/cashu_seed.replaced-{stamp}.json"));
-    fs::rename(&from, &to)
-        .await
-        .with_context(|| format!("Could not archive the previous ecash phrase to {}", to.display()))?;
+    fs::rename(&from, &to).await.with_context(|| {
+        format!(
+            "Could not archive the previous ecash phrase to {}",
+            to.display()
+        )
+    })?;
     warn!("Previous ecash phrase archived to {}", to.display());
     Ok(())
 }
 
 /// Write the seed file at 0600, creating the wallet directory if needed.
-async fn write_seed(
-    data_dir: &Path,
-    mnemonic: &bip39::Mnemonic,
-    source: SeedSource,
-) -> Result<()> {
+async fn write_seed(data_dir: &Path, mnemonic: &bip39::Mnemonic, source: SeedSource) -> Result<()> {
     let path = seed_path(data_dir);
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)
@@ -596,8 +601,7 @@ mod tests {
         // A *different* master seed must not replace the phrase the existing
         // proofs were minted under.
         let (other_words, _) = MasterSeed::generate().unwrap();
-        let (_, other_master) =
-            MasterSeed::from_mnemonic_words(&other_words.to_string()).unwrap();
+        let (_, other_master) = MasterSeed::from_mnemonic_words(&other_words.to_string()).unwrap();
         let third = establish_from_master(d, &other_master).await.unwrap();
         assert_eq!(
             first.words(),
@@ -615,10 +619,9 @@ mod tests {
 
         // Stand in for the other wallet: a known phrase and what it derives.
         let theirs: bip39::Mnemonic = TEST_MNEMONIC.parse().unwrap();
-        let expected =
-            EcashSeed::from_mnemonic(theirs.clone(), SeedSource::Imported)
-                .derive_output(V1_KEYSET, 3)
-                .unwrap();
+        let expected = EcashSeed::from_mnemonic(theirs.clone(), SeedSource::Imported)
+            .derive_output(V1_KEYSET, 3)
+            .unwrap();
 
         let imported = import_mnemonic(d, TEST_MNEMONIC, false).await.unwrap();
         assert_eq!(imported.source(), SeedSource::Imported);
@@ -644,7 +647,10 @@ mod tests {
         let err = import_mnemonic(d, &other.to_string(), false)
             .await
             .expect_err("must not replace without confirmation");
-        assert!(err.to_string().contains("already has a backup phrase"), "{err}");
+        assert!(
+            err.to_string().contains("already has a backup phrase"),
+            "{err}"
+        );
         assert_eq!(
             load_seed(d).await.unwrap().unwrap().words(),
             original_words,
@@ -660,7 +666,11 @@ mod tests {
         let archived: Vec<_> = std::fs::read_dir(d.join("wallet"))
             .unwrap()
             .filter_map(|e| e.ok())
-            .filter(|e| e.file_name().to_string_lossy().starts_with("cashu_seed.replaced-"))
+            .filter(|e| {
+                e.file_name()
+                    .to_string_lossy()
+                    .starts_with("cashu_seed.replaced-")
+            })
             .collect();
         assert_eq!(archived.len(), 1, "the replaced phrase must be kept");
     }
@@ -677,7 +687,11 @@ mod tests {
         let archived = std::fs::read_dir(d.join("wallet"))
             .unwrap()
             .filter_map(|e| e.ok())
-            .filter(|e| e.file_name().to_string_lossy().starts_with("cashu_seed.replaced-"))
+            .filter(|e| {
+                e.file_name()
+                    .to_string_lossy()
+                    .starts_with("cashu_seed.replaced-")
+            })
             .count();
         assert_eq!(archived, 0);
     }
@@ -718,7 +732,10 @@ mod tests {
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
-            let mode = std::fs::metadata(seed_path(d)).unwrap().permissions().mode();
+            let mode = std::fs::metadata(seed_path(d))
+                .unwrap()
+                .permissions()
+                .mode();
             assert_eq!(mode & 0o777, 0o600, "the ecash phrase must be owner-only");
         }
     }

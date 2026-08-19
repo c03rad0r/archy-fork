@@ -380,9 +380,7 @@ impl RpcHandler {
             .and_then(|v| v.as_bool())
             .unwrap_or(false);
 
-        let mut password = self
-            .verify_reveal_auth(&params, "the ecash seed")
-            .await?;
+        let mut password = self.verify_reveal_auth(&params, "the ecash seed").await?;
         password.zeroize();
 
         let seed =

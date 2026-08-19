@@ -397,9 +397,8 @@ pub async fn load_accepted_mints(data_dir: &Path) -> Result<AcceptedMints> {
             mints: vec![network.default_mint()],
         }
     } else {
-        serde_json::from_str(&content).with_context(|| {
-            format!("Accepted-mints file {} is damaged", path.display())
-        })?
+        serde_json::from_str(&content)
+            .with_context(|| format!("Accepted-mints file {} is damaged", path.display()))?
     };
     Ok(mints)
 }
@@ -1521,7 +1520,10 @@ pub async fn restore_from_seed(data_dir: &Path, mint_url: &str) -> Result<Restor
                 let mint_key = match keys.key_for_amount(sig.amount) {
                     Ok(k) => k,
                     Err(e) => {
-                        warn!("Restored a {} sat output with no matching key: {e:#}", sig.amount);
+                        warn!(
+                            "Restored a {} sat output with no matching key: {e:#}",
+                            sig.amount
+                        );
                         continue;
                     }
                 };
@@ -2312,7 +2314,11 @@ mod tests {
         // mint — never the real coins.
         save_network(dir, EcashNetwork::Testnet).await.unwrap();
         let test_wallet = load_wallet(dir).await.unwrap();
-        assert_eq!(test_wallet.balance(), 0, "test wallet must not see real coins");
+        assert_eq!(
+            test_wallet.balance(),
+            0,
+            "test wallet must not see real coins"
+        );
         assert!(test_wallet.mint_url.contains("testnut"));
         assert!(load_accepted_mints(dir).await.unwrap().mints[0].contains("testnut"));
 
@@ -2341,7 +2347,6 @@ mod tests {
         assert_eq!(back.proofs[0].proof.secret, "real");
     }
 
-
     #[tokio::test]
     async fn a_damaged_wallet_file_fails_loudly_and_is_left_on_disk() {
         let tmp = TempDir::new().unwrap();
@@ -2355,7 +2360,9 @@ mod tests {
 
         // It must NOT read as an empty wallet: that is what caused the real
         // balance to be overwritten with nothing on the next save.
-        let err = load_wallet(dir).await.expect_err("damaged wallet must error");
+        let err = load_wallet(dir)
+            .await
+            .expect_err("damaged wallet must error");
         assert!(
             err.to_string().contains("damaged"),
             "error should name the problem: {err}"
@@ -2372,7 +2379,9 @@ mod tests {
         std::fs::create_dir_all(dir.join("wallet")).unwrap();
         std::fs::write(dir.join("wallet/ecash.json"), "   \n").unwrap();
         // A create that never got its first write is not damage.
-        let w = load_wallet(dir).await.expect("empty file is a fresh wallet");
+        let w = load_wallet(dir)
+            .await
+            .expect("empty file is a fresh wallet");
         assert_eq!(w.balance(), 0);
     }
 

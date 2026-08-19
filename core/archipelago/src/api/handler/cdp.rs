@@ -105,10 +105,7 @@ async fn run_keeper(mut rx: mpsc::Receiver<String>, connected: Arc<AtomicBool>) 
 /// Discard queued input for `d` — used while no kiosk session exists so the
 /// bounded channel can't fill with stale events.
 async fn drain_for(rx: &mut mpsc::Receiver<String>, d: Duration) {
-    let _ = tokio::time::timeout(d, async {
-        while rx.recv().await.is_some() {}
-    })
-    .await;
+    let _ = tokio::time::timeout(d, async { while rx.recv().await.is_some() {} }).await;
 }
 
 /// Find the kiosk page target's WebSocket debugger URL. Prefers the page on
@@ -219,7 +216,11 @@ fn translate(raw: &str, cursor: &mut Cursor, id: &mut impl FnMut() -> u64) -> Ve
             vec![mouse_event(id(), "mouseMoved", cursor, "none", 0, 1)]
         }
         Some("c") => {
-            let b = msg.get("b").and_then(Value::as_u64).unwrap_or(1).clamp(1, 3);
+            let b = msg
+                .get("b")
+                .and_then(Value::as_u64)
+                .unwrap_or(1)
+                .clamp(1, 3);
             let (button, buttons) = match b {
                 2 => ("middle", 4),
                 3 => ("right", 2),
@@ -255,7 +256,14 @@ fn translate(raw: &str, cursor: &mut Cursor, id: &mut impl FnMut() -> u64) -> Ve
     }
 }
 
-fn mouse_event(id: u64, kind: &str, cursor: &Cursor, button: &str, buttons: u32, clicks: u32) -> Value {
+fn mouse_event(
+    id: u64,
+    kind: &str,
+    cursor: &Cursor,
+    button: &str,
+    buttons: u32,
+    clicks: u32,
+) -> Value {
     json!({
         "id": id,
         "method": "Input.dispatchMouseEvent",

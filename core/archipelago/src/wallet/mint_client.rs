@@ -191,7 +191,10 @@ impl MintClient {
         &self,
         keyset_id: &str,
         amounts: &[u64],
-    ) -> Result<(Vec<BlindedMessageRequest>, Vec<(Vec<u8>, secp256k1::SecretKey, u64)>)> {
+    ) -> Result<(
+        Vec<BlindedMessageRequest>,
+        Vec<(Vec<u8>, secp256k1::SecretKey, u64)>,
+    )> {
         let derived = match &self.recovery {
             Some(source) => match source.next_outputs(keyset_id, amounts.len()).await {
                 Ok(pairs) => Some(pairs),
@@ -320,9 +323,7 @@ impl MintClient {
             .filter(|k| !k.keys.is_empty() && k.unit.eq_ignore_ascii_case("sat"))
             // Prefer a keyset the mint will still sign with.
             .max_by_key(|k| k.active)
-            .ok_or_else(|| {
-                anyhow::anyhow!("No active sat keyset found at mint {}", self.url)
-            })
+            .ok_or_else(|| anyhow::anyhow!("No active sat keyset found at mint {}", self.url))
     }
 
     // ── Mint quotes (NUT-04) ──
@@ -510,7 +511,9 @@ impl MintClient {
                     "The mint's fee ({fee} sat) consumes this whole amount — nothing would be left"
                 );
             }
-            debug!("Reducing swap outputs {requested} -> {spendable} to cover a {fee} sat mint fee");
+            debug!(
+                "Reducing swap outputs {requested} -> {spendable} to cover a {fee} sat mint fee"
+            );
             owned_targets = amount_to_denominations(spendable);
             &owned_targets
         } else {

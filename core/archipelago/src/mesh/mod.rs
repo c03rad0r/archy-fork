@@ -538,8 +538,12 @@ async fn same_serial_device(a: &str, b: &str) -> bool {
     if a == b {
         return true;
     }
-    let ra = fs::canonicalize(a).await.unwrap_or_else(|_| PathBuf::from(a));
-    let rb = fs::canonicalize(b).await.unwrap_or_else(|_| PathBuf::from(b));
+    let ra = fs::canonicalize(a)
+        .await
+        .unwrap_or_else(|_| PathBuf::from(a));
+    let rb = fs::canonicalize(b)
+        .await
+        .unwrap_or_else(|_| PathBuf::from(b));
     ra == rb
 }
 

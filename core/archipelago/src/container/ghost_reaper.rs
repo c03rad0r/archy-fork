@@ -216,14 +216,20 @@ pub async fn reap_for_app(app_id: &str) -> usize {
     let app_id = app_id.to_string();
     reap_matching(move |g| {
         g.name.as_deref().is_some_and(|n| {
-            n == app_id || n.starts_with(&format!("{app_id}-")) || n.ends_with(&format!("-{app_id}"))
+            n == app_id
+                || n.starts_with(&format!("{app_id}-"))
+                || n.ends_with(&format!("-{app_id}"))
         })
     })
     .await
 }
 
 async fn reap_matching(pred: impl Fn(&Ghost) -> bool) -> usize {
-    let ghosts: Vec<Ghost> = find_ghosts().await.into_iter().filter(|g| pred(g)).collect();
+    let ghosts: Vec<Ghost> = find_ghosts()
+        .await
+        .into_iter()
+        .filter(|g| pred(g))
+        .collect();
     if ghosts.is_empty() {
         return 0;
     }
@@ -237,7 +243,10 @@ async fn reap_matching(pred: impl Fn(&Ghost) -> bool) -> usize {
         );
         kill_ghost(ghost).await;
     }
-    info!(count = ghosts.len(), "ghost reaper: reaped ghost containers");
+    info!(
+        count = ghosts.len(),
+        "ghost reaper: reaped ghost containers"
+    );
     ghosts.len()
 }
 
@@ -280,7 +289,9 @@ mod tests {
 
     #[test]
     fn a_truncated_or_missing_id_is_not_reapable() {
-        assert!(parse_conmon(&argv(&["/usr/bin/conmon", "-c", "8ea2fc65", "-n", "gitea"])).is_none());
+        assert!(
+            parse_conmon(&argv(&["/usr/bin/conmon", "-c", "8ea2fc65", "-n", "gitea"])).is_none()
+        );
         assert!(parse_conmon(&argv(&["/usr/bin/conmon", "--api-version", "1"])).is_none());
     }
 
@@ -295,9 +306,7 @@ mod tests {
             let app = app.to_string();
             let gh = g(name);
             gh.name.as_deref().is_some_and(|n| {
-                n == app
-                    || n.starts_with(&format!("{app}-"))
-                    || n.ends_with(&format!("-{app}"))
+                n == app || n.starts_with(&format!("{app}-")) || n.ends_with(&format!("-{app}"))
             })
         };
         assert!(matches("gitea", "gitea"));

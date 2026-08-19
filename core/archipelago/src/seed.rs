@@ -697,7 +697,10 @@ mod tests {
         // nodes would derive each other's coins.
         let (other_words, _) = MasterSeed::generate().unwrap();
         let (_, other_seed) = MasterSeed::from_mnemonic_words(&other_words.to_string()).unwrap();
-        assert_ne!(a.to_string(), derive_cashu_mnemonic(&other_seed).unwrap().to_string());
+        assert_ne!(
+            a.to_string(),
+            derive_cashu_mnemonic(&other_seed).unwrap().to_string()
+        );
     }
 
     /// It must NOT be the node's own phrase. Restoring ecash into a
