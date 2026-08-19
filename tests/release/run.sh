@@ -75,7 +75,20 @@ fi
 
 # ── Stage 2: frontend ────────────────────────────────────────────────
 stage "ui-type-check"    bash -c 'cd neode-ui && npm run --silent type-check'
-stage "ui-unit-tests"    bash -c 'cd neode-ui && npx vitest run --silent 2>&1 | tail -4; exit ${PIPESTATUS[0]}'
+# A red vitest run must name the failing test. `| tail -4` used to swallow the
+# failure block, so the gate reported only "1 failed" and nothing else —
+# undiagnosable after the fact. Quiet 4-line summary on success, full log on
+# failure (kept on disk so a scrolled-off terminal is not the end of it).
+ui_unit_tests() {
+  local log; log=$(mktemp -t vitest-gate.XXXXXX.log)
+  if ( cd neode-ui && npx vitest run --silent ) >"$log" 2>&1; then
+    tail -4 "$log"; rm -f "$log"; return 0
+  fi
+  echo "──── vitest FAILED — full log kept at $log ────"
+  cat "$log"
+  return 1
+}
+stage "ui-unit-tests"    ui_unit_tests
 
 if [[ $WITH_BUILD -eq 1 ]]; then
   # npm run build can fail silently (vue-tsc EACCES burned us before) —
