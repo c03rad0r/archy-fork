@@ -73,7 +73,7 @@
       "author": "Mempool",
       "category": "money",
       "tier": "core",
-      "dockerImage": "source.archipelago-foundation.org/lfg2025/mempool-frontend:v3.0.1",
+      "dockerImage": "source.archipelago-foundation.org/lfg2025/mempool-frontend:v3.3.1",
       "repoUrl": "https://github.com/mempool/mempool",
       "requires": [
         "bitcoin-knots",
@@ -193,13 +193,13 @@
     {
       "id": "nostr-rs-relay",
       "title": "Nostr Relay (Rust)",
-      "version": "0.8.0",
+      "version": "0.10.0",
       "description": "High-performance Nostr relay written in Rust. Host your own decentralized social media relay and earn networking profits.",
       "icon": "/assets/img/app-icons/nostrudel.svg",
       "author": "Nostr RS Relay",
       "category": "community",
       "tier": "recommended",
-      "dockerImage": "scsibug/nostr-rs-relay:0.8.9",
+      "dockerImage": "scsibug/nostr-rs-relay:0.10.0",
       "repoUrl": "https://github.com/scsibug/nostr-rs-relay",
       "containerConfig": {
         "ports": [
@@ -223,7 +223,7 @@
       "author": "Vaultwarden",
       "category": "data",
       "tier": "recommended",
-      "dockerImage": "source.archipelago-foundation.org/lfg2025/vaultwarden:1.30.0-alpine",
+      "dockerImage": "source.archipelago-foundation.org/lfg2025/vaultwarden:1.37.1-alpine",
       "repoUrl": "https://github.com/dani-garcia/vaultwarden",
       "containerConfig": {
         "ports": [
@@ -262,7 +262,7 @@
       "icon": "/assets/img/app-icons/fedimint.png",
       "author": "Fedimint",
       "category": "money",
-      "dockerImage": "source.archipelago-foundation.org/lfg2025/fedimintd:v0.10.0",
+      "dockerImage": "source.archipelago-foundation.org/lfg2025/fedimintd:v0.10.1",
       "repoUrl": "https://github.com/fedimint/fedimint"
     },
     {
@@ -285,7 +285,7 @@
       "icon": "/assets/img/app-icons/fedimint.png",
       "author": "Fedimint",
       "category": "money",
-      "dockerImage": "source.archipelago-foundation.org/lfg2025/gatewayd:v0.10.0",
+      "dockerImage": "source.archipelago-foundation.org/lfg2025/gatewayd:v0.10.1",
       "repoUrl": "https://github.com/fedimint/fedimint",
       "containerConfig": {
         "ports": [
@@ -325,7 +325,7 @@
       "icon": "/assets/img/app-icons/jellyfin.webp",
       "author": "Jellyfin",
       "category": "data",
-      "dockerImage": "source.archipelago-foundation.org/lfg2025/jellyfin:10.8.13",
+      "dockerImage": "source.archipelago-foundation.org/lfg2025/jellyfin:10.11.11",
       "repoUrl": "https://github.com/jellyfin/jellyfin",
       "containerConfig": {
         "ports": [
@@ -356,7 +356,7 @@
       "icon": "/assets/img/app-icons/homeassistant.png",
       "author": "Home Assistant",
       "category": "home",
-      "dockerImage": "source.archipelago-foundation.org/lfg2025/home-assistant:2026.7.3",
+      "dockerImage": "source.archipelago-foundation.org/lfg2025/home-assistant:2026.8.2",
       "repoUrl": "https://github.com/home-assistant/core",
       "containerConfig": {
         "ports": [
@@ -374,11 +374,11 @@
       "id": "pine",
       "title": "Pine",
       "version": "1.3.0",
-      "description": "A private voice assistant for your home. Pine runs speech-to-text (Whisper), text-to-speech (Piper) and wake-word detection (openWakeWord) on your own node and pairs with a PineVoice satellite speaker, so Home Assistant Assist works locally with nothing sent to the cloud. Ask it about your node \u2014 block height, sync, peers, Lightning balance \u2014 and, when a Claude API key is set, anything else.",
+      "description": "A private voice assistant for your home. Pine runs speech-to-text (Whisper), text-to-speech (Piper) and wake-word detection (openWakeWord) on your own node and pairs with a PineVoice satellite speaker, so Home Assistant Assist works locally with nothing sent to the cloud. Ask it about your node — block height, sync, peers, Lightning balance — and, when a Claude API key is set, anything else.",
       "icon": "/assets/img/app-icons/pine.svg",
       "author": "Archipelago",
       "category": "home",
-      "dockerImage": "docker.io/library/nginx:1.27-alpine",
+      "dockerImage": "docker.io/library/nginx:1.31.3-alpine",
       "repoUrl": "https://github.com/rhasspy/wyoming"
     },
     {
@@ -442,7 +442,7 @@
       "author": "Portainer",
       "category": "development",
       "tier": "optional",
-      "dockerImage": "source.archipelago-foundation.org/lfg2025/portainer:2.39.1",
+      "dockerImage": "source.archipelago-foundation.org/lfg2025/portainer:2.39.6",
       "repoUrl": "https://github.com/portainer/portainer",
       "containerConfig": {
         "ports": [
@@ -459,12 +459,12 @@
       "id": "netbird",
       "title": "NetBird",
       "version": "2.38.0",
-      "description": "Self-hosted WireGuard mesh VPN control plane with dashboard, embedded identity provider, management API, signal, relay, and STUN. The user-facing entry point \u2014 a TLS proxy in front of the dashboard + server.",
+      "description": "Self-hosted WireGuard mesh VPN control plane with dashboard, embedded identity provider, management API, signal, relay, and STUN. The user-facing entry point — a TLS proxy in front of the dashboard + server.",
       "icon": "/assets/img/app-icons/netbird.svg",
       "author": "NetBird",
       "category": "networking",
       "tier": "recommended",
-      "dockerImage": "docker.io/library/nginx:1.27-alpine",
+      "dockerImage": "docker.io/library/nginx:1.31.3-alpine",
       "repoUrl": "https://github.com/netbirdio/netbird",
       "containerConfig": {
         "ports": [
@@ -552,19 +552,19 @@
       "id": "alby-hub",
       "title": "Alby Hub",
       "version": "1.23.0",
-      "description": "Self-custodial Lightning wallet hub. Runs its own Lightning node on your Archipelago and connects your apps to it over Nostr Wallet Connect \u2014 one hub, every app pays through it.",
+      "description": "Self-custodial Lightning wallet hub. Runs its own Lightning node on your Archipelago and connects your apps to it over Nostr Wallet Connect — one hub, every app pays through it.",
       "icon": "/assets/img/app-icons/alby-hub.svg",
       "author": "Alby",
       "category": "money",
       "tier": "optional",
-      "dockerImage": "source.archipelago-foundation.org/lfg2025/alby-hub:v1.23.0",
+      "dockerImage": "source.archipelago-foundation.org/lfg2025/alby-hub:v1.24.0",
       "repoUrl": "https://github.com/getAlby/hub"
     },
     {
       "id": "phoenixd",
       "title": "phoenixd",
       "version": "0.9.0",
-      "description": "Headless Lightning daemon by ACINQ (the Phoenix wallet team). No screen of its own \u2014 it exposes a small local API that other apps and tools use to send and receive Lightning payments. Channel liquidity is managed automatically for a fee.",
+      "description": "Headless Lightning daemon by ACINQ (the Phoenix wallet team). No screen of its own — it exposes a small local API that other apps and tools use to send and receive Lightning payments. Channel liquidity is managed automatically for a fee.",
       "icon": "/assets/img/app-icons/phoenixd.svg",
       "author": "ACINQ",
       "category": "money",

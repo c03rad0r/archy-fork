@@ -46,6 +46,9 @@
             "seccomp_profile": "default",
             "user": 1000
           },
+          "upstream": {
+            "kind": "internal"
+          },
           "version": "0.1.0"
         }
       },
@@ -56,7 +59,7 @@
         "app": {
           "category": "money",
           "container": {
-            "image": "source.archipelago-foundation.org/lfg2025/alby-hub:v1.23.0",
+            "image": "source.archipelago-foundation.org/lfg2025/alby-hub:v1.24.0",
             "pull_policy": "if-not-present"
           },
           "dependencies": [
@@ -122,6 +125,10 @@
             "network_policy": "bridge",
             "no_new_privileges": true,
             "readonly_root": true
+          },
+          "upstream": {
+            "kind": "github",
+            "repo": "getAlby/hub"
           },
           "version": "1.23.0",
           "volumes": [
@@ -191,6 +198,10 @@
             ],
             "network_policy": "isolated",
             "readonly_root": false
+          },
+          "upstream": {
+            "kind": "dockerhub",
+            "repo": "library/postgres"
           },
           "version": "15.17",
           "volumes": [
@@ -265,6 +276,10 @@
             "network_policy": "isolated",
             "readonly_root": false
           },
+          "upstream": {
+            "kind": "dockerhub",
+            "repo": "library/mariadb"
+          },
           "version": "11.4.10",
           "volumes": [
             {
@@ -288,7 +303,7 @@
             "sync_required": false
           },
           "container": {
-            "image": "source.archipelago-foundation.org/lfg2025/mempool-frontend:v3.0.1",
+            "image": "source.archipelago-foundation.org/lfg2025/mempool-frontend:v3.3.1",
             "network": "archy-net",
             "pull_policy": "if-not-present"
           },
@@ -330,6 +345,10 @@
             "capabilities": [],
             "network_policy": "isolated",
             "readonly_root": false
+          },
+          "upstream": {
+            "kind": "github",
+            "repo": "mempool/mempool"
           },
           "version": "3.0.1"
         }
@@ -407,6 +426,10 @@
             "capabilities": [],
             "network_policy": "isolated",
             "readonly_root": false
+          },
+          "upstream": {
+            "kind": "github",
+            "repo": "dgarage/NBXplorer"
           },
           "version": "2.6.0",
           "volumes": [
@@ -508,7 +531,7 @@
           },
           "container": {
             "custom_args": [
-              "BITCOIND=\"$(command -v bitcoind || true)\"; if [ -z \"$BITCOIND\" ]; then\n  BITCOIND=\"$(find /opt -path '*/bin/bitcoind' -type f 2>/dev/null | sort | tail -n 1)\";\nfi; if [ -z \"$BITCOIND\" ]; then\n  echo \"bitcoind not found in image\" >&2;\n  exit 127;\nfi; RPC_USER=\"$(printenv BITCOIN_RPC_USER)\"; RPC_PASS=\"$(printenv BITCOIN_RPC_PASS)\"; RPC_CONF=\"/tmp/rpc.conf\"; umask 077; { echo \"rpcuser=$RPC_USER\"; echo \"rpcpassword=$RPC_PASS\"; } > \"$RPC_CONF\"; if [ -f /home/bitcoin/.bitcoin/bitcoin.conf ]; then\n  echo \"archipelago: ignoring legacy datadir bitcoin.conf; RPC config comes from $RPC_CONF\" >&2;\nfi; RPC_TXRELAY_AUTH=\"$(printenv BITCOIN_RPC_TXRELAY_RPCAUTH || true)\"; DISK_GB_VALUE=\"$(printenv DISK_GB || true)\"; RPC_HEADROOM=\"-rpcthreads=16 -rpcworkqueue=256\"; RPC_TXRELAY_FLAGS=\"-rpcwhitelistdefault=0\"; if [ -n \"$RPC_TXRELAY_AUTH\" ]; then\n  RPC_TXRELAY_FLAGS=\"$RPC_TXRELAY_FLAGS -rpcauth=$RPC_TXRELAY_AUTH -rpcwhitelist=txrelay:sendrawtransaction,submitpackage,testmempoolaccept,getmempoolinfo,getrawmempool,getmempoolentry,getnetworkinfo,getblockchaininfo,getblockcount,getblockhash,getblock,getblockheader,getrawtransaction,gettxout,gettxspendingprevout,decoderawtransaction,decodescript,estimatesmartfee,uptime,ping,getconnectioncount,getpeerinfo,getindexinfo,getdeploymentinfo,getchaintips\";\nfi; if [ \"${DISK_GB_VALUE:-0}\" -lt 1000 ]; then\n  exec \"$BITCOIND\" -datadir=/home/bitcoin/.bitcoin -conf=\"$RPC_CONF\" -allowignoredconf=1 -printtoconsole=0 -server=1 -prune=550 -rpcallowip=0.0.0.0/0 -rpcbind=0.0.0.0:8332 -listen=1 -bind=0.0.0.0:8333 -dbcache=1024 -par=0 -maxconnections=125 $RPC_HEADROOM $RPC_TXRELAY_FLAGS;\nelse\n  exec \"$BITCOIND\" -datadir=/home/bitcoin/.bitcoin -conf=\"$RPC_CONF\" -allowignoredconf=1 -printtoconsole=0 -server=1 -txindex=1 -rpcallowip=0.0.0.0/0 -rpcbind=0.0.0.0:8332 -listen=1 -bind=0.0.0.0:8333 -dbcache=4096 -par=0 -maxconnections=125 $RPC_HEADROOM $RPC_TXRELAY_FLAGS;\nfi"
+              "BITCOIND=\"$(command -v bitcoind || true)\"; if [ -z \"$BITCOIND\" ]; then\n  BITCOIND=\"$(find /opt -path '*/bin/bitcoind' -type f 2>/dev/null | sort | tail -n 1)\";\nfi; if [ -z \"$BITCOIND\" ]; then\n  echo \"bitcoind not found in image\" >&2;\n  exit 127;\nfi; RPC_USER=\"$(printenv BITCOIN_RPC_USER)\"; RPC_PASS=\"$(printenv BITCOIN_RPC_PASS)\"; RPC_CONF=\"/tmp/rpc.conf\"; umask 077; { echo \"rpcuser=$RPC_USER\"; echo \"rpcpassword=$RPC_PASS\"; } > \"$RPC_CONF\"; if [ -f /home/bitcoin/.bitcoin/bitcoin.conf ]; then\n  echo \"archipelago: ignoring legacy datadir bitcoin.conf; RPC config comes from $RPC_CONF\" >&2;\nfi; RPC_TXRELAY_AUTH=\"$(printenv BITCOIN_RPC_TXRELAY_RPCAUTH || true)\"; DISK_GB_VALUE=\"$(printenv DISK_GB || true)\"; RPC_HEADROOM=\"-rpcthreads=16 -rpcworkqueue=256\"; RPC_TXRELAY_FLAGS=\"-rpcwhitelistdefault=0\"; if [ -n \"$RPC_TXRELAY_AUTH\" ]; then\n  RPC_TXRELAY_FLAGS=\"$RPC_TXRELAY_FLAGS -rpcauth=$RPC_TXRELAY_AUTH -rpcwhitelist=txrelay:sendrawtransaction,submitpackage,testmempoolaccept,getmempoolinfo,getrawmempool,getmempoolentry,getnetworkinfo,getblockchaininfo,getblockcount,getblockhash,getblock,getblockheader,getrawtransaction,gettxout,gettxspendingprevout,decoderawtransaction,decodescript,estimatesmartfee,uptime,ping,getconnectioncount,getpeerinfo,getindexinfo,getdeploymentinfo,getchaintips\";\nfi; if [ \"${DISK_GB_VALUE:-0}\" -lt 1000 ]; then\n  exec \"$BITCOIND\" -datadir=/home/bitcoin/.bitcoin -conf=\"$RPC_CONF\" -allowignoredconf=1 -printtoconsole=0 -server=1 -prune=50000 -rpcallowip=0.0.0.0/0 -rpcbind=0.0.0.0:8332 -listen=1 -bind=0.0.0.0:8333 -dbcache=1024 -par=0 -maxconnections=125 $RPC_HEADROOM $RPC_TXRELAY_FLAGS;\nelse\n  exec \"$BITCOIND\" -datadir=/home/bitcoin/.bitcoin -conf=\"$RPC_CONF\" -allowignoredconf=1 -printtoconsole=0 -server=1 -txindex=1 -rpcallowip=0.0.0.0/0 -rpcbind=0.0.0.0:8332 -listen=1 -bind=0.0.0.0:8333 -dbcache=4096 -par=0 -maxconnections=125 $RPC_HEADROOM $RPC_TXRELAY_FLAGS;\nfi"
             ],
             "data_uid": "100101:100101",
             "derived_env": [
@@ -586,6 +609,10 @@
             "network_policy": "isolated",
             "readonly_root": false
           },
+          "upstream": {
+            "kind": "github",
+            "repo": "bitcoin/bitcoin"
+          },
           "version": "28.4.0",
           "volumes": [
             {
@@ -654,7 +681,7 @@
           },
           "container": {
             "custom_args": [
-              "BITCOIND=\"$(command -v bitcoind || true)\"; if [ -z \"$BITCOIND\" ]; then\n  BITCOIND=\"$(find /opt -path '*/bin/bitcoind' -type f 2>/dev/null | sort | tail -n 1)\";\nfi; if [ -z \"$BITCOIND\" ]; then\n  echo \"bitcoind not found in image\" >&2;\n  exit 127;\nfi; RPC_USER=\"$(printenv BITCOIN_RPC_USER)\"; RPC_PASS=\"$(printenv BITCOIN_RPC_PASS)\"; RPC_CONF=\"/tmp/rpc.conf\"; umask 077; { echo \"rpcuser=$RPC_USER\"; echo \"rpcpassword=$RPC_PASS\"; } > \"$RPC_CONF\"; if [ -f /home/bitcoin/.bitcoin/bitcoin.conf ]; then\n  echo \"archipelago: ignoring legacy datadir bitcoin.conf; RPC config comes from $RPC_CONF\" >&2;\nfi; RPC_TXRELAY_AUTH=\"$(printenv BITCOIN_RPC_TXRELAY_RPCAUTH || true)\"; DISK_GB_VALUE=\"$(printenv DISK_GB || true)\"; RPC_HEADROOM=\"-rpcthreads=16 -rpcworkqueue=256\"; RPC_TXRELAY_FLAGS=\"-rpcwhitelistdefault=0\"; if [ -n \"$RPC_TXRELAY_AUTH\" ]; then\n  RPC_TXRELAY_FLAGS=\"$RPC_TXRELAY_FLAGS -rpcauth=$RPC_TXRELAY_AUTH -rpcwhitelist=txrelay:sendrawtransaction,submitpackage,testmempoolaccept,getmempoolinfo,getrawmempool,getmempoolentry,getnetworkinfo,getblockchaininfo,getblockcount,getblockhash,getblock,getblockheader,getrawtransaction,gettxout,gettxspendingprevout,decoderawtransaction,decodescript,estimatesmartfee,uptime,ping,getconnectioncount,getpeerinfo,getindexinfo,getdeploymentinfo,getchaintips\";\nfi; if [ \"${DISK_GB_VALUE:-0}\" -lt 1000 ]; then\n  exec \"$BITCOIND\" -datadir=/home/bitcoin/.bitcoin -conf=\"$RPC_CONF\" -allowignoredconf=1 -printtoconsole=0 -server=1 -prune=550 -rpcallowip=0.0.0.0/0 -rpcbind=0.0.0.0:8332 -listen=1 -bind=0.0.0.0:8333 -dbcache=2048 -par=0 -maxconnections=125 $RPC_HEADROOM $RPC_TXRELAY_FLAGS;\nelse\n  exec \"$BITCOIND\" -datadir=/home/bitcoin/.bitcoin -conf=\"$RPC_CONF\" -allowignoredconf=1 -printtoconsole=0 -server=1 -txindex=1 -rpcallowip=0.0.0.0/0 -rpcbind=0.0.0.0:8332 -listen=1 -bind=0.0.0.0:8333 -dbcache=4096 -par=0 -maxconnections=125 $RPC_HEADROOM $RPC_TXRELAY_FLAGS;\nfi"
+              "BITCOIND=\"$(command -v bitcoind || true)\"; if [ -z \"$BITCOIND\" ]; then\n  BITCOIND=\"$(find /opt -path '*/bin/bitcoind' -type f 2>/dev/null | sort | tail -n 1)\";\nfi; if [ -z \"$BITCOIND\" ]; then\n  echo \"bitcoind not found in image\" >&2;\n  exit 127;\nfi; RPC_USER=\"$(printenv BITCOIN_RPC_USER)\"; RPC_PASS=\"$(printenv BITCOIN_RPC_PASS)\"; RPC_CONF=\"/tmp/rpc.conf\"; umask 077; { echo \"rpcuser=$RPC_USER\"; echo \"rpcpassword=$RPC_PASS\"; } > \"$RPC_CONF\"; if [ -f /home/bitcoin/.bitcoin/bitcoin.conf ]; then\n  echo \"archipelago: ignoring legacy datadir bitcoin.conf; RPC config comes from $RPC_CONF\" >&2;\nfi; RPC_TXRELAY_AUTH=\"$(printenv BITCOIN_RPC_TXRELAY_RPCAUTH || true)\"; DISK_GB_VALUE=\"$(printenv DISK_GB || true)\"; RPC_HEADROOM=\"-rpcthreads=16 -rpcworkqueue=256\"; RPC_TXRELAY_FLAGS=\"-rpcwhitelistdefault=0\"; if [ -n \"$RPC_TXRELAY_AUTH\" ]; then\n  RPC_TXRELAY_FLAGS=\"$RPC_TXRELAY_FLAGS -rpcauth=$RPC_TXRELAY_AUTH -rpcwhitelist=txrelay:sendrawtransaction,submitpackage,testmempoolaccept,getmempoolinfo,getrawmempool,getmempoolentry,getnetworkinfo,getblockchaininfo,getblockcount,getblockhash,getblock,getblockheader,getrawtransaction,gettxout,gettxspendingprevout,decoderawtransaction,decodescript,estimatesmartfee,uptime,ping,getconnectioncount,getpeerinfo,getindexinfo,getdeploymentinfo,getchaintips\";\nfi; if [ \"${DISK_GB_VALUE:-0}\" -lt 1000 ]; then\n  exec \"$BITCOIND\" -datadir=/home/bitcoin/.bitcoin -conf=\"$RPC_CONF\" -allowignoredconf=1 -printtoconsole=0 -server=1 -prune=50000 -rpcallowip=0.0.0.0/0 -rpcbind=0.0.0.0:8332 -listen=1 -bind=0.0.0.0:8333 -dbcache=2048 -par=0 -maxconnections=125 $RPC_HEADROOM $RPC_TXRELAY_FLAGS;\nelse\n  exec \"$BITCOIND\" -datadir=/home/bitcoin/.bitcoin -conf=\"$RPC_CONF\" -allowignoredconf=1 -printtoconsole=0 -server=1 -txindex=1 -rpcallowip=0.0.0.0/0 -rpcbind=0.0.0.0:8332 -listen=1 -bind=0.0.0.0:8333 -dbcache=4096 -par=0 -maxconnections=125 $RPC_HEADROOM $RPC_TXRELAY_FLAGS;\nfi"
             ],
             "data_uid": "100101:100101",
             "derived_env": [
@@ -731,6 +758,10 @@
             ],
             "network_policy": "isolated",
             "readonly_root": false
+          },
+          "upstream": {
+            "kind": "github",
+            "repo": "bitcoinknots/bitcoin"
           },
           "version": "28.1.0",
           "volumes": [
@@ -810,6 +841,9 @@
           "security": {
             "network_policy": "host",
             "readonly_root": false
+          },
+          "upstream": {
+            "kind": "internal"
           },
           "version": "1.0.0",
           "volumes": [
@@ -917,6 +951,9 @@
             "readonly_root": true,
             "seccomp_profile": "default",
             "user": 999
+          },
+          "upstream": {
+            "kind": "internal"
           },
           "version": "1.2.11",
           "volumes": [
@@ -1038,7 +1075,8 @@
           "name": "BTCPay Server",
           "ports": [
             {
-              "auth": "gated",
+              "auth": "open",
+              "auth_rationale": "BTCPay enforces its own login for administration, and its checkout, invoice and webhook endpoints are designed to be reached by anonymous payers and payment processors.",
               "bind": "127.0.0.1",
               "container": 49392,
               "host": 23000,
@@ -1054,6 +1092,10 @@
             "capabilities": [],
             "network_policy": "isolated",
             "readonly_root": false
+          },
+          "upstream": {
+            "kind": "github",
+            "repo": "btcpayserver/btcpayserver"
           },
           "version": "2.4.2",
           "volumes": [
@@ -1140,6 +1182,10 @@
             "seccomp_profile": "default",
             "user": 1000
           },
+          "upstream": {
+            "kind": "github",
+            "repo": "ElementsProject/lightning"
+          },
           "version": "23.08.2",
           "volumes": [
             {
@@ -1209,6 +1255,9 @@
             "seccomp_profile": "default",
             "user": 1000
           },
+          "upstream": {
+            "kind": "internal"
+          },
           "version": "1.0.0",
           "volumes": [
             {
@@ -1269,6 +1318,9 @@
           "security": {
             "network_policy": "host",
             "readonly_root": false
+          },
+          "upstream": {
+            "kind": "internal"
           },
           "version": "1.0.0",
           "volumes": []
@@ -1362,6 +1414,10 @@
             "network_policy": "isolated",
             "readonly_root": false
           },
+          "upstream": {
+            "kind": "github",
+            "repo": "spesmilo/electrumx"
+          },
           "version": "1.18.0",
           "volumes": [
             {
@@ -1378,7 +1434,7 @@
       "version": "v1.18.0"
     },
     "fedimint": {
-      "image": "source.archipelago-foundation.org/lfg2025/fedimintd:v0.10.0",
+      "image": "source.archipelago-foundation.org/lfg2025/fedimintd:v0.10.1",
       "manifest": {
         "app": {
           "bitcoin_integration": {
@@ -1408,7 +1464,7 @@
               "sh",
               "-lc"
             ],
-            "image": "source.archipelago-foundation.org/lfg2025/fedimintd:v0.10.0",
+            "image": "source.archipelago-foundation.org/lfg2025/fedimintd:v0.10.1",
             "network": "archy-net",
             "pull_policy": "if-not-present",
             "secret_env": [
@@ -1489,6 +1545,10 @@
             "network_policy": "isolated",
             "readonly_root": true
           },
+          "upstream": {
+            "kind": "github",
+            "repo": "fedimint/fedimint"
+          },
           "version": "0.10.0",
           "volumes": [
             {
@@ -1502,7 +1562,7 @@
           ]
         }
       },
-      "version": "v0.10.0"
+      "version": "v0.10.1"
     },
     "fedimint-clientd": {
       "manifest": {
@@ -1571,6 +1631,10 @@
             "network_policy": "bridge",
             "readonly_root": true
           },
+          "upstream": {
+            "kind": "github",
+            "repo": "fedimint/fedimint-clientd"
+          },
           "version": "0.8.0",
           "volumes": [
             {
@@ -1587,7 +1651,7 @@
       "version": "0.8.0"
     },
     "fedimint-gateway": {
-      "image": "source.archipelago-foundation.org/lfg2025/gatewayd:v0.10.0",
+      "image": "source.archipelago-foundation.org/lfg2025/gatewayd:v0.10.1",
       "manifest": {
         "app": {
           "bitcoin_integration": {
@@ -1615,7 +1679,7 @@
                 "name": "fedimint-gateway-hash"
               }
             ],
-            "image": "source.archipelago-foundation.org/lfg2025/gatewayd:v0.10.0",
+            "image": "source.archipelago-foundation.org/lfg2025/gatewayd:v0.10.1",
             "network": "archy-net",
             "pull_policy": "if-not-present",
             "secret_env": [
@@ -1679,6 +1743,10 @@
             "network_policy": "isolated",
             "readonly_root": true
           },
+          "upstream": {
+            "kind": "github",
+            "repo": "fedimint/fedimint"
+          },
           "version": "0.10.0",
           "volumes": [
             {
@@ -1700,7 +1768,7 @@
           ]
         }
       },
-      "version": "v0.10.0"
+      "version": "v0.10.1"
     },
     "filebrowser": {
       "image": "source.archipelago-foundation.org/lfg2025/filebrowser:v2.27.0",
@@ -1761,6 +1829,10 @@
             ],
             "network_policy": "isolated",
             "readonly_root": false
+          },
+          "upstream": {
+            "kind": "github",
+            "repo": "filebrowser/filebrowser"
           },
           "version": "2.27.0",
           "volumes": [
@@ -1827,6 +1899,9 @@
           "security": {
             "network_policy": "host",
             "readonly_root": false
+          },
+          "upstream": {
+            "kind": "internal"
           },
           "version": "1.0.0",
           "volumes": []
@@ -1902,7 +1977,8 @@
           },
           "ports": [
             {
-              "auth": "gated",
+              "auth": "open",
+              "auth_rationale": "Gitea enforces its own account login on every page and API route; git clients authenticate with basic-auth/tokens and cannot complete a browser login challenge.",
               "bind": "127.0.0.1",
               "container": 3000,
               "host": 3001,
@@ -1932,6 +2008,10 @@
             "network_policy": "bridge",
             "no_new_privileges": false,
             "readonly_root": false
+          },
+          "upstream": {
+            "kind": "github",
+            "repo": "go-gitea/gitea"
           },
           "version": "1.23",
           "volumes": [
@@ -2016,6 +2096,10 @@
             "seccomp_profile": "default",
             "user": 1000
           },
+          "upstream": {
+            "kind": "github",
+            "repo": "grafana/grafana"
+          },
           "version": "10.2.0",
           "volumes": [
             {
@@ -2032,11 +2116,11 @@
       "version": "10.2.0"
     },
     "homeassistant": {
-      "image": "source.archipelago-foundation.org/lfg2025/home-assistant:2026.7.3",
+      "image": "source.archipelago-foundation.org/lfg2025/home-assistant:2026.8.2",
       "manifest": {
         "app": {
           "container": {
-            "image": "source.archipelago-foundation.org/lfg2025/home-assistant:2026.7.3",
+            "image": "source.archipelago-foundation.org/lfg2025/home-assistant:2026.8.2",
             "network": "pasta",
             "pull_policy": "if-not-present"
           },
@@ -2109,6 +2193,10 @@
             "seccomp_profile": "default",
             "user": 1000
           },
+          "upstream": {
+            "kind": "github",
+            "repo": "home-assistant/core"
+          },
           "version": "2026.7.3",
           "volumes": [
             {
@@ -2122,7 +2210,7 @@
           ]
         }
       },
-      "version": "2026.7.3"
+      "version": "2026.8.2"
     },
     "immich": {
       "image": "source.archipelago-foundation.org/lfg2025/immich-server:release",
@@ -2210,6 +2298,10 @@
             ],
             "network_policy": "isolated",
             "readonly_root": false
+          },
+          "upstream": {
+            "kind": "github",
+            "repo": "immich-app/immich"
           },
           "version": "2.7.4",
           "volumes": [
@@ -2330,6 +2422,10 @@
             ],
             "network_policy": "isolated",
             "readonly_root": false
+          },
+          "upstream": {
+            "kind": "dockerhub",
+            "repo": "valkey/valkey"
           },
           "version": "7-alpine",
           "volumes": []
@@ -2453,6 +2549,9 @@
             "network_policy": "isolated",
             "readonly_root": false
           },
+          "upstream": {
+            "kind": "internal"
+          },
           "version": "1.0.0",
           "volumes": [
             {
@@ -2561,6 +2660,9 @@
             "network_policy": "isolated",
             "readonly_root": false
           },
+          "upstream": {
+            "kind": "internal"
+          },
           "version": "1.0.0",
           "volumes": []
         }
@@ -2618,6 +2720,9 @@
             "capabilities": [],
             "network_policy": "isolated",
             "readonly_root": false
+          },
+          "upstream": {
+            "kind": "internal"
           },
           "version": "1.0.0",
           "volumes": []
@@ -2758,6 +2863,10 @@
             "network_policy": "isolated",
             "readonly_root": false
           },
+          "upstream": {
+            "kind": "dockerhub",
+            "repo": "library/postgres"
+          },
           "version": "16.13-alpine",
           "volumes": [
             {
@@ -2816,6 +2925,10 @@
             "network_policy": "isolated",
             "readonly_root": false
           },
+          "upstream": {
+            "kind": "dockerhub",
+            "repo": "library/redis"
+          },
           "version": "7.4.8-alpine",
           "volumes": [
             {
@@ -2836,7 +2949,7 @@
         "app": {
           "category": "community",
           "container": {
-            "image": "source.archipelago-foundation.org/lfg2025/nostr-rs-relay:0.9.0",
+            "image": "source.archipelago-foundation.org/lfg2025/nostr-rs-relay:0.10.0",
             "network": "indeedhub-net",
             "network_aliases": [
               "relay"
@@ -2870,6 +2983,10 @@
             "network_policy": "isolated",
             "readonly_root": false
           },
+          "upstream": {
+            "kind": "github",
+            "repo": "scsibug/nostr-rs-relay"
+          },
           "version": "0.9.0",
           "volumes": [
             {
@@ -2886,11 +3003,11 @@
       "version": "0.9.0"
     },
     "jellyfin": {
-      "image": "source.archipelago-foundation.org/lfg2025/jellyfin:10.8.13",
+      "image": "source.archipelago-foundation.org/lfg2025/jellyfin:10.11.11",
       "manifest": {
         "app": {
           "container": {
-            "image": "source.archipelago-foundation.org/lfg2025/jellyfin:10.8.13",
+            "image": "source.archipelago-foundation.org/lfg2025/jellyfin:10.11.11",
             "network": "pasta",
             "pull_policy": "if-not-present"
           },
@@ -2950,6 +3067,10 @@
             "network_policy": "isolated",
             "readonly_root": false
           },
+          "upstream": {
+            "kind": "github",
+            "repo": "jellyfin/jellyfin"
+          },
           "version": "10.8.13",
           "volumes": [
             {
@@ -2971,7 +3092,7 @@
           ]
         }
       },
-      "version": "10.8.13"
+      "version": "10.11.11"
     },
     "lightning-stack": {
       "manifest": {
@@ -3159,6 +3280,10 @@
             "network_policy": "isolated",
             "readonly_root": false
           },
+          "upstream": {
+            "kind": "github",
+            "repo": "lightningnetwork/lnd"
+          },
           "version": "0.18.4",
           "volumes": [
             {
@@ -3219,6 +3344,9 @@
             "network_policy": "host",
             "readonly_root": false
           },
+          "upstream": {
+            "kind": "internal"
+          },
           "version": "1.0.0",
           "volumes": []
         }
@@ -3226,11 +3354,11 @@
       "version": "1.7.123-alpha"
     },
     "mempool": {
-      "image": "source.archipelago-foundation.org/lfg2025/mempool-frontend:v3.0.1",
+      "image": "source.archipelago-foundation.org/lfg2025/mempool-frontend:v3.3.1",
       "images": {
         "archy-mempool-db": "source.archipelago-foundation.org/lfg2025/mariadb:11.4.10",
-        "archy-mempool-web": "source.archipelago-foundation.org/lfg2025/mempool-frontend:v3.0.1",
-        "mempool-api": "source.archipelago-foundation.org/lfg2025/mempool-backend:v3.0.0"
+        "archy-mempool-web": "source.archipelago-foundation.org/lfg2025/mempool-frontend:v3.3.1",
+        "mempool-api": "source.archipelago-foundation.org/lfg2025/mempool-backend:v3.3.1"
       },
       "manifest": {
         "app": {
@@ -3239,7 +3367,7 @@
             "sync_required": true
           },
           "container": {
-            "image": "source.archipelago-foundation.org/lfg2025/mempool-frontend:v3.0.1",
+            "image": "source.archipelago-foundation.org/lfg2025/mempool-frontend:v3.3.1",
             "image_signature": "cosign://...",
             "pull_policy": "if-not-present"
           },
@@ -3294,6 +3422,10 @@
             "seccomp_profile": "default",
             "user": 1000
           },
+          "upstream": {
+            "kind": "github",
+            "repo": "mempool/mempool"
+          },
           "version": "3.0.0",
           "volumes": [
             {
@@ -3307,7 +3439,7 @@
           ]
         }
       },
-      "version": "v3.0.1"
+      "version": "v3.3.1"
     },
     "mempool-api": {
       "manifest": {
@@ -3324,7 +3456,7 @@
                 "template": "{{BITCOIN_HOST}}"
               }
             ],
-            "image": "source.archipelago-foundation.org/lfg2025/mempool-backend:v3.0.0",
+            "image": "source.archipelago-foundation.org/lfg2025/mempool-backend:v3.3.1",
             "network": "archy-net",
             "pull_policy": "if-not-present",
             "secret_env": [
@@ -3394,6 +3526,10 @@
             "network_policy": "isolated",
             "readonly_root": false
           },
+          "upstream": {
+            "kind": "github",
+            "repo": "mempool/mempool"
+          },
           "version": "3.0.0",
           "volumes": [
             {
@@ -3460,6 +3596,9 @@
             "seccomp_profile": "default",
             "user": 1000
           },
+          "upstream": {
+            "kind": "internal"
+          },
           "version": "1.0.0",
           "volumes": [
             {
@@ -3486,7 +3625,7 @@
                 "key": "/var/lib/archipelago/netbird/tls.key"
               }
             ],
-            "image": "docker.io/library/nginx:1.27-alpine",
+            "image": "docker.io/library/nginx:1.31.3-alpine",
             "network": "netbird-net",
             "pull_policy": "if-not-present"
           },
@@ -3566,6 +3705,10 @@
             ],
             "network_policy": "isolated",
             "readonly_root": false
+          },
+          "upstream": {
+            "kind": "dockerhub",
+            "repo": "library/nginx"
           },
           "version": "2.38.0",
           "volumes": [
@@ -3680,6 +3823,10 @@
             "network_policy": "isolated",
             "readonly_root": false
           },
+          "upstream": {
+            "kind": "github",
+            "repo": "netbirdio/dashboard"
+          },
           "version": "2.38.0",
           "volumes": []
         }
@@ -3776,6 +3923,10 @@
             "network_policy": "isolated",
             "readonly_root": false
           },
+          "upstream": {
+            "kind": "github",
+            "repo": "netbirdio/netbird"
+          },
           "version": "0.71.2",
           "volumes": [
             {
@@ -3867,6 +4018,10 @@
             "network_policy": "isolated",
             "readonly_root": false
           },
+          "upstream": {
+            "kind": "github",
+            "repo": "nextcloud/server"
+          },
           "version": "29",
           "volumes": [
             {
@@ -3887,12 +4042,12 @@
       "version": "latest"
     },
     "nostr-rs-relay": {
-      "image": "source.archipelago-foundation.org/lfg2025/nostr-rs-relay:0.9.0",
+      "image": "source.archipelago-foundation.org/lfg2025/nostr-rs-relay:0.10.0",
       "manifest": {
         "app": {
           "container": {
             "data_uid": "1000:1000",
-            "image": "scsibug/nostr-rs-relay:0.8.9",
+            "image": "scsibug/nostr-rs-relay:0.10.0",
             "image_signature": "cosign://...",
             "pull_policy": "verify-signature"
           },
@@ -3946,7 +4101,11 @@
             "seccomp_profile": "default",
             "user": 1000
           },
-          "version": "0.8.0",
+          "upstream": {
+            "kind": "github",
+            "repo": "scsibug/nostr-rs-relay"
+          },
+          "version": "0.10.0",
           "volumes": [
             {
               "options": [
@@ -3959,7 +4118,7 @@
           ]
         }
       },
-      "version": "0.9.0"
+      "version": "0.10.0"
     },
     "nostr-vpn": {
       "image": "source.archipelago-foundation.org/lfg2025/nostr-vpn:v0.3.7",
@@ -4038,6 +4197,10 @@
             "network_policy": "bridge",
             "no_new_privileges": true,
             "readonly_root": true
+          },
+          "upstream": {
+            "kind": "github",
+            "repo": "ACINQ/phoenixd"
           },
           "version": "0.9.0",
           "volumes": [
@@ -4122,6 +4285,10 @@
             "network_policy": "isolated",
             "readonly_root": false
           },
+          "upstream": {
+            "kind": "github",
+            "repo": "photoprism/photoprism"
+          },
           "version": "240915",
           "volumes": [
             {
@@ -4148,7 +4315,7 @@
                 "key": "/var/lib/archipelago/pine/tls.key"
               }
             ],
-            "image": "docker.io/library/nginx:1.27-alpine",
+            "image": "docker.io/library/nginx:1.31.3-alpine",
             "network": "archy-net",
             "network_aliases": [
               "pine"
@@ -4251,6 +4418,10 @@
             "network_policy": "isolated",
             "no_new_privileges": true,
             "readonly_root": false
+          },
+          "upstream": {
+            "kind": "dockerhub",
+            "repo": "library/nginx"
           },
           "version": "1.3.0",
           "volumes": [
@@ -4358,6 +4529,10 @@
             "no_new_privileges": true,
             "readonly_root": false
           },
+          "upstream": {
+            "kind": "github",
+            "repo": "rhasspy/wyoming-openwakeword"
+          },
           "version": "2.1.0",
           "volumes": [
             {
@@ -4382,7 +4557,7 @@
               "--voice",
               "en_GB-alba-medium"
             ],
-            "image": "docker.io/rhasspy/wyoming-piper:2.2.2",
+            "image": "docker.io/rhasspy/wyoming-piper:2.4.2",
             "network": "archy-net",
             "network_aliases": [
               "pine-piper"
@@ -4438,7 +4613,11 @@
             "no_new_privileges": true,
             "readonly_root": false
           },
-          "version": "2.2.2",
+          "upstream": {
+            "kind": "github",
+            "repo": "rhasspy/wyoming-piper"
+          },
+          "version": "2.4.2",
           "volumes": [
             {
               "options": [
@@ -4451,7 +4630,7 @@
           ]
         }
       },
-      "version": "2.2.2"
+      "version": "2.4.2"
     },
     "pine-whisper": {
       "manifest": {
@@ -4538,13 +4717,13 @@
       "version": "3.4.2"
     },
     "portainer": {
-      "image": "source.archipelago-foundation.org/lfg2025/portainer:2.39.1",
+      "image": "source.archipelago-foundation.org/lfg2025/portainer:2.39.6",
       "manifest": {
         "app": {
           "category": "development",
           "container": {
             "data_uid": "1000:1000",
-            "image": "source.archipelago-foundation.org/lfg2025/portainer:2.39.1",
+            "image": "source.archipelago-foundation.org/lfg2025/portainer:2.39.6",
             "pull_policy": "if-not-present"
           },
           "dependencies": [
@@ -4602,6 +4781,10 @@
             "no_new_privileges": true,
             "readonly_root": false
           },
+          "upstream": {
+            "kind": "github",
+            "repo": "portainer/portainer"
+          },
           "version": "2.19.4",
           "volumes": [
             {
@@ -4631,7 +4814,7 @@
           ]
         }
       },
-      "version": "2.39.1"
+      "version": "2.39.6"
     },
     "router": {
       "manifest": {
@@ -4711,6 +4894,9 @@
             "seccomp_profile": "default",
             "user": 1000
           },
+          "upstream": {
+            "kind": "internal"
+          },
           "version": "1.0.0",
           "volumes": [
             {
@@ -4789,6 +4975,10 @@
             "seccomp_profile": "default",
             "user": 1000
           },
+          "upstream": {
+            "kind": "github",
+            "repo": "searxng/searxng"
+          },
           "version": "1.0.0",
           "volumes": [
             {
@@ -4808,7 +4998,7 @@
       "manifest": {
         "app": {
           "container": {
-            "image": "dockurr/strfry:1.0.4",
+            "image": "dockurr/strfry:1.1.1",
             "image_signature": "cosign://...",
             "pull_policy": "verify-signature"
           },
@@ -4861,7 +5051,11 @@
             "readonly_root": true,
             "seccomp_profile": "default"
           },
-          "version": "0.9.0",
+          "upstream": {
+            "kind": "github",
+            "repo": "hoytech/strfry"
+          },
+          "version": "1.1.1",
           "volumes": [
             {
               "options": [
@@ -4882,7 +5076,7 @@
           ]
         }
       },
-      "version": "0.9.0"
+      "version": "1.1.1"
     },
     "tailscale": {
       "image": "source.archipelago-foundation.org/lfg2025/tailscale:stable",
@@ -4954,6 +5148,10 @@
             "network_policy": "isolated",
             "readonly_root": false
           },
+          "upstream": {
+            "kind": "github",
+            "repo": "louislam/uptime-kuma"
+          },
           "version": "1.23.0",
           "volumes": [
             {
@@ -4970,11 +5168,11 @@
       "version": "1"
     },
     "vaultwarden": {
-      "image": "source.archipelago-foundation.org/lfg2025/vaultwarden:1.30.0-alpine",
+      "image": "source.archipelago-foundation.org/lfg2025/vaultwarden:1.37.1-alpine",
       "manifest": {
         "app": {
           "container": {
-            "image": "source.archipelago-foundation.org/lfg2025/vaultwarden:1.30.0-alpine",
+            "image": "source.archipelago-foundation.org/lfg2025/vaultwarden:1.37.1-alpine",
             "network": "pasta",
             "pull_policy": "if-not-present"
           },
@@ -5037,6 +5235,10 @@
             "network_policy": "isolated",
             "readonly_root": false
           },
+          "upstream": {
+            "kind": "github",
+            "repo": "dani-garcia/vaultwarden"
+          },
           "version": "1.30.0",
           "volumes": [
             {
@@ -5050,11 +5252,11 @@
           ]
         }
       },
-      "version": "1.30.0-alpine"
+      "version": "1.37.1-alpine"
     }
   },
   "schema": 1,
-  "signature": "0aaf681435434b6e325269745d1fc3f90686c5391525d6b591666d6e36097bef0e5b999e2b9fe37d7a945e59aa40db74ed618824ab78c7fc6af73271c62ff20a",
+  "signature": "97628de24e3ffa17f639c663e19881cf6dea8c79aab272fe9c5442a4e951b3f0d257fee21aa9ce6158e3824b56a337acb71805f6fd34245e48345b86b46ec007",
   "signed_by": "did:key:z6Mkfu5LT8d4DjETtrkATvHh9Dvcbnr7zBCUwfau8Sw7DLWT",
-  "updated": "2026-08-13"
+  "updated": "2026-08-19"
 }

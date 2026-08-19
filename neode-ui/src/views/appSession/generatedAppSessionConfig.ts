@@ -2,6 +2,7 @@
 
 export const GENERATED_APP_PORTS: Record<string, number> = {
   "aiui": 5180,
+  "alby-hub": 8187,
   "archy-mempool-web": 4080,
   "archy-nbxplorer": 32838,
   "bitcoin-ui": 8334,
@@ -38,6 +39,7 @@ export const GENERATED_APP_PORTS: Record<string, number> = {
 
 export const GENERATED_APP_TITLES: Record<string, string> = {
   "aiui": "AI Assistant",
+  "alby-hub": "Alby Hub",
   "archy-btcpay-db": "BTCPay Postgres",
   "archy-mempool-db": "Mempool MariaDB",
   "archy-mempool-web": "Mempool Web",
@@ -82,6 +84,7 @@ export const GENERATED_APP_TITLES: Record<string, string> = {
   "netbird-server": "NetBird Server",
   "nextcloud": "Nextcloud",
   "nostr-rs-relay": "Nostr Relay (Rust)",
+  "phoenixd": "phoenixd",
   "photoprism": "PhotoPrism",
   "pine": "Pine",
   "pine-openwakeword": "Pine Wake Word (openWakeWord)",
