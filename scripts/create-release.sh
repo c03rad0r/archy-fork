@@ -155,7 +155,18 @@ cd "$PROJECT_ROOT"
 
 echo "[4/8] Building frontend..."
 cd "$PROJECT_ROOT/neode-ui"
-npm run build 2>&1 | tail -3
+# `| tail -3` discards npm's exit status, so a FAILED build looked identical
+# to a successful one and the run marched on to report the far more
+# confusing "build no-opped or its output is stale" a few lines later.
+# Keep the quiet 3-line output, but surface the real error when it breaks.
+build_log=$(mktemp -t neode-build.XXXXXX.log)
+if npm run build >"$build_log" 2>&1; then
+    tail -3 "$build_log"; rm -f "$build_log"
+else
+    echo "Error: the frontend build FAILED — full log kept at $build_log" >&2
+    tail -40 "$build_log" >&2
+    exit 1
+fi
 cd "$PROJECT_ROOT"
 
 # npm run build wipes web/dist — fold AIUI straight back in. The OTA tarball
