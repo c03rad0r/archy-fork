@@ -1,6 +1,6 @@
 # Changelog
 
-## v1.8.4-alpha (draft — date set at cut)
+## v1.8.4-alpha (2026-08-20)
 
 - **Apps with their own login can now skip the node's login screen — Gitea and BTCPay Server do so out of the box.** Some apps bring a complete account system of their own, and putting the node's password page in front of them broke real workflows: git clients can't answer a browser login, and a BTCPay checkout link handed to a customer must open for that customer. These apps are now served directly on their own login, while the node still fronts the connection for everything else it does (embedding fixes, the "app is restarting" page, Tor). Every app gets a new **Settings → app → Access control** switch, so you can put the node login back in front of any app — or take it away from one — with one click, effective immediately. App developers declare the default in their manifest (`auth: open`), documented in the developer guide.
 

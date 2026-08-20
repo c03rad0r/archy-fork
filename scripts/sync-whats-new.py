@@ -28,6 +28,15 @@ MONTHS = ["", "January", "February", "March", "April", "May", "June", "July",
 
 HEADER_RE = re.compile(r"^## (v\d+\.\d+\.\d+\S*) \((\d{4})-(\d{2})-(\d{2})\)")
 
+# A header that names a version but carries no YYYY-MM-DD date. Such a line
+# does not match HEADER_RE, so the version is INVISIBLE here — the tool then
+# reports "all present" while the very release being cut has no modal block.
+# That is what happened to v1.8.4-alpha on 2026-08-20: the changelog said
+# "(draft — date set at cut)", this check passed, and create-release then
+# aborted at the frontend step because the built bundle contained no version
+# string at all (the What's New modal is the only place one appears).
+UNDATED_RE = re.compile(r"^## (v\d+\.\d+\.\d+\S*) \((?!\d{4}-\d{2}-\d{2}\))")
+
 
 def parse_changelog():
     """Return [(version, 'Month D, YYYY', [bullet, ...]), ...] newest-first."""
@@ -46,6 +55,16 @@ def parse_changelog():
                 continue  # dev-process note, not user-facing
             cur["bullets"].append(text)
     return entries
+
+
+def undated_versions():
+    """[(version, whole line), ...] for version headers with no real date."""
+    found = []
+    for line in CHANGELOG.read_text().splitlines():
+        m = UNDATED_RE.match(line)
+        if m:
+            found.append((m.group(1), line.strip()))
+    return found
 
 
 def existing_versions():
@@ -78,6 +97,21 @@ def render_block(entry):
 
 def main():
     check = "--check" in sys.argv
+
+    # Refuse to reason about a changelog whose newest entry has no date:
+    # silently skipping it is what makes this check pass while the release
+    # is in fact missing its modal block.
+    undated = undated_versions()
+    if undated:
+        for ver, line in undated:
+            print(f"FAIL: CHANGELOG entry for {ver} carries no release date:",
+                  file=sys.stderr)
+            print(f"        {line}", file=sys.stderr)
+        print("A dated '## vX.Y.Z (YYYY-MM-DD)' header is required before the "
+              "modal can be synced — without it the version is invisible to "
+              "this tool and never reaches the built frontend.", file=sys.stderr)
+        return 1
+
     entries = parse_changelog()
     have = existing_versions()
     missing = [e for e in entries if e["ver"] not in have]
