@@ -12,6 +12,16 @@ export default defineConfig({
   test: {
     environment: 'jsdom',
     globals: true,
+    // Vitest's 5s default is not a statement about these tests — the whole
+    // 1000-test suite runs in ~70s on an idle box. It is a statement about
+    // the machine. This one also runs a live node, so a release gate can
+    // collide with a cargo build or a container churn, and starved workers
+    // blow 5s on tests that normally take milliseconds: on 2026-08-20 four
+    // unrelated tests timed out at once (one after 36s of wall clock) purely
+    // from CPU contention, failing the gate with nothing actually broken.
+    // 20s keeps real hangs bounded while surviving a busy box.
+    testTimeout: 20_000,
+    hookTimeout: 20_000,
     setupFiles: ['./vitest.setup.ts'],
     root: '.',
     passWithNoTests: true,
