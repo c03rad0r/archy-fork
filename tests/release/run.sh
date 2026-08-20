@@ -46,7 +46,16 @@ stage() { # stage <name> <cmd...>
     echo "=== [$name] PASS"
     PASS+=("$name")
   else
-    echo "=== [$name] FAIL (exit $?)"
+    local rc=$?
+    # 124 is `timeout` killing the stage. Reporting it as a bare exit code
+    # reads as "the tests failed" and sends you hunting for a broken test
+    # that does not exist — say plainly that it ran out of wall clock.
+    if [ "$rc" -eq 124 ]; then
+      echo "=== [$name] FAIL (exit 124 — TIMED OUT, not a test failure)"
+      echo "===   the command ran out of wall clock; re-run, or raise its timeout"
+    else
+      echo "=== [$name] FAIL (exit $rc)"
+    fi
     FAIL+=("$name")
     summary 1
   fi
@@ -110,9 +119,13 @@ stage "cargo-check"      timeout 580 cargo check --manifest-path core/Cargo.toml
 #   scanner    — RAII in-flight guard (v1.7.84)
 #   drift      — published-port drift detection (the .116 self-heal)
 #   missing_secret — secret-resolution names the missing file (the .198 fix)
-# 1500s: the non-incremental test-profile compile alone takes ~9 min on the
-# .116 ThinkPad; 580s expires mid-compile (exit 124) before a single test runs.
-stage "cargo-test-weekly" timeout 1500 env CARGO_INCREMENTAL=0 \
+# TIMEOUT, NOT TEST FAILURE: exit 124 here means the compile ran out of wall
+# clock, not that anything failed. The non-incremental test-profile build has
+# outgrown every ceiling set for it — 580s expired mid-compile, then on
+# 2026-08-20 1500s died at unit 427/429 (the archipelago bin test, the biggest
+# link) on a loaded, swapping dev box, again without running a single test.
+# 3600s leaves headroom; a warm target/ finishes in a fraction of it.
+stage "cargo-test-weekly" timeout 3600 env CARGO_INCREMENTAL=0 \
   cargo test --manifest-path core/Cargo.toml -p archipelago -- \
   update:: lnd container::image_versions scanner drift missing_secret
 
