@@ -193,7 +193,8 @@ echo " ISO:    $ISO ($(du -h "$ISO" | cut -f1))"
 echo " SHA256: $(cut -d' ' -f1 "$SHA_FILE")"
 echo
 echo " Next steps (publisher, offline mnemonic required):"
-echo "   1. scripts/sign-iso-checksums.sh $ISO"
-echo "   2. upload ISO + .sha256 + signed checksum JSON alongside the"
-echo "      v$VERSION Gitea release assets"
+echo "   1. bash scripts/sign-iso-checksums.sh $ISO"
+echo "   2. bash scripts/publish-release-assets.sh $VERSION"
+echo "      (attaches the ISO, its .sha256 and the signed checksum JSON to"
+echo "       the v$VERSION Gitea release, then verifies the stored sizes)"
 summary 0

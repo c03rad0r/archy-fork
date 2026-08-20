@@ -100,15 +100,22 @@ fi
 release_id=$(printf '%s' "$release_json" | python3 -c 'import json,sys; print(json.load(sys.stdin)["id"])')
 
 asset_names=$(curl -fsS -u "$auth" "$api/releases/$release_id/assets" | python3 -c 'import json,sys; print("\n".join(a["name"] for a in json.load(sys.stdin)))')
+# upload_asset <path> <name> [max_seconds]
+# The 900s default is ample for the ~98MB frontend tarball but nowhere near
+# enough for a multi-GB ISO, which also deserves a visible progress bar
+# rather than sitting mute for the better part of an hour.
 upload_asset() {
     local path="$1"
     local name="$2"
+    local max_time="${3:-900}"
     if printf '%s\n' "$asset_names" | grep -Fxq "$name"; then
         echo "Asset $name already exists; leaving it in place."
         return
     fi
-    echo "Uploading $name..."
-    curl --fail --show-error --silent --http1.1 --connect-timeout 20 --max-time 900 \
+    local noise=(--silent)
+    if [ "$max_time" -gt 900 ]; then noise=(--progress-bar); fi
+    echo "Uploading $name ($(du -h "$path" | cut -f1))..."
+    curl --fail --show-error "${noise[@]}" --http1.1 --connect-timeout 20 --max-time "$max_time" \
         -u "$auth" \
         -F "attachment=@$path" \
         "$api/releases/$release_id/assets?name=$name" >/dev/null
@@ -131,3 +138,91 @@ echo "Assets verified. Pushing main to $REMOTE (this makes v${VERSION} live)..."
 git -C "$PROJECT_ROOT" push "$REMOTE" main
 
 echo "Release v${VERSION} published and verified on $REMOTE."
+
+# ── ISO publication (optional) ───────────────────────────────────────
+# Deliberately AFTER main is pushed. The ISO is not referenced by
+# releases/manifest.json, so no node's OTA path depends on it — running it
+# last means a slow or failed multi-GB upload can never delay, or strand,
+# an OTA release that has already been verified.
+#
+# Skipped cleanly when this version has no ISO yet: create-release.sh runs
+# long before scripts/build-iso-release.sh, which needs the very tag this
+# script pushes. Re-run this script after building the ISO to attach it.
+# SKIP_ISO=1 bypasses the stage entirely.
+if [ "${SKIP_ISO:-0}" = "1" ]; then
+    echo "SKIP_ISO=1 — not publishing an ISO."
+    exit 0
+fi
+
+ISO=$(ls -t "$PROJECT_ROOT"/image-recipe/results/archipelago-installer-"$VERSION"*-x86_64_RC*.iso 2>/dev/null | head -1 || true)
+if [ -z "$ISO" ]; then
+    echo
+    echo "No ISO built for v${VERSION} — OTA published without one."
+    echo "  Build it:   bash scripts/build-iso-release.sh"
+    echo "  Sign it:    bash scripts/sign-iso-checksums.sh <iso>"
+    echo "  Attach it:  bash scripts/publish-release-assets.sh $VERSION $REMOTE"
+    exit 0
+fi
+
+echo
+echo "Publishing ISO: $(basename "$ISO")"
+ISO_SHA_FILE="$ISO.sha256"
+ISO_SIG_FILE="$ISO.sha256.json"
+[ -f "$ISO_SHA_FILE" ] || fail "missing $(basename "$ISO_SHA_FILE") — re-run scripts/build-iso-release.sh"
+[ -f "$ISO_SIG_FILE" ] || fail "the ISO checksum is unsigned. Run: bash scripts/sign-iso-checksums.sh $ISO"
+
+# Same supply-chain rule as the OTA manifest: anything published must be
+# signed by the pinned release root, and the crypto must actually verify —
+# a present-but-bogus signature is the failure mode worth catching.
+grep -q '"signature":' "$ISO_SIG_FILE" \
+    && grep -q "\"signed_by\": \"$EXPECTED_DID\"" "$ISO_SIG_FILE" \
+    || fail "$(basename "$ISO_SIG_FILE") is not signed by the release root — run: bash scripts/sign-iso-checksums.sh $ISO"
+if [ -x "$PROJECT_ROOT/core/target/release/archipelago" ]; then
+    "$PROJECT_ROOT/core/target/release/archipelago" ceremony verify "$ISO_SIG_FILE" \
+        || fail "the ISO checksum signature failed cryptographic verification"
+fi
+
+# Never upload an image that no longer matches its own checksum. A truncated
+# or half-copied ISO is exactly what a signed checksum exists to expose, and
+# catching it here is far cheaper than on someone's flashed USB stick.
+echo "Checking the ISO against its recorded sha256 (reads the whole image)..."
+(cd "$(dirname "$ISO")" && sha256sum --check --status "$(basename "$ISO_SHA_FILE")") \
+    || fail "$(basename "$ISO") does not match its .sha256 — rebuild it; do not publish this image"
+
+ISO_NAME=$(basename "$ISO")
+# 4h ceiling: a multi-GB image over a domestic uplink is not a 15-minute job.
+upload_asset "$ISO"          "$ISO_NAME"             14400
+upload_asset "$ISO_SHA_FILE" "$ISO_NAME.sha256"
+upload_asset "$ISO_SIG_FILE" "$ISO_NAME.sha256.json"
+
+# Verify what actually landed. Re-downloading a multi-GB ISO would cost far
+# more than it proves — the signed .sha256.json already lets anyone verify
+# the bytes independently — so confirm each asset exists and that Gitea's
+# stored size matches the local file exactly.
+echo "Verifying uploaded ISO assets..."
+assets_json=$(curl -fsS -u "$auth" "$api/releases/$release_id/assets")
+python3 - "$assets_json" \
+    "$ISO_NAME" "$(stat -c%s "$ISO")" \
+    "$ISO_NAME.sha256" "$(stat -c%s "$ISO_SHA_FILE")" \
+    "$ISO_NAME.sha256.json" "$(stat -c%s "$ISO_SIG_FILE")" <<'PY' \
+    || fail "ISO asset verification failed — the release is missing or has a truncated ISO"
+import json
+import sys
+
+assets = {a["name"]: a for a in json.loads(sys.argv[1])}
+args = sys.argv[2:]
+bad = []
+for name, size in zip(args[0::2], args[1::2]):
+    asset = assets.get(name)
+    if asset is None:
+        bad.append(f"{name}: missing from the release")
+    elif int(asset["size"]) != int(size):
+        bad.append(f"{name}: uploaded {asset['size']} bytes, local file is {size}")
+    else:
+        print(f"  OK {name} ({asset['size']} bytes)")
+for b in bad:
+    print("  FAIL " + b, file=sys.stderr)
+sys.exit(1 if bad else 0)
+PY
+
+echo "ISO for v${VERSION} published and verified on $REMOTE."
