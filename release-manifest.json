@@ -1,29 +1,33 @@
 {
   "changelog": [
-    "**The network map on TVs: no more blank page, no more frozen page — and it moves again.** The map's entrance animation needed a smoothness that TV kiosk hardware can't always deliver, so the page could sit blank until a refresh; the previous fix cured the freeze by stopping the animation entirely, which went too far. Now the map appears instantly with everything already in place, then resumes its calm orbital motion at a gentler pace suited to TVs. Resizing or rotating any screen also redraws the map properly instead of leaving it tiny, stretched, or empty.",
-    "**The dashboard's corner logo is back to normal.** The new glossy paint finish was meant for the big emblem on the screensaver, intro, and login screens — it had quietly spread to the small logo in the dashboard header, where it looked wrong. Each screen now gets exactly the treatment intended for it.",
-    "**App icons no longer vanish in My Apps.** The freshly restyled Alby Hub and phoenixd icons could render as blank squares in some views — a subtlety in how the icon files declared their size. Fixed at the source, and the icon tool app developers use now produces immune files."
+    "**Apps with their own login can now skip the node's login screen — Gitea and BTCPay Server do so out of the box.** Some apps bring a complete account system of their own, and putting the node's password page in front of them broke real workflows: git clients can't answer a browser login, and a BTCPay checkout link handed to a customer must open for that customer. These apps are now served directly on their own login, while the node still fronts the connection for everything else it does (embedding fixes, the \"app is restarting\" page, Tor). Every app gets a new **Settings → app → Access control** switch, so you can put the node login back in front of any app — or take it away from one — with one click, effective immediately. App developers declare the default in their manifest (`auth: open`), documented in the developer guide.",
+    "**The phone remote now works inside apps on the TV — tap, scroll, and type everywhere.** The companion remote and keyboard drove the dashboard beautifully but died at the edge of any app screen (Gitea, BTCPay, and friends): for the browser, each app is a separate website embedded in the page, and simulated input is forbidden from crossing that wall. The on-screen display now accepts the remote's input the way a real mouse and keyboard arrive — below the page, through the browser itself — so it lands anywhere on screen, app screens and tabs included. Taps click, two-finger scrolling scrolls the app, and typing goes into whichever field you tapped. Existing kiosks pick this up with the update, no reinstall needed.",
+    "**While you're driving with the phone remote, the old mouse pointer gets out of the way.** The computer's own pointer used to sit frozen wherever the physical mouse last left it — a second, dead cursor next to the live orange one. It now hides while the remote is in use and returns half a minute after the last remote input.",
+    "**\"Are you sure?\" questions no longer freeze the remote.** A handful of confirmations (clearing mesh history, rebooting, deleting a backup, uninstalling an app) used the browser's built-in popup, which stops the whole page — including remote input — until someone clicks it with a real mouse. From the couch, that meant asking a question you couldn't answer. All of them are now proper in-app windows in the house style, fully driveable by remote.",
+    "**A mesh radio now connects no matter which port it's plugged into — or replugged into.** Moving a radio to a different USB port could leave the mesh silently down: the node only checked a short fixed list of port names (a radio landing outside it was invisible), a hand-set serial-port override quietly outranked the device you'd just approved in the \"Radio detected\" window, and one whole family of boards (Espressif-based radios like recent Heltec/T-Deck models) never received a stable device name at all — the exact combination found live on a fleet machine this week. All three are fixed: every serial port is scanned, choosing a radio in the detection window clears any stale override, and Espressif boards get the same stable name as everyone else.",
+    "**Mesh signal strength is honest now.** Every peer heard over Reticulum radio reported a signal strength of exactly 0 — which is also what you'd see with no radio at all, and what peers reached over the internet showed. Real receptions now show their true signal reading, and anything that arrived over a relay or the internet says so by showing none — so \"the radio is working\" and \"the internet is doing the radio's job\" no longer look identical. (The reading depends on the radio's firmware reporting it; boards that don't report per-packet signal stats show \"unknown\" rather than a made-up number, and the new radio diagnostics show at a glance whether yours reports them.)",
+    "**A background error that repeated every 90 seconds, forever, is gone.** After setting up a node from its recovery phrase, the node kept introducing itself to its federation partners with its old temporary identity papers while signing with its new ones — every partner rejected the introduction, and both sides logged an error about it every minute and a half until the next restart. The identity switch now updates everything at once, a rejected introduction is no longer misreported as delivered, and a partner who has already answered is no longer re-asked on every cycle."
   ],
   "components": [
     {
-      "current_version": "1.8.3-alpha",
-      "download_url": "https://source.archipelago-foundation.org/lfg2025/archy/releases/download/v1.8.3-alpha/archipelago",
+      "current_version": "1.8.4-alpha",
+      "download_url": "https://source.archipelago-foundation.org/lfg2025/archy/releases/download/v1.8.4-alpha/archipelago",
       "name": "archipelago",
-      "new_version": "1.8.3-alpha",
-      "sha256": "23b608bfce575212edb873ded3e125505f42be0db6dc06ce5f9c1e51c232c22d",
-      "size_bytes": 59900696
+      "new_version": "1.8.4-alpha",
+      "sha256": "c4d3a4fdecfdc2a972f808c7f98225b29dc65333418038bb016a5f0bd79d3551",
+      "size_bytes": 63850680
     },
     {
-      "current_version": "1.8.3-alpha",
-      "download_url": "https://source.archipelago-foundation.org/lfg2025/archy/releases/download/v1.8.3-alpha/archipelago-frontend-1.8.3-alpha.tar.gz",
-      "name": "archipelago-frontend-1.8.3-alpha.tar.gz",
-      "new_version": "1.8.3-alpha",
-      "sha256": "13ca772e9a36c266b67e6eff2d51366616cdbedeab3a05ba5eba340332d3d6d4",
-      "size_bytes": 97615528
+      "current_version": "1.8.4-alpha",
+      "download_url": "https://source.archipelago-foundation.org/lfg2025/archy/releases/download/v1.8.4-alpha/archipelago-frontend-1.8.4-alpha.tar.gz",
+      "name": "archipelago-frontend-1.8.4-alpha.tar.gz",
+      "new_version": "1.8.4-alpha",
+      "sha256": "790de85816a7ad49480dc99134022279e4f40b69bd9b0983a6393373a3bdd7cc",
+      "size_bytes": 97641658
     }
   ],
-  "release_date": "2026-08-14",
-  "signature": "35d5f56ef77cda1866051a3ff06f6e09ff0a23ac7b000a1ac4cf24e04cecabff00be7f3e240fc82ec605bff80c5690c55c296a300018562940d71ffc5df26c00",
+  "release_date": "2026-08-20",
+  "signature": "94ffb717166c6062ddbea97476942285903d629543bf3b9ec435697a1b8c31243dedb0f3c8f874daf3d9c0974a6342bf42b7e9d34b00680aa63a1d441dbc4805",
   "signed_by": "did:key:z6Mkfu5LT8d4DjETtrkATvHh9Dvcbnr7zBCUwfau8Sw7DLWT",
-  "version": "1.8.3-alpha"
+  "version": "1.8.4-alpha"
 }
