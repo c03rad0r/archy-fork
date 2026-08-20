@@ -228,7 +228,17 @@ if [ ! -x "$SIGNER" ]; then
     exit 1
 fi
 if [ -n "${RELEASE_MASTER_MNEMONIC:-}" ] || [ -t 0 ]; then
-    echo "[6b/8] Signing release manifest (paste the release master mnemonic when prompted)..."
+    echo "[6b/8] Signing release manifest..."
+    # The signer reads stdin to EOF, so Enter alone submits NOTHING and a
+    # second paste just appends to the first. That is how a 24-word phrase
+    # arrived as "invalid word count: 89" on 2026-08-20 — roughly four
+    # pastes concatenated, because nothing appeared to happen after Enter.
+    echo "════════════════════════════════════════════════════════════════"
+    echo "  Paste the release master mnemonic ONCE, press Enter, then"
+    echo "  press Ctrl-D on the new line to submit."
+    echo "  Enter by itself will NOT submit; pasting twice concatenates"
+    echo "  the phrases and fails on word count."
+    echo "════════════════════════════════════════════════════════════════"
     "$SIGNER" ceremony sign "$PROJECT_ROOT/releases/manifest.json"
     "$SIGNER" ceremony verify "$PROJECT_ROOT/releases/manifest.json"
 else
