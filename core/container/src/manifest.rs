@@ -1746,6 +1746,14 @@ app:
             }
         }
         exempt.sort();
+        // 28 as of 2026-08-21: the 26 below plus cuprate's two exemptions —
+        // 18183 (Monero p2p gossip, same reasoning as bitcoin's 8333) and
+        // 18089 (Monero restricted RPC, upstream's own safe-for-public
+        // subset that wallets connect to directly as a "remote node" over
+        // plain HTTP JSON-RPC — same reasoning as electrumx's 50001).
+        // cuprate's unrestricted RPC (full node control) stays loopback-only
+        // (auth: local), not in this set.
+        //
         // 26 as of 2026-08-16: the 25 below plus phoenixd 9740, a
         // loopback-only JSON API whose own generated http password
         // authenticates every request (added with the phoenixd onboarding,
@@ -1762,7 +1770,7 @@ app:
         // stage timed out that cycle, so the count here lagged at 17.
         assert_eq!(
             exempt.len(),
-            26,
+            28,
             "unauthenticated port set changed — review before updating this count: {exempt:?}"
         );
     }

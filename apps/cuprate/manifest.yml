@@ -1,0 +1,152 @@
+app:
+  id: cuprate
+  name: Cuprate
+  # Matches the crate's own Cargo.toml version (binaries/cuprated/Cargo.toml).
+  # Cuprate has no stable release yet — this is explicitly work-in-progress
+  # software (see upstream README). The image tag below pins the exact
+  # commit built, since "0.1.0-preview" alone is not reproducible.
+  version: 0.1.0-preview
+  # Where this app comes from, so scripts/check-upstream-releases.py can
+  # tell us when the pin below has fallen behind. Without it nothing can:
+  # container.image names our mirror, not the project it was mirrored from.
+  upstream:
+    kind: github
+    repo: Cuprate/cuprate
+  description: Alternative Monero node implementation in Rust. Independently validates Monero consensus rules, providing a layer of security and redundancy for the network.
+
+  container:
+    # Built from the upstream Dockerfile at the tip of main, 18 commits past
+    # the cuprated-0.1.0-preview tag (commit 618ff14, 2026-08-19) — there is
+    # no newer tagged release as of this writing. Re-pin to a tagged release
+    # once upstream cuts one.
+    image: source.archipelago-foundation.org/lfg2025/cuprate:0.1.0-preview-18-g618ff14
+    pull_policy: if-not-present
+    network: archy-net
+    # The image's own ENTRYPOINT is ["/usr/local/bin/cuprated"]; these are
+    # appended as its argv, matching the project's own systemd unit
+    # (cuprated.service) invocation exactly.
+    custom_args: ["--config-file", "/home/cuprate/Cuprated.toml"]
+    # The image (FROM scratch) creates uid:gid 1000:1000 for the `cuprate`
+    # user at build time and runs as it unconditionally (USER 1000:1000,
+    # no shell to switch users at runtime) — same pattern as
+    # apps/phoenixd, apps/electrumx, apps/nostr-rs-relay, apps/portainer,
+    # apps/barkd. The bind-mounted data dir must be owned by that literal
+    # uid or cuprated dies on a permission error the first time it writes.
+    data_uid: "1000:1000"
+
+  dependencies:
+    # Monero mainnet is ~250GiB unpruned as of 2026 and growing a few GB a
+    # month; cuprated's pruning support is not confirmed stable yet (the
+    # `pruning` crate exists in the workspace but nothing in this config
+    # surface toggles it), so this sizes for a full unpruned chain plus
+    # headroom rather than assuming pruning is available.
+    - storage: 300Gi
+
+  resources:
+    cpu_limit: 0
+    memory_limit: 4Gi
+    disk_limit: 300Gi
+
+  security:
+    # FROM scratch, no package manager/shell, ownership fixed at build time
+    # — unlike bitcoin-knots this needs no runtime chown/setuid dance, so it
+    # can run fully read-only with an empty capability set.
+    capabilities: []
+    readonly_root: true
+    no_new_privileges: true
+    network_policy: isolated
+
+  ports:
+    # P2P. Cuprate's own default listen address is already 0.0.0.0
+    # (p2p.clear_net.listen_on), so no config override is needed — only the
+    # host-side port differs from Monero's canonical 18080 because that
+    # number is already taken on this fleet by lnd's REST port.
+    - host: 18183
+      container: 18080
+      protocol: tcp
+      auth: none
+      auth_rationale: >-
+        Monero p2p gossip. Peers are anonymous by design and speak the Monero wire protocol, not HTTP.
+    # Unrestricted RPC: full node control (mining, wallet-adjacent calls).
+    # cuprated enables this by default bound to 127.0.0.1 and refuses to
+    # start if pointed at a non-local address without an explicit opt-in
+    # flag — this mirrors that intent at the gate too. Host port differs
+    # from Monero's canonical 18081 for the same reason as P2P above
+    # (nostr-rs-relay already holds 18081 on this fleet).
+    - host: 18184
+      container: 18081
+      protocol: tcp
+      bind: 127.0.0.1
+      auth: local
+    # Restricted RPC: Monero's own purpose-built safe-for-public subset —
+    # what wallets use when connecting to a "remote node". Disabled by
+    # cuprated's own default; enabled via files[] below. A dashboard login
+    # would break wallet clients connecting programmatically, same
+    # reasoning as electrumx's port — canonical port 18089 is free on this
+    # fleet, so no remap needed here.
+    - host: 18089
+      container: 18089
+      protocol: tcp
+      auth: none
+      auth_rationale: >-
+        Monero restricted RPC — the subset upstream considers safe for public/remote-node use. Wallets (Feather, monero-wallet-rpc, GUI) connect directly over plain HTTP JSON-RPC and cannot hold a dashboard session cookie.
+
+  volumes:
+    - type: bind
+      source: /var/lib/archipelago/cuprate
+      target: /home/cuprate
+      options: [rw]
+
+  # Settings that need to differ from cuprated's own documented defaults
+  # (verified against `cuprated --generate-config` and `--dry-run` locally,
+  # 2026-08-21):
+  #   - target_max_memory: cuprated's own default auto-detects total *host*
+  #     RAM via sysinfo, which inside a memory-limited container would let
+  #     it size caches far past what resources.memory_limit above actually
+  #     grants — same class of problem bitcoin-knots' -dbcache sizing
+  #     comment addresses. Set explicitly, comfortably under the 4Gi limit.
+  #   - rpc.restricted.enable: cuprated ships this off by default; flip on
+  #     so the auth:none host port above actually serves something instead
+  #     of refusing every connection. port stays at its documented default
+  #     (canonical 18089), and advertise stays false — this node is not
+  #     opting in to being listed as a public remote node over the p2p
+  #     network, just reachable if someone points a wallet at it directly.
+  #   - rpc.unrestricted.address + the allow-public flag: cuprated's own
+  #     default (127.0.0.1) looks like the obviously-correct choice for a
+  #     port meant to stay loopback-only, but verified live (2026-08-21)
+  #     that a service bound literally to 127.0.0.1 *inside* the container
+  #     is unreachable through the host's published port — connections
+  #     reset regardless of how long the daemon has been up. Binding
+  #     0.0.0.0 inside and letting ports[].bind: 127.0.0.1 below be the
+  #     actual restriction is the same pattern apps/bitcoin-knots already
+  #     uses for its own RPC port (-rpcbind=0.0.0.0:8332 internally, gate
+  #     restricts it externally) — not a new risk, the same one already
+  #     reviewed and accepted for Bitcoin's RPC.
+  files:
+    - path: /var/lib/archipelago/cuprate/Cuprated.toml
+      content: |
+        network = "Mainnet"
+        target_max_memory = 3000000000
+
+        [rpc.unrestricted]
+        address = "0.0.0.0"
+        i_know_what_im_doing_allow_public_unrestricted_rpc = true
+
+        [rpc.restricted]
+        enable = true
+      overwrite: false
+
+  health_check:
+    type: tcp
+    endpoint: localhost:18184
+    interval: 30s
+    timeout: 5s
+    retries: 3
+    start_period: 5m
+
+  metadata:
+    icon: /assets/img/app-icons/cuprate.svg
+    category: money
+    tier: optional
+    author: Cuprate
+    repo: https://github.com/Cuprate/cuprate
