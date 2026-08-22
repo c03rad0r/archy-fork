@@ -67,17 +67,18 @@ app:
       auth: none
       auth_rationale: >-
         Monero p2p gossip. Peers are anonymous by design and speak the Monero wire protocol, not HTTP.
-    # Unrestricted RPC: full node control (mining, wallet-adjacent calls).
-    # cuprated enables this by default bound to 127.0.0.1 and refuses to
-    # start if pointed at a non-local address without an explicit opt-in
-    # flag — this mirrors that intent at the gate too. Host port differs
-    # from Monero's canonical 18081 for the same reason as P2P above
-    # (nostr-rs-relay already holds 18081 on this fleet).
-    - host: 18184
-      container: 18081
-      protocol: tcp
-      bind: 127.0.0.1
-      auth: local
+    # Unrestricted RPC (full node control) is deliberately NOT published.
+    # cuprated has no RPC authentication, and for a published port to reach
+    # it the service would have to bind 0.0.0.0 inside the container — at
+    # which point every other app can reach it directly on 18081, since
+    # ports[].bind only restricts the HOST side and podman bridges route to
+    # each other (verified live 2026-08-22: a peer container on archy-net
+    # got an unauthenticated get_info, from a *different* network). That is
+    # unlike bitcoin-knots, whose 0.0.0.0 RPC still demands the rpcuser /
+    # rpcpassword it writes from generated secrets. So unrestricted RPC is
+    # left at cuprated's own default — container loopback only, reachable by
+    # nothing — which is also what upstream intends by refusing a non-local
+    # bind without an explicit i_know_what_im_doing override.
     # Restricted RPC: Monero's own purpose-built safe-for-public subset —
     # what wallets use when connecting to a "remote node". Disabled by
     # cuprated's own default; enabled via files[] below. A dashboard login
@@ -128,17 +129,14 @@ app:
         network = "Mainnet"
         target_max_memory = 3000000000
 
-        [rpc.unrestricted]
-        address = "0.0.0.0"
-        i_know_what_im_doing_allow_public_unrestricted_rpc = true
-
         [rpc.restricted]
         enable = true
       overwrite: false
 
   health_check:
     type: tcp
-    endpoint: localhost:18184
+    # Restricted RPC — the only RPC surface published now.
+    endpoint: localhost:18089
     interval: 30s
     timeout: 5s
     retries: 3
