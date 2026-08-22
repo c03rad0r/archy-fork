@@ -168,7 +168,7 @@ pub(super) async fn read_disk_usage() -> Result<(u64, u64)> {
 /// Read disk usage via `df` for a given path.
 pub(super) async fn read_disk_usage_path(path: &str) -> Result<(u64, u64)> {
     let output = tokio::process::Command::new("df")
-        .args(["--block-size=1", "--output=used,size", path])
+        .args(["--block-size=1", "--output=used,size,avail", path])
         .output()
         .await
         .context("Failed to run df")?;
@@ -189,11 +189,22 @@ pub(super) async fn read_disk_usage_path(path: &str) -> Result<(u64, u64)> {
         .ok_or_else(|| anyhow::anyhow!("Missing used"))?
         .parse()
         .context("parse df used")?;
-    let total: u64 = parts
+    // Raw `size` includes the filesystem's root-reserved blocks (5% by default
+    // on ext4 — 92 GiB of this node's 1.8 TiB), which nothing can allocate.
+    // Reporting it as capacity told the dashboard there were 251 GiB free when
+    // only 159 GiB were writable. Callers derive free as total - used, so total
+    // must mean "what can actually be used".
+    let _size: u64 = parts
         .next()
-        .ok_or_else(|| anyhow::anyhow!("Missing total"))?
+        .ok_or_else(|| anyhow::anyhow!("Missing size"))?
         .parse()
-        .context("parse df total")?;
+        .context("parse df size")?;
+    let avail: u64 = parts
+        .next()
+        .ok_or_else(|| anyhow::anyhow!("Missing avail"))?
+        .parse()
+        .context("parse df avail")?;
+    let total = used.saturating_add(avail);
 
     Ok((used, total))
 }

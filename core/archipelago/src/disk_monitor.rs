@@ -4,9 +4,19 @@
 use anyhow::{Context, Result};
 use tracing::{info, warn};
 
-/// Parse df output into (used_bytes, total_bytes, used_percent).
-/// Expects output from `df --block-size=1 --output=used,size /` which has a header line
-/// followed by a data line with two whitespace-separated numbers.
+/// Parse df output into (used_bytes, usable_total_bytes, used_percent).
+/// Expects `df --block-size=1 --output=used,size,avail <path>`: a header line
+/// followed by used, size and avail.
+///
+/// `size` is deliberately NOT the denominator. ext4 reserves 5% of the
+/// filesystem for root — 92 GiB on archi-dev-box's 1.8 TiB disk — which `size`
+/// counts but no ordinary process can ever allocate. Dividing by `size`
+/// under-reports usage by about five points: on 2026-08-22 that disk was
+/// genuinely 90.8% full (159 GiB usable left) while this returned 86.2%, so the
+/// 90% auto-cleanup below had never once fired and ~72 GB of dangling images
+/// had accumulated. It also meant the dashboard advertised 251 GiB free when
+/// only 159 GiB could actually be written. used/(used+avail) is what `df`
+/// itself prints and what the operator can actually spend.
 fn parse_df_output(stdout: &str) -> Result<(u64, u64, f64)> {
     let data_line = stdout
         .lines()
@@ -18,11 +28,19 @@ fn parse_df_output(stdout: &str) -> Result<(u64, u64, f64)> {
         .ok_or_else(|| anyhow::anyhow!("Missing used"))?
         .parse()
         .context("parse df used")?;
-    let total: u64 = parts
+    // Parsed to keep the column contract explicit, then intentionally unused —
+    // see the note above on why raw size is the wrong denominator.
+    let _size: u64 = parts
         .next()
-        .ok_or_else(|| anyhow::anyhow!("Missing total"))?
+        .ok_or_else(|| anyhow::anyhow!("Missing size"))?
         .parse()
-        .context("parse df total")?;
+        .context("parse df size")?;
+    let avail: u64 = parts
+        .next()
+        .ok_or_else(|| anyhow::anyhow!("Missing avail"))?
+        .parse()
+        .context("parse df avail")?;
+    let total = used.saturating_add(avail);
 
     let percent = if total > 0 {
         (used as f64 / total as f64) * 100.0
@@ -44,7 +62,7 @@ pub async fn check_disk_usage() -> Result<(u64, u64, f64)> {
         "/"
     };
     let output = tokio::process::Command::new("df")
-        .args(["--block-size=1", "--output=used,size", data_path])
+        .args(["--block-size=1", "--output=used,size,avail", data_path])
         .output()
         .await
         .context("Failed to run df")?;
@@ -257,8 +275,8 @@ mod tests {
 
     #[test]
     fn test_parse_df_output_normal() {
-        // Simulates typical df --block-size=1 --output=used,size / output
-        let output = "      Used       Size\n 500000000000 1000000000000\n";
+        // df --block-size=1 --output=used,size,avail : used, size, avail
+        let output = "      Used       Size      Avail\n 500000000000 1000000000000 500000000000\n";
         let (used, total, percent) = parse_df_output(output).unwrap();
         assert_eq!(used, 500_000_000_000);
         assert_eq!(total, 1_000_000_000_000);
@@ -267,16 +285,35 @@ mod tests {
 
     #[test]
     fn test_parse_df_output_high_usage() {
-        let output = "      Used       Size\n 900000000000 1000000000000\n";
+        let output = "      Used       Size      Avail\n 900000000000 1000000000000 100000000000\n";
         let (used, total, percent) = parse_df_output(output).unwrap();
         assert_eq!(used, 900_000_000_000);
         assert_eq!(total, 1_000_000_000_000);
         assert!((percent - 90.0).abs() < 0.01);
     }
 
+    /// The bug this function existed to hide: reserved blocks are counted by
+    /// `size` but are not available to anyone. Real numbers from archi-dev-box,
+    /// 2026-08-22 — 1.8 TiB disk, ext4 5% reserve, genuinely 90.8% full. The old
+    /// used/size math returned 86.2%, so the 90% auto-cleanup never triggered.
+    #[test]
+    fn reserved_blocks_are_not_counted_as_free() {
+        let output = "Used Size Avail\n1681459122176 1951249276928 170581372928\n";
+        let (used, total, percent) = parse_df_output(output).unwrap();
+        assert_eq!(used, 1_681_459_122_176);
+        // Total is what can actually be written, not the raw device size.
+        assert_eq!(total, 1_852_040_495_104);
+        assert!(
+            total < 1_951_249_276_928,
+            "raw size must not be the denominator"
+        );
+        assert!((percent - 90.8).abs() < 0.1, "got {percent}");
+        assert!(percent >= 90.0, "must cross the auto-cleanup threshold");
+    }
+
     #[test]
     fn test_parse_df_output_almost_full() {
-        let output = "Used Size\n999 1000\n";
+        let output = "Used Size Avail\n999 1000 1\n";
         let (used, total, percent) = parse_df_output(output).unwrap();
         assert_eq!(used, 999);
         assert_eq!(total, 1000);
@@ -285,7 +322,7 @@ mod tests {
 
     #[test]
     fn test_parse_df_output_empty_disk() {
-        let output = "Used Size\n0 1000000000000\n";
+        let output = "Used Size Avail\n0 1000000000000 1000000000000\n";
         let (used, total, percent) = parse_df_output(output).unwrap();
         assert_eq!(used, 0);
         assert_eq!(total, 1_000_000_000_000);
@@ -295,7 +332,7 @@ mod tests {
     #[test]
     fn test_parse_df_output_zero_total() {
         // Edge case: total is 0 (should not happen but should not panic/divide-by-zero)
-        let output = "Used Size\n0 0\n";
+        let output = "Used Size Avail\n0 0 0\n";
         let (used, total, percent) = parse_df_output(output).unwrap();
         assert_eq!(used, 0);
         assert_eq!(total, 0);
@@ -338,21 +375,23 @@ mod tests {
 
     #[test]
     fn test_parse_df_output_extra_whitespace() {
-        let output = "  Used    Size  \n    123456    7890000   \n";
+        let output = "  Used    Size   Avail \n    123456    7890000   7766544  \n";
         let (used, total, _) = parse_df_output(output).unwrap();
         assert_eq!(used, 123456);
-        assert_eq!(total, 7890000);
+        assert_eq!(total, 7_890_000);
     }
 
     #[test]
     fn test_parse_df_output_real_world_format() {
         // Closer to real df output with header padding
-        let output = "          Used         Size\n  328000000000  1800000000000\n";
+        // Real df output carries a reserved-block gap: size here is 1.8 TB but
+        // only 1.382 TB is available, so usable total is used + avail.
+        let output = "          Used         Size        Avail\n  328000000000  1800000000000  1382000000000\n";
         let (used, total, percent) = parse_df_output(output).unwrap();
         assert_eq!(used, 328_000_000_000);
-        assert_eq!(total, 1_800_000_000_000);
-        // ~18.2%
-        assert!(percent > 18.0 && percent < 19.0);
+        assert_eq!(total, 1_710_000_000_000);
+        // ~19.2% against usable space, not 18.2% against the raw device.
+        assert!(percent > 19.0 && percent < 20.0, "got {percent}");
     }
 
     #[tokio::test]
