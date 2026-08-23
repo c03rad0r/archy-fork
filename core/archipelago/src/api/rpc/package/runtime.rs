@@ -365,8 +365,18 @@ impl RpcHandler {
         // after uninstall. The reconciler owns a manifest map independent of
         // podman state, so a raw `podman rm` alone is not enough.
         if let Some(orchestrator) = &self.orchestrator {
+            let mut teardown_errors = Vec::new();
             for app_id in orchestrator_uninstall_app_ids(package_id) {
-                let _ = orchestrator.remove(&app_id, preserve_data).await;
+                if let Err(err) = orchestrator.remove(&app_id, preserve_data).await {
+                    teardown_errors.push(format!("{app_id}: {err:#}"));
+                }
+            }
+            if !teardown_errors.is_empty() {
+                return Err(anyhow::anyhow!(
+                    "Uninstall {} aborted: failed to remove declarative app unit(s): {}",
+                    package_id,
+                    teardown_errors.join("; ")
+                ));
             }
         }
 
@@ -2180,6 +2190,11 @@ mod tests {
             "Error: no container with name or id \"x\" found"
         ));
         assert!(!is_missing_container_error("Error: OCI runtime error"));
+    }
+
+    #[test]
+    fn single_app_uninstall_targets_its_declarative_unit() {
+        assert_eq!(orchestrator_uninstall_app_ids("cuprate"), vec!["cuprate"]);
     }
 
     #[test]
