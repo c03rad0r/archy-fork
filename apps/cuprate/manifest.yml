@@ -83,9 +83,10 @@ app:
     # what wallets use when connecting to a "remote node". Disabled by
     # cuprated's own default; enabled via files[] below. A dashboard login
     # would break wallet clients connecting programmatically, same
-    # reasoning as electrumx's port — canonical port 18089 is free on this
-    # fleet, so no remap needed here.
-    - host: 18089
+    # reasoning as electrumx's port. The daemon still uses its canonical
+    # container port 18089, but Penpot already owns host port 18089, so this
+    # maps the public host port to the free 18090 instead.
+    - host: 18090
       container: 18089
       protocol: tcp
       auth: none
@@ -136,7 +137,7 @@ app:
   health_check:
     type: tcp
     # Restricted RPC — the only RPC surface published now.
-    endpoint: localhost:18089
+    endpoint: localhost:18090
     interval: 30s
     timeout: 5s
     retries: 3

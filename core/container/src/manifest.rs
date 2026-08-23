@@ -1746,9 +1746,10 @@ app:
             }
         }
         exempt.sort();
-        // 28 as of 2026-08-21: the 26 below plus cuprate's two exemptions —
+        // 28 as of 2026-08-23: the 26 below plus cuprate's two exemptions —
         // 18183 (Monero p2p gossip, same reasoning as bitcoin's 8333) and
-        // 18089 (Monero restricted RPC, upstream's own safe-for-public
+        // 18090 (host mapping for Monero's canonical 18089 restricted RPC,
+        // upstream's own safe-for-public
         // subset that wallets connect to directly as a "remote node" over
         // plain HTTP JSON-RPC — same reasoning as electrumx's 50001).
         // cuprate's unrestricted RPC (full node control) stays loopback-only
