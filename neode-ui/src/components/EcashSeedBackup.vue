@@ -50,6 +50,7 @@ const showRevealModal = ref(false)
 const revealPassword = ref('')
 const revealCode = ref('')
 const revealPassphrase = ref('')
+const showRevealPassphrase = ref(false)
 const revealing = ref(false)
 const revealError = ref('')
 const revealedWords = ref<string[]>([])
@@ -60,6 +61,7 @@ function openReveal() {
   revealPassword.value = ''
   revealCode.value = ''
   revealPassphrase.value = ''
+  showRevealPassphrase.value = false
   revealError.value = ''
   revealedWords.value = []
   showRevealModal.value = true
@@ -83,7 +85,17 @@ async function submitReveal() {
     // to set up a backup that now exists.
     void loadStatus()
   } catch (e: unknown) {
-    revealError.value = e instanceof Error ? e.message : 'Failed to reveal the ecash phrase'
+    const message = e instanceof Error ? e.message : 'Failed to reveal the ecash phrase'
+    // Most operators used their login password as the backup passphrase. Do
+    // not confront everyone with an unexplained third credential up front;
+    // disclose it only when the authenticated password could not decrypt the
+    // node seed and a distinct setup-time passphrase may actually exist.
+    if (!status.value?.active && /could not decrypt the saved seed/i.test(message)) {
+      showRevealPassphrase.value = true
+      revealError.value = 'Your login password did not unlock the saved seed. Enter the separate backup passphrase you chose during setup.'
+    } else {
+      revealError.value = message
+    }
   } finally {
     revealing.value = false
   }
@@ -95,6 +107,7 @@ function closeReveal() {
   revealPassword.value = ''
   revealCode.value = ''
   revealPassphrase.value = ''
+  showRevealPassphrase.value = false
 }
 
 async function copyRevealedWords() {
@@ -376,9 +389,9 @@ async function restoreFromPhrase() {
               <label class="block text-xs text-white/60 mb-1">2FA code <span class="text-white/30">(if enabled)</span></label>
               <input v-model="revealCode" inputmode="numeric" autocomplete="one-time-code" class="w-full px-3 py-2 rounded-lg bg-white/5 border border-white/10 text-white text-sm font-mono tracking-widest focus:outline-none focus:border-white/30" placeholder="123456" />
             </div>
-            <div v-if="!status?.active">
-              <label class="block text-xs text-white/60 mb-1">Backup passphrase <span class="text-white/30">(only if different from password)</span></label>
-              <input v-model="revealPassphrase" type="password" class="w-full px-3 py-2 rounded-lg bg-white/5 border border-white/10 text-white text-sm focus:outline-none focus:border-white/30" placeholder="Leave blank to use password" />
+            <div v-if="showRevealPassphrase">
+              <label class="block text-xs text-white/60 mb-1">Separate backup passphrase</label>
+              <input v-model="revealPassphrase" type="password" autocomplete="off" autofocus class="w-full px-3 py-2 rounded-lg bg-white/5 border border-white/10 text-white text-sm focus:outline-none focus:border-white/30" placeholder="Passphrase chosen during setup" />
             </div>
             <p v-if="revealError" class="text-xs text-red-300 bg-red-500/10 border border-red-400/20 rounded-lg px-3 py-2">{{ revealError }}</p>
             <div class="flex gap-2 pt-1">
