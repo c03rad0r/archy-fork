@@ -260,6 +260,7 @@ function pickDetectedRouter(ip: string) {
 function disconnectRouter() {
   host.value = status.value?.host ?? host.value
   connectedParams.value = null
+  error.value = ''
   detectError.value = ''
   detectedCandidates.value = []
   showConnectForm.value = true
@@ -533,7 +534,10 @@ onMounted(() => {
     <!-- Error state -->
     <div v-else-if="error" class="glass-card p-6 mb-4">
       <p class="text-sm text-red-300">{{ error }}</p>
-      <button class="mt-3 text-xs text-white/50 hover:text-white transition-colors underline" @click="load()">Retry</button>
+      <div class="mt-3 flex items-center gap-4">
+        <button class="text-xs text-white/50 hover:text-white transition-colors underline" @click="load()">Retry</button>
+        <button class="text-xs text-orange-300/80 hover:text-orange-200 transition-colors underline" @click="disconnectRouter">Reconfigure router</button>
+      </div>
     </div>
 
     <!-- Status panels -->
