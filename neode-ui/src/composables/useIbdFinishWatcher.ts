@@ -2,6 +2,7 @@ import { computed, watch, watchEffect, onUnmounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { GOALS } from '@/data/goals'
 import { useGoalStore } from '@/stores/goals'
+import { useAppStore } from '@/stores/app'
 import { useToast } from '@/composables/useToast'
 import {
   acquireBitcoinSync,
@@ -20,6 +21,7 @@ let firedThisSession = false
  */
 export function useIbdFinishWatcher() {
   const goalStore = useGoalStore()
+  const appStore = useAppStore()
   const router = useRouter()
   const toast = useToast()
 
@@ -68,8 +70,16 @@ export function useIbdFinishWatcher() {
     const goalId = pendingLightningGoalId.value
     if (!goalId) return
     firedThisSession = true
+    // The on-chain wallet lives in LND, not Bitcoin Core — the address the
+    // fund flow shows comes from `lnd.newaddress`. While the goal's
+    // install-LND step is still pending, "fund your wallet" would point at
+    // something that doesn't exist yet, so the toast names the actual next
+    // step instead (issue #143).
+    const lndInstalled = Object.keys(appStore.packages).includes('lnd')
     toast.action(
-      'Bitcoin is fully synced — you can now fund your wallet and open your Lightning channel.',
+      lndInstalled
+        ? 'Bitcoin is fully synced — you can now fund your wallet and open your Lightning channel.'
+        : "Bitcoin is fully synced — next, install Lightning (LND) to get your node's on-chain wallet.",
       {
         label: 'Finish setup',
         onClick: () => { router.push(`/dashboard/goals/${goalId}`) },
