@@ -97,7 +97,7 @@ describe('useIbdFinishWatcher', () => {
     await completeSync()
 
     expect(state.toastAction).toHaveBeenCalledTimes(1)
-    const [message, opts] = state.toastAction.mock.calls[0]
+    const [message, opts] = state.toastAction.mock.calls[0]!
     expect(message).toBe(
       "Bitcoin is fully synced — next, install Lightning (LND) to get your node's on-chain wallet.",
     )
@@ -115,7 +115,7 @@ describe('useIbdFinishWatcher', () => {
     await completeSync()
 
     expect(state.toastAction).toHaveBeenCalledTimes(1)
-    const [message, opts] = state.toastAction.mock.calls[0]
+    const [message, opts] = state.toastAction.mock.calls[0]!
     expect(message).toBe(
       'Bitcoin is fully synced — you can now fund your wallet and open your Lightning channel.',
     )
