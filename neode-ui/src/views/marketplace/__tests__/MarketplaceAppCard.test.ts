@@ -15,7 +15,7 @@ const app: MarketplaceApp = {
   source: 'community',
 }
 
-function mountCard(installed: boolean, installBlockedReason?: string) {
+function mountCard(installed: boolean, installBlockedReason?: string, appOverride: MarketplaceApp = app) {
   const i18n = createI18n({
     legacy: false,
     locale: 'en',
@@ -29,7 +29,7 @@ function mountCard(installed: boolean, installBlockedReason?: string) {
 
   return mount(MarketplaceAppCard, {
     props: {
-      app,
+      app: appOverride,
       index: 0,
       stagger: false,
       installed,
@@ -64,5 +64,17 @@ describe('MarketplaceAppCard', () => {
     const wrapper = mountCard(false, 'You need a full archival bitcoin node before downloading ElectrumX')
     expect(wrapper.text()).toContain('Requires a full archive Bitcoin node before install.')
     expect(wrapper.text()).toContain('Bitcoin Pruned')
+  })
+
+  it('does not present one catalog version as definitive for multi-version apps (#129)', () => {
+    const wrapper = mountCard(false, undefined, {
+      ...app,
+      id: 'bitcoin-core',
+      title: 'Bitcoin Core',
+      version: '28.4.0',
+    })
+
+    expect(wrapper.text()).toContain('Choose version when installing')
+    expect(wrapper.text()).not.toContain('28.4')
   })
 })

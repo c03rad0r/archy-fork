@@ -26,7 +26,8 @@
             :class="tierLabel === 'core' ? 'tier-badge-core' : 'tier-badge-recommended'"
           >{{ tierLabel }}</span>
         </h3>
-        <p class="text-sm text-white/60">{{ app.version ? $ver(app.version) : 'latest' }}</p>
+        <p v-if="!isMultiVersion" class="text-sm text-white/60">{{ app.version ? $ver(app.version) : 'latest' }}</p>
+        <p v-else class="text-sm text-white/60">Choose version when installing</p>
         <p v-if="app.author" class="text-xs text-white/50 mt-1">by {{ app.author }}</p>
       </div>
     </div>
@@ -175,7 +176,7 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
-import type { MarketplaceApp, InstallProgress } from './marketplaceData'
+import { MULTI_VERSION_APP_IDS, type MarketplaceApp, type InstallProgress } from './marketplaceData'
 import { DEFAULT_APP_ICON } from '@/views/apps/appsConfig'
 
 const { t } = useI18n()
@@ -199,6 +200,8 @@ defineEmits<{
   install: [app: MarketplaceApp]
   launch: [app: MarketplaceApp]
 }>()
+
+const isMultiVersion = computed(() => MULTI_VERSION_APP_IDS.has(props.app.id))
 
 const signatureLabel = computed(() => {
   switch (props.app.signature?.status) {

@@ -57,6 +57,12 @@ export interface InstallProgress {
   attempt: number
 }
 
+/** Apps that ask for their concrete version in InstallVersionModal. Their
+ * store tiles deliberately omit a single catalog version: showing “v28.4”
+ * there implies that is the only version immediately before asking the user
+ * to choose a different one. */
+export const MULTI_VERSION_APP_IDS = new Set(['bitcoin-knots', 'bitcoin-core'])
+
 /** Archipelago app registry — all app images are mirrored here */
 const REGISTRY = 'source.archipelago-foundation.org/lfg2025'
 
