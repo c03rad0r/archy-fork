@@ -2,6 +2,12 @@ app:
   id: immich-postgres
   name: Immich Postgres
   version: "14-vectorchord0.4.3-pgvectors0.2.0"
+  # Upstream is the Immich-built Postgres image, published only on ghcr.io
+  # (no GitHub release tags, no Docker Hub repo) — the ghcr fetcher in
+  # scripts/check-upstream-releases.py is the only one that can see it.
+  upstream:
+    kind: ghcr
+    repo: immich-app/postgres
   description: Postgres (pgvecto.rs / vectorchord) backend for Immich.
 
   # Container named immich_postgres (underscore) to match the runtime's existing

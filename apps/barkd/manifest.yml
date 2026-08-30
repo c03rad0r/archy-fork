@@ -2,6 +2,14 @@ app:
   id: barkd
   name: Ark Wallet
   version: 0.3.0
+  # Where this app comes from, so scripts/check-upstream-releases.py can
+  # tell us when the pin below has fallen behind. bark ships on GitLab only
+  # (no GitHub mirror), so the gitlab fetcher is the one that can see it.
+  # NOTE: a version bump is code work, not a pin move — the REST shapes are
+  # coded in core/archipelago/src/wallet/ark_client.rs (see Dockerfile note).
+  upstream:
+    kind: gitlab
+    repo: ark-bitcoin/bark
   description: Ark protocol wallet daemon (barkd). Lets the node hold self-custodial off-chain bitcoin via an Ark server; the wallet talks to it over a local REST API. Signet by default while Ark matures.
 
   container:

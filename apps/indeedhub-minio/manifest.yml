@@ -2,6 +2,12 @@ app:
   id: indeedhub-minio
   name: IndeedHub MinIO
   version: "RELEASE.2024-11-07T00-52-20Z"
+  # MinIO's release tags are date-opaque (RELEASE.YYYY-MM-DD…), so the
+  # checker reports them as UNCOMPARABLE rather than ordering them — the
+  # latest tag is still shown for hand comparison, which is the point.
+  upstream:
+    kind: github
+    repo: minio/minio
   description: MinIO S3-compatible object storage for IndeedHub media.
   category: community
 

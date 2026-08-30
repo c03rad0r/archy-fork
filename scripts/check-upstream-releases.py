@@ -39,6 +39,7 @@ import os
 import re
 import sys
 import urllib.error
+import urllib.parse
 import urllib.request
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -191,7 +192,50 @@ def _highest(tags: list[str], current: str = "") -> str:
     return max(ranked)[1]
 
 
-FETCHERS = {"github": latest_github, "dockerhub": latest_dockerhub}
+def latest_gitlab(project: str, current: str = "") -> str:
+    """Newest release tag for a GitLab `group/project`.
+
+    Some projects publish releases only on GitLab with no GitHub mirror
+    (bark lives at ark-bitcoin/bark and nowhere else). GitLab release tags
+    sometimes carry the project name as a prefix (`bark-0.6.2`); strip it so
+    version ordering can see the number.
+    """
+    esc = urllib.parse.quote(project, safe="")
+    releases = http_json(
+        f"https://gitlab.com/api/v4/projects/{esc}/releases?per_page=100"
+    )
+    tags = [str(r["tag_name"]) for r in releases]
+    prefix = project.rsplit("/", 1)[-1].lower() + "-"
+    tags = [t[len(prefix):] if t.lower().startswith(prefix) else t for t in tags]
+    return _highest(tags, current)
+
+
+def latest_ghcr(repo: str, current: str = "") -> str:
+    """Newest version-like tag on GitHub's container registry.
+
+    Some images exist only on ghcr.io (immich-app/postgres publishes there
+    and nowhere else), so neither the GitHub-release nor the Docker Hub
+    fetcher can see them. Anonymous pull token first, then the tag list —
+    the same handshake any `docker pull ghcr.io/...` performs.
+    """
+    token = http_json(
+        f"https://ghcr.io/token?scope=repository:{repo}:pull&service=ghcr.io"
+    )["token"]
+    req = urllib.request.Request(
+        f"https://ghcr.io/v2/{repo}/tags/list",
+        headers={"User-Agent": USER_AGENT, "Authorization": f"Bearer {token}"},
+    )
+    with urllib.request.urlopen(req, timeout=TIMEOUT) as res:  # noqa: S310
+        tags = [str(t) for t in json.loads(res.read().decode()).get("tags", [])]
+    return _highest(tags, current)
+
+
+FETCHERS = {
+    "github": latest_github,
+    "dockerhub": latest_dockerhub,
+    "gitlab": latest_gitlab,
+    "ghcr": latest_ghcr,
+}
 
 
 # ── Manifest reading ───────────────────────────────────────────────────────

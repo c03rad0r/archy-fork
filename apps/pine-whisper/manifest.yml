@@ -6,6 +6,14 @@ app:
   # pick up the args change; the pre-release form "3.4.1-1" would compare
   # LOWER than 3.4.1 under semver and never roll out.
   version: "3.4.2"
+  # Tracks the rhasspy/wyoming-whisper image we pin (Docker Hub — the
+  # project's GitHub tags are not the image tags). NOTE: this manifest
+  # deliberately ships an args-tuned revision AHEAD of the image tag (see
+  # comment above) — BEHIND here means the image tag moved and the tuned
+  # revision needs re-basing onto it, not just a pin bump.
+  upstream:
+    kind: dockerhub
+    repo: rhasspy/wyoming-whisper
   description: Wyoming-protocol faster-whisper speech-to-text engine. Internal Pine voice-assistant stack member — turns speech captured by a PineVoice satellite into text for Home Assistant Assist.
   category: home
 

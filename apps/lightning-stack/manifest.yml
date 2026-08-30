@@ -2,6 +2,12 @@ app:
   id: lightning-stack
   name: Lightning Stack
   version: 0.12.0
+  # No public listing exists for lightninglabs/lightning-stack (checked
+  # docker.io, ghcr.io and github.com) — nothing can be queried automatically,
+  # so this one is tracked by hand.
+  upstream:
+    kind: manual
+    url: no public listing for lightninglabs/lightning-stack — verify by hand
   description: Complete Lightning Network implementation. Includes LND, CLN, and management tools.
   
   container:
