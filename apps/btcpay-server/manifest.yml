@@ -1,7 +1,7 @@
 app:
   id: btcpay-server
   name: BTCPay Server
-  version: 2.4.2
+  version: 2.4.3
   # Where this app comes from, so scripts/check-upstream-releases.py can
   # tell us when the pin below has fallen behind. Without it nothing can:
   # container.image names our mirror, not the project it was mirrored from.
@@ -11,7 +11,7 @@ app:
   description: Self-hosted Bitcoin payment processor. Accept Bitcoin payments without intermediaries.
 
   container:
-    image: docker.io/btcpayserver/btcpayserver:2.4.2
+    image: docker.io/btcpayserver/btcpayserver:2.4.3
     pull_policy: if-not-present
     network: archy-net
     secret_env:

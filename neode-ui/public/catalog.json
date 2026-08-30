@@ -52,13 +52,13 @@
     {
       "id": "btcpay-server",
       "title": "BTCPay Server",
-      "version": "2.4.2",
+      "version": "2.4.3",
       "description": "Self-hosted Bitcoin payment processor. Accept Bitcoin payments without intermediaries.",
       "icon": "/assets/img/app-icons/btcpay-server.png",
       "author": "BTCPay Server Foundation",
       "category": "commerce",
       "tier": "core",
-      "dockerImage": "docker.io/btcpayserver/btcpayserver:2.4.2",
+      "dockerImage": "docker.io/btcpayserver/btcpayserver:2.4.3",
       "repoUrl": "https://github.com/btcpayserver/btcpayserver",
       "requires": [
         "bitcoin-knots"
@@ -378,7 +378,7 @@
       "icon": "/assets/img/app-icons/pine.svg",
       "author": "Archipelago",
       "category": "home",
-      "dockerImage": "docker.io/library/nginx:1.31.3-alpine",
+      "dockerImage": "docker.io/library/nginx:1.31.4-alpine",
       "repoUrl": "https://github.com/rhasspy/wyoming"
     },
     {
@@ -464,7 +464,7 @@
       "author": "NetBird",
       "category": "networking",
       "tier": "recommended",
-      "dockerImage": "docker.io/library/nginx:1.31.3-alpine",
+      "dockerImage": "docker.io/library/nginx:1.31.4-alpine",
       "repoUrl": "https://github.com/netbirdio/netbird",
       "containerConfig": {
         "ports": [

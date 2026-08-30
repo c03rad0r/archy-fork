@@ -18,7 +18,7 @@ app:
   container_name: netbird
 
   container:
-    image: docker.io/library/nginx:1.31.3-alpine
+    image: docker.io/library/nginx:1.31.4-alpine
     pull_policy: if-not-present
     network: netbird-net
     # Self-signed TLS cert materialised before create — the dashboard needs a

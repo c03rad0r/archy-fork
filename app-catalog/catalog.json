@@ -52,13 +52,13 @@
     {
       "id": "btcpay-server",
       "title": "BTCPay Server",
-      "version": "2.4.2",
+      "version": "2.4.3",
       "description": "Self-hosted Bitcoin payment processor. Accept Bitcoin payments without intermediaries.",
       "icon": "/assets/img/app-icons/btcpay-server.png",
       "author": "BTCPay Server Foundation",
       "category": "commerce",
       "tier": "core",
-      "dockerImage": "docker.io/btcpayserver/btcpayserver:2.4.2",
+      "dockerImage": "docker.io/btcpayserver/btcpayserver:2.4.3",
       "repoUrl": "https://github.com/btcpayserver/btcpayserver",
       "requires": [
         "bitcoin-knots"
@@ -378,7 +378,7 @@
       "icon": "/assets/img/app-icons/pine.svg",
       "author": "Archipelago",
       "category": "home",
-      "dockerImage": "docker.io/library/nginx:1.31.3-alpine",
+      "dockerImage": "docker.io/library/nginx:1.31.4-alpine",
       "repoUrl": "https://github.com/rhasspy/wyoming"
     },
     {
@@ -464,7 +464,7 @@
       "author": "NetBird",
       "category": "networking",
       "tier": "recommended",
-      "dockerImage": "docker.io/library/nginx:1.31.3-alpine",
+      "dockerImage": "docker.io/library/nginx:1.31.4-alpine",
       "repoUrl": "https://github.com/netbirdio/netbird",
       "containerConfig": {
         "ports": [
@@ -571,6 +571,18 @@
       "tier": "optional",
       "dockerImage": "source.archipelago-foundation.org/lfg2025/phoenixd:0.9.0",
       "repoUrl": "https://github.com/ACINQ/phoenixd"
+    },
+    {
+      "id": "cuprate",
+      "title": "Cuprate",
+      "version": "0.1.0-preview",
+      "description": "Alternative Monero node implementation in Rust. Independently validates Monero consensus rules, providing a layer of security and redundancy for the network.",
+      "icon": "/assets/img/app-icons/cuprate.svg",
+      "author": "Cuprate contributors",
+      "category": "money",
+      "tier": "optional",
+      "dockerImage": "source.archipelago-foundation.org/lfg2025/cuprate:0.1.0-preview-18-g618ff14",
+      "repoUrl": "https://github.com/Cuprate/cuprate"
     }
   ]
 }

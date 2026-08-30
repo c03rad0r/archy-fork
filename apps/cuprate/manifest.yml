@@ -13,6 +13,12 @@ app:
     kind: github
     repo: Cuprate/cuprate
   description: Alternative Monero node implementation in Rust. Independently validates Monero consensus rules, providing a layer of security and redundancy for the network.
+  category: money
+
+  metadata:
+    icon: /assets/img/app-icons/cuprate.svg
+    repo: https://github.com/Cuprate/cuprate
+    tier: optional
 
   container:
     # Built from the upstream Dockerfile at the tip of main, 18 commits past

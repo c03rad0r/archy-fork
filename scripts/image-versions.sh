@@ -37,7 +37,7 @@ MEMPOOL_WEB_IMAGE="$ARCHY_REGISTRY/mempool-frontend:v3.3.1"
 MARIADB_IMAGE="$ARCHY_REGISTRY/mariadb:11.4.10"
 
 # BTCPay
-BTCPAY_IMAGE="docker.io/btcpayserver/btcpayserver:2.4.2"
+BTCPAY_IMAGE="docker.io/btcpayserver/btcpayserver:2.4.3"
 NBXPLORER_IMAGE="$ARCHY_REGISTRY/nbxplorer:2.6.0"
 POSTGRES_IMAGE="$ARCHY_REGISTRY/postgres:15.17"
 BTCPAY_POSTGRES_IMAGE="$ARCHY_REGISTRY/postgres:15.17"

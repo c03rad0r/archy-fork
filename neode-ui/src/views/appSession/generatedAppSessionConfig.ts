@@ -51,6 +51,7 @@ export const GENERATED_APP_TITLES: Record<string, string> = {
   "botfights": "BotFights",
   "btcpay-server": "BTCPay Server",
   "core-lightning": "Core Lightning (CLN)",
+  "cuprate": "Cuprate",
   "did-wallet": "Web5 DID Wallet",
   "electrs-ui": "Electrs UI",
   "electrumx": "ElectrumX",
