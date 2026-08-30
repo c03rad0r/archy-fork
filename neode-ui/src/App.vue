@@ -181,7 +181,7 @@ watch(() => appStore.isAuthenticated, (authenticated) => {
     startRemoteRelay()
   } else {
     messageToast.stopPolling()
-    toastMessage.value = { show: false, text: '', fromPubkey: '' }
+    toastMessage.value = { show: false, text: '', fromPubkey: '', contactId: null }
     screensaverStore.clearInactivityTimer()
     screensaverStore.deactivate()
     stopRemoteRelay()

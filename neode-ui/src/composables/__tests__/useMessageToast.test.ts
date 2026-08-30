@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
+import { createPinia, setActivePinia } from 'pinia'
 
 const mockPush = vi.fn()
 
@@ -9,6 +10,7 @@ vi.mock('vue-router', () => ({
 vi.mock('@/api/rpc-client', () => ({
   rpcClient: {
     getReceivedMessages: vi.fn(),
+    call: vi.fn(),
   },
 }))
 
@@ -21,13 +23,16 @@ describe('useMessageToast', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     vi.useFakeTimers()
+    localStorage.clear()
+    setActivePinia(createPinia())
+    vi.mocked(rpcClient.call).mockResolvedValue({ messages: [], count: 0 })
     // Reset shared singleton state
     const toast = useMessageToast()
     toast.stopPolling()
     toast.receivedMessages.value = []
     toast.lastMessageCount.value = 0
     toast.loadingMessages.value = false
-    toast.toastMessage.value = { show: false, text: '', fromPubkey: '' }
+    toast.toastMessage.value = { show: false, text: '', fromPubkey: '', contactId: null }
   })
 
   afterEach(() => {
@@ -143,9 +148,43 @@ describe('useMessageToast', () => {
     expect(toast.unreadCount.value).toBe(0)
   })
 
+  it('shows a radio-mesh toast and deep-links to its contact', async () => {
+    const toast = useMessageToast()
+    mockedRpc.getReceivedMessages.mockResolvedValue({ messages: [] })
+
+    // Initialize an empty node, then deliver its first Meshtastic message.
+    await toast.loadReceivedMessages()
+    vi.mocked(rpcClient.call).mockResolvedValueOnce({
+      messages: [{
+        id: 1,
+        direction: 'received',
+        peer_contact_id: 42,
+        peer_name: 'Alice',
+        plaintext: 'Over LoRa',
+        timestamp: '2026-01-01',
+        delivered: true,
+        encrypted: true,
+        transport: 'meshtastic',
+      }],
+      count: 1,
+    })
+    await toast.loadReceivedMessages()
+
+    expect(toast.toastMessage.value).toMatchObject({
+      show: true,
+      text: 'Over LoRa',
+      contactId: 42,
+    })
+    toast.dismissToastAndOpenMessages()
+    expect(mockPush).toHaveBeenCalledWith({
+      path: '/dashboard/mesh',
+      query: { contact: '42' },
+    })
+  })
+
   it('dismissToastAndOpenMessages clears toast and navigates', () => {
     const toast = useMessageToast()
-    toast.toastMessage.value = { show: true, text: 'New message', fromPubkey: '' }
+    toast.toastMessage.value = { show: true, text: 'New message', fromPubkey: '', contactId: null }
     toast.dismissToastAndOpenMessages()
 
     expect(toast.toastMessage.value.show).toBe(false)

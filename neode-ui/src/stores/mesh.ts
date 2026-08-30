@@ -288,12 +288,27 @@ export const useMeshStore = defineStore('mesh', () => {
   // are safe watermarks: the backend allocates them monotonically and
   // restores the counter as max(persisted)+1 across restarts.
   const LAST_SEEN_KEY = 'archipelago.mesh.last-seen.v1'
-  const lastSeenId = ref<Record<number, number>>(
-    JSON.parse(localStorage.getItem(LAST_SEEN_KEY) || '{}') as Record<number, number>
-  )
+  let storedLastSeen = localStorage.getItem(LAST_SEEN_KEY)
+  function parseLastSeen(raw: string | null): Record<number, number> {
+    if (!raw) return {}
+    try {
+      const parsed = JSON.parse(raw)
+      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+        return parsed as Record<number, number>
+      }
+    } catch {
+      // Treat corrupt browser state like a first run and safely reseed it.
+    }
+    storedLastSeen = null
+    return {}
+  }
+  const lastSeenId = ref<Record<number, number>>(parseLastSeen(storedLastSeen))
   // First run after this feature ships: treat existing history as seen so
-  // nobody gets a wall of phantom badges for months-old messages.
-  let seedLastSeenFromHistory = localStorage.getItem(LAST_SEEN_KEY) === null
+  // nobody gets a wall of phantom badges for months-old messages. Complete
+  // this initialization even when history is empty; otherwise the first real
+  // message to arrive on a brand-new node is mistaken for old history and its
+  // notification is silently swallowed.
+  let seedLastSeenFromHistory = storedLastSeen === null
   function persistLastSeen() {
     localStorage.setItem(LAST_SEEN_KEY, JSON.stringify(lastSeenId.value))
   }
@@ -481,17 +496,18 @@ export const useMeshStore = defineStore('mesh', () => {
     }
   }
 
-  async function fetchMessages(limit?: number) {
+  async function fetchMessages(limit?: number): Promise<MeshMessage[]> {
     try {
       const res = await rpcClient.call<{ messages: MeshMessage[]; count: number }>({
         method: 'mesh.messages',
         params: limit ? { limit } : {},
         dedup: true,
       })
-      if (seedLastSeenFromHistory && res.messages.length > 0) {
+      if (seedLastSeenFromHistory) {
         for (const m of res.messages) {
           if (m.direction === 'received') advanceLastSeen(m.peer_contact_id, m.id)
         }
+        // Persist even an empty object as the initialization sentinel.
         persistLastSeen()
         seedLastSeenFromHistory = false
       }
@@ -520,8 +536,15 @@ export const useMeshStore = defineStore('mesh', () => {
       messages.value = res.messages
       // Extract node positions from coordinate messages
       updateNodePositionsFromMessages(res.messages)
+      // The app-wide notification poll uses this exact batch, rather than a
+      // session message-count delta, so one arrival can never resurrect old
+      // messages as "11 unread" after a refresh.
+      return newMsgs.filter(msg => !(
+        viewingChatIds.value.includes(msg.peer_contact_id) && viewingAtBottom.value
+      ))
     } catch (err: unknown) {
       error.value = err instanceof Error ? err.message : 'Failed to fetch mesh messages'
+      return []
     }
   }
 

@@ -1,6 +1,7 @@
 import { ref, computed } from 'vue'
 import { useRouter } from 'vue-router'
 import { rpcClient } from '@/api/rpc-client'
+import { useMeshStore } from '@/stores/mesh'
 
 export interface ReceivedMessage {
   from_pubkey: string
@@ -14,11 +15,19 @@ const MESSAGE_POLL_INTERVAL = 30000 // 30s
 const receivedMessages = ref<ReceivedMessage[]>([])
 const lastMessageCount = ref(0)
 const loadingMessages = ref(false)
-const toastMessage = ref<{ show: boolean; text: string; fromPubkey: string }>({ show: false, text: '', fromPubkey: '' })
+type MessageToast = {
+  show: boolean
+  text: string
+  fromPubkey: string
+  contactId: number | null
+}
+const emptyToast = (): MessageToast => ({ show: false, text: '', fromPubkey: '', contactId: null })
+const toastMessage = ref<MessageToast>(emptyToast())
 let pollTimer: ReturnType<typeof setInterval> | null = null
 
 export function useMessageToast() {
   const router = useRouter()
+  const mesh = useMeshStore()
 
   const unreadCount = computed(() =>
     Math.max(0, receivedMessages.value.length - lastMessageCount.value)
@@ -40,6 +49,7 @@ export function useMessageToast() {
           // Only deep-link to a specific chat when it's a single new message
           // from one sender; otherwise open the mesh list.
           fromPubkey: newCount === 1 ? (latest?.from_pubkey ?? '') : '',
+          contactId: null,
         }
         lastMessageCount.value = msgs.length
       } else {
@@ -54,6 +64,26 @@ export function useMessageToast() {
       if (import.meta.env.DEV) console.error('Failed to load messages:', e)
     } finally {
       loadingMessages.value = false
+    }
+
+    // Federation messages and radio-mesh messages use separate backend
+    // queues. Poll the mesh store too so Meshtastic/MeshCore/Reticulum
+    // arrivals produce the same app-wide toast. fetchMessages returns only
+    // the newly-unread batch computed from its durable per-contact watermark.
+    const newMeshMessages = await mesh.fetchMessages()
+    if (newMeshMessages.length > 0) {
+      const latest = newMeshMessages[newMeshMessages.length - 1]!
+      const oneConversation = newMeshMessages.every(
+        msg => msg.peer_contact_id === latest.peer_contact_id
+      )
+      toastMessage.value = {
+        show: true,
+        text: newMeshMessages.length === 1
+          ? latest.plaintext
+          : `${newMeshMessages.length} new messages`,
+        fromPubkey: '',
+        contactId: oneConversation ? latest.peer_contact_id : null,
+      }
     }
   }
 
@@ -86,16 +116,21 @@ export function useMessageToast() {
   }
 
   function dismissToastAndOpenMessages() {
-    const peer = toastMessage.value.fromPubkey
-    toastMessage.value = { show: false, text: '', fromPubkey: '' }
+    const { fromPubkey: peer, contactId } = toastMessage.value
+    toastMessage.value = emptyToast()
     markAsRead()
-    // Open the specific conversation when we know the sender; else the mesh list.
-    router.push(peer ? { path: '/dashboard/mesh', query: { peer } } : '/dashboard/mesh')
+    // Open the exact radio conversation by contact id, or the federation
+    // conversation by pubkey. Multiple conversations fall back to the list.
+    if (contactId !== null) {
+      router.push({ path: '/dashboard/mesh', query: { contact: String(contactId) } })
+    } else {
+      router.push(peer ? { path: '/dashboard/mesh', query: { peer } } : '/dashboard/mesh')
+    }
   }
 
   // Dismiss the toast without navigating (the close icon).
   function closeToast() {
-    toastMessage.value = { show: false, text: '', fromPubkey: '' }
+    toastMessage.value = emptyToast()
   }
 
   return {

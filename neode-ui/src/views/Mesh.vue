@@ -565,7 +565,13 @@ function armMeshLive() {
     // match an entry in mesh.peers, so without this fallback the deep-link
     // silently failed and just landed on the bare mesh page every time.
     const targetPeer = typeof route.query.peer === 'string' ? route.query.peer : ''
-    if (targetPeer) {
+    const targetContact = typeof route.query.contact === 'string'
+      ? Number(route.query.contact)
+      : NaN
+    if (Number.isInteger(targetContact)) {
+      const match = mesh.peers.find(p => p.contact_id === targetContact)
+      if (match) openChat(match)
+    } else if (targetPeer) {
       const match = mesh.peers.find(
         (p) => p.pubkey_hex === targetPeer || p.did === targetPeer
       )
