@@ -196,12 +196,19 @@ exit 2
 /// Point kdump-tools at /var/crash with a compressed core collector. Works on
 /// the package's shipped defaults file (USE_KDUMP=0, commented KDUMP_COREDIR)
 /// and on any state we already wrote — pure line surgery, idempotent.
-async fn ensure_kdump_defaults() -> Result<()> {
-    let script = r#"
+fn kdump_defaults_script(conf: &str) -> String {
+    r#"
 set -u
-CONF=/etc/default/kdump-tools
+CONF='@@CONF@@'
 [ -f "$CONF" ] || exit 3
 CHANGED=0
+# Remove the one malformed line emitted by the old systemd-run environment
+# expansion bug before it was disabled. It makes every kdump-config invocation
+# print an error while sourcing this file.
+if grep -Fqx '=""' "$CONF"; then
+    sed -i '/^=""$/d' "$CONF"
+    CHANGED=1
+fi
 set_kv() {
     # Canonicalise KEY to one double-quoted assignment. Older fixup versions
     # could append duplicates because their exact-value check did not accept
@@ -222,8 +229,13 @@ set_kv CORE_COLLECTOR 'makedumpfile -l --message-level 1 -d 31'
 [ "$CHANGED" -eq 1 ] || exit 0
 systemctl enable kdump-tools >/dev/null 2>&1 || true
 exit 2
-"#;
-    let status = host_sudo(&["sh", "-lc", script])
+"#
+    .replace("@@CONF@@", conf)
+}
+
+async fn ensure_kdump_defaults() -> Result<()> {
+    let script = kdump_defaults_script("/etc/default/kdump-tools");
+    let status = host_sudo(&["sh", "-lc", &script])
         .await
         .context("configure kdump-tools")?;
     match status.code() {
@@ -366,6 +378,51 @@ mod tests {
     #[test]
     fn keep_dumps_is_two() {
         assert_eq!(KEEP_DUMPS, 2);
+    }
+
+    #[test]
+    fn kdump_defaults_repairs_old_malformed_line_and_is_idempotent() {
+        use std::{fs, process::Command};
+
+        let root = tempfile::tempdir().unwrap();
+        let conf = root.path().join("kdump-tools");
+        let bin = root.path().join("bin");
+        fs::create_dir(&bin).unwrap();
+        fs::write(bin.join("systemctl"), "#!/bin/sh\nexit 0\n").unwrap();
+        assert!(Command::new("chmod")
+            .args(["+x"])
+            .arg(bin.join("systemctl"))
+            .status()
+            .unwrap()
+            .success());
+        fs::write(
+            &conf,
+            "# package defaults\n=\"\"\nUSE_KDUMP=0\nUSE_KDUMP=\"1\"\n",
+        )
+        .unwrap();
+
+        let script = kdump_defaults_script(conf.to_str().unwrap());
+        let path = format!("{}:{}", bin.display(), std::env::var("PATH").unwrap());
+        let first = Command::new("sh")
+            .args(["-lc", &script])
+            .env("PATH", &path)
+            .status()
+            .unwrap();
+        assert_eq!(first.code(), Some(2));
+        let repaired = fs::read_to_string(&conf).unwrap();
+        assert!(!repaired.lines().any(|line| line == "=\"\""));
+        assert_eq!(repaired.matches("USE_KDUMP=").count(), 1);
+        assert!(repaired.contains("USE_KDUMP=\"1\""));
+        assert!(repaired.contains("KDUMP_COREDIR=\"/var/crash\""));
+        assert!(repaired.contains("CORE_COLLECTOR=\"makedumpfile -l --message-level 1 -d 31\""));
+
+        let second = Command::new("sh")
+            .args(["-lc", &script])
+            .env("PATH", path)
+            .status()
+            .unwrap();
+        assert!(second.success());
+        assert_eq!(fs::read_to_string(conf).unwrap(), repaired);
     }
 
     #[test]
