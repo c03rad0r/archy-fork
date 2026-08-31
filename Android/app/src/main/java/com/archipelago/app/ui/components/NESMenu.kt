@@ -330,6 +330,11 @@ private fun MenuPanel(
                     val active = server.serialize() == activeServer?.serialize()
                     MenuItem(
                         label = server.displayName(),
+                        // FIPS nodes carry their mesh ULA — the address Termux
+                        // (or any other app) can reach over the split-tunnel,
+                        // from anywhere. Tap to copy; the node's npub stays
+                        // visible in the FIPS Mesh page.
+                        subtitle = server.meshIp.takeIf { it.isNotBlank() },
                         selected = active,
                         onClick = { onSelectServer(server) },
                         onEdit = { startEdit(server) },
@@ -652,26 +657,52 @@ private fun MenuItem(
     onClick: () -> Unit,
     onEdit: (() -> Unit)? = null,
     onRemove: (() -> Unit)? = null,
+    /** Optional second line (the node's mesh ULA); tapping it copies. */
+    subtitle: String? = null,
 ) {
+    val clipboard = LocalClipboardManager.current
     Row(
         Modifier
             .fillMaxWidth()
-            .height(ROW_H)
+            // Rows with a second line grow to fit it.
+            .then(if (subtitle == null) Modifier.height(ROW_H) else Modifier.heightIn(min = ROW_H))
             .clip(RoundedCornerShape(ROW_R))
             .background(if (selected) BitcoinOrange.copy(alpha = 0.12f) else RowBg)
             .border(1.dp, if (selected) BitcoinOrange.copy(alpha = 0.4f) else RowBorder, RoundedCornerShape(ROW_R))
             .clickable { onClick() }
-            .padding(horizontal = 16.dp),
+            .padding(horizontal = 16.dp)
+            .then(if (subtitle == null) Modifier else Modifier.padding(vertical = 8.dp)),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.SpaceBetween,
     ) {
-        Text(
-            label,
-            color = if (selected) BitcoinOrange else labelColor,
-            fontSize = 16.sp,
-            fontWeight = FontWeight.Medium,
-            modifier = Modifier.weight(1f),
-        )
+        Column(Modifier.weight(1f)) {
+            Text(
+                label,
+                color = if (selected) BitcoinOrange else labelColor,
+                fontSize = 16.sp,
+                fontWeight = FontWeight.Medium,
+            )
+            if (subtitle != null) {
+                Row(
+                    Modifier
+                        .padding(top = 2.dp)
+                        .clip(RoundedCornerShape(6.dp))
+                        .clickable { clipboard.setText(AnnotatedString(subtitle)) }
+                        .padding(horizontal = 4.dp, vertical = 2.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text(
+                        subtitle,
+                        color = TextMuted,
+                        fontSize = 10.sp,
+                        fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
+                        maxLines = 1,
+                        overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+                    )
+                    Text("⧉", color = TextMuted.copy(alpha = 0.7f), fontSize = 11.sp, modifier = Modifier.padding(start = 6.dp))
+                }
+            }
+        }
         if (onEdit != null) {
             Text(
                 "✎",
