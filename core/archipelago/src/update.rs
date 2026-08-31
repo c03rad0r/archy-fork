@@ -1487,6 +1487,11 @@ pub(crate) async fn host_sudo(args: &[&str]) -> Result<std::process::ExitStatus>
         "--quiet",
         "--collect",
         "--pipe",
+        // Shell snippets passed as one argument must reach the child intact.
+        // systemd-run otherwise expands $VAR/${VAR} against the manager's
+        // environment before `sh -lc` can see them (and usually replaces them
+        // with empty strings).
+        "--expand-environment=no",
         "--",
     ];
     full.extend_from_slice(args);
@@ -1506,6 +1511,7 @@ pub(crate) async fn host_sudo_output(args: &[&str]) -> Result<std::process::Outp
         "--quiet",
         "--collect",
         "--pipe",
+        "--expand-environment=no",
         "--",
     ];
     full.extend_from_slice(args);
