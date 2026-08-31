@@ -41,7 +41,7 @@ use crate::update::host_sudo;
 
 /// Packages the node's host must have. Keep this list short and justified —
 /// every entry is state we now own on the fleet's OS images.
-const HOST_PACKAGES: &[&str] = &["kdump-tools", "kexec-tools", "rasdaemon"];
+const HOST_PACKAGES: &[&str] = &["kdump-tools", "kexec-tools", "makedumpfile", "rasdaemon"];
 
 /// Crash-kernel reservation. 256M covers the capture kernel plus makedumpfile
 /// on the fleet's 16–64GB amd64 machines (~1–2% of RAM, permanently reserved).
@@ -204,18 +204,18 @@ CONF=/etc/default/kdump-tools
 [ -f "$CONF" ] || exit 3
 CHANGED=0
 set_kv() {
-    # set_kv KEY VALUE — replace any (possibly commented) KEY= line with
-    # KEY='VALUE', appending at the end when absent.
+    # Canonicalise KEY to one double-quoted assignment. Older fixup versions
+    # could append duplicates because their exact-value check did not accept
+    # double quotes; collapsing them also makes future passes idempotent.
     KEY="$1"; VAL="$2"
-    if grep -qE "^${KEY}=" "$CONF" 2>/dev/null; then
-        if ! grep -qE "^${KEY}='?${VAL}'?$" "$CONF"; then
-            sed -i "s|^${KEY}=.*|${KEY}=\"${VAL}\"|" "$CONF"
-            CHANGED=1
-        fi
-    else
-        printf '\n%s="%s"\n' "$KEY" "$VAL" >> "$CONF"
-        CHANGED=1
+    EXPECTED="${KEY}=\"${VAL}\""
+    COUNT=$(grep -c "^${KEY}=" "$CONF" 2>/dev/null || true)
+    if [ "$COUNT" -eq 1 ] && grep -Fqx "$EXPECTED" "$CONF"; then
+        return
     fi
+    sed -i "/^${KEY}=/d" "$CONF"
+    printf '\n%s\n' "$EXPECTED" >> "$CONF"
+    CHANGED=1
 }
 set_kv USE_KDUMP 1
 set_kv KDUMP_COREDIR /var/crash
@@ -298,21 +298,30 @@ async fn ensure_rasdaemon_enabled() -> Result<()> {
 /// Keep only the newest [`KEEP_DUMPS`] dumps in /var/crash. Called on every
 /// fixup pass rather than by a timer: the pass runs at every startup, which is
 /// exactly the cadence at which new dumps appear (a dump ends in a reboot).
-async fn prune_crash_dumps() -> Result<()> {
-    let script = format!(
+fn crash_dump_prune_script() -> String {
+    format!(
         r#"
 set -u
-DIR=/var/crash
+DIR=${{ARCHIPELAGO_CRASH_DIR:-/var/crash}}
 [ -d "$DIR" ] || exit 0
 KEEP={KEEP_DUMPS}
-COUNT=$(ls -1 "$DIR" 2>/dev/null | wc -l)
+# kdump-tools keeps its lock and kexec command files beside timestamped dump
+# directories. Count and prune directories only: treating those bookkeeping
+# files as dumps can delete the sole freshly captured vmcore on startup.
+COUNT=$(find "$DIR" -mindepth 1 -maxdepth 1 -type d -printf . | wc -c)
 [ "$COUNT" -gt "$KEEP" ] || exit 0
-ls -1dt "$DIR"/* 2>/dev/null | tail -n +"$((KEEP + 1))" | while IFS= read -r victim; do
-    rm -rf -- "$victim"
-done
+find "$DIR" -mindepth 1 -maxdepth 1 -type d -printf '%T@ %p\0' \
+    | sort -zrn \
+    | tail -z -n +"$((KEEP + 1))" \
+    | cut -z -d ' ' -f 2- \
+    | xargs -0r rm -rf --
 exit 2
 "#
-    );
+    )
+}
+
+async fn prune_crash_dumps() -> Result<()> {
+    let script = crash_dump_prune_script();
     let status = host_sudo(&["sh", "-lc", &script])
         .await
         .context("prune /var/crash")?;
@@ -344,7 +353,10 @@ mod tests {
 
     #[test]
     fn package_list_is_exactly_the_kdump_rasdaemon_set() {
-        assert_eq!(HOST_PACKAGES, &["kdump-tools", "kexec-tools", "rasdaemon"]);
+        assert_eq!(
+            HOST_PACKAGES,
+            &["kdump-tools", "kexec-tools", "makedumpfile", "rasdaemon"]
+        );
     }
 
     #[test]
@@ -355,5 +367,56 @@ mod tests {
     #[test]
     fn keep_dumps_is_two() {
         assert_eq!(KEEP_DUMPS, 2);
+    }
+
+    #[test]
+    fn crash_pruning_ignores_kdump_bookkeeping_files() {
+        use std::{fs, process::Command};
+
+        let root = tempfile::tempdir().unwrap();
+        let crash = root.path();
+        fs::write(crash.join("kdump_lock"), []).unwrap();
+        fs::write(crash.join("kexec_cmd"), "kexec -p").unwrap();
+
+        for (name, epoch) in [("old dump", "100"), ("middle", "200"), ("newest", "300")] {
+            let path = crash.join(name);
+            fs::create_dir(&path).unwrap();
+            fs::write(path.join("vmcore"), name).unwrap();
+            assert!(Command::new("touch")
+                .args(["-d", &format!("@{epoch}")])
+                .arg(&path)
+                .status()
+                .unwrap()
+                .success());
+        }
+
+        let status = Command::new("sh")
+            .args(["-lc", &crash_dump_prune_script()])
+            .env("ARCHIPELAGO_CRASH_DIR", crash)
+            .status()
+            .unwrap();
+        assert_eq!(status.code(), Some(2));
+        assert!(!crash.join("old dump").exists());
+        assert!(crash.join("middle").join("vmcore").exists());
+        assert!(crash.join("newest").join("vmcore").exists());
+        assert!(crash.join("kdump_lock").exists());
+        assert!(crash.join("kexec_cmd").exists());
+    }
+
+    #[test]
+    fn crash_pruning_does_nothing_when_only_bookkeeping_files_exist() {
+        use std::{fs, process::Command};
+
+        let root = tempfile::tempdir().unwrap();
+        for name in ["kdump_lock", "kexec_cmd", "another-marker"] {
+            fs::write(root.path().join(name), []).unwrap();
+        }
+        let status = Command::new("sh")
+            .args(["-lc", &crash_dump_prune_script()])
+            .env("ARCHIPELAGO_CRASH_DIR", root.path())
+            .status()
+            .unwrap();
+        assert!(status.success());
+        assert_eq!(fs::read_dir(root.path()).unwrap().count(), 3);
     }
 }
