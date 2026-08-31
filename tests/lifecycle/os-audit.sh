@@ -242,14 +242,21 @@ section_d() {
   else
     record FAIL "kdump-tools configured" "/etc/default/kdump-tools missing USE_KDUMP=1 — host fixup didn't land"
   fi
-  # D2. crashkernel reservation — memory is reserved at BOOT, so a node that
-  # took the OTA fixup but hasn't rebooted yet is WARN, not FAIL.
-  if grep -q 'crashkernel=' /proc/cmdline 2>/dev/null; then
-    record PASS "crashkernel reserved" "$(grep -oE 'crashkernel=[^ ]+' /proc/cmdline | head -1)"
-  elif grep -q 'crashkernel=' /etc/default/grub 2>/dev/null; then
-    record WARN "crashkernel reserved" "written to GRUB — applies on next reboot"
+  # D2. crashkernel reservation — grade the memory the kernel actually
+  # reserved, not merely the first matching cmdline token. Debian's
+  # kdump-tools.cfg used to append a second crashkernel= range after our 256M;
+  # the audit falsely passed while /sys reported only 192M reserved.
+  local crash_size expected_size=$((256 * 1024 * 1024))
+  crash_size=$(cat /sys/kernel/kexec_crash_size 2>/dev/null || echo 0)
+  [[ "$crash_size" =~ ^[0-9]+$ ]] || crash_size=0
+  if (( crash_size >= expected_size )); then
+    record PASS "crashkernel reserved" "$((crash_size / 1024 / 1024))MiB actually reserved"
+  elif (( crash_size > 0 )); then
+    record FAIL "crashkernel reserved" "$((crash_size / 1024 / 1024))MiB reserved; expected >=256MiB (conflicting cmdline?)"
+  elif grep -q 'crashkernel=256M' /etc/default/grub 2>/dev/null; then
+    record WARN "crashkernel reserved" "256M written to GRUB — applies on next reboot"
   else
-    record FAIL "crashkernel reserved" "absent from /proc/cmdline AND /etc/default/grub"
+    record FAIL "crashkernel reserved" "no reservation and crashkernel=256M absent from GRUB"
   fi
   # D3. hang/panic capture policy — runtime-settable, expected immediately
   if [[ "$(cat /proc/sys/kernel/hung_task_panic 2>/dev/null)" == "1" ]]; then

@@ -237,24 +237,39 @@ exit 2
     }
 }
 
-/// Append `crashkernel=` to the installed GRUB cmdline and run update-grub.
+/// Set the installed GRUB cmdline to one fixed `crashkernel=` reservation and
+/// run update-grub. Debian's kdump-tools package installs a grub.d snippet that
+/// otherwise appends its own range-based reservation after ours; on amd64 that
+/// silently wins and reserves only 192M instead of the intended 256M.
 /// The reservation itself only exists after the next reboot — memory cannot
 /// be set aside at runtime — so the caller must log the reboot caveat.
-/// Returns true if the cmdline changed.
+/// Returns true if the generated cmdline changed.
 async fn ensure_crashkernel_cmdline() -> Result<bool> {
     let script = format!(
         r#"
 set -u
 GRUB=/etc/default/grub
+KDUMP_GRUB=/etc/default/grub.d/kdump-tools.cfg
 PARAM='{CRASHKERNEL_PARAM}'
 [ -f "$GRUB" ] || exit 3
+CHANGED=0
+# kdump-tools sources this after /etc/default/grub and unconditionally appends
+# crashkernel=512M-:192M. Neutralize that package default: Archipelago owns the
+# explicit fixed reservation in GRUB_CMDLINE_LINUX_DEFAULT below.
+if [ -f "$KDUMP_GRUB" ] && grep -qE '^[^#]*crashkernel=' "$KDUMP_GRUB"; then
+    printf '%s\n' '# Archipelago owns crashkernel sizing in /etc/default/grub.' > "$KDUMP_GRUB"
+    CHANGED=1
+fi
 LINE=$(grep -E '^GRUB_CMDLINE_LINUX_DEFAULT=' "$GRUB" | head -1)
 [ -n "$LINE" ] || exit 3
-case "$LINE" in
-    *"$PARAM"*) exit 0 ;;
-esac
-NEWLINE=$(printf '%s' "$LINE" | sed "s/\"$/ $PARAM\"/")
-sed -i "s|^GRUB_CMDLINE_LINUX_DEFAULT=.*|$NEWLINE|" "$GRUB"
+# Remove any prior value before appending ours, so repeated fixups can never
+# create conflicting parameters whose kernel precedence is easy to misread.
+NEWLINE=$(printf '%s' "$LINE" | sed -E "s/[[:space:]]+crashkernel=[^ \"']+//g; s/\"$/ $PARAM\"/")
+if [ "$NEWLINE" != "$LINE" ]; then
+    sed -i "s|^GRUB_CMDLINE_LINUX_DEFAULT=.*|$NEWLINE|" "$GRUB"
+    CHANGED=1
+fi
+[ "$CHANGED" -eq 1 ] || exit 0
 timeout 120 update-grub >/dev/null 2>&1 || true
 exit 2
 "#

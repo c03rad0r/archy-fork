@@ -3746,6 +3746,13 @@ if [ -d "$BOOT_MEDIA/archipelago/plymouth-theme" ]; then
     # Configure clean boot: splash, suppress kernel noise, hide cursor
     sed -i 's/GRUB_CMDLINE_LINUX_DEFAULT=".*"/GRUB_CMDLINE_LINUX_DEFAULT="quiet splash loglevel=0 rd.systemd.show_status=false vt.global_cursor_default=0 acpi=force crashkernel=256M"/' \
         /mnt/target/etc/default/grub 2>/dev/null || true
+    # kdump-tools ships a grub.d snippet that appends crashkernel=512M-:192M
+    # after this line. The later value silently wins on amd64, so neutralize
+    # the package default and keep Archipelago's explicit fixed reservation.
+    if [ -f /mnt/target/etc/default/grub.d/kdump-tools.cfg ]; then
+        printf '%s\n' '# Archipelago owns crashkernel sizing in /etc/default/grub.' \
+            > /mnt/target/etc/default/grub.d/kdump-tools.cfg
+    fi
     echo "   Installed Archipelago Plymouth theme on target"
 fi
 
