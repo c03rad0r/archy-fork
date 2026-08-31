@@ -309,6 +309,12 @@
 - More TV-screen polish: the built-in assistant shows its dark theme instead of bright white panels, the on-screen hint for switching between the kiosk and a terminal now points at the right keys, the welcome logo no longer occasionally renders as garbled characters, and an accidental tap of the power button no longer shuts the node down — hold it to power off on purpose.
 - Behind the scenes: fixed the installer image build so it no longer stops on a component that was removed from the product, and so it correctly includes the private relay it was meant to bundle.
 
+## v1.7.107-alpha (2026-07-20)
+
+- Wi-Fi setup now heals itself on older nodes. Some nodes set up before a mid-year fix couldn't connect to a Wi-Fi network from the screen — it failed with a permissions error — because the piece that lets the node manage networking on your behalf was missing. Nodes now put that piece in place automatically on startup, so "scan, pick a network, type the password, connect" works without reinstalling.
+- Your node rejoins the mesh faster after an update. Applying this update briefly restarts the mesh service, and previously a node could sit disconnected from other nodes for up to five minutes before it retried. It now notices the restart and reconnects within seconds.
+- Behind the scenes: fixed the installer image build so it no longer stops on a component that was removed from the product, and so it correctly includes the private relay it was meant to bundle — two separate faults that had been failing the build.
+
 ## v1.7.106-alpha (2026-07-20)
 
 - Nodes on the same network now find each other directly. Your node announces itself on your local network and connects straight to other Archipelago nodes nearby, instead of every connection having to be introduced by a public rendezvous server out on the internet. Peers in the same home or office stay connected to each other even when that server is unreachable, and they reach each other faster.
@@ -688,11 +694,13 @@
 
 - Orchestrator-backed app starts now run the same pre-start repairs as the legacy Podman path, so Nginx Proxy Manager stale `81:81` container metadata is removed and recreated before the orchestrator tries to start it.
 - Live diagnostics on a fleet node confirmed host nginx is healthy while Nginx Proxy Manager has no listeners on `8081`, `8084`, or `8444`, causing host nginx `502` responses for NPM proxy paths.
+- The gap this closes: apps launched through the orchestrator previously skipped the legacy start-time repair path entirely, so the same stale metadata the old flow cleaned up silently broke the new one. Both paths now converge on the same repairs.
 
 ## v1.7.64-alpha (2026-05-18)
 
 - Update apply rate limiting is relaxed for authenticated admins from 2 attempts per 10 minutes to 10 attempts per minute, preventing the System Update page from getting stuck behind `429 Too Many Requests` during legitimate OTA retry/troubleshooting flows.
 - The corrected backend artifact rebuild protection from `v1.7.63-alpha` remains in place, so this release is built from a fresh Rust backend binary before publishing.
+- For operators mid-incident this changes the recovery loop: a failed apply can now be retried immediately from the System Update page instead of waiting out a throttle window while a node sits half-updated.
 
 ## v1.7.63-alpha (2026-05-18)
 
@@ -802,6 +810,18 @@
 - Debian 13/Trixie ISO and disk-install paths now force security updates from `trixie-security` during image/install creation so rebuilt release media includes patched base packages.
 - Broad `.198` lifecycle audit passes with the current qualified app set; known absent blockers remain `electrumx`, `photoprism`, `dwn`, and `ollama`.
 
+## v1.7.51-alpha (2026-04-30)
+
+- Stack installs now adopt containers that already exist instead of failing on them — a repair or reinstall over leftover containers completes, and the adopted container's readiness is waited on like any fresh start.
+- Failed installs come with evidence: the install path waits for its containers, and when one doesn't become healthy it captures that container's logs, so the error on screen names the real culprit instead of a bare timeout.
+- Bitcoin RPC bindings are ensured as part of install, and the startup self-heal path gained additional ground for already-deployed nodes.
+
+## v1.7.50-alpha (2026-04-30)
+
+- The OTA bridge older nodes needed: deployed binaries only knew how to apply two artifacts (the backend binary and the frontend archive), so the scripts, app specs and docker assets newer releases carry never reached them. This release packs those payloads inside the frontend tarball — the one channel old binaries do apply — and the new backend promotes them into /opt once it starts.
+- Runtime payloads are staged into timestamped directories and promoted atomically; a failed extraction cleans up its staging area instead of leaving half-written state for the next update to trip over.
+- This is the release that un-sticks the fleet's update pipeline: from here on, an OTA can carry more than the two artifacts, and app installs on updated nodes use the specs that match their backend.
+
 ## v1.7.49-alpha (2026-04-30)
 
 - Bitcoin Knots/Core UI now reports connection, reconnecting, syncing, and error states from a backend status bridge instead of showing a stale "Unable to connect" message while the node is warming up.
@@ -813,12 +833,15 @@
 
 ## v1.7.48-alpha (2026-04-29)
 
-- archipelago.service no longer fails to start with "Failed to set up mount namespacing: /run/containers: No such file or directory" on nodes where /run/containers wasn't pre-created. ExecStartPre now creates it. Existing nodes need a one-time `systemctl edit archipelago` to add the mkdir; ISO installs from this version forward have the fix baked in.
+- archipelago.service no longer fails to start with "Failed to set up mount namespacing: /run/containers: No such file or directory" on nodes where that runtime directory wasn't pre-created — the failure surfaced in systemd's mount-namespace setup before the service itself ever ran.
+- ExecStartPre now creates /run/containers before the service starts, so the node's service manager finds the directory it needs on every boot; ISO installs from this version forward have the fix baked in.
+- Existing nodes pick the fix up with a one-time `systemctl edit archipelago` adding the mkdir — after which the boot failure does not recur.
 
 ## v1.7.47-alpha (2026-04-29)
 
 - Bitcoin Knots/Core sync is now significantly faster. The container now uses every available core for script verification (was capped at 2) and has 8GB of memory instead of 4GB so its 4GB UTXO cache has headroom for the mempool and peer connections. Existing nodes pick up the new limits on next install/update; freshly-installed nodes start at full speed.
 - ElectrumX initial indexing is faster too. Its CPU cap is removed, container memory is 4GB, and its internal cache is now 3GB (default was 1.2GB).
+- The result: a fresh node's first hours are measurably shorter — initial block download and ElectrumX indexing were the two longest post-install waits, and both now run at the hardware's limit.
 
 ## v1.7.46-alpha (2026-04-29)
 
@@ -841,10 +864,9 @@
 
 ## v1.7.44-alpha (2026-04-28)
 
-43de3b73 feat(orchestrator): complete container migration and release hardening
-ce39430b feat(self-update): sync and rebuild UI containers on OTA
-72dec5aa fix(lnd-ui): align container port across all specs
-83aacdf2 chore(release): archive ISO build recipes, tarball-only releases
+- Container orchestration migration completed, with release hardening across the app lifecycle — installs, updates and removals now run through one orchestrator path instead of the split legacy/Podman flows.
+- OTA updates now rebuild and sync the app UI containers they carry, so an updated app serves the UI image that matches its backend instead of whatever happened to be on disk.
+- LND UI port handling is aligned across all runtime specs, and release packaging moved to tarball-only payloads with the ISO build recipes archived — update payloads now carry only the files existing nodes need.
 
 
 All notable changes to Archipelago will be documented in this file.
