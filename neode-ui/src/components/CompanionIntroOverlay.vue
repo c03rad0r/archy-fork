@@ -143,6 +143,7 @@ import { ref, onMounted, onUnmounted, watch } from 'vue'
 import * as QRCode from 'qrcode'
 import { IS_DEMO, DEMO_PASSWORD } from '@/composables/useDemoIntro'
 import { companionIntroRequested } from '@/composables/useCompanionIntro'
+import { isCompanionApp } from '@/utils/openExternal'
 import { useLoginTransitionStore } from '@/stores/loginTransition'
 import { useServerStore } from '@/stores/server'
 import { rpcClient } from '@/api/rpc-client'
@@ -205,10 +206,12 @@ const POST_INTRO_GRACE_MS = 2000
 
 let calmTicker: ReturnType<typeof setInterval> | null = null
 
-// Running inside the companion app's own WebView (it injects this JS bridge).
+// Running inside the companion app's own WebView (it injects the JS bridge —
+// detected with the canonical helper, not a raw window check, so the gate
+// is identical everywhere the question is asked).
 // The "get the companion app" pitch is nonsense there — the user is already in
 // it. Server management for connected companions lives in the NESMenu instead.
-const IN_COMPANION_APP = typeof (window as { ArchipelagoNative?: unknown }).ArchipelagoNative !== 'undefined'
+const IN_COMPANION_APP = isCompanionApp()
 
 onMounted(() => {
   if (IN_COMPANION_APP) return
@@ -247,9 +250,13 @@ function maybeShow() {
 }
 
 // Manual open (App Store banner etc.) — ignores the once-per-browser gate.
+// The trigger itself is already a no-op inside the companion (useCompanionIntro),
+// and this watcher refuses to open there too, so no caller can ever pop the
+// install pitch inside the app it installs (#61).
 watch(companionIntroRequested, (requested) => {
   if (!requested) return
   companionIntroRequested.value = false
+  if (IN_COMPANION_APP) return
   if (calmTicker) {
     clearInterval(calmTicker)
     calmTicker = null

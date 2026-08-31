@@ -22,6 +22,7 @@ import com.archipelago.app.data.ServerEntry
 import com.archipelago.app.data.ServerPreferences
 import com.archipelago.app.data.ServerQrParser
 import com.archipelago.app.fips.FipsManager
+import com.archipelago.app.ui.components.SignerLaunch
 import com.archipelago.app.ui.screens.FlareScreen
 import com.archipelago.app.ui.screens.IntroScreen
 import com.archipelago.app.ui.screens.NodePickerScreen
@@ -133,27 +134,41 @@ fun AppNavHost(
     LaunchedEffect(pairUri) {
         val raw = pairUri ?: return@LaunchedEffect
         onPairUriConsumed()
-        when (val result = ServerQrParser.parse(raw)) {
-            is PairResult.Success -> {
-                // Pairing implies the app is installed and in use — skip the intro.
+        when {
+            // Remote-signer pairing deep link (NIP-46): nostrconnect://…
+            // from the node's login QR — any QR scanner app can hand it over.
+            // The signer UI lives inside the hub menu: drop the URI where
+            // WebViewScreen picks it up and route to the session, which opens
+            // the hub on its signer sub-page.
+            raw.startsWith("nostrconnect://") -> {
                 prefs.markIntroSeen()
-                val merged = prefs.upsertServer(result.server)
-                FipsManager.registerNode(context, result.fips, merged.displayName())
-                if (merged.password.isNotBlank()) {
-                    // Demo flow: password came with the link — connect in one step.
-                    prefs.setActiveServer(merged)
-                    navController.navigate(Routes.WEB_VIEW) {
-                        popUpTo(0) { inclusive = true }
-                    }
-                } else {
-                    pairPrefill = merged
-                    navController.navigate(Routes.SERVER_CONNECT) {
-                        popUpTo(0) { inclusive = true }
-                    }
+                SignerLaunch.pendingUri.value = raw
+                navController.navigate(Routes.WEB_VIEW) {
+                    popUpTo(0) { inclusive = true }
                 }
             }
-            else -> {
-                // Invalid or too-new pairing link — ignore; normal startup continues.
+            else -> when (val result = ServerQrParser.parse(raw)) {
+                is PairResult.Success -> {
+                    // Pairing implies the app is installed and in use — skip the intro.
+                    prefs.markIntroSeen()
+                    val merged = prefs.upsertServer(result.server)
+                    FipsManager.registerNode(context, result.fips, merged.displayName())
+                    if (merged.password.isNotBlank()) {
+                        // Demo flow: password came with the link — connect in one step.
+                        prefs.setActiveServer(merged)
+                        navController.navigate(Routes.WEB_VIEW) {
+                            popUpTo(0) { inclusive = true }
+                        }
+                    } else {
+                        pairPrefill = merged
+                        navController.navigate(Routes.SERVER_CONNECT) {
+                            popUpTo(0) { inclusive = true }
+                        }
+                    }
+                }
+                else -> {
+                    // Invalid or too-new pairing link — ignore; normal startup continues.
+                }
             }
         }
     }

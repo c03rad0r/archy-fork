@@ -101,6 +101,7 @@ import com.archipelago.app.fips.FipsManager
 import com.archipelago.app.ui.components.GestureHintOverlay
 import com.archipelago.app.ui.components.MeshLoadingScreen
 import com.archipelago.app.ui.components.NESMenu
+import com.archipelago.app.ui.components.SignerLaunch
 import com.archipelago.app.ui.components.QrScannerOverlay
 import com.archipelago.app.ui.components.SlidingLoader
 import com.archipelago.app.ui.components.WalletQrScannerModal
@@ -1373,6 +1374,16 @@ fun WebViewScreen(
         // Hub menu overlay — opened by the three-finger hold, drawn above
         // everything (also reachable from the error screen, where switching
         // servers is exactly what's needed).
+        // Remote-signer deep link: route to the session and pop the hub open
+        // on its signer sub-page (the request itself is consumed by NESMenu).
+        var signerPairRequest by remember { mutableStateOf<String?>(null) }
+        val signerLaunch by SignerLaunch.pendingUri.collectAsState()
+        LaunchedEffect(signerLaunch) {
+            val uri = signerLaunch ?: return@LaunchedEffect
+            signerPairRequest = uri
+            SignerLaunch.pendingUri.value = null
+            showHubMenu = true
+        }
         NESMenu(
             visible = showHubMenu,
             servers = savedServers,
@@ -1427,6 +1438,8 @@ fun WebViewScreen(
             onKeyboard = { showHubMenu = false; onRemoteKeyboard() },
             onBackToWebView = { showHubMenu = false },
             onMeshParty = onMeshParty?.let { open -> { showHubMenu = false; open() } },
+            signerPairRequest = signerPairRequest,
+            onSignerPairHandled = { signerPairRequest = null },
         )
 
         // Pairing-QR scan launched from the menu's Nodes page; the menu stays

@@ -89,6 +89,38 @@ class FipsPreferences(private val context: Context) {
 
     suspend fun hasPeers(): Boolean = JSONArray(peersJson()).length() > 0
 
+    /**
+     * Union the stored node peers with a backup's peer list, matched by
+     * npub — the backup's copy wins for the same npub (its addresses are what
+     * the restored identity pairs against). Used by companion restore (#128)
+     * after [saveIdentity] adopted the backup's mesh identity.
+     */
+    suspend fun mergePeersJson(incomingJson: String) {
+        context.fipsDataStore.edit { prefs ->
+            val current = JSONArray(prefs[peersKey] ?: "[]")
+            val incoming = try {
+                JSONArray(incomingJson)
+            } catch (_: Exception) {
+                JSONArray()
+            }
+            val incomingNpubs = mutableSetOf<String>()
+            val merged = JSONArray()
+            for (i in 0 until incoming.length()) {
+                val peer = incoming.optJSONObject(i) ?: continue
+                val npub = peer.optString("npub")
+                if (npub.isNotBlank()) {
+                    incomingNpubs.add(npub)
+                    merged.put(peer)
+                }
+            }
+            for (i in 0 until current.length()) {
+                val peer = current.optJSONObject(i) ?: continue
+                if (peer.optString("npub") !in incomingNpubs) merged.put(peer)
+            }
+            prefs[peersKey] = merged.toString()
+        }
+    }
+
     // ── Mesh Party (phone↔phone) ────────────────────────────────────────────
 
     suspend fun partyListen(): Boolean =

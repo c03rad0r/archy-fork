@@ -11,7 +11,9 @@
 //! JSON-over-strings, mirroring the myco / nostr-vpn embedding pattern:
 //! `generateIdentity`, `deriveIdentity`, `start`, `stop`, `isRunning`.
 
+pub mod backup;
 pub mod mesh;
+pub mod nostr;
 
 #[cfg(target_os = "android")]
 mod jni_glue;
