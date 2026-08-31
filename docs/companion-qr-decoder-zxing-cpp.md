@@ -88,29 +88,29 @@ proprietary and Play-Services-backed.
 
 ## Integration sketch
 
-> ⚠️ Coordinates and API surface below are from memory and were **not**
-> verified against Maven Central — the machine this was written on had no
-> network. Confirm the current artifact version and wrapper API on the first
-> online Gradle sync before trusting the snippet.
+> Verified 2026-08-31 against Maven Central and the wrapper source
+> (`wrappers/android/zxingcpp/src/main/java/zxingcpp/BarcodeReader.kt` at
+> `io.github.zxing-cpp:android:3.1.1`, the current release). Coordinates and
+> API below are what the published artifact actually ships.
 
 `Android/app/build.gradle.kts`:
 
 ```kotlin
 // Replaces com.google.zxing:core for the live-camera path.
-implementation("io.github.zxing-cpp:android:<pin-exact-version>")
+implementation("io.github.zxing-cpp:android:3.1.1")
 ```
 
 `QrCodeAnalyzer` collapses to roughly:
 
 ```kotlin
-private val reader = BarcodeReader().apply {
+private val reader = BarcodeReader(
     options = BarcodeReader.Options(
-        formats = setOf(BarcodeFormat.QR_CODE),
+        formats = setOf(BarcodeReader.Format.QR_CODE),
         tryHarder = true,
         tryRotate = true,
         tryInvert = true,
     )
-}
+)
 
 override fun analyze(image: ImageProxy) {
     try {
@@ -120,6 +120,15 @@ override fun analyze(image: ImageProxy) {
     }
 }
 ```
+
+API notes from the published wrapper: `BarcodeReader.read(ImageProxy)` takes
+the CameraX `YUV_420_888` frame directly (it reads the Y plane + cropRect +
+rotation itself — the manual crop/copy machinery really can go); options are
+one constructor-argument data class; `Format.QR_CODE` is nested inside
+`BarcodeReader` (not a top-level `BarcodeFormat`); results carry `text`,
+`contentType`, `position` — and `lastReadTime` gives the per-call decode time
+in ms, useful to measure the claimed 5–10× while evaluating. Keep
+`com.google.zxing:core` for the still-image path regardless (below).
 
 Keep `com.google.zxing:core` for now regardless: the still-image path
 (`decodeQrFromUri` in `WalletQrScannerModal.kt`, used by "Upload image") and
