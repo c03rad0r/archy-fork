@@ -150,7 +150,9 @@ impl ApiHandler {
         // appears immediately, without a frontend release. The old external UI
         // catalog below is emergency compatibility only; it must never override
         // a healthy signed catalog (Cuprate was invisible for exactly that reason).
-        if let Ok(body) = crate::container::app_catalog::verified_catalog_body(&self.config.data_dir).await {
+        if let Ok(body) =
+            crate::container::app_catalog::verified_catalog_body(&self.config.data_dir).await
+        {
             return Ok(Response::builder()
                 .status(hyper::StatusCode::OK)
                 .header("Content-Type", "application/json")

@@ -207,7 +207,9 @@ pub async fn verified_catalog_body(data_dir: &Path) -> anyhow::Result<String> {
     let raw: serde_json::Value = serde_json::from_str(&body)?;
     match crate::trust::verify_detached(&raw)? {
         crate::trust::SignatureStatus::Verified { anchored: true, .. } => Ok(body),
-        crate::trust::SignatureStatus::Verified { anchored: false, .. } => {
+        crate::trust::SignatureStatus::Verified {
+            anchored: false, ..
+        } => {
             anyhow::bail!("app catalog signer is not anchored to the release root")
         }
         crate::trust::SignatureStatus::Unsigned => anyhow::bail!("app catalog is unsigned"),
@@ -670,7 +672,11 @@ mod tests {
     #[tokio::test]
     async fn verified_catalog_body_rejects_unsigned_cache() {
         let dir = tempfile::tempdir().unwrap();
-        write_cache(dir.path(), r#"{"schema":1,"apps":{"demo":{"version":"1"}}}"#).unwrap();
+        write_cache(
+            dir.path(),
+            r#"{"schema":1,"apps":{"demo":{"version":"1"}}}"#,
+        )
+        .unwrap();
         let err = verified_catalog_body(dir.path()).await.unwrap_err();
         assert!(err.to_string().contains("unsigned"));
     }
