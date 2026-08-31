@@ -54,6 +54,7 @@ step-by-step guides, and some predate the current implementation.
 - [Dual Ecash](dual-ecash-design.md)
 - [Hardware Signer](hardware-signer-design.md)
 - [Manifest Hooks](manifest-hooks-design.md)
+- [Peering & Federation Trust](peering-trust-model.md) — naming/semantics of trust levels vs discovery (#134)
 - [kdump + rasdaemon Troubleshooting](kdump-rasdaemon-design.md) — post-mortem and hardware-error capture on nodes (#144)
 - [Meshroller Integration](meshroller-integration-design.md)
 - [Nostr Git Source Hosting](nostr-git-source-hosting.md)
