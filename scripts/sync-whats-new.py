@@ -67,9 +67,53 @@ def undated_versions():
     return found
 
 
-def existing_versions():
-    text = MODAL.read_text()
-    return set(re.findall(r"<!-- (v\d+\.\d+\.\d+\S*) -->", text))
+def ordered_versions():
+    """Return modal versions in display order (top to bottom)."""
+    return re.findall(r"<!-- (v\d+\.\d+\.\d+\S*) -->", MODAL.read_text())
+
+
+def version_key(version):
+    match = re.match(r"v(\d+)\.(\d+)\.(\d+)", version)
+    return tuple(map(int, match.groups()))
+
+
+def sort_modal_blocks():
+    """Sort complete release-note blocks newest-first, preserving gaps."""
+    lines = MODAL.read_text().splitlines(keepends=True)
+    marker = re.compile(r"^\s*<!-- (v\d+\.\d+\.\d+\S*) -->\s*$")
+    blocks = []
+
+    for start, line in enumerate(lines):
+        match = marker.match(line)
+        if not match:
+            continue
+        depth = 0
+        opened = False
+        for index in range(start + 1, len(lines)):
+            for tag in re.findall(r"</?div\b[^>]*>", lines[index]):
+                if tag.startswith("</"):
+                    depth -= 1
+                else:
+                    depth += 1
+                    opened = True
+            if opened and depth == 0:
+                blocks.append((start, index + 1, match.group(1), lines[start:index + 1]))
+                break
+        else:
+            raise RuntimeError(f"unclosed What's New block for {match.group(1)}")
+
+    sorted_segments = [b[3] for b in sorted(blocks, key=lambda b: version_key(b[2]), reverse=True)]
+    output = []
+    cursor = 0
+    for (start, end, _version, _segment), replacement in zip(blocks, sorted_segments):
+        output.extend(lines[cursor:start])
+        output.extend(replacement)
+        cursor = end
+    output.extend(lines[cursor:])
+    changed = output != lines
+    if changed:
+        MODAL.write_text("".join(output))
+    return changed
 
 
 def to_html(text):
@@ -113,36 +157,44 @@ def main():
         return 1
 
     entries = parse_changelog()
-    have = existing_versions()
+    displayed = ordered_versions()
+    have = set(displayed)
     missing = [e for e in entries if e["ver"] not in have]
+    expected_order = sorted(displayed, key=version_key, reverse=True)
+    out_of_order = displayed != expected_order
 
-    if not missing:
+    if not missing and not out_of_order:
         print("What's New modal is in sync with CHANGELOG.md "
-              f"({len(entries)} changelog versions, all present).")
+              f"({len(entries)} changelog versions, all present and newest-first).")
         return 0
 
     names = ", ".join(e["ver"] for e in missing)
     if check:
-        print("FAIL: these CHANGELOG versions have no block in the Settings "
-              f"What's New modal: {names}", file=sys.stderr)
+        if missing:
+            print("FAIL: these CHANGELOG versions have no block in the Settings "
+                  f"What's New modal: {names}", file=sys.stderr)
+        if out_of_order:
+            print("FAIL: What's New entries are not newest-first; the modal currently "
+                  f"opens at {displayed[0]} instead of {expected_order[0]}", file=sys.stderr)
         print("Run: python3 scripts/sync-whats-new.py", file=sys.stderr)
         return 1
 
-    # Insert missing blocks newest-first, immediately before the newest existing
-    # block marker (the first "<!-- v... -->" line in the file).
-    lines = MODAL.read_text().splitlines(keepends=True)
-    marker = re.compile(r"^\s*<!-- v\d+\.\d+\.\d+\S* -->\s*$")
-    idx = next((i for i, ln in enumerate(lines) if marker.match(ln)), None)
-    if idx is None:
-        print("ERROR: could not find an existing version block marker in the modal.",
-              file=sys.stderr)
-        return 2
+    if missing:
+        # Insert before the first block; the full sort below makes this safe even
+        # when a historical hand-written block was accidentally left at the top.
+        lines = MODAL.read_text().splitlines(keepends=True)
+        marker = re.compile(r"^\s*<!-- v\d+\.\d+\.\d+\S* -->\s*$")
+        idx = next((i for i, ln in enumerate(lines) if marker.match(ln)), None)
+        if idx is None:
+            print("ERROR: could not find an existing version block marker in the modal.",
+                  file=sys.stderr)
+            return 2
+        lines.insert(idx, "".join(render_block(e) for e in missing))
+        MODAL.write_text("".join(lines))
+        print(f"Inserted {len(missing)} block(s): {names}")
 
-    # newest-first: sort missing by their order in `entries` (already newest-first)
-    block_text = "".join(render_block(e) for e in missing)
-    lines.insert(idx, block_text)
-    MODAL.write_text("".join(lines))
-    print(f"Inserted {len(missing)} block(s): {names}")
+    if sort_modal_blocks():
+        print("Sorted What's New blocks newest-first.")
     return 0
 
 

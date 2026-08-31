@@ -362,42 +362,6 @@ init()
               </button>
             </div>
             <div class="overflow-y-auto flex-1 min-h-0 space-y-6 pr-1">
-              <!-- v1.7.107-alpha -->
-              <div>
-                <div class="flex items-center gap-2 mb-3">
-                  <span class="text-xs font-mono px-2 py-0.5 rounded bg-orange-500/20 text-orange-300">v1.7.107-alpha</span>
-                  <span class="text-xs text-white/40">July 20, 2026</span>
-                </div>
-                <div class="space-y-3 text-sm text-white/80 pl-3 border-l border-white/10">
-                  <p>Wi-Fi setup now heals itself on older nodes. Some nodes set up before a mid-year fix couldn't connect to a Wi-Fi network from the screen — it failed with a permissions error — because the piece that lets the node manage networking on your behalf was missing. Nodes now put that piece in place automatically on startup, so "scan, pick a network, type the password, connect" works without reinstalling.</p>
-                  <p>Your node rejoins the mesh faster after an update. Applying this update briefly restarts the mesh service, and previously a node could sit disconnected from other nodes for up to five minutes before it retried. It now notices the restart and reconnects within seconds.</p>
-                  <p>Behind the scenes: fixed the installer image build so it no longer stops on a component that was removed from the product, and so it correctly includes the private relay it was meant to bundle — two separate faults that had been failing the build.</p>
-                </div>
-              </div>
-              <!-- v1.7.51-alpha -->
-              <div>
-                <div class="flex items-center gap-2 mb-3">
-                  <span class="text-xs font-mono px-2 py-0.5 rounded bg-orange-500/20 text-orange-300">v1.7.51-alpha</span>
-                  <span class="text-xs text-white/40">April 30, 2026</span>
-                </div>
-                <div class="space-y-3 text-sm text-white/80 pl-3 border-l border-white/10">
-                  <p>Stack installs now adopt containers that already exist instead of failing on them — a repair or reinstall over leftover containers completes, and the adopted container's readiness is waited on like any fresh start.</p>
-                  <p>Failed installs come with evidence: the install path waits for its containers, and when one doesn't become healthy it captures that container's logs, so the error on screen names the real culprit instead of a bare timeout.</p>
-                  <p>Bitcoin RPC bindings are ensured as part of install, and the startup self-heal path gained additional ground for already-deployed nodes.</p>
-                </div>
-              </div>
-              <!-- v1.7.50-alpha -->
-              <div>
-                <div class="flex items-center gap-2 mb-3">
-                  <span class="text-xs font-mono px-2 py-0.5 rounded bg-orange-500/20 text-orange-300">v1.7.50-alpha</span>
-                  <span class="text-xs text-white/40">April 30, 2026</span>
-                </div>
-                <div class="space-y-3 text-sm text-white/80 pl-3 border-l border-white/10">
-                  <p>The OTA bridge older nodes needed: deployed binaries only knew how to apply two artifacts (the backend binary and the frontend archive), so the scripts, app specs and docker assets newer releases carry never reached them. This release packs those payloads inside the frontend tarball — the one channel old binaries do apply — and the new backend promotes them into /opt once it starts.</p>
-                  <p>Runtime payloads are staged into timestamped directories and promoted atomically; a failed extraction cleans up its staging area instead of leaving half-written state for the next update to trip over.</p>
-                  <p>This is the release that un-sticks the fleet's update pipeline: from here on, an OTA can carry more than the two artifacts, and app installs on updated nodes use the specs that match their backend.</p>
-                </div>
-              </div>
               <!-- v1.8.5-alpha -->
               <div>
                 <div class="flex items-center gap-2 mb-3">
@@ -550,7 +514,6 @@ init()
                   <p>Known gaps, unchanged from the last release: three voice-assistant ports remain open without authentication. Non-browser clients — phone apps for Vaultwarden, Home Assistant or Jellyfin, and git over the web — meet the login page and need an access token. The 5x real-node lifecycle gate was not run for this release.</p>
                 </div>
               </div>
-
               <!-- v1.7.125-alpha -->
               <div>
                 <div class="flex items-center gap-2 mb-3">
@@ -598,6 +561,7 @@ init()
                   <p>Known gaps, disclosed rather than buried: non-browser clients — phone apps for Vaultwarden, Home Assistant or Jellyfin, and git over the web — meet the login page and need an access token. Three voice-assistant ports remain open without authentication; the correct fix puts them on a private network with the assistant. The 5x real-node lifecycle gate was not run for this release.</p>
                 </div>
               </div>
+
               <!-- v1.7.122-alpha -->
               <div>
                 <div class="flex items-center gap-2 mb-3">
@@ -860,6 +824,18 @@ init()
                   <p>The TV screen now fits your television. On a large or 4K TV the interface rendered tiny with no way to zoom on a keyboard-less screen; it now sizes itself to a comfortable, readable scale automatically (and small laptop panels are left unchanged).</p>
                   <p>More TV-screen polish: the built-in assistant shows its dark theme instead of bright white panels, the on-screen hint for switching between the kiosk and a terminal now points at the right keys, the welcome logo no longer occasionally renders as garbled characters, and an accidental tap of the power button no longer shuts the node down — hold it to power off on purpose.</p>
                   <p>Behind the scenes: fixed the installer image build so it no longer stops on a component that was removed from the product, and so it correctly includes the private relay it was meant to bundle.</p>
+                </div>
+              </div>
+              <!-- v1.7.107-alpha -->
+              <div>
+                <div class="flex items-center gap-2 mb-3">
+                  <span class="text-xs font-mono px-2 py-0.5 rounded bg-orange-500/20 text-orange-300">v1.7.107-alpha</span>
+                  <span class="text-xs text-white/40">July 20, 2026</span>
+                </div>
+                <div class="space-y-3 text-sm text-white/80 pl-3 border-l border-white/10">
+                  <p>Wi-Fi setup now heals itself on older nodes. Some nodes set up before a mid-year fix couldn't connect to a Wi-Fi network from the screen — it failed with a permissions error — because the piece that lets the node manage networking on your behalf was missing. Nodes now put that piece in place automatically on startup, so "scan, pick a network, type the password, connect" works without reinstalling.</p>
+                  <p>Your node rejoins the mesh faster after an update. Applying this update briefly restarts the mesh service, and previously a node could sit disconnected from other nodes for up to five minutes before it retried. It now notices the restart and reconnects within seconds.</p>
+                  <p>Behind the scenes: fixed the installer image build so it no longer stops on a component that was removed from the product, and so it correctly includes the private relay it was meant to bundle — two separate faults that had been failing the build.</p>
                 </div>
               </div>
               <!-- v1.7.106-alpha -->
@@ -1579,6 +1555,30 @@ init()
                 <div class="space-y-3 text-sm text-white/80 pl-3 border-l border-white/10">
                   <p>Tailscale now launches its local installed web UI on port 8240 and starts tailscaled before tailscale web, fixing unreachable installs after container creation.</p>
                   <p>Grafana lifecycle actions repair missing rootless host listeners on port 3000, and Debian 13 install paths pull security updates from trixie-security during image/install creation.</p>
+                </div>
+              </div>
+              <!-- v1.7.51-alpha -->
+              <div>
+                <div class="flex items-center gap-2 mb-3">
+                  <span class="text-xs font-mono px-2 py-0.5 rounded bg-orange-500/20 text-orange-300">v1.7.51-alpha</span>
+                  <span class="text-xs text-white/40">April 30, 2026</span>
+                </div>
+                <div class="space-y-3 text-sm text-white/80 pl-3 border-l border-white/10">
+                  <p>Stack installs now adopt containers that already exist instead of failing on them — a repair or reinstall over leftover containers completes, and the adopted container's readiness is waited on like any fresh start.</p>
+                  <p>Failed installs come with evidence: the install path waits for its containers, and when one doesn't become healthy it captures that container's logs, so the error on screen names the real culprit instead of a bare timeout.</p>
+                  <p>Bitcoin RPC bindings are ensured as part of install, and the startup self-heal path gained additional ground for already-deployed nodes.</p>
+                </div>
+              </div>
+              <!-- v1.7.50-alpha -->
+              <div>
+                <div class="flex items-center gap-2 mb-3">
+                  <span class="text-xs font-mono px-2 py-0.5 rounded bg-orange-500/20 text-orange-300">v1.7.50-alpha</span>
+                  <span class="text-xs text-white/40">April 30, 2026</span>
+                </div>
+                <div class="space-y-3 text-sm text-white/80 pl-3 border-l border-white/10">
+                  <p>The OTA bridge older nodes needed: deployed binaries only knew how to apply two artifacts (the backend binary and the frontend archive), so the scripts, app specs and docker assets newer releases carry never reached them. This release packs those payloads inside the frontend tarball — the one channel old binaries do apply — and the new backend promotes them into /opt once it starts.</p>
+                  <p>Runtime payloads are staged into timestamped directories and promoted atomically; a failed extraction cleans up its staging area instead of leaving half-written state for the next update to trip over.</p>
+                  <p>This is the release that un-sticks the fleet's update pipeline: from here on, an OTA can carry more than the two artifacts, and app installs on updated nodes use the specs that match their backend.</p>
                 </div>
               </div>
               <!-- v1.7.49-alpha -->
