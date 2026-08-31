@@ -261,15 +261,19 @@ content = open('$CHANGELOG_FILE').read()
 pattern = r'## .*?${VERSION}.*?\n(.*?)(?=\n## |\Z)'
 m = re.search(pattern, content, re.DOTALL)
 if m:
-    for line in m.group(1).strip().split('\n')[:10]:
+    for line in m.group(1).splitlines():
         line = line.strip()
-        if line:
-            print(line)
+        if not line.startswith('- '):
+            continue
+        text = line[2:].strip()
+        if text.lower().startswith('validation '):
+            continue
+        print(text)
 " 2>/dev/null || echo "")
     if [ -n "$ENTRIES" ]; then
         CHANGELOG=$(echo "$ENTRIES" | python3 -c "
 import sys, json
-lines = [l.strip().lstrip('- ') for l in sys.stdin if l.strip()]
+lines = [l.strip() for l in sys.stdin if l.strip()]
 print(json.dumps(lines))
 ")
     fi
