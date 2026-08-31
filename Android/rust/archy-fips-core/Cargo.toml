@@ -37,6 +37,35 @@ tracing = "0.1"
 # fcntl: force the VpnService TUN fd into blocking mode (see mesh::start).
 libc = "0.2"
 
+# ── Companion backup (#128) ───────────────────────────────────────────────
+# ADR-005 envelope: the SAME crates and blob layout as the node's backup code
+# (core/archipelago/src/backup/identity.rs) — Argon2id KDF + ChaCha20-Poly1305
+# AEAD — applied to the companion's own JSON payload. Do not diverge from
+# those parameters: a companion backup and a node backup must decrypt with
+# the same code path on either side.
+argon2 = "0.5"
+chacha20poly1305 = "0.10"
+base64 = "0.22"
+
+# ── NIP-46 remote signer (#139) ───────────────────────────────────────────
+# BIP340 schnorr signing + secp256k1 ECDH (NIP-44/NIP-04 conversation keys).
+# Audited libsecp256k1 via cc; cargo-ndk provides the NDK clang on Android.
+secp256k1 = "0.29"
+# NIP-44 v2: HKDF-SHA256 (conversation/message keys) + HMAC-SHA256 (MAC).
+sha2 = "0.10"
+hmac = "0.12"
+hkdf = "0.12"
+# NIP-44 v2 stream cipher (raw ChaCha20, RFC 8439 — NOT the AEAD).
+chacha20 = "0.9"
+# NIP-04 fallback (deprecated in the spec but still sent by real clients):
+# AES-256-CBC, key = raw ECDH x-coordinate.
+aes = "0.8"
+cbc = { version = "0.1", features = ["alloc"] }
+# npub/nsec (bech32, BIP173 variant — NOT Bech32m).
+bech32 = "0.11"
+# nostrconnect:// URI parsing (repeated relay params + percent-decoding).
+url = "2.5"
+
 # The JNI surface only exists on Android; host builds skip it and drive the
 # mesh module directly (tests).
 [target.'cfg(target_os = "android")'.dependencies]
