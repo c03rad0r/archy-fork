@@ -101,6 +101,7 @@ import com.archipelago.app.fips.FipsManager
 import com.archipelago.app.ui.components.GestureHintOverlay
 import com.archipelago.app.ui.components.MeshLoadingScreen
 import com.archipelago.app.ui.components.NESMenu
+import com.archipelago.app.ui.components.SignerLaunch
 import com.archipelago.app.ui.components.QrScannerOverlay
 import com.archipelago.app.ui.components.SlidingLoader
 import com.archipelago.app.ui.components.WalletQrScannerModal
@@ -599,10 +600,6 @@ fun WebViewScreen(
     onRemoteKeyboard: () -> Unit = {},
     // Opens the phone-to-phone Mesh Party screen; null hides its hub card.
     onMeshParty: (() -> Unit)? = null,
-    // Backup & Restore (companion 0.5.28, #128); null hides its hub card.
-    onBackupRestore: (() -> Unit)? = null,
-    // Remote Signer (companion 0.5.28, #139); null hides its hub card.
-    onSigner: (() -> Unit)? = null,
     // Stored password for this server (from QR pairing or manual entry). When
     // non-blank, the login page is auto-filled and submitted — the one-step
     // demo flow from docs/companion-pairing-qr.md.
@@ -1377,6 +1374,16 @@ fun WebViewScreen(
         // Hub menu overlay — opened by the three-finger hold, drawn above
         // everything (also reachable from the error screen, where switching
         // servers is exactly what's needed).
+        // Remote-signer deep link: route to the session and pop the hub open
+        // on its signer sub-page (the request itself is consumed by NESMenu).
+        var signerPairRequest by remember { mutableStateOf<String?>(null) }
+        val signerLaunch by SignerLaunch.pendingUri.collectAsState()
+        LaunchedEffect(signerLaunch) {
+            val uri = signerLaunch ?: return@LaunchedEffect
+            signerPairRequest = uri
+            SignerLaunch.pendingUri.value = null
+            showHubMenu = true
+        }
         NESMenu(
             visible = showHubMenu,
             servers = savedServers,
@@ -1431,8 +1438,8 @@ fun WebViewScreen(
             onKeyboard = { showHubMenu = false; onRemoteKeyboard() },
             onBackToWebView = { showHubMenu = false },
             onMeshParty = onMeshParty?.let { open -> { showHubMenu = false; open() } },
-            onBackupRestore = onBackupRestore?.let { open -> { showHubMenu = false; open() } },
-            onSigner = onSigner?.let { open -> { showHubMenu = false; open() } },
+            signerPairRequest = signerPairRequest,
+            onSignerPairHandled = { signerPairRequest = null },
         )
 
         // Pairing-QR scan launched from the menu's Nodes page; the menu stays

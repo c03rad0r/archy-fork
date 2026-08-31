@@ -50,10 +50,11 @@ The encrypted payload is the companion's own JSON:
   wrong-passphrase, tampered-blob, node-shape envelopes, and salt/nonce
   freshness.
 - **Payload/merge:** `BackupManager` (`Android/app/src/main/java/com/archipelago/app/data/BackupManager.kt`).
-- **UI:** hub menu (three-finger) → **Backup & Restore** → SAF file picker
-  (`CreateDocument` for export, `OpenDocument` for import), passphrase fields,
-  verified-backup preview, result summary. The suggested export name is
-  `archy-companion-backup-YYYYMMDD-HHmmss.json`.
+- **UI:** a hub sub-page (`ui/components/BackupSection.kt`, opened from the
+  three-finger hub menu like Nodes/FIPS) — SAF file picker
+  (`CreateDocument` for export, `OpenDocument` for import), passphrase
+  fields, verified-backup preview, result summary. The suggested export
+  name is `archy-companion-backup-YYYYMMDD-HHmmss.json`.
 
 ## Restore semantics — never silently destructive
 

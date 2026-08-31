@@ -99,21 +99,16 @@ object BunkerManager {
 
     private val session = AtomicReference<Session?>(null)
 
-    fun refreshState(context: Context) {
+    /** Refresh Idle/NoKey state (suspend; call from a coroutine — DataStore reads hit disk). */
+    suspend fun refreshState(context: Context) {
         if (!NativeCore.available) {
             _state.value = SignerState.Unavailable
             return
         }
         if (session.get() != null) return
-        // Called from a LaunchedEffect (IO dispatcher); DataStore read is quick
-        // but still a disk access — never on Main.
-        kotlinx.coroutines.runBlocking {
-            withContext(Dispatchers.IO) {
-                val prefs = NostrSignerPreferences(context.applicationContext)
-                _state.value =
-                    if (prefs.secret() == null) SignerState.NoKey else SignerState.Idle
-            }
-        }
+        val prefs = NostrSignerPreferences(context.applicationContext)
+        _state.value =
+            if (prefs.secret() == null) SignerState.NoKey else SignerState.Idle
     }
 
     /**

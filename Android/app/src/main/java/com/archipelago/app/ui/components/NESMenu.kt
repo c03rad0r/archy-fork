@@ -108,24 +108,62 @@ fun NESMenu(
     onKeyboard: () -> Unit,
     onBackToWebView: (() -> Unit)? = null,
     onMeshParty: (() -> Unit)? = null,
-    onBackupRestore: (() -> Unit)? = null,
-    onSigner: (() -> Unit)? = null,
+    // Remote-signer pairing request (nostrconnect://… deep link, or a scan):
+    // non-null opens the hub on the signer sub-page and pairs. Consumed once
+    // the signer section hands it back via [onSignerPairHandled].
+    signerPairRequest: String? = null,
+    onSignerPairHandled: () -> Unit = {},
 ) {
+    // Pairing state is latched here (not passed straight through) so the
+    // source can clear itself while the request stays alive until consumed.
+    var pendingSignerPair by remember { mutableStateOf<String?>(null) }
+    var signerScan by remember { mutableStateOf(false) }
+    LaunchedEffect(signerPairRequest) {
+        if (signerPairRequest != null) pendingSignerPair = signerPairRequest
+    }
+
     AnimatedVisibility(visible = visible, enter = fadeIn(), exit = fadeOut()) {
         // Contained hub overlay: a centred glass panel (not full-screen) that
-        // holds the card page and its sub-pages (Nodes, FIPS) and scrolls
-        // inside its own bounds when content is tall. Tapping the dimmed
-        // backdrop dismisses.
+        // holds the card page and its sub-pages (Nodes, FIPS, Backup, Signer)
+        // and scrolls inside its own bounds when content is tall. Tapping the
+        // dimmed backdrop dismisses.
         Box(
             Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.7f))
                 .clickable(indication = null, interactionSource = remember { MutableInteractionSource() }) { onDismiss() },
             contentAlignment = Alignment.Center,
         ) {
             AnimatedVisibility(visible = visible, enter = fadeIn() + scaleIn(initialScale = 0.95f), exit = fadeOut() + scaleOut(targetScale = 0.95f)) {
-                MenuPanel(servers, activeServer, onDismiss, onSelectServer, onAddServer, onScanQr, onEditServer, onRemoveServer, onRemote, onKeyboard, onBackToWebView, onMeshParty, onBackupRestore, onSigner)
+                MenuPanel(
+                    servers, activeServer, onDismiss, onSelectServer, onAddServer, onScanQr,
+                    onEditServer, onRemoveServer, onRemote, onKeyboard, onBackToWebView, onMeshParty,
+                    signerPairUri = pendingSignerPair,
+                    onSignerScan = { signerScan = true },
+                    onSignerPairHandled = {
+                        pendingSignerPair = null
+                        onSignerPairHandled()
+                    },
+                )
             }
         }
     }
+
+    // Pairing-QR scanner for the signer sub-page — a full-screen glass
+    // modal hosted OUTSIDE the hub panel so it isn't clipped to the panel's
+    // bounds (same layering the pairing scanner gets from WebViewScreen).
+    QrGlassModal(
+        visible = signerScan && visible,
+        title = "Scan pairing QR",
+        status = null,
+        idleHint = "Point at the nostrconnect QR the node or client shows",
+        permissionRationale = "Camera access is needed to scan the pairing code",
+        onDismiss = { signerScan = false },
+        onDecoded = { text ->
+            if (text.startsWith("nostrconnect://")) {
+                signerScan = false
+                pendingSignerPair = text
+            }
+        },
+    )
 }
 
 @Composable
@@ -142,8 +180,9 @@ private fun MenuPanel(
     onKeyboard: () -> Unit,
     onBackToWebView: (() -> Unit)?,
     onMeshParty: (() -> Unit)?,
-    onBackupRestore: (() -> Unit)?,
-    onSigner: (() -> Unit)?,
+    signerPairUri: String?,
+    onSignerScan: () -> Unit,
+    onSignerPairHandled: () -> Unit,
 ) {
     var showAdd by remember { mutableStateOf(false) }
     // The saved server being edited, or null when adding a new one.
@@ -182,9 +221,10 @@ private fun MenuPanel(
             .widthIn(max = 420.dp)
             .fillMaxWidth()
             .padding(horizontal = 20.dp)
-            // Cap height just short of the full screen; the panel wraps short
-            // content and only scrolls in the rare case it outgrows this.
-            .heightIn(max = (LocalConfiguration.current.screenHeightDp * 0.92f).dp)
+            // Cap height at 70% of the screen — a ~15% breathing margin top
+            // and bottom — the panel wraps short content and scrolls inside
+            // its own bounds when a sub-page outgrows this.
+            .heightIn(max = (LocalConfiguration.current.screenHeightDp * 0.70f).dp)
             .clip(RoundedCornerShape(PANEL_R))
             .background(PanelBg.copy(alpha = 0.86f))
             .border(1.dp, PanelBorder, RoundedCornerShape(PANEL_R))
@@ -207,7 +247,13 @@ private fun MenuPanel(
                     IconRound(Icons.AutoMirrored.Filled.ArrowBack, "Back") { resetForm(); page = HubPage.HUB }
                     Spacer(Modifier.width(12.dp))
                     Text(
-                        if (page == HubPage.NODES) "Nodes" else "FIPS Mesh",
+                        when (page) {
+                            HubPage.NODES -> "Nodes"
+                            HubPage.FIPS -> "FIPS Mesh"
+                            HubPage.BACKUP -> "Backup & Restore"
+                            HubPage.SIGNER -> "Remote Signer"
+                            HubPage.HUB -> "Menu"
+                        },
                         color = TextPrimary, fontSize = 20.sp, fontWeight = FontWeight.SemiBold, letterSpacing = 1.sp,
                     )
                 }
@@ -241,14 +287,10 @@ private fun MenuPanel(
                 }
                 // Backup & Restore (#128): the phone side of losing your phone
                 // or wiping it to cross a border — encrypted export file, no cloud.
-                if (onBackupRestore != null) {
-                    HubCard(Icons.Default.SettingsBackupRestore, "Backup & Restore", "Encrypted export for a wiped phone") { onBackupRestore() }
-                }
+                HubCard(Icons.Default.SettingsBackupRestore, "Backup & Restore", "Encrypted export for a wiped phone") { page = HubPage.BACKUP }
                 // Remote Signer (#139): hold a nostr key on the phone and
                 // approve/deny remote signature requests (NIP-46).
-                if (onSigner != null) {
-                    HubCard(Icons.Default.Key, "Remote Signer", "Approve signatures for your node") { onSigner() }
-                }
+                HubCard(Icons.Default.Key, "Remote Signer", "Approve signatures for your node") { page = HubPage.SIGNER }
                 // Dark/Classic style lives on the remote/keyboard screen next to
                 // the settings button — not here.
 
@@ -407,11 +449,23 @@ private fun MenuPanel(
             HubPage.FIPS -> {
                 FipsSection(embedded = true)
             }
+
+            HubPage.BACKUP -> {
+                BackupSection()
+            }
+
+            HubPage.SIGNER -> {
+                SignerSection(
+                    pairUri = signerPairUri,
+                    onScan = onSignerScan,
+                    onPairHandled = onSignerPairHandled,
+                )
+            }
         }
     }
 }
 
-private enum class HubPage { HUB, NODES, FIPS }
+private enum class HubPage { HUB, NODES, FIPS, BACKUP, SIGNER }
 
 /** Big tappable destination card for the hub page: icon + title + subtitle. */
 @Composable
@@ -639,7 +693,7 @@ private fun MenuItem(
 
 /** Glass text field with centered input text. */
 @Composable
-private fun GlassField(
+internal fun GlassField(
     value: String,
     onValueChange: (String) -> Unit,
     placeholder: String,

@@ -50,9 +50,12 @@ still spoken by real clients); all sending is NIP-44 v2.
 - **JNI:** `com.archipelago.app.NativeCore` (same .so as the FIPS mesh).
 - **Session:** `nostr/BunkerManager.kt` — OkHttp WebSocket relay client,
   JSON-RPC dispatch, approve/deny state.
-- **UI:** `ui/screens/SignerScreen.kt` — key setup, npub/nsec display,
-  pairing scan, session status, the approve/deny card.
-- **Deep link:** `nostrconnect://` intent filter → SignerScreen.
+- **UI:** a hub sub-page (`ui/components/SignerSection.kt`, opened from the
+  three-finger hub menu like Nodes/FIPS) — key setup, npub/nsec display,
+  pairing scan, session status, the approve/deny card. The full-screen
+  pairing scanner (`QrGlassModal`) is hosted by NESMenu so it isn't clipped
+  to the panel's bounds. The `nostrconnect://` deep link routes to the
+  session and pops the hub open on the signer sub-page (`SignerLaunch`).
 
 ## Security notes (conscious deviations, reviewed)
 
