@@ -9,6 +9,8 @@
 #   C. FM-guards                 — the concrete failure modes that have bitten the
 #                                  fleet: port-drift (FM8), secret-completeness (FM2),
 #                                  orphaned container states (FM9), OTA wedge (FM12)
+#   D. Host capture (#144)        — kdump + rasdaemon baseline: crash dumps configured
+#                                  and reserved, hang policy live, ECC recording running
 #
 # Everything here is READ-ONLY: no install/stop/start/uninstall, no service bounce.
 # Safe to run against a live production node. It is the per-boot building block the
@@ -226,6 +228,43 @@ section_c() {
   fi
 }
 
+# ══ Section D — host capture (#144): kdump + rasdaemon ═══════════════════════
+section_d() {
+  echo
+  echo "== D. Host capture — crash + hardware-error evidence (#144) =="
+  if [[ "$ARCHY_LOCAL" != "1" ]]; then
+    record WARN "kdump + rasdaemon baseline" "remote node — host checks skipped"
+    return
+  fi
+  # D1. kdump enabled in config (image bakes it in; OTA host fixups converge)
+  if grep -qE '^USE_KDUMP=.?1' /etc/default/kdump-tools 2>/dev/null; then
+    record PASS "kdump-tools configured" "USE_KDUMP=1, dumps to /var/crash"
+  else
+    record FAIL "kdump-tools configured" "/etc/default/kdump-tools missing USE_KDUMP=1 — host fixup didn't land"
+  fi
+  # D2. crashkernel reservation — memory is reserved at BOOT, so a node that
+  # took the OTA fixup but hasn't rebooted yet is WARN, not FAIL.
+  if grep -q 'crashkernel=' /proc/cmdline 2>/dev/null; then
+    record PASS "crashkernel reserved" "$(grep -oE 'crashkernel=[^ ]+' /proc/cmdline | head -1)"
+  elif grep -q 'crashkernel=' /etc/default/grub 2>/dev/null; then
+    record WARN "crashkernel reserved" "written to GRUB — applies on next reboot"
+  else
+    record FAIL "crashkernel reserved" "absent from /proc/cmdline AND /etc/default/grub"
+  fi
+  # D3. hang/panic capture policy — runtime-settable, expected immediately
+  if [[ "$(cat /proc/sys/kernel/hung_task_panic 2>/dev/null)" == "1" ]]; then
+    record PASS "hang-capture policy live" "kernel.hung_task_panic=1"
+  else
+    record FAIL "hang-capture policy live" "kernel.hung_task_panic!=1 — sysctl drop-in not applied"
+  fi
+  # D4. rasdaemon recording hardware errors (ECC/AER events → sqlite)
+  if systemctl is-active --quiet rasdaemon 2>/dev/null; then
+    record PASS "rasdaemon active" "hardware-error events recorded to /var/lib/rasdaemon"
+  else
+    record FAIL "rasdaemon active" "service not running — package missing or host fixup failed"
+  fi
+}
+
 # ── run ────────────────────────────────────────────────────────────────────────
 echo "=============================================================="
 echo " OS-wide audit — ${BASE_URL}  ($(date '+%Y-%m-%d %H:%M:%S'))"
@@ -237,6 +276,9 @@ if (( FAIL == 0 )) || [[ -n "$SESSION" ]]; then
   section_b
   section_c
 fi
+# Host-capture baseline is independent of RPC health: a wedged backend must
+# not mask that the node also stopped capturing evidence.
+section_d
 
 echo
 echo "=============================================================="

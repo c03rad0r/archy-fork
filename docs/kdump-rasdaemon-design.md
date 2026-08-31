@@ -1,6 +1,10 @@
 # kdump + rasdaemon — post-mortem and hardware-error capture (#144)
 
-Status: DRAFT for review
+Status: IMPLEMENTED (phase 1) — decisions approved 2026-08-30: hang capture ON,
+crashkernel=256M, ship the backfill with this release, phase-2 UI deferred.
+Delivery: image-recipe (Dockerfile.rootfs, auto-install.sh cmdline) +
+`core/archipelago/src/host_fixups.rs` (existing nodes, see
+docs/system-level-ota-design.md) + `tests/lifecycle/os-audit.sh` section D.
 Owner: node image (image-recipe) + lifecycle gate
 Issue: #144 — "Configure kdump and rasdaemon for troubleshooting"
 

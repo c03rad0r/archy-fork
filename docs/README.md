@@ -56,6 +56,7 @@ step-by-step guides, and some predate the current implementation.
 - [Manifest Hooks](manifest-hooks-design.md)
 - [Peering & Federation Trust](peering-trust-model.md) — naming/semantics of trust levels vs discovery (#134)
 - [kdump + rasdaemon Troubleshooting](kdump-rasdaemon-design.md) — post-mortem and hardware-error capture on nodes (#144)
+- [System-Level OTA](system-level-ota-design.md) — how host-level packages/config reach already-deployed nodes
 - [Meshroller Integration](meshroller-integration-design.md)
 - [Nostr Git Source Hosting](nostr-git-source-hosting.md)
 - [Nostr Identity Import](nostr-identity-import-plan.md) · [Nostr Signer Login (research)](nostr-signer-login-research.md)

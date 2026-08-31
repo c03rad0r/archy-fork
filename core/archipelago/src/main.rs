@@ -55,6 +55,7 @@ mod entropy;
 mod federation;
 mod fips;
 mod health_monitor;
+mod host_fixups;
 mod host_ip;
 mod identity;
 mod identity_manager;
@@ -434,6 +435,12 @@ async fn main() -> Result<()> {
     // TV input: gamepad→keyboard bridge so controllers work inside every app
     // iframe on kiosk nodes (docs/tv-input-iframe-apps.md).
     tokio::spawn(bootstrap::ensure_gamepad_keys());
+
+    // Host-level fixups (#144 + docs/system-level-ota-design.md): kdump +
+    // rasdaemon — crash/hardware-error capture delivered to already-deployed
+    // nodes over the signed binary OTA. Idempotent, non-fatal, background;
+    // the crashkernel= GRUB edit lands on the next reboot.
+    tokio::spawn(host_fixups::ensure_host_fixups());
 
     // Mesh access: mirror IPv4-published app ports onto [::] so direct-port
     // app URLs (http://[<fips0 ULA>]:<port>) work from the companion.
