@@ -1,8 +1,11 @@
 <template>
   <!-- Companion app banner — same format as the featured app banner, with a
        phone mockup rising out of the right edge. Clicking anywhere (or the
-       Install button) opens the Remote Companion download/pairing modal. -->
+       Install button) opens the Remote Companion download/pairing modal.
+       Not rendered at all inside the companion app's WebView: pitching
+       "install the companion" to someone already in it is noise (#61). -->
   <div
+    v-if="showPitch"
     class="featured-banner companion-banner glass-card mb-8 relative overflow-hidden cursor-pointer"
     @click="openCompanionIntro()"
   >
@@ -41,7 +44,11 @@
 </template>
 
 <script setup lang="ts">
+import { computed } from 'vue'
+import { isCompanionApp } from '@/utils/openExternal'
 import { openCompanionIntro } from '@/composables/useCompanionIntro'
+
+const showPitch = computed(() => !isCompanionApp())
 </script>
 
 <style scoped>

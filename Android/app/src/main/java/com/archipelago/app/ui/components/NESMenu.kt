@@ -31,6 +31,8 @@ import androidx.compose.material.icons.filled.Dns
 import androidx.compose.material.icons.filled.Groups
 import androidx.compose.material.icons.filled.Keyboard
 import androidx.compose.material.icons.filled.RestartAlt
+import androidx.compose.material.icons.filled.SettingsBackupRestore
+import androidx.compose.material.icons.filled.Key
 import androidx.compose.material.icons.filled.SportsEsports
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -106,22 +108,62 @@ fun NESMenu(
     onKeyboard: () -> Unit,
     onBackToWebView: (() -> Unit)? = null,
     onMeshParty: (() -> Unit)? = null,
+    // Remote-signer pairing request (nostrconnect://… deep link, or a scan):
+    // non-null opens the hub on the signer sub-page and pairs. Consumed once
+    // the signer section hands it back via [onSignerPairHandled].
+    signerPairRequest: String? = null,
+    onSignerPairHandled: () -> Unit = {},
 ) {
+    // Pairing state is latched here (not passed straight through) so the
+    // source can clear itself while the request stays alive until consumed.
+    var pendingSignerPair by remember { mutableStateOf<String?>(null) }
+    var signerScan by remember { mutableStateOf(false) }
+    LaunchedEffect(signerPairRequest) {
+        if (signerPairRequest != null) pendingSignerPair = signerPairRequest
+    }
+
     AnimatedVisibility(visible = visible, enter = fadeIn(), exit = fadeOut()) {
         // Contained hub overlay: a centred glass panel (not full-screen) that
-        // holds the card page and its sub-pages (Nodes, FIPS) and scrolls
-        // inside its own bounds when content is tall. Tapping the dimmed
-        // backdrop dismisses.
+        // holds the card page and its sub-pages (Nodes, FIPS, Backup, Signer)
+        // and scrolls inside its own bounds when content is tall. Tapping the
+        // dimmed backdrop dismisses.
         Box(
             Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.7f))
                 .clickable(indication = null, interactionSource = remember { MutableInteractionSource() }) { onDismiss() },
             contentAlignment = Alignment.Center,
         ) {
             AnimatedVisibility(visible = visible, enter = fadeIn() + scaleIn(initialScale = 0.95f), exit = fadeOut() + scaleOut(targetScale = 0.95f)) {
-                MenuPanel(servers, activeServer, onDismiss, onSelectServer, onAddServer, onScanQr, onEditServer, onRemoveServer, onRemote, onKeyboard, onBackToWebView, onMeshParty)
+                MenuPanel(
+                    servers, activeServer, onDismiss, onSelectServer, onAddServer, onScanQr,
+                    onEditServer, onRemoveServer, onRemote, onKeyboard, onBackToWebView, onMeshParty,
+                    signerPairUri = pendingSignerPair,
+                    onSignerScan = { signerScan = true },
+                    onSignerPairHandled = {
+                        pendingSignerPair = null
+                        onSignerPairHandled()
+                    },
+                )
             }
         }
     }
+
+    // Pairing-QR scanner for the signer sub-page — a full-screen glass
+    // modal hosted OUTSIDE the hub panel so it isn't clipped to the panel's
+    // bounds (same layering the pairing scanner gets from WebViewScreen).
+    QrGlassModal(
+        visible = signerScan && visible,
+        title = "Scan pairing QR",
+        status = null,
+        idleHint = "Point at the nostrconnect QR the node or client shows",
+        permissionRationale = "Camera access is needed to scan the pairing code",
+        onDismiss = { signerScan = false },
+        onDecoded = { text ->
+            if (text.startsWith("nostrconnect://")) {
+                signerScan = false
+                pendingSignerPair = text
+            }
+        },
+    )
 }
 
 @Composable
@@ -138,6 +180,9 @@ private fun MenuPanel(
     onKeyboard: () -> Unit,
     onBackToWebView: (() -> Unit)?,
     onMeshParty: (() -> Unit)?,
+    signerPairUri: String?,
+    onSignerScan: () -> Unit,
+    onSignerPairHandled: () -> Unit,
 ) {
     var showAdd by remember { mutableStateOf(false) }
     // The saved server being edited, or null when adding a new one.
@@ -176,9 +221,10 @@ private fun MenuPanel(
             .widthIn(max = 420.dp)
             .fillMaxWidth()
             .padding(horizontal = 20.dp)
-            // Cap height just short of the full screen; the panel wraps short
-            // content and only scrolls in the rare case it outgrows this.
-            .heightIn(max = (LocalConfiguration.current.screenHeightDp * 0.92f).dp)
+            // Cap height at 70% of the screen — a ~15% breathing margin top
+            // and bottom — the panel wraps short content and scrolls inside
+            // its own bounds when a sub-page outgrows this.
+            .heightIn(max = (LocalConfiguration.current.screenHeightDp * 0.70f).dp)
             .clip(RoundedCornerShape(PANEL_R))
             .background(PanelBg.copy(alpha = 0.86f))
             .border(1.dp, PanelBorder, RoundedCornerShape(PANEL_R))
@@ -201,7 +247,13 @@ private fun MenuPanel(
                     IconRound(Icons.AutoMirrored.Filled.ArrowBack, "Back") { resetForm(); page = HubPage.HUB }
                     Spacer(Modifier.width(12.dp))
                     Text(
-                        if (page == HubPage.NODES) "Nodes" else "FIPS Mesh",
+                        when (page) {
+                            HubPage.NODES -> "Nodes"
+                            HubPage.FIPS -> "FIPS Mesh"
+                            HubPage.BACKUP -> "Backup & Restore"
+                            HubPage.SIGNER -> "Remote Signer"
+                            HubPage.HUB -> "Menu"
+                        },
                         color = TextPrimary, fontSize = 20.sp, fontWeight = FontWeight.SemiBold, letterSpacing = 1.sp,
                     )
                 }
@@ -233,6 +285,12 @@ private fun MenuPanel(
                 if (onMeshParty != null) {
                     HubCard(Icons.Default.Groups, "Mesh Party", "Phone-to-phone chat & beam") { onMeshParty() }
                 }
+                // Backup & Restore (#128): the phone side of losing your phone
+                // or wiping it to cross a border — encrypted export file, no cloud.
+                HubCard(Icons.Default.SettingsBackupRestore, "Backup & Restore", "Encrypted export for a wiped phone") { page = HubPage.BACKUP }
+                // Remote Signer (#139): hold a nostr key on the phone and
+                // approve/deny remote signature requests (NIP-46).
+                HubCard(Icons.Default.Key, "Remote Signer", "Approve signatures for your node") { page = HubPage.SIGNER }
                 // Dark/Classic style lives on the remote/keyboard screen next to
                 // the settings button — not here.
 
@@ -272,6 +330,11 @@ private fun MenuPanel(
                     val active = server.serialize() == activeServer?.serialize()
                     MenuItem(
                         label = server.displayName(),
+                        // FIPS nodes carry their mesh ULA — the address Termux
+                        // (or any other app) can reach over the split-tunnel,
+                        // from anywhere. Tap to copy; the node's npub stays
+                        // visible in the FIPS Mesh page.
+                        subtitle = server.meshIp.takeIf { it.isNotBlank() },
                         selected = active,
                         onClick = { onSelectServer(server) },
                         onEdit = { startEdit(server) },
@@ -391,11 +454,23 @@ private fun MenuPanel(
             HubPage.FIPS -> {
                 FipsSection(embedded = true)
             }
+
+            HubPage.BACKUP -> {
+                BackupSection()
+            }
+
+            HubPage.SIGNER -> {
+                SignerSection(
+                    pairUri = signerPairUri,
+                    onScan = onSignerScan,
+                    onPairHandled = onSignerPairHandled,
+                )
+            }
         }
     }
 }
 
-private enum class HubPage { HUB, NODES, FIPS }
+private enum class HubPage { HUB, NODES, FIPS, BACKUP, SIGNER }
 
 /** Big tappable destination card for the hub page: icon + title + subtitle. */
 @Composable
@@ -582,26 +657,52 @@ private fun MenuItem(
     onClick: () -> Unit,
     onEdit: (() -> Unit)? = null,
     onRemove: (() -> Unit)? = null,
+    /** Optional second line (the node's mesh ULA); tapping it copies. */
+    subtitle: String? = null,
 ) {
+    val clipboard = LocalClipboardManager.current
     Row(
         Modifier
             .fillMaxWidth()
-            .height(ROW_H)
+            // Rows with a second line grow to fit it.
+            .then(if (subtitle == null) Modifier.height(ROW_H) else Modifier.heightIn(min = ROW_H))
             .clip(RoundedCornerShape(ROW_R))
             .background(if (selected) BitcoinOrange.copy(alpha = 0.12f) else RowBg)
             .border(1.dp, if (selected) BitcoinOrange.copy(alpha = 0.4f) else RowBorder, RoundedCornerShape(ROW_R))
             .clickable { onClick() }
-            .padding(horizontal = 16.dp),
+            .padding(horizontal = 16.dp)
+            .then(if (subtitle == null) Modifier else Modifier.padding(vertical = 8.dp)),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.SpaceBetween,
     ) {
-        Text(
-            label,
-            color = if (selected) BitcoinOrange else labelColor,
-            fontSize = 16.sp,
-            fontWeight = FontWeight.Medium,
-            modifier = Modifier.weight(1f),
-        )
+        Column(Modifier.weight(1f)) {
+            Text(
+                label,
+                color = if (selected) BitcoinOrange else labelColor,
+                fontSize = 16.sp,
+                fontWeight = FontWeight.Medium,
+            )
+            if (subtitle != null) {
+                Row(
+                    Modifier
+                        .padding(top = 2.dp)
+                        .clip(RoundedCornerShape(6.dp))
+                        .clickable { clipboard.setText(AnnotatedString(subtitle)) }
+                        .padding(horizontal = 4.dp, vertical = 2.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text(
+                        subtitle,
+                        color = TextMuted,
+                        fontSize = 10.sp,
+                        fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
+                        maxLines = 1,
+                        overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+                    )
+                    Text("⧉", color = TextMuted.copy(alpha = 0.7f), fontSize = 11.sp, modifier = Modifier.padding(start = 6.dp))
+                }
+            }
+        }
         if (onEdit != null) {
             Text(
                 "✎",
@@ -623,7 +724,7 @@ private fun MenuItem(
 
 /** Glass text field with centered input text. */
 @Composable
-private fun GlassField(
+internal fun GlassField(
     value: String,
     onValueChange: (String) -> Unit,
     placeholder: String,
