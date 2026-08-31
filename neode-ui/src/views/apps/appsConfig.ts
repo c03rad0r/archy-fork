@@ -4,6 +4,7 @@ import type { Ref } from 'vue'
 import { computed } from 'vue'
 import { PackageState, type PackageDataEntry } from '@/types/api'
 import { matchPageScheme, resolveAppUrl } from '../appSession/appSessionConfig'
+import { portIsGateFronted } from '../discover/curatedApps'
 import { isAutoTabApp } from '@/utils/autoTabApps'
 
 export type AppsTab = 'apps' | 'websites' | 'services'
@@ -301,10 +302,13 @@ export function resolveRuntimeLaunchUrl(pkg: PackageDataEntry): string {
   if (!addr || typeof window === 'undefined') return addr
   const local = addr.replace(/^http:\/\/(localhost|127\.0\.0\.1)(?=[:/]|$)/, `http://${window.location.hostname}`)
   // The backend reports runtime URLs as http:// because that is how the app
-  // binds locally — on an HTTPS connection that is a cleartext downgrade
-  // (and mixed-content-blocked when opened from the dashboard). The gate
-  // serves TLS on every app port, so follow the page's scheme, exactly like
-  // resolveAppUrl() does for the same runtime URLs.
+  // binds locally — on an HTTPS connection that is a cleartext downgrade.
+  // Upgrade only when the app gate fronts the port (it serves TLS there);
+  // a container-published plain-HTTP port would fail over https outright.
+  try {
+    const port = new URL(local).port
+    if (!portIsGateFronted(pkg.manifest.id, port)) return local
+  } catch { /* keep as-is */ }
   return matchPageScheme(local)
 }
 

@@ -184,6 +184,7 @@ import {
   categorizeCommunityApp,
   getCuratedAppList,
 } from './marketplace/marketplaceData'
+import { fetchAppCatalog } from './discover/curatedApps'
 
 const router = useRouter()
 const route = useRoute()
@@ -238,10 +239,17 @@ watch(() => route.query.category, (category) => {
 // Community marketplace state — cached (D-09/D-06: near-static catalog, long
 // TTL) behind a shared key so Discover.vue's identical loader picks up the
 // same cache entry without its own conversion (plan 02-04). Non-sensitive
-// and small, so it persists across reloads.
+// and small, so it persists across reloads. Dynamic-catalog-first: the
+// daemon-verified signed catalog is what makes a newly published app appear
+// without a dashboard release — the static list below is only the offline
+// fallback (same fetcher contract as Discover.vue for this shared key).
 const catalogResource = useCachedResource<MarketplaceApp[]>({
   key: 'app-catalog',
-  fetcher: async () => getCuratedAppList(),
+  fetcher: async () => {
+    const catalog = await fetchAppCatalog()
+    if (catalog && catalog.apps.length) return catalog.apps
+    return getCuratedAppList()
+  },
   ttlMs: 300_000,
   persist: true,
 })

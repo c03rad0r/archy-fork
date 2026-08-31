@@ -18,17 +18,94 @@ export interface AppCatalog {
   apps: MarketplaceApp[]
 }
 
+/** Shape of the release-signed catalog (`releases/app-catalog.json`) served
+ *  by the daemon at /api/app-catalog after release-root verification. `apps`
+ *  is keyed by app id and each entry embeds the app's full manifest — the
+ *  ports[] there (auth: gated/open/none) are what decides whether a port is
+ *  fronted by the node's app gate (and therefore serves TLS on the same
+ *  port) or published by the container as plain HTTP. */
+export interface SignedAppCatalog {
+  schema?: number
+  updated?: string
+  apps: Record<string, SignedAppEntry>
+}
+
+export interface SignedAppEntry {
+  version: string
+  image?: string
+  manifest?: {
+    app?: {
+      id?: string
+      name?: string
+      version?: string
+      description?: string
+      category?: string
+      container?: { image?: string }
+      metadata?: { icon?: string; author?: string; repo?: string }
+      ports?: { host?: number | string; container?: number | string; auth?: string }[]
+    }
+  }
+}
+
+/** Convert the signed catalog's keyed entries into store-listing apps.
+ *  Pure — unit-tested against the live catalog's shape (Cuprate). */
+export function signedCatalogToApps(catalog: SignedAppCatalog): MarketplaceApp[] {
+  const out: MarketplaceApp[] = []
+  for (const [id, entry] of Object.entries(catalog.apps || {})) {
+    const app = entry.manifest?.app
+    out.push({
+      id,
+      title: app?.name || id,
+      version: entry.version || app?.version || '',
+      description: app?.description || '',
+      icon: app?.metadata?.icon || '/assets/icon/favico-black-v2.svg',
+      author: app?.metadata?.author,
+      dockerImage: entry.image || app?.container?.image || '',
+      repoUrl: app?.metadata?.repo,
+      category: app?.category,
+      source: 'signed-catalog',
+    })
+  }
+  return out
+}
+
+/** The daemon-verified signed catalog, kept for synchronous port-auth lookups
+ *  after fetchAppCatalog() has run. Test-hookable. */
+let signedCatalogCache: SignedAppCatalog | null = null
+
+/** Port auth for an app's host port, from the signed catalog's embedded
+ *  manifest. `gated`/`open` = the node's app gate owns the port and serves
+ *  TLS on it; `none`/`local` = container-published plain HTTP; null = app
+ *  unknown to the signed catalog (legacy curated installs). */
+export function portAuth(appId: string, hostPort: number | string): string | null {
+  const ports = signedCatalogCache?.apps?.[appId]?.manifest?.app?.ports
+  if (!Array.isArray(ports)) return null
+  const hit = ports.find(p => String(p.host) === String(hostPort))
+  return hit?.auth ?? null
+}
+
+/** Whether an app's host port is fronted by the node's app gate (and so
+ *  serves TLS alongside HTTP on the same port). Unknown apps are NOT —
+ *  assuming TLS for a container-published port breaks it outright. */
+export function portIsGateFronted(appId: string, hostPort: number | string): boolean {
+  const auth = portAuth(appId, hostPort)
+  return auth === 'gated' || auth === 'open'
+}
+
+export function __setSignedCatalogForTests(catalog: SignedAppCatalog | null) {
+  signedCatalogCache = catalog
+}
+
 let cachedCatalog: AppCatalog | null = null
 let catalogFetchedAt = 0
 const CATALOG_TTL = 60 * 60 * 1000 // 1 hour cache
 
-/** Catalog URLs tried in order. First success wins.
- *  Primary is the backend proxy (`/api/app-catalog`) — server-side fetch
- *  bypasses CORS on the upstream Gitea and CSP restrictions on the IP-port
- *  fallback. If the backend is offline (mid-restart etc.) we fall back
- *  to the static copy baked into the frontend build. */
+/** Catalog URLs for the community listing. The signed catalog is served by
+ *  the backend proxy (`/api/app-catalog`) — server-side fetch bypasses CORS
+ *  on the upstream Gitea and verifies the release-root signature. If the
+ *  backend is offline (mid-restart etc.) the static community copy baked
+ *  into the frontend build still renders the store. */
 const CATALOG_URLS = [
-  '/api/app-catalog',
   '/catalog.json',
 ]
 
@@ -38,29 +115,61 @@ export async function fetchAppCatalog(): Promise<AppCatalog | null> {
   // Return cache if fresh
   if (cachedCatalog && Date.now() - catalogFetchedAt < CATALOG_TTL) return cachedCatalog
 
+  // The daemon-verified signed catalog first (release-root signature checked
+  // server-side): it is what makes a newly published app appear without a
+  // dashboard release. The community catalog supplies the featured banner
+  // and curated copy for shared ids; signed-only ids join the listing as-is.
+  let signedApps: MarketplaceApp[] = []
+  let signedOk = false
+  try {
+    const res = await fetch('/api/app-catalog', { credentials: 'include', signal: AbortSignal.timeout(20000) })
+    if (res.ok) {
+      const data = await res.json() as SignedAppCatalog
+      if (data.apps && !Array.isArray(data.apps)) {
+        signedCatalogCache = data
+        signedApps = signedCatalogToApps(data)
+        signedOk = signedApps.length > 0
+      }
+    }
+  } catch { /* fall through to the community catalog */ }
+
+  let community: AppCatalog | null = null
   for (const url of CATALOG_URLS) {
     try {
       const res = await fetch(url, { credentials: 'include', signal: AbortSignal.timeout(20000) })
       if (!res.ok) continue
       const data = await res.json() as AppCatalog
       if (!data.apps?.length) continue
-
-      // Expand short docker image refs to full registry paths
       const registry = data.registry || R
       for (const app of data.apps) {
         if (app.dockerImage && !app.dockerImage.includes('/')) {
           app.dockerImage = `${registry}/${app.dockerImage}`
         }
       }
-      cachedCatalog = data
-      catalogFetchedAt = Date.now()
-      // Cache in localStorage for offline fallback
-      try { localStorage.setItem('archy_catalog', JSON.stringify(data)) } catch {}
-      return data
-    } catch (e) {
-      console.warn(`[catalog] fetch failed for ${url}:`, e)
-      continue
+      community = data
+      break
+    } catch { /* try the next source */ }
+  }
+
+  if (signedOk || community) {
+    // Community copy wins for shared ids (curated descriptions, webUrl-only
+    // apps); signed entries fill version/image gaps and append brand-new apps.
+    const byId = new Map<string, MarketplaceApp>()
+    for (const app of signedApps) byId.set(app.id, app)
+    for (const app of community?.apps ?? []) {
+      const existing = byId.get(app.id)
+      byId.set(app.id, existing ? { ...app, version: app.version || existing.version, dockerImage: app.dockerImage || existing.dockerImage } : app)
     }
+    const merged: AppCatalog = {
+      version: community?.version ?? 1,
+      registry: community?.registry ?? R,
+      featured: community?.featured ?? { id: 'bitcoin-knots', banner: '', headline: '', description: '', tag: '' },
+      apps: [...byId.values()],
+    }
+    cachedCatalog = merged
+    catalogFetchedAt = Date.now()
+    try { localStorage.setItem('archy_catalog', JSON.stringify(merged)) } catch {}
+    return merged
   }
 
   // Try localStorage cache as final fallback

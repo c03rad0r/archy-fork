@@ -1,5 +1,17 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { setActivePinia, createPinia } from 'pinia'
+import { __setSignedCatalogForTests } from '@/views/discover/curatedApps'
+
+// The signed catalog's embedded manifests decide which ports the app gate
+// fronts (TLS on the same port) — prime the same shape the live catalog
+// carries for the apps these tests launch.
+const SIGNED = {
+  apps: {
+    vaultwarden: { version: '1.37.1', manifest: { app: { ports: [{ host: 8082, auth: 'gated' }] } } },
+    gitea: { version: '1.23', manifest: { app: { ports: [{ host: 3001, auth: 'open' }] } } },
+    'nginx-proxy-manager': { version: 'latest' }, // legacy: no manifest → http
+  },
+}
 
 // vi.hoisted runs before vi.mock hoisting
 const { mockPush, mockWindowOpen } = vi.hoisted(() => ({
@@ -23,6 +35,7 @@ describe('useAppLauncherStore', () => {
   beforeEach(() => {
     setActivePinia(createPinia())
     vi.clearAllMocks()
+    __setSignedCatalogForTests(SIGNED as never)
     // Default to HTTP to avoid proxy rewriting
     Object.defineProperty(window, 'location', {
       value: { origin: 'http://192.0.2.10', protocol: 'http:', hostname: '192.0.2.10' },

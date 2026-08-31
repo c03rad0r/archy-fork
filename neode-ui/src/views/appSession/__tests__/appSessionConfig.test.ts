@@ -1,8 +1,39 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, beforeEach } from 'vitest'
 import { NEW_TAB_APPS, directAppUrl, resolveAppUrl } from '../appSessionConfig'
 import { GENERATED_NEW_TAB_APPS } from '../generatedAppSessionConfig'
+import { __setSignedCatalogForTests } from '../../discover/curatedApps'
+
+// Mirror of the live signed catalog's embedded manifests (the ports[] auth
+// that decides TLS eligibility). Kept minimal — only what the scheme logic
+// consults.
+const SIGNED = {
+  apps: {
+    vaultwarden: { version: '1.37.1', manifest: { app: { ports: [{ host: 8082, auth: 'gated' }] } } },
+    gitea: { version: '1.23', manifest: { app: { ports: [{ host: 3001, auth: 'open' }, { host: 2222, auth: 'none' }] } } },
+    'btcpay-server': { version: '2.4.3', manifest: { app: { ports: [{ host: 23000, auth: 'open' }] } } },
+    mempool: { version: '3.3.1', manifest: { app: { ports: [{ host: 4080, auth: 'gated' }] } } },
+    filebrowser: { version: '2.27.0', manifest: { app: { ports: [{ host: 8083, auth: 'gated' }] } } },
+    // Legacy curated installs — in the community list, NOT in the signed
+    // catalog's manifests. Their ports publish plain HTTP: https fails.
+    'nginx-proxy-manager': { version: 'latest' },
+    tailscale: { version: 'stable' },
+    // auth:none ports are container-published too — https would fail.
+    cuprate: { version: '0.1.0-preview', manifest: { app: { ports: [{ host: 18090, auth: 'none' }] } } },
+  },
+}
+
+function stubLocation(value: { hostname: string; protocol: string }) {
+  Object.defineProperty(window, 'location', {
+    value,
+    writable: true,
+    configurable: true,
+  })
+}
 
 describe('appSessionConfig', () => {
+  beforeEach(() => {
+    __setSignedCatalogForTests(SIGNED as never)
+  })
   it('keeps manifest-owned new-tab apps marked on every viewport', () => {
     expect(NEW_TAB_APPS.has('btcpay-server')).toBe(true)
     expect(NEW_TAB_APPS.has('photoprism')).toBe(true)
@@ -56,7 +87,9 @@ describe('appSessionConfig', () => {
       configurable: true,
     })
 
-    expect(resolveAppUrl('netbird', undefined, 'http://localhost:8086')).toBe('http://192.0.2.10:8087')
+    // NetBird's dashboard needs a secure context (OIDC PKCE), so it is
+    // ALWAYS launched over https — on either page scheme.
+    expect(resolveAppUrl('netbird', undefined, 'http://localhost:8086')).toBe('https://192.0.2.10:8087')
   })
 
   it('uses backend runtime URLs for apps with dynamic launch surfaces', () => {
@@ -66,53 +99,52 @@ describe('appSessionConfig', () => {
       configurable: true,
     })
 
-    expect(resolveAppUrl('filebrowser', undefined, 'http://localhost:18083')).toBe('http://192.0.2.10:18083')
+    expect(resolveAppUrl('filebrowser', undefined, 'http://localhost:8083')).toBe('http://192.0.2.10:8083')
   })
 
   // The direct-port launch path (new-tab apps on desktop, the companion's
   // native WebView on phones) used to hardcode http:// — so a node reached
-  // over HTTPS opened Vaultwarden and friends in cleartext. These pin the
-  // scheme-following contract on both page schemes.
-  it('builds direct app URLs on the page scheme — https page, https app', () => {
-    Object.defineProperty(window, 'location', {
-      value: { hostname: '192.0.2.10', protocol: 'https:' },
-      writable: true,
-      configurable: true,
-    })
+  // over HTTPS opened Vaultwarden and friends in cleartext. It must follow
+  // the page scheme ONLY for ports the app gate fronts (TLS on the same
+  // port); legacy installs without manifests (Nginx Proxy Manager, Tailscale)
+  // and auth:none ports stay on http or https would fail to connect.
+  it('builds direct app URLs on the page scheme — https page, gate-fronted app', () => {
+    stubLocation({ hostname: '192.0.2.10', protocol: 'https:' })
 
     expect(directAppUrl('vaultwarden')).toBe('https://192.0.2.10:8082')
     expect(directAppUrl('gitea')).toBe('https://192.0.2.10:3001')
     expect(directAppUrl('btcpay-server')).toBe('https://192.0.2.10:23000')
   })
 
+  it('keeps legacy manifest-less apps on http even on an https page', () => {
+    stubLocation({ hostname: '192.0.2.10', protocol: 'https:' })
+
+    expect(directAppUrl('nginx-proxy-manager')).toBe('http://192.0.2.10:8081')
+    expect(directAppUrl('tailscale')).toBe('http://192.0.2.10:8240')
+  })
+
   it('keeps plain-http direct app URLs on a plain-http page', () => {
-    Object.defineProperty(window, 'location', {
-      value: { hostname: '192.0.2.10', protocol: 'http:' },
-      writable: true,
-      configurable: true,
-    })
+    stubLocation({ hostname: '192.0.2.10', protocol: 'http:' })
 
     expect(directAppUrl('vaultwarden')).toBe('http://192.0.2.10:8082')
+    expect(directAppUrl('nginx-proxy-manager')).toBe('http://192.0.2.10:8081')
   })
 
   it('always launches secure-context apps over https, on either page scheme', () => {
-    Object.defineProperty(window, 'location', {
-      value: { hostname: '192.0.2.10', protocol: 'http:' },
-      writable: true,
-      configurable: true,
-    })
+    stubLocation({ hostname: '192.0.2.10', protocol: 'http:' })
 
     expect(directAppUrl('netbird')).toBe('https://192.0.2.10:8087')
   })
 
-  it('resolves session app URLs on the page scheme too (https page)', () => {
-    Object.defineProperty(window, 'location', {
-      value: { hostname: '192.0.2.10', protocol: 'https:' },
-      writable: true,
-      configurable: true,
-    })
+  it('resolves session app URLs on the page scheme for gate-fronted ports only (https page)', () => {
+    stubLocation({ hostname: '192.0.2.10', protocol: 'https:' })
 
     expect(resolveAppUrl('mempool')).toBe('https://192.0.2.10:4080')
-    expect(resolveAppUrl('filebrowser', undefined, 'http://localhost:18083')).toBe('https://192.0.2.10:18083')
+    expect(resolveAppUrl('filebrowser', undefined, 'http://localhost:8083')).toBe('https://192.0.2.10:8083')
+    // A runtime port the gate does NOT front keeps plain http (https would
+    // fail to connect outright).
+    expect(resolveAppUrl('filebrowser', undefined, 'http://localhost:18083')).toBe('http://192.0.2.10:18083')
+    // Cuprate's UI port is auth:none — plain HTTP stays plain.
+    expect(resolveAppUrl('cuprate', undefined, 'http://localhost:18090')).toBe('http://192.0.2.10:18090')
   })
 })

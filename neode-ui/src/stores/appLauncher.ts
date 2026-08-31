@@ -5,6 +5,7 @@ import { recordAppLaunch } from '@/utils/appUsage'
 import { requestExternalOpen } from '@/api/remote-relay'
 import { openInAppOrNewTab, isCompanionApp, type InAppLaunchMeta } from '@/utils/openExternal'
 import { directAppUrl, HTTPS_APP_IDS, resolveAppUrl } from '@/views/appSession/appSessionConfig'
+import { portIsGateFronted } from '@/views/discover/curatedApps'
 import { useAppStore } from '@/stores/app'
 import { resolveAppIcon } from '@/views/apps/appsConfig'
 import { IS_DEMO, isDemoApp, isDemoExternal, demoAppUrl } from '@/composables/useDemoIntro'
@@ -256,20 +257,20 @@ export const useAppLauncherStore = defineStore('appLauncher', () => {
     let launchUrl = normalizeLaunchUrl(payload.url, titleHintId)
     const resolvedId = resolveAppIdFromUrl(launchUrl) || titleHintId
 
-    // Scheme discipline for everything launched on this host. App ports are
-    // owned by the app gate, which serves TLS on the same port whenever the
-    // node has a certificate — so on an HTTPS connection every same-host
-    // app URL must be https: plain http is a silent downgrade at best and
-    // mixed-content-blocked at worst (remote browsers, the companion
-    // webview). Apps that are ALWAYS https (netbird's secure-context OIDC
-    // dashboard) upgrade regardless of the page, and external hosts keep
-    // their own scheme.
+    // Scheme discipline for everything launched on this host. Ports fronted
+    // by the node's app gate (manifest auth gated/open) serve TLS on the same
+    // port — on an HTTPS connection those must open over https. Ports that
+    // are NOT gate-fronted (legacy curated installs like Nginx Proxy Manager,
+    // Tailscale; `auth: none` publishes) are plain HTTP and https would fail
+    // to connect outright, so they keep http. External hosts keep their own
+    // scheme.
     try {
       const u = new URL(launchUrl, window.location.origin)
       const sameHost = u.hostname === window.location.hostname
       const alwaysHttps = !!resolvedId && HTTPS_APP_IDS.has(resolvedId)
       const httpsPage = window.location.protocol === 'https:'
-      if (u.protocol === 'http:' && (alwaysHttps || (httpsPage && sameHost && (resolvedId || mustOpenInNewTab(launchUrl))))) {
+      const gateFronted = !!resolvedId && portIsGateFronted(resolvedId, u.port)
+      if (u.protocol === 'http:' && sameHost && (alwaysHttps || (httpsPage && gateFronted))) {
         // Pure prefix swap — never re-serialize the URL (URL.href would add
         // a trailing slash and change the string the caller handed over).
         launchUrl = launchUrl.replace(/^http:\/\//i, 'https://')

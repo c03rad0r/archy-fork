@@ -1,5 +1,6 @@
 /** Static configuration maps for app session routing and display */
 
+import { portIsGateFronted } from '../discover/curatedApps'
 import { GENERATED_APP_PORTS, GENERATED_APP_TITLES, GENERATED_NEW_TAB_APPS } from './generatedAppSessionConfig'
 import { IS_DEMO, demoAppUrl } from '@/composables/useDemoIntro'
 
@@ -107,15 +108,20 @@ export function resolveAppUrl(id: string, routeQueryPath?: string, runtimeUrl?: 
   // shell when proxied under a path prefix on some nodes.
   if (id === 'bitcoin-knots' || id === 'bitcoin-core' || id === 'bitcoin-ui') {
     if (import.meta.env.DEV) return '/app/bitcoin-ui/'
-    return appOrigin(8334)
+    return appOrigin(8334, id)
   }
 
   if (runtimeUrl && id !== 'netbird') {
     let base = runtimeUrl.replace(/localhost/i, window.location.hostname)
     // The backend reports runtime URLs as http:// because that is how the app
-    // binds locally. Sent to a browser on an HTTPS dashboard that is mixed
-    // content and the frame is blocked outright, so follow the page instead.
-    base = matchPageScheme(base)
+    // binds locally. On an HTTPS dashboard that is mixed content and the
+    // frame is blocked outright — but ONLY upgrade when the gate fronts the
+    // port (it serves TLS there); a container-published plain-HTTP port
+    // would fail to connect over https at all.
+    try {
+      const port = new URL(base).port
+      if (portIsGateFronted(id, port)) base = matchPageScheme(base)
+    } catch { /* keep as-is */ }
     if (routeQueryPath) base += routeQueryPath
     return base
   }
@@ -124,13 +130,14 @@ export function resolveAppUrl(id: string, routeQueryPath?: string, runtimeUrl?: 
   const port = APP_PORTS[id]
   if (!port) return ''
 
-  let base = appOrigin(port)
+  let base = appOrigin(port, id)
   if (routeQueryPath) base += routeQueryPath
   return base
 }
 
 /**
- * An app's origin on this host, on the SAME scheme as the page.
+ * An app's origin on this host, on the SAME scheme as the page when the
+ * app gate fronts the port (TLS on the same port), plain http otherwise.
  *
  * An HTTPS dashboard cannot embed an HTTP frame at all — browsers block it as
  * mixed content before any cookie question arises — and it is also what makes
@@ -143,8 +150,11 @@ export function resolveAppUrl(id: string, routeQueryPath?: string, runtimeUrl?: 
  * Node certificate. A certificate warning cannot be accepted inside an iframe,
  * so an untrusted app port renders nothing rather than prompting.
  */
-export function appOrigin(port: number): string {
-  return `${pageScheme()}//${window.location.hostname}:${port}`
+export function appOrigin(port: number, appId?: string): string {
+  const https = appId
+    ? HTTPS_APP_IDS.has(appId) || (portIsGateFronted(appId, port) && pageScheme() === 'https:')
+    : pageScheme() === 'https:'
+  return `${https ? 'https' : 'http'}://${window.location.hostname}:${port}`
 }
 
 /** Rewrite a URL's scheme to the page's, leaving everything else alone. */
@@ -202,10 +212,25 @@ export const DIRECT_APP_PORTS: Record<string, string> = {
  *  DIRECT_APP_PORTS is served by the app gate with TLS on the same port
  *  (see appgate/tls.rs), so following the page scheme is always answerable.
  *  Plain-HTTP dashboards keep today's behaviour exactly. */
+/** Whether an app's direct port should follow the page's scheme (https on
+ *  an https connection). True only when the node's app gate fronts the port
+ *  (manifest auth gated/open — TLS served on the same port) or the app is
+ *  unconditionally https (netbird). Legacy curated installs without a
+ *  manifest (Nginx Proxy Manager, Tailscale) and `auth: none` ports (Cuprate's
+ *  RPC) publish plain HTTP and must NOT be upgraded — https would fail to
+ *  connect outright. */
+function shouldFollowPageScheme(appId: string, port: number | string): boolean {
+  if (HTTPS_APP_IDS.has(appId)) return true
+  return portIsGateFronted(appId, port)
+}
+
 export function directAppUrl(appId: string): string | null {
   const port = DIRECT_APP_PORTS[appId]
   if (!port || typeof window === 'undefined') return null
-  const scheme = HTTPS_APP_IDS.has(appId) || pageScheme() === 'https:' ? 'https' : 'http'
+  const scheme = HTTPS_APP_IDS.has(appId)
+    || (portIsGateFronted(appId, port) && pageScheme() === 'https:')
+    ? 'https'
+    : 'http'
   return `${scheme}://${window.location.hostname}:${port}`
 }
 
