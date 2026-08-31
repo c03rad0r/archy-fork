@@ -131,11 +131,10 @@ async fn run_host_fixups() -> Result<()> {
 /// install without `apt-get update` first; only if that fails (fresh suite,
 /// stale index), update once and retry. Both under timeout, both non-fatal.
 async fn ensure_packages() -> Result<bool> {
-    let wanted = HOST_PACKAGES
-        .iter()
-        .map(|p| format!("'{p}'"))
-        .collect::<Vec<_>>()
-        .join(" ");
+    // Package names are a fixed internal allowlist. Do not embed shell quote
+    // characters in WANTED: quotes produced by variable expansion are data,
+    // so dpkg-query would look for a package literally named 'kdump-tools'.
+    let wanted = HOST_PACKAGES.join(" ");
     let script = format!(
         r#"
 set -u
