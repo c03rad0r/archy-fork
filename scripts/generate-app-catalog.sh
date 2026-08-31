@@ -81,9 +81,6 @@ SINGLE = {
     "fedimint": "FEDIMINT_IMAGE",
     "fedimint-gateway": "FEDIMINT_GATEWAY_IMAGE",
     "nostr-rs-relay": "NOSTR_RS_RELAY_IMAGE",
-    "nostr-vpn": "NOSTR_VPN_IMAGE",
-    "fips": "FIPS_IMAGE",
-    "routstr": "ROUTSTR_IMAGE",
     "adguardhome": "ADGUARDHOME_IMAGE",
 }
 
@@ -99,13 +96,6 @@ STACK = {
         "immich_server": "IMMICH_SERVER_IMAGE",
         "immich_postgres": "IMMICH_POSTGRES_IMAGE",
         "immich_redis": "REDIS_IMAGE",
-    },
-    "penpot": {
-        "penpot-frontend": "PENPOT_FRONTEND_IMAGE",
-        "penpot-backend": "PENPOT_BACKEND_IMAGE",
-        "penpot-exporter": "PENPOT_EXPORTER_IMAGE",
-        "penpot-postgres": "PENPOT_POSTGRES_IMAGE",
-        "penpot-valkey": "PENPOT_VALKEY_IMAGE",
     },
     "mempool": {
         "archy-mempool-web": "MEMPOOL_WEB_IMAGE",

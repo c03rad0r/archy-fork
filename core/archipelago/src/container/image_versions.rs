@@ -178,17 +178,9 @@ fn image_var_for_app(app_id: &str) -> Option<&'static str> {
 
         // Nostr / VPN
         "nostr-rs-relay" => Some("NOSTR_RS_RELAY_IMAGE"),
-        "nostr-vpn" => Some("NOSTR_VPN_IMAGE"),
-        "fips" => Some("FIPS_IMAGE"),
 
         // Immich (primary = server)
         "immich" | "immich_server" => Some("IMMICH_SERVER_IMAGE"),
-
-        // Penpot (primary = frontend)
-        "penpot" | "penpot-frontend" => Some("PENPOT_FRONTEND_IMAGE"),
-
-        // AI
-        "routstr" => Some("ROUTSTR_IMAGE"),
 
         // Networking
         "adguardhome" => Some("ADGUARDHOME_IMAGE"),
@@ -340,13 +332,6 @@ pub fn containers_for_stack(app_id: &str) -> Vec<(&'static str, &'static str)> {
             ("immich_postgres", "IMMICH_POSTGRES_IMAGE"),
             ("immich_redis", "REDIS_IMAGE"),
             ("immich_server", "IMMICH_SERVER_IMAGE"),
-        ],
-        "penpot" | "penpot-frontend" => vec![
-            ("penpot-postgres", "PENPOT_POSTGRES_IMAGE"),
-            ("penpot-valkey", "PENPOT_VALKEY_IMAGE"),
-            ("penpot-backend", "PENPOT_BACKEND_IMAGE"),
-            ("penpot-exporter", "PENPOT_EXPORTER_IMAGE"),
-            ("penpot-frontend", "PENPOT_FRONTEND_IMAGE"),
         ],
         "netbird" => vec![
             ("netbird", "NETBIRD_PROXY_IMAGE"),

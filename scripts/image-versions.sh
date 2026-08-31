@@ -99,13 +99,9 @@ VALKEY_IMAGE="$ARCHY_REGISTRY/valkey:8.1.6"
 # Nostr
 NOSTR_RS_RELAY_IMAGE="$ARCHY_REGISTRY/nostr-rs-relay:0.10.0"
 STRFRY_IMAGE="$ARCHY_REGISTRY/strfry:1.0.4"
-NOSTR_VPN_IMAGE="$ARCHY_REGISTRY/nostr-vpn:v0.3.7"
-NOSTR_VPN_UI_IMAGE="$ARCHY_REGISTRY/nostr-vpn-ui:latest"
-FIPS_IMAGE="$ARCHY_REGISTRY/fips:v0.1.0"
 FIPS_UI_IMAGE="$ARCHY_REGISTRY/fips-ui:1.7.123-alpha"
 
 # AI / Routing
-ROUTSTR_IMAGE="$ARCHY_REGISTRY/routstr:v0.4.3"
 
 # Community / Gaming
 BOTFIGHTS_IMAGE="$ARCHY_REGISTRY/botfights:1.2.11"
@@ -127,12 +123,6 @@ GITEA_IMAGE="docker.io/gitea/gitea:1.23"
 IMMICH_POSTGRES_IMAGE="$ARCHY_REGISTRY/immich-postgres:14-vectorchord0.4.3-pgvectors0.2.0"
 IMMICH_SERVER_IMAGE="$ARCHY_REGISTRY/immich-server:release"
 
-# Penpot stack
-PENPOT_POSTGRES_IMAGE="$ARCHY_REGISTRY/postgres:15"
-PENPOT_VALKEY_IMAGE="$ARCHY_REGISTRY/valkey:8.1"
-PENPOT_BACKEND_IMAGE="$ARCHY_REGISTRY/penpot-backend:2.4"
-PENPOT_EXPORTER_IMAGE="$ARCHY_REGISTRY/penpot-exporter:2.4"
-PENPOT_FRONTEND_IMAGE="$ARCHY_REGISTRY/penpot-frontend:2.4"
 
 # Custom UI containers (built from docker/ dirs, pushed to registry)
 BITCOIN_UI_IMAGE="$ARCHY_REGISTRY/bitcoin-ui:1.7.123-alpha"

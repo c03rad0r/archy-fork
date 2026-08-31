@@ -1,0 +1,88 @@
+app:
+  id: adguardhome
+  name: AdGuard Home
+  version: v0.107.55
+  upstream:
+    kind: github
+    repo: AdguardTeam/AdGuardHome
+  description: >-
+    Network-wide ad and tracker blocking: a DNS server that filters every
+    device on your LAN, with a web console for rules and client management.
+
+  container:
+    image: source.archipelago-foundation.org/lfg2025/adguardhome:v0.107.55
+    pull_policy: if-not-present
+    network: pasta
+
+  dependencies:
+    - storage: 1Gi
+
+  resources:
+    memory_limit: 512Mi
+    disk_limit: 1Gi
+
+  security:
+    capabilities: [NET_BIND_SERVICE]
+    readonly_root: false
+    no_new_privileges: true
+    network_policy: isolated
+
+  ports:
+    - host: 3000
+      container: 3000
+      protocol: tcp
+      bind: 127.0.0.1
+      # open: the setup wizard and admin console carry AdGuard Home's own
+      # login; the gate fronts the port (TLS, header fixes) without a
+      # second cookie challenge.
+      auth: open
+      auth_rationale: >-
+        AdGuard Home enforces its own admin login on the console, and the
+        first-run wizard must answer before any account exists.
+    - host: 53
+      container: 53
+      protocol: udp
+      # none: plain DNS must answer every unauthenticated query from LAN
+      # devices — a login page in front of :53 breaks every client on the
+      # network by design.
+      auth: none
+      auth_rationale: >-
+        Plain DNS answers unauthenticated by protocol: resolvers and clients
+        send queries directly; a login challenge would make DNS unreachable.
+    - host: 53
+      container: 53
+      protocol: tcp
+      auth: none
+      auth_rationale: >-
+        DNS-over-TCP fallback (truncated responses, zone transfers); same
+        protocol-level requirement as the UDP port.
+
+  volumes:
+    - type: bind
+      source: /var/lib/archipelago/adguardhome
+      target: /opt/adguardhome
+      options: [rw]
+
+  environment: []
+
+  health_check:
+    type: tcp
+    endpoint: localhost:3000
+    interval: 30s
+    timeout: 5s
+    retries: 3
+
+  interfaces:
+    main:
+      name: Admin console
+      description: AdGuard Home web console
+      type: ui
+      port: 3000
+      protocol: http
+      path: /
+
+  metadata:
+    author: AdGuard
+    category: networking
+    repo: https://github.com/AdguardTeam/AdGuardHome
+    tier: optional

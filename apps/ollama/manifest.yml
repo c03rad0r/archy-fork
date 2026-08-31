@@ -1,0 +1,62 @@
+app:
+  id: ollama
+  name: Ollama
+  version: 0.5.4
+  upstream:
+    kind: github
+    repo: ollama/ollama
+  description: >-
+    Run large language models locally. Download and run AI models like
+    Llama, Mistral on your own hardware — served on the node's loopback for
+    the AI assistant (Settings → Claude Auth → model backend), never exposed
+    to the network.
+
+  container:
+    image: source.archipelago-foundation.org/lfg2025/ollama:latest
+    pull_policy: if-not-present
+    network: pasta
+
+  dependencies:
+    - storage: 50Gi
+
+  resources:
+    memory_limit: 0
+    disk_limit: 50Gi
+
+  security:
+    capabilities: []
+    readonly_root: false
+    no_new_privileges: true
+    network_policy: isolated
+
+  ports:
+    - host: 11434
+      container: 11434
+      protocol: tcp
+      # local: Ollama's REST API is consumed by the node's own assistant over
+      # loopback — never externally reachable, so no gate, no TLS, and no
+      # login surface exist at all.
+      bind: 127.0.0.1
+      auth: local
+
+  volumes:
+    - type: bind
+      source: /var/lib/archipelago/ollama
+      target: /root/.ollama
+      options: [rw]
+
+  environment: []
+
+  health_check:
+    type: tcp
+    endpoint: localhost:11434
+    interval: 30s
+    timeout: 5s
+    retries: 3
+
+  metadata:
+    author: Ollama
+    category: community
+    icon: /assets/img/app-icons/ollama.png
+    repo: https://github.com/ollama/ollama
+    tier: optional

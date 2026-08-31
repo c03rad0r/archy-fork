@@ -1,0 +1,67 @@
+app:
+  id: cryptpad
+  name: CryptPad
+  version: 2024.12.0
+  upstream:
+    kind: github
+    repo: cryptpad/cryptpad
+  description: End-to-end encrypted documents, spreadsheets, and presentations. Zero-knowledge collaboration.
+
+  container:
+    image: source.archipelago-foundation.org/lfg2025/cryptpad:2024.12.0
+    pull_policy: if-not-present
+    network: pasta
+
+  dependencies:
+    - storage: 5Gi
+
+  resources:
+    memory_limit: 1Gi
+    disk_limit: 5Gi
+
+  security:
+    capabilities: []
+    readonly_root: false
+    no_new_privileges: true
+    network_policy: isolated
+
+  ports:
+    - host: 3000
+      container: 3000
+      protocol: tcp
+      bind: 127.0.0.1
+      # gated: CryptPad is browser-only (its own per-user accounts sit on top
+      # of the node login, exactly like Vaultwarden), so the gate's session
+      # challenge costs nothing and keeps the pads behind the node login.
+      auth: gated
+
+  volumes:
+    - type: bind
+      source: /var/lib/archipelago/cryptpad
+      target: /cryptpad/data
+      options: [rw]
+
+  environment: []
+
+  health_check:
+    type: tcp
+    endpoint: localhost:3000
+    interval: 30s
+    timeout: 5s
+    retries: 3
+
+  interfaces:
+    main:
+      name: CryptPad
+      description: Encrypted collaboration suite
+      type: ui
+      port: 3000
+      protocol: http
+      path: /
+
+  metadata:
+    author: XWiki SAS
+    category: data
+    icon: /assets/icon/favico-black-v2.svg
+    repo: https://github.com/cryptpad/cryptpad
+    tier: optional

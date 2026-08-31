@@ -1,0 +1,74 @@
+app:
+  id: nginx-proxy-manager
+  name: Nginx Proxy Manager
+  version: 2.12.1
+  upstream:
+    kind: github
+    repo: NginxProxyManager/nginx-proxy-manager
+  description: >-
+    Reverse proxy with SSL. Beautiful web interface for managing proxies.
+    On a node, this manages its admin UI and upstream configuration — the
+    proxy's own :80/:443 listeners are not published (the node's web server
+    owns those ports).
+
+  container:
+    image: source.archipelago-foundation.org/lfg2025/nginx-proxy-manager:latest
+    pull_policy: if-not-present
+    network: pasta
+
+  dependencies:
+    - storage: 1Gi
+
+  resources:
+    memory_limit: 512Mi
+    disk_limit: 1Gi
+
+  security:
+    capabilities: [CHOWN, SETUID, SETGID, DAC_OVERRIDE]
+    readonly_root: false
+    no_new_privileges: true
+    network_policy: isolated
+
+  ports:
+    - host: 8081
+      container: 81
+      protocol: tcp
+      bind: 127.0.0.1
+      # open, not gated: NPM carries a complete admin login of its own. The
+      # gate still fronts the port (TLS on the same port, header fixes, retry
+      # page, Tor) without putting a cookie challenge in front of it.
+      auth: open
+      auth_rationale: >-
+        Nginx Proxy Manager enforces its own admin account on every page;
+        the initial setup wizard also has to answer before any account exists.
+
+  volumes:
+    - type: bind
+      source: /var/lib/archipelago/nginx-proxy-manager
+      target: /data
+      options: [rw]
+
+  environment: []
+
+  health_check:
+    type: tcp
+    endpoint: localhost:81
+    interval: 30s
+    timeout: 5s
+    retries: 3
+
+  interfaces:
+    main:
+      name: Admin UI
+      description: Nginx Proxy Manager admin interface
+      type: ui
+      port: 8081
+      protocol: http
+      path: /
+
+  metadata:
+    author: Nginx Proxy Manager
+    category: networking
+    icon: /assets/img/app-icons/nginx.svg
+    repo: https://github.com/NginxProxyManager/nginx-proxy-manager
+    tier: optional

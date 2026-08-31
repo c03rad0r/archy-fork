@@ -1,0 +1,78 @@
+app:
+  id: tailscale
+  name: Tailscale
+  version: 1.78.0
+  upstream:
+    kind: github
+    repo: tailscale/tailscale
+  description: Zero-config VPN with WireGuard mesh networking.
+
+  container:
+    image: source.archipelago-foundation.org/lfg2025/tailscale:stable
+    pull_policy: if-not-present
+    network: pasta
+    # Mirrors the legacy curated install exactly: tailscaled in userspace
+    # networking (no host TUN device needed — the rootless container cannot
+    # have one anyway), then `tailscale web` serving the console on :8240 as
+    # plain HTTP the app gate can front (TLS on the same port via the node
+    # certificate, framing-header fixes, retry page, Tor).
+    entrypoint: ["sh", "-c", "tailscaled --tun=userspace-networking & for i in $(seq 1 30); do [ -S /var/run/tailscale/tailscaled.sock ] && break; sleep 1; done; tailscale web --listen 0.0.0.0:8240 & wait"]
+
+  dependencies:
+    - storage: 1Gi
+
+  resources:
+    memory_limit: 512Mi
+    disk_limit: 1Gi
+
+  security:
+    capabilities: []
+    readonly_root: false
+    no_new_privileges: true
+    network_policy: isolated
+
+  ports:
+    - host: 8240
+      container: 8240
+      protocol: tcp
+      bind: 127.0.0.1
+      # open, not gated: the web console requires the tailnet's own login for
+      # every administrative action — the gate fronts the port without adding
+      # a second login in front of it.
+      auth: open
+      auth_rationale: >-
+        Tailscale's web console authenticates against the tailnet account for
+        all administrative actions; the node's cookie challenge would be a
+        second, redundant login.
+
+  volumes:
+    - type: bind
+      source: /var/lib/archipelago/tailscale
+      target: /var/lib/tailscale
+      options: [rw]
+
+  environment:
+    - TS_STATE_DIR=/var/lib/tailscale
+
+  health_check:
+    type: tcp
+    endpoint: localhost:8240
+    interval: 30s
+    timeout: 5s
+    retries: 3
+
+  interfaces:
+    main:
+      name: Web console
+      description: Tailscale web console
+      type: ui
+      port: 8240
+      protocol: http
+      path: /
+
+  metadata:
+    author: Tailscale
+    category: networking
+    icon: /assets/img/app-icons/tailscale.webp
+    repo: https://github.com/tailscale/tailscale
+    tier: recommended
