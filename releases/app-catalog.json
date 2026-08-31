@@ -505,6 +505,10 @@
             "network_policy": "bridge",
             "readonly_root": true
           },
+          "upstream": {
+            "kind": "gitlab",
+            "repo": "ark-bitcoin/bark"
+          },
           "version": "0.3.0",
           "volumes": [
             {
@@ -978,13 +982,13 @@
       "version": "1.2.11"
     },
     "btcpay": {
-      "image": "docker.io/btcpayserver/btcpayserver:2.4.2",
+      "image": "docker.io/btcpayserver/btcpayserver:2.4.3",
       "images": {
         "archy-btcpay-db": "source.archipelago-foundation.org/lfg2025/postgres:15.17",
         "archy-nbxplorer": "source.archipelago-foundation.org/lfg2025/nbxplorer:2.6.0",
-        "btcpay-server": "docker.io/btcpayserver/btcpayserver:2.4.2"
+        "btcpay-server": "docker.io/btcpayserver/btcpayserver:2.4.3"
       },
-      "version": "2.4.2"
+      "version": "2.4.3"
     },
     "btcpay-server": {
       "manifest": {
@@ -1000,7 +1004,7 @@
                 "template": "{{HOST_IP}}:23000"
               }
             ],
-            "image": "docker.io/btcpayserver/btcpayserver:2.4.2",
+            "image": "docker.io/btcpayserver/btcpayserver:2.4.3",
             "network": "archy-net",
             "pull_policy": "if-not-present",
             "secret_env": [
@@ -1097,7 +1101,7 @@
             "kind": "github",
             "repo": "btcpayserver/btcpayserver"
           },
-          "version": "2.4.2",
+          "version": "2.4.3",
           "volumes": [
             {
               "options": [
@@ -1110,7 +1114,7 @@
           ]
         }
       },
-      "version": "2.4.2"
+      "version": "2.4.3"
     },
     "core-lightning": {
       "manifest": {
@@ -1204,6 +1208,96 @@
     "cryptpad": {
       "image": "source.archipelago-foundation.org/lfg2025/cryptpad:2024.12.0",
       "version": "2024.12.0"
+    },
+    "cuprate": {
+      "manifest": {
+        "app": {
+          "category": "money",
+          "container": {
+            "custom_args": [
+              "--config-file",
+              "/home/cuprate/Cuprated.toml"
+            ],
+            "data_uid": "1000:1000",
+            "image": "source.archipelago-foundation.org/lfg2025/cuprate:0.1.0-preview-18-g618ff14",
+            "network": "archy-net",
+            "pull_policy": "if-not-present"
+          },
+          "dependencies": [
+            {
+              "storage": "300Gi"
+            }
+          ],
+          "description": "Alternative Monero node implementation in Rust. Independently validates Monero consensus rules, providing a layer of security and redundancy for the network.",
+          "files": [
+            {
+              "content": "network = \"Mainnet\"\ntarget_max_memory = 3000000000\n\n[rpc.restricted]\nenable = true\n",
+              "overwrite": false,
+              "path": "/var/lib/archipelago/cuprate/Cuprated.toml"
+            }
+          ],
+          "health_check": {
+            "endpoint": "localhost:18090",
+            "interval": "30s",
+            "retries": 3,
+            "start_period": "5m",
+            "timeout": "5s",
+            "type": "tcp"
+          },
+          "id": "cuprate",
+          "metadata": {
+            "author": "Cuprate",
+            "category": "money",
+            "icon": "/assets/img/app-icons/cuprate.svg",
+            "repo": "https://github.com/Cuprate/cuprate",
+            "tier": "optional"
+          },
+          "name": "Cuprate",
+          "ports": [
+            {
+              "auth": "none",
+              "auth_rationale": "Monero p2p gossip. Peers are anonymous by design and speak the Monero wire protocol, not HTTP.",
+              "container": 18080,
+              "host": 18183,
+              "protocol": "tcp"
+            },
+            {
+              "auth": "none",
+              "auth_rationale": "Monero restricted RPC — the subset upstream considers safe for public/remote-node use. Wallets (Feather, monero-wallet-rpc, GUI) connect directly over plain HTTP JSON-RPC and cannot hold a dashboard session cookie.",
+              "container": 18089,
+              "host": 18090,
+              "protocol": "tcp"
+            }
+          ],
+          "resources": {
+            "cpu_limit": 0,
+            "disk_limit": "300Gi",
+            "memory_limit": "4Gi"
+          },
+          "security": {
+            "capabilities": [],
+            "network_policy": "isolated",
+            "no_new_privileges": true,
+            "readonly_root": true
+          },
+          "upstream": {
+            "kind": "github",
+            "repo": "Cuprate/cuprate"
+          },
+          "version": "0.1.0-preview",
+          "volumes": [
+            {
+              "options": [
+                "rw"
+              ],
+              "source": "/var/lib/archipelago/cuprate",
+              "target": "/home/cuprate",
+              "type": "bind"
+            }
+          ]
+        }
+      },
+      "version": "0.1.0-preview"
     },
     "did-wallet": {
       "manifest": {
@@ -2375,6 +2469,10 @@
             "network_policy": "isolated",
             "readonly_root": false
           },
+          "upstream": {
+            "kind": "ghcr",
+            "repo": "immich-app/postgres"
+          },
           "version": "14-vectorchord0.4.3-pgvectors0.2.0",
           "volumes": [
             {
@@ -2788,6 +2886,10 @@
             "network_policy": "isolated",
             "readonly_root": false
           },
+          "upstream": {
+            "kind": "github",
+            "repo": "minio/minio"
+          },
           "version": "RELEASE.2024-11-07T00-52-20Z",
           "volumes": [
             {
@@ -3174,6 +3276,10 @@
             "readonly_root": true,
             "seccomp_profile": "default",
             "user": 1000
+          },
+          "upstream": {
+            "kind": "manual",
+            "url": "no public listing for lightninglabs/lightning-stack — verify by hand"
           },
           "version": "0.12.0",
           "volumes": [
@@ -3625,7 +3731,7 @@
                 "key": "/var/lib/archipelago/netbird/tls.key"
               }
             ],
-            "image": "docker.io/library/nginx:1.31.3-alpine",
+            "image": "docker.io/library/nginx:1.31.4-alpine",
             "network": "netbird-net",
             "pull_policy": "if-not-present"
           },
@@ -4315,7 +4421,7 @@
                 "key": "/var/lib/archipelago/pine/tls.key"
               }
             ],
-            "image": "docker.io/library/nginx:1.31.3-alpine",
+            "image": "docker.io/library/nginx:1.31.4-alpine",
             "network": "archy-net",
             "network_aliases": [
               "pine"
@@ -4701,6 +4807,10 @@
             "no_new_privileges": true,
             "readonly_root": false
           },
+          "upstream": {
+            "kind": "dockerhub",
+            "repo": "rhasspy/wyoming-whisper"
+          },
           "version": "3.4.2",
           "volumes": [
             {
@@ -4998,7 +5108,7 @@
       "manifest": {
         "app": {
           "container": {
-            "image": "dockurr/strfry:1.1.1",
+            "image": "dockurr/strfry:1.1.2",
             "image_signature": "cosign://...",
             "pull_policy": "verify-signature"
           },
@@ -5055,7 +5165,7 @@
             "kind": "github",
             "repo": "hoytech/strfry"
           },
-          "version": "1.1.1",
+          "version": "1.1.2",
           "volumes": [
             {
               "options": [
@@ -5076,7 +5186,7 @@
           ]
         }
       },
-      "version": "1.1.1"
+      "version": "1.1.2"
     },
     "tailscale": {
       "image": "source.archipelago-foundation.org/lfg2025/tailscale:stable",
@@ -5256,7 +5366,7 @@
     }
   },
   "schema": 1,
-  "signature": "97628de24e3ffa17f639c663e19881cf6dea8c79aab272fe9c5442a4e951b3f0d257fee21aa9ce6158e3824b56a337acb71805f6fd34245e48345b86b46ec007",
+  "signature": "da5b6b183ac46c062945c27abdc06affb558e805e1ccf67ac0ee17e5e3dd85cc05a0656dd83bdacb1e1d237445145d00995f55e77209e1cbb2b6d8ce47084e0a",
   "signed_by": "did:key:z6Mkfu5LT8d4DjETtrkATvHh9Dvcbnr7zBCUwfau8Sw7DLWT",
-  "updated": "2026-08-19"
+  "updated": "2026-08-30"
 }
