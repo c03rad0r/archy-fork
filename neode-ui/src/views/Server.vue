@@ -970,12 +970,27 @@ onUnmounted(() => disarmVpnPoll())
 // outside a <KeepAlive> boundary (confirmed by ServerNetworkRefresh.test.ts,
 // which mounts this view bare), so a bare mount must not silently skip them.
 onMounted(() => {
+  consumeOpenWifiQuery()
   checkTorStatus(); loadNetworkData(); loadInterfaces(); loadTorServices(); loadVpnPeers(); loadFipsSummary(); loadDiskStatus()
   armServerEntryEffects()
 })
 
 watch(showWifiModal, (open) => { if (open) scanWifi() })
 watch(showDnsModal, (open) => { if (open) { dnsSelectedProvider.value = networkData.value.dnsProvider || 'system'; dnsError.value = '' } })
+
+// #145: onboarding's no-network callout deep-links here with ?open=wifi so a
+// fresh-install user lands straight in the WiFi picker. Read from the real
+// URL (the dashboard's SPA router keeps it in sync) rather than vue-router —
+// the KeepAlive-mounted view has no router guarantee at test-mount time —
+// and consume it (history.replaceState) so a tab-return never re-pops.
+function consumeOpenWifiQuery() {
+  const params = new URLSearchParams(window.location.search)
+  if (params.get('open') !== 'wifi') return
+  params.delete('open')
+  const qs = params.toString()
+  history.replaceState(history.state, '', window.location.pathname + (qs ? `?${qs}` : '') + window.location.hash)
+  showWifiModal.value = true
+}
 
 async function restartServices() {
   restarting.value = true; servicesRunning.value = false

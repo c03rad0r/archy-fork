@@ -147,12 +147,12 @@
       <!-- WiFi password prompt -->
       <div v-if="wifiConnecting" class="mt-4 pt-4 border-t border-white/10">
         <p class="text-sm text-white/80 mb-2">Connect to <span class="font-medium text-white">{{ wifiSelectedSsid }}</span></p>
-        <input
+        <PasswordRevealInput
           v-model="localWifiPassword"
-          type="password"
           placeholder="WiFi password"
-          class="w-full px-3 py-2 bg-white/5 border border-white/10 rounded-lg text-white text-sm placeholder-white/30 focus:outline-none focus:border-white/30 mb-3"
-          @keyup.enter="$emit('connectWifi', localWifiPassword)"
+          :disabled="wifiSubmitting"
+          class="mb-3"
+          @enter="$emit('connectWifi', localWifiPassword)"
         />
         <p v-if="wifiError" class="text-sm text-red-400 mb-3">{{ wifiError }}</p>
         <div class="flex gap-2">
@@ -231,6 +231,7 @@
 
 <script setup lang="ts">
 import { ref } from 'vue'
+import PasswordRevealInput from '@/components/PasswordRevealInput.vue'
 
 defineProps<{
   showAddServiceModal: boolean

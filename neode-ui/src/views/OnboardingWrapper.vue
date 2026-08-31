@@ -48,6 +48,10 @@
     <!-- Content with 3D transitions -->
     <div class="perspective-container-wrapper">
       <div class="perspective-container">
+        <!-- #145: fresh install with no cable — point at the WiFi picker. -->
+        <!-- Onboarding routes only: logged-in sessions are offline-first and
+             must never be nagged about connectivity. -->
+        <OnboardingNetworkCallout v-if="isOnboardingRoute" />
         <RouterView v-slot="{ Component, route }">
           <Transition :name="transitionName">
             <div :key="route.path" class="view-wrapper">
@@ -64,9 +68,15 @@
 import { ref, watch, onMounted, computed } from 'vue'
 import { useRoute } from 'vue-router'
 import { resumeAudioContext, startSynthwave } from '@/composables/useLoginSounds'
+import OnboardingNetworkCallout from '@/components/OnboardingNetworkCallout.vue'
 
 const route = useRoute()
 const currentBackground = ref('bg-intro.jpg')
+
+// #145: the no-network callout follows the user across onboarding steps, but
+// this wrapper also hosts /login (and could host more later) — scope the
+// callout to the onboarding flow only.
+const isOnboardingRoute = computed(() => route.path.startsWith('/onboarding/'))
 const isGlitching = ref(false)
 const isTransitioning = ref(false)
 const videoElement = ref<HTMLVideoElement | null>(null)
