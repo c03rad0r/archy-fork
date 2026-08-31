@@ -567,6 +567,33 @@ RUN mkdir -p /etc/polkit-1/rules.d && \
       > /etc/polkit-1/rules.d/49-archipelago-networkmanager.rules && \
     chmod 644 /etc/polkit-1/rules.d/49-archipelago-networkmanager.rules
 
+# kdump + rasdaemon (#144, docs/kdump-rasdaemon-design.md): crash dumps and
+# hardware-error capture on the host. Packages + config are baked in for fresh
+# installs; the binary's host_fixups module delivers the identical end state to
+# already-deployed nodes over OTA (idempotent no-op here once applied).
+RUN set -eu; \
+    apt-get update; \
+    apt-get install -y --no-install-recommends kdump-tools kexec-tools rasdaemon; \
+    apt-get clean; rm -rf /var/lib/apt/lists/*; \
+    CONF=/etc/default/kdump-tools; \
+    sed -i 's|^#\?USE_KDUMP=.*|USE_KDUMP="1"|' "$CONF"; \
+    grep -q '^KDUMP_COREDIR=' "$CONF" \
+        && sed -i 's|^KDUMP_COREDIR=.*|KDUMP_COREDIR="/var/crash"|' "$CONF" \
+        || printf '\nKDUMP_COREDIR="/var/crash"\n' >> "$CONF"; \
+    grep -q '^CORE_COLLECTOR=' "$CONF" \
+        && sed -i 's|^CORE_COLLECTOR=.*|CORE_COLLECTOR="makedumpfile -l --message-level 1 -d 31"|' "$CONF" \
+        || printf '\nCORE_COLLECTOR="makedumpfile -l --message-level 1 -d 31"\n' >> "$CONF"; \
+    printf '%s\n' \
+        '# Archipelago kdump policy (#144). A wedged kiosk is useless until someone' \
+        '# power-cycles it — capture the evidence, then reboot by itself. Dumps land in' \
+        '# /var/crash (see docs/kdump-rasdaemon-design.md); keep-2 pruning is done by' \
+        '# the host fixup pass, not a timer.' \
+        'kernel.panic = 10' \
+        'kernel.panic_on_oops = 1' \
+        'kernel.hung_task_panic = 1' \
+        'kernel.hardlockup_panic = 1' \
+        > /etc/sysctl.d/99-archipelago-kdump.conf
+
 # Enable services
 RUN systemctl enable NetworkManager || true && \
     systemctl enable polkit || systemctl enable polkit.service || true && \
@@ -580,7 +607,9 @@ RUN systemctl enable NetworkManager || true && \
     systemctl enable archipelago-update.timer || true && \
     systemctl enable archipelago-doctor.timer || true && \
     systemctl enable archipelago-tor-helper.path || true && \
-    systemctl enable nostr-relay || true
+    systemctl enable nostr-relay || true && \
+    systemctl enable rasdaemon || true && \
+    systemctl enable kdump-tools || true
 # archipelago-fips.service + archipelago-wg.service + archipelago-wg-address.service
 # stay installed and enabled. They all use `ConditionPathExists=` on their
 # respective seed-derived key files, so on a fresh pre-onboarding boot
@@ -3715,7 +3744,7 @@ if [ -d "$BOOT_MEDIA/archipelago/plymouth-theme" ]; then
         ln -sf /usr/share/plymouth/themes/archipelago/archipelago.plymouth \
             /mnt/target/etc/alternatives/default.plymouth 2>/dev/null || true
     # Configure clean boot: splash, suppress kernel noise, hide cursor
-    sed -i 's/GRUB_CMDLINE_LINUX_DEFAULT=".*"/GRUB_CMDLINE_LINUX_DEFAULT="quiet splash loglevel=0 rd.systemd.show_status=false vt.global_cursor_default=0 acpi=force"/' \
+    sed -i 's/GRUB_CMDLINE_LINUX_DEFAULT=".*"/GRUB_CMDLINE_LINUX_DEFAULT="quiet splash loglevel=0 rd.systemd.show_status=false vt.global_cursor_default=0 acpi=force crashkernel=256M"/' \
         /mnt/target/etc/default/grub 2>/dev/null || true
     echo "   Installed Archipelago Plymouth theme on target"
 fi
