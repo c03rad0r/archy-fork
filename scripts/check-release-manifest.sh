@@ -1,21 +1,22 @@
 #!/bin/bash
-# Validate releases/manifest.json:
+# Validate the live or a pending release manifest:
 #   - version matches core/archipelago/Cargo.toml
 #   - changelog contains curated release notes, not raw git log output
 #   - every component's download_url exists on disk and matches sha256/size
 #
 # Run on every push from CI, and also locally before publishing a release:
-#   scripts/check-release-manifest.sh
+#   scripts/check-release-manifest.sh [path/to/manifest.json]
 #
 # Exits non-zero on any mismatch so the release process fails loud.
 
 set -eo pipefail
 
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-MANIFEST="$REPO_ROOT/releases/manifest.json"
+MANIFEST="${1:-$REPO_ROOT/releases/manifest.json}"
+[[ "$MANIFEST" = /* ]] || MANIFEST="$REPO_ROOT/$MANIFEST"
 
 if [ ! -f "$MANIFEST" ]; then
-    echo "❌ releases/manifest.json missing"
+    echo "❌ manifest missing: $MANIFEST"
     exit 1
 fi
 
@@ -24,6 +25,18 @@ ok() { echo "✅ $*"; }
 
 MANIFEST_VERSION=$(python3 -c "import json; print(json.load(open('$MANIFEST'))['version'])")
 CARGO_VERSION=$(grep '^version' "$REPO_ROOT/core/archipelago/Cargo.toml" | head -1 | sed -E 's/.*"([^"]+)".*/\1/')
+
+# A prepared release deliberately leaves the live manifest on the previous
+# version. Ordinary pushes are therefore harmless: only the publisher promotes
+# the pending manifest after its assets have been uploaded and downloaded back.
+if [ "$MANIFEST_VERSION" != "$CARGO_VERSION" ] && [ "$MANIFEST" = "$REPO_ROOT/releases/manifest.json" ]; then
+    PENDING="$REPO_ROOT/releases/pending/v${CARGO_VERSION}/manifest.json"
+    if [ -f "$PENDING" ]; then
+        ok "live manifest remains v${MANIFEST_VERSION} while v${CARGO_VERSION} is pending"
+        MANIFEST="$PENDING"
+        MANIFEST_VERSION="$CARGO_VERSION"
+    fi
+fi
 
 if [ "$MANIFEST_VERSION" != "$CARGO_VERSION" ]; then
     fail "manifest version ($MANIFEST_VERSION) ≠ Cargo.toml ($CARGO_VERSION)"
@@ -105,4 +118,4 @@ for i in $(seq 0 $((COMPONENT_COUNT - 1))); do
 done
 
 echo
-ok "releases/manifest.json passes all checks — safe to publish v${MANIFEST_VERSION}"
+ok "$MANIFEST passes all checks — safe to publish v${MANIFEST_VERSION}"

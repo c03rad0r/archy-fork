@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 # One-step OTA-manifest signer (counterpart to sign-catalog.sh).
 #
-#   Run:   bash scripts/sign-manifest.sh
+#   Run:   bash scripts/sign-manifest.sh [path/to/manifest.json]
 #   Then:  paste your 24-word release master mnemonic, press Enter, then Ctrl-D.
 #
-# Signs releases/manifest.json in place and cryptographically verifies the
+# Signs the requested manifest (live by default) and cryptographically verifies the
 # result against the pinned release-root anchor. The mnemonic is read from the
 # terminal only (never stored, never in shell history, never passed to Claude).
 #
@@ -18,7 +18,9 @@
 set -euo pipefail
 
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-MANIFEST="$REPO/releases/manifest.json"
+MANIFEST="${1:-$REPO/releases/manifest.json}"
+[[ "$MANIFEST" = /* ]] || MANIFEST="$REPO/$MANIFEST"
+[ -f "$MANIFEST" ] || { echo "Manifest not found: $MANIFEST" >&2; exit 1; }
 
 # Use ONLY a prebuilt signer — never compile here (compiling caused hangs in
 # the earlier catalog ceremony). Prefer the repo's release build.
@@ -41,9 +43,10 @@ echo "════════════════════════�
 
 echo
 if "$BIN" ceremony verify "$MANIFEST"; then
-    echo "✅ SUCCESS — manifest signed by the pinned release root."
-    echo "   Commit + push releases/manifest.json (and release-manifest.json if present)."
-    cp "$MANIFEST" "$REPO/release-manifest.json" 2>/dev/null || true
+    echo "✅ SUCCESS — manifest signed by the pinned release root: $MANIFEST"
+    if [ "$MANIFEST" = "$REPO/releases/manifest.json" ]; then
+        cp "$MANIFEST" "$REPO/release-manifest.json"
+    fi
 else
     echo "❌ Signature did NOT verify against the pinned release-root anchor."
     echo "   Do NOT commit. Check the mnemonic and re-run."

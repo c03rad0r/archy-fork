@@ -2,7 +2,8 @@
 # create-release.sh — Full release automation for Archipelago
 #
 # Bumps version in Cargo.toml and package.json, generates changelog from git log,
-# creates release manifest, and creates git tag.
+# creates a pending release manifest, and creates git tag. The live manifest is
+# promoted only by publish-release-assets.sh after the assets are verified.
 #
 # Usage:
 #   ./scripts/create-release.sh 1.0.0         # Release v1.0.0
@@ -30,9 +31,9 @@ for arg in "$@"; do
             echo "  2. Bump version in Cargo.toml and package.json"
             echo "  3. Build backend"
             echo "  4. Build frontend"
-            echo "  5. Generate changelog from git log"
-            echo "  6. Create release manifest"
-            echo "  7. Commit version bump"
+            echo "  5. Validate the curated changelog"
+            echo "  6. Create pending release manifest"
+            echo "  7. Commit release preparation"
             echo "  8. Create git tag v{VERSION}"
             echo ""
             echo "Options:"
@@ -121,14 +122,13 @@ if $DRY_RUN; then
     echo "  2. Update neode-ui/package.json version to $VERSION"
     echo "  3. Build backend (cargo build --release -p archipelago)"
     echo "  4. Build frontend (npm run build)"
-    echo "  5. Generate changelog from git log since v${CURRENT_CARGO_VERSION}"
-    echo "  6. Create release manifest"
-    echo "  7. Commit: 'chore: release v${VERSION}'"
+    echo "  5. Validate the curated changelog"
+    echo "  6. Create pending release manifest (the live manifest stays unchanged)"
+    echo "  7. Commit: 'chore: prepare release v${VERSION}'"
     echo "  8. Tag: v${VERSION}"
     echo ""
-    echo "After this script, you would:"
-    echo "  - Push: git push && git push --tags"
-    echo "  - Build ISOs on server: ssh archipelago@192.0.2.10"
+    echo "After this script, publish only with:"
+    echo "  scripts/publish-release-assets.sh ${VERSION} gitea-vps2"
     exit 0
 fi
 
@@ -214,9 +214,13 @@ if [ ! -f "$CHANGELOG_FILE" ] || ! grep -q "^## v${VERSION} (" "$CHANGELOG_FILE"
     exit 1
 fi
 
-echo "[6/8] Creating release manifest..."
-mkdir -p "$PROJECT_ROOT/releases"
-"$SCRIPT_DIR/create-release-manifest.sh" --version "$VERSION" --date "$RELEASE_DATE" --output "$PROJECT_ROOT/releases/manifest.json" 2>&1 | grep -v "^$"
+echo "[6/8] Creating pending release manifest..."
+# Never write the fleet-visible path here. A normal `git push main` must not be
+# capable of advertising assets which have not been uploaded yet.
+PENDING_DIR="$PROJECT_ROOT/releases/pending/v${VERSION}"
+PENDING_MANIFEST="$PENDING_DIR/manifest.json"
+mkdir -p "$PENDING_DIR"
+"$SCRIPT_DIR/create-release-manifest.sh" --version "$VERSION" --date "$RELEASE_DATE" --output "$PENDING_MANIFEST" 2>&1 | grep -v "^$"
 
 # §A supply-chain: the OTA manifest must carry the release-root signature.
 # Nodes refuse to AUTO-apply unsigned manifests, and publish-release-assets.sh
@@ -239,60 +243,45 @@ if [ -n "${RELEASE_MASTER_MNEMONIC:-}" ] || [ -t 0 ]; then
     echo "  Enter by itself will NOT submit; pasting twice concatenates"
     echo "  the phrases and fails on word count."
     echo "════════════════════════════════════════════════════════════════"
-    "$SIGNER" ceremony sign "$PROJECT_ROOT/releases/manifest.json"
-    "$SIGNER" ceremony verify "$PROJECT_ROOT/releases/manifest.json"
+    "$SIGNER" ceremony sign "$PENDING_MANIFEST"
+    "$SIGNER" ceremony verify "$PENDING_MANIFEST"
 else
-    echo "⚠ WARNING: no TTY and RELEASE_MASTER_MNEMONIC unset — manifest left UNSIGNED."
-    echo "  This run will ABORT before committing (step 7 refuses an unsigned"
-    echo "  manifest), because nodes read releases/manifest.json from branch main"
-    echo "  and would refuse to auto-apply it."
-    echo "  Sign it, then re-run: bash scripts/sign-manifest.sh"
+    echo "⚠ WARNING: no TTY and RELEASE_MASTER_MNEMONIC unset — pending manifest left UNSIGNED."
+    echo "  This run will ABORT before committing (step 7 refuses an unsigned manifest)."
+    echo "  Sign it, then re-run: bash scripts/sign-manifest.sh $PENDING_MANIFEST"
 fi
-cp "$PROJECT_ROOT/releases/manifest.json" "$PROJECT_ROOT/release-manifest.json"
-
 echo "[6c/8] Staging release artifacts for validation..."
 VERSION_DIR="$PROJECT_ROOT/releases/v${VERSION}"
 FRONTEND_ARCHIVE="/tmp/archipelago-frontend-${VERSION}.tar.gz"
 mkdir -p "$VERSION_DIR"
 install -m 0755 "$PROJECT_ROOT/core/target/release/archipelago" "$VERSION_DIR/archipelago"
 install -m 0644 "$FRONTEND_ARCHIVE" "$VERSION_DIR/archipelago-frontend-${VERSION}.tar.gz"
-"$SCRIPT_DIR/check-release-manifest.sh"
+"$SCRIPT_DIR/check-release-manifest.sh" "$PENDING_MANIFEST"
 
-# §A supply-chain gate, mirroring publish-release-assets.sh — but EARLIER,
-# because publishing is not the first way an unsigned manifest reaches the
-# fleet. Nodes fetch releases/manifest.json straight from branch `main`
-# (see the verification URLs printed below), so the COMMIT is what exposes
-# it, not the publish. publish-release-assets.sh refusing to ship is a
-# backstop that arrives one step too late: by then the unsigned manifest is
-# already on main and the fleet is already refusing to auto-apply.
-#
-# This is why every cycle needed a manual catch. The signing block above is
-# conditional — no TTY and no RELEASE_MASTER_MNEMONIC means it prints a
-# warning and falls through — and the commit then happened anyway. A release
-# commit carrying a manifest no node will accept has no valid use, so refuse
-# to create one rather than leave a tag that has to be re-cut.
+# §A supply-chain gate, mirroring publish-release-assets.sh. The pending path
+# prevents an ordinary main push from exposing the release, but an unsigned
+# manifest is still unpublishable and must never be tagged as ready.
 # Release root ROTATED 2026-08-05. v1.7.122-alpha was the last release signed
 # with the old root (z6Mkkid…q7ur) — it is the release that installed this
 # pin on every node. From v1.7.123 onward the new root signs, and nodes
 # running .122+ reject anything signed with the old key.
 EXPECTED_DID="did:key:z6Mkfu5LT8d4DjETtrkATvHh9Dvcbnr7zBCUwfau8Sw7DLWT"
-if ! grep -q '"signature":' "$PROJECT_ROOT/releases/manifest.json" \
-    || ! grep -q "\"signed_by\": \"$EXPECTED_DID\"" "$PROJECT_ROOT/releases/manifest.json"; then
+if ! grep -q '"signature":' "$PENDING_MANIFEST" \
+    || ! grep -q "\"signed_by\": \"$EXPECTED_DID\"" "$PENDING_MANIFEST"; then
     echo "" >&2
-    echo "Error: releases/manifest.json is NOT signed by the release root." >&2
-    echo "  Refusing to commit — nodes read this file from branch main and will" >&2
-    echo "  refuse to auto-apply it, so the release would be dead on arrival." >&2
+    echo "Error: the pending manifest is NOT signed by the release root." >&2
+    echo "  Refusing to commit an unpublishable release." >&2
     echo "" >&2
     echo "  Sign it, then re-run this script:" >&2
-    echo "    bash scripts/sign-manifest.sh" >&2
+    echo "    bash scripts/sign-manifest.sh $PENDING_MANIFEST" >&2
     echo "" >&2
     echo "  (Signing needs a TTY for the mnemonic prompt, or RELEASE_MASTER_MNEMONIC set.)" >&2
     exit 1
 fi
-"$SIGNER" ceremony verify "$PROJECT_ROOT/releases/manifest.json" \
+"$SIGNER" ceremony verify "$PENDING_MANIFEST" \
     || { echo "Error: manifest signature failed cryptographic verification — refusing to commit" >&2; exit 1; }
 
-echo "[7/8] Committing version bump..."
+echo "[7/8] Committing release preparation..."
 git -C "$PROJECT_ROOT" add \
     core/archipelago/Cargo.toml \
     core/Cargo.lock \
@@ -300,15 +289,16 @@ git -C "$PROJECT_ROOT" add \
     neode-ui/package-lock.json \
     neode-ui/public/catalog.json \
     CHANGELOG.md \
-    releases/manifest.json \
-    release-manifest.json \
     2>/dev/null || true
+# releases/** is ignored because binaries live in Gitea attachments; force-add
+# only this small signed pending manifest.
+git -C "$PROJECT_ROOT" add -f "releases/pending/v${VERSION}/manifest.json"
 # Cargo.lock (rewritten by the release build after the version bump) and
 # neode-ui/public/catalog.json (regenerated by the frontend build) belong in
 # THIS commit: leaving them dirty failed build-iso-release.sh's clean-tree
 # preflight on three consecutive releases (.127-.129, 2026-08-09/10).
 
-git -C "$PROJECT_ROOT" commit -m "chore: release v${VERSION}"
+git -C "$PROJECT_ROOT" commit -m "chore: prepare release v${VERSION}"
 
 echo "[8/8] Creating git tag..."
 git -C "$PROJECT_ROOT" tag -a "v${VERSION}" -m "Release v${VERSION}"
@@ -319,8 +309,8 @@ echo ""
 echo "Artifacts:"
 echo "  - Version bumped in Cargo.toml and package.json"
 echo "  - Changelog updated in CHANGELOG.md"
-echo "  - Release manifest: releases/manifest.json"
-echo "  - Release manifest copy: release-manifest.json"
+echo "  - Pending manifest: releases/pending/v${VERSION}/manifest.json"
+echo "  - Live manifest: unchanged until assets pass publication verification"
 echo "  - Staged artifacts: releases/v${VERSION}/"
 echo "  - Git tag: v${VERSION}"
 echo ""

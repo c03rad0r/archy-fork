@@ -16,14 +16,26 @@ PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 VERSION_DIR="$PROJECT_ROOT/releases/v${VERSION}"
 BACKEND="$VERSION_DIR/archipelago"
 FRONTEND="$VERSION_DIR/archipelago-frontend-${VERSION}.tar.gz"
+PENDING_MANIFEST="$PROJECT_ROOT/releases/pending/v${VERSION}/manifest.json"
+LIVE_MANIFEST="$PROJECT_ROOT/releases/manifest.json"
+if [ -f "$PENDING_MANIFEST" ]; then
+    MANIFEST="$PENDING_MANIFEST"
+    PROMOTE_MANIFEST=1
+else
+    # Backward compatibility for releases prepared before pending manifests.
+    MANIFEST="$LIVE_MANIFEST"
+    PROMOTE_MANIFEST=0
+fi
 
 fail() { echo "Error: $*" >&2; exit 1; }
 
-[ -f "$PROJECT_ROOT/releases/manifest.json" ] || fail "releases/manifest.json missing"
+[ -f "$MANIFEST" ] || fail "release manifest missing: $MANIFEST"
+MANIFEST_VERSION=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["version"])' "$MANIFEST")
+[ "$MANIFEST_VERSION" = "$VERSION" ] || fail "requested v$VERSION but $MANIFEST describes v$MANIFEST_VERSION"
 [ -f "$BACKEND" ] || fail "backend artifact missing: $BACKEND"
 [ -f "$FRONTEND" ] || fail "frontend artifact missing: $FRONTEND"
 
-"$SCRIPT_DIR/check-release-manifest.sh"
+"$SCRIPT_DIR/check-release-manifest.sh" "$MANIFEST"
 
 # §A supply-chain gate: never publish an unsigned OTA manifest. Fleet nodes
 # with the pinned release-root anchor refuse to auto-apply unsigned manifests,
@@ -32,11 +44,11 @@ fail() { echo "Error: $*" >&2; exit 1; }
 # Release root ROTATED 2026-08-05; see create-release.sh. New root from
 # v1.7.123 onward.
 EXPECTED_DID="did:key:z6Mkfu5LT8d4DjETtrkATvHh9Dvcbnr7zBCUwfau8Sw7DLWT"
-grep -q '"signature":' "$PROJECT_ROOT/releases/manifest.json" \
-    && grep -q "\"signed_by\": \"$EXPECTED_DID\"" "$PROJECT_ROOT/releases/manifest.json" \
-    || fail "releases/manifest.json is not signed by the release root — run: bash scripts/sign-manifest.sh"
+grep -q '"signature":' "$MANIFEST" \
+    && grep -q "\"signed_by\": \"$EXPECTED_DID\"" "$MANIFEST" \
+    || fail "$MANIFEST is not signed by the release root — run: bash scripts/sign-manifest.sh $MANIFEST"
 if [ -x "$PROJECT_ROOT/core/target/release/archipelago" ]; then
-    "$PROJECT_ROOT/core/target/release/archipelago" ceremony verify "$PROJECT_ROOT/releases/manifest.json" \
+    "$PROJECT_ROOT/core/target/release/archipelago" ceremony verify "$MANIFEST" \
         || fail "manifest signature failed cryptographic verification"
 fi
 
@@ -130,12 +142,36 @@ echo "Verifying public download URLs (full GET + size + sha256)..."
 # hand during recovery. It fails hard on the first bad asset — the previous
 # inline `while read` ran in a pipe subshell, where a `fail` (exit) killed only
 # the subshell and let this script march on to "published and verified".
-"$PROJECT_ROOT/scripts/check-release-assets.sh" "$PROJECT_ROOT/releases/manifest.json" \
+"$PROJECT_ROOT/scripts/check-release-assets.sh" "$MANIFEST" \
     || fail "asset verification failed — NOT pushing main. The manifest stays off the branch nodes read, so no node sees a version it cannot fetch. Repair the assets and re-run."
 
-# Assets are proven fetchable — only now does the manifest become live.
-echo "Assets verified. Pushing main to $REMOTE (this makes v${VERSION} live)..."
-git -C "$PROJECT_ROOT" push "$REMOTE" main
+# Assets are proven fetchable — only now may the manifest become live. First
+# incorporate concurrent work, then promote in a dedicated commit. Until the
+# final push succeeds the remote still serves the previous manifest.
+echo "Assets verified. Synchronizing main before manifest promotion..."
+git -C "$PROJECT_ROOT" fetch "$REMOTE" main
+git -C "$PROJECT_ROOT" merge --no-edit "$REMOTE/main"
+
+if [ "$PROMOTE_MANIFEST" = "1" ]; then
+    cp "$MANIFEST" "$LIVE_MANIFEST"
+    cp "$MANIFEST" "$PROJECT_ROOT/release-manifest.json"
+    git -C "$PROJECT_ROOT" add releases/manifest.json release-manifest.json
+    git -C "$PROJECT_ROOT" rm -f -- "releases/pending/v${VERSION}/manifest.json"
+    git -C "$PROJECT_ROOT" commit -m "chore: publish release v${VERSION}"
+fi
+
+echo "Publishing verified manifest to main (this makes v${VERSION} live)..."
+# A concurrent push can race the fetch above. Merge and retry without ever
+# force-pushing; the remote remains on its old, working manifest meanwhile.
+for attempt in 1 2 3; do
+    if git -C "$PROJECT_ROOT" push "$REMOTE" HEAD:main; then
+        break
+    fi
+    [ "$attempt" -lt 3 ] || fail "main advanced repeatedly; assets are safe but manifest was not promoted"
+    echo "main advanced during publication; merging and retrying..."
+    git -C "$PROJECT_ROOT" fetch "$REMOTE" main
+    git -C "$PROJECT_ROOT" merge --no-edit "$REMOTE/main"
+done
 
 echo "Release v${VERSION} published and verified on $REMOTE."
 
