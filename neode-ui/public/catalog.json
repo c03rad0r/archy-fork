@@ -571,6 +571,18 @@
       "tier": "optional",
       "dockerImage": "source.archipelago-foundation.org/lfg2025/phoenixd:0.9.0",
       "repoUrl": "https://github.com/ACINQ/phoenixd"
+    },
+    {
+      "id": "cuprate",
+      "title": "Cuprate",
+      "version": "0.1.0-preview",
+      "description": "Alternative Monero node implementation in Rust. Independently validates Monero consensus rules, providing a layer of security and redundancy for the network.",
+      "icon": "/assets/img/app-icons/cuprate.svg",
+      "author": "Cuprate contributors",
+      "category": "money",
+      "tier": "optional",
+      "dockerImage": "source.archipelago-foundation.org/lfg2025/cuprate:0.1.0-preview-18-g618ff14",
+      "repoUrl": "https://github.com/Cuprate/cuprate"
     }
   ]
 }
