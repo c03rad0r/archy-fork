@@ -795,4 +795,30 @@ mod tests {
         );
         assert!(secret_from_nsec("npub1").is_err());
     }
+
+    /// The mesh ULA is a PURE function of the node's public key:
+    /// `fd ‖ sha256(x-only pubkey)[0..15]` (fips identity/node_addr.rs →
+    /// identity/address.rs). That is what makes "address by npub" work —
+    /// Termux's fipssh helper, and any future DNS-style resolver, just
+    /// computes what the fips daemon's DNS answers.
+    #[test]
+    fn npub_derives_the_same_mesh_ula_as_the_fips_identity() {
+        for seed in [0x42u8, 0x07, 0x31] {
+            // 0xff… would exceed the curve order — secret keys must be valid scalars.
+            let secret = [seed; 32];
+            let id = fips::Identity::from_secret_bytes(&secret).unwrap();
+            let npub = id.npub();
+            let expected = id.address().to_ipv6().to_string();
+
+            let pubkey_hex = pubkey_from_any(&npub).unwrap();
+            let pk = hex::decode(&pubkey_hex).unwrap();
+            let mut hasher = Sha256::new();
+            hasher.update(&pk);
+            let hash = hasher.finalize();
+            let mut ula = [0u8; 16];
+            ula[0] = 0xfd;
+            ula[1..].copy_from_slice(&hash[..15]);
+            assert_eq!(std::net::Ipv6Addr::from(ula).to_string(), expected, "npub {npub}");
+        }
+    }
 }

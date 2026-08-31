@@ -87,6 +87,25 @@ the node UI**, default **off**. Sketch:
 - [ ] Settings UI survives a page reload; RPC has a vitest like
       `TransportPrefsCard.test.ts`.
 
+## Addendum (2026-08-31, same day): the npub IS the address
+
+While wiring this up we confirmed the mesh ULA is a **pure function of the
+public key** — `fd ‖ sha256(x-only pubkey)[0..15]` (`fips/src/identity/node_addr.rs`
+`from_pubkey` → `identity/address.rs` `from_node_addr`,
+`FIPS_ADDRESS_PREFIX = 0xfd`). The daemon's DNS resolver (`fips/dial.rs`) just
+answers what anyone can compute. Consequences for the node side:
+
+- Docs/UI can advertise `ssh <user>@npub1…`-style addressing: Termux's
+  `Android/tools/fipssh` (shipped with the companion work) derives the ULA
+  from the npub with zero infrastructure, verified byte-identical against
+  the fips crate (`archy-fips-core` test
+  `npub_derives_the_same_mesh_ula_as_the_fips_identity`).
+- If the settings toggle from this handover ever grows a "copy command"
+  affordance, `fipssh <user>@<npub>` is the natural shape (npub, not ULA —
+  it is the durable identity; the ULA follows from it).
+- No node-side DNS surface is required for the SSH case; the resolver stays
+  what it is today (the node's own peer dials).
+
 ## Working rules
 
 Same as the queue handoffs: small commits, tracker issue for this feature
