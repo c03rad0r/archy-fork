@@ -661,4 +661,23 @@ mod tests {
             ]
         );
     }
+
+    // The signed-catalog body served to the browser must be the anchored,
+    // release-root-verified bytes — and nothing else. Unsigned caches (the
+    // migration-window form) and self-consistent-but-unanchored signatures
+    // must both be refused so a tampered mirror can never become an install
+    // button (same posture as the OTA manifest supply-chain gate).
+    #[tokio::test]
+    async fn verified_catalog_body_rejects_unsigned_cache() {
+        let dir = tempfile::tempdir().unwrap();
+        write_cache(dir.path(), r#"{"schema":1,"apps":{"demo":{"version":"1"}}}"#).unwrap();
+        let err = verified_catalog_body(dir.path()).await.unwrap_err();
+        assert!(err.to_string().contains("unsigned"));
+    }
+
+    #[tokio::test]
+    async fn verified_catalog_body_rejects_missing_cache() {
+        let dir = tempfile::tempdir().unwrap();
+        assert!(verified_catalog_body(dir.path()).await.is_err());
+    }
 }
