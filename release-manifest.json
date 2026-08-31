@@ -1,33 +1,31 @@
 {
   "changelog": [
-    "**Apps with their own login can now skip the node's login screen — Gitea and BTCPay Server do so out of the box.** Some apps bring a complete account system of their own, and putting the node's password page in front of them broke real workflows: git clients can't answer a browser login, and a BTCPay checkout link handed to a customer must open for that customer. These apps are now served directly on their own login, while the node still fronts the connection for everything else it does (embedding fixes, the \"app is restarting\" page, Tor). Every app gets a new **Settings → app → Access control** switch, so you can put the node login back in front of any app — or take it away from one — with one click, effective immediately. App developers declare the default in their manifest (`auth: open`), documented in the developer guide.",
-    "**The phone remote now works inside apps on the TV — tap, scroll, and type everywhere.** The companion remote and keyboard drove the dashboard beautifully but died at the edge of any app screen (Gitea, BTCPay, and friends): for the browser, each app is a separate website embedded in the page, and simulated input is forbidden from crossing that wall. The on-screen display now accepts the remote's input the way a real mouse and keyboard arrive — below the page, through the browser itself — so it lands anywhere on screen, app screens and tabs included. Taps click, two-finger scrolling scrolls the app, and typing goes into whichever field you tapped. Existing kiosks pick this up with the update, no reinstall needed.",
-    "**While you're driving with the phone remote, the old mouse pointer gets out of the way.** The computer's own pointer used to sit frozen wherever the physical mouse last left it — a second, dead cursor next to the live orange one. It now hides while the remote is in use and returns half a minute after the last remote input.",
-    "**\"Are you sure?\" questions no longer freeze the remote.** A handful of confirmations (clearing mesh history, rebooting, deleting a backup, uninstalling an app) used the browser's built-in popup, which stops the whole page — including remote input — until someone clicks it with a real mouse. From the couch, that meant asking a question you couldn't answer. All of them are now proper in-app windows in the house style, fully driveable by remote.",
-    "**A mesh radio now connects no matter which port it's plugged into — or replugged into.** Moving a radio to a different USB port could leave the mesh silently down: the node only checked a short fixed list of port names (a radio landing outside it was invisible), a hand-set serial-port override quietly outranked the device you'd just approved in the \"Radio detected\" window, and one whole family of boards (Espressif-based radios like recent Heltec/T-Deck models) never received a stable device name at all — the exact combination found live on a fleet machine this week. All three are fixed: every serial port is scanned, choosing a radio in the detection window clears any stale override, and Espressif boards get the same stable name as everyone else.",
-    "**Mesh signal strength is honest now.** Every peer heard over Reticulum radio reported a signal strength of exactly 0 — which is also what you'd see with no radio at all, and what peers reached over the internet showed. Real receptions now show their true signal reading, and anything that arrived over a relay or the internet says so by showing none — so \"the radio is working\" and \"the internet is doing the radio's job\" no longer look identical. (The reading depends on the radio's firmware reporting it; boards that don't report per-packet signal stats show \"unknown\" rather than a made-up number, and the new radio diagnostics show at a glance whether yours reports them.)",
-    "**A background error that repeated every 90 seconds, forever, is gone.** After setting up a node from its recovery phrase, the node kept introducing itself to its federation partners with its old temporary identity papers while signing with its new ones — every partner rejected the introduction, and both sides logged an error about it every minute and a half until the next restart. The identity switch now updates everything at once, a rejected introduction is no longer misreported as delivered, and a partner who has already answered is no longer re-asked on every cycle."
+    "**Cuprate — an independent Monero node — is now an app.** Monero consensus validated by a second, unrelated codebase (Rust), the same layer of security-in-depth Bitcoin gets from Knots. Review caught two problems before anything shipped: the unrestricted RPC that can move funds stayed bound to the container's loopback (never published to the node, let alone the LAN — anything on the node could previously have reached it), and its restricted RPC moved off port 18089 to avoid colliding with Penpot. Honest caveat: upstream has cut no stable release yet, so the pin tracks an exact preview build (0.1.0-preview-18-g618ff14) and moves to their first tagged release when there is one.",
+    "**A frozen node now explains itself — and comes back on its own.** The host now captures a memory dump into /var/crash when the kernel panics *or* wedges (a hung kiosk used to sit dead until someone power-cycled it; now it dumps, reboots itself, and leaves the evidence behind), and records failing-memory signals (ECC errors) into a database as they happen. This is the first change delivered by a new host-update channel: the node's own updater now carries OS-level packages and settings to already-deployed machines — the crash-kernel's memory reservation is the one part that waits for a reboot, and the node says so rather than pretending.",
+    "**Uninstalling an app can no longer report success when it failed.** The declarative path used to swallow every teardown error and report the app uninstalled, leaving the tile behind and the truth in the logs. A failed uninstall now stops and shows the real per-app errors, so \"still there\" is never presented as \"gone\".",
+    "**Pictures to internet-only mesh contacts work now.** Sending an attachment inline always took the radio path and failed with \"Peer is federation-only (no radio twin)\" for contacts reachable only over the internet — and the size-adviser kept recommending a radio transfer those peers can't receive. Both fixed: inline sends route over the federation when that's the only way to reach the peer, and the advice no longer offers radio-only transfers to radio-unreachable contacts.",
+    "**Disk cleanup finally has honest numbers.** Space \"free\" on a drive was counted including the slice the filesystem keeps reserved for root — roughly 5% of the disk, 92 GB on one dev box — so the automatic cleanup that's supposed to kick in at 90% never triggered and stale container images piled up unnoticed. Reserved space now counts as used, which is what the threshold was always meant to measure."
   ],
   "components": [
     {
-      "current_version": "1.8.4-alpha",
-      "download_url": "https://source.archipelago-foundation.org/lfg2025/archy/releases/download/v1.8.4-alpha/archipelago",
+      "current_version": "1.8.5-alpha",
+      "download_url": "https://source.archipelago-foundation.org/lfg2025/archy/releases/download/v1.8.5-alpha/archipelago",
       "name": "archipelago",
-      "new_version": "1.8.4-alpha",
-      "sha256": "c4d3a4fdecfdc2a972f808c7f98225b29dc65333418038bb016a5f0bd79d3551",
-      "size_bytes": 63850680
+      "new_version": "1.8.5-alpha",
+      "sha256": "54e91944c6395a53c8ac87ea97f61e8a7fc5ffd133f017180931ba4fa9566239",
+      "size_bytes": 63934504
     },
     {
-      "current_version": "1.8.4-alpha",
-      "download_url": "https://source.archipelago-foundation.org/lfg2025/archy/releases/download/v1.8.4-alpha/archipelago-frontend-1.8.4-alpha.tar.gz",
-      "name": "archipelago-frontend-1.8.4-alpha.tar.gz",
-      "new_version": "1.8.4-alpha",
-      "sha256": "790de85816a7ad49480dc99134022279e4f40b69bd9b0983a6393373a3bdd7cc",
-      "size_bytes": 97641658
+      "current_version": "1.8.5-alpha",
+      "download_url": "https://source.archipelago-foundation.org/lfg2025/archy/releases/download/v1.8.5-alpha/archipelago-frontend-1.8.5-alpha.tar.gz",
+      "name": "archipelago-frontend-1.8.5-alpha.tar.gz",
+      "new_version": "1.8.5-alpha",
+      "sha256": "a5d773e8225bfd8a34dfc74acf38bdc2c39bc138c62bf9f4137d0efd72cce3e9",
+      "size_bytes": 97657151
     }
   ],
-  "release_date": "2026-08-20",
-  "signature": "94ffb717166c6062ddbea97476942285903d629543bf3b9ec435697a1b8c31243dedb0f3c8f874daf3d9c0974a6342bf42b7e9d34b00680aa63a1d441dbc4805",
+  "release_date": "2026-08-31",
+  "signature": "f0bcec4935588ee428ebabfbb6e08e00dbd42202af92763073a7f98f4785925ca3565bf96fecbdd1695eff77fcf906783fd9053d82730b11c75441c6f5a60b05",
   "signed_by": "did:key:z6Mkfu5LT8d4DjETtrkATvHh9Dvcbnr7zBCUwfau8Sw7DLWT",
-  "version": "1.8.4-alpha"
+  "version": "1.8.5-alpha"
 }
