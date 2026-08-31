@@ -11,8 +11,9 @@ a block (from the curated CHANGELOG bullets) and inserts it newest-first.
   python3 scripts/sync-whats-new.py --check    # exit 1 if anything is missing
 
 Dev-process bullets ("Validation passed…/pending…") are dropped — the modal is
-user-facing. Only CHANGELOG versions are managed; older hand-written blocks
-(pre-CHANGELOG history) are never touched or removed.
+user-facing. The visible history deliberately starts at v1.8.0-alpha; older
+blocks are removed so this remains a concise product history rather than an
+unbounded archive.
 """
 import re
 import sys
@@ -25,6 +26,7 @@ MODAL = REPO / "neode-ui/src/views/settings/AccountInfoSection.vue"
 
 MONTHS = ["", "January", "February", "March", "April", "May", "June", "July",
           "August", "September", "October", "November", "December"]
+MIN_VISIBLE_VERSION = (1, 8, 0)
 
 HEADER_RE = re.compile(r"^## (v\d+\.\d+\.\d+\S*) \((\d{4})-(\d{2})-(\d{2})\)")
 
@@ -47,7 +49,10 @@ def parse_changelog():
         if m:
             ver, y, mo, d = m.groups()
             cur = {"ver": ver, "date": f"{MONTHS[int(mo)]} {int(d)}, {y}", "bullets": []}
-            entries.append(cur)
+            if version_key(ver) >= MIN_VISIBLE_VERSION:
+                entries.append(cur)
+            else:
+                cur = None
             continue
         if cur is not None and line.startswith("- "):
             text = line[2:].strip()
@@ -77,8 +82,8 @@ def version_key(version):
     return tuple(map(int, match.groups()))
 
 
-def sort_modal_blocks():
-    """Sort complete release-note blocks newest-first, preserving gaps."""
+def sort_modal_blocks(entries):
+    """Re-render current release-note blocks newest-first and remove old history."""
     lines = MODAL.read_text().splitlines(keepends=True)
     marker = re.compile(r"^\s*<!-- (v\d+\.\d+\.\d+\S*) -->\s*$")
     blocks = []
@@ -102,14 +107,24 @@ def sort_modal_blocks():
         else:
             raise RuntimeError(f"unclosed What's New block for {match.group(1)}")
 
-    sorted_segments = [b[3] for b in sorted(blocks, key=lambda b: version_key(b[2]), reverse=True)]
-    output = []
-    cursor = 0
-    for (start, end, _version, _segment), replacement in zip(blocks, sorted_segments):
-        output.extend(lines[cursor:start])
-        output.extend(replacement)
-        cursor = end
-    output.extend(lines[cursor:])
+    if not blocks:
+        return False
+    for previous, following in zip(blocks, blocks[1:]):
+        gap = "".join(lines[previous[1]:following[0]])
+        if gap.strip():
+            raise RuntimeError("unexpected content between What's New release blocks")
+
+    by_version = {entry["ver"]: entry for entry in entries}
+    retained = [b for b in blocks if version_key(b[2]) >= MIN_VISIBLE_VERSION]
+    sorted_segments = [
+        render_block(by_version[b[2]]).splitlines(keepends=True)
+        if b[2] in by_version else b[3]
+        for b in sorted(retained, key=lambda b: version_key(b[2]), reverse=True)
+    ]
+    output = lines[:blocks[0][0]]
+    for segment in sorted_segments:
+        output.extend(segment)
+    output.extend(lines[blocks[-1][1]:])
     changed = output != lines
     if changed:
         MODAL.write_text("".join(output))
@@ -117,8 +132,11 @@ def sort_modal_blocks():
 
 
 def to_html(text):
-    text = text.replace("`", "")          # drop markdown code ticks (plain prose)
-    return html.escape(text, quote=False)  # & < >  (Vue template-safe)
+    text = text.replace("`", "")
+    escaped = html.escape(text, quote=False)  # & < > (Vue template-safe)
+    escaped = re.sub(r"\*\*(.+?)\*\*", r"<strong>\1</strong>", escaped)
+    escaped = re.sub(r"(?<!\*)\*([^*]+?)\*(?!\*)", r"<em>\1</em>", escaped)
+    return escaped
 
 
 def render_block(entry):
@@ -162,10 +180,15 @@ def main():
     missing = [e for e in entries if e["ver"] not in have]
     expected_order = sorted(displayed, key=version_key, reverse=True)
     out_of_order = displayed != expected_order
+    too_old = [v for v in displayed if version_key(v) < MIN_VISIBLE_VERSION]
 
-    if not missing and not out_of_order:
-        print("What's New modal is in sync with CHANGELOG.md "
-              f"({len(entries)} changelog versions, all present and newest-first).")
+    if not missing and not out_of_order and not too_old:
+        changed = False if check else sort_modal_blocks(entries)
+        if changed:
+            print("Re-rendered What's New blocks from the curated changelog.")
+        else:
+            print("What's New modal is in sync with CHANGELOG.md "
+                  f"({len(entries)} changelog versions, all present and newest-first).")
         return 0
 
     names = ", ".join(e["ver"] for e in missing)
@@ -176,6 +199,9 @@ def main():
         if out_of_order:
             print("FAIL: What's New entries are not newest-first; the modal currently "
                   f"opens at {displayed[0]} instead of {expected_order[0]}", file=sys.stderr)
+        if too_old:
+            print("FAIL: What's New contains entries older than the v1.8.0 history floor: "
+                  + ", ".join(too_old), file=sys.stderr)
         print("Run: python3 scripts/sync-whats-new.py", file=sys.stderr)
         return 1
 
@@ -193,8 +219,8 @@ def main():
         MODAL.write_text("".join(lines))
         print(f"Inserted {len(missing)} block(s): {names}")
 
-    if sort_modal_blocks():
-        print("Sorted What's New blocks newest-first.")
+    if sort_modal_blocks(entries):
+        print("Normalized What's New blocks (v1.8.0+ only, newest-first).")
     return 0
 
 

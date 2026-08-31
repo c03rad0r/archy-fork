@@ -1,5 +1,13 @@
 # Changelog
 
+## v1.8.6-alpha (2026-08-31)
+
+- **Companion 0.5.28 is included in the node download this time, with the work that missed v1.8.5.** The companion hub can back up and restore its node list, act as a NIP-46 remote signer, and shows each paired node's FIPS mesh address with tap-to-copy. For Termux users, the included `fipssh` helper turns a durable node npub into its mesh address, so `fipssh user@npub1…` can reach SSH once that node has explicitly allowed port 22. The node-side “SSH over mesh” firewall toggle is not claimed here—it still needs implementation and remains off by default.
+
+- **What's New now starts cleanly at v1.8.0 and is guaranteed to be newest-first.** Older alpha history no longer overwhelms the useful recent changes, the three stray v1.7 entries that appeared above current releases are gone, and the release check now fails if either the ordering or the v1.8.0 history floor drifts again.
+
+- **A release can no longer advertise itself before its files exist.** New releases are prepared behind a pending manifest; the publisher uploads the backend and frontend, downloads both back and verifies their size and hash, and only then promotes the signed manifest to the path nodes read. The manifest generator also includes every curated What's New item instead of silently stopping after the first ten physical changelog lines.
+
 ## v1.8.5-alpha (2026-08-30)
 
 - **Cuprate — an independent Monero node — is now an app.** Monero consensus validated by a second, unrelated codebase (Rust), the same layer of security-in-depth Bitcoin gets from Knots. Review caught two problems before anything shipped: the unrestricted RPC that can move funds stayed bound to the container's loopback (never published to the node, let alone the LAN — anything on the node could previously have reached it), and its restricted RPC moved off port 18089 to avoid colliding with Penpot. Honest caveat: upstream has cut no stable release yet, so the pin tracks an exact preview build (0.1.0-preview-18-g618ff14) and moves to their first tagged release when there is one.
