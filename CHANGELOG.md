@@ -1,5 +1,11 @@
 # Changelog
 
+## v1.8.7-alpha (2026-08-31)
+
+- **What's New really does stop at v1.8.0 now.** The first correction removed old generated release blocks but missed six much older hand-written v1.2 sections at the bottom of the modal. Those sections are gone, and the release check now recognizes and rejects that legacy format too, so the history floor cannot falsely pass again.
+
+- **The installer carries the same corrected release, Companion 0.5.28, and complete crash tooling.** Its artifact gate now checks the companion APK version, the v1.8.0 What's New floor, and every kdump package inside the finished ISO; `makedumpfile` is installed explicitly rather than accidentally relying on a recommended dependency that the minimal image deliberately omits.
+
 ## v1.8.6-alpha (2026-08-31)
 
 - **Companion 0.5.28 is included in the node download this time, with the work that missed v1.8.5.** The companion hub can back up and restore its node list, act as a NIP-46 remote signer, and shows each paired node's FIPS mesh address with tap-to-copy. For Termux users, the included `fipssh` helper turns a durable node npub into its mesh address, so `fipssh user@npub1…` can reach SSH once that node has explicitly allowed port 22. The node-side “SSH over mesh” firewall toggle is not claimed here—it still needs implementation and remains off by default.

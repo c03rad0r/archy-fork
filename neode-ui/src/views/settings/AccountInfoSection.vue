@@ -362,6 +362,17 @@ init()
               </button>
             </div>
             <div class="overflow-y-auto flex-1 min-h-0 space-y-6 pr-1">
+              <!-- v1.8.7-alpha -->
+              <div>
+                <div class="flex items-center gap-2 mb-3">
+                  <span class="text-xs font-mono px-2 py-0.5 rounded bg-orange-500/20 text-orange-300">v1.8.7-alpha</span>
+                  <span class="text-xs text-white/40">August 31, 2026</span>
+                </div>
+                <div class="space-y-3 text-sm text-white/80 pl-3 border-l border-white/10">
+                  <p><strong>What's New really does stop at v1.8.0 now.</strong> The first correction removed old generated release blocks but missed six much older hand-written v1.2 sections at the bottom of the modal. Those sections are gone, and the release check now recognizes and rejects that legacy format too, so the history floor cannot falsely pass again.</p>
+                  <p><strong>The installer carries the same corrected release, Companion 0.5.28, and complete crash tooling.</strong> Its artifact gate now checks the companion APK version, the v1.8.0 What's New floor, and every kdump package inside the finished ISO; makedumpfile is installed explicitly rather than accidentally relying on a recommended dependency that the minimal image deliberately omits.</p>
+                </div>
+              </div>
               <!-- v1.8.6-alpha -->
               <div>
                 <div class="flex items-center gap-2 mb-3">
