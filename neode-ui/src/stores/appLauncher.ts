@@ -4,7 +4,7 @@ import { rpcClient } from '@/api/rpc-client'
 import { recordAppLaunch } from '@/utils/appUsage'
 import { requestExternalOpen } from '@/api/remote-relay'
 import { openInAppOrNewTab, isCompanionApp, type InAppLaunchMeta } from '@/utils/openExternal'
-import { resolveAppUrl } from '@/views/appSession/appSessionConfig'
+import { directAppUrl, HTTPS_APP_IDS, resolveAppUrl } from '@/views/appSession/appSessionConfig'
 import { useAppStore } from '@/stores/app'
 import { resolveAppIcon } from '@/views/apps/appsConfig'
 import { IS_DEMO, isDemoApp, isDemoExternal, demoAppUrl } from '@/composables/useDemoIntro'
@@ -59,9 +59,6 @@ const NEW_TAB_APP_IDS = new Set([
   // cert warning inside an iframe).
   'netbird',
 ])
-
-// Apps served over HTTPS (self-signed) rather than plain HTTP.
-const HTTPS_APP_IDS = new Set(['netbird'])
 
 function mustOpenInNewTab(url: string): boolean {
   try {
@@ -147,33 +144,7 @@ const PORT_TO_APP_ID: Record<string, string> = {
   '50002': 'electrumx',
 }
 
-const APP_ID_TO_PORT: Record<string, string> = {
-  'btcpay-server': '23000',
-  grafana: '3000',
-  photoprism: '2342',
-  homeassistant: '8123',
-  vaultwarden: '8082',
-  nextcloud: '8085',
-  portainer: '9000',
-  tailscale: '8240',
-  'nginx-proxy-manager': '8081',
-  'uptime-kuma': '3002',
-  gitea: '3001',
-  // Without this, directAppUrl('netbird') returns null and netbird falls
-  // through to the iframe (and never gets its https URL) — issue #15.
-  netbird: '8087',
-}
-
-function directAppUrl(appId: string): string | null {
-  const port = APP_ID_TO_PORT[appId]
-  if (!port || typeof window === 'undefined') return null
-  const scheme = HTTPS_APP_IDS.has(appId) ? 'https' : 'http'
-  return `${scheme}://${window.location.hostname}:${port}`
-}
-
-
 const APPROVED_ORIGINS_KEY = 'neode_nostr_approved_origins'
-
 function getApprovedOrigins(): Set<string> {
   try {
     const stored = localStorage.getItem(APPROVED_ORIGINS_KEY)
@@ -285,18 +256,25 @@ export const useAppLauncherStore = defineStore('appLauncher', () => {
     let launchUrl = normalizeLaunchUrl(payload.url, titleHintId)
     const resolvedId = resolveAppIdFromUrl(launchUrl) || titleHintId
 
-    // Apps served over HTTPS (e.g. netbird, which needs a secure context for
-    // its OIDC dashboard) must be launched over https — a stale http URL hits
-    // the TLS port and 400s. Upgrade the scheme defensively in every path.
-    if (resolvedId && HTTPS_APP_IDS.has(resolvedId)) {
-      try {
-        const u = new URL(launchUrl, window.location.origin)
-        if (u.protocol === 'http:') {
-          u.protocol = 'https:'
-          launchUrl = u.href
-        }
-      } catch { /* leave as-is */ }
-    }
+    // Scheme discipline for everything launched on this host. App ports are
+    // owned by the app gate, which serves TLS on the same port whenever the
+    // node has a certificate — so on an HTTPS connection every same-host
+    // app URL must be https: plain http is a silent downgrade at best and
+    // mixed-content-blocked at worst (remote browsers, the companion
+    // webview). Apps that are ALWAYS https (netbird's secure-context OIDC
+    // dashboard) upgrade regardless of the page, and external hosts keep
+    // their own scheme.
+    try {
+      const u = new URL(launchUrl, window.location.origin)
+      const sameHost = u.hostname === window.location.hostname
+      const alwaysHttps = !!resolvedId && HTTPS_APP_IDS.has(resolvedId)
+      const httpsPage = window.location.protocol === 'https:'
+      if (u.protocol === 'http:' && (alwaysHttps || (httpsPage && sameHost && (resolvedId || mustOpenInNewTab(launchUrl))))) {
+        // Pure prefix swap — never re-serialize the URL (URL.href would add
+        // a trailing slash and change the string the caller handed over).
+        launchUrl = launchUrl.replace(/^http:\/\//i, 'https://')
+      }
+    } catch { /* leave as-is */ }
 
     if (!isMobileViewport() && payload.openInNewTab) {
       if (resolvedId) recordAppLaunch(resolvedId)

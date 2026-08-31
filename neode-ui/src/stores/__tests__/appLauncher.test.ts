@@ -256,6 +256,46 @@ describe('useAppLauncherStore', () => {
     )
   })
 
+  // An HTTPS connection must never hand the remote browser (or the phone
+  // webview) a cleartext app URL: same-host app ports are gate-owned and
+  // serve TLS on the same port. Plain-http pages keep http exactly as before
+  // — pinned by every test above this one.
+  it('upgrades same-host app URLs to https on an https page', () => {
+    Object.defineProperty(window, 'location', {
+      value: { origin: 'https://192.0.2.10', protocol: 'https:', hostname: '192.0.2.10' },
+      writable: true,
+      configurable: true,
+    })
+    const store = useAppLauncherStore()
+
+    store.open({ url: 'http://192.0.2.10:8082', title: 'Vaultwarden' })
+
+    expect(store.isOpen).toBe(false)
+    expect(store.panelAppId).toBe(null)
+    expect(mockWindowOpen).toHaveBeenCalledWith(
+      'https://192.0.2.10:8082',
+      '_blank',
+      'noopener,noreferrer',
+    )
+  })
+
+  it('never upgrades a different host on an https page', () => {
+    Object.defineProperty(window, 'location', {
+      value: { origin: 'https://192.0.2.10', protocol: 'https:', hostname: '192.0.2.10' },
+      writable: true,
+      configurable: true,
+    })
+    const store = useAppLauncherStore()
+
+    store.open({ url: 'http://192.168.1.100:8082', title: 'Vaultwarden' })
+
+    expect(mockWindowOpen).toHaveBeenCalledWith(
+      'http://192.168.1.100:8082',
+      '_blank',
+      'noopener,noreferrer',
+    )
+  })
+
   it('opens Gitea path URL in new tab', () => {
     const store = useAppLauncherStore()
 

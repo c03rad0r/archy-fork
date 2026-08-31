@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { NEW_TAB_APPS, resolveAppUrl } from '../appSessionConfig'
+import { NEW_TAB_APPS, directAppUrl, resolveAppUrl } from '../appSessionConfig'
 import { GENERATED_NEW_TAB_APPS } from '../generatedAppSessionConfig'
 
 describe('appSessionConfig', () => {
@@ -67,5 +67,52 @@ describe('appSessionConfig', () => {
     })
 
     expect(resolveAppUrl('filebrowser', undefined, 'http://localhost:18083')).toBe('http://192.0.2.10:18083')
+  })
+
+  // The direct-port launch path (new-tab apps on desktop, the companion's
+  // native WebView on phones) used to hardcode http:// — so a node reached
+  // over HTTPS opened Vaultwarden and friends in cleartext. These pin the
+  // scheme-following contract on both page schemes.
+  it('builds direct app URLs on the page scheme — https page, https app', () => {
+    Object.defineProperty(window, 'location', {
+      value: { hostname: '192.0.2.10', protocol: 'https:' },
+      writable: true,
+      configurable: true,
+    })
+
+    expect(directAppUrl('vaultwarden')).toBe('https://192.0.2.10:8082')
+    expect(directAppUrl('gitea')).toBe('https://192.0.2.10:3001')
+    expect(directAppUrl('btcpay-server')).toBe('https://192.0.2.10:23000')
+  })
+
+  it('keeps plain-http direct app URLs on a plain-http page', () => {
+    Object.defineProperty(window, 'location', {
+      value: { hostname: '192.0.2.10', protocol: 'http:' },
+      writable: true,
+      configurable: true,
+    })
+
+    expect(directAppUrl('vaultwarden')).toBe('http://192.0.2.10:8082')
+  })
+
+  it('always launches secure-context apps over https, on either page scheme', () => {
+    Object.defineProperty(window, 'location', {
+      value: { hostname: '192.0.2.10', protocol: 'http:' },
+      writable: true,
+      configurable: true,
+    })
+
+    expect(directAppUrl('netbird')).toBe('https://192.0.2.10:8087')
+  })
+
+  it('resolves session app URLs on the page scheme too (https page)', () => {
+    Object.defineProperty(window, 'location', {
+      value: { hostname: '192.0.2.10', protocol: 'https:' },
+      writable: true,
+      configurable: true,
+    })
+
+    expect(resolveAppUrl('mempool')).toBe('https://192.0.2.10:4080')
+    expect(resolveAppUrl('filebrowser', undefined, 'http://localhost:18083')).toBe('https://192.0.2.10:18083')
   })
 })

@@ -166,6 +166,49 @@ function pageScheme(): string {
   return p === 'https:' || p === 'http:' ? p : 'http:'
 }
 
+/** Apps served over HTTPS (self-signed) rather than plain HTTP, regardless of
+ *  the page's scheme. */
+export const HTTPS_APP_IDS = new Set(['netbird'])
+
+/** App ID -> direct launch port for the paths that bypass the in-app session:
+ *  new-tab apps and the companion's native WebView. Every port here is owned
+ *  by the app gate (manifest `auth: gated`/`open` + `bind: 127.0.0.1`), which
+ *  serves TLS on the same port whenever the node has a certificate. */
+export const DIRECT_APP_PORTS: Record<string, string> = {
+  'btcpay-server': '23000',
+  grafana: '3000',
+  photoprism: '2342',
+  homeassistant: '8123',
+  vaultwarden: '8082',
+  nextcloud: '8085',
+  portainer: '9000',
+  tailscale: '8240',
+  'nginx-proxy-manager': '8081',
+  'uptime-kuma': '3002',
+  gitea: '3001',
+  // Without this, directAppUrl('netbird') returns null and netbird falls
+  // through to the iframe (and never gets its https URL) — issue #15.
+  netbird: '8087',
+}
+
+/** Direct-port launch URL for an app, on the page's scheme.
+ *
+ *  These are the apps that open OUTSIDE the dashboard's own origin — a new
+ *  browser tab on the desktop, or the companion's in-app WebView on a phone.
+ *  The URL is handed to a context with no dashboard chrome, so it must carry
+ *  the scheme the remote browser actually reached the node on: on an HTTPS
+ *  connection, `http://host:port` is at best a silent downgrade to cleartext
+ *  and at worst blocked outright as mixed content. Every port in
+ *  DIRECT_APP_PORTS is served by the app gate with TLS on the same port
+ *  (see appgate/tls.rs), so following the page scheme is always answerable.
+ *  Plain-HTTP dashboards keep today's behaviour exactly. */
+export function directAppUrl(appId: string): string | null {
+  const port = DIRECT_APP_PORTS[appId]
+  if (!port || typeof window === 'undefined') return null
+  const scheme = HTTPS_APP_IDS.has(appId) || pageScheme() === 'https:' ? 'https' : 'http'
+  return `${scheme}://${window.location.hostname}:${port}`
+}
+
 /** Resolve a human-readable title for an app */
 export function resolveAppTitle(id: string): string {
   return APP_TITLES[id] || id.replace(/-/g, ' ').replace(/\b\w/g, c => c.toUpperCase())

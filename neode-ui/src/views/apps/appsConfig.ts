@@ -3,7 +3,7 @@
 import type { Ref } from 'vue'
 import { computed } from 'vue'
 import { PackageState, type PackageDataEntry } from '@/types/api'
-import { resolveAppUrl } from '../appSession/appSessionConfig'
+import { matchPageScheme, resolveAppUrl } from '../appSession/appSessionConfig'
 import { isAutoTabApp } from '@/utils/autoTabApps'
 
 export type AppsTab = 'apps' | 'websites' | 'services'
@@ -299,7 +299,13 @@ export function launchBlockedReason(id: string, pkg?: PackageDataEntry | null): 
 export function resolveRuntimeLaunchUrl(pkg: PackageDataEntry): string {
   const addr = runtimeLanAddress(pkg)
   if (!addr || typeof window === 'undefined') return addr
-  return addr.replace(/^http:\/\/(localhost|127\.0\.0\.1)(?=[:/]|$)/, `http://${window.location.hostname}`)
+  const local = addr.replace(/^http:\/\/(localhost|127\.0\.0\.1)(?=[:/]|$)/, `http://${window.location.hostname}`)
+  // The backend reports runtime URLs as http:// because that is how the app
+  // binds locally — on an HTTPS connection that is a cleartext downgrade
+  // (and mixed-content-blocked when opened from the dashboard). The gate
+  // serves TLS on every app port, so follow the page's scheme, exactly like
+  // resolveAppUrl() does for the same runtime URLs.
+  return matchPageScheme(local)
 }
 
 export function getStatusClass(state: PackageState, health?: string | null, exitCode?: number | null): string {
