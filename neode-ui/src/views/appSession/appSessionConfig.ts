@@ -212,18 +212,6 @@ export const DIRECT_APP_PORTS: Record<string, string> = {
  *  DIRECT_APP_PORTS is served by the app gate with TLS on the same port
  *  (see appgate/tls.rs), so following the page scheme is always answerable.
  *  Plain-HTTP dashboards keep today's behaviour exactly. */
-/** Whether an app's direct port should follow the page's scheme (https on
- *  an https connection). True only when the node's app gate fronts the port
- *  (manifest auth gated/open — TLS served on the same port) or the app is
- *  unconditionally https (netbird). Legacy curated installs without a
- *  manifest (Nginx Proxy Manager, Tailscale) and `auth: none` ports (Cuprate's
- *  RPC) publish plain HTTP and must NOT be upgraded — https would fail to
- *  connect outright. */
-function shouldFollowPageScheme(appId: string, port: number | string): boolean {
-  if (HTTPS_APP_IDS.has(appId)) return true
-  return portIsGateFronted(appId, port)
-}
-
 export function directAppUrl(appId: string): string | null {
   const port = DIRECT_APP_PORTS[appId]
   if (!port || typeof window === 'undefined') return null
