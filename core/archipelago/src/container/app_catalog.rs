@@ -24,6 +24,7 @@
 //! Unknown fields are ignored (no `deny_unknown_fields`), so adding fields on the
 //! publisher side never breaks older nodes.
 
+use anyhow::Context;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -192,6 +193,25 @@ fn load_catalog() -> AppCatalog {
 
 fn entry_for(app_id: &str) -> Option<AppCatalogEntry> {
     load_catalog().apps.get(app_id).cloned()
+}
+
+/// Return the cached catalog bytes only when they carry a signature anchored
+/// to the release root. This is the browser App Store's source: newly signed
+/// apps must appear without waiting for a frontend OTA, while unsigned or
+/// self-signed registry data must never become an install button.
+pub async fn verified_catalog_body(data_dir: &Path) -> anyhow::Result<String> {
+    let path = data_dir.join(APP_CATALOG_FILE);
+    let body = tokio::fs::read_to_string(&path)
+        .await
+        .with_context(|| format!("read signed app catalog {}", path.display()))?;
+    let raw: serde_json::Value = serde_json::from_str(&body)?;
+    match crate::trust::verify_detached(&raw)? {
+        crate::trust::SignatureStatus::Verified { anchored: true, .. } => Ok(body),
+        crate::trust::SignatureStatus::Verified { anchored: false, .. } => {
+            anyhow::bail!("app catalog signer is not anchored to the release root")
+        }
+        crate::trust::SignatureStatus::Unsigned => anyhow::bail!("app catalog is unsigned"),
+    }
 }
 
 /// Primary image for an app per the remote catalog, if covered.

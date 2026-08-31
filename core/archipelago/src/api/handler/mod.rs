@@ -145,6 +145,19 @@ impl ApiHandler {
     /// URL so the App Store still renders on nodes that haven't persisted
     /// a registry config yet. 15s total timeout.
     async fn handle_app_catalog_proxy(&self) -> Result<Response<hyper::Body>> {
+        // The daemon already refreshes and verifies releases/app-catalog.json.
+        // Serve that release-root-anchored cache first so a newly published app
+        // appears immediately, without a frontend release. The old external UI
+        // catalog below is emergency compatibility only; it must never override
+        // a healthy signed catalog (Cuprate was invisible for exactly that reason).
+        if let Ok(body) = crate::container::app_catalog::verified_catalog_body(&self.config.data_dir).await {
+            return Ok(Response::builder()
+                .status(hyper::StatusCode::OK)
+                .header("Content-Type", "application/json")
+                .header("Cache-Control", "no-cache")
+                .body(hyper::Body::from(body))?);
+        }
+
         let mut upstreams: Vec<String> = Vec::new();
         if let Ok(config) = crate::container::registry::load_registries(&self.config.data_dir).await
         {
