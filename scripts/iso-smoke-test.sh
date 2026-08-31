@@ -84,6 +84,60 @@ else
     warn "unmkinitramfs not installed — skipping initrd live-boot check"
 fi
 
+# ── Host crash-capture payload (#144) ──────────────────────────────
+# Check the built artifact, not just the ISO builder source: otherwise a stale
+# rootfs.tar can silently omit the packages/configuration while the build passes.
+ROOTFS="$MNT/archipelago/rootfs.tar"
+if [ -f "$ROOTFS" ]; then
+    DPKG_STATUS="$(sudo tar -xOf "$ROOTFS" var/lib/dpkg/status 2>/dev/null || true)"
+    for package in kdump-tools kexec-tools makedumpfile rasdaemon; do
+        if awk -v wanted="$package" 'BEGIN { RS=""; FS="\n" }
+            $0 ~ "(^|\\n)Package: " wanted "(\\n|$)" &&
+            $0 ~ "(^|\\n)Status: install ok installed(\\n|$)" { found=1 }
+            END { exit !found }' <<<"$DPKG_STATUS"; then
+            ok "rootfs package installed: $package"
+        else
+            bad "rootfs package missing/not installed: $package"
+        fi
+    done
+
+    KDUMP_DEFAULTS="$(sudo tar -xOf "$ROOTFS" etc/default/kdump-tools 2>/dev/null || true)"
+    if grep -qE '^USE_KDUMP=.?1' <<<"$KDUMP_DEFAULTS"; then
+        ok "rootfs enables kdump"
+    else
+        bad "rootfs /etc/default/kdump-tools does not enable kdump"
+    fi
+    if grep -qE '^KDUMP_COREDIR=.?/var/crash' <<<"$KDUMP_DEFAULTS"; then
+        ok "rootfs sends crash dumps to /var/crash"
+    else
+        bad "rootfs kdump target is not /var/crash"
+    fi
+
+    KDUMP_SYSCTL="$(sudo tar -xOf "$ROOTFS" etc/sysctl.d/99-archipelago-kdump.conf 2>/dev/null || true)"
+    for setting in 'kernel.panic = 10' 'kernel.panic_on_oops = 1' \
+                   'kernel.hung_task_panic = 1' 'kernel.hardlockup_panic = 1'; do
+        if grep -Fqx "$setting" <<<"$KDUMP_SYSCTL"; then
+            ok "rootfs sysctl: $setting"
+        else
+            bad "rootfs missing sysctl: $setting"
+        fi
+    done
+else
+    bad "cannot inspect crash-capture payload: missing archipelago/rootfs.tar"
+fi
+
+AUTO_INSTALL="$MNT/archipelago/auto-install.sh"
+if grep -qF 'crashkernel=256M' "$AUTO_INSTALL" 2>/dev/null; then
+    ok "installer writes crashkernel=256M"
+else
+    bad "installer does not write crashkernel=256M"
+fi
+if grep -qF 'Archipelago owns crashkernel sizing in /etc/default/grub' "$AUTO_INSTALL" 2>/dev/null; then
+    ok "installer neutralizes the conflicting Debian kdump GRUB default"
+else
+    bad "installer does not neutralize the conflicting Debian kdump GRUB default"
+fi
+
 # ── Backend binary inside the ISO embeds the expected version ────────
 # (the v1.4.0-binary-in-a-v1.5-ISO incident: a stale captured binary
 #  shipped and the fleet rejected its fips.yaml on Activate)
