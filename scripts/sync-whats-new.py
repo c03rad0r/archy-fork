@@ -73,8 +73,13 @@ def undated_versions():
 
 
 def ordered_versions():
-    """Return modal versions in display order (top to bottom)."""
+    """Return generated modal versions in display order (top to bottom)."""
     return re.findall(r"<!-- (v\d+\.\d+\.\d+\S*) -->", MODAL.read_text())
+
+
+def legacy_blocks():
+    """Return old hand-written alpha blocks that predate generated markers."""
+    return re.findall(r"<!-- (alpha\.[^ ]+) -->", MODAL.read_text())
 
 
 def version_key(version):
@@ -85,7 +90,10 @@ def version_key(version):
 def sort_modal_blocks(entries):
     """Re-render current release-note blocks newest-first and remove old history."""
     lines = MODAL.read_text().splitlines(keepends=True)
-    marker = re.compile(r"^\s*<!-- (v\d+\.\d+\.\d+\S*) -->\s*$")
+    # Include the old hand-written `alpha.*` blocks in the replace range so
+    # normalization can delete them. Previously the checker saw only generated
+    # vX.Y.Z markers and falsely claimed the v1.8.0 history floor was enforced.
+    marker = re.compile(r"^\s*<!-- ((?:v\d+\.\d+\.\d+\S*)|(?:alpha\.[^ ]+)) -->\s*$")
     blocks = []
 
     for start, line in enumerate(lines):
@@ -115,7 +123,10 @@ def sort_modal_blocks(entries):
             raise RuntimeError("unexpected content between What's New release blocks")
 
     by_version = {entry["ver"]: entry for entry in entries}
-    retained = [b for b in blocks if version_key(b[2]) >= MIN_VISIBLE_VERSION]
+    retained = [
+        b for b in blocks
+        if b[2].startswith("v") and version_key(b[2]) >= MIN_VISIBLE_VERSION
+    ]
     sorted_segments = [
         render_block(by_version[b[2]]).splitlines(keepends=True)
         if b[2] in by_version else b[3]
@@ -181,6 +192,7 @@ def main():
     expected_order = sorted(displayed, key=version_key, reverse=True)
     out_of_order = displayed != expected_order
     too_old = [v for v in displayed if version_key(v) < MIN_VISIBLE_VERSION]
+    too_old.extend(legacy_blocks())
 
     if not missing and not out_of_order and not too_old:
         changed = False if check else sort_modal_blocks(entries)

@@ -573,7 +573,7 @@ RUN mkdir -p /etc/polkit-1/rules.d && \
 # already-deployed nodes over OTA (idempotent no-op here once applied).
 RUN set -eu; \
     apt-get update; \
-    apt-get install -y --no-install-recommends kdump-tools kexec-tools rasdaemon; \
+    apt-get install -y --no-install-recommends kdump-tools kexec-tools makedumpfile rasdaemon; \
     apt-get clean; rm -rf /var/lib/apt/lists/*; \
     CONF=/etc/default/kdump-tools; \
     sed -i 's|^#\?USE_KDUMP=.*|USE_KDUMP="1"|' "$CONF"; \

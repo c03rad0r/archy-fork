@@ -165,16 +165,35 @@ else
     sudo rm -rf "$TMPBIN"
 fi
 
-# ── Frontend payload present ─────────────────────────────────────────
-if [ -f "$MNT/archipelago/web-ui/index.html" ]; then
+# ── Frontend + companion payload ─────────────────────────────────────
+WEB_UI="$MNT/archipelago/web-ui"
+if [ -f "$WEB_UI/index.html" ]; then
     ok "frontend payload (archipelago/web-ui/index.html)"
-    if [ -f "$MNT/archipelago/web-ui/aiui/index.html" ]; then
+    if [ -f "$WEB_UI/aiui/index.html" ]; then
         ok "AIUI included in frontend payload"
     else
-        warn "AIUI missing from archipelago/web-ui (verify rootfs copy before shipping)"
+        bad "AIUI missing from archipelago/web-ui"
+    fi
+
+    COMPANION_META="$WEB_UI/packages/archipelago-companion.json"
+    COMPANION_APK="$WEB_UI/packages/archipelago-companion.apk"
+    if [ -s "$COMPANION_APK" ] && [ "$(jq -r '.versionName // empty' "$COMPANION_META" 2>/dev/null)" = "0.5.28" ] \
+            && [ "$(jq -r '.versionCode // empty' "$COMPANION_META" 2>/dev/null)" = "48" ]; then
+        ok "Companion 0.5.28 (versionCode 48) APK included"
+    else
+        bad "Companion 0.5.28 APK/metadata missing or stale"
+    fi
+
+    SETTINGS_BUNDLE="$(grep -rlF "v$EXPECTED_VERSION" "$WEB_UI/assets" 2>/dev/null | head -1)"
+    if [ -n "$SETTINGS_BUNDLE" ] \
+            && grep -qF 'v1.8.0-alpha' "$SETTINGS_BUNDLE" \
+            && ! grep -qE 'v1\.[0-7]\.|v1\.2\.0-alpha' "$SETTINGS_BUNDLE"; then
+        ok "What's New is v1.8.6-first with a v1.8.0 history floor"
+    else
+        bad "What's New payload is missing v1.8 history or still contains pre-v1.8 entries"
     fi
 else
-    warn "no archipelago/web-ui payload on ISO (frontend may live in rootfs.tar only)"
+    bad "no archipelago/web-ui payload on ISO"
 fi
 
 echo
