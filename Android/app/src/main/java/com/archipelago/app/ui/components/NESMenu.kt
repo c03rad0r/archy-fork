@@ -31,6 +31,8 @@ import androidx.compose.material.icons.filled.Dns
 import androidx.compose.material.icons.filled.Groups
 import androidx.compose.material.icons.filled.Keyboard
 import androidx.compose.material.icons.filled.RestartAlt
+import androidx.compose.material.icons.filled.SettingsBackupRestore
+import androidx.compose.material.icons.filled.Key
 import androidx.compose.material.icons.filled.SportsEsports
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -106,6 +108,8 @@ fun NESMenu(
     onKeyboard: () -> Unit,
     onBackToWebView: (() -> Unit)? = null,
     onMeshParty: (() -> Unit)? = null,
+    onBackupRestore: (() -> Unit)? = null,
+    onSigner: (() -> Unit)? = null,
 ) {
     AnimatedVisibility(visible = visible, enter = fadeIn(), exit = fadeOut()) {
         // Contained hub overlay: a centred glass panel (not full-screen) that
@@ -118,7 +122,7 @@ fun NESMenu(
             contentAlignment = Alignment.Center,
         ) {
             AnimatedVisibility(visible = visible, enter = fadeIn() + scaleIn(initialScale = 0.95f), exit = fadeOut() + scaleOut(targetScale = 0.95f)) {
-                MenuPanel(servers, activeServer, onDismiss, onSelectServer, onAddServer, onScanQr, onEditServer, onRemoveServer, onRemote, onKeyboard, onBackToWebView, onMeshParty)
+                MenuPanel(servers, activeServer, onDismiss, onSelectServer, onAddServer, onScanQr, onEditServer, onRemoveServer, onRemote, onKeyboard, onBackToWebView, onMeshParty, onBackupRestore, onSigner)
             }
         }
     }
@@ -138,6 +142,8 @@ private fun MenuPanel(
     onKeyboard: () -> Unit,
     onBackToWebView: (() -> Unit)?,
     onMeshParty: (() -> Unit)?,
+    onBackupRestore: (() -> Unit)?,
+    onSigner: (() -> Unit)?,
 ) {
     var showAdd by remember { mutableStateOf(false) }
     // The saved server being edited, or null when adding a new one.
@@ -232,6 +238,16 @@ private fun MenuPanel(
                 }
                 if (onMeshParty != null) {
                     HubCard(Icons.Default.Groups, "Mesh Party", "Phone-to-phone chat & beam") { onMeshParty() }
+                }
+                // Backup & Restore (#128): the phone side of losing your phone
+                // or wiping it to cross a border — encrypted export file, no cloud.
+                if (onBackupRestore != null) {
+                    HubCard(Icons.Default.SettingsBackupRestore, "Backup & Restore", "Encrypted export for a wiped phone") { onBackupRestore() }
+                }
+                // Remote Signer (#139): hold a nostr key on the phone and
+                // approve/deny remote signature requests (NIP-46).
+                if (onSigner != null) {
+                    HubCard(Icons.Default.Key, "Remote Signer", "Approve signatures for your node") { onSigner() }
                 }
                 // Dark/Classic style lives on the remote/keyboard screen next to
                 // the settings button — not here.

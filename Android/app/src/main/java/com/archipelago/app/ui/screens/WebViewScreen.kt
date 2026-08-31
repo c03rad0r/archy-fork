@@ -599,6 +599,10 @@ fun WebViewScreen(
     onRemoteKeyboard: () -> Unit = {},
     // Opens the phone-to-phone Mesh Party screen; null hides its hub card.
     onMeshParty: (() -> Unit)? = null,
+    // Backup & Restore (companion 0.5.28, #128); null hides its hub card.
+    onBackupRestore: (() -> Unit)? = null,
+    // Remote Signer (companion 0.5.28, #139); null hides its hub card.
+    onSigner: (() -> Unit)? = null,
     // Stored password for this server (from QR pairing or manual entry). When
     // non-blank, the login page is auto-filled and submitted — the one-step
     // demo flow from docs/companion-pairing-qr.md.
@@ -1427,6 +1431,8 @@ fun WebViewScreen(
             onKeyboard = { showHubMenu = false; onRemoteKeyboard() },
             onBackToWebView = { showHubMenu = false },
             onMeshParty = onMeshParty?.let { open -> { showHubMenu = false; open() } },
+            onBackupRestore = onBackupRestore?.let { open -> { showHubMenu = false; open() } },
+            onSigner = onSigner?.let { open -> { showHubMenu = false; open() } },
         )
 
         // Pairing-QR scan launched from the menu's Nodes page; the menu stays

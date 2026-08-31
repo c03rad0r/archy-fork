@@ -54,6 +54,15 @@
                 <category android:name="android.intent.category.BROWSABLE" />
                 <data android:scheme="archipelago" android:host="pair" />
             </intent-filter>
+            <!-- Remote-signer pairing deep link (NIP-46, companion 0.5.28):
+                 nostrconnect://<client-pubkey>?relay=...&secret=... — the
+                 node's login QR, hand-off from any QR scanner app. -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="nostrconnect" />
+            </intent-filter>
         </activity>
 
         <!-- Embedded FIPS mesh node: split-tunnel VpnService (fd00::/8 only),

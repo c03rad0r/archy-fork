@@ -22,12 +22,14 @@ import com.archipelago.app.data.ServerEntry
 import com.archipelago.app.data.ServerPreferences
 import com.archipelago.app.data.ServerQrParser
 import com.archipelago.app.fips.FipsManager
+import com.archipelago.app.ui.screens.BackupRestoreScreen
 import com.archipelago.app.ui.screens.FlareScreen
 import com.archipelago.app.ui.screens.IntroScreen
 import com.archipelago.app.ui.screens.NodePickerScreen
 import com.archipelago.app.ui.screens.PartyScreen
 import com.archipelago.app.ui.screens.RemoteInputScreen
 import com.archipelago.app.ui.screens.ServerConnectScreen
+import com.archipelago.app.ui.screens.SignerScreen
 import com.archipelago.app.ui.screens.WebViewScreen
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -41,6 +43,8 @@ object Routes {
     const val REMOTE_INPUT = "remote_input"
     const val MESH_PARTY = "mesh_party"
     const val FLARE = "flare"
+    const val BACKUP_RESTORE = "backup_restore"
+    const val SIGNER = "signer"
 }
 
 /**
@@ -133,27 +137,35 @@ fun AppNavHost(
     LaunchedEffect(pairUri) {
         val raw = pairUri ?: return@LaunchedEffect
         onPairUriConsumed()
-        when (val result = ServerQrParser.parse(raw)) {
-            is PairResult.Success -> {
-                // Pairing implies the app is installed and in use — skip the intro.
+        when {
+            // Remote-signer pairing deep link (NIP-46): nostrconnect://…
+            // from the node's login QR — any QR scanner app can hand it over.
+            raw.startsWith("nostrconnect://") -> {
                 prefs.markIntroSeen()
-                val merged = prefs.upsertServer(result.server)
-                FipsManager.registerNode(context, result.fips, merged.displayName())
-                if (merged.password.isNotBlank()) {
-                    // Demo flow: password came with the link — connect in one step.
-                    prefs.setActiveServer(merged)
-                    navController.navigate(Routes.WEB_VIEW) {
-                        popUpTo(0) { inclusive = true }
-                    }
-                } else {
-                    pairPrefill = merged
-                    navController.navigate(Routes.SERVER_CONNECT) {
-                        popUpTo(0) { inclusive = true }
+                navController.navigate("${Routes.SIGNER}?uri=${android.net.Uri.encode(raw)}")
+            }
+            else -> when (val result = ServerQrParser.parse(raw)) {
+                is PairResult.Success -> {
+                    // Pairing implies the app is installed and in use — skip the intro.
+                    prefs.markIntroSeen()
+                    val merged = prefs.upsertServer(result.server)
+                    FipsManager.registerNode(context, result.fips, merged.displayName())
+                    if (merged.password.isNotBlank()) {
+                        // Demo flow: password came with the link — connect in one step.
+                        prefs.setActiveServer(merged)
+                        navController.navigate(Routes.WEB_VIEW) {
+                            popUpTo(0) { inclusive = true }
+                        }
+                    } else {
+                        pairPrefill = merged
+                        navController.navigate(Routes.SERVER_CONNECT) {
+                            popUpTo(0) { inclusive = true }
+                        }
                     }
                 }
-            }
-            else -> {
-                // Invalid or too-new pairing link — ignore; normal startup continues.
+                else -> {
+                    // Invalid or too-new pairing link — ignore; normal startup continues.
+                }
             }
         }
     }
@@ -259,6 +271,12 @@ fun AppNavHost(
                     onMeshParty = {
                         navController.navigate(Routes.MESH_PARTY)
                     },
+                    onBackupRestore = {
+                        navController.navigate(Routes.BACKUP_RESTORE)
+                    },
+                    onSigner = {
+                        navController.navigate(Routes.SIGNER)
+                    },
                 )
             }
         }
@@ -293,6 +311,29 @@ fun AppNavHost(
         composable(Routes.FLARE) {
             FlareScreen(
                 onBack = { navController.popBackStack() },
+            )
+        }
+
+        composable(Routes.BACKUP_RESTORE) {
+            BackupRestoreScreen(
+                onBack = { navController.popBackStack() },
+            )
+        }
+
+        composable(
+            "${Routes.SIGNER}?uri={uri}",
+            arguments = listOf(
+                navArgument("uri") {
+                    type = NavType.StringType
+                    defaultValue = ""
+                },
+            ),
+        ) { entry ->
+            SignerScreen(
+                onBack = { navController.popBackStack() },
+                initialPairUri = entry.arguments?.getString("uri")?.let { uri ->
+                    if (uri.isBlank()) null else android.net.Uri.decode(uri)
+                },
             )
         }
     }
