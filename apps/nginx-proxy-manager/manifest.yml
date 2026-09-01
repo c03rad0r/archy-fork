@@ -24,7 +24,14 @@ app:
     disk_limit: 1Gi
 
   security:
-    capabilities: [CHOWN, SETUID, SETGID, DAC_OVERRIDE]
+    # NET_BIND_SERVICE is load-bearing, not decoration: NPM's internal nginx
+    # listens on 80, 443 AND 81, and the orchestrator runs --cap-drop=ALL —
+    # without this cap every start dies with "bind() to 0.0.0.0:80 failed
+    # (13: Permission denied)" and s6 restart-loops forever (shorty-s,
+    # 2026-09-01, restart counter 3176 within hours of the manifest
+    # conversion). The legacy podman-run path defaulted to the full cap set,
+    # which is why it never showed there.
+    capabilities: [CHOWN, SETUID, SETGID, DAC_OVERRIDE, NET_BIND_SERVICE]
     readonly_root: false
     no_new_privileges: true
     network_policy: isolated
@@ -46,6 +53,13 @@ app:
     - type: bind
       source: /var/lib/archipelago/nginx-proxy-manager
       target: /data
+      options: [rw]
+    # Current NPM images refuse to start unless /etc/letsencrypt is a mount in
+    # its own right. Keeping the files below the same persistent app directory
+    # preserves existing certificates while satisfying that startup contract.
+    - type: bind
+      source: /var/lib/archipelago/nginx-proxy-manager/letsencrypt
+      target: /etc/letsencrypt
       options: [rw]
 
   environment: []
