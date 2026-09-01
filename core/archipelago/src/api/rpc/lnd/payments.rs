@@ -4,6 +4,44 @@ use tracing::info;
 
 use super::LND_REST_BASE_URL;
 
+fn router_error_message(body: &serde_json::Value) -> Option<&str> {
+    body.get("error")
+        .and_then(|e| e.get("message"))
+        .and_then(|v| v.as_str())
+        .or_else(|| body.get("message").and_then(|v| v.as_str()))
+}
+
+fn payment_error(message: &str) -> anyhow::Error {
+    if message.to_ascii_lowercase().contains("invoice expired") {
+        anyhow::anyhow!(
+            "Payment failed: this invoice has expired ({}). Ask the recipient for a fresh invoice and try again.",
+            message.trim_start_matches("invoice expired. ")
+        )
+    } else {
+        anyhow::anyhow!("Payment failed: {message}")
+    }
+}
+
+fn payment_failure_reason(reason: &str) -> &'static str {
+    match reason {
+        "FAILURE_REASON_NO_ROUTE" => "No route to the recipient",
+        "FAILURE_REASON_INSUFFICIENT_BALANCE" => "Insufficient channel balance",
+        "FAILURE_REASON_TIMEOUT" => "Payment timed out in the network",
+        "FAILURE_REASON_INCORRECT_PAYMENT_DETAILS" => {
+            "Recipient rejected the payment (wrong details or expired invoice)"
+        }
+        _ => "Payment failed",
+    }
+}
+
+fn json_i64(value: &serde_json::Value, key: &str) -> Option<i64> {
+    value.get(key).and_then(|v| {
+        v.as_str()
+            .and_then(|s| s.parse().ok())
+            .or_else(|| v.as_i64())
+    })
+}
+
 impl RpcHandler {
     /// Pay a Lightning invoice.
     pub(in crate::api::rpc) async fn handle_lnd_payinvoice(
@@ -65,23 +103,22 @@ impl RpcHandler {
 
         let mut pay_body = serde_json::json!({
             "payment_request": payment_request,
+            // Suppress intermediate stream records: one terminal Payment is
+            // enough, and it makes grpc-gateway's response a single JSON value.
+            "no_inflight_updates": true,
+            "timeout_seconds": 120,
         });
         if let Some(amt) = amount_sats {
             pay_body["amt"] = serde_json::json!(amt.to_string());
         }
 
-        // `/v1/channels/transactions` is SYNCHRONOUS: it blocks until the
-        // payment settles or definitively fails, and multi-hop routing with
-        // retries routinely takes longer than the shared client's 15s budget.
-        // That 15s abort used to surface as "Payment failed" while LND kept
-        // paying in the background — only LND may declare a payment failed,
-        // so a post-connect timeout is IN FLIGHT (status: pending), never
-        // failure. The window is deliberately SHORT: most payments settle in
-        // a couple of seconds and still get their answer in one round trip,
-        // while a slow multi-hop route flips the UI into its "settling…"
-        // polling state (lnd.paymentstatus every 3s) after ~8s instead of
-        // freezing the modal for two minutes with no feedback (a test node
-        // user report, 2026-07-29).
+        // LND 0.21 removed the deprecated Lightning.SendPaymentSync REST route
+        // (`/v1/channels/transactions`). Router.SendPaymentV2 is its supported
+        // replacement. The old route now returns literal 404 "Not Found" on
+        // every payment — the fleet failure seen immediately after the 0.21.2
+        // update. Keep the short browser-facing wait: after LND accepts a slow
+        // payment we return pending and the UI follows it through
+        // lnd.paymentstatus instead of declaring a transport timeout a failure.
         let pay_client = reqwest::Client::builder()
             .no_proxy()
             .connect_timeout(std::time::Duration::from_secs(10))
@@ -91,7 +128,7 @@ impl RpcHandler {
             .context("Failed to create HTTP client")?;
 
         let resp = match pay_client
-            .post(format!("{LND_REST_BASE_URL}/v1/channels/transactions"))
+            .post(format!("{LND_REST_BASE_URL}/v2/router/send"))
             .header("Grpc-Metadata-macaroon", &macaroon_hex)
             .json(&pay_body)
             .send()
@@ -119,49 +156,42 @@ impl RpcHandler {
         let body: serde_json::Value = resp
             .json()
             .await
-            .context("Failed to parse payment response")?;
+            .context("Failed to parse Router.SendPaymentV2 response")?;
 
+        // grpc-gateway wraps server-streaming records as {"result": ...} and
+        // transport/RPC failures as {"error": {"message": ...}}. Do not look
+        // only for the old endpoint's top-level `message`: that turns useful
+        // LND errors into "Unknown error".
         if !status.is_success() {
-            let msg = body
-                .get("message")
-                .and_then(|v| v.as_str())
-                .unwrap_or("Unknown error");
-            // Invoices are short-lived; retrying the same one can never
-            // succeed, so tell the user the way out instead of just the fact.
-            if msg.contains("invoice expired") {
-                return Err(anyhow::anyhow!(
-                    "Payment failed: this invoice has expired ({}). Ask the recipient for a fresh invoice and try again.",
-                    msg.trim_start_matches("invoice expired. ")
-                ));
+            let msg = router_error_message(&body).unwrap_or("Unknown error");
+            return Err(payment_error(msg));
+        }
+        let payment = body.get("result").unwrap_or(&body);
+        match payment.get("status").and_then(|v| v.as_str()).unwrap_or("") {
+            "SUCCEEDED" => {}
+            "FAILED" => {
+                let reason = payment
+                    .get("failure_reason")
+                    .and_then(|v| v.as_str())
+                    .map(payment_failure_reason)
+                    .unwrap_or("Payment failed");
+                return Err(anyhow::anyhow!("Payment failed: {reason}"));
             }
-            return Err(anyhow::anyhow!("Payment failed: {}", msg));
+            _ => {
+                return Ok(serde_json::json!({
+                    "status": "pending",
+                    "payment_hash": decoded_hash,
+                    "amount_sats": decoded_amt,
+                }));
+            }
         }
 
-        let payment_error = body
-            .get("payment_error")
-            .and_then(|v| v.as_str())
-            .unwrap_or("");
-        if !payment_error.is_empty() {
-            return Err(anyhow::anyhow!("Payment failed: {}", payment_error));
-        }
-
-        let amount_sat = body
-            .get("payment_route")
-            .and_then(|r| r.get("total_amt"))
-            .and_then(|v| v.as_str())
-            .and_then(|s| s.parse::<i64>().ok())
-            .unwrap_or(decoded_amt);
-
-        let payment_hash = body
-            .get("payment_hash")
-            .and_then(|v| v.as_str())
-            .filter(|s| !s.is_empty())
-            .map(|s| s.to_string())
-            .unwrap_or(decoded_hash);
-
+        let amount_sat = json_i64(payment, "value_sat").unwrap_or(decoded_amt);
         Ok(serde_json::json!({
             "status": "succeeded",
-            "payment_hash": payment_hash,
+            // The decode endpoint returns the canonical hex hash used by our
+            // polling/list APIs. Router's bytes field is base64 in REST JSON.
+            "payment_hash": decoded_hash,
             "amount_sats": amount_sat,
         }))
     }
@@ -480,5 +510,44 @@ impl RpcHandler {
         });
 
         Ok(serde_json::json!({ "transactions": transactions }))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn unwraps_grpc_gateway_router_success() {
+        let body = serde_json::json!({
+            "result": { "status": "SUCCEEDED", "value_sat": "1000" }
+        });
+        let payment = body.get("result").unwrap_or(&body);
+        assert_eq!(
+            payment.get("status").and_then(|v| v.as_str()),
+            Some("SUCCEEDED")
+        );
+        assert_eq!(json_i64(payment, "value_sat"), Some(1000));
+    }
+
+    #[test]
+    fn reads_nested_router_error() {
+        let body = serde_json::json!({
+            "error": { "code": 2, "message": "invoice expired. valid until yesterday" }
+        });
+        let msg = router_error_message(&body).unwrap();
+        assert!(payment_error(msg).to_string().contains("fresh invoice"));
+    }
+
+    #[test]
+    fn router_failure_reasons_are_actionable() {
+        assert_eq!(
+            payment_failure_reason("FAILURE_REASON_NO_ROUTE"),
+            "No route to the recipient"
+        );
+        assert_eq!(
+            payment_failure_reason("FAILURE_REASON_INSUFFICIENT_BALANCE"),
+            "Insufficient channel balance"
+        );
     }
 }

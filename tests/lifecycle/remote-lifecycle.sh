@@ -136,7 +136,7 @@ image_for() {
     bitcoin-knots) echo "source.archipelago-foundation.org/lfg2025/bitcoin-knots:latest" ;;
     bitcoin-core) echo "docker.io/bitcoin/bitcoin:28.4" ;;
     btcpay-server) echo "docker.io/btcpayserver/btcpayserver:2.4.2" ;;
-    lnd) echo "source.archipelago-foundation.org/lfg2025/lnd:v0.18.4-beta" ;;
+    lnd) echo "source.archipelago-foundation.org/lfg2025/lnd:v0.21.2-beta" ;;
     mempool) echo "source.archipelago-foundation.org/lfg2025/mempool-frontend:v3.0.0" ;;
     homeassistant) echo "source.archipelago-foundation.org/lfg2025/home-assistant:2024.1" ;;
     grafana) echo "source.archipelago-foundation.org/lfg2025/grafana:10.2.0" ;;
