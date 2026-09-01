@@ -131,6 +131,10 @@ const LND_STATE_DIRS: &[&str] = &[
 /// container, not a Quadlet unit, so it is restarted via `podman`, not systemctl.
 const LND_CONTAINER: &str = "lnd";
 
+/// Canonical on-host admin macaroon — same path the RPC layer reads.
+const LND_ADMIN_MACAROON: &str =
+    "/var/lib/archipelago/lnd/data/chain/bitcoin/mainnet/admin.macaroon";
+
 /// Archipelago data dir (default; not overridden in prod). Holds the
 /// `user-stopped.json` that gates health-monitor auto-restart.
 const ARCHY_DATA_DIR: &str = "/var/lib/archipelago";
@@ -872,6 +876,188 @@ fn cert_sha256_thumbprint(pem: &str) -> Result<String> {
     Ok(hex::encode_upper(Sha256::digest(&der)))
 }
 
+// ── Channel-peer watchdog ──────────────────────────────────────────────────
+
+/// Every open channel's remote peer that is NOT currently connected.
+/// Pure over LND's REST JSON so the selection can be unit-tested.
+///
+/// `/v1/peers` uses `pub_key`; `/v1/channels` uses `remote_pubkey` — the
+/// asymmetry is LND's, not ours.
+fn select_reconnect_targets(
+    channels: &serde_json::Value,
+    peers: &serde_json::Value,
+) -> Vec<String> {
+    let connected: std::collections::HashSet<&str> = peers
+        .get("peers")
+        .and_then(|p| p.as_array())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|p| p.get("pub_key").and_then(|v| v.as_str()))
+                .collect()
+        })
+        .unwrap_or_default();
+    let mut targets: Vec<String> = channels
+        .get("channels")
+        .and_then(|c| c.as_array())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|c| c.get("remote_pubkey").and_then(|v| v.as_str()))
+                .filter(|pk| !connected.contains(pk))
+                .map(str::to_string)
+                .collect()
+        })
+        .unwrap_or_default();
+    targets.sort();
+    targets.dedup();
+    targets
+}
+
+/// Reconnect peers of open channels that LND has not re-established on its
+/// own. Returns the number of peers reconnected this pass.
+///
+/// LND normally reconnects channel peers after a restart — but not reliably:
+/// when the restart outages are long or repeated (an app update, a node
+/// reboot, reconciler churn), the peer link can stay down for hours while
+/// BOTH endpoints keep flagging the channel `disabled` in the routing
+/// graph. The node itself looks perfectly healthy and every payment in
+/// either direction fails "no route to the recipient" — observed live on
+/// framework-pt (2026-09-01): its only channel sat disabled on both policy
+/// sides for ~17h after the LND 0.21.2 update, while the wallet showed
+/// plenty of outbound. The channel graph is desired state; this keeps it.
+///
+/// Quietly returns Ok(0) when LND is not installed or its wallet is locked —
+/// that is every node without LND, on every pass.
+///
+/// `last_attempt` throttles retries per peer (`min_retry`) so an unreachable
+/// peer is not hammered every pass; the caller owns the map so the pass
+/// itself stays stateless and testable.
+pub(crate) async fn reconnect_disconnected_channel_peers(
+    last_attempt: &mut std::collections::HashMap<String, std::time::Instant>,
+    min_retry: std::time::Duration,
+) -> Result<usize> {
+    let Ok(macaroon) = read_file_as_root(LND_ADMIN_MACAROON).await else {
+        return Ok(0); // LND not installed (or not initialized yet)
+    };
+    let macaroon_hex = hex::encode(macaroon);
+    let client = reqwest::Client::builder()
+        .no_proxy()
+        .timeout(std::time::Duration::from_secs(8))
+        .danger_accept_invalid_certs(true)
+        .build()
+        .context("building LND REST client for the channel-peer watchdog")?;
+
+    let channels: serde_json::Value = client
+        .get(format!("{LND_REST_BASE_URL}/v1/channels"))
+        .header("Grpc-Metadata-macaroon", &macaroon_hex)
+        .send()
+        .await
+        .context("LND REST: listing channels for the peer watchdog")?
+        .json()
+        .await
+        .context("parsing LND channel list")?;
+    // A locked wallet answers 503 with an error body — it parses as JSON
+    // with no "channels" key, which selects nothing. That is a quiet pass.
+    let peers: serde_json::Value = client
+        .get(format!("{LND_REST_BASE_URL}/v1/peers"))
+        .header("Grpc-Metadata-macaroon", &macaroon_hex)
+        .send()
+        .await
+        .context("LND REST: listing peers for the peer watchdog")?
+        .json()
+        .await
+        .context("parsing LND peer list")?;
+
+    let mut reconnected = 0usize;
+    for pubkey in select_reconnect_targets(&channels, &peers) {
+        if last_attempt
+            .get(&pubkey)
+            .is_some_and(|t| t.elapsed() < min_retry)
+        {
+            continue;
+        }
+        last_attempt.insert(pubkey.clone(), std::time::Instant::now());
+
+        // Where does the peer live? Its advertised addresses in the public
+        // graph. A peer with none (fully private) cannot be dialed from here
+        // — LND itself may still find it; we only log the gap once per pass.
+        // Unknown to the public graph (or the graph query failed) — nothing
+        // to dial on.
+        let Ok(node) = client
+            .get(format!("{LND_REST_BASE_URL}/v1/graph/node/{pubkey}"))
+            .header("Grpc-Metadata-macaroon", &macaroon_hex)
+            .send()
+            .await
+            .and_then(|r| r.error_for_status())
+        else {
+            continue;
+        };
+        let Ok(node) = node.json::<serde_json::Value>().await else {
+            continue;
+        };
+        let addresses: Vec<String> = node
+            .get("node")
+            .and_then(|n| n.get("addresses"))
+            .and_then(|a| a.as_array())
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|a| a.get("addr").and_then(|v| v.as_str()))
+                    .map(str::to_string)
+                    .collect()
+            })
+            .unwrap_or_default();
+        if addresses.is_empty() {
+            tracing::warn!(
+                peer = %pubkey,
+                "LND channel peer is disconnected and advertises no address — cannot dial it; payments through this channel stay unroutable"
+            );
+            continue;
+        }
+
+        for addr in addresses {
+            let Some((host, port)) = addr.rsplit_once(':') else {
+                continue;
+            };
+            let Ok(port) = port.parse::<u32>() else {
+                continue;
+            };
+            let body = serde_json::json!({
+                "perm": false,
+                "timeout": "15s",
+                "addr": { "pubkey": pubkey, "host": host, "port": port },
+            });
+            match client
+                .post(format!("{LND_REST_BASE_URL}/v1/peers"))
+                .header("Grpc-Metadata-macaroon", &macaroon_hex)
+                .json(&body)
+                .send()
+                .await
+            {
+                Ok(resp) if resp.status().is_success() => {
+                    reconnected += 1;
+                    tracing::info!(
+                        peer = %pubkey,
+                        addr = %addr,
+                        "reconnected a disconnected channel peer (channel was unroutable)"
+                    );
+                    break;
+                }
+                Ok(resp) => {
+                    let msg = resp.text().await.unwrap_or_default();
+                    // Already connected between our list call and now — success.
+                    if msg.contains("already connected") {
+                        break;
+                    }
+                    tracing::debug!(peer = %pubkey, addr = %addr, %msg, "channel-peer connect attempt failed");
+                }
+                Err(e) => {
+                    tracing::debug!(peer = %pubkey, addr = %addr, error = %e, "channel-peer connect attempt failed");
+                }
+            }
+        }
+    }
+    Ok(reconnected)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -984,5 +1170,36 @@ mod tests {
         // to the legacy constant so old wallets still open.
         let cands = unlock_password_candidates().await;
         assert!(cands.iter().any(|p| p == LEGACY_WALLET_PASSWORD));
+    }
+
+    #[test]
+    fn reconnect_targets_pick_disconnected_channel_peers_only() {
+        // Shape captured from a live node: /v1/channels uses remote_pubkey,
+        // /v1/peers uses pub_key, and an offline channel's peer is simply
+        // absent from the peer list — that absence is the whole signal.
+        let channels = serde_json::json!({
+            "channels": [
+                { "remote_pubkey": "AAA", "active": true },
+                { "remote_pubkey": "BBB", "active": false },
+                { "remote_pubkey": "AAA" }
+            ]
+        });
+        let peers = serde_json::json!({ "peers": [ { "pub_key": "AAA" } ] });
+
+        let targets = select_reconnect_targets(&channels, &peers);
+        assert_eq!(targets, vec!["BBB".to_string()]);
+    }
+
+    #[test]
+    fn reconnect_targets_empty_without_channels_or_peers() {
+        // No LND wallet (503 error body), locked wallet, or an empty node:
+        // selects nothing, quietly.
+        let error_body = serde_json::json!({ "message": "locked" });
+        assert!(select_reconnect_targets(&error_body, &serde_json::json!({})).is_empty());
+        assert!(select_reconnect_targets(
+            &serde_json::json!({ "channels": [] }),
+            &serde_json::json!({ "peers": [] })
+        )
+        .is_empty());
     }
 }

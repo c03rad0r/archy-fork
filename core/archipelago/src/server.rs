@@ -841,6 +841,37 @@ impl Server {
             });
         }
 
+        // LND channel-peer watchdog — every 2 minutes, reconnect the peers
+        // of open channels that LND has not re-established on its own. LND's
+        // reconnect logic gives up with a long backoff after repeated or
+        // extended downtime (an app update, a reboot, reconciler churn), and
+        // while the peer link is down BOTH endpoints keep the channel flagged
+        // `disabled` in the routing graph — payments fail "no route" in both
+        // directions while the node itself looks perfectly healthy. The
+        // channel graph is desired state; this keeps it (framework-pt,
+        // 2026-09-01: only channel unroutable ~17h after the 0.21.2 update).
+        // No-ops quietly on nodes without LND. Per-peer retries are throttled
+        // to 10 minutes so an unreachable peer is not hammered every pass.
+        {
+            tokio::spawn(async move {
+                let mut interval = tokio::time::interval(Duration::from_secs(120));
+                let mut last_attempt: HashMap<String, Instant> = HashMap::new();
+                loop {
+                    interval.tick().await;
+                    match crate::container::lnd::reconnect_disconnected_channel_peers(
+                        &mut last_attempt,
+                        Duration::from_secs(600),
+                    )
+                    .await
+                    {
+                        Ok(0) => {}
+                        Ok(n) => info!(n, "LND channel-peer watchdog reconnected channel peers"),
+                        Err(e) => debug!("LND channel-peer watchdog (non-fatal): {}", e),
+                    }
+                }
+            });
+        }
+
         // FIPS seed-anchor apply loop — every 5 minutes we re-push the
         // configured seed anchors into the running fips daemon via
         // `fipsctl connect`. This keeps the mesh bootstrap resilient:

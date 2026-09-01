@@ -362,6 +362,17 @@ init()
               </button>
             </div>
             <div class="overflow-y-auto flex-1 min-h-0 space-y-6 pr-1">
+              <!-- v1.8.10-alpha -->
+              <div>
+                <div class="flex items-center gap-2 mb-3">
+                  <span class="text-xs font-mono px-2 py-0.5 rounded bg-orange-500/20 text-orange-300">v1.8.10-alpha</span>
+                  <span class="text-xs text-white/40">September 2, 2026</span>
+                </div>
+                <div class="space-y-3 text-sm text-white/80 pl-3 border-l border-white/10">
+                  <p><strong>A channel that drops its peer link now heals itself — on every node.</strong> Restarting LND (an app update, a reboot, container churn) can leave a channel's peer connection down for hours while both endpoints keep the channel flagged disabled in the routing graph: the node looks perfectly healthy, the wallet shows balance, and every payment in either direction fails "no route to the recipient". The daemon now watches the channel graph as desired state — every open channel should have a live peer — and reconnects any that don't. Nodes without LND are untouched; an unreachable peer is retried gently.</p>
+                  <p><strong>The Lightning wallet says what's actually wrong, instead of "you have no channel".</strong> Trying to send while a channel you just opened was still confirming — or when all its balance sits on the far side — produced a modal claiming you had no channel at all, and payment routing failures even showed the receiving copy. The gate now reads your real channel list: a confirming channel gets "it unlocks automatically once confirmed, nothing is needed from you", a far-side balance gets "you can receive, but there's nothing to send right now", and only a genuinely channel-less node is sent to open one.</p>
+                </div>
+              </div>
               <!-- v1.8.9-alpha -->
               <div>
                 <div class="flex items-center gap-2 mb-3">
