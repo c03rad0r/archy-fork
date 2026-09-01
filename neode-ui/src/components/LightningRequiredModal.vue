@@ -10,7 +10,32 @@
     z-index="z-[3600]"
     @close="onClose"
   >
-    <p v-if="lightning.status.value === 'no-funds'" class="text-sm text-white/70 leading-relaxed">
+    <p v-if="lightning.status.value === 'no-funds' && lightning.fundingReason.value === 'pending'" class="text-sm text-white/70 leading-relaxed">
+      Your new channel is <span class="text-white/90">waiting for its on-chain confirmations</span> —
+      that's why the network doesn't see it yet. It unlocks automatically once
+      confirmed (usually within about half an hour); nothing is needed from
+      you. This screen will work as soon as it lands.
+    </p>
+    <p v-else-if="lightning.status.value === 'no-funds' && lightning.fundingReason.value === 'far-side'" class="text-sm text-white/70 leading-relaxed">
+      <template v-if="lightning.fundingDirection.value === 'receive'">
+        You have channels, but <span class="text-white/90">all the balance is on your side</span> —
+        you can send, but there's nothing to be paid into right now. Receive a
+        payment by spending first, or open another channel to bring inbound
+        liquidity in.
+      </template>
+      <template v-else>
+        You have channels, but <span class="text-white/90">all the balance is on the far side</span> —
+        you can receive, but there's nothing to send right now. Someone has to
+        pay you first (or rebalance the channel), and sending unlocks on its own.
+      </template>
+    </p>
+    <p v-else-if="lightning.status.value === 'no-funds' && lightning.fundingReason.value === 'failed-payment'" class="text-sm text-white/70 leading-relaxed">
+      LND couldn't route this payment — most often there's
+      <span class="text-white/90">not enough outbound for this amount</span>, or no
+      route to the recipient at the fees offered. Smaller amounts sometimes
+      get through; check the channels screen to see what's actually spendable.
+    </p>
+    <p v-else-if="lightning.status.value === 'no-funds'" class="text-sm text-white/70 leading-relaxed">
       Your Lightning node is running, but it has no payment channel yet.
       <template v-if="lightning.fundingDirection.value === 'receive'">
         Receiving needs <span class="text-white/90">inbound liquidity</span> — a
@@ -101,14 +126,31 @@
         @click="openApps"
       >Open My Apps</button>
       <template v-else-if="lightning.status.value === 'no-funds'">
-        <button
-          class="flex-1 glass-button px-4 py-2 rounded-lg text-sm"
-          @click="openSetupGuide"
-        >Setup Guide</button>
-        <button
-          class="flex-1 glass-button glass-button-warning px-4 py-2 rounded-lg text-sm font-medium"
-          @click="openLightningSetup"
-        >Open a channel</button>
+        <!-- A confirming channel needs no action at all — offering "open a
+             channel" here would send the user to fix a problem they don't
+             have (and possibly open a second one). -->
+        <template v-if="lightning.fundingReason.value === 'pending'">
+          <button
+            class="flex-1 glass-button px-4 py-2 rounded-lg text-sm"
+            @click="onClose"
+          >Got it — I'll wait</button>
+        </template>
+        <template v-else>
+          <button
+            class="flex-1 glass-button px-4 py-2 rounded-lg text-sm"
+            @click="openSetupGuide"
+          >Setup Guide</button>
+          <button
+            v-if="lightning.fundingReason.value !== 'failed-payment'"
+            class="flex-1 glass-button glass-button-warning px-4 py-2 rounded-lg text-sm font-medium"
+            @click="openLightningSetup"
+          >Open a channel</button>
+          <button
+            v-else
+            class="flex-1 glass-button px-4 py-2 rounded-lg text-sm"
+            @click="onClose"
+          >Close</button>
+        </template>
       </template>
     </div>
   </BaseModal>
@@ -155,7 +197,12 @@ const nodes: NodeChoice[] = [
 const router = useRouter()
 
 const modalTitle = computed(() => {
-  if (lightningStatusIs('no-funds')) return 'You need a Lightning channel'
+  if (lightningStatusIs('no-funds')) {
+    if (lightning.fundingReason.value === 'pending') return 'Channel confirming…'
+    if (lightning.fundingReason.value === 'far-side') return 'Balance is on the far side'
+    if (lightning.fundingReason.value === 'failed-payment') return 'Payment couldn\u2019t route'
+    return 'You need a Lightning channel'
+  }
   if (lightningStatusIs('stopped')) return 'Lightning node not running'
   return 'Lightning node required'
 })

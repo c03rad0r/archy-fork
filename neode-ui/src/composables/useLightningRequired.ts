@@ -34,12 +34,27 @@ export const LIGHTNING_NODE_APP_IDS = ['lnd'] as const
  *  `running` — good to go. */
 export type LightningStatus = 'absent' | 'stopped' | 'running' | 'no-funds'
 
+/** WHY the funding modal opened — the old copy always said "you have no
+ *  channel yet", which was a lie three ways: a just-opened channel sits in
+ *  LND's pending list (invisible to the outbound sum) until it has ~3
+ *  confirmations, channels can exist with all their balance on the far
+ *  side, and a payment failure can look like a funding problem. The user
+ *  sees "no channel" while looking at a wallet full of pending liquidity
+ *  (framework-pt, 2026-09-01: "LND thinks I do not have a channel").
+ *  `none` — genuinely no channels, the open-one flow is right.
+ *  `pending` — channel(s) exist but are still confirming on-chain.
+ *  `far-side` — open channel(s), but the needed direction has zero balance.
+ *  `failed-payment` — LND refused a payment; looks like routing/liquidity. */
+export type FundingReason = 'none' | 'pending' | 'far-side' | 'failed-payment'
+
 // Module-scope: one source of truth shared by every caller and the single
 // global modal mounted in App.vue.
 const show = ref(false)
 const status = ref<LightningStatus>('absent')
 /** Which direction raised the funding modal, so the copy can be specific. */
 const fundingDirection = ref<'send' | 'receive'>('receive')
+/** Why the funding modal opened, so the copy states the node's real state. */
+const fundingReason = ref<FundingReason>('none')
 
 export function useLightningRequired() {
   // The store is resolved lazily, inside the functions that need it, rather
@@ -86,8 +101,9 @@ export function useLightningRequired() {
    * rather than inventing a second one, and routes to the Lightning setup
    * goal where funding and channel-opening already live.
    */
-  function openLightningFunding() {
+  function openLightningFunding(reason: FundingReason = 'none') {
     status.value = 'no-funds'
+    fundingReason.value = reason
     show.value = true
   }
 
@@ -114,7 +130,9 @@ export function useLightningRequired() {
       'no path',
     ].some((needle) => msg.includes(needle))
     if (!fundingRelated) return false
-    openLightningFunding()
+    // LND refused the payment itself — not necessarily "no channels", so
+    // the modal must not claim it is. Most often this is routing/liquidity.
+    openLightningFunding('failed-payment')
     return true
   }
 
@@ -133,14 +151,28 @@ export function useLightningRequired() {
   async function requireLightningReady(direction: 'send' | 'receive'): Promise<boolean> {
     if (!requireLightningNode()) return false
     try {
-      const res = await rpcClient.call<{ total_inbound?: number; total_outbound?: number }>({
+      const res = await rpcClient.call<{
+        total_inbound?: number
+        total_outbound?: number
+        channels?: { status?: string; local_balance?: number; remote_balance?: number }[]
+      }>({
         method: 'lnd.listchannels',
         timeout: 15000,
       })
       const liquidity = direction === 'receive' ? res?.total_inbound ?? 0 : res?.total_outbound ?? 0
       if (liquidity > 0) return true
       fundingDirection.value = direction
-      openLightningFunding()
+      // Zero in the needed direction — say WHY, from the same response.
+      // The channel list carries pending entries (status 'pending_open');
+      // the totals deliberately exclude them (nothing is spendable through
+      // an unconfirmed channel), so "0 outbound + pending channels" is the
+      // just-opened-a-channel state, not "no channel".
+      const channels = res?.channels ?? []
+      const hasPending = channels.some(c => c.status === 'pending_open')
+      const hasOpen = channels.some(
+        c => c.status === 'active' || c.status === 'inactive' || (!c.status && (c.local_balance || c.remote_balance)),
+      )
+      openLightningFunding(hasPending ? 'pending' : hasOpen ? 'far-side' : 'none')
       return false
     } catch {
       return true
@@ -150,6 +182,7 @@ export function useLightningRequired() {
   return {
     show,
     fundingDirection,
+    fundingReason,
     status,
     lightningStatus,
     hasLightningNode,

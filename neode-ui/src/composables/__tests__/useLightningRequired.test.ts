@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { createPinia, setActivePinia } from 'pinia'
 import { useLightningRequired } from '../useLightningRequired'
+import { rpcClient } from '@/api/rpc-client'
 
 // The gate reads install state off the app store's package list. Stub the
 // store rather than the RPC layer so the test pins the decision, not the
@@ -12,6 +13,12 @@ vi.mock('@/stores/app', () => ({
       return packages.value
     },
   }),
+}))
+
+vi.mock('@/api/rpc-client', () => ({
+  rpcClient: {
+    call: vi.fn(),
+  },
 }))
 
 describe('useLightningRequired', () => {
@@ -72,5 +79,83 @@ describe('useLightningRequired', () => {
   it('treats an empty package list as absent', () => {
     packages.value = {}
     expect(useLightningRequired().lightningStatus()).toBe('absent')
+  })
+
+  describe('requireLightningReady states the node\u2019s real funding state', () => {
+    beforeEach(() => {
+      packages.value = { lnd: { state: 'running' } }
+      vi.mocked(rpcClient.call).mockReset()
+    })
+
+    it('says the channel is confirming, not \u201cno channel\u201d, while pending', async () => {
+      // The regression (framework-pt, 2026-09-01): a just-opened channel
+      // sits in LND's pending list; the outbound sum is legitimately 0, but
+      // the modal claimed the node had no channel at all.
+      vi.mocked(rpcClient.call).mockResolvedValue({
+        total_inbound: 0,
+        total_outbound: 0,
+        channels: [{ status: 'pending_open', local_balance: 900000, remote_balance: 0 }],
+      })
+      const lightning = useLightningRequired()
+
+      expect(await lightning.requireLightningReady('send')).toBe(false)
+      expect(lightning.show.value).toBe(true)
+      expect(lightning.status.value).toBe('no-funds')
+      expect(lightning.fundingReason.value).toBe('pending')
+    })
+
+    it('says the balance is on the far side when channels exist but outbound is 0', async () => {
+      vi.mocked(rpcClient.call).mockResolvedValue({
+        total_inbound: 985000,
+        total_outbound: 0,
+        channels: [{ status: 'active', local_balance: 0, remote_balance: 985000 }],
+      })
+      const lightning = useLightningRequired()
+
+      expect(await lightning.requireLightningReady('send')).toBe(false)
+      expect(lightning.fundingReason.value).toBe('far-side')
+      // The same node CAN receive — the gate must pass for the other way.
+      vi.mocked(rpcClient.call).mockResolvedValue({
+        total_inbound: 985000,
+        total_outbound: 0,
+        channels: [{ status: 'active', local_balance: 0, remote_balance: 985000 }],
+      })
+      expect(await lightning.requireLightningReady('receive')).toBe(true)
+    })
+
+    it('keeps the open-a-channel guidance only when there truly is no channel', async () => {
+      vi.mocked(rpcClient.call).mockResolvedValue({
+        total_inbound: 0,
+        total_outbound: 0,
+        channels: [],
+      })
+      const lightning = useLightningRequired()
+
+      expect(await lightning.requireLightningReady('send')).toBe(false)
+      expect(lightning.fundingReason.value).toBe('none')
+    })
+
+    it('fails OPEN on an RPC error \u2014 a transient blip must not block a working wallet', async () => {
+      vi.mocked(rpcClient.call).mockRejectedValue(new Error('Failed to fetch'))
+      const lightning = useLightningRequired()
+
+      expect(await lightning.requireLightningReady('send')).toBe(true)
+      expect(lightning.show.value).toBe(false)
+    })
+
+    it('maps a routing/liquidity payment failure onto the modal without claiming \u201cno channel\u201d', () => {
+      const lightning = useLightningRequired()
+
+      expect(lightning.handleLightningFailure(new Error('Payment failed: unable to find a path to destination'))).toBe(true)
+      expect(lightning.status.value).toBe('no-funds')
+      expect(lightning.fundingReason.value).toBe('failed-payment')
+    })
+
+    it('leaves non-funding payment errors to the caller', () => {
+      const lightning = useLightningRequired()
+
+      expect(lightning.handleLightningFailure(new Error('Payment failed: Not Found'))).toBe(false)
+      expect(lightning.show.value).toBe(false)
+    })
   })
 })
