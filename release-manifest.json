@@ -1,32 +1,29 @@
 {
   "changelog": [
-    "**Lightning sends work again after the LND 0.21.2 update.** LND 0.21 removed the old synchronous payment route the node's backend paid through (`/v1/channels/transactions`) — every Lightning send answered the literal \"Not Found\" and the wallet showed \"Payment failed: Not Found\". The backend now pays through the supported Router.SendPaymentV2 route, keeps the same settle-then-report behaviour (a slow multi-hop payment is still tracked to completion, never falsely declared failed), and translates LND's failure reasons into plain advice. A new gate test speaks the payment route directly against the running LND, so an image/backend skew like this can never ship silently again.",
-    "**The node no longer pins HSTS — HTTP access is a supported mode, and it stays working.** The HTTPS listener used to send `Strict-Transport-Security: max-age=31536000; includeSubDomains`; browsers that visited HTTPS once cached that and then silently upgraded the still-open HTTP dashboard's calls to HTTPS, which is a scheme change — cross-origin — so every request died as \"CORS blocked / Failed to fetch\" while the node was perfectly healthy. The HTTPS listener now actively clears the cached policy (`max-age=0`) and port 80 sends no HSTS at all, which is deliberate: the node's certificate is optional and self-signed, and devices that haven't installed the CA must keep plain-HTTP access (that's what Settings → Node certificate is for). If your browser already cached the old policy, visiting the dashboard over HTTPS once after this update clears it; a gate test now refuses any config that reintroduces the pin.",
-    "**App frames open over HTTPS again — including the ones that \"did not connect.\"** The launcher asked the signed catalog for each app's port policy under the name you click (\"Mempool Web\", \"Bitcoin Knots\"), but the catalog declares those ports under the manifest that owns them (the Mempool web container, Bitcoin UI). The lookup missed, the launcher handed the iframe an `http://` address, and the browser blocked it as mixed content — the app tile went blank or spun forever. Port resolution now follows launch aliases (mempool-web, bitcoin-knots/bitcoin-core, lnd, electrs and friends), falls back to a port-wide catalog scan when the id is unknown, and the catalog is warmed as soon as the dashboard loads rather than only in the App Store, so the very first app you open already knows which ports serve TLS.",
-    "**Signing in to IndeeHub with Nostr works over HTTPS.** The NIP-07 bridge compared the app frame's origin for exact equality with the recorded `http://` app URL — a frame the browser upgraded to HTTPS (or any scheme change) was silently ignored, and replies addressed to the stale origin were refused outright, so Nostr sign-in quietly did nothing. The bridge now matches host and port (scheme intentionally ignored) and always replies to the frame's real origin.",
-    "**Nginx Proxy Manager starts again.** Converting it to a platform manifest dropped two things its image needs: the `/etc/letsencrypt` mount its boot script hard-requires, and the `NET_BIND_SERVICE` capability its internal nginx needs to bind ports 80/443/81 under the orchestrator's `--cap-drop=ALL`. The result was an endless start/die loop (a node watched it restart 3,176 times). Both are declared in its manifest now, its certs live on unchanged under the same persistent app directory, and the signed catalog carries the fix so installed nodes heal on the next update.",
-    "**Portainer's first-run token is in the app page, not buried in \"server logs.\"** New Portainer versions mint a one-time setup token on a fresh install and print it only to the container logs — on an appliance that meant telling the user to go read a server log to get into their own app. The token now appears in the same launch interstitial as app login credentials (with a copy button), only while first-run setup is actually pending; once the admin account exists the card disappears on its own."
+    "**Lightning sends work again — v1.8.9's payment switch lost the fee budget.** Moving payments to LND 0.21's supported route (Router.SendPaymentV2) shipped without a fee limit, and the v2 API treats an absent limit as **zero allowed fees**: every real route carries a routing fee, so the pathfinder rejected them all and the wallet answered \"No route to the recipient\" on every send — all day, on healthy channels with plenty of liquidity. The router debug log made it unambiguous (`fee_limit=0 mSAT` on every failing wallet payment; the same payment succeeded by hand the moment a fee limit was set). Payments now carry lncli's default budget (the payment amount), the wallet's amount handling for zero-value invoices is preserved, and a unit test pins the limit can never be zero again.",
+    "**A channel that drops its peer link now heals itself — on every node.** Restarting LND (an app update, a reboot, container churn) can leave a channel's peer connection down for hours while both endpoints keep the channel flagged disabled in the routing graph: the node looks perfectly healthy, the wallet shows balance, and every payment in either direction fails \"no route to the recipient\". Observed live: a node's only channel sat unroutable for ~17 hours after the LND 0.21.2 update, with no sign of it in any dashboard. The daemon now watches the channel graph as desired state — every open channel should have a live peer — and reconnects any that don't, using the peer's advertised addresses. Nodes without LND are untouched; an unreachable peer is retried gently, not hammered.",
+    "**The Lightning wallet states the node's real funding state instead of \"you have no channel.\"** Trying to send while a freshly opened channel was still waiting for on-chain confirmations — or when all its balance sits on the far side — raised a modal that claimed the node had NO channel at all (the outbound sum is legitimately zero in both states), pointed the user at opening a second channel, and — for payment routing failures — even showed the *receiving* copy. The funding gate now reads the channel list it already fetched: a confirming channel gets \"it unlocks automatically once confirmed, nothing is needed from you\", a far-side balance gets \"you can receive, but there's nothing to send right now\", a routing/liquidity payment failure says so instead of claiming channel problems, and only a genuinely channel-less node keeps the open-one guidance."
   ],
   "components": [
     {
-      "current_version": "1.8.9-alpha",
-      "download_url": "https://source.archipelago-foundation.org/lfg2025/archy/releases/download/v1.8.9-alpha/archipelago",
+      "current_version": "1.8.10-alpha",
+      "download_url": "https://source.archipelago-foundation.org/lfg2025/archy/releases/download/v1.8.10-alpha/archipelago",
       "name": "archipelago",
-      "new_version": "1.8.9-alpha",
-      "sha256": "39795958963680f56763e3c05e3fe0cd589c30edd9a09416ad325bab4c862123",
-      "size_bytes": 64139152
+      "new_version": "1.8.10-alpha",
+      "sha256": "6c8bd41fed44cd999cb360c00e1b66a2d19d19812cc2b0c8a1677eec2a9579e6",
+      "size_bytes": 64178056
     },
     {
-      "current_version": "1.8.9-alpha",
-      "download_url": "https://source.archipelago-foundation.org/lfg2025/archy/releases/download/v1.8.9-alpha/archipelago-frontend-1.8.9-alpha.tar.gz",
-      "name": "archipelago-frontend-1.8.9-alpha.tar.gz",
-      "new_version": "1.8.9-alpha",
-      "sha256": "624dd10dfea09809be1fdddc7eac804e1fde66ff3d552cb90d56d9ac550ed944",
-      "size_bytes": 97734650
+      "current_version": "1.8.10-alpha",
+      "download_url": "https://source.archipelago-foundation.org/lfg2025/archy/releases/download/v1.8.10-alpha/archipelago-frontend-1.8.10-alpha.tar.gz",
+      "name": "archipelago-frontend-1.8.10-alpha.tar.gz",
+      "new_version": "1.8.10-alpha",
+      "sha256": "6b25de8a8e1a4f7fe51594f9bbbe21f5820f417af47a8b309c2dbf8f8723b719",
+      "size_bytes": 97736297
     }
   ],
   "release_date": "2026-09-01",
-  "signature": "d7d724b910e827651240bd9520102d66932b57a8a8d674ef645c45eb77f78c123fb45d294ec07f8bbfc3713ed9bd9f98096f59ff18cd6098df51aa473e771908",
+  "signature": "b69926bcb1851ff7d6a5b24519cd4a8015aab4ed4b588ee989d8ce6e3beaeb2cc0eb38078f522ded0d389fe53b7dbcdbf3f40c534b4bfafa5cf4a2ab2c59e40f",
   "signed_by": "did:key:z6Mkfu5LT8d4DjETtrkATvHh9Dvcbnr7zBCUwfau8Sw7DLWT",
-  "version": "1.8.9-alpha"
+  "version": "1.8.10-alpha"
 }
