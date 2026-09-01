@@ -125,6 +125,16 @@ app:
   #     uses for its own RPC port (-rpcbind=0.0.0.0:8332 internally, gate
   #     restricts it externally) — not a new risk, the same one already
   #     reviewed and accepted for Bitcoin's RPC.
+  #   - tracing.stdout.level / tracing.file.{level,max_log_files}: values
+  #     are identical to `cuprated --generate-config`'s own defaults (info /
+  #     debug / 7) — nothing about the logging behaviour changes. They're
+  #     spelled out explicitly anyway so an operator reading
+  #     Cuprated.toml on disk can see and tune the log level directly,
+  #     instead of the file silently omitting the whole [tracing] table
+  #     and the actual level only being discoverable by running
+  #     `cuprated --generate-config` and diffing it against this file
+  #     (verified live on amishparadise 2026-09-01: the deployed file had
+  #     no [tracing] section at all).
   files:
     - path: /var/lib/archipelago/cuprate/Cuprated.toml
       content: |
@@ -133,6 +143,13 @@ app:
 
         [rpc.restricted]
         enable = true
+
+        [tracing.stdout]
+        level = "info"
+
+        [tracing.file]
+        level = "debug"
+        max_log_files = 7
       overwrite: false
 
   health_check:
