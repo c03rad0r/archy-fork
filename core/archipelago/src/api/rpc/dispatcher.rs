@@ -558,6 +558,11 @@ impl RpcHandler {
                 self.handle_fips_remove_seed_anchor(&p).await
             }
             "fips.apply-seed-anchors" => self.handle_fips_apply_seed_anchors().await,
+            "fips.ssh-over-mesh.get" => self.handle_fips_ssh_over_mesh_get().await,
+            "fips.ssh-over-mesh.set" => {
+                let p = params.unwrap_or(serde_json::json!({}));
+                self.handle_fips_ssh_over_mesh_set(&p).await
+            }
 
             // System updates
             "update.check" => self.handle_update_check().await,

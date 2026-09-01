@@ -141,6 +141,16 @@ impl DockerPackageScanner {
 
             // Get metadata for this app
             let metadata = get_app_metadata(&app_id);
+            // Manifest-owned metadata (icon) wins over the static table: the
+            // manifest is what the catalog signed and what the App Store shows,
+            // so it is also what an installed tile must render.
+            let manifest_icon = real_manifest_metadata(&app_id)
+                .and_then(|m| {
+                    m.get("icon")
+                        .and_then(|v| v.as_str())
+                        .map(str::to_string)
+                })
+                .filter(|s| !s.trim().is_empty());
 
             // Resolve UI address: separate UI containers > static map > dynamic ports
             let lan_address = if app_id == "netbird" {
@@ -191,7 +201,7 @@ impl DockerPackageScanner {
                 static_files: StaticFiles {
                     license: "MIT".to_string(),
                     instructions: metadata.description.clone(),
-                    icon: metadata.icon.clone(),
+                    icon: manifest_icon.unwrap_or_else(|| metadata.icon.clone()),
                 },
                 manifest: Manifest {
                     id: app_id.clone(),
@@ -211,28 +221,34 @@ impl DockerPackageScanner {
                     author: Some("Archipelago".to_string()),
                     website: lan_address.clone(),
                     tier: Some(metadata.tier.to_string()),
-                    interfaces: if lan_address.is_some() || tor_address.is_some() {
+                    interfaces: {
                         // `ui` is no longer implied by a published port: a
                         // headless backend with an exposed port is a service,
                         // not a launchable app. ui_detection consults the
                         // manifest declaration first, then HTTP-probes the
-                        // port. Addresses stay present either way so the
-                        // Services tab can still show where a backend lives.
+                        // port. A DECLARED UI classifies the app as launchable
+                        // even when no reachable address was confirmed this
+                        // scan — the launch button falls back to the static
+                        // port map, and burying a manifest-declared UI app
+                        // (Alby Hub) in Services because a probe missed was
+                        // exactly the classification bug this fixes.
                         let has_ui = super::ui_detection::has_web_ui(
                             &app_id,
                             lan_address.as_deref(),
                             package_state == PackageState::Running,
                         )
                         .await;
-                        Some(Interfaces {
-                            main: Some(MainInterface {
-                                ui: has_ui.then(|| "true".to_string()),
-                                tor_config: tor_address.clone(),
-                                lan_config: None,
-                            }),
-                        })
-                    } else {
-                        None
+                        if lan_address.is_some() || tor_address.is_some() || has_ui {
+                            Some(Interfaces {
+                                main: Some(MainInterface {
+                                    ui: has_ui.then(|| "true".to_string()),
+                                    tor_config: tor_address.clone(),
+                                    lan_config: None,
+                                }),
+                            })
+                        } else {
+                            None
+                        }
                     },
                 },
                 available_update,
@@ -320,6 +336,43 @@ fn is_transient_podman_helper(app_id: &str, ports: &[String]) -> bool {
         && !right.is_empty()
         && left.chars().all(|c| c.is_ascii_lowercase())
         && right.chars().all(|c| c.is_ascii_lowercase())
+}
+
+/// Raw `metadata` block of an installed app's real manifest — catalog overlay
+/// first (origin-wins), disk manifest as fallback. Kept as raw JSON because
+/// the typed `AppManifest` deliberately does not model `metadata`, yet its
+/// `icon` is what makes an installed app's tile render the right icon on
+/// every surface (My Apps, Services, launcher, companion) instead of the
+/// generic A-mark — the exact regression Cuprate exposed on install.
+fn real_manifest_metadata(app_id: &str) -> Option<serde_json::Value> {
+    for (id, value) in crate::container::app_catalog::catalog_manifest_values() {
+        if id == app_id {
+            return value.get("app").and_then(|a| a.get("metadata")).cloned();
+        }
+    }
+    let mut candidates = Vec::new();
+    if let Ok(dir) = std::env::var("ARCHIPELAGO_DATA_DIR") {
+        candidates.push(
+            std::path::PathBuf::from(dir)
+                .join("../apps")
+                .join(app_id)
+                .join("manifest.yml"),
+        );
+    }
+    candidates.push(
+        std::path::PathBuf::from("/opt/archipelago/apps")
+            .join(app_id)
+            .join("manifest.yml"),
+    );
+    for path in candidates {
+        let Ok(content) = std::fs::read_to_string(&path) else { continue };
+        let Ok(value) = serde_yaml::from_str::<serde_json::Value>(&content) else { continue };
+        let meta = value.get("app").and_then(|a| a.get("metadata")).cloned();
+        if meta.is_some() {
+            return meta;
+        }
+    }
+    None
 }
 
 fn get_app_metadata(app_id: &str) -> AppMetadata {

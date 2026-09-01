@@ -261,4 +261,51 @@ impl RpcHandler {
             }).collect::<Vec<_>>(),
         }))
     }
+
+    /// The SSH-over-mesh toggle state plus sshd preflights (the card explains
+    /// the rule instead of gating on it — see ssh_mesh.rs).
+    pub(super) async fn handle_fips_ssh_over_mesh_get(&self) -> Result<serde_json::Value> {
+        let state = fips::ssh_mesh::load(&self.config.data_dir).await;
+        let preflights = fips::ssh_mesh::preflights().await;
+        Ok(serde_json::json!({
+            "enabled": state.enabled,
+            "sources": state.sources,
+            "scope": if state.sources.is_empty() { "any" } else { "list" },
+            "preflights": preflights,
+        }))
+    }
+
+    /// Set the toggle. Params: `{ enabled: bool, sources?: string[] }` —
+    /// an empty/absent source list opens port 22 to every mesh peer (the UI
+    /// confirms that explicitly before calling with it).
+    pub(super) async fn handle_fips_ssh_over_mesh_set(
+        &self,
+        params: &serde_json::Value,
+    ) -> Result<serde_json::Value> {
+        let enabled = params
+            .get("enabled")
+            .and_then(|v| v.as_bool())
+            .ok_or_else(|| anyhow::anyhow!("missing boolean 'enabled'"))?;
+        let sources: Vec<String> = params
+            .get("sources")
+            .and_then(|v| v.as_array())
+            .map(|a| {
+                a.iter()
+                    .filter_map(|s| s.as_str().map(str::to_string))
+                    .collect()
+            })
+            .unwrap_or_default();
+        let (state, outcome) =
+            fips::ssh_mesh::set(&self.config.data_dir, enabled, &sources).await?;
+        let preflights = fips::ssh_mesh::preflights().await;
+        Ok(serde_json::json!({
+            "enabled": state.enabled,
+            "sources": state.sources,
+            "scope": if state.sources.is_empty() { "any" } else { "list" },
+            "applied": outcome.applied,
+            "removed": outcome.removed,
+            "reloaded": outcome.reloaded,
+            "preflights": preflights,
+        }))
+    }
 }

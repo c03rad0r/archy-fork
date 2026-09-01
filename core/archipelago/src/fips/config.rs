@@ -305,6 +305,14 @@ pub async fn install(identity_dir: &Path) -> Result<()> {
         }
     }
 
+    // SSH-over-mesh rides every config install so the on-state survives
+    // upgrades, reconnects, and the startup self-heal (see ssh_mesh.rs —
+    // this module owns the 90-ssh.nft slot exclusively).
+    let ssh_data_dir = identity_dir.parent().unwrap_or(identity_dir);
+    if let Err(e) = super::ssh_mesh::reconcile(ssh_data_dir).await {
+        tracing::warn!("ssh-over-mesh reconcile after config install failed (non-fatal): {e:#}");
+    }
+
     sudo_install_file(&src_key, DAEMON_KEY_PATH, "0600").await?;
     // Heal a legacy fips_key.pub that was written as bech32 npub text
     // (pre-fix identity::write_fips_key_from_seed did this). Upstream

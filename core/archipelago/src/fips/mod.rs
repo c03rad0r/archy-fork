@@ -32,6 +32,7 @@ pub mod dial;
 pub mod endpoints;
 pub mod iface;
 pub mod service;
+pub mod ssh_mesh;
 pub mod telemetry;
 pub mod update;
 
