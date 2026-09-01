@@ -362,6 +362,20 @@ init()
               </button>
             </div>
             <div class="overflow-y-auto flex-1 min-h-0 space-y-6 pr-1">
+              <!-- v1.8.9-alpha -->
+              <div>
+                <div class="flex items-center gap-2 mb-3">
+                  <span class="text-xs font-mono px-2 py-0.5 rounded bg-orange-500/20 text-orange-300">v1.8.9-alpha</span>
+                  <span class="text-xs text-white/40">September 1, 2026</span>
+                </div>
+                <div class="space-y-3 text-sm text-white/80 pl-3 border-l border-white/10">
+                  <p><strong>Lightning sends work again after the LND 0.21.2 update.</strong> LND 0.21 removed the payment route the node's backend used — every send answered "Not Found". Payments now go through LND's supported v2 router route, slow multi-hop payments are still tracked to completion (never falsely declared failed), failures explain themselves in plain language, and a new test speaks the payment route directly at release-gate time so an image/backend mismatch like this can never ship silently again.</p>
+                  <p><strong>HTTP and HTTPS both work, and no longer break each other.</strong> The HTTPS listener used to pin a year-long browser policy (HSTS); once your browser had visited HTTPS, it silently rewrote the HTTP dashboard's calls to HTTPS — cross-origin, so everything showed "Failed to fetch"/CORS errors while the node was healthy. The pin is gone, the HTTPS listener now actively clears the stale policy browsers already cached (visit HTTPS once after this update to clear yours), and plain-HTTP access — which is deliberate on nodes whose self-signed certificate you haven't installed — keeps working exactly as before.</p>
+                  <p><strong>Apps open over HTTPS again, including Mempool, Bitcoin and IndeeHub.</strong> The launcher looked each app's port policy up in the signed catalog under the name you click, but the catalog lists that port under the app that owns it — so Mempool "did not connect", Bitcoin opened a plain-http tab, and Nostr sign-in on IndeeHub silently did nothing over HTTPS. Launches now follow the alias to the owning manifest, the catalog is loaded before the first app you open (not just in the App Store), and the Nostr bridge replies to the app frame's real origin instead of a stale recorded address.</p>
+                  <p><strong>Nginx Proxy Manager starts again.</strong> Its manifest was missing two things its image requires — the LetsEncrypt folder mount and the permission to bind low ports — leaving it in an endless restart loop on nodes that had it installed. Both are declared now; your existing certificates are untouched, and the fix arrives via the signed catalog without waiting for this release.</p>
+                  <p><strong>Portainer's first-run token is on the app page, not buried in "server logs".</strong> New Portainer versions hand the first admin a one-time setup token that was only printed in the container logs — on this box, that token now appears with your app's other credentials, with a copy button, and disappears once setup is done.</p>
+                </div>
+              </div>
               <!-- v1.8.8-alpha -->
               <div>
                 <div class="flex items-center gap-2 mb-3">
