@@ -4046,7 +4046,8 @@
               "CHOWN",
               "SETUID",
               "SETGID",
-              "DAC_OVERRIDE"
+              "DAC_OVERRIDE",
+              "NET_BIND_SERVICE"
             ],
             "network_policy": "isolated",
             "no_new_privileges": true,
@@ -4064,6 +4065,14 @@
               ],
               "source": "/var/lib/archipelago/nginx-proxy-manager",
               "target": "/data",
+              "type": "bind"
+            },
+            {
+              "options": [
+                "rw"
+              ],
+              "source": "/var/lib/archipelago/nginx-proxy-manager/letsencrypt",
+              "target": "/etc/letsencrypt",
               "type": "bind"
             }
           ]
@@ -5420,7 +5429,7 @@
     }
   },
   "schema": 1,
-  "signature": "5f5bbb02ab88c9fbc4bf62a2c237a3e58912bd33ecf5bba67ad2705f0331b62a08b0e04dc6b03f76c236e5d4d316d80e982b112ecf0313a5a5e29c3289531308",
+  "signature": "f982faeb9823062d9d39f6e4b38a171b4442cad0f35e74792ea161b5d77246ab9128044acbdc390ec23f921363af2d13bbba66c558b188d14d06a3f9a7f42406",
   "signed_by": "did:key:z6Mkfu5LT8d4DjETtrkATvHh9Dvcbnr7zBCUwfau8Sw7DLWT",
   "updated": "2026-09-01"
 }
