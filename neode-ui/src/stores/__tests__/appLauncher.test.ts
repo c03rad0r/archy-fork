@@ -29,7 +29,7 @@ vi.mock('@/router', () => ({
 
 vi.stubGlobal('open', mockWindowOpen)
 
-import { useAppLauncherStore } from '../appLauncher'
+import { useAppLauncherStore, senderMatchesApp } from '../appLauncher'
 
 describe('useAppLauncherStore', () => {
   beforeEach(() => {
@@ -447,5 +447,22 @@ describe('useAppLauncherStore', () => {
     // requestAnimationFrame fires the focus restore callback
     vi.runAllTimers()
     vi.useRealTimers()
+  })
+
+  describe('NIP-07 sender origin matching', () => {
+    it('accepts a scheme-upgraded frame (HSTS) as the opened app', () => {
+      // Regression (2026-09-01): the stored app URL was http:// but the
+      // browser loaded the frame as https:// — strict origin equality
+      // dropped every nostr sign-in from the upgraded frame.
+      expect(senderMatchesApp('http://framework-pt.local:7778', 'https://framework-pt.local:7778')).toBe(true)
+      expect(senderMatchesApp('https://framework-pt.local:7778', 'http://framework-pt.local:7778')).toBe(true)
+    })
+
+    it('still rejects a different host or port', () => {
+      expect(senderMatchesApp('http://framework-pt.local:7778', 'https://evil.example:7778')).toBe(false)
+      expect(senderMatchesApp('http://framework-pt.local:7778', 'https://framework-pt.local:7777')).toBe(false)
+      expect(senderMatchesApp('http://framework-pt.local:7778', 'null')).toBe(false)
+      expect(senderMatchesApp('', 'https://framework-pt.local:7778')).toBe(false)
+    })
   })
 })

@@ -29,6 +29,24 @@ function openExternal(launchUrl: string) {
   window.open(launchUrl, '_blank', 'noopener,noreferrer')
 }
 
+/** Whether a postMessage sender's origin belongs to the app the launcher
+ *  actually opened. Same hostname and port are REQUIRED; the SCHEME is
+ *  deliberately not compared: a browser with cached HSTS (or any scheme
+ *  upgrade) loads a stored http:// app URL as https://, and strict equality
+ *  silently dropped every nostr request from the upgraded frame — nostr
+ *  sign-in on IndeeHub died exactly there over HTTPS (2026-09-01). */
+export function senderMatchesApp(appUrl: string, senderOrigin: string): boolean {
+  let expected: URL
+  let sender: URL
+  try {
+    expected = new URL(appUrl, 'http://localhost/')
+    sender = new URL(senderOrigin)
+  } catch {
+    return false
+  }
+  return sender.hostname === expected.hostname && sender.port === expected.port
+}
+
 /** Ports of apps that set X-Frame-Options (can't iframe, must open in new tab) */
 const NEW_TAB_PORTS = new Set([
   '23000', // BTCPay — X-Frame-Options: DENY
@@ -393,19 +411,11 @@ export const useAppLauncherStore = defineStore('appLauncher', () => {
     const source = event.source as Window | null
     if (!source) return
 
-    // Only the app we actually opened may drive this bridge. The sender's
-    // real origin must match the open app's URL origin — without this, any
-    // co-resident iframe could deanonymize the nostr identity or use the
-    // node as a decryption oracle while an app happened to be open.
-    let expectedOrigin: string
-    try {
-      expectedOrigin = new URL(url.value, window.location.href).origin
-    } catch {
-      return
-    }
-    if (event.origin !== expectedOrigin) return
+    // Only the app we actually opened may drive this bridge — see
+    // senderMatchesApp for why the scheme is deliberately not compared.
+    if (!senderMatchesApp(url.value, event.origin)) return
 
-    const origin = url.value || 'unknown'
+    const origin = event.origin
 
     // Check if app has a per-app identity stored (from identity picker)
     const IDENTITY_KEY = 'archipelago_app_identity_'

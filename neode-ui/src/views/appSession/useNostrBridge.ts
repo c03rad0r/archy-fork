@@ -1,11 +1,15 @@
-/** Composable for NIP-07 Nostr signing bridge between parent and iframe */
+/** Composable for NIP-07 Nostr signing between parent and iframe apps.
+ *
+ *  Replies always target event.origin — the frame's REAL origin. The app's
+ *  recorded URL can carry a stale scheme (HSTS-upgraded http app on an HTTPS
+ *  dashboard); targeting it makes postMessage throw and the app never sees
+ *  its response. */
 
 import { rpcClient } from '@/api/rpc-client'
 import type { SelectedIdentity } from './useAppIdentity'
 
 export function useNostrBridge(
   getStoredIdentity: () => SelectedIdentity | null,
-  getAppUrl: () => string,
 ) {
   async function handleNostrRequest(event: MessageEvent) {
     const { id, method, params } = event.data
@@ -43,14 +47,15 @@ export function useNostrBridge(
       else if (method === 'nip44.encrypt') { result = (await rpcClient.call<{ ciphertext: string }>({ method: 'identity.nostr-encrypt-nip44', params: { id: identityId || undefined, pubkey: params.pubkey, plaintext: params.plaintext } })).ciphertext }
       else if (method === 'nip44.decrypt') { result = (await rpcClient.call<{ plaintext: string }>({ method: 'identity.nostr-decrypt-nip44', params: { id: identityId || undefined, pubkey: params.pubkey, ciphertext: params.ciphertext } })).plaintext }
       else { throw new Error(`Unsupported NIP-07 method: ${method}`) }
-      const url = getAppUrl()
-      const targetOrigin = url ? new URL(url).origin : '*'
-      source.postMessage({ type: 'nostr-response', id, result }, targetOrigin)
+      // Reply to the sender's REAL origin, never to the stored app URL:
+      // a scheme-upgraded frame (HSTS, or any future upgrade) makes the
+      // stored http:// URL a stale targetOrigin — postMessage then throws
+      // and the app never receives its response. nostr sign-in on IndeeHub
+      // over HTTPS died exactly there (2026-09-01).
+      source.postMessage({ type: 'nostr-response', id, result }, event.origin || '*')
     } catch (err) {
       if (import.meta.env.DEV) console.error(`[NIP-07] ${method} FAILED:`, err instanceof Error ? err.message : err)
-      const url = getAppUrl()
-      const targetOrigin = url ? new URL(url).origin : '*'
-      source.postMessage({ type: 'nostr-response', id, error: err instanceof Error ? err.message : 'Unknown error' }, targetOrigin)
+      source.postMessage({ type: 'nostr-response', id, error: err instanceof Error ? err.message : 'Unknown error' }, event.origin || '*')
     }
   }
 

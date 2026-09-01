@@ -265,7 +265,7 @@ function closeRouteSession() {
 const iframeRef = computed(() => frameRef.value?.iframeRef ?? null)
 
 const identity = useAppIdentity(appId, iframeRef, showIdentityPicker)
-const nostrBridge = useNostrBridge(identity.getStoredIdentity, () => appUrl.value)
+const nostrBridge = useNostrBridge(identity.getStoredIdentity)
 
 // --- Display mode ---
 

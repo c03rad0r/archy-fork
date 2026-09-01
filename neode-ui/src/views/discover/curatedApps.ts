@@ -79,15 +79,60 @@ export function signedCatalogToApps(catalog: SignedAppCatalog): MarketplaceApp[]
  *  after fetchAppCatalog() has run. Test-hookable. */
 let signedCatalogCache: SignedAppCatalog | null = null
 
+/** Launch aliases → the catalog app id that OWNS the UI port.
+ *
+ *  The launcher knows apps by several historical names (`mempool-web`, `lnd`,
+ *  `electrs`…); the signed catalog knows them by manifest id. Without this
+ *  map the port-auth lookup below misses, `portIsGateFronted` answers false,
+ *  and an HTTPS dashboard hands the app session an http:// frame URL — which
+ *  the browser then blocks outright as mixed content. That is exactly how
+ *  Mempool and IndeeHub “did not connect” over HTTPS while working fine over
+ *  HTTP (2026-09-01). */
+const CATALOG_APP_ID_ALIASES: Record<string, string> = {
+  'mempool-web': 'archy-mempool-web',
+  'mempool-electrs': 'electrs-ui',
+  'electrs': 'electrs-ui',
+  'archy-electrs-ui': 'electrs-ui',
+  'lnd': 'lnd-ui',
+  'archy-lnd-ui': 'lnd-ui',
+  'bitcoin-knots': 'bitcoin-ui',
+  'bitcoin-core': 'bitcoin-ui',
+  'fedimintd': 'fedimint',
+  'immich_server': 'immich',
+}
+
 /** Port auth for an app's host port, from the signed catalog's embedded
  *  manifest. `gated`/`open` = the node's app gate owns the port and serves
  *  TLS on it; `none`/`local` = container-published plain HTTP; null = app
- *  unknown to the signed catalog (legacy curated installs). */
+ *  unknown to the signed catalog (legacy curated installs).
+ *
+ *  Resolution order: the app's own manifest, then its alias (the manifest
+ *  that actually owns the UI port), then — only for ports no known id
+ *  declares — a port-wide scan of the catalog. The scan must be UNANIMOUS:
+ *  a host port that any app publishes as plain HTTP (`none`) must never be
+ *  answered `gated`, or an https frame URL would point at a port that never
+ *  serves TLS. */
 export function portAuth(appId: string, hostPort: number | string): string | null {
-  const ports = signedCatalogCache?.apps?.[appId]?.manifest?.app?.ports
-  if (!Array.isArray(ports)) return null
-  const hit = ports.find(p => String(p.host) === String(hostPort))
-  return hit?.auth ?? null
+  const apps = signedCatalogCache?.apps
+  if (!apps) return null
+  const alias: string | undefined = CATALOG_APP_ID_ALIASES[appId]
+  const ids: string[] = alias === undefined || alias === appId ? [appId] : [appId, alias]
+  for (const id of ids) {
+    const ports = apps[id]?.manifest?.app?.ports
+    if (!Array.isArray(ports)) continue
+    const hit = ports.find(p => String(p.host) === String(hostPort))
+    if (hit?.auth) return hit.auth
+  }
+  let found: string | null = null
+  for (const entry of Object.values(apps)) {
+    const ports = entry?.manifest?.app?.ports
+    if (!Array.isArray(ports)) continue
+    const hit = ports.find(p => String(p.host) === String(hostPort))
+    if (!hit?.auth) continue
+    if (found === null) found = hit.auth
+    else if (found !== hit.auth) return null
+  }
+  return found
 }
 
 /** Whether an app's host port is fronted by the node's app gate (and so

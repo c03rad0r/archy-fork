@@ -117,6 +117,7 @@ import { useSpotlightStore } from '@/stores/spotlight'
 import { useCLIStore } from '@/stores/cli'
 import { useMessageToast } from '@/composables/useMessageToast'
 import { useAppStore } from '@/stores/app'
+import { fetchAppCatalog } from './views/discover/curatedApps'
 import { useScreensaverStore } from '@/stores/screensaver'
 import { useUIModeStore } from '@/stores/uiMode'
 import { startRemoteRelay, stopRemoteRelay } from '@/api/remote-relay'
@@ -396,6 +397,13 @@ function onVisibilityChange() {
 
 onMounted(async () => {
   syncKioskSafeArea()
+  // Warm the signed-catalog cache before any app launch needs it: port auth
+  // (gate-fronted ⇒ TLS on the app port) decides whether an app frame opens
+  // over https on an HTTPS dashboard. The cache used to be filled only by
+  // the Store/Discover views, so a user who went straight to My Apps got an
+  // http:// frame URL — blocked as mixed content (mempool/indeehub "did not
+  // connect", 2026-09-01). fetchAppCatalog() memoizes with a 1h TTL.
+  void fetchAppCatalog()
   // Light app-wide mesh poll so a freshly plugged-in radio surfaces the
   // setup modal on any page (the Mesh view's own poll takes over there).
   useMeshStore().startGlobalDetection()
