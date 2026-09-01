@@ -1,7 +1,7 @@
 app:
   id: homeassistant
   name: Home Assistant
-  version: 2026.7.3
+  version: 2026.8.3
   # Where this app comes from, so scripts/check-upstream-releases.py can
   # tell us when the pin below has fallen behind. Without it nothing can:
   # container.image names our mirror, not the project it was mirrored from.
@@ -11,7 +11,7 @@ app:
   description: Open source home automation platform. Control and monitor your smart home devices.
   
   container:
-    image: source.archipelago-foundation.org/lfg2025/home-assistant:2026.8.2
+    image: source.archipelago-foundation.org/lfg2025/home-assistant:2026.8.3
     pull_policy: if-not-present
     network: pasta
     

@@ -44,10 +44,8 @@
             class="tier-badge"
             :class="tier === 'core' ? 'tier-badge-core' : 'tier-badge-recommended'"
           >{{ tier }}</span>
-          <span
-            v-if="pkg['available-update']"
-            class="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-semibold bg-orange-500/20 text-orange-300 border border-orange-500/30"
-          >Update</span>
+          <!-- Update state is the bottom-left button only: a second pill up
+               here duplicated the signal and crowded the title. -->
         </div>
         <p class="text-sm text-white/50">{{ version ? $ver(version) : '' }}</p>
         <p v-if="author" class="text-xs text-white/40 mt-0.5">{{ author }}</p>

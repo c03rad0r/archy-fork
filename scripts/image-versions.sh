@@ -43,18 +43,18 @@ POSTGRES_IMAGE="$ARCHY_REGISTRY/postgres:15.17"
 BTCPAY_POSTGRES_IMAGE="$ARCHY_REGISTRY/postgres:15.17"
 
 # Apps
-HOMEASSISTANT_IMAGE="$ARCHY_REGISTRY/home-assistant:2026.8.2"
+HOMEASSISTANT_IMAGE="$ARCHY_REGISTRY/home-assistant:2026.8.3"
 GRAFANA_IMAGE="$ARCHY_REGISTRY/grafana:10.2.0"
 UPTIME_KUMA_IMAGE="$ARCHY_REGISTRY/uptime-kuma:1"
 JELLYFIN_IMAGE="$ARCHY_REGISTRY/jellyfin:10.11.11"
 PHOTOPRISM_IMAGE="$ARCHY_REGISTRY/photoprism:240915"
 OLLAMA_IMAGE="$ARCHY_REGISTRY/ollama:latest"
-VAULTWARDEN_IMAGE="$ARCHY_REGISTRY/vaultwarden:1.37.1-alpine"
+VAULTWARDEN_IMAGE="$ARCHY_REGISTRY/vaultwarden:1.37.2-alpine"
 NEXTCLOUD_IMAGE="$ARCHY_REGISTRY/nextcloud:29"
 SEARXNG_IMAGE="$ARCHY_REGISTRY/searxng:latest"
 # OnlyOffice removed — incompatible with rootless Podman (internal postgres/rabbitmq fail)
 # Replaced by CryptPad (single Node.js process, e2e encrypted)
-FILEBROWSER_IMAGE="$ARCHY_REGISTRY/filebrowser:v2.27.0"
+FILEBROWSER_IMAGE="$ARCHY_REGISTRY/filebrowser:v2.63.23"
 NPM_IMAGE="$ARCHY_REGISTRY/nginx-proxy-manager:latest"
 # 2.39.1 is what the fleet has actually been running via the moving :latest
 # tag, and it is the version that wrote their databases. Pinning back to
@@ -62,7 +62,7 @@ NPM_IMAGE="$ARCHY_REGISTRY/nginx-proxy-manager:latest"
 # container was recreated: "database schema version does not align with the
 # server version" — it migrates a DB forward, never backward. Pinned
 # forward and published as a concrete tag so this is reproducible.
-PORTAINER_IMAGE="$ARCHY_REGISTRY/portainer:2.39.6"
+PORTAINER_IMAGE="$ARCHY_REGISTRY/portainer:2.45.0"
 
 # Networking
 TAILSCALE_IMAGE="$ARCHY_REGISTRY/tailscale:stable"
@@ -70,7 +70,7 @@ NETBIRD_DASHBOARD_IMAGE="docker.io/netbirdio/dashboard:v2.38.0"
 NETBIRD_SERVER_IMAGE="docker.io/netbirdio/netbird-server:0.71.2"
 NETBIRD_PROXY_IMAGE="docker.io/library/nginx:1.27-alpine"
 ALPINE_TOR_IMAGE="$ARCHY_REGISTRY/alpine-tor:0.4.8.13"
-ADGUARDHOME_IMAGE="$ARCHY_REGISTRY/adguardhome:v0.107.55"
+ADGUARDHOME_IMAGE="$ARCHY_REGISTRY/adguardhome:v0.107.79"
 
 # Fedimint
 FEDIMINT_IMAGE="$ARCHY_REGISTRY/fedimintd:v0.10.1"
@@ -114,7 +114,7 @@ INDEEDHUB_POSTGRES_IMAGE="$ARCHY_REGISTRY/postgres:16.13-alpine"
 INDEEDHUB_REDIS_IMAGE="$ARCHY_REGISTRY/redis:7.4.8-alpine"
 
 # Gitea (Git + Container Registry)
-GITEA_IMAGE="docker.io/gitea/gitea:1.23"
+GITEA_IMAGE="source.archipelago-foundation.org/lfg2025/gitea:1.27.3"
 
 # DWN (Decentralized Web Node)
 

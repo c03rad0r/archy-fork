@@ -1,7 +1,7 @@
 app:
   id: gitea
   name: Gitea
-  version: "1.23"
+  version: "1.27.3"
   # Where this app comes from, so scripts/check-upstream-releases.py can
   # tell us when the pin below has fallen behind. Without it nothing can:
   # container.image names our mirror, not the project it was mirrored from.
@@ -12,7 +12,7 @@ app:
   category: development
 
   container:
-    image: docker.io/gitea/gitea:1.23
+    image: source.archipelago-foundation.org/lfg2025/gitea:1.27.3
     pull_policy: if-not-present
 
   dependencies:

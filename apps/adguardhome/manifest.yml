@@ -1,7 +1,7 @@
 app:
   id: adguardhome
   name: AdGuard Home
-  version: v0.107.55
+  version: v0.107.79
   upstream:
     kind: github
     repo: AdguardTeam/AdGuardHome
@@ -10,7 +10,7 @@ app:
     device on your LAN, with a web console for rules and client management.
 
   container:
-    image: source.archipelago-foundation.org/lfg2025/adguardhome:v0.107.55
+    image: source.archipelago-foundation.org/lfg2025/adguardhome:v0.107.79
     pull_policy: if-not-present
     network: pasta
 

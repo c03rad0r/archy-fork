@@ -1,7 +1,7 @@
 app:
   id: filebrowser
   name: File Browser
-  version: 2.27.0
+  version: 2.63.23
   # Where this app comes from, so scripts/check-upstream-releases.py can
   # tell us when the pin below has fallen behind. Without it nothing can:
   # container.image names our mirror, not the project it was mirrored from.
@@ -11,7 +11,7 @@ app:
   description: Baseline Archipelago file manager service.
 
   container:
-    image: source.archipelago-foundation.org/lfg2025/filebrowser:v2.27.0
+    image: source.archipelago-foundation.org/lfg2025/filebrowser:v2.63.23
     pull_policy: if-not-present
     network: archy-net
     custom_args: ["--config", "/data/.filebrowser.json"]

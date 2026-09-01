@@ -5,7 +5,7 @@ app:
   # (--beam-size 1). Bumped past the image version so catalog-driven nodes
   # pick up the args change; the pre-release form "3.4.1-1" would compare
   # LOWER than 3.4.1 under semver and never roll out.
-  version: "3.4.2"
+  version: "3.6.0"
   # Tracks the rhasspy/wyoming-whisper image we pin (Docker Hub — the
   # project's GitHub tags are not the image tags). NOTE: this manifest
   # deliberately ships an args-tuned revision AHEAD of the image tag (see
@@ -24,7 +24,7 @@ app:
   container_name: pine-whisper
 
   container:
-    image: docker.io/rhasspy/wyoming-whisper:3.4.1
+    image: docker.io/rhasspy/wyoming-whisper:3.6.0
     pull_policy: if-not-present
     network: archy-net
     network_aliases: [pine-whisper]

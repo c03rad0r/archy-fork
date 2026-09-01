@@ -13,13 +13,13 @@
     {
       "id": "adguardhome",
       "title": "AdGuard Home",
-      "version": "v0.107.55",
+      "version": "v0.107.79",
       "description": "Network-wide ad and tracker blocking: a DNS server that filters every device on your LAN, with a web console for rules and client management.",
       "icon": "",
       "author": "AdGuard",
       "category": "networking",
       "tier": "optional",
-      "dockerImage": "source.archipelago-foundation.org/lfg2025/adguardhome:v0.107.55",
+      "dockerImage": "source.archipelago-foundation.org/lfg2025/adguardhome:v0.107.79",
       "repoUrl": "https://github.com/AdguardTeam/AdGuardHome"
     },
     {
@@ -191,13 +191,13 @@
     {
       "id": "filebrowser",
       "title": "File Browser",
-      "version": "2.27.0",
+      "version": "2.63.23",
       "description": "Baseline Archipelago file manager service.",
       "icon": "/assets/img/app-icons/file-browser.webp",
       "author": "File Browser",
       "category": "data",
       "tier": "core",
-      "dockerImage": "source.archipelago-foundation.org/lfg2025/filebrowser:v2.27.0",
+      "dockerImage": "source.archipelago-foundation.org/lfg2025/filebrowser:v2.63.23",
       "repoUrl": "https://github.com/filebrowser/filebrowser",
       "containerConfig": {
         "ports": [
@@ -218,12 +218,12 @@
     {
       "id": "gitea",
       "title": "Gitea",
-      "version": "1.23",
+      "version": "1.27.3",
       "description": "Self-hosted Git service with built-in container registry, CI/CD, and package hosting.",
       "icon": "/assets/img/app-icons/gitea.svg",
       "author": "Gitea",
       "category": "development",
-      "dockerImage": "docker.io/gitea/gitea:1.23",
+      "dockerImage": "source.archipelago-foundation.org/lfg2025/gitea:1.27.3",
       "repoUrl": "https://gitea.com",
       "containerConfig": {
         "ports": [
@@ -274,12 +274,12 @@
     {
       "id": "homeassistant",
       "title": "Home Assistant",
-      "version": "2026.7.3",
+      "version": "2026.8.3",
       "description": "Open source home automation platform. Control and monitor your smart home devices.",
       "icon": "/assets/img/app-icons/homeassistant.png",
       "author": "Home Assistant",
       "category": "home",
-      "dockerImage": "source.archipelago-foundation.org/lfg2025/home-assistant:2026.8.2",
+      "dockerImage": "source.archipelago-foundation.org/lfg2025/home-assistant:2026.8.3",
       "repoUrl": "https://github.com/home-assistant/core",
       "containerConfig": {
         "ports": [
@@ -505,13 +505,13 @@
     {
       "id": "portainer",
       "title": "Portainer",
-      "version": "2.19.4",
+      "version": "2.45.0",
       "description": "Container management web UI for the local Podman socket.",
       "icon": "/assets/img/app-icons/portainer.webp",
       "author": "Portainer",
       "category": "development",
       "tier": "optional",
-      "dockerImage": "source.archipelago-foundation.org/lfg2025/portainer:2.39.6",
+      "dockerImage": "source.archipelago-foundation.org/lfg2025/portainer:2.45.0",
       "repoUrl": "https://github.com/portainer/portainer",
       "containerConfig": {
         "ports": [
@@ -603,13 +603,13 @@
     {
       "id": "vaultwarden",
       "title": "Vaultwarden",
-      "version": "1.30.0",
+      "version": "1.37.2",
       "description": "Self-hosted password vault with zero-knowledge encryption.",
       "icon": "/assets/img/app-icons/vaultwarden.webp",
       "author": "Vaultwarden",
       "category": "data",
       "tier": "recommended",
-      "dockerImage": "source.archipelago-foundation.org/lfg2025/vaultwarden:1.37.1-alpine",
+      "dockerImage": "source.archipelago-foundation.org/lfg2025/vaultwarden:1.37.2-alpine",
       "repoUrl": "https://github.com/dani-garcia/vaultwarden",
       "containerConfig": {
         "ports": [
