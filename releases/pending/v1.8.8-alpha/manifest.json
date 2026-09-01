@@ -1,0 +1,30 @@
+{
+  "changelog": [
+    "**SSH over the mesh is now a first-class setting.** Settings gains an \"SSH over mesh\" card: off by default, and when you allow it the node's mesh firewall opens port 22 — either to every mesh peer (behind an explicit \"I understand\" confirmation, because that's a real exposure) or only to the mesh addresses you list. The rule is owned by the node (the `90-ssh.nft` drop-in), so it survives upgrades and daemon reinstalls, and the card tells you up front whether sshd is running, whether it listens on IPv6 (the mesh is IPv6-only — this is what a broken attempt looks like before it happens), and whether password login is on (keys-only is the recommended pairing). From Termux on your phone, `fipssh <user>@<node-npub>` connects once the toggle is on — the npub is the durable address, and the command is shown with a copy button on the card.",
+    "**The App Store now lists apps — not parts of apps.** The signed catalog carries every manifest because the node's update layer needs their pins, and the store briefly listed them all: Mempool API, LND UI, Bitcoin UI, the Pine voice engines, the IndeeHub and Immich backends, the mesh router and friends. Components are hidden from the store listing (they still appear where they belong — the Services tab of My Apps, once installed), and four entries that never earned a tile are gone outright: MorphOS server (old), the Web5 DID wallet, Lightning Stack (an untracked upstream bundle — LND covers the need), and CryptPad (never tested).",
+    "**App icons now persist everywhere, in the proper container style.** Two fixes: installed apps render the icon from their own manifest — Cuprate no longer falls back to the generic A-mark on its Services tile — and the store grids (the Discover page) apply the same icon container treatment (backdrop, border, shadow) as My Apps, the detail pages, and Home. Manifest-declared UI apps also classify correctly again: Alby Hub installs into My Apps with a working tile, not into Services, because a probe miss no longer buries an app the manifest itself says has a frontend.",
+    "**Installing from the store keeps you on the store page.** The install progress lives on the tile itself and the app appears in My Apps when it lands — no more being yanked to My Apps mid-browse."
+  ],
+  "components": [
+    {
+      "current_version": "1.8.8-alpha",
+      "download_url": "https://source.archipelago-foundation.org/lfg2025/archy/releases/download/v1.8.8-alpha/archipelago",
+      "name": "archipelago",
+      "new_version": "1.8.8-alpha",
+      "sha256": "96f39b8db6f08386200e1eab91c8444a7758526e6034100c8a33907ff9263530",
+      "size_bytes": 64175864
+    },
+    {
+      "current_version": "1.8.8-alpha",
+      "download_url": "https://source.archipelago-foundation.org/lfg2025/archy/releases/download/v1.8.8-alpha/archipelago-frontend-1.8.8-alpha.tar.gz",
+      "name": "archipelago-frontend-1.8.8-alpha.tar.gz",
+      "new_version": "1.8.8-alpha",
+      "sha256": "7829b67edf8dec27997dd821650ed4d61aea721f802d46a8d47014f4b4246db1",
+      "size_bytes": 97730549
+    }
+  ],
+  "release_date": "2026-09-01",
+  "signature": "c839cbdcb356a503d87bc17f52b6e5f3a934ae1e72a891f2d21d85366f23debb224a2a40b9124bab50fe95444e01e27711690b1bc50062f40b7ed4f34e078d06",
+  "signed_by": "did:key:z6Mkfu5LT8d4DjETtrkATvHh9Dvcbnr7zBCUwfau8Sw7DLWT",
+  "version": "1.8.8-alpha"
+}
