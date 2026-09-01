@@ -125,16 +125,19 @@ app:
   #     uses for its own RPC port (-rpcbind=0.0.0.0:8332 internally, gate
   #     restricts it externally) — not a new risk, the same one already
   #     reviewed and accepted for Bitcoin's RPC.
-  #   - tracing.stdout.level / tracing.file.{level,max_log_files}: values
-  #     are identical to `cuprated --generate-config`'s own defaults (info /
-  #     debug / 7) — nothing about the logging behaviour changes. They're
-  #     spelled out explicitly anyway so an operator reading
-  #     Cuprated.toml on disk can see and tune the log level directly,
-  #     instead of the file silently omitting the whole [tracing] table
-  #     and the actual level only being discoverable by running
-  #     `cuprated --generate-config` and diffing it against this file
-  #     (verified live on amishparadise 2026-09-01: the deployed file had
-  #     no [tracing] section at all).
+  #   - tracing.stdout.level / tracing.file.{level,max_log_files}: an
+  #     operator reading Cuprated.toml on disk should be able to see and
+  #     tune the log level directly instead of the file silently omitting
+  #     the whole [tracing] table (verified live on amishparadise
+  #     2026-09-01: the deployed file had no [tracing] section at all, and
+  #     the level was only discoverable by running `cuprated
+  #     --generate-config` and diffing). file.level is set to "info", NOT
+  #     cuprated's own raw default of "debug" — matches the reference dev
+  #     config this app was built and tested against
+  #     (ssmithx@archy-dev-pa:/home/ssmithx/cuprate/Cuprated.toml,
+  #     verified 2026-09-01), which deliberately runs file logging quieter
+  #     than the binary default. max_log_files similarly follows that
+  #     reference (14, not the binary default of 7).
   files:
     - path: /var/lib/archipelago/cuprate/Cuprated.toml
       content: |
@@ -148,8 +151,8 @@ app:
         level = "info"
 
         [tracing.file]
-        level = "debug"
-        max_log_files = 7
+        level = "info"
+        max_log_files = 14
       overwrite: false
 
   health_check:

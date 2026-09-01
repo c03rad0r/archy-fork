@@ -1367,7 +1367,7 @@
           "files": [
             {
               "path": "/var/lib/archipelago/cuprate/Cuprated.toml",
-              "content": "network = \"Mainnet\"\ntarget_max_memory = 3000000000\n\n[rpc.restricted]\nenable = true\n\n[tracing.stdout]\nlevel = \"info\"\n\n[tracing.file]\nlevel = \"debug\"\nmax_log_files = 7\n",
+              "content": "network = \"Mainnet\"\ntarget_max_memory = 3000000000\n\n[rpc.restricted]\nenable = true\n\n[tracing.stdout]\nlevel = \"info\"\n\n[tracing.file]\nlevel = \"info\"\nmax_log_files = 14\n",
               "overwrite": false
             }
           ],
