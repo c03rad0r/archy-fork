@@ -1,30 +1,32 @@
 {
   "changelog": [
-    "**SSH over the mesh is now a first-class setting.** Settings gains an \"SSH over mesh\" card: off by default, and when you allow it the node's mesh firewall opens port 22 — either to every mesh peer (behind an explicit \"I understand\" confirmation, because that's a real exposure) or only to the mesh addresses you list. The rule is owned by the node (the `90-ssh.nft` drop-in), so it survives upgrades and daemon reinstalls, and the card tells you up front whether sshd is running, whether it listens on IPv6 (the mesh is IPv6-only — this is what a broken attempt looks like before it happens), and whether password login is on (keys-only is the recommended pairing). From Termux on your phone, `fipssh <user>@<node-npub>` connects once the toggle is on — the npub is the durable address, and the command is shown with a copy button on the card.",
-    "**The App Store now lists apps — not parts of apps.** The signed catalog carries every manifest because the node's update layer needs their pins, and the store briefly listed them all: Mempool API, LND UI, Bitcoin UI, the Pine voice engines, the IndeeHub and Immich backends, the mesh router and friends. Components are hidden from the store listing (they still appear where they belong — the Services tab of My Apps, once installed), and four entries that never earned a tile are gone outright: MorphOS server (old), the Web5 DID wallet, Lightning Stack (an untracked upstream bundle — LND covers the need), and CryptPad (never tested).",
-    "**App icons now persist everywhere, in the proper container style.** Two fixes: installed apps render the icon from their own manifest — Cuprate no longer falls back to the generic A-mark on its Services tile — and the store grids (the Discover page) apply the same icon container treatment (backdrop, border, shadow) as My Apps, the detail pages, and Home. Manifest-declared UI apps also classify correctly again: Alby Hub installs into My Apps with a working tile, not into Services, because a probe miss no longer buries an app the manifest itself says has a frontend.",
-    "**Installing from the store keeps you on the store page.** The install progress lives on the tile itself and the app appears in My Apps when it lands — no more being yanked to My Apps mid-browse."
+    "**Lightning sends work again after the LND 0.21.2 update.** LND 0.21 removed the old synchronous payment route the node's backend paid through (`/v1/channels/transactions`) — every Lightning send answered the literal \"Not Found\" and the wallet showed \"Payment failed: Not Found\". The backend now pays through the supported Router.SendPaymentV2 route, keeps the same settle-then-report behaviour (a slow multi-hop payment is still tracked to completion, never falsely declared failed), and translates LND's failure reasons into plain advice. A new gate test speaks the payment route directly against the running LND, so an image/backend skew like this can never ship silently again.",
+    "**The node no longer pins HSTS — HTTP access is a supported mode, and it stays working.** The HTTPS listener used to send `Strict-Transport-Security: max-age=31536000; includeSubDomains`; browsers that visited HTTPS once cached that and then silently upgraded the still-open HTTP dashboard's calls to HTTPS, which is a scheme change — cross-origin — so every request died as \"CORS blocked / Failed to fetch\" while the node was perfectly healthy. The HTTPS listener now actively clears the cached policy (`max-age=0`) and port 80 sends no HSTS at all, which is deliberate: the node's certificate is optional and self-signed, and devices that haven't installed the CA must keep plain-HTTP access (that's what Settings → Node certificate is for). If your browser already cached the old policy, visiting the dashboard over HTTPS once after this update clears it; a gate test now refuses any config that reintroduces the pin.",
+    "**App frames open over HTTPS again — including the ones that \"did not connect.\"** The launcher asked the signed catalog for each app's port policy under the name you click (\"Mempool Web\", \"Bitcoin Knots\"), but the catalog declares those ports under the manifest that owns them (the Mempool web container, Bitcoin UI). The lookup missed, the launcher handed the iframe an `http://` address, and the browser blocked it as mixed content — the app tile went blank or spun forever. Port resolution now follows launch aliases (mempool-web, bitcoin-knots/bitcoin-core, lnd, electrs and friends), falls back to a port-wide catalog scan when the id is unknown, and the catalog is warmed as soon as the dashboard loads rather than only in the App Store, so the very first app you open already knows which ports serve TLS.",
+    "**Signing in to IndeeHub with Nostr works over HTTPS.** The NIP-07 bridge compared the app frame's origin for exact equality with the recorded `http://` app URL — a frame the browser upgraded to HTTPS (or any scheme change) was silently ignored, and replies addressed to the stale origin were refused outright, so Nostr sign-in quietly did nothing. The bridge now matches host and port (scheme intentionally ignored) and always replies to the frame's real origin.",
+    "**Nginx Proxy Manager starts again.** Converting it to a platform manifest dropped two things its image needs: the `/etc/letsencrypt` mount its boot script hard-requires, and the `NET_BIND_SERVICE` capability its internal nginx needs to bind ports 80/443/81 under the orchestrator's `--cap-drop=ALL`. The result was an endless start/die loop (a node watched it restart 3,176 times). Both are declared in its manifest now, its certs live on unchanged under the same persistent app directory, and the signed catalog carries the fix so installed nodes heal on the next update.",
+    "**Portainer's first-run token is in the app page, not buried in \"server logs.\"** New Portainer versions mint a one-time setup token on a fresh install and print it only to the container logs — on an appliance that meant telling the user to go read a server log to get into their own app. The token now appears in the same launch interstitial as app login credentials (with a copy button), only while first-run setup is actually pending; once the admin account exists the card disappears on its own."
   ],
   "components": [
     {
-      "current_version": "1.8.8-alpha",
-      "download_url": "https://source.archipelago-foundation.org/lfg2025/archy/releases/download/v1.8.8-alpha/archipelago",
+      "current_version": "1.8.9-alpha",
+      "download_url": "https://source.archipelago-foundation.org/lfg2025/archy/releases/download/v1.8.9-alpha/archipelago",
       "name": "archipelago",
-      "new_version": "1.8.8-alpha",
-      "sha256": "96f39b8db6f08386200e1eab91c8444a7758526e6034100c8a33907ff9263530",
-      "size_bytes": 64175864
+      "new_version": "1.8.9-alpha",
+      "sha256": "39795958963680f56763e3c05e3fe0cd589c30edd9a09416ad325bab4c862123",
+      "size_bytes": 64139152
     },
     {
-      "current_version": "1.8.8-alpha",
-      "download_url": "https://source.archipelago-foundation.org/lfg2025/archy/releases/download/v1.8.8-alpha/archipelago-frontend-1.8.8-alpha.tar.gz",
-      "name": "archipelago-frontend-1.8.8-alpha.tar.gz",
-      "new_version": "1.8.8-alpha",
-      "sha256": "7829b67edf8dec27997dd821650ed4d61aea721f802d46a8d47014f4b4246db1",
-      "size_bytes": 97730549
+      "current_version": "1.8.9-alpha",
+      "download_url": "https://source.archipelago-foundation.org/lfg2025/archy/releases/download/v1.8.9-alpha/archipelago-frontend-1.8.9-alpha.tar.gz",
+      "name": "archipelago-frontend-1.8.9-alpha.tar.gz",
+      "new_version": "1.8.9-alpha",
+      "sha256": "624dd10dfea09809be1fdddc7eac804e1fde66ff3d552cb90d56d9ac550ed944",
+      "size_bytes": 97734650
     }
   ],
   "release_date": "2026-09-01",
-  "signature": "c839cbdcb356a503d87bc17f52b6e5f3a934ae1e72a891f2d21d85366f23debb224a2a40b9124bab50fe95444e01e27711690b1bc50062f40b7ed4f34e078d06",
+  "signature": "d7d724b910e827651240bd9520102d66932b57a8a8d674ef645c45eb77f78c123fb45d294ec07f8bbfc3713ed9bd9f98096f59ff18cd6098df51aa473e771908",
   "signed_by": "did:key:z6Mkfu5LT8d4DjETtrkATvHh9Dvcbnr7zBCUwfau8Sw7DLWT",
-  "version": "1.8.8-alpha"
+  "version": "1.8.9-alpha"
 }
