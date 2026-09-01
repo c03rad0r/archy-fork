@@ -208,7 +208,11 @@ async fn reload_nft() -> bool {
         Ok(true) => {}
         _ => return false,
     }
-    match Command::new("sudo").args(["nft", "-f", FIPS_NFT]).output().await {
+    match Command::new("sudo")
+        .args(["nft", "-f", FIPS_NFT])
+        .output()
+        .await
+    {
         Ok(out) if out.status.success() => true,
         Ok(out) => {
             tracing::warn!(
@@ -227,7 +231,11 @@ async fn reload_nft() -> bool {
 /// Persist new state and reconcile immediately. Validation happens here so
 /// an invalid source list can never reach disk, and reconcile reads back
 /// exactly what was saved.
-pub async fn set(data_dir: &Path, enabled: bool, sources: &[String]) -> Result<(SshMeshState, ReconcileOutcome)> {
+pub async fn set(
+    data_dir: &Path,
+    enabled: bool,
+    sources: &[String],
+) -> Result<(SshMeshState, ReconcileOutcome)> {
     let state = SshMeshState {
         enabled,
         sources: validate_sources(sources)?,
@@ -268,7 +276,11 @@ pub async fn preflights() -> SshPreflights {
 
 async fn sshd_active() -> bool {
     for unit in ["ssh", "sshd"] {
-        if let Ok(out) = Command::new("systemctl").args(["is-active", "--quiet", unit]).output().await {
+        if let Ok(out) = Command::new("systemctl")
+            .args(["is-active", "--quiet", unit])
+            .output()
+            .await
+        {
             if out.status.success() {
                 return true;
             }
@@ -330,7 +342,9 @@ fn collect_password_auth(content: &str, out: &mut Vec<bool>) {
 }
 
 async fn glob_sorted(pattern: &str) -> Result<Vec<std::path::PathBuf>> {
-    let dir = std::path::Path::new(pattern).parent().unwrap_or_else(|| Path::new("/"));
+    let dir = std::path::Path::new(pattern)
+        .parent()
+        .unwrap_or_else(|| Path::new("/"));
     let prefix = std::path::Path::new(pattern)
         .file_name()
         .and_then(|n| n.to_str())
@@ -338,7 +352,9 @@ async fn glob_sorted(pattern: &str) -> Result<Vec<std::path::PathBuf>> {
         .unwrap_or("")
         .to_string();
     let mut files: Vec<std::path::PathBuf> = Vec::new();
-    let mut entries = tokio::fs::read_dir(dir).await.context("read sshd_config.d")?;
+    let mut entries = tokio::fs::read_dir(dir)
+        .await
+        .context("read sshd_config.d")?;
     while let Ok(Some(entry)) = entries.next_entry().await {
         let name = entry.file_name();
         let name = name.to_string_lossy();
@@ -357,14 +373,19 @@ mod tests {
     #[test]
     fn disabled_is_the_default_and_missing_file_is_not_an_error() {
         let dir = tempfile::tempdir().unwrap();
-        let state = tokio::runtime::Runtime::new().unwrap().block_on(load(dir.path()));
+        let state = tokio::runtime::Runtime::new()
+            .unwrap()
+            .block_on(load(dir.path()));
         assert!(!state.enabled);
         assert!(state.sources.is_empty());
     }
 
     #[test]
     fn any_peer_dropin_is_an_unrestricted_accept() {
-        let state = SshMeshState { enabled: true, sources: vec![] };
+        let state = SshMeshState {
+            enabled: true,
+            sources: vec![],
+        };
         let out = render_dropin(&state);
         assert!(out.contains("tcp dport 22 accept"));
         assert!(!out.contains("ip6 saddr"), "no saddr restriction expected");
@@ -398,7 +419,10 @@ mod tests {
             String::new(),
         ])
         .unwrap();
-        assert_eq!(ok, vec!["fd68:496d:fe34:a06d:cf1:6e4:b6a4:3586".to_string()]);
+        assert_eq!(
+            ok,
+            vec!["fd68:496d:fe34:a06d:cf1:6e4:b6a4:3586".to_string()]
+        );
     }
 
     #[test]
@@ -408,8 +432,14 @@ mod tests {
             enabled: true,
             sources: vec!["fd00::1".to_string()],
         };
-        std::fs::write(dir.path().join(STATE_FILE), serde_json::to_string(&state).unwrap()).unwrap();
-        let loaded = tokio::runtime::Runtime::new().unwrap().block_on(load(dir.path()));
+        std::fs::write(
+            dir.path().join(STATE_FILE),
+            serde_json::to_string(&state).unwrap(),
+        )
+        .unwrap();
+        let loaded = tokio::runtime::Runtime::new()
+            .unwrap()
+            .block_on(load(dir.path()));
         assert_eq!(loaded, state);
     }
 

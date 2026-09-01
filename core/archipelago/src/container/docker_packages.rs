@@ -145,11 +145,7 @@ impl DockerPackageScanner {
             // manifest is what the catalog signed and what the App Store shows,
             // so it is also what an installed tile must render.
             let manifest_icon = real_manifest_metadata(&app_id)
-                .and_then(|m| {
-                    m.get("icon")
-                        .and_then(|v| v.as_str())
-                        .map(str::to_string)
-                })
+                .and_then(|m| m.get("icon").and_then(|v| v.as_str()).map(str::to_string))
                 .filter(|s| !s.trim().is_empty());
 
             // Resolve UI address: separate UI containers > static map > dynamic ports
@@ -365,8 +361,12 @@ fn real_manifest_metadata(app_id: &str) -> Option<serde_json::Value> {
             .join("manifest.yml"),
     );
     for path in candidates {
-        let Ok(content) = std::fs::read_to_string(&path) else { continue };
-        let Ok(value) = serde_yaml::from_str::<serde_json::Value>(&content) else { continue };
+        let Ok(content) = std::fs::read_to_string(&path) else {
+            continue;
+        };
+        let Ok(value) = serde_yaml::from_str::<serde_json::Value>(&content) else {
+            continue;
+        };
         let meta = value.get("app").and_then(|a| a.get("metadata")).cloned();
         if meta.is_some() {
             return meta;
