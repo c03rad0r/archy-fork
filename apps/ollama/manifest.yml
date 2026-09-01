@@ -20,7 +20,8 @@ app:
     - storage: 50Gi
 
   resources:
-    memory_limit: 0
+    # No memory limit: models are sized by the disk allowance below, and a
+    # RAM ceiling would just OOM-kill long inferences.
     disk_limit: 50Gi
 
   security:

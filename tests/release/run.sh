@@ -127,7 +127,7 @@ stage "cargo-check"      timeout 580 cargo check --manifest-path core/Cargo.toml
 # 3600s leaves headroom; a warm target/ finishes in a fraction of it.
 stage "cargo-test-weekly" timeout 3600 env CARGO_INCREMENTAL=0 \
   cargo test --manifest-path core/Cargo.toml -p archipelago -- \
-  update:: lnd container::image_versions scanner drift missing_secret
+  update:: lnd container::image_versions scanner drift missing_secret collision
 
 # ── Stage 4: live node smoke ─────────────────────────────────────────
 if [[ $LIVE -eq 1 ]]; then

@@ -104,7 +104,7 @@ dependencies = [
 
 [[package]]
 name = "archipelago"
-version = "1.8.7-alpha"
+version = "1.8.8-alpha"
 dependencies = [
  "anyhow",
  "archipelago-container",
