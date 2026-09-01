@@ -2040,8 +2040,57 @@ autopilot.active=false\n",
             }));
         }
 
+        // Portainer ≥2.21 no longer lets whoever loads the page first claim the
+        // admin account: on a fresh install it mints a one-time setup token and
+        // prints it to the SERVER LOGS, expecting the operator to go digging.
+        // On an appliance that is hostile UX — "check the Portainer server
+        // logs" is exactly the dead end users cannot follow. The token is the
+        // only thing standing between the user and their own app, so surface
+        // it in the same launch interstitial as the login credentials: extract
+        // it from the container logs and hand it over with a copy button.
+        // Once setup completes Portainer invalidates the token, and a container
+        // recreate (any update) drops the log line entirely — so absence of the
+        // line naturally makes the card disappear and no stale token lingers.
+        if app_id == "portainer" {
+            if let Some(token) = portainer_setup_token(self).await {
+                return Ok(serde_json::json!({
+                    "title": "Portainer first-run token",
+                    "description": "New Portainer versions protect the first launch with a one-time setup token instead of letting anyone on the network claim the admin account. Paste this token into Portainer's setup screen to create your administrator login. It is only valid until setup finishes — if you already created your admin account, ignore this.",
+                    "credentials": [
+                        { "label": "Setup token", "value": token, "sensitive": true }
+                    ]
+                }));
+            }
+        }
+
         Ok(serde_json::json!({ "credentials": [] }))
     }
+}
+
+/// Extract Portainer's first-run `setup_token=…` from the live container's
+/// recent logs. `None` when the line is absent (setup already done, or an
+/// older Portainer without the token flow).
+async fn portainer_setup_token(rpc: &RpcHandler) -> Option<String> {
+    let logs = rpc.get_container_logs_value("portainer", 300).await.ok()?;
+    let lines = logs.as_array()?;
+    let lines: Vec<&str> = lines.iter().filter_map(|l| l.as_str()).collect();
+    parse_setup_token(&lines)
+}
+
+/// Pure log-line scan: the token is 64 hex chars after `setup_token=`.
+/// Sear newest-first so the most recent mint wins.
+fn parse_setup_token(lines: &[&str]) -> Option<String> {
+    for line in lines.iter().rev() {
+        let Some(idx) = line.find("setup_token=") else {
+            continue;
+        };
+        let tail = &line[idx + "setup_token=".len()..];
+        let token: String = tail.chars().take_while(|c| c.is_ascii_hexdigit()).collect();
+        if token.len() == 64 {
+            return Some(token);
+        }
+    }
+    None
 }
 
 async fn cleanup_stale_package_ports(package_id: &str) {
@@ -2751,7 +2800,7 @@ fn is_unknown_app_id_error(err: &anyhow::Error) -> bool {
 #[cfg(test)]
 mod tests {
     use super::{
-        orchestrator_install_app_id, should_try_orchestrator_install,
+        orchestrator_install_app_id, parse_setup_token, should_try_orchestrator_install,
         uses_orchestrator_install_flow,
     };
     use crate::api::rpc::package::runtime::orchestrator_uninstall_app_ids;
@@ -2860,5 +2909,42 @@ mod tests {
             "bitcoin-knots",
             "Error: no container with name or ID \"bitcoin-knots\" found"
         ));
+    }
+
+    #[test]
+    fn portainer_setup_token_is_extracted_from_log_lines() {
+        // Shape captured live from portainer:2.45.0 on 2026-09-01 — the
+        // token line is plain text inside the bordered s6 log block.
+        let logs = [
+            "2026/09/01 12:38PM INF github.com/portainer/portainer/api/database/boltdb/db.go:163 > loading PortainerDB | filename=portainer.db",
+            "==========================",
+            "setup_token=27637c02b6323972dff76bcad4caa456f957b521d3cfe3bc7fb95d2488dfd23a",
+            "Paste it into the setup screen, or send it in the X-Setup-Token header.",
+            "==========================",
+        ];
+        assert_eq!(
+            parse_setup_token(&logs).as_deref(),
+            Some("27637c02b6323972dff76bcad4caa456f957b521d3cfe3bc7fb95d2488dfd23a")
+        );
+    }
+
+    #[test]
+    fn portainer_setup_token_absent_when_setup_already_done() {
+        // An instance with an existing admin account never prints the line —
+        // the credentials card must not render a stale or empty token.
+        let logs = [
+            "2026/09/01 11:37AM INF api/datastore/migrator/migrate_ce.go:76 > db migrated to 2.45.0 |",
+            "2026/09/01 11:37:38 server: Listening on http://0.0.0.0:8000",
+        ];
+        assert_eq!(parse_setup_token(&logs), None);
+    }
+
+    #[test]
+    fn portainer_setup_token_rejects_short_or_non_hex_values() {
+        assert_eq!(parse_setup_token(&["setup_token=abc123"]), None);
+        assert_eq!(
+            parse_setup_token(&["setup_token=".to_string().as_str()]),
+            None
+        );
     }
 }
