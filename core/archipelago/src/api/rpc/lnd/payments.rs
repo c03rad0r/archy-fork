@@ -42,6 +42,21 @@ fn json_i64(value: &serde_json::Value, key: &str) -> Option<i64> {
     })
 }
 
+/// Fee budget for a send, matching lncli's own default: the payment amount
+/// (100%). Zero-amount invoices take the payer-supplied amount; fixed invoices
+/// take the invoice's own amount. Falls back to a nominal 1,000 sats only when
+/// both are somehow absent — the limit must never be left at LND's zero
+/// default, which rejects every fee-carrying route as "no route".
+fn fee_limit_sats(amount_sats: Option<u64>, decoded_amt: i64) -> i64 {
+    if let Some(amt) = amount_sats {
+        return amt as i64;
+    }
+    if decoded_amt > 0 {
+        return decoded_amt;
+    }
+    1_000
+}
+
 impl RpcHandler {
     /// Pay a Lightning invoice.
     pub(in crate::api::rpc) async fn handle_lnd_payinvoice(
@@ -107,6 +122,14 @@ impl RpcHandler {
             // enough, and it makes grpc-gateway's response a single JSON value.
             "no_inflight_updates": true,
             "timeout_seconds": 120,
+            // Router.SendPaymentV2 treats an ABSENT fee limit as ZERO — every
+            // real route carries a routing fee, so the pathfinder rejects
+            // them all and the wallet gets "No route to the recipient" on
+            // every send (fleet-wide, 2026-09-01: the v1.8.9 switch to the v2
+            // route shipped without this, and a manual lncli test that set
+            // --fee_limit masked it). lncli's own default is the payment
+            // amount (100%), which is what we send here.
+            "fee_limit_sat": fee_limit_sats(amount_sats, decoded_amt),
         });
         if let Some(amt) = amount_sats {
             pay_body["amt"] = serde_json::json!(amt.to_string());
@@ -549,5 +572,16 @@ mod tests {
             payment_failure_reason("FAILURE_REASON_INSUFFICIENT_BALANCE"),
             "Insufficient channel balance"
         );
+    }
+
+    #[test]
+    fn fee_limit_never_falls_back_to_zero() {
+        // SendPaymentV2 defaults an ABSENT fee limit to zero — which rejects
+        // every fee-carrying route as "no route". The budget must always be
+        // positive: the payer-supplied amount for zero-amount invoices, the
+        // invoice's own amount otherwise.
+        assert_eq!(fee_limit_sats(Some(20_000), 0), 20_000);
+        assert_eq!(fee_limit_sats(None, 20_000), 20_000);
+        assert_eq!(fee_limit_sats(None, 0), 1_000);
     }
 }
