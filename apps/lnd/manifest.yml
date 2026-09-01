@@ -1,7 +1,7 @@
 app:
   id: lnd
   name: LND
-  version: 0.18.4
+  version: 0.21.2
   # Where this app comes from, so scripts/check-upstream-releases.py can
   # tell us when the pin below has fallen behind. Without it nothing can:
   # container.image names our mirror, not the project it was mirrored from.
@@ -11,7 +11,7 @@ app:
   description: Lightning Network implementation by Lightning Labs. Enables instant, low-cost Bitcoin payments.
 
   container:
-    image: source.archipelago-foundation.org/lfg2025/lnd:v0.18.4-beta
+    image: source.archipelago-foundation.org/lfg2025/lnd:v0.21.2-beta
     pull_policy: if-not-present
     network: archy-net
     # BITCOIND_HOST must follow the node's actual Bitcoin container — Knots or

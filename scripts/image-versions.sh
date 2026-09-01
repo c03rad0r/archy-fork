@@ -28,7 +28,7 @@ ARCHY_REGISTRY_FALLBACK=""
 # halts pending the BIP110/RDTS consensus decision, so a moving tag can freeze
 # the fleet's chain sync. Bumping this is a consensus decision.
 BITCOIN_KNOTS_IMAGE="$ARCHY_REGISTRY/bitcoin-knots:29.3.knots20260210"
-LND_IMAGE="$ARCHY_REGISTRY/lnd:v0.18.4-beta"
+LND_IMAGE="$ARCHY_REGISTRY/lnd:v0.21.2-beta"
 ELECTRUMX_IMAGE="$ARCHY_REGISTRY/electrumx:v1.18.0"
 
 # Mempool stack

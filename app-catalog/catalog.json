@@ -338,13 +338,13 @@
     {
       "id": "lnd",
       "title": "LND",
-      "version": "0.18.4",
+      "version": "0.21.2",
       "description": "Lightning Network implementation by Lightning Labs. Enables instant, low-cost Bitcoin payments.",
       "icon": "/assets/img/app-icons/lnd.png",
       "author": "Lightning Labs",
       "category": "money",
       "tier": "core",
-      "dockerImage": "source.archipelago-foundation.org/lfg2025/lnd:v0.18.4-beta",
+      "dockerImage": "source.archipelago-foundation.org/lfg2025/lnd:v0.21.2-beta",
       "repoUrl": "https://github.com/lightningnetwork/lnd",
       "requires": [
         "bitcoin-knots"
