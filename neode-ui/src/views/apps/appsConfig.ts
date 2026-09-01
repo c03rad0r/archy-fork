@@ -6,33 +6,17 @@ import { PackageState, type PackageDataEntry } from '@/types/api'
 import { matchPageScheme, resolveAppUrl } from '../appSession/appSessionConfig'
 import { portIsGateFronted } from '../discover/curatedApps'
 import { isAutoTabApp } from '@/utils/autoTabApps'
+import {
+  SERVICE_NAMES as SHARED_SERVICE_NAMES,
+  isServiceContainer as sharedIsServiceContainer,
+} from './serviceNames'
 
 export type AppsTab = 'apps' | 'websites' | 'services'
 
-// Service container name patterns (backend/infra, not user-facing)
-export const SERVICE_NAMES = new Set([
-  'dwn', 'archy-mempool-db', 'archy-btcpay-db', 'archy-nbxplorer', 'archy-tor',
-  // Headless backends with no user-facing UI: the Fedimint ecash client daemon,
-  // the Nostr relay, and the Meshtastic LoRa daemon (its chat UI lives in the
-  // built-in Mesh tab) belong in Services, not My Apps.
-  'fedimint-clientd', 'nostr-rs-relay', 'meshtastic',
-  'immich_postgres', 'immich_redis',
-  // immich is now a manifest-driven stack (app_id-named, hyphen). The server is
-  // the launcher app; postgres/redis are backends → Services.
-  'immich-postgres', 'immich-redis',
-  'mysql-mempool', 'mempool-api', 'archy-mempool-web',
-  'archy-bitcoin-ui', 'archy-lnd-ui', 'archy-electrs-ui',
-  'bitcoin-ui', 'lnd-ui', 'electrs-ui',
-  'indeedhub-postgres', 'indeedhub-redis', 'indeedhub-minio',
-  'indeedhub-api', 'indeedhub-ffmpeg',
-  'indeedhub-relay', 'indeedhub-build_api_1', 'indeedhub-build_ffmpeg-worker_1',
-  'indeedhub-build_postgres_1', 'indeedhub-build_redis_1', 'indeedhub-build_minio_1',
-  'indeedhub-build_minio-init_1', 'indeedhub-build_relay_1',
-  // Pine voice-assistant stack: the two Wyoming engines are backends (STT/TTS)
-  // reached by Home Assistant over host.containers.internal — the user-facing
-  // card is "pine" (the setup/status launcher), so the engines go to Services.
-  'pine-whisper', 'pine-piper', 'pine-openwakeword',
-])
+// Re-exported for every existing caller — the canon moved to serviceNames.ts
+// so the App Store's catalog merge can share it without a circular import.
+export const SERVICE_NAMES = SHARED_SERVICE_NAMES
+export const isServiceContainer = sharedIsServiceContainer
 
 const INTERNAL_TOOLING_NAMES = new Set([
   'buildx_buildkit_default',
@@ -43,16 +27,7 @@ export function isInternalToolingPackage(id: string, pkg?: PackageDataEntry): bo
   return INTERNAL_TOOLING_NAMES.has(id) || INTERNAL_TOOLING_NAMES.has(manifestId) || id.startsWith('buildx_buildkit') || manifestId.startsWith('buildx_buildkit')
 }
 
-export function isServiceContainer(id: string): boolean {
-  if (SERVICE_NAMES.has(id)) return true
-  if (id.startsWith('indeedhub-build_')) return true
-  if (id.startsWith('archy-')) return true
-  // Backend naming patterns that never carry a user-facing UI: databases and
-  // caches. Safe to classify by suffix (a database is never a launcher).
-  if (/-(db|postgres|postgresql|redis|valkey|mariadb|mysql|cache)$/.test(id)) return true
-  if (id.endsWith('_db')) return true
-  return false
-}
+// isServiceContainer now re-exports the shared canon (serviceNames.ts).
 
 export function isServicePackage(id: string, pkg?: PackageDataEntry): boolean {
   if (isServiceContainer(id)) return true

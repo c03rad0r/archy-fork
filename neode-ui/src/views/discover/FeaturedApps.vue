@@ -24,7 +24,7 @@
             v-if="app.icon"
             :src="app.icon"
             :alt="app.title"
-            class="w-20 h-20 rounded-xl object-cover flex-shrink-0"
+            class="w-20 h-20 rounded-xl archy-app-icon flex-shrink-0"
             @error="handleImageError"
           />
           <div class="flex-1 min-w-0">

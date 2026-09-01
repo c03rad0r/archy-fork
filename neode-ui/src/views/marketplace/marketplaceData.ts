@@ -248,17 +248,6 @@ export function getCuratedAppList(): MarketplaceApp[] {
       repoUrl: 'https://github.com/ollama/ollama'
     },
     {
-      id: 'cryptpad',
-      title: 'CryptPad',
-      version: '2024.12.0',
-      description: 'End-to-end encrypted documents, spreadsheets, and presentations. Zero-knowledge collaboration.',
-      icon: '/assets/icon/favico-black-v2.svg',
-      author: 'XWiki SAS',
-      dockerImage: `${REGISTRY}/cryptpad:2024.12.0`,
-      manifestUrl: undefined,
-      repoUrl: 'https://github.com/cryptpad/cryptpad'
-    },
-    {
       id: 'nextcloud',
       title: 'Nextcloud',
       version: '29.0',

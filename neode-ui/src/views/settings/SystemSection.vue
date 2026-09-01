@@ -6,6 +6,7 @@ import AIDataAccessSection from '@/views/settings/AIDataAccessSection.vue'
 import RoutstrBudgetSection from '@/views/settings/RoutstrBudgetSection.vue'
 import WebhookSection from '@/views/settings/WebhookSection.vue'
 import TelemetrySection from '@/views/settings/TelemetrySection.vue'
+import SshOverMeshCard from '@/views/settings/SshOverMeshCard.vue'
 import NodeCertificateSection from '@/views/settings/NodeCertificateSection.vue'
 import LightningCredentialsSection from '@/views/settings/LightningCredentialsSection.vue'
 import BackupSection from '@/views/settings/BackupSection.vue'
@@ -20,6 +21,7 @@ import SystemDangerZone from '@/views/settings/SystemDangerZone.vue'
   <AIDataAccessSection />
   <WebhookSection />
   <TelemetrySection />
+  <SshOverMeshCard />
   <NodeCertificateSection />
   <LightningCredentialsSection />
   <BackupSection />

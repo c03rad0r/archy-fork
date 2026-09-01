@@ -1,5 +1,15 @@
 # Changelog
 
+## v1.8.8-alpha (2026-09-01)
+
+- **SSH over the mesh is now a first-class setting.** Settings gains an "SSH over mesh" card: off by default, and when you allow it the node's mesh firewall opens port 22 — either to every mesh peer (behind an explicit "I understand" confirmation, because that's a real exposure) or only to the mesh addresses you list. The rule is owned by the node (the `90-ssh.nft` drop-in), so it survives upgrades and daemon reinstalls, and the card tells you up front whether sshd is running, whether it listens on IPv6 (the mesh is IPv6-only — this is what a broken attempt looks like before it happens), and whether password login is on (keys-only is the recommended pairing). From Termux on your phone, `fipssh <user>@<node-npub>` connects once the toggle is on — the npub is the durable address, and the command is shown with a copy button on the card.
+
+- **The App Store now lists apps — not parts of apps.** The signed catalog carries every manifest because the node's update layer needs their pins, and the store briefly listed them all: Mempool API, LND UI, Bitcoin UI, the Pine voice engines, the IndeeHub and Immich backends, the mesh router and friends. Components are hidden from the store listing (they still appear where they belong — the Services tab of My Apps, once installed), and four entries that never earned a tile are gone outright: MorphOS server (old), the Web5 DID wallet, Lightning Stack (an untracked upstream bundle — LND covers the need), and CryptPad (never tested).
+
+- **App icons now persist everywhere, in the proper container style.** Two fixes: installed apps render the icon from their own manifest — Cuprate no longer falls back to the generic A-mark on its Services tile — and the store grids (the Discover page) apply the same icon container treatment (backdrop, border, shadow) as My Apps, the detail pages, and Home. Manifest-declared UI apps also classify correctly again: Alby Hub installs into My Apps with a working tile, not into Services, because a probe miss no longer buries an app the manifest itself says has a frontend.
+
+- **Installing from the store keeps you on the store page.** The install progress lives on the tile itself and the app appears in My Apps when it lands — no more being yanked to My Apps mid-browse.
+
 ## v1.8.7-alpha (2026-08-31)
 
 - **What's New really does stop at v1.8.0 now.** The first correction removed old generated release blocks but missed six much older hand-written v1.2 sections at the bottom of the modal. Those sections are gone, and the release check now recognizes and rejects that legacy format too, so the history floor cannot falsely pass again.

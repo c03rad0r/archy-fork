@@ -362,6 +362,19 @@ init()
               </button>
             </div>
             <div class="overflow-y-auto flex-1 min-h-0 space-y-6 pr-1">
+              <!-- v1.8.8-alpha -->
+              <div>
+                <div class="flex items-center gap-2 mb-3">
+                  <span class="text-xs font-mono px-2 py-0.5 rounded bg-orange-500/20 text-orange-300">v1.8.8-alpha</span>
+                  <span class="text-xs text-white/40">September 1, 2026</span>
+                </div>
+                <div class="space-y-3 text-sm text-white/80 pl-3 border-l border-white/10">
+                  <p><strong>SSH over the mesh is now a first-class setting.</strong> Settings gains an "SSH over mesh" card: off by default, and when you allow it the node's mesh firewall opens port 22 — either to every mesh peer (behind an explicit "I understand" confirmation, because that's a real exposure) or only to the mesh addresses you list. The rule is owned by the node (the 90-ssh.nft drop-in), so it survives upgrades and daemon reinstalls, and the card tells you up front whether sshd is running, whether it listens on IPv6 (the mesh is IPv6-only — this is what a broken attempt looks like before it happens), and whether password login is on (keys-only is the recommended pairing). From Termux on your phone, fipssh &lt;user&gt;@&lt;node-npub&gt; connects once the toggle is on — the npub is the durable address, and the command is shown with a copy button on the card.</p>
+                  <p><strong>The App Store now lists apps — not parts of apps.</strong> The signed catalog carries every manifest because the node's update layer needs their pins, and the store briefly listed them all: Mempool API, LND UI, Bitcoin UI, the Pine voice engines, the IndeeHub and Immich backends, the mesh router and friends. Components are hidden from the store listing (they still appear where they belong — the Services tab of My Apps, once installed), and four entries that never earned a tile are gone outright: MorphOS server (old), the Web5 DID wallet, Lightning Stack (an untracked upstream bundle — LND covers the need), and CryptPad (never tested).</p>
+                  <p><strong>App icons now persist everywhere, in the proper container style.</strong> Two fixes: installed apps render the icon from their own manifest — Cuprate no longer falls back to the generic A-mark on its Services tile — and the store grids (the Discover page) apply the same icon container treatment (backdrop, border, shadow) as My Apps, the detail pages, and Home. Manifest-declared UI apps also classify correctly again: Alby Hub installs into My Apps with a working tile, not into Services, because a probe miss no longer buries an app the manifest itself says has a frontend.</p>
+                  <p><strong>Installing from the store keeps you on the store page.</strong> The install progress lives on the tile itself and the app appears in My Apps when it lands — no more being yanked to My Apps mid-browse.</p>
+                </div>
+              </div>
               <!-- v1.8.7-alpha -->
               <div>
                 <div class="flex items-center gap-2 mb-3">

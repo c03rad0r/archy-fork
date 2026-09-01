@@ -40,7 +40,7 @@
             v-if="app.icon"
             :src="app.icon"
             :alt="app.title"
-            class="w-14 h-14 rounded-lg object-cover"
+            class="w-14 h-14 rounded-lg archy-app-icon"
             @error="handleImageError"
           />
           <div v-else class="w-14 h-14 rounded-lg bg-white/10 flex items-center justify-center">

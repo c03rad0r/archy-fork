@@ -1,4 +1,5 @@
 import type { MarketplaceApp } from './types'
+import { isStoreListedApp } from '../apps/serviceNames'
 
 const R = 'source.archipelago-foundation.org/lfg2025'
 
@@ -48,10 +49,15 @@ export interface SignedAppEntry {
 }
 
 /** Convert the signed catalog's keyed entries into store-listing apps.
- *  Pure — unit-tested against the live catalog's shape (Cuprate). */
+ *  Pure — unit-tested against the live catalog's shape (Cuprate).
+ *  Components and node internals never enter the listing: the signed catalog
+ *  carries every manifest (including backends like mempool-api and the
+ *  bundled UIs) because the node's update layer needs their pins, but the
+ *  App Store publishes apps, not parts of apps. */
 export function signedCatalogToApps(catalog: SignedAppCatalog): MarketplaceApp[] {
   const out: MarketplaceApp[] = []
   for (const [id, entry] of Object.entries(catalog.apps || {})) {
+    if (!isStoreListedApp(id)) continue
     const app = entry.manifest?.app
     out.push({
       id,
@@ -200,7 +206,6 @@ export function getCuratedAppList(): MarketplaceApp[] {
     { id: 'grafana', title: 'Grafana', version: '10.2.0', description: 'Analytics and monitoring platform. Dashboards for your node metrics and system health.', icon: '/assets/img/app-icons/grafana.png', author: 'Grafana Labs', dockerImage: `${R}/grafana:10.2.0`, repoUrl: 'https://github.com/grafana/grafana' },
     { id: 'searxng', title: 'SearXNG', version: '2024.1.0', description: 'Privacy-respecting metasearch engine. Search the internet without being tracked or profiled.', icon: '/assets/img/app-icons/searxng.png', author: 'SearXNG', dockerImage: `${R}/searxng:latest`, repoUrl: 'https://github.com/searxng/searxng' },
     { id: 'ollama', title: 'Ollama', version: '0.5.4', description: 'Run AI models locally. Llama, Mistral, and more — on your hardware, completely private.', icon: '/assets/img/app-icons/ollama.png', author: 'Ollama', dockerImage: `${R}/ollama:latest`, repoUrl: 'https://github.com/ollama/ollama' },
-    { id: 'cryptpad', title: 'CryptPad', version: '2024.12.0', description: 'End-to-end encrypted documents, spreadsheets, and presentations. Zero-knowledge collaboration.', icon: '/assets/icon/favico-black-v2.svg', author: 'XWiki SAS', dockerImage: `${R}/cryptpad:2024.12.0`, repoUrl: 'https://github.com/cryptpad/cryptpad' },
     { id: 'nextcloud', title: 'Nextcloud', version: '29', description: 'Your own private cloud. File sync, calendars, contacts — all on your hardware.', icon: '/assets/img/app-icons/nextcloud.webp', author: 'Nextcloud', dockerImage: `${R}/nextcloud:29`, repoUrl: 'https://github.com/nextcloud/server' },
     { id: 'vaultwarden', title: 'Vaultwarden', version: '1.30.0', description: 'Self-hosted password vault. Bitwarden-compatible with zero-knowledge encryption.', icon: '/assets/img/app-icons/vaultwarden.webp', author: 'Vaultwarden', dockerImage: `${R}/vaultwarden:1.30.0-alpine`, repoUrl: 'https://github.com/dani-garcia/vaultwarden' },
     { id: 'jellyfin', title: 'Jellyfin', version: '10.8.13', description: 'Free media server. Stream your movies, music, and photos to any device.', icon: '/assets/img/app-icons/jellyfin.webp', author: 'Jellyfin', dockerImage: `${R}/jellyfin:10.8.13`, repoUrl: 'https://github.com/jellyfin/jellyfin' },

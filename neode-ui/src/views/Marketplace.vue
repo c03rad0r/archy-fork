@@ -515,8 +515,10 @@ async function installApp(app: MarketplaceApp) {
   }
 
   queueInstall(app)
-  toast.info("Installing " + (app.title ?? app.id) + " - check My Apps")
-  router.push('/dashboard/apps').catch(() => {})
+  // Stay on the store page: the tile itself shows install progress via the
+  // global watcher, and a forced jump to My Apps yanked the user out of the
+  // page they were deliberately browsing.
+  toast.info("Installing " + (app.title ?? app.id) + " — it will appear in My Apps")
 
   try {
     const installUrl = app.url || app.manifestUrl || app.s9pkUrl
@@ -540,8 +542,8 @@ async function installCommunityApp(app: MarketplaceApp) {
   }
 
   queueInstall(app)
-  toast.info("Installing " + (app.title ?? app.id) + " - check My Apps")
-  router.push('/dashboard/apps').catch(() => {})
+  // Stay on the store page (see installApp).
+  toast.info("Installing " + (app.title ?? app.id) + " — it will appear in My Apps")
 
   try {
     const installParams: Record<string, unknown> = { id: app.id, dockerImage: app.dockerImage, version: app.version }
