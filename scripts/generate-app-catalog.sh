@@ -73,7 +73,6 @@ SINGLE = {
     "vaultwarden": "VAULTWARDEN_IMAGE",
     "nextcloud": "NEXTCLOUD_IMAGE",
     "searxng": "SEARXNG_IMAGE",
-    "cryptpad": "CRYPTPAD_IMAGE",
     "filebrowser": "FILEBROWSER_IMAGE",
     "nginx-proxy-manager": "NPM_IMAGE",
     "portainer": "PORTAINER_IMAGE",

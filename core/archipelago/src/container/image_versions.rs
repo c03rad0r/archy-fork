@@ -163,7 +163,6 @@ fn image_var_for_app(app_id: &str) -> Option<&'static str> {
         "vaultwarden" => Some("VAULTWARDEN_IMAGE"),
         "nextcloud" => Some("NEXTCLOUD_IMAGE"),
         "searxng" => Some("SEARXNG_IMAGE"),
-        "cryptpad" => Some("CRYPTPAD_IMAGE"),
         "filebrowser" => Some("FILEBROWSER_IMAGE"),
         "nginx-proxy-manager" => Some("NPM_IMAGE"),
         "portainer" => Some("PORTAINER_IMAGE"),

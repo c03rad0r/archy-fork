@@ -118,18 +118,6 @@
       ]
     },
     {
-      "id": "cryptpad",
-      "title": "CryptPad",
-      "version": "2024.12.0",
-      "description": "End-to-end encrypted documents, spreadsheets, and presentations. Zero-knowledge collaboration.",
-      "icon": "/assets/icon/favico-black-v2.svg",
-      "author": "XWiki SAS",
-      "category": "data",
-      "tier": "optional",
-      "dockerImage": "source.archipelago-foundation.org/lfg2025/cryptpad:2024.12.0",
-      "repoUrl": "https://github.com/cryptpad/cryptpad"
-    },
-    {
       "id": "cuprate",
       "title": "Cuprate",
       "version": "0.1.0-preview",

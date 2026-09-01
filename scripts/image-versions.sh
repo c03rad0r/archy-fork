@@ -54,7 +54,6 @@ NEXTCLOUD_IMAGE="$ARCHY_REGISTRY/nextcloud:29"
 SEARXNG_IMAGE="$ARCHY_REGISTRY/searxng:latest"
 # OnlyOffice removed — incompatible with rootless Podman (internal postgres/rabbitmq fail)
 # Replaced by CryptPad (single Node.js process, e2e encrypted)
-CRYPTPAD_IMAGE="$ARCHY_REGISTRY/cryptpad:2024.12.0"
 FILEBROWSER_IMAGE="$ARCHY_REGISTRY/filebrowser:v2.27.0"
 NPM_IMAGE="$ARCHY_REGISTRY/nginx-proxy-manager:latest"
 # 2.39.1 is what the fleet has actually been running via the moving :latest
