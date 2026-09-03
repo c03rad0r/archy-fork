@@ -87,17 +87,21 @@ app:
     # bind without an explicit i_know_what_im_doing override.
     # Restricted RPC: Monero's own purpose-built safe-for-public subset —
     # what wallets use when connecting to a "remote node". Disabled by
-    # cuprated's own default; enabled via files[] below. A dashboard login
-    # would break wallet clients connecting programmatically, same
-    # reasoning as electrumx's port. The daemon still uses its canonical
-    # container port 18089, but Penpot already owns host port 18089, so this
-    # maps the public host port to the free 18090 instead.
+    # cuprated's own default; enabled via files[] below. `open`, not `gated`:
+    # the gate still takes the port over (loopback pin, external binds,
+    # fronts the Tor onion) but skips the dashboard login challenge, same
+    # reasoning as electrumx's port — wallet clients (Feather,
+    # monero-wallet-rpc, GUI) speak plain HTTP JSON-RPC programmatically and
+    # cannot complete a browser login or hold a session cookie. The daemon
+    # still uses its canonical container port 18089, but Penpot already owns
+    # host port 18089, so this maps the public host port to the free 18090
+    # instead.
     - host: 18090
       container: 18089
       protocol: tcp
-      auth: none
+      auth: open
       auth_rationale: >-
-        Monero restricted RPC — the subset upstream considers safe for public/remote-node use. Wallets (Feather, monero-wallet-rpc, GUI) connect directly over plain HTTP JSON-RPC and cannot hold a dashboard session cookie.
+        Monero restricted RPC — the subset upstream considers safe for public/remote-node use. Wallets (Feather, monero-wallet-rpc, GUI) connect directly over plain HTTP JSON-RPC and cannot complete a browser login or hold a dashboard session cookie.
 
   volumes:
     - type: bind
