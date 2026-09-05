@@ -198,6 +198,18 @@ new host/credentials; the newly connected router becomes the persisted one.
   fails**: the node sanity-checks the downloaded `.ipk` is at least 50 KB —
   a smaller file usually means `wget` captured an HTML error page instead
   (no internet access from the router, or a bad release URL).
+- **Install fails right after a reboot or a fresh WAN setup** with `apk
+  update failed ... router may have no internet access` even though WAN
+  looks configured: this is usually just timing, not a real problem — the
+  router's WiFi-uplink association (`wwan`/`hakodosh`-style STA interface)
+  can take a few seconds longer to reconnect than the dashboard takes to
+  let you click Install. Wait ~10–15 seconds after WAN shows `sta_state:
+  up` and retry; it should succeed on the next attempt.
+- **Install fails with `opkg not found at /usr/bin/opkg` (or similar) even
+  though the router clearly has `opkg`/`apk` installed**: fixed as of
+  2026-09-05 — the backend used to hardcode `/usr/bin/opkg`/`/usr/bin/apk`,
+  which some official OpenWrt builds don't symlink into `/bin`. If you're
+  running an Archipelago build from before that fix, update first.
 
 ---
 
