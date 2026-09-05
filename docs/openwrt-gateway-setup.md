@@ -27,7 +27,8 @@ not flash or install OpenWrt; you bring a router that already runs it.
 1. **A router already flashed with OpenWrt.** Check the
    [OpenWrt Table of Hardware](https://openwrt.org/toh/start) for your model
    and follow OpenWrt's own install/flashing instructions — that part is
-   outside Archipelago's scope.
+   outside Archipelago's scope. See below for a worked example (GL.iNet
+   AX3000).
 2. **SSH reachable.** Fresh OpenWrt images enable `dropbear` (SSH) on LAN by
    default, listening as `root` with no password (or the password you set
    during OpenWrt's first-boot wizard at `192.168.1.1`). Archipelago
@@ -39,6 +40,40 @@ not flash or install OpenWrt; you bring a router that already runs it.
    this node — provisioning defaults `mint_url` to
    `http://<node-ip>:3338` and TollGate customers must be able to reach that
    URL from outside the node's loopback.
+
+## Worked example: flashing a GL.iNet AX3000 to stock OpenWrt
+
+GL.iNet's "AX3000" travel router is the **Beryl AX (GL-MT3000)** —
+MediaTek MT7981B (Cortex-A53), OpenWrt target `mediatek/filogic`. It ships
+running a GL.iNet fork of OpenWrt with its own web UI and LuCI already
+enabled, but the steps below replace that with stock/vanilla OpenWrt so it
+matches the prebuilt TollGate `.ipk` architectures exactly
+(`aarch64_cortex-a53`).
+
+1. **Download the sysupgrade image** for the current stable release from
+   `https://downloads.openwrt.org/releases/<version>/targets/mediatek/filogic/`
+   — the file you want is
+   `openwrt-<version>-mediatek-filogic-glinet_gl-mt3000-squashfs-sysupgrade.bin`.
+2. **Verify the checksum** against the `sha256sums` file in that same
+   directory before flashing anything.
+3. **Flash from the GL.iNet UI**: on the router's default address
+   (`192.168.8.1`), go to **More Settings → Upgrade → Local Upgrade**, or
+   open **Advanced → LuCI** and use **System → Backup / Flash Firmware →
+   Flash new firmware image**.
+4. Upload the `.bin` file. **Uncheck "Keep Settings"** — going from the
+   GL.iNet fork to stock OpenWrt needs a clean reset, not a config carry-over.
+5. Confirm and wait ~3–5 minutes without power-cycling the router.
+6. **After it reboots** you're on stock OpenWrt: LAN at `192.168.1.1`, DHCP
+   on, SSH (dropbear) open as `root` with **no password set yet** — set one
+   via LuCI at `192.168.1.1` or `passwd` over SSH before doing anything else.
+   From here, continue with the Prerequisites/Step 2 flow above to connect
+   it to the Archipelago node.
+
+**If the flash fails / the router doesn't come back**: filogic devices
+don't use a reset-button recovery. Instead, connect to the router's LAN
+port and, during boot, press a key within the first ~2 seconds to enter
+U-Boot; per the OpenWrt wiki, typing `gl` then `httpd` at the U-Boot prompt
+brings up a recovery web UI at `192.168.1.2` that accepts a firmware image.
 
 ## Step 1: Open the OpenWrt Gateway panel
 
