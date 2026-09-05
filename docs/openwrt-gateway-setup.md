@@ -131,27 +131,40 @@ network.
 The dashboard's WAN panel shows the resulting association state, assigned
 IP, and whether the router currently has internet reachability.
 
-## Step 4: (Optional) Provision TollGate
+## Step 4: (Optional) Install TollGate
 
 Once connected (and with a local Cashu mint app running), the dashboard
-shows a **TollGate: not installed** state with a **Provision** action.
+shows a **TollGate: not installed** panel with a single **Install TollGate**
+button — there's no config form at this stage, it installs with defaults.
+The panel itself warns: *"Router needs internet access to install TollGate
+— configure WAN above first"* (Step 3), since the router has to reach the
+internet to download the package.
 
-1. Click **Provision TollGate**.
-2. Set:
-   - **Price** (sats)
-   - **Step size** (minutes — billed in `step_size_ms` under the hood,
-     default 1 minute)
-   - **Minimum steps** a customer must buy at once
-   - **Mint URL** — leave as the auto-filled `http://<node-ip>:3338` unless
-     you're pointing at an external/different mint
-3. Confirm. This can take a few minutes: the node downloads/installs
-   `tollgate-module-basic-go` on the router (via `opkg` on OpenWrt ≤24.x, or
-   a manual `.ipk` extract for 25.x images where `opkg` isn't available),
-   writes `/etc/tollgate/config.json`, and creates the `archipelago` SSID.
-4. Once provisioned, the same panel lets you **edit** price/step/mint and
-   toggle TollGate enabled/disabled without reinstalling — changes are
-   pushed to `/etc/tollgate/config.json` and the daemon is restarted to
-   pick them up (it does not hot-reload).
+1. Click **Install TollGate**. The button relabels to *"Installing… this
+   may take a few minutes"* while it works.
+2. Under the hood this installs `tollgate-module-basic-go` on the router
+   (via `opkg` on OpenWrt ≤24.x, or a manual `.ipk` extract on 25.x images
+   where `opkg` isn't available), writes `/etc/tollgate/config.json`, and
+   creates the `archipelago` SSID — all with default pricing (10 sats per
+   1-minute step, minimum 1 step, `mint_url` auto-filled to
+   `http://<node-ip>:3338`, enabled).
+3. On success you'll see *"TollGate provisioned successfully"* and the
+   panel switches to the installed view (Enabled/Disabled badge, current
+   price/step/mint).
+
+### Configuring price, step size, or mint (after install)
+
+The installed-state panel has an **Edit** button — this is the only place
+you set price/step/mint, and it only appears once TollGate is already
+installed:
+
+1. Click **Edit**.
+2. Set **Price** (sats), **Step size** (minutes — billed as `step_size_ms`
+   under the hood), **Minimum steps** a customer must buy at once, **Mint
+   URL** (leave as the auto-filled node URL unless pointing at an external
+   mint), and the **Enable TollGate** toggle.
+3. Click **Save**. Changes are pushed to `/etc/tollgate/config.json` and the
+   daemon is restarted to pick them up — it does not hot-reload.
 
 Anyone who joins the `archipelago` SSID sees TollGate's captive portal and
 pays sats (via the configured Cashu mint) for timed access.
