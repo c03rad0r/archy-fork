@@ -6,18 +6,53 @@ use crate::Router;
 /// The OpenWrt package name for the TollGate reference implementation.
 const TOLLGATE_PACKAGE: &str = "tollgate-module-basic-go";
 
-/// Direct-download fallback URLs by opkg architecture string.
+/// Pinned upstream release. Was stuck on v0.2.0 (Oct 2025) until 2026-09-05 —
+/// nine releases behind. v0.5.0's changelog covers exactly the failure modes
+/// hit live against archy-x250-pa3: a mint with an empty/broken keyset used
+/// to crash-loop the daemon forever ("graceful degradation when Cashu mints
+/// fail" in v0.5.0), and the bundled captive-portal build had no CBOR support
+/// at all, so it could only decode legacy `cashuA` tokens — rejecting the
+/// `cashuB` (NUT-00 V4) tokens modern wallets like Minibits generate by
+/// default ("portal improvements" in v0.5.0 include a JS bundle update that
+/// should carry a current cashu-ts with V4 support). Bump this string to move
+/// both this crate's URLs and the version baked into the source comments.
+const TOLLGATE_VERSION: &str = "v0.5.0";
+
+/// Direct-download fallback URLs by opkg architecture string, for the
+/// `.ipk` (ar-archive) package format.
 /// Used when the package is not in any configured feed.
-/// Source: https://github.com/OpenTollGate/tollgate-module-basic-go/releases/tag/v0.2.0
-fn ipk_url(arch: &str) -> Option<&'static str> {
-    match arch {
-        "mips_24kc"          => Some("https://github.com/OpenTollGate/tollgate-module-basic-go/releases/download/v0.2.0/mips_24kc.ipk"),
-        "mipsel_24kc"        => Some("https://github.com/OpenTollGate/tollgate-module-basic-go/releases/download/v0.2.0/mipsel_24kc.ipk"),
-        "aarch64_cortex-a53" => Some("https://github.com/OpenTollGate/tollgate-module-basic-go/releases/download/v0.2.0/aarch64_cortex-a53.ipk"),
-        "aarch64_cortex-a72" => Some("https://github.com/OpenTollGate/tollgate-module-basic-go/releases/download/v0.2.0/aarch64_cortex-a72.ipk"),
-        "arm_cortex-a7"      => Some("https://github.com/OpenTollGate/tollgate-module-basic-go/releases/download/v0.2.0/arm_cortex-a7.ipk"),
-        _ => None,
-    }
+/// Source: https://github.com/OpenTollGate/tollgate-module-basic-go/releases/tag/v0.5.0
+fn ipk_url(arch: &str) -> Option<String> {
+    let name = match arch {
+        "mips_24kc"          => "mips_24kc",
+        "mipsel_24kc"        => "mipsel_24kc",
+        "aarch64_cortex-a53" => "aarch64_cortex-a53",
+        "aarch64_cortex-a72" => "aarch64_cortex-a72",
+        "arm_cortex-a7"      => "arm_cortex-a7",
+        "x86_64"             => "x86_64",
+        _ => return None,
+    };
+    Some(format!(
+        "https://github.com/OpenTollGate/tollgate-module-basic-go/releases/download/{TOLLGATE_VERSION}/tollgate-wrt_{TOLLGATE_VERSION}_{name}.ipk"
+    ))
+}
+
+/// Direct-download URLs for the native Alpine-style `.apk` package format —
+/// only published for a subset of architectures as of v0.5.0. Where
+/// available this is strictly better than [`ipk_url`] on an apk-native
+/// (OpenWrt 25.x+) router: `apk add` installs it directly (dependency
+/// resolution, postinst, uci-defaults all handled by apk itself), instead of
+/// the manual `ar`/`tar` extraction dance `install_ipk` has to do to unpack
+/// an `.ipk` on a router with no `opkg`.
+fn apk_url(arch: &str) -> Option<String> {
+    let name = match arch {
+        "aarch64_cortex-a53" => "aarch64_cortex-a53",
+        "x86_64" => "x86_64",
+        _ => return None,
+    };
+    Some(format!(
+        "https://github.com/OpenTollGate/tollgate-module-basic-go/releases/download/{TOLLGATE_VERSION}/tollgate-wrt_{TOLLGATE_VERSION}_{name}.apk"
+    ))
 }
 
 /// Install tollgate-module-basic-go via opkg (OpenWrt ≤24.x).
@@ -101,6 +136,39 @@ pub fn install_tollgate_apk_native(router: &Router) -> Result<()> {
     info!("[{}] detected arch: {:?}", router.host, arch);
     if arch.is_empty() {
         anyhow::bail!("Could not determine router architecture");
+    }
+
+    // Prefer a native .apk when the release publishes one for this arch —
+    // `apk add` handles the install itself (deps, postinst, uci-defaults),
+    // skipping the manual ar/tar extraction the .ipk fallback below needs.
+    if let Some(url) = apk_url(arch) {
+        info!(
+            "[{}] Downloading native TollGate .apk for {} from GitHub releases",
+            router.host, arch
+        );
+        let (dl_out, dl_code) = router.run(&format!(
+            "wget --no-check-certificate -O /tmp/tollgate.apk '{}' 2>&1",
+            url
+        ))?;
+        if dl_code != 0 {
+            anyhow::bail!("TollGate .apk download failed: {}", dl_out.trim());
+        }
+        let (size_out, _) = router.run("wc -c < /tmp/tollgate.apk 2>/dev/null")?;
+        let size: u64 = size_out.trim().parse().unwrap_or(0);
+        if size < 50_000 {
+            anyhow::bail!(
+                "Downloaded TollGate .apk is only {}B — wget likely captured an error page. \
+                 Check router internet access and that the release URL is reachable.",
+                size
+            );
+        }
+        let (add_out, add_code) =
+            router.run("apk add --allow-untrusted /tmp/tollgate.apk 2>&1")?;
+        router.run_ok("rm -f /tmp/tollgate.apk")?;
+        if add_code != 0 {
+            anyhow::bail!("TollGate .apk install failed: {}", add_out.trim());
+        }
+        return Ok(());
     }
 
     let url = ipk_url(arch).ok_or_else(|| {
