@@ -35,7 +35,7 @@ pub fn install_tollgate(router: &Router) -> Result<()> {
 
     // Package not in any feed — download the .ipk directly.
     let arch = router
-        .run_ok("/usr/bin/opkg print-architecture | grep -v all | grep -v noarch | tail -1 | awk '{print $2}'")?;
+        .run_ok("opkg print-architecture | grep -v all | grep -v noarch | tail -1 | awk '{print $2}'")?;
     let arch = arch.trim();
 
     let url = ipk_url(arch).ok_or_else(|| {
@@ -88,7 +88,7 @@ pub fn install_tollgate_apk_native(router: &Router) -> Result<()> {
         ". /etc/openwrt_release 2>/dev/null \
          && a=\"${DISTRIB_ARCH:-${OPENWRT_ARCH:-}}\" \
          && [ -n \"$a\" ] && echo \"$a\" \
-         || /usr/bin/apk --print-arch 2>/dev/null \
+         || apk --print-arch 2>/dev/null \
          || uname -m",
     )?;
     // Normalise: uname -m returns bare "mipsel"/"mips"; map to 24kc variant
