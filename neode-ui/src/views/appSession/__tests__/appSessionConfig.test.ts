@@ -64,10 +64,10 @@ describe('appSessionConfig', () => {
       configurable: true,
     })
 
-    // did-wallet's manifest publishes host port 8088 (apps/did-wallet/
+    // searxng's manifest publishes host port 8888 (apps/searxng/
     // manifest.yml) — assert against the manifest-generated value, which is
     // exactly what this test exists to protect.
-    expect(resolveAppUrl('did-wallet')).toBe('http://192.0.2.10:8088')
+    expect(resolveAppUrl('searxng')).toBe('http://192.0.2.10:8888')
   })
 
   it('does not treat service-only tcp ports as web launch surfaces', () => {
