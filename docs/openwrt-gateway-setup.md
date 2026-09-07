@@ -69,6 +69,15 @@ matches the prebuilt TollGate `.ipk` architectures exactly
    From here, continue with the Prerequisites/Step 2 flow above to connect
    it to the Archipelago node.
 
+   > The Archipelago UI's Connect form (Step 2) authenticates *with* a
+   > password — it has no flow for setting the initial one on a fresh,
+   > passwordless router. You have to set it out-of-band first. If you're
+   > working from the node's own local kiosk display rather than a normal
+   > desktop browser, there's no visible tab bar/address bar to open a new
+   > tab from — press **Ctrl+T** to open one anyway, navigate to
+   > `192.168.1.1`, and use LuCI's first-boot prompt to set the root
+   > password. Then switch back to the Archipelago tab and Connect with it.
+
 **If the flash fails / the router doesn't come back**: filogic devices
 don't use a reset-button recovery. Instead, connect to the router's LAN
 port and, during boot, press a key within the first ~2 seconds to enter
