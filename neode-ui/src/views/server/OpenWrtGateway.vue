@@ -36,6 +36,7 @@ interface TollGateStatus {
   min_steps?: number
   currency?: string
   mint_url?: string
+  payout_address?: string
 }
 
 interface WanStatus {
@@ -149,6 +150,7 @@ const editPriceSats = ref(10)
 const editStepSizeMin = ref(1)
 const editMinSteps = ref(1)
 const editMintUrl = ref('')
+const editPayoutAddress = ref('')
 const editEnabled = ref(true)
 
 // WAN setup flow
@@ -306,6 +308,7 @@ function startEditTollgate() {
   editStepSizeMin.value = Math.max(1, Math.round((tg?.step_size_ms ?? 60000) / 60000))
   editMinSteps.value = tg?.min_steps ?? 1
   editMintUrl.value = tg?.mint_url ?? ''
+  editPayoutAddress.value = tg?.payout_address ?? ''
   editEnabled.value = tg?.enabled ?? true
   updateTollgateError.value = ''
   editingTollgate.value = true
@@ -321,6 +324,7 @@ async function saveTollgateConfig() {
       step_size_ms: editStepSizeMin.value * 60_000,
       min_steps: editMinSteps.value,
       mint_url: editMintUrl.value,
+      payout_address: editPayoutAddress.value,
       enabled: editEnabled.value,
     }
     await rpcClient.call({ method: 'openwrt.provision-tollgate', params, timeout: 300000 })
@@ -934,6 +938,21 @@ onMounted(() => {
               placeholder="http://..."
               class="w-full px-4 py-3 bg-transparent border border-white/20 rounded-lg text-white placeholder-white/30 focus:outline-none focus:border-white/40 transition-colors font-mono text-xs"
             />
+          </div>
+          <div class="mb-4">
+            <label class="block text-xs text-white/40 mb-2">Payout Lightning address</label>
+            <input
+              v-model="editPayoutAddress"
+              type="text"
+              placeholder="you@yourwallet.example"
+              class="w-full px-4 py-3 bg-transparent border border-white/20 rounded-lg text-white placeholder-white/30 focus:outline-none focus:border-white/40 transition-colors font-mono text-xs"
+            />
+            <p class="mt-2 text-xs text-white/40">
+              Where TollGate's built-in auto-payout sends your share once the on-router balance
+              crosses its threshold. Leave blank to keep whatever's already set on the router —
+              on a router not originally provisioned here, that may be an upstream default you
+              don't control.
+            </p>
           </div>
           <div class="flex items-center gap-2">
             <button

@@ -150,6 +150,7 @@ impl RpcHandler {
                         "min_steps":     router.uci_get("tollgate.main.min_steps").ok().and_then(|v| v.parse::<u32>().ok()).unwrap_or(1),
                         "currency":      router.uci_get("tollgate.main.currency").unwrap_or_default(),
                         "mint_url":      router.uci_get("tollgate.main.mint_url").unwrap_or_default(),
+                        "payout_address":router.uci_get("tollgate.main.payout_address").unwrap_or_default(),
                     })
                 } else {
                     serde_json::json!({ "installed": false })
@@ -199,10 +200,15 @@ impl RpcHandler {
     ///
     /// Params: `{ "host": "192.168.1.1", "ssh_user": "root", "ssh_password": "",
     ///             "price_sats": 10, "step_size_ms": 60000, "min_steps": 1,
-    ///             "mint_url": "<optional override>" }`
+    ///             "mint_url": "<optional override>",
+    ///             "payout_address": "<optional Lightning address>" }`
     ///
     /// `mint_url` defaults to `http://<this node's IP>:3338` — the local Cashu
     /// mint that must be running as an Archy app before calling this endpoint.
+    ///
+    /// `payout_address` sets the "owner" identity's Lightning address for
+    /// TollGate's own built-in payout (see `config::apply_payout_identity`).
+    /// Omitted or blank leaves whatever's already on the router untouched.
     pub(super) async fn handle_openwrt_provision_tollgate(
         &self,
         params: Option<serde_json::Value>,
@@ -254,6 +260,17 @@ impl RpcHandler {
             .trim_end_matches('/')
             .to_string();
 
+        // `None` (not sent, or sent blank) leaves whatever's already on the
+        // router untouched — see apply_payout_identity's doc comment for why
+        // that matters (an upstream-default placeholder otherwise survives
+        // forever, since nothing else ever writes this field).
+        let payout_address = p
+            .get("payout_address")
+            .and_then(|v| v.as_str())
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(str::to_string);
+
         let config = TollGateConfig {
             ssid: "archipelago".to_string(),
             mint_url,
@@ -264,6 +281,7 @@ impl RpcHandler {
                 .unwrap_or(60_000),
             min_steps: p.get("min_steps").and_then(|v| v.as_u64()).unwrap_or(1) as u32,
             enabled: p.get("enabled").and_then(|v| v.as_bool()).unwrap_or(true),
+            payout_address,
         };
 
         // Blocking SSH session, and provision runs `opkg install` over it —

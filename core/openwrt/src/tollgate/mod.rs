@@ -68,6 +68,8 @@ pub async fn provision(router: &Router, config: &TollGateConfig) -> Result<()> {
     // the daemon restart below — config.json is only read at startup.
     config::apply_daemon_config(router, config)
         .context("write /etc/tollgate/config.json — tollgate-wrt reads this, not UCI")?;
+    config::apply_payout_identity(router, config.payout_address.as_deref())
+        .context("write /etc/tollgate/identities.json owner payout address")?;
     // Also must come after provision_ssid: points gatewayinterface at
     // br-tollgate, which provision_ssid is what creates.
     nodogsplash::configure(router, config)
