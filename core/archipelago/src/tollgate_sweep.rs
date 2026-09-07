@@ -22,6 +22,46 @@ use crate::wallet::ecash;
 ///
 /// Returns the total sats swept in (0 if there was nothing to do, including
 /// when no router is configured or it doesn't have TollGate installed).
+///
+/// # KNOWN BROKEN as of 2026-09-07 — do not "fix" by adding `--json` without
+/// reading the rest of this comment first.
+///
+/// Confirmed live against archy-x250-pa3, two stacked bugs in the upstream
+/// `tollgate` CLI, not in this function:
+///
+/// 1. **This call never actually drains anything.** `tollgate wallet drain
+///    cashu` (no flags — what this function runs) prints an interactive
+///    `Are you sure? (y/N)` confirmation and reads stdin for the answer.
+///    `Router::run` executes over SSH with no PTY and empty stdin, so it
+///    always reads EOF, defaults to "N", and prints "Operation cancelled." —
+///    **with exit code 0**. The `drain_code != 0` check below can never catch
+///    this, so every single tick silently falls through to "no `Token:`
+///    lines found" → `Ok(0)`. No error, no log line (even at `warn!`), just
+///    quiet total inaction, forever. This has presumably never swept a
+///    single sat on any node.
+///
+/// 2. **The obvious fix is worse.** `tollgate --json wallet drain cashu`
+///    *does* skip the confirmation prompt — but confirmed live: when the
+///    wallet's internal per-mint registry holds more than one entry for what
+///    is really the same mint (here: `https://mint.minibits.cash/Bitcoin` vs.
+///    a stale `.../Bitcoin/` — leftover from before the trailing-slash
+///    `mint_url` fix elsewhere in this codebase; `wallet.db` still had a
+///    proof/registry entry keyed under the old slashed URL even after
+///    `config.json` was corrected), the CLI appears to complete a real swap
+///    against the *good* entry — spending and irreversibly consuming the
+///    original proofs, per how Cashu swaps work — then hits the second,
+///    empty, stale-keyed entry, reports the whole command as
+///    `"success": false`, and **never prints or persists the resulting
+///    token anywhere** (checked every location its own "will be saved to a
+///    file" warning implies: `/etc/tollgate/ecash/`, `/root`, `/tmp`,
+///    nothing). Balance went from 50 sats to 0 across that one call. The
+///    funds are gone — there is no undo once a swap is submitted to the
+///    mint.
+///
+/// Do not wire `--json` into this function until upstream fixes partial
+/// per-mint failure handling in `drain cashu` to preserve/return whatever it
+/// already successfully drained. Until then, the current silent-no-op
+/// behavior, while useless, is at least safe.
 pub async fn sweep_once(data_dir: &Path) -> Result<u64> {
     let cfg = net_router::load_router_config(data_dir).await?;
     if !cfg.configured {
