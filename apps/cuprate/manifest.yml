@@ -45,7 +45,12 @@ app:
 
   resources:
     cpu_limit: 0
-    memory_limit: 4Gi
+    # Raised from 4Gi alongside target_max_memory below (see files[] comment)
+    # — 2026-09-03 incident: a 4Gi/3GB-cache config starved
+    # cuprated's DB cache into constant eviction/flush, driving 45% sustained
+    # CPU and ~595GB/24h of block I/O on a fully-synced node. 10Gi leaves
+    # headroom above the 8GiB cache for the process itself.
+    memory_limit: 10Gi
     disk_limit: 300Gi
 
   security:
@@ -82,17 +87,21 @@ app:
     # bind without an explicit i_know_what_im_doing override.
     # Restricted RPC: Monero's own purpose-built safe-for-public subset —
     # what wallets use when connecting to a "remote node". Disabled by
-    # cuprated's own default; enabled via files[] below. A dashboard login
-    # would break wallet clients connecting programmatically, same
-    # reasoning as electrumx's port. The daemon still uses its canonical
-    # container port 18089, but Penpot already owns host port 18089, so this
-    # maps the public host port to the free 18090 instead.
+    # cuprated's own default; enabled via files[] below. `open`, not `gated`:
+    # the gate still takes the port over (loopback pin, external binds,
+    # fronts the Tor onion) but skips the dashboard login challenge, same
+    # reasoning as electrumx's port — wallet clients (Feather,
+    # monero-wallet-rpc, GUI) speak plain HTTP JSON-RPC programmatically and
+    # cannot complete a browser login or hold a session cookie. The daemon
+    # still uses its canonical container port 18089, but Penpot already owns
+    # host port 18089, so this maps the public host port to the free 18090
+    # instead.
     - host: 18090
       container: 18089
       protocol: tcp
-      auth: none
+      auth: open
       auth_rationale: >-
-        Monero restricted RPC — the subset upstream considers safe for public/remote-node use. Wallets (Feather, monero-wallet-rpc, GUI) connect directly over plain HTTP JSON-RPC and cannot hold a dashboard session cookie.
+        Monero restricted RPC — the subset upstream considers safe for public/remote-node use. Wallets (Feather, monero-wallet-rpc, GUI) connect directly over plain HTTP JSON-RPC and cannot complete a browser login or hold a dashboard session cookie.
 
   volumes:
     - type: bind
@@ -103,11 +112,23 @@ app:
   # Settings that need to differ from cuprated's own documented defaults
   # (verified against `cuprated --generate-config` and `--dry-run` locally,
   # 2026-08-21):
+  #   - fast_sync: cuprated's own default is false, which performs full
+  #     cryptographic verification (ring signatures + RandomX PoW) on every
+  #     incoming block instead of trusting checkpointed history. Root-caused
+  #     2026-09-03 as the dominant cause of a sustained 45% CPU node,
+  #     vs. 2.8% on a reference node with fast_sync = true — same chain height, same
+  #     block rate. Set explicitly rather than relying on the binary
+  #     default so fresh deploys don't silently regress into full-verify.
   #   - target_max_memory: cuprated's own default auto-detects total *host*
   #     RAM via sysinfo, which inside a memory-limited container would let
   #     it size caches far past what resources.memory_limit above actually
   #     grants — same class of problem bitcoin-knots' -dbcache sizing
-  #     comment addresses. Set explicitly, comfortably under the 4Gi limit.
+  #     comment addresses. Set explicitly, comfortably under the 10Gi limit.
+  #     Previously 3000000000 (~2.8GiB); that starved the DB cache and
+  #     forced constant eviction/flush (595GB/24h block I/O on a node just
+  #     appending ~2MB blocks every 2 minutes) — raised to 8GiB, matching
+  #     the healthy reference node, and
+  #     resources.memory_limit above raised in step to keep headroom above it.
   #   - rpc.restricted.enable: cuprated ships this off by default; flip on
   #     so the auth:none host port above actually serves something instead
   #     of refusing every connection. port stays at its documented default
@@ -128,21 +149,21 @@ app:
   #   - tracing.stdout.level / tracing.file.{level,max_log_files}: an
   #     operator reading Cuprated.toml on disk should be able to see and
   #     tune the log level directly instead of the file silently omitting
-  #     the whole [tracing] table (verified live on amishparadise
+  #     the whole [tracing] table (verified live on the affected node
   #     2026-09-01: the deployed file had no [tracing] section at all, and
   #     the level was only discoverable by running `cuprated
   #     --generate-config` and diffing). file.level is set to "info", NOT
   #     cuprated's own raw default of "debug" — matches the reference dev
-  #     config this app was built and tested against
-  #     (ssmithx@archy-dev-pa:/home/ssmithx/cuprate/Cuprated.toml,
-  #     verified 2026-09-01), which deliberately runs file logging quieter
+  #     config this app was built and tested against (verified 2026-09-01),
+  #     which deliberately runs file logging quieter
   #     than the binary default. max_log_files similarly follows that
   #     reference (14, not the binary default of 7).
   files:
     - path: /var/lib/archipelago/cuprate/Cuprated.toml
       content: |
         network = "Mainnet"
-        target_max_memory = 3000000000
+        fast_sync = true
+        target_max_memory = 8589934592
 
         [rpc.restricted]
         enable = true
