@@ -145,6 +145,11 @@ echo "Verifying public download URLs (full GET + size + sha256)..."
 "$PROJECT_ROOT/scripts/check-release-assets.sh" "$MANIFEST" \
     || fail "asset verification failed — NOT pushing main. The manifest stays off the branch nodes read, so no node sees a version it cannot fetch. Repair the assets and re-run."
 
+"$PROJECT_ROOT/scripts/check-gitea-release-download-links.sh" "$VERSION" \
+    "archipelago" \
+    "archipelago-frontend-${VERSION}.tar.gz" \
+    || fail "release page download links are not public HTTPS URLs — fix Gitea ROOT_URL/proxy configuration before publishing."
+
 # Assets are proven fetchable — only now may the manifest become live. First
 # incorporate concurrent work, then promote in a dedicated commit. Until the
 # final push succeeds the remote still serves the previous manifest.
@@ -260,5 +265,11 @@ for b in bad:
     print("  FAIL " + b, file=sys.stderr)
 sys.exit(1 if bad else 0)
 PY
+
+"$PROJECT_ROOT/scripts/check-gitea-release-download-links.sh" "$VERSION" \
+    "$ISO_NAME" \
+    "$ISO_NAME.sha256" \
+    "$ISO_NAME.sha256.json" \
+    || fail "ISO is uploaded but the release page links are not public HTTPS URLs — fix Gitea ROOT_URL/proxy configuration."
 
 echo "ISO for v${VERSION} published and verified on $REMOTE."

@@ -1,5 +1,11 @@
 # Changelog
 
+## v1.8.11-alpha (2026-09-07)
+
+- **Cuprate now syncs without burning a core for days.** The app's shipped config now enables Cuprate's checkpoint-backed `fast_sync` path, raises the database cache to 8 GiB, and gives the container a 10 GiB memory limit so the cache has real headroom. A live comparison that motivated the change saw the affected node sit around 45% CPU while the corrected config held near low single digits at the same chain height and block rate. The restricted RPC remains fronted through the safe app gate/Tor path.
+
+- **OpenWrt Gateway setup is documented from a real install, and two setup bugs are fixed.** The new guide walks a node operator through flashing a GL.iNet AX3000 to stock OpenWrt, pairing it with Archipelago, and installing TollGate pay-as-you-go WiFi. The installer now finds `opkg`/`apk` through the router's actual `PATH` instead of assuming `/usr/bin`, the UI no longer sends an empty password over a saved router connection, and the pinned TollGate package moves to `v0.5.0` with a native `.apk` install path where upstream provides one.
+
 ## v1.8.10-alpha (2026-09-02)
 
 - **Lightning sends work again — v1.8.9's payment switch lost the fee budget.** Moving payments to LND 0.21's supported route (Router.SendPaymentV2) shipped without a fee limit, and the v2 API treats an absent limit as **zero allowed fees**: every real route carries a routing fee, so the pathfinder rejected them all and the wallet answered "No route to the recipient" on every send — all day, on healthy channels with plenty of liquidity. The router debug log made it unambiguous (`fee_limit=0 mSAT` on every failing wallet payment; the same payment succeeded by hand the moment a fee limit was set). Payments now carry lncli's default budget (the payment amount), the wallet's amount handling for zero-value invoices is preserved, and a unit test pins the limit can never be zero again.
