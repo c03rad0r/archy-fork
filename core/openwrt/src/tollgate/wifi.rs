@@ -118,6 +118,49 @@ fn provision_firewall(router: &Router) -> Result<()> {
     Ok(())
 }
 
+/// Fold the upstream `tollgate-module-basic-go` installer's own default
+/// AP(s) onto the gated `tollgate` network.
+///
+/// `install::install_ipk` runs the package's `/etc/uci-defaults/*` first-boot
+/// scripts itself (no real package manager to trigger them on OpenWrt 25.x —
+/// see its doc comment). Those upstream scripts rebrand OpenWrt's
+/// factory-default wifi sections (`wireless.default_radioN`, present on
+/// every fresh install) to a `TollGate-<serial>` SSID, but only ever touch
+/// the SSID — they leave `network` at its original `lan` binding. Nothing
+/// else in this project's own provisioning (`provision_ssid` above) ever
+/// looks at those sections; it only manages the separate `wireless.tollgate`
+/// SSID it creates itself. Left alone, the result is two open SSIDs
+/// broadcasting side by side: ours (gated by NoDogSplash) and upstream's
+/// (wide open on `lan`, with a direct route to whatever's plugged into the
+/// wired LAN port).
+///
+/// Confirmed live against archy-x250-pa3 2026-09-07: a client joining
+/// "TollGate-3458" landed on `br-lan` with unrestricted WAN forwarding and
+/// zero NoDogSplash involvement — free, unmetered internet, no captive
+/// portal, on the router's own admin network.
+///
+/// Must run after `provision_network` (needs the `tollgate` network/bridge
+/// to already exist) and before the network/wifi restart in
+/// `restart_services` picks the new binding up.
+pub fn regate_upstream_default_aps(router: &Router) -> Result<()> {
+    let sections = router.run_ok(
+        "uci show wireless 2>/dev/null | grep -o '^wireless\\.default_radio[0-9]*' | sort -u",
+    )?;
+    for section in sections.lines().map(str::trim).filter(|s| !s.is_empty()) {
+        let network_key = format!("{}.network", section);
+        let current = router.uci_get(&network_key).unwrap_or_default();
+        if current == "lan" {
+            info!(
+                "[{}] Re-gating upstream default AP {} (was network=lan) onto the tollgate network",
+                router.host, section
+            );
+            router.uci_set(&network_key, "tollgate")?;
+        }
+    }
+    router.uci_commit(Some("wireless"))?;
+    Ok(())
+}
+
 /// Return the first available wireless radio device name (e.g. "radio0").
 fn detect_radio(router: &Router) -> Result<String> {
     let out =

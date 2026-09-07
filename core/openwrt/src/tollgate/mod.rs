@@ -59,6 +59,11 @@ pub async fn provision(router: &Router, config: &TollGateConfig) -> Result<()> {
 
     config::apply(router, config)?;
     wifi::provision_ssid(router, config)?;
+    // Must come after provision_ssid (creates the `tollgate` network this
+    // folds the upstream installer's own default AP onto) — see
+    // regate_upstream_default_aps for why this is needed at all.
+    wifi::regate_upstream_default_aps(router)
+        .context("re-gate upstream tollgate-module-basic-go default AP(s)")?;
     // Must come after provision_ssid (which creates br-tollgate) and before
     // the daemon restart below — config.json is only read at startup.
     config::apply_daemon_config(router, config)

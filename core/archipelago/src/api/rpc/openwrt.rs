@@ -240,10 +240,18 @@ impl RpcHandler {
             .unwrap_or_default();
 
         let default_mint_url = format!("http://{}:{}", self.config.host_ip, LOCAL_MINT_PORT);
+        // Trim trailing slash(es): tollgate-wrt matches a token's embedded
+        // mint URL against this value with an exact string compare, and
+        // Cashu wallets (Minibits included) encode mint URLs without a
+        // trailing slash. A stray slash here means every otherwise-valid
+        // token gets rejected as "untrusted mint" — confirmed live against
+        // archy-x250-pa3 2026-09-07 with a manually-entered
+        // "https://mint.minibits.cash/Bitcoin/".
         let mint_url = p
             .get("mint_url")
             .and_then(|v| v.as_str())
             .unwrap_or(&default_mint_url)
+            .trim_end_matches('/')
             .to_string();
 
         let config = TollGateConfig {
