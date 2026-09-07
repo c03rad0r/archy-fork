@@ -24,12 +24,12 @@ const TOLLGATE_VERSION: &str = "v0.5.0";
 /// Source: https://github.com/OpenTollGate/tollgate-module-basic-go/releases/tag/v0.5.0
 fn ipk_url(arch: &str) -> Option<String> {
     let name = match arch {
-        "mips_24kc"          => "mips_24kc",
-        "mipsel_24kc"        => "mipsel_24kc",
+        "mips_24kc" => "mips_24kc",
+        "mipsel_24kc" => "mipsel_24kc",
         "aarch64_cortex-a53" => "aarch64_cortex-a53",
         "aarch64_cortex-a72" => "aarch64_cortex-a72",
-        "arm_cortex-a7"      => "arm_cortex-a7",
-        "x86_64"             => "x86_64",
+        "arm_cortex-a7" => "arm_cortex-a7",
+        "x86_64" => "x86_64",
         _ => return None,
     };
     Some(format!(
@@ -69,8 +69,9 @@ pub fn install_tollgate(router: &Router) -> Result<()> {
     }
 
     // Package not in any feed — download the .ipk directly.
-    let arch = router
-        .run_ok("opkg print-architecture | grep -v all | grep -v noarch | tail -1 | awk '{print $2}'")?;
+    let arch = router.run_ok(
+        "opkg print-architecture | grep -v all | grep -v noarch | tail -1 | awk '{print $2}'",
+    )?;
     let arch = arch.trim();
 
     let url = ipk_url(arch).ok_or_else(|| {
@@ -162,8 +163,7 @@ pub fn install_tollgate_apk_native(router: &Router) -> Result<()> {
                 size
             );
         }
-        let (add_out, add_code) =
-            router.run("apk add --allow-untrusted /tmp/tollgate.apk 2>&1")?;
+        let (add_out, add_code) = router.run("apk add --allow-untrusted /tmp/tollgate.apk 2>&1")?;
         router.run_ok("rm -f /tmp/tollgate.apk")?;
         if add_code != 0 {
             anyhow::bail!("TollGate .apk install failed: {}", add_out.trim());
