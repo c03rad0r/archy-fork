@@ -115,6 +115,24 @@ const showConnectForm = ref(false)
 const connecting = ref(false)
 const connectedParams = ref<Record<string, string> | null>(null)
 
+// Every action below (install/edit TollGate, WiFi scan, WAN configure) needs
+// host/ssh_user/ssh_password to reach the router. `connectedParams` only gets
+// set when the Connect form was actually submitted this session (WR-03 above)
+// — on a normal page load the router reconnects via the server-persisted
+// config instead, so `sshPassword`/`sshUser`/`host` (the Connect form's own
+// local refs) sit at their untouched defaults ('', 'root', ''). Falling back
+// to those refs here used to send an explicit-but-empty ssh_password, which
+// the backend treats as "the caller provided this" and never falls back to
+// the real saved password — a real router password then fails auth on every
+// action even though the status poll (which sends no params at all) keeps
+// working fine (archy-x250-pa3, 2026-09-05: dropbear logged one bad-password
+// attempt at the exact moment "Install TollGate" was clicked). Omitting the
+// fields entirely when there's no explicit connectedParams lets the backend's
+// own saved-config fallback do the right thing, same as the status poll.
+function authParams(): Record<string, string> {
+  return connectedParams.value ?? {}
+}
+
 const detecting = ref(false)
 const detectError = ref('')
 const detectedCandidates = ref<string[]>([])
@@ -271,11 +289,7 @@ async function provisionTollgate() {
   provisionError.value = ''
   provisionSuccess.value = false
   try {
-    const params: Record<string, unknown> = {
-      host: connectedParams.value?.host ?? status.value?.host,
-      ssh_user: connectedParams.value?.ssh_user ?? sshUser.value,
-      ssh_password: connectedParams.value?.ssh_password ?? sshPassword.value,
-    }
+    const params: Record<string, unknown> = { ...authParams() }
     await rpcClient.call({ method: 'openwrt.provision-tollgate', params, timeout: 300000 })
     provisionSuccess.value = true
     await load(connectedParams.value ?? undefined)
@@ -302,9 +316,7 @@ async function saveTollgateConfig() {
   updateTollgateError.value = ''
   try {
     const params: Record<string, unknown> = {
-      host: connectedParams.value?.host ?? status.value?.host,
-      ssh_user: connectedParams.value?.ssh_user ?? sshUser.value,
-      ssh_password: connectedParams.value?.ssh_password ?? sshPassword.value,
+      ...authParams(),
       price_sats: editPriceSats.value,
       step_size_ms: editStepSizeMin.value * 60_000,
       min_steps: editMinSteps.value,
@@ -336,11 +348,7 @@ async function scanWifi() {
   wanStep.value = 'scanning'
   wanError.value = ''
   try {
-    const params: Record<string, unknown> = {
-      host: connectedParams.value?.host ?? status.value?.host,
-      ssh_user: connectedParams.value?.ssh_user ?? sshUser.value,
-      ssh_password: connectedParams.value?.ssh_password ?? sshPassword.value,
-    }
+    const params: Record<string, unknown> = { ...authParams() }
     const result = await rpcClient.call<{ networks: ScannedNetwork[] }>({
       method: 'openwrt.scan-wifi',
       params,
@@ -367,9 +375,7 @@ async function configureWan() {
   wanError.value = ''
   try {
     const params: Record<string, unknown> = {
-      host: connectedParams.value?.host ?? status.value?.host,
-      ssh_user: connectedParams.value?.ssh_user ?? sshUser.value,
-      ssh_password: connectedParams.value?.ssh_password ?? sshPassword.value,
+      ...authParams(),
       ssid: selectedNetwork.value.ssid,
       password: wanPassword.value,
       encryption: selectedNetwork.value.encryption,

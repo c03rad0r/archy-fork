@@ -15,25 +15,32 @@ pub enum PkgManager {
 impl Router {
     /// Detect which package manager is available.
     ///
-    /// - If `/usr/bin/opkg` exists → `PkgManager::Opkg` (nothing to do).
-    /// - If `/usr/bin/apk` exists → run `apk update` (switching repos to HTTP
+    /// Looks up `opkg`/`apk` via the router's `$PATH` (`command -v`) rather
+    /// than a hardcoded `/usr/bin/<tool>` — official OpenWrt images don't all
+    /// symlink `/bin` into `/usr/bin` (e.g. the `glinet_gl-mt3000` 24.10.2
+    /// build keeps them as separate real directories with `opkg` living in
+    /// `/bin`), so a fixed absolute path silently misses a perfectly normal
+    /// install and reports "no package management" (archy-x250-pa3, 2026-09-05).
+    ///
+    /// - If `opkg` is on PATH → `PkgManager::Opkg` (nothing to do).
+    /// - If `apk` is on PATH → run `apk update` (switching repos to HTTP
     ///   first to work around missing CA bundle on fresh images), then try
     ///   `apk add opkg`.  If opkg is in the repos → `Opkg`.  If not (OpenWrt
     ///   25.x) → `ApkNative`.
     /// - Neither found → error.
     pub fn opkg_check(&self) -> Result<PkgManager> {
-        let (_, code) = self.run("test -x /usr/bin/opkg")?;
+        let (_, code) = self.run("command -v opkg >/dev/null 2>&1")?;
         if code == 0 {
             return Ok(PkgManager::Opkg);
         }
 
-        let (_, apk_code) = self.run("test -x /usr/bin/apk")?;
+        let (_, apk_code) = self.run("command -v apk >/dev/null 2>&1")?;
         if apk_code == 0 {
             info!("[{}] opkg not found — using apk (OpenWrt 25.x+)", self.host);
             // Fresh images ship without a CA bundle; switch repos to HTTP so
             // apk's wget can reach the package index without TLS verification.
             self.run_ok("sed -i 's|https://|http://|g' /etc/apk/repositories 2>/dev/null || true")?;
-            let (update_out, update_code) = self.run("/usr/bin/apk update 2>&1")?;
+            let (update_out, update_code) = self.run("apk update 2>&1")?;
             if update_code != 0 {
                 anyhow::bail!(
                     "apk update failed (exit {}) — router may have no internet access. \
@@ -43,7 +50,7 @@ impl Router {
                 );
             }
             // Try to install opkg (only available on some 25.x builds).
-            let (add_out, add_code) = self.run("/usr/bin/apk add opkg 2>&1")?;
+            let (add_out, add_code) = self.run("apk add opkg 2>&1")?;
             if add_code == 0 {
                 return Ok(PkgManager::Opkg);
             }
@@ -62,7 +69,7 @@ impl Router {
         }
 
         anyhow::bail!(
-            "opkg not found at /usr/bin/opkg — this router's firmware may not \
+            "Neither opkg nor apk found on this router's $PATH — its firmware may not \
              support package management (TollGate requires a standard OpenWrt build)"
         );
     }
@@ -70,31 +77,28 @@ impl Router {
     /// `opkg update` — refresh package lists.
     pub fn opkg_update(&self) -> Result<()> {
         info!("[{}] opkg update", self.host);
-        self.run_ok("/usr/bin/opkg update")?;
+        self.run_ok("opkg update")?;
         Ok(())
     }
 
     /// Install a package, skipping if already installed.
     pub fn opkg_install(&self, package: &str) -> Result<()> {
         // Check if already installed to avoid unnecessary network traffic.
-        let (_, code) = self.run(&format!(
-            "/usr/bin/opkg list-installed | grep -q '^{} '",
-            package
-        ))?;
+        let (_, code) = self.run(&format!("opkg list-installed | grep -q '^{} '", package))?;
         if code == 0 {
             info!("[{}] {} already installed", self.host, package);
             return Ok(());
         }
 
         info!("[{}] opkg install {}", self.host, package);
-        self.run_ok(&format!("/usr/bin/opkg install {}", package))?;
+        self.run_ok(&format!("opkg install {}", package))?;
         Ok(())
     }
 
     /// Remove a package.
     pub fn opkg_remove(&self, package: &str) -> Result<()> {
         info!("[{}] opkg remove {}", self.host, package);
-        self.run_ok(&format!("/usr/bin/opkg remove {}", package))?;
+        self.run_ok(&format!("opkg remove {}", package))?;
         Ok(())
     }
 
@@ -121,7 +125,7 @@ impl Router {
         }
 
         info!("[{}] apk add {}", self.host, package);
-        self.run_ok(&format!("/usr/bin/apk add {}", package))?;
+        self.run_ok(&format!("apk add {}", package))?;
         Ok(())
     }
 }

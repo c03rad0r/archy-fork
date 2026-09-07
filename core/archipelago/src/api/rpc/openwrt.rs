@@ -135,7 +135,7 @@ impl RpcHandler {
                 // not /usr/bin/tollgate-module-basic-go — that's only the opkg/apk
                 // *package* name, never an on-disk filename.
                 let tollgate_installed = router
-                    .run("/usr/bin/opkg list-installed 2>/dev/null | grep -q '^tollgate-module-basic-go ' || \
+                    .run("opkg list-installed 2>/dev/null | grep -q '^tollgate-module-basic-go ' || \
                           test -f /usr/bin/tollgate-wrt 2>/dev/null")
                     .map(|(_, code)| code == 0)
                     .unwrap_or(false);

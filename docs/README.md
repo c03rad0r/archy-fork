@@ -10,6 +10,7 @@ disagree, the code wins and the doc is a bug.
 - [Talking to your node](COMMANDS.md) — the conversational command surface
 - [Seed Verification](SEED-VERIFICATION.md) — independently verify your 24-word backup
 - [Troubleshooting](troubleshooting.md) — common problems and how to resolve them
+- [OpenWrt Gateway Setup](openwrt-gateway-setup.md) — pairing an OpenWrt router and provisioning TollGate pay-as-you-go WiFi
 - [Gamepad / Controller Navigation](GAMEPAD-NAV.md) — driving the UI from a controller
 - [Pine voice commands](pine-voice-commands.md) — the voice-satellite phrase surface
 
