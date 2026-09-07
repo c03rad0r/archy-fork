@@ -178,6 +178,52 @@ installed:
 Anyone who joins the `archipelago` SSID sees TollGate's captive portal and
 pays sats (via the configured Cashu mint) for timed access.
 
+## Verifying a successful install
+
+A clean install (flash → Connect → WAN/WISP → Install TollGate, all through
+the UI as above) ends in this state — worth checking if you want to confirm
+everything actually landed correctly rather than trusting the UI's success
+toast alone:
+
+- `tollgate-wrt` is running (`/etc/init.d/tollgate-wrt status` → `running`).
+- nodogsplash's **rendered** config — not just the UCI source — has
+  `GatewayInterface br-tollgate`. Check the actual file the daemon was
+  started with (typically `/tmp/etc/nodogsplash_main.conf`), since that's
+  what's actually enforced, not `uci show nodogsplash`. This matters because
+  provisioning must stop nodogsplash and reconfigure it to gate the
+  `br-tollgate` bridge *before* starting it — installing the package by hand
+  (bypassing the UI/RPC flow) leaves nodogsplash on its default
+  `br-lan`-gating behavior instead, which locks out the router's own
+  admin/SSH access. If you ever see a router become unreachable right after
+  a TollGate install, this is the first thing to check.
+- The router's own LAN (the interface you manage it over — SSH, ping) is
+  still reachable and untouched by the portal.
+- TollGate's own log (`logread | grep tollgate-wrt`) shows successful mint
+  probes for each configured mint.
+
+A `dev build detected (branch=unknown), injecting test mint:
+https://nofee.testnut.cashu.space` line in that log means the installed
+build considers itself a dev build and silently adds a test mint alongside
+your configured one(s) — check the Edit panel's Mint URL afterward if you
+don't want that test mint accepted.
+
+### A note on network topology during setup
+
+If the Archipelago node reaches the router over the same wired interface the
+router uses as its LAN, expect the router to become the node's default
+route on that interface once it has its own working WAN/WISP uplink — this
+is normal and, once WAN is actually configured with internet access, works
+fine end-to-end (the node's traffic routes out through the router's
+uplink). It's only a problem *before* WAN is configured: a freshly flashed
+or freshly factory-reset router has no upstream internet yet, so if it wins
+the node's default-route race (lowest metric on its own interface) while
+still offline, it creates a dead-end route and the node loses its own
+connectivity (including anything tunneled, e.g. a VPN/mesh network the node
+relies on) until that route is removed or the router gets its uplink
+working. If you hit this, either wait until WAN/WISP is actually up before
+letting the router's interface win the route race, or temporarily lower the
+priority of that route until it is.
+
 ## Reconfiguring or moving to a different router
 
 Use **Disconnect** on the status dashboard to return to the connect form —
