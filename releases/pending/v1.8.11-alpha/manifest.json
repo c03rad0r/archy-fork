@@ -1,0 +1,29 @@
+{
+  "changelog": [
+    "**Cuprate now syncs without burning a core for days.** The app's shipped config now enables Cuprate's checkpoint-backed `fast_sync` path, raises the database cache to 8 GiB, and gives the container a 10 GiB memory limit so the cache has real headroom. A live comparison that motivated the change saw the affected node sit around 45% CPU while the corrected config held near low single digits at the same chain height and block rate. The restricted RPC remains fronted through the safe app gate/Tor path.",
+    "**OpenWrt Gateway setup is documented from a real install, and two setup bugs are fixed.** The new guide walks a node operator through flashing a GL.iNet AX3000 to stock OpenWrt, pairing it with Archipelago, and installing TollGate pay-as-you-go WiFi. The installer now finds `opkg`/`apk` through the router's actual `PATH` instead of assuming `/usr/bin`, the UI no longer sends an empty password over a saved router connection, and the pinned TollGate package moves to `v0.5.0` with a native `.apk` install path where upstream provides one.",
+    "**Release publishing now checks the public Gitea download links before a manifest goes live.** The publisher already fetched every artifact back and verified its size and SHA-256; this release adds a second guard for the release page itself, so a bad Gitea `ROOT_URL` or proxy setting cannot publish working files behind broken public HTTPS download links."
+  ],
+  "components": [
+    {
+      "current_version": "1.8.11-alpha",
+      "download_url": "https://source.archipelago-foundation.org/lfg2025/archy/releases/download/v1.8.11-alpha/archipelago",
+      "name": "archipelago",
+      "new_version": "1.8.11-alpha",
+      "sha256": "ae569054edd6b2491beb101815f6809bc00c95a7dbe86bd084bcb9a7c36e1853",
+      "size_bytes": 64179264
+    },
+    {
+      "current_version": "1.8.11-alpha",
+      "download_url": "https://source.archipelago-foundation.org/lfg2025/archy/releases/download/v1.8.11-alpha/archipelago-frontend-1.8.11-alpha.tar.gz",
+      "name": "archipelago-frontend-1.8.11-alpha.tar.gz",
+      "new_version": "1.8.11-alpha",
+      "sha256": "192fd0470b6ccf66e78c80b4a4c3af5468882b85d81959362a3bd11f88b9d71d",
+      "size_bytes": 97741740
+    }
+  ],
+  "release_date": "2026-09-07",
+  "signature": "6449ce6ef35a4ef4fa6d0923bb58a2bff52ea5430d5532496e8f0af9ed52eaec293f19d7bec272dc9bc1af5fb2cdfa0e46068c827a9a4dd9cbef92d1c5845301",
+  "signed_by": "did:key:z6Mkfu5LT8d4DjETtrkATvHh9Dvcbnr7zBCUwfau8Sw7DLWT",
+  "version": "1.8.11-alpha"
+}

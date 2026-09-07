@@ -6,6 +6,8 @@
 
 - **OpenWrt Gateway setup is documented from a real install, and two setup bugs are fixed.** The new guide walks a node operator through flashing a GL.iNet AX3000 to stock OpenWrt, pairing it with Archipelago, and installing TollGate pay-as-you-go WiFi. The installer now finds `opkg`/`apk` through the router's actual `PATH` instead of assuming `/usr/bin`, the UI no longer sends an empty password over a saved router connection, and the pinned TollGate package moves to `v0.5.0` with a native `.apk` install path where upstream provides one.
 
+- **Release publishing now checks the public Gitea download links before a manifest goes live.** The publisher already fetched every artifact back and verified its size and SHA-256; this release adds a second guard for the release page itself, so a bad Gitea `ROOT_URL` or proxy setting cannot publish working files behind broken public HTTPS download links.
+
 ## v1.8.10-alpha (2026-09-02)
 
 - **Lightning sends work again — v1.8.9's payment switch lost the fee budget.** Moving payments to LND 0.21's supported route (Router.SendPaymentV2) shipped without a fee limit, and the v2 API treats an absent limit as **zero allowed fees**: every real route carries a routing fee, so the pathfinder rejected them all and the wallet answered "No route to the recipient" on every send — all day, on healthy channels with plenty of liquidity. The router debug log made it unambiguous (`fee_limit=0 mSAT` on every failing wallet payment; the same payment succeeded by hand the moment a fee limit was set). Payments now carry lncli's default budget (the payment amount), the wallet's amount handling for zero-value invoices is preserved, and a unit test pins the limit can never be zero again.

@@ -1,7 +1,7 @@
 {
   "name": "neode-ui",
   "private": true,
-  "version": "1.8.10-alpha",
+  "version": "1.8.11-alpha",
   "type": "module",
   "scripts": {
     "start": "./start-dev.sh",
