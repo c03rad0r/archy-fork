@@ -315,7 +315,7 @@
     "passwordNeedUppercase": "Password must contain at least one uppercase letter",
     "passwordNeedLowercase": "Password must contain at least one lowercase letter",
     "passwordNeedDigit": "Password must contain at least one digit",
-    "passwordNeedSpecial": "Password must contain at least one special character (!@#$%^&* etc.)",
+    "passwordNeedSpecial": "Password must contain at least one special character (!{'@'}#$%^&* etc.)",
     "setupFailed": "Setup failed",
     "verificationFailed": "Verification failed",
     "disableFailed": "Failed to disable 2FA",

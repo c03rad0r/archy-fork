@@ -315,7 +315,7 @@
     "passwordNeedUppercase": "La contrase\u00f1a debe contener al menos una letra may\u00fascula",
     "passwordNeedLowercase": "La contrase\u00f1a debe contener al menos una letra min\u00fascula",
     "passwordNeedDigit": "La contrase\u00f1a debe contener al menos un d\u00edgito",
-    "passwordNeedSpecial": "La contrase\u00f1a debe contener al menos un car\u00e1cter especial (!@#$%^&* etc.)",
+    "passwordNeedSpecial": "La contrase\u00f1a debe contener al menos un car\u00e1cter especial (!{'@'}#$%^&* etc.)",
     "setupFailed": "La configuraci\u00f3n fall\u00f3",
     "verificationFailed": "La verificaci\u00f3n fall\u00f3",
     "disableFailed": "Error al deshabilitar 2FA",
