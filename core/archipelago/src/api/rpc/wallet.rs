@@ -432,11 +432,16 @@ impl RpcHandler {
     /// `wallet.ecash-lnaddress-claim` — redeem any Lightning payments that
     /// arrived on the node's Minibits address as ecash. Returns the sats swept in
     /// (0 when nothing was waiting), so the UI can refresh its balance.
+    /// `failed_count` is non-zero when a payment was fetched (and so already
+    /// consumed server-side) but couldn't be redeemed yet — it stays queued
+    /// and is retried automatically, but the UI should tell the operator
+    /// rather than let it be a silent, unbounded wait.
     pub(super) async fn handle_wallet_ecash_lnaddress_claim(&self) -> Result<serde_json::Value> {
         let outcome = crate::wallet::minibits::claim_and_redeem(&self.config.data_dir).await?;
         Ok(serde_json::json!({
             "claimed_count": outcome.claimed_count,
             "received_sats": outcome.received_sats,
+            "failed_count": outcome.failed_count,
         }))
     }
 

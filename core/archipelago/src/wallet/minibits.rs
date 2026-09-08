@@ -39,6 +39,20 @@
 //!
 //! Only runs on the mainnet ecash network — Minibits is a mainnet service, and a
 //! testnet node must not register a profile or hit the production API.
+//!
+//! ## A claim can't be re-fetched — so nothing gets dropped
+//!
+//! `/claim` consumes a payment server-side the instant it's returned. A local
+//! failure after that point (mint briefly unreachable, a stale cached server
+//! key, a crash mid-loop) must not silently lose the coins, so every fetched
+//! token is persisted to `MinibitsState::pending_claims` *before* decrypt/
+//! redeem is attempted, and stays there — retried on every later poll — until
+//! it succeeds. `ClaimOutcome::failed_count` reports how many are still
+//! stuck so the caller can surface it instead of it being a log-only event.
+//! Separately, `ensure_mint_accepted` keeps the Minibits mint on the node's
+//! accepted-mints allow-list: the address is inherently backed by that one
+//! mint, so an operator-edited allow-list must never be able to cause this
+//! same kind of loss via `receive_token`'s mint check.
 
 use super::ecash::{self, EcashNetwork};
 use super::nut13;
@@ -112,9 +126,17 @@ pub struct MinibitsState {
     pub access_expires: i64,
     /// Server Nostr pubkey used to decrypt claims, discovered from LUD-16.
     #[serde(default)]
-    pub server_nostur_pubkey: String,
+    pub server_nostr_pubkey: String,
     #[serde(default)]
     pub created_at: String,
+    /// Raw NIP-04-encrypted claim tokens fetched from `/claim` but not yet
+    /// successfully redeemed. A claim is consumed server-side the instant
+    /// `/claim` returns it, so it is stashed here *before* decrypt/redeem is
+    /// attempted — a local failure (mint briefly down, bad cached server key,
+    /// process crash mid-loop) then retries next poll instead of losing the
+    /// coins outright.
+    #[serde(default)]
+    pub pending_claims: Vec<String>,
 }
 
 /// A fresh Nostr keypair + seedHash derived from the node's ecash phrase.
@@ -431,8 +453,9 @@ pub async fn lnaddress(data_dir: &Path) -> Result<serde_json::Value> {
                 seed_hash: identity.seed_hash.clone(),
                 access_token: access,
                 access_expires: expires,
-                server_nostur_pubkey: String::new(),
+                server_nostr_pubkey: String::new(),
                 created_at: chrono::Utc::now().to_rfc3339(),
+                pending_claims: Vec::new(),
             }
         }
     };
@@ -454,22 +477,60 @@ pub async fn lnaddress(data_dir: &Path) -> Result<serde_json::Value> {
 pub struct ClaimOutcome {
     pub claimed_count: usize,
     pub received_sats: u64,
+    /// Claims that were fetched (and so already consumed server-side) but
+    /// still haven't been redeemed after this poll — decrypt/redeem failed
+    /// and they are queued in `pending_claims` for the next poll rather than
+    /// dropped. Non-zero here means real, unswept value the operator should
+    /// know about.
+    pub failed_count: usize,
+}
+
+const NO_CLAIMS: ClaimOutcome = ClaimOutcome {
+    claimed_count: 0,
+    received_sats: 0,
+    failed_count: 0,
+};
+
+/// Make sure the Minibits mint is on the accepted-mints allow-list.
+///
+/// `ecash::receive_token` checks the raw accepted-mints file directly (not
+/// the more lenient `ecash::is_mint_trusted`, which always trusts the default
+/// mint) — so an operator who edited their accepted-mints list (e.g. via the
+/// `streaming.configure-mints` RPC) and dropped the default mint would
+/// otherwise cause every Minibits claim to fail *after* the claim was already
+/// consumed server-side, permanently losing those coins with nothing but a
+/// log line to show for it. The Minibits Lightning address is inherently
+/// backed by this one mint — registering it already implies trusting the
+/// mint — so self-heal the allow-list here rather than let that combination
+/// silently strand funds.
+async fn ensure_mint_accepted(data_dir: &Path, mint_url: &str) -> Result<()> {
+    let mut accepted = ecash::load_accepted_mints(data_dir).await?;
+    if !accepted.mints.iter().any(|m| m == mint_url) {
+        accepted.mints.push(mint_url.to_string());
+        ecash::save_accepted_mints(data_dir, &accepted).await?;
+        info!("Minibits: added {mint_url} to accepted mints (needed to redeem LN-address claims)");
+    }
+    Ok(())
 }
 
 /// Poll Minibits for Lightning payments sent to the node's address and redeem
 /// each into the ecash wallet.
 ///
-/// Each claim is a NUT-00 token NIP-04-encrypted by the Minibits service to this
-/// wallet's Nostr key; decrypting it needs the service pubkey (discovered from
-/// our LUD-16 metadata, falling back to the known constant). A token that fails
-/// to decrypt or redeem is logged and skipped rather than aborting the batch —
-/// but note a claim is consumed server-side the moment it is fetched, so any
-/// failure here is surfaced loudly since those coins cannot be re-fetched.
+/// Each claim is a NUT-00 token NIP-04-encrypted by the Minibits service to
+/// this wallet's Nostr key; decrypting it needs the service pubkey
+/// (discovered from our LUD-16 metadata, falling back to the known
+/// constant). A claim is consumed server-side the instant `/claim` returns
+/// it, so newly-fetched tokens are persisted to `state.pending_claims`
+/// *before* decrypt/redeem is attempted; a token that fails to decrypt or
+/// redeem stays in `pending_claims` and is retried on the next poll instead
+/// of being dropped, and `failed_count` tells the caller when that happened
+/// so it isn't purely a log-line event.
 pub async fn claim_and_redeem(data_dir: &Path) -> Result<ClaimOutcome> {
     let network = ecash::load_network(data_dir).await;
     if network == EcashNetwork::Testnet {
-        return Ok(ClaimOutcome { claimed_count: 0, received_sats: 0 });
+        return Ok(NO_CLAIMS);
     }
+    ensure_mint_accepted(data_dir, &network.default_mint()).await?;
 
     let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(30))
@@ -483,58 +544,75 @@ pub async fn claim_and_redeem(data_dir: &Path) -> Result<ClaimOutcome> {
         Some(st) => st,
         // Nothing is addressable until a profile exists; registering lazily here
         // means a payment could not have arrived, so claiming is a no-op.
-        None => return Ok(ClaimOutcome { claimed_count: 0, received_sats: 0 }),
+        None => return Ok(NO_CLAIMS),
     };
     ensure_token(&client, &mut state, &identity.keys).await?;
 
     // Discover (and cache) the service key that wraps claimed tokens.
-    if state.server_nostur_pubkey.is_empty() {
+    if state.server_nostr_pubkey.is_empty() {
         match discover_server_nostr_pubkey(&client, &state.lud16).await {
-            Ok(pk) => state.server_nostur_pubkey = pk,
+            Ok(pk) => state.server_nostr_pubkey = pk,
             Err(e) => {
                 warn!("Minibits: could not read service Nostr pubkey ({e}); using fallback");
-                state.server_nostur_pubkey = FALLBACK_SERVER_NOSTR_PUBKEY.to_string();
+                state.server_nostr_pubkey = FALLBACK_SERVER_NOSTR_PUBKEY.to_string();
             }
         }
     }
-    save_state(data_dir, &state).await?;
 
-    let server_pk = nostr_sdk::PublicKey::from_hex(&state.server_nostur_pubkey)
+    let server_pk = nostr_sdk::PublicKey::from_hex(&state.server_nostr_pubkey)
         .context("Service Nostr pubkey was not valid hex")?;
 
+    // Fetch anything new. A failure here is *not* fatal to the poll — the
+    // operator may still have earlier claims sitting in `pending_claims` that
+    // are worth retrying — so log and fall through instead of bailing out.
     let resp = client
         .post(format!("{API_BASE}/claim"))
         .bearer_auth(&state.access_token)
         .json(&serde_json::json!({ "seedHash": state.seed_hash }))
         .send()
-        .await
-        .context("Minibits claim request failed")?;
-    let status = resp.status();
-    let body = resp.text().await.context("Minibits claim body read failed")?;
-    if !status.is_success() {
-        return Err(minibits_error(status, &body));
-    }
-    let claims: Vec<serde_json::Value> =
-        serde_json::from_str(&body).context("Minibits claim response was not a JSON array")?;
-    if claims.is_empty() {
-        return Ok(ClaimOutcome { claimed_count: 0, received_sats: 0 });
+        .await;
+    match resp {
+        Ok(resp) => {
+            let status = resp.status();
+            let body = resp.text().await.unwrap_or_default();
+            if status.is_success() {
+                match serde_json::from_str::<Vec<serde_json::Value>>(&body) {
+                    Ok(claims) => {
+                        for claim in &claims {
+                            match claim.get("token").and_then(|t| t.as_str()) {
+                                Some(t) => state.pending_claims.push(t.to_string()),
+                                None => warn!("Minibits claim had no 'token' field; skipping"),
+                            }
+                        }
+                    }
+                    Err(e) => warn!("Minibits claim response was not the expected shape: {e}"),
+                }
+            } else {
+                warn!("{}", minibits_error(status, &body));
+            }
+        }
+        Err(e) => warn!("Minibits claim request failed ({e}); retrying only previously-pending claims"),
     }
 
+    // Persist immediately: everything in `pending_claims` right now has
+    // already been consumed server-side, whether it came from this fetch or
+    // survived from an earlier failed attempt.
+    save_state(data_dir, &state).await?;
+
+    if state.pending_claims.is_empty() {
+        return Ok(NO_CLAIMS);
+    }
+
+    let to_process = std::mem::take(&mut state.pending_claims);
     let mut redeemed = 0usize;
     let mut sats = 0u64;
-    for claim in &claims {
-        let enc = match claim.get("token").and_then(|t| t.as_str()) {
-            Some(t) => t,
-            None => {
-                warn!("Minibits claim had no 'token' field; skipping");
-                continue;
-            }
-        };
+    let mut still_pending = Vec::new();
+    for enc in &to_process {
         let decoded = match nip04::decrypt(identity.keys.secret_key(), &server_pk, enc) {
             Ok(d) => d,
             Err(e) => {
-                // Claim already consumed server-side — this is a real loss.
-                warn!("Minibits claim could not be decrypted ({e}); coins may be unrecoverable");
+                warn!("Minibits claim could not be decrypted ({e}); will retry next poll");
+                still_pending.push(enc.clone());
                 continue;
             }
         };
@@ -545,12 +623,17 @@ pub async fn claim_and_redeem(data_dir: &Path) -> Result<ClaimOutcome> {
                 info!("Minibits: redeemed a claimed payment ({got} sats)");
             }
             Err(e) => {
-                warn!("Minibits claim decrypted but failed to redeem ({e}); coins may be unrecoverable")
+                warn!("Minibits claim decrypted but failed to redeem ({e}); will retry next poll");
+                still_pending.push(enc.clone());
             }
         }
     }
 
-    Ok(ClaimOutcome { claimed_count: redeemed, received_sats: sats })
+    let failed_count = still_pending.len();
+    state.pending_claims = still_pending;
+    save_state(data_dir, &state).await?;
+
+    Ok(ClaimOutcome { claimed_count: redeemed, received_sats: sats, failed_count })
 }
 
 #[cfg(test)]
@@ -608,6 +691,41 @@ mod tests {
             access_expires: now + 3600,
             ..Default::default()
         }));
+    }
+
+    #[tokio::test]
+    async fn ensure_mint_accepted_heals_a_dropped_default_mint() {
+        // Regression guard: `ecash::receive_token` checks the raw accepted-mints
+        // file, not the more lenient `is_mint_trusted` — so an operator-edited
+        // allow-list that dropped the default mint must not be able to make
+        // Minibits claims (already consumed server-side by the time redeem
+        // runs) fail permanently and silently.
+        let tmp = tempfile::TempDir::new().unwrap();
+        let mint = "https://mint.minibits.cash/Bitcoin";
+        ecash::save_accepted_mints(
+            tmp.path(),
+            &ecash::AcceptedMints {
+                mints: vec!["https://mint.example.com".to_string()],
+            },
+        )
+        .await
+        .unwrap();
+
+        ensure_mint_accepted(tmp.path(), mint).await.unwrap();
+
+        let accepted = ecash::load_accepted_mints(tmp.path()).await.unwrap();
+        assert!(accepted.mints.iter().any(|m| m == mint));
+        assert!(accepted.mints.iter().any(|m| m == "https://mint.example.com"));
+    }
+
+    #[tokio::test]
+    async fn ensure_mint_accepted_does_not_duplicate() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let mint = "https://mint.minibits.cash/Bitcoin";
+        ensure_mint_accepted(tmp.path(), mint).await.unwrap();
+        ensure_mint_accepted(tmp.path(), mint).await.unwrap();
+        let accepted = ecash::load_accepted_mints(tmp.path()).await.unwrap();
+        assert_eq!(accepted.mints.iter().filter(|m| *m == mint).count(), 1);
     }
 
     /// Live end-to-end against the production Minibits API: register a throwaway

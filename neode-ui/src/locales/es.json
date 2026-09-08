@@ -762,6 +762,7 @@
     "lnAddressLoading": "Configurando su direcci\u00f3n Lightning\u2026",
     "lnAddressUnavailable": "Direcci\u00f3n Lightning no disponible \u2014 a\u00fan puede pegar un token abajo.",
     "lnAddressReceived": "\u00a1Recibi\u00f3 {amount} sats en su direcci\u00f3n Lightning!",
+    "lnAddressPendingRetry": "Lleg\u00f3 un pago pero a\u00fan no se pudo canjear ({count}) \u2014 reintentando autom\u00e1ticamente, mantenga esta pantalla abierta.",
     "processing": "Procesando...",
     "generateAddress": "Generar direcci\u00f3n",
     "createInvoice": "Crear factura",

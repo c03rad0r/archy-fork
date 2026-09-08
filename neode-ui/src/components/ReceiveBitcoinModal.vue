@@ -119,6 +119,9 @@
             <p v-if="lnClaimedSats > 0" class="text-green-400 text-sm mt-2">
               {{ t('receiveBitcoin.lnAddressReceived', { amount: lnClaimedSats.toLocaleString() }) }}
             </p>
+            <p v-if="lnPendingClaims > 0" class="text-orange-400 text-sm mt-2">
+              {{ t('receiveBitcoin.lnAddressPendingRetry', { count: lnPendingClaims }) }}
+            </p>
           </div>
           <div v-else-if="lnAddressLoading" class="mb-4 text-center text-white/50 text-sm py-4">
             {{ t('receiveBitcoin.lnAddressLoading') }}
@@ -201,6 +204,7 @@ watch(() => props.show, (open) => {
   lnAddressLoading.value = false
   lnAddressError.value = false
   lnClaimedSats.value = 0
+  lnPendingClaims.value = 0
   error.value = ''
   processing.value = false
   if (props.autoGenerate && receiveMethod.value === 'onchain') {
@@ -233,6 +237,10 @@ const lnAddress = ref('')
 const lnAddressLoading = ref(false)
 const lnAddressError = ref(false)
 const lnClaimedSats = ref(0)
+// A payment the backend fetched (and so already consumed at Minibits) but
+// couldn't redeem yet — it's queued for automatic retry, not lost, but the
+// operator should see it rather than have it be a silent, unbounded wait.
+const lnPendingClaims = ref(0)
 let lnClaimTimer: ReturnType<typeof setInterval> | null = null
 
 async function loadLnAddress() {
@@ -274,13 +282,14 @@ async function pollLnClaims() {
     return
   }
   try {
-    const res = await rpcClient.call<{ received_sats?: number }>({
+    const res = await rpcClient.call<{ received_sats?: number; failed_count?: number }>({
       method: 'wallet.ecash-lnaddress-claim',
     })
     if (res?.received_sats && res.received_sats > 0) {
       lnClaimedSats.value += res.received_sats
       emit('received')
     }
+    lnPendingClaims.value = res?.failed_count || 0
   } catch {
     // Transient poll failure (offline, mint busy) — keep polling.
   }
@@ -415,6 +424,7 @@ function close() {
   ecashResult.value = ''
   lnAddress.value = ''
   lnClaimedSats.value = 0
+  lnPendingClaims.value = 0
   error.value = ''
   emit('close')
 }

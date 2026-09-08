@@ -781,6 +781,7 @@
     "lnAddressLoading": "Setting up your Lightning address…",
     "lnAddressUnavailable": "Lightning address unavailable — you can still paste a token below.",
     "lnAddressReceived": "Received {amount} sats to your Lightning address!",
+    "lnAddressPendingRetry": "A payment arrived but couldn't be redeemed yet ({count}) — retrying automatically, keep this screen open.",
     "processing": "Processing...",
     "generateAddress": "Generate Address",
     "createInvoice": "Create Invoice",
