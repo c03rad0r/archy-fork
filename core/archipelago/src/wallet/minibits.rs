@@ -59,7 +59,7 @@ use super::nut13;
 use anyhow::{anyhow, Context, Result};
 use base64::Engine;
 use nostr_sdk::nips::{nip04, nip06::FromMnemonic};
-use nostr_sdk::{EventBuilder, Kind, RelayUrl, Tag, TagKind, Timestamp, ToBech32};
+use nostr_sdk::{Client, EventBuilder, Filter, Kind, RelayUrl, Tag, TagKind, Timestamp, ToBech32};
 use rand::seq::SliceRandom;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -73,6 +73,15 @@ const API_BASE: &str = "https://api.minibits.cash/v3";
 /// The relay named in the NIP-42 auth event. Matches the value the Minibits app
 /// sends and the relay the service publishes in its NIP-05 record.
 const RELAY_URL: &str = "wss://relay.minibits.cash";
+/// Relays to check for incoming claim DMs (see `fetch_relay_dms`). Confirmed
+/// live 2026-09-08: real Lightning payments to a `@minibits.cash` address are
+/// delivered as a NIP-04 DM (kind 4, `#p`-tagged to the wallet's pubkey)
+/// published to relays — *not* surfaced by `POST /claim`, which was the only
+/// source this module fetched from until that gap stranded three real
+/// payments. `RELAY_URL` first (it's the service's own relay and the one
+/// most likely to have them), plus two large public relays as a fallback in
+/// case that relay is ever unreachable or Minibits adds others.
+const CLAIM_RELAY_URLS: &[&str] = &[RELAY_URL, "wss://relay.damus.io", "wss://nos.lol"];
 /// NIP-42 client authentication event kind.
 const AUTH_KIND: u16 = 22242;
 /// The Minibits service Nostr pubkey that NIP-04-encrypts claimed tokens. Used
@@ -137,6 +146,13 @@ pub struct MinibitsState {
     /// coins outright.
     #[serde(default)]
     pub pending_claims: Vec<String>,
+    /// Unix timestamp of the newest Nostr DM we've already pulled into
+    /// `pending_claims` (see `fetch_relay_dms`). Nostr events never expire
+    /// from relays, so without this watermark every poll would re-fetch and
+    /// re-attempt every claim ever sent — harmless (the mint rejects an
+    /// already-spent token) but wasteful and noisy.
+    #[serde(default)]
+    pub last_dm_seen_at: u64,
 }
 
 /// A fresh Nostr keypair + seedHash derived from the node's ecash phrase.
@@ -467,6 +483,7 @@ pub async fn lnaddress(data_dir: &Path) -> Result<serde_json::Value> {
                 server_nostr_pubkey: String::new(),
                 created_at: chrono::Utc::now().to_rfc3339(),
                 pending_claims: Vec::new(),
+                last_dm_seen_at: 0,
             }
         }
     };
@@ -514,6 +531,61 @@ const NO_CLAIMS: ClaimOutcome = ClaimOutcome {
 /// backed by this one mint — registering it already implies trusting the
 /// mint — so self-heal the allow-list here rather than let that combination
 /// silently strand funds.
+/// Fetch NIP-04 DM (kind 4) events addressed to `our_pubkey` newer than
+/// `since`, from `CLAIM_RELAY_URLS`. Returns each event's raw (still
+/// encrypted) content plus its `created_at`, newest last. This — not
+/// `POST /claim` — is how Minibits actually delivers a Lightning payment
+/// made to a `@minibits.cash` address: confirmed live 2026-09-08 against
+/// three real payments that `/claim` never surfaced. Best-effort: a relay
+/// error here must not abort the poll, since `pending_claims` may still hold
+/// earlier fetches worth retrying.
+async fn fetch_relay_dms(
+    our_pubkey: nostr_sdk::PublicKey,
+    since: u64,
+) -> Vec<(String, u64, String)> {
+    let client = Client::default();
+    for url in CLAIM_RELAY_URLS {
+        if let Err(e) = client.add_relay(*url).await {
+            warn!("Minibits: could not add relay {url}: {e}");
+        }
+    }
+    client.connect().await;
+    // Give relays a moment to finish the WebSocket handshake before the
+    // fetch's own timeout starts consuming that time.
+    tokio::time::sleep(std::time::Duration::from_millis(800)).await;
+
+    // `since` is inclusive in NIP-01, and `since` here is the `created_at` of
+    // the newest event we've already queued — so filter strictly after it,
+    // or the same event gets re-fetched (and its already-spent token
+    // re-attempted) every poll forever.
+    let filter = Filter::new()
+        .pubkey(our_pubkey)
+        .kind(Kind::from(4u16))
+        .since(Timestamp::from(since.saturating_add(1)))
+        .limit(200);
+
+    let result = match client
+        .fetch_events(filter, std::time::Duration::from_secs(10))
+        .await
+    {
+        Ok(events) => {
+            let mut out: Vec<(String, u64, String)> = events
+                .into_iter()
+                .map(|e| (e.content, e.created_at.as_u64(), e.pubkey.to_hex()))
+                .collect();
+            out.sort_by_key(|(_, created_at, _)| *created_at);
+            out
+        }
+        Err(e) => {
+            warn!("Minibits: relay fetch for claim DMs failed: {e}");
+            Vec::new()
+        }
+    };
+
+    client.shutdown().await;
+    result
+}
+
 async fn ensure_mint_accepted(data_dir: &Path, mint_url: &str) -> Result<()> {
     let mut accepted = ecash::load_accepted_mints(data_dir).await?;
     if !accepted.mints.iter().any(|m| m == mint_url) {
@@ -605,9 +677,24 @@ pub async fn claim_and_redeem(data_dir: &Path) -> Result<ClaimOutcome> {
         Err(e) => warn!("Minibits claim request failed ({e}); retrying only previously-pending claims"),
     }
 
+    // The actual delivery channel: real Lightning payments arrive as a
+    // NIP-04 DM on relays, not via `/claim` above. `since` is our own
+    // watermark (Nostr events never expire off a relay, so without it we'd
+    // re-fetch and re-attempt every claim ever sent on every poll).
+    let dms = fetch_relay_dms(identity.keys.public_key(), state.last_dm_seen_at).await;
+    for (content, created_at, author) in dms {
+        if author != state.server_nostr_pubkey {
+            warn!("Minibits: ignoring claim DM from unexpected pubkey {author}");
+            continue;
+        }
+        state.pending_claims.push(content);
+        state.last_dm_seen_at = state.last_dm_seen_at.max(created_at);
+    }
+
     // Persist immediately: everything in `pending_claims` right now has
-    // already been consumed server-side, whether it came from this fetch or
-    // survived from an earlier failed attempt.
+    // already been consumed server-side (or, for relay DMs, is public and
+    // can't be un-sent), whether it came from this fetch or survived from an
+    // earlier failed attempt.
     save_state(data_dir, &state).await?;
 
     if state.pending_claims.is_empty() {
@@ -737,6 +824,21 @@ mod tests {
         ensure_mint_accepted(tmp.path(), mint).await.unwrap();
         let accepted = ecash::load_accepted_mints(tmp.path()).await.unwrap();
         assert_eq!(accepted.mints.iter().filter(|m| *m == mint).count(), 1);
+    }
+
+    #[test]
+    fn dm_watermark_advances_but_never_rewinds() {
+        // `claim_and_redeem` does `state.last_dm_seen_at.max(created_at)` per
+        // event. Events from `fetch_relay_dms` are sorted ascending, but the
+        // watermark must still be safe against an out-of-order relay
+        // response (or a future refactor) — it must never move backward, or
+        // an already-queued DM gets re-fetched and its now-spent token
+        // re-attempted forever.
+        let mut watermark = 100u64;
+        for created_at in [105, 103, 110, 108] {
+            watermark = watermark.max(created_at);
+        }
+        assert_eq!(watermark, 110);
     }
 
     #[tokio::test]

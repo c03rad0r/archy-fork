@@ -207,7 +207,15 @@ impl CashuToken {
     }
 
     /// Decode a cashuA (V3 JSON) or cashuB (V4 CBOR) token string.
+    ///
+    /// Trims surrounding whitespace first: a token can arrive with stray
+    /// leading/trailing whitespace from a clipboard paste, or (confirmed
+    /// live, 2026-09-08) from Minibits' own NIP-04 claim-DM content, which
+    /// has a trailing space after the base64 — none of the base64 alphabets
+    /// in `decode_token_base64` tolerate that, so an otherwise-valid token
+    /// would hard-fail with "Invalid base64" instead of parsing.
     pub fn deserialize(token_str: &str) -> Result<Self> {
+        let token_str = token_str.trim();
         if let Some(payload) = token_str.strip_prefix(CASHU_B_PREFIX) {
             return Self::deserialize_v4(payload);
         }
@@ -506,6 +514,45 @@ mod tests {
         assert_eq!(decoded.token[0].mint, "http://127.0.0.1:8175");
         assert_eq!(decoded.token[0].proofs[0].secret, "abcdef1234567890");
         assert_eq!(decoded.memo, Some("test token".to_string()));
+    }
+
+    /// Regression guard (2026-09-08): a real Minibits claim DM decrypted to
+    /// a cashuB token with a trailing space after the base64 payload, which
+    /// made every base64 alphabet in `decode_token_base64` reject it as
+    /// invalid — three real payments got stuck retrying forever with
+    /// "Invalid base64 in cashuB token" until `deserialize` started
+    /// trimming the whole string first. Whitespace can show up around a
+    /// token from more than one source (clipboard paste included), so this
+    /// covers cashuA too, and leading as well as trailing.
+    #[test]
+    fn deserialize_trims_stray_whitespace() {
+        let token = CashuToken {
+            token: vec![TokenEntry {
+                mint: "http://127.0.0.1:8175".to_string(),
+                proofs: vec![Proof {
+                    amount: 8,
+                    id: "009a1f293253e41e".to_string(),
+                    secret: "abcdef1234567890".to_string(),
+                    c: "02a9acc1e48c25eeeb9289b5031cc57da9fe72f3fe2861d94ec4da0e7f6c2b4e24"
+                        .to_string(),
+                }],
+            }],
+            memo: None,
+            unit: Some("sat".to_string()),
+        };
+        let encoded = token.serialize().unwrap();
+        assert!(encoded.starts_with("cashuA"));
+
+        for wrapped in [
+            format!("{encoded} "),
+            format!(" {encoded}"),
+            format!(" {encoded}\n"),
+            format!("{encoded}\t"),
+        ] {
+            let decoded = CashuToken::deserialize(&wrapped)
+                .unwrap_or_else(|e| panic!("failed on {wrapped:?}: {e}"));
+            assert_eq!(decoded.total_amount(), 8);
+        }
     }
 
     #[test]
