@@ -191,15 +191,26 @@ fn state_path(data_dir: &Path) -> std::path::PathBuf {
 async fn load_state(data_dir: &Path) -> Result<Option<MinibitsState>> {
     let path = state_path(data_dir);
     match fs::read_to_string(&path).await {
-        Ok(s) => {
-            let st: MinibitsState = serde_json::from_str(&s)
-                .with_context(|| format!("Failed to parse {}", path.display()))?;
-            if st.wallet_id.is_empty() {
+        Ok(s) if s.trim().is_empty() => Ok(None),
+        Ok(s) => match serde_json::from_str::<MinibitsState>(&s) {
+            Ok(st) if st.wallet_id.is_empty() => Ok(None),
+            Ok(st) => Ok(Some(st)),
+            // Unlike the accepted-mints file, nothing here is a user-editable
+            // security setting — it's a pure mirror of state Minibits already
+            // holds server-side, and registration is idempotent per pubkey
+            // (§ module docs), so re-registering after a corrupt/truncated
+            // read always recovers the *same* address. A node whose disk
+            // filled up mid-write (observed on archy-x250-pa3, 2026-09-08:
+            // this file truncated to 0 bytes) must self-heal on the next open
+            // rather than permanently show "Lightning address unavailable".
+            Err(e) => {
+                warn!(
+                    "Minibits: {} is corrupt/unreadable ({e}); treating as no profile yet and re-registering",
+                    path.display()
+                );
                 Ok(None)
-            } else {
-                Ok(Some(st))
             }
-        }
+        },
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
         Err(e) => Err(e).with_context(|| format!("Failed to read {}", path.display())),
     }
@@ -726,6 +737,36 @@ mod tests {
         ensure_mint_accepted(tmp.path(), mint).await.unwrap();
         let accepted = ecash::load_accepted_mints(tmp.path()).await.unwrap();
         assert_eq!(accepted.mints.iter().filter(|m| *m == mint).count(), 1);
+    }
+
+    #[tokio::test]
+    async fn load_state_treats_empty_file_as_no_profile() {
+        // Reproduces archy-x250-pa3, 2026-09-08: a disk-full write truncated
+        // wallet/minibits.json to 0 bytes, which then made every
+        // wallet.ecash-lnaddress call fail with "EOF while parsing a value"
+        // instead of just re-registering (idempotent per pubkey, so safe).
+        let tmp = tempfile::TempDir::new().unwrap();
+        let path = tmp.path().join(STATE_FILE);
+        tokio::fs::create_dir_all(path.parent().unwrap())
+            .await
+            .unwrap();
+        tokio::fs::write(&path, b"").await.unwrap();
+
+        let st = load_state(tmp.path()).await.unwrap();
+        assert!(st.is_none());
+    }
+
+    #[tokio::test]
+    async fn load_state_treats_corrupt_json_as_no_profile() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let path = tmp.path().join(STATE_FILE);
+        tokio::fs::create_dir_all(path.parent().unwrap())
+            .await
+            .unwrap();
+        tokio::fs::write(&path, b"{ not valid json").await.unwrap();
+
+        let st = load_state(tmp.path()).await.unwrap();
+        assert!(st.is_none());
     }
 
     /// Live end-to-end against the production Minibits API: register a throwaway
