@@ -421,6 +421,25 @@ impl RpcHandler {
         }))
     }
 
+    /// `wallet.ecash-lnaddress` — the node's Minibits Lightning address
+    /// (`<name>@minibits.cash`, LUD-16), derived from and authenticated by the
+    /// ecash wallet's own seed. Registers the profile on first use; safe to call
+    /// on every open of the Cashu receive screen (it is idempotent).
+    pub(super) async fn handle_wallet_ecash_lnaddress(&self) -> Result<serde_json::Value> {
+        crate::wallet::minibits::lnaddress(&self.config.data_dir).await
+    }
+
+    /// `wallet.ecash-lnaddress-claim` — redeem any Lightning payments that
+    /// arrived on the node's Minibits address as ecash. Returns the sats swept in
+    /// (0 when nothing was waiting), so the UI can refresh its balance.
+    pub(super) async fn handle_wallet_ecash_lnaddress_claim(&self) -> Result<serde_json::Value> {
+        let outcome = crate::wallet::minibits::claim_and_redeem(&self.config.data_dir).await?;
+        Ok(serde_json::json!({
+            "claimed_count": outcome.claimed_count,
+            "received_sats": outcome.received_sats,
+        }))
+    }
+
     pub(super) async fn handle_wallet_networking_profits(&self) -> Result<serde_json::Value> {
         let summary = profits::get_networking_profits(&self.config.data_dir).await?;
         Ok(serde_json::json!({

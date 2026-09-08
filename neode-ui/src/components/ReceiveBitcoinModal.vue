@@ -106,6 +106,27 @@
 
         <!-- Ecash -->
         <div v-if="receiveMethod === 'ecash'">
+          <!-- Shareable @minibits.cash Lightning address (LUD-16): any Lightning
+               wallet can pay this node by address, and the sats land as ecash.
+               Fetched on tab open; claimed payments are polled in while open. -->
+          <div v-if="lnAddress" class="mb-4 p-3 bg-white/5 rounded-lg text-center">
+            <p class="text-white/60 text-sm mb-2">{{ t('receiveBitcoin.lnAddressTitle') }}</p>
+            <canvas ref="lnAddressQrCanvas" class="mx-auto mb-3 rounded-lg" style="image-rendering: pixelated;"></canvas>
+            <p class="text-white/50 text-xs mb-1">{{ t('receiveBitcoin.lnAddressLabel') }}</p>
+            <p class="text-base font-mono text-white/95 break-all mb-2">{{ lnAddress }}</p>
+            <CopyButton :value="lnAddress" :label="t('common.copy')" />
+            <p class="text-white/40 text-xs mt-3 leading-relaxed">{{ t('receiveBitcoin.lnAddressHint') }}</p>
+            <p v-if="lnClaimedSats > 0" class="text-green-400 text-sm mt-2">
+              {{ t('receiveBitcoin.lnAddressReceived', { amount: lnClaimedSats.toLocaleString() }) }}
+            </p>
+          </div>
+          <div v-else-if="lnAddressLoading" class="mb-4 text-center text-white/50 text-sm py-4">
+            {{ t('receiveBitcoin.lnAddressLoading') }}
+          </div>
+          <div v-else-if="lnAddressError" class="mb-3 text-xs text-white/40">
+            {{ t('receiveBitcoin.lnAddressUnavailable') }}
+          </div>
+
           <div class="mb-3">
             <label class="text-white/60 text-sm block mb-1">{{ t('receiveBitcoin.pasteEcashToken') }}</label>
             <textarea v-model="ecashToken" rows="3" placeholder="cashuB… (Cashu) or Fedimint notes" class="w-full input-glass font-mono"></textarea>
@@ -175,6 +196,11 @@ watch(() => props.show, (open) => {
   arkAddress.value = ''
   ecashToken.value = ''
   ecashResult.value = ''
+  stopLnClaimPoll()
+  lnAddress.value = ''
+  lnAddressLoading.value = false
+  lnAddressError.value = false
+  lnClaimedSats.value = 0
   error.value = ''
   processing.value = false
   if (props.autoGenerate && receiveMethod.value === 'onchain') {
@@ -193,8 +219,79 @@ const ecashResult = ref('')
 const onchainQrCanvas = ref<HTMLCanvasElement | null>(null)
 const lightningQrCanvas = ref<HTMLCanvasElement | null>(null)
 const arkQrCanvas = ref<HTMLCanvasElement | null>(null)
+const lnAddressQrCanvas = ref<HTMLCanvasElement | null>(null)
 const processing = ref(false)
 const error = ref('')
+
+// ── Minibits Lightning address (ecash receive) ──────────────────────────────
+// The ecash tab doubles as "receive onto my @minibits.cash address": the node
+// derives/registers it from its own ecash seed (wallet.ecash-lnaddress) and
+// sweeps any Lightning payments that land there back into ecash while the tab is
+// open (wallet.ecash-lnaddress-claim). A registration failure is never fatal —
+// the paste-token path below always works.
+const lnAddress = ref('')
+const lnAddressLoading = ref(false)
+const lnAddressError = ref(false)
+const lnClaimedSats = ref(0)
+let lnClaimTimer: ReturnType<typeof setInterval> | null = null
+
+async function loadLnAddress() {
+  if (lnAddress.value || lnAddressLoading.value) return
+  lnAddressLoading.value = true
+  lnAddressError.value = false
+  try {
+    const res = await rpcClient.call<{ address?: string }>({ method: 'wallet.ecash-lnaddress' })
+    lnAddress.value = res?.address || ''
+    if (lnAddress.value) {
+      await nextTick()
+      renderQr(lnAddress.value, lnAddressQrCanvas.value)
+      startLnClaimPoll()
+    } else {
+      lnAddressError.value = true
+    }
+  } catch {
+    lnAddressError.value = true
+  } finally {
+    lnAddressLoading.value = false
+  }
+}
+
+function stopLnClaimPoll() {
+  if (lnClaimTimer) {
+    clearInterval(lnClaimTimer)
+    lnClaimTimer = null
+  }
+}
+
+function startLnClaimPoll() {
+  stopLnClaimPoll()
+  lnClaimTimer = setInterval(() => void pollLnClaims(), 8000)
+}
+
+async function pollLnClaims() {
+  if (!props.show || !lnAddress.value) {
+    stopLnClaimPoll()
+    return
+  }
+  try {
+    const res = await rpcClient.call<{ received_sats?: number }>({
+      method: 'wallet.ecash-lnaddress-claim',
+    })
+    if (res?.received_sats && res.received_sats > 0) {
+      lnClaimedSats.value += res.received_sats
+      emit('received')
+    }
+  } catch {
+    // Transient poll failure (offline, mint busy) — keep polling.
+  }
+}
+
+onUnmounted(stopLnClaimPoll)
+
+// Fetch the address the first time the operator opens the ecash tab.
+watch(receiveMethod, (m) => {
+  if (m === 'ecash' && props.show) void loadLnAddress()
+})
 
 // ── On-chain payment detection ────────────────────────────────────────────
 // The generated address is FRESH (lnd.newaddress), so any incoming wallet
@@ -309,12 +406,15 @@ async function renderQr(data: string, canvas: HTMLCanvasElement | null, prefix =
 
 function close() {
   stopWatchingPayment()
+  stopLnClaimPoll()
   paymentSeen.value = null
   invoiceResult.value = ''
   onchainAddress.value = ''
   arkAddress.value = ''
   ecashToken.value = ''
   ecashResult.value = ''
+  lnAddress.value = ''
+  lnClaimedSats.value = 0
   error.value = ''
   emit('close')
 }

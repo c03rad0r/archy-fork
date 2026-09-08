@@ -6,6 +6,7 @@ pub mod bdhke;
 pub mod cashu;
 pub mod ecash;
 pub mod fedimint_client;
+pub mod minibits;
 pub mod mint_client;
 pub mod nut13;
 pub mod profits;

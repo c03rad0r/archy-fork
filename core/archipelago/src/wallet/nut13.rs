@@ -137,6 +137,18 @@ impl EcashSeed {
         self.mnemonic.words().map(|w| w.to_string()).collect()
     }
 
+    /// The phrase as a single string — the input to NUT-13 *and* to the NIP-06
+    /// Nostr derivation the Minibits profile flow needs (`crate::wallet::minibits`).
+    pub fn phrase(&self) -> String {
+        self.mnemonic.to_string()
+    }
+
+    /// The 64-byte BIP-39 seed. Same bytes Minibits hashes with SHA-256 to get
+    /// its `seedHash`, so the two wallets agree on wallet identity.
+    pub fn seed_bytes(&self) -> [u8; 64] {
+        self.seed
+    }
+
     pub fn source(&self) -> SeedSource {
         self.source
     }

@@ -269,6 +269,8 @@ impl RpcHandler {
             "wallet.ecash-network" => self.handle_wallet_ecash_network().await,
             "wallet.ecash-set-network" => self.handle_wallet_ecash_set_network(params).await,
             "wallet.ecash-seed-status" => self.handle_wallet_ecash_seed_status().await,
+            "wallet.ecash-lnaddress" => self.handle_wallet_ecash_lnaddress().await,
+            "wallet.ecash-lnaddress-claim" => self.handle_wallet_ecash_lnaddress_claim().await,
             "wallet.ecash-seed-reveal" => self.handle_wallet_ecash_seed_reveal(params).await,
             "wallet.ecash-restore" => self.handle_wallet_ecash_restore(params).await,
             "wallet.ecash-seed-import" => self.handle_wallet_ecash_seed_import(params).await,
