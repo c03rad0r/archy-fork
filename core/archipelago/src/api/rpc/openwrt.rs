@@ -270,6 +270,10 @@ impl RpcHandler {
             .map(str::trim)
             .filter(|s| !s.is_empty())
             .map(str::to_string);
+        if let Some(address) = payout_address.as_deref() {
+            tollgate::config::validate_payout_address(address)
+                .context("invalid TollGate payout address")?;
+        }
 
         let config = TollGateConfig {
             ssid: "archipelago".to_string(),

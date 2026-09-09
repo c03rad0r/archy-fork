@@ -149,16 +149,28 @@ pub fn regate_upstream_default_aps(router: &Router) -> Result<()> {
     for section in sections.lines().map(str::trim).filter(|s| !s.is_empty()) {
         let network_key = format!("{}.network", section);
         let current = router.uci_get(&network_key).unwrap_or_default();
-        if current == "lan" {
+        let ssid = router
+            .uci_get(&format!("{}.ssid", section))
+            .unwrap_or_default();
+        // A failed/changed upstream first-boot script can leave a stock
+        // default_radioN section in place. Moving that interface merely
+        // because it is on LAN can seize the router's existing management AP.
+        // Only the public APs the TollGate installer demonstrably rebranded
+        // belong on the paid network.
+        if should_regate_upstream_ap(&current, &ssid) {
             info!(
-                "[{}] Re-gating upstream default AP {} (was network=lan) onto the tollgate network",
-                router.host, section
+                "[{}] Re-gating upstream default AP {} ({}) onto the tollgate network",
+                router.host, section, ssid
             );
             router.uci_set(&network_key, "tollgate")?;
         }
     }
     router.uci_commit(Some("wireless"))?;
     Ok(())
+}
+
+fn should_regate_upstream_ap(network: &str, ssid: &str) -> bool {
+    network.trim() == "lan" && ssid.trim().starts_with("TollGate-")
 }
 
 /// Return the first available wireless radio device name (e.g. "radio0").
@@ -168,4 +180,20 @@ fn detect_radio(router: &Router) -> Result<String> {
     // Extract "radioN" from "wireless.radioN.type"
     let radio = out.trim().split('.').nth(1).unwrap_or("radio0").to_string();
     Ok(radio)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::should_regate_upstream_ap;
+
+    #[test]
+    fn regates_only_confirmed_upstream_tollgate_aps() {
+        assert!(should_regate_upstream_ap("lan", "TollGate-3458"));
+        assert!(should_regate_upstream_ap(" lan\n", " TollGate-A1B2 "));
+
+        assert!(!should_regate_upstream_ap("lan", "OpenWrt"));
+        assert!(!should_regate_upstream_ap("lan", "Archipelago Admin"));
+        assert!(!should_regate_upstream_ap("tollgate", "TollGate-3458"));
+        assert!(!should_regate_upstream_ap("lan", "tollgate-3458"));
+    }
 }

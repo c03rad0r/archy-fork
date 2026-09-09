@@ -136,11 +136,44 @@ pub fn apply_payout_identity(router: &Router, payout_address: Option<&str>) -> R
     let Some(address) = payout_address else {
         return Ok(());
     };
+    validate_payout_address(address)?;
 
     let existing = router.run_ok("cat /etc/tollgate/identities.json 2>/dev/null || echo '{}'")?;
-    let mut doc: serde_json::Value =
-        serde_json::from_str(existing.trim()).unwrap_or_else(|_| serde_json::json!({}));
+    let mut doc = parse_identities(&existing)?;
 
+    merge_payout_identity(&mut doc, address)?;
+
+    let json_str = serde_json::to_string_pretty(&doc).context("serialize identities.json")?;
+    router
+        .upload_file("/etc/tollgate/identities.json", json_str.as_bytes())
+        .context("upload /etc/tollgate/identities.json")?;
+    Ok(())
+}
+
+fn parse_identities(existing: &str) -> Result<serde_json::Value> {
+    serde_json::from_str(existing.trim()).context(
+        "parse existing /etc/tollgate/identities.json; refusing to overwrite malformed identity data",
+    )
+}
+
+/// Reject malformed values before provisioning changes anything on the
+/// router. A payout typo otherwise remains dormant until the threshold is
+/// reached, when the operator discovers that settlement cannot resolve.
+pub fn validate_payout_address(address: &str) -> Result<()> {
+    let (name, domain) = address
+        .split_once('@')
+        .context("Lightning address must look like name@example.com")?;
+    if name.is_empty()
+        || domain.is_empty()
+        || domain.contains('@')
+        || address.chars().any(char::is_whitespace)
+    {
+        anyhow::bail!("Lightning address must look like name@example.com");
+    }
+    Ok(())
+}
+
+fn merge_payout_identity(doc: &mut serde_json::Value, address: &str) -> Result<()> {
     let identities = doc
         .as_object_mut()
         .context("identities.json root is not a JSON object")?
@@ -166,9 +199,70 @@ pub fn apply_payout_identity(router: &Router, payout_address: Option<&str>) -> R
         }
     }
 
-    let json_str = serde_json::to_string_pretty(&doc).context("serialize identities.json")?;
-    router
-        .upload_file("/etc/tollgate/identities.json", json_str.as_bytes())
-        .context("upload /etc/tollgate/identities.json")?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{merge_payout_identity, parse_identities, validate_payout_address};
+
+    #[test]
+    fn payout_merge_changes_only_owner_address() {
+        let mut doc = serde_json::json!({
+            "config_version": "v0.0.1",
+            "owned_identities": [{ "name": "merchant", "privatekey": "keep-secret" }],
+            "public_identities": [
+                { "name": "owner", "pubkey": "not currently used", "lightning_address": "old@example.com" },
+                { "name": "upstream", "lightning_address": "keep@example.com" }
+            ]
+        });
+        let before_owned = doc["owned_identities"].clone();
+        let before_other = doc["public_identities"][1].clone();
+
+        merge_payout_identity(&mut doc, "operator@example.com").unwrap();
+
+        assert_eq!(doc["owned_identities"], before_owned);
+        assert_eq!(doc["public_identities"][1], before_other);
+        assert_eq!(
+            doc["public_identities"][0]["lightning_address"],
+            "operator@example.com"
+        );
+    }
+
+    #[test]
+    fn payout_merge_can_create_missing_owner() {
+        let mut doc = serde_json::json!({ "public_identities": [] });
+        merge_payout_identity(&mut doc, "operator@example.com").unwrap();
+        assert_eq!(doc["public_identities"][0]["name"], "owner");
+        assert_eq!(
+            doc["public_identities"][0]["lightning_address"],
+            "operator@example.com"
+        );
+    }
+
+    #[test]
+    fn payout_address_validation_rejects_typographical_failures() {
+        assert!(validate_payout_address("operator@example.com").is_ok());
+        for invalid in [
+            "",
+            "operator",
+            "@example.com",
+            "operator@",
+            "a@b@c",
+            "a b@example.com",
+        ] {
+            assert!(
+                validate_payout_address(invalid).is_err(),
+                "accepted {invalid:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn malformed_identity_data_is_never_replaced() {
+        let err = parse_identities("{ truncated").unwrap_err();
+        assert!(err
+            .to_string()
+            .contains("refusing to overwrite malformed identity data"));
+    }
 }
