@@ -257,6 +257,11 @@ impl RpcHandler {
             .and_then(|v| v.as_str())
             .ok_or_else(|| anyhow::anyhow!("Missing package id"))?;
         validate_app_id(package_id)?;
+        // Restart is stop + recreate, so on a disk that shrank below the cuprate
+        // minimum after install it resumes the doomed unprunable sync just like
+        // start would — same gate, same "fail before clearing user-stopped /
+        // flipping state" contract (see handle_package_start).
+        super::dependencies::check_cuprate_disk_compatibility(package_id).await?;
 
         let single_orchestrator_app =
             self.orchestrator.is_some() && uses_single_orchestrator_app(package_id);
