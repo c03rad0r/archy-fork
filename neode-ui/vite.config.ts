@@ -173,6 +173,11 @@ export default defineConfig({
         changeOrigin: true,
         secure: false,
       },
+      '/app/cuprate-ui': {
+        target: process.env.BACKEND_URL || 'http://localhost:5959',
+        changeOrigin: true,
+        secure: false,
+      },
       // Demo mock app UIs (electrumx, lnd, fedimint) + generic notice page.
       '/app/electrumx': { target: process.env.BACKEND_URL || 'http://localhost:5959', changeOrigin: true, secure: false },
       '/app/electrs': { target: process.env.BACKEND_URL || 'http://localhost:5959', changeOrigin: true, secure: false },

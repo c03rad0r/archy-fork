@@ -34,6 +34,9 @@ export const APP_PORTS: Record<string, number> = {
   'bitcoin-knots': 8334,
   'bitcoin-core':  8334,
   'bitcoin-ui':    8334,
+  'cuprate':       18091,
+  'cuprate-ui':    18091,
+  'archy-cuprate-ui': 18091,
   'electrumx':     50002,
   'electrs':       50002,
   'archy-electrs-ui': 50002,
@@ -151,6 +154,15 @@ export function resolveAppUrl(id: string, routeQueryPath?: string, runtimeUrl?: 
   if (id === 'bitcoin-knots' || id === 'bitcoin-core' || id === 'bitcoin-ui') {
     if (import.meta.env.DEV) return '/app/bitcoin-ui/'
     return appOrigin(8334, id)
+  }
+
+  // Cuprate UI is the same companion shape on :18091. The cuprate app itself
+  // publishes only the restricted RPC (18090) — a raw JSON endpoint, not a
+  // page — so cuprate launches must land on the companion, never on the
+  // runtimeUrl a running cuprate reports.
+  if (id === 'cuprate' || id === 'cuprate-ui' || id === 'archy-cuprate-ui') {
+    if (import.meta.env.DEV) return '/app/cuprate-ui/'
+    return appOrigin(18091, id)
   }
 
   if (runtimeUrl && id !== 'netbird') {
