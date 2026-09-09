@@ -249,7 +249,14 @@
 
         function render(info, heightFallback) {
             const height = info.height ?? heightFallback ?? 0;
-            const target = info.target_height ?? info.target ?? height;
+            // Monero's get_info returns target_height == 0 when the node is
+            // FULLY SYNCED — the field is the height being caught up to, not
+            // the chain tip, so `??` cannot substitute for the 0 case (a
+            // synced node would sit forever at "Syncing — 0.00%"). Treat
+            // 0/absent as "target is our own height" — the same sentinel
+            // core/archipelago/src/electrs_status.rs branches on.
+            const rawTarget = info.target_height ?? info.target ?? 0;
+            const target = rawTarget > 0 ? rawTarget : height;
             document.getElementById('height').textContent = tabular(height);
             document.getElementById('targetOf').textContent = `of ${tabular(target)}`;
 
