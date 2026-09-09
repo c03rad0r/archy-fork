@@ -36,11 +36,19 @@ app:
     data_uid: "1000:1000"
 
   dependencies:
-    # Monero mainnet is ~250GiB unpruned as of 2026 and growing a few GB a
-    # month; cuprated's pruning support is not confirmed stable yet (the
-    # `pruning` crate exists in the workspace but nothing in this config
-    # surface toggles it), so this sizes for a full unpruned chain plus
-    # headroom rather than assuming pruning is available.
+    # Monero mainnet is ~250GiB unpruned as of 2026 and growing ~60GiB/year.
+    # Verified against upstream main (binaries/cuprated/src/config.rs, 2026-09):
+    # cuprated has NO on-disk pruning setting of any kind — the `pruning`
+    # crate in its workspace is Monero's p2p *protocol* pruning, not a
+    # smaller chain — so unlike bitcoin-knots this app CANNOT self-prune
+    # when disk is scarce (see the DISK_GB branch in
+    # apps/bitcoin-knots/manifest.yml). Left running on a too-small disk it
+    # syncs until the filesystem fills and takes Archipelago down. The
+    # disk-scarce equivalent is enforced in Rust instead: install/start
+    # refuse, and boot reconcile skips, on any node under
+    # CUPRATE_MIN_DISK_GB (450GB — chain + headroom; refuses the 250GB VPS
+    # class, allows 500GB-class disks). If upstream ever ships a prune flag,
+    # replace that gate with the bitcoin-style entrypoint branch.
     - storage: 300Gi
 
   resources:

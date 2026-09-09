@@ -3,10 +3,10 @@ use super::config::{
     is_readonly_compatible, is_valid_docker_image,
 };
 use super::dependencies::{
-    check_bitcoin_pruning_compatibility, configure_fedimint_lnd, detect_existing_containers,
-    detect_running_deps, detect_running_deps_from_package_data, log_optional_dep_info,
-    needs_archy_net, wait_for_install_deps, DepProbe, RunningDeps, DEP_WAIT_INTERVAL,
-    DEP_WAIT_MAX_ATTEMPTS,
+    check_bitcoin_pruning_compatibility, check_cuprate_disk_compatibility, configure_fedimint_lnd,
+    detect_existing_containers, detect_running_deps, detect_running_deps_from_package_data,
+    log_optional_dep_info, needs_archy_net, wait_for_install_deps, DepProbe, RunningDeps,
+    DEP_WAIT_INTERVAL, DEP_WAIT_MAX_ATTEMPTS,
 };
 use super::progress::parse_pull_progress;
 use super::validation::validate_app_id;
@@ -374,6 +374,7 @@ impl RpcHandler {
         // failing instantly.
         let deps = self.gate_install_deps(package_id).await?;
         check_bitcoin_pruning_compatibility(package_id).await?;
+        check_cuprate_disk_compatibility(package_id).await?;
         log_optional_dep_info(package_id, &deps);
         if matches!(package_id, "bitcoin" | "bitcoin-core" | "bitcoin-knots") {
             // Materialise the RPC password file before any install path

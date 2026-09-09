@@ -55,6 +55,7 @@ impl RpcHandler {
             .to_string();
         super::validation::validate_app_id(&package_id)?;
         super::dependencies::check_bitcoin_pruning_compatibility(&package_id).await?;
+        super::dependencies::check_cuprate_disk_compatibility(&package_id).await?;
 
         // Reject if already in a transitional lifecycle (prevents double-click
         // queuing two installs on the same package).

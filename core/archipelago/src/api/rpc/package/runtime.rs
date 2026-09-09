@@ -60,6 +60,12 @@ impl RpcHandler {
             .and_then(|v| v.as_str())
             .ok_or_else(|| anyhow::anyhow!("Missing package id"))?;
         validate_app_id(package_id)?;
+        // A cuprate node that starts on a too-small disk fills it and takes
+        // Archipelago down with it (no upstream pruning — see
+        // dependencies::check_cuprate_disk_compatibility). Fail the start
+        // before clearing user-stopped or flipping state, so the app stays
+        // cleanly stopped and the error carries the actionable message.
+        super::dependencies::check_cuprate_disk_compatibility(package_id).await?;
 
         let to_start = if self.orchestrator.is_some() && uses_single_orchestrator_app(package_id) {
             vec![orchestrator_app_id(package_id).to_string()]
