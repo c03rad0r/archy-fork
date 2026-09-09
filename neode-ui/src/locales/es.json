@@ -757,7 +757,7 @@
     "transactionId": "ID de transacci\u00f3n",
     "pasteEcashToken": "Pegar token Ecash",
     "lnAddressTitle": "O comparte tu direcci\u00f3n Lightning de Minibits",
-    "lnAddressHint": "Cualquier persona puede pagarte sats con cualquier billetera Lightning enviando a esta direcci\u00f3n \u2014 los sats llegan como ecash. Mant\u00e9n esta pantalla abierta para recibirlos.",
+    "lnAddressHint": "Cualquier persona puede pagarte sats con cualquier billetera Lightning enviando a esta direcci\u00f3n \u2014 los sats llegan como ecash. Mant\u00e9n esta pantalla abierta para recibirlos. Minibits es un servicio beta de terceros; mant\u00e9n saldos peque\u00f1os.",
     "lnAddressLabel": "Su direcci\u00f3n {'@'}minibits.cash:",
     "lnAddressLoading": "Configurando su direcci\u00f3n Lightning\u2026",
     "lnAddressUnavailable": "Direcci\u00f3n Lightning no disponible \u2014 a\u00fan puede pegar un token abajo.",

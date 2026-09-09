@@ -242,13 +242,17 @@ const lnClaimedSats = ref(0)
 // operator should see it rather than have it be a silent, unbounded wait.
 const lnPendingClaims = ref(0)
 let lnClaimTimer: ReturnType<typeof setInterval> | null = null
+let lnClaimInFlight = false
 
 async function loadLnAddress() {
   if (lnAddress.value || lnAddressLoading.value) return
   lnAddressLoading.value = true
   lnAddressError.value = false
   try {
-    const res = await rpcClient.call<{ address?: string }>({ method: 'wallet.ecash-lnaddress' })
+    const res = await rpcClient.call<{ address?: string }>({
+      method: 'wallet.ecash-lnaddress',
+      timeout: 60_000,
+    })
     lnAddress.value = res?.address || ''
     if (lnAddress.value) {
       await nextTick()
@@ -277,14 +281,23 @@ function startLnClaimPoll() {
 }
 
 async function pollLnClaims() {
+  if (lnClaimInFlight) return
   if (!props.show || !lnAddress.value) {
     stopLnClaimPoll()
     return
   }
+  lnClaimInFlight = true
   try {
     const res = await rpcClient.call<{ received_sats?: number; failed_count?: number }>({
       method: 'wallet.ecash-lnaddress-claim',
+      // Relay collection alone has a ten-second window and redemption may
+      // then contact the mint. Keep the browser request alive long enough for
+      // the backend's bounded work instead of timing out and queuing another.
+      timeout: 90_000,
     })
+    // The user may have closed the modal while the relay fetch was in flight.
+    // Do not resurrect its status or emit a stale received event afterward.
+    if (!props.show || !lnAddress.value) return
     if (res?.received_sats && res.received_sats > 0) {
       lnClaimedSats.value += res.received_sats
       emit('received')
@@ -292,6 +305,8 @@ async function pollLnClaims() {
     lnPendingClaims.value = res?.failed_count || 0
   } catch {
     // Transient poll failure (offline, mint busy) — keep polling.
+  } finally {
+    lnClaimInFlight = false
   }
 }
 

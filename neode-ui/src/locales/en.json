@@ -776,7 +776,7 @@
     "transactionId": "Transaction ID",
     "pasteEcashToken": "Paste ecash token",
     "lnAddressTitle": "Or share your Minibits Lightning address",
-    "lnAddressHint": "Anyone can pay you sats with any Lightning wallet by sending to this address — the sats arrive as ecash. Keep this screen open to receive them.",
+    "lnAddressHint": "Anyone can pay you sats with any Lightning wallet by sending to this address — the sats arrive as ecash. Keep this screen open to receive them. Minibits is a third-party beta service; keep balances small.",
     "lnAddressLabel": "Your {'@'}minibits.cash address:",
     "lnAddressLoading": "Setting up your Lightning address…",
     "lnAddressUnavailable": "Lightning address unavailable — you can still paste a token below.",

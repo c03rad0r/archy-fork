@@ -67,6 +67,13 @@ use std::path::Path;
 use tokio::fs;
 use tracing::{debug, info, warn};
 
+// Address registration, claim fetching and the state/wallet updates they
+// trigger are one transaction from this module's point of view. Multiple
+// dashboard tabs can call the RPC concurrently, while a relay fetch normally
+// lasts longer than the UI's poll interval; serialise them so two polls cannot
+// consume the same claim and race each other's state file writes.
+static MINIBITS_STATE_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
 /// Minibits profile/LNURL API. Confirmed live: `/v3/auth/challenge`,
 /// `/v3/profile`, `/v3/claim` (the older `/v2` host no longer serves profiles).
 const API_BASE: &str = "https://api.minibits.cash/v3";
@@ -108,10 +115,10 @@ const ADJECTIVES: &[&str] = &[
 ];
 const NOUNS: &[&str] = &[
     "harbor", "meadow", "canyon", "summit", "river", "forest", "island", "comet", "nebula",
-    "orbit", "quartz", "maple", "willow", "falcon", "otter", "badger", "salmon", "crane",
-    "ridge", "creek", "glade", "grove", "prairie", "delta", "cobalt", "onyx", "topaz", "ember",
-    "anchor", "lantern", "beacon", "cabin", "drift", "signal", "thunder", "zephyr", "marble",
-    "pebble", "sequoia", "tundra",
+    "orbit", "quartz", "maple", "willow", "falcon", "otter", "badger", "salmon", "crane", "ridge",
+    "creek", "glade", "grove", "prairie", "delta", "cobalt", "onyx", "topaz", "ember", "anchor",
+    "lantern", "beacon", "cabin", "drift", "signal", "thunder", "zephyr", "marble", "pebble",
+    "sequoia", "tundra",
 ];
 
 /// Persistent state for the node's Minibits address.
@@ -145,7 +152,7 @@ pub struct MinibitsState {
     /// process crash mid-loop) then retries next poll instead of losing the
     /// coins outright.
     #[serde(default)]
-    pub pending_claims: Vec<String>,
+    pub pending_claims: Vec<PendingClaim>,
     /// Unix timestamp of the newest Nostr DM we've already pulled into
     /// `pending_claims` (see `fetch_relay_dms`). Nostr events never expire
     /// from relays, so without this watermark every poll would re-fetch and
@@ -153,6 +160,41 @@ pub struct MinibitsState {
     /// already-spent token) but wasteful and noisy.
     #[serde(default)]
     pub last_dm_seen_at: u64,
+    /// Event ids already queued from the relay. `created_at` has only
+    /// one-second resolution, so a strict `since = last + 1` watermark can
+    /// permanently miss a second payment published later in the same second.
+    /// We query the boundary second inclusively and deduplicate by event id.
+    #[serde(default)]
+    pub seen_dm_ids: Vec<String>,
+}
+
+/// A retryable encrypted token and the server key that encrypted it. The
+/// legacy string form is accepted for state written by the original PR; new
+/// entries retain their author so a server-key rotation does not make an older
+/// pending claim undecryptable.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum PendingClaim {
+    Attributed {
+        content: String,
+        sender_pubkey: String,
+    },
+    Legacy(String),
+}
+
+impl PendingClaim {
+    fn content(&self) -> &str {
+        match self {
+            Self::Attributed { content, .. } | Self::Legacy(content) => content,
+        }
+    }
+
+    fn sender_pubkey<'a>(&'a self, fallback: &'a str) -> &'a str {
+        match self {
+            Self::Attributed { sender_pubkey, .. } => sender_pubkey,
+            Self::Legacy(_) => fallback,
+        }
+    }
 }
 
 /// A fresh Nostr keypair + seedHash derived from the node's ecash phrase.
@@ -171,6 +213,11 @@ fn derive_identity(phrase: &str, seed: &[u8; 64]) -> Result<MinibitsIdentity> {
     Ok(MinibitsIdentity { keys, seed_hash })
 }
 
+fn state_matches_identity(state: &MinibitsState, identity: &MinibitsIdentity) -> bool {
+    state.seed_hash == identity.seed_hash
+        && state.nostr_pubkey == identity.keys.public_key().to_hex()
+}
+
 /// A Minibits profile record — the fields we read off every profile response.
 #[derive(Debug, Deserialize)]
 struct ProfileRecord {
@@ -180,8 +227,6 @@ struct ProfileRecord {
     nip05: String,
     #[serde(default)]
     lud16: Option<String>,
-    #[serde(default)]
-    pubkey: String,
 }
 
 /// Turn a non-2xx Minibits response into a readable error, surfacing the
@@ -194,14 +239,40 @@ fn minibits_error(status: reqwest::StatusCode, body: &str) -> anyhow::Error {
             return anyhow!("Minibits API error {status}: {name} {msg}");
         }
     }
-    anyhow!(
-        "Minibits API error {status}: {}",
-        &body[..body.len().min(180)]
-    )
+    let excerpt: String = body.chars().take(180).collect();
+    anyhow!("Minibits API error {status}: {excerpt}")
 }
 
 fn state_path(data_dir: &Path) -> std::path::PathBuf {
     data_dir.join(STATE_FILE)
+}
+
+async fn archive_state(data_dir: &Path, reason: &str) -> Result<Option<std::path::PathBuf>> {
+    let path = state_path(data_dir);
+    if !path.exists() {
+        return Ok(None);
+    }
+    let stamp = chrono::Utc::now().timestamp_millis();
+    let archived = path.with_file_name(format!("minibits.recovery-{stamp}.json"));
+    fs::rename(&path, &archived).await.with_context(|| {
+        format!(
+            "Failed to preserve {} as {}",
+            path.display(),
+            archived.display()
+        )
+    })?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(&archived, std::fs::Permissions::from_mode(0o600))
+            .await
+            .with_context(|| format!("Failed to protect {}", archived.display()))?;
+    }
+    warn!(
+        "Minibits: preserved prior state at {} before recovery ({reason})",
+        archived.display()
+    );
+    Ok(Some(archived))
 }
 
 async fn load_state(data_dir: &Path) -> Result<Option<MinibitsState>> {
@@ -224,6 +295,7 @@ async fn load_state(data_dir: &Path) -> Result<Option<MinibitsState>> {
                     "Minibits: {} is corrupt/unreadable ({e}); treating as no profile yet and re-registering",
                     path.display()
                 );
+                archive_state(data_dir, "state file was not valid JSON").await?;
                 Ok(None)
             }
         },
@@ -241,11 +313,34 @@ async fn save_state(data_dir: &Path, state: &MinibitsState) -> Result<()> {
             .await
             .context("Failed to create the wallet directory")?;
     }
-    let content = serde_json::to_string_pretty(state)
-        .context("Failed to serialize the Minibits profile")?;
-    fs::write(&path, content)
+    let content =
+        serde_json::to_string_pretty(state).context("Failed to serialize the Minibits profile")?;
+
+    // This file contains both a bearer token and already-consumed claims.
+    // Truncating it in place can lose retryable value on a crash or full disk.
+    // Write and fsync a 0600 sibling, then atomically rename it over the state.
+    let tmp = path.with_extension("json.tmp");
+    let mut options = fs::OpenOptions::new();
+    options.create(true).truncate(true).write(true);
+    #[cfg(unix)]
+    {
+        options.mode(0o600);
+    }
+    let mut file = options
+        .open(&tmp)
         .await
-        .with_context(|| format!("Failed to write {}", path.display()))?;
+        .with_context(|| format!("Failed to create {}", tmp.display()))?;
+    use tokio::io::AsyncWriteExt;
+    file.write_all(content.as_bytes())
+        .await
+        .with_context(|| format!("Failed to write {}", tmp.display()))?;
+    file.sync_all()
+        .await
+        .with_context(|| format!("Failed to flush {}", tmp.display()))?;
+    drop(file);
+    fs::rename(&tmp, &path)
+        .await
+        .with_context(|| format!("Failed to replace {}", path.display()))?;
 
     #[cfg(unix)]
     {
@@ -271,10 +366,7 @@ fn jwt_expiry(token: &str) -> Option<i64> {
 
 /// Run the NIP-42 challenge/verify dance and return the access token plus its
 /// expiry. Idempotent and cheap enough to redo whenever the cached token lapses.
-async fn authenticate(
-    client: &reqwest::Client,
-    keys: &nostr_sdk::Keys,
-) -> Result<(String, i64)> {
+async fn authenticate(client: &reqwest::Client, keys: &nostr_sdk::Keys) -> Result<(String, i64)> {
     let ch: serde_json::Value = client
         .post(format!("{API_BASE}/auth/challenge"))
         .json(&serde_json::json!({ "pubkey": keys.public_key().to_hex() }))
@@ -409,10 +501,7 @@ async fn register_profile(
 
 /// Fetch the LUD-16 metadata for our own address and read the service's
 /// `nostrPubkey` — the key that NIP-04-encrypts claimed tokens.
-async fn discover_server_nostr_pubkey(
-    client: &reqwest::Client,
-    lud16: &str,
-) -> Result<String> {
+async fn discover_server_nostr_pubkey(client: &reqwest::Client, lud16: &str) -> Result<String> {
     let (name, domain) = lud16
         .split_once('@')
         .ok_or_else(|| anyhow!("Malformed Minibits address '{lud16}'"))?;
@@ -448,6 +537,7 @@ async fn ecash_phrase(data_dir: &Path) -> Result<(String, [u8; 64])> {
 /// and refresh the access token as needed. Registration is idempotent per pubkey,
 /// so a node that restores the same ecash phrase recovers the same address.
 pub async fn lnaddress(data_dir: &Path) -> Result<serde_json::Value> {
+    let _state_guard = MINIBITS_STATE_LOCK.lock().await;
     let network = ecash::load_network(data_dir).await;
     if network == EcashNetwork::Testnet {
         return Err(anyhow!(
@@ -464,27 +554,15 @@ pub async fn lnaddress(data_dir: &Path) -> Result<serde_json::Value> {
     let identity = derive_identity(&phrase, &seed)?;
 
     let mut state = match load_state(data_dir).await? {
-        Some(st) => st,
+        Some(st) if state_matches_identity(&st, &identity) => st,
+        Some(_) => {
+            warn!("Minibits: cached profile belongs to a different ecash seed; registering the restored wallet identity");
+            archive_state(data_dir, "profile belonged to a different ecash seed").await?;
+            register_new_state(&client, &identity).await?
+        }
         None => {
             info!("Minibits: no profile yet, registering a new @minibits.cash address");
-            let (access, expires) = authenticate(&client, &identity.keys).await?;
-            let rec = register_profile(&client, &access, &identity.seed_hash).await?;
-            MinibitsState {
-                wallet_id: rec.wallet_id.clone(),
-                lud16: rec
-                    .lud16
-                    .clone()
-                    .unwrap_or_else(|| format!("{}@minibits.cash", rec.wallet_id)),
-                nip05: rec.nip05.clone(),
-                nostr_pubkey: rec.pubkey.clone(),
-                seed_hash: identity.seed_hash.clone(),
-                access_token: access,
-                access_expires: expires,
-                server_nostr_pubkey: String::new(),
-                created_at: chrono::Utc::now().to_rfc3339(),
-                pending_claims: Vec::new(),
-                last_dm_seen_at: 0,
-            }
+            register_new_state(&client, &identity).await?
         }
     };
 
@@ -498,6 +576,42 @@ pub async fn lnaddress(data_dir: &Path) -> Result<serde_json::Value> {
         "nostr_pubkey": state.nostr_pubkey,
         "npub": identity.keys.public_key().to_bech32().unwrap_or_default(),
     }))
+}
+
+async fn register_new_state(
+    client: &reqwest::Client,
+    identity: &MinibitsIdentity,
+) -> Result<MinibitsState> {
+    let (access, expires) = authenticate(client, &identity.keys).await?;
+    let rec = register_profile(client, &access, &identity.seed_hash).await?;
+    let lud16 = rec
+        .lud16
+        .clone()
+        .unwrap_or_else(|| format!("{}@minibits.cash", rec.wallet_id));
+    let (name, domain) = lud16
+        .split_once('@')
+        .ok_or_else(|| anyhow!("Minibits returned malformed Lightning address '{lud16}'"))?;
+    if name.is_empty() || !domain.eq_ignore_ascii_case("minibits.cash") {
+        return Err(anyhow!(
+            "Minibits returned an unexpected Lightning-address domain '{domain}'"
+        ));
+    }
+    Ok(MinibitsState {
+        wallet_id: rec.wallet_id,
+        lud16,
+        nip05: rec.nip05,
+        // Bind local state to the key we actually derived and authenticated,
+        // rather than trusting an optional echo in the remote response.
+        nostr_pubkey: identity.keys.public_key().to_hex(),
+        seed_hash: identity.seed_hash.clone(),
+        access_token: access,
+        access_expires: expires,
+        server_nostr_pubkey: String::new(),
+        created_at: chrono::Utc::now().to_rfc3339(),
+        pending_claims: Vec::new(),
+        last_dm_seen_at: 0,
+        seen_dm_ids: Vec::new(),
+    })
 }
 
 /// Outcome of a claim poll.
@@ -541,8 +655,9 @@ const NO_CLAIMS: ClaimOutcome = ClaimOutcome {
 /// earlier fetches worth retrying.
 async fn fetch_relay_dms(
     our_pubkey: nostr_sdk::PublicKey,
+    server_pubkey: nostr_sdk::PublicKey,
     since: u64,
-) -> Vec<(String, u64, String)> {
+) -> Vec<(String, u64, String, String)> {
     let client = Client::default();
     for url in CLAIM_RELAY_URLS {
         if let Err(e) = client.add_relay(*url).await {
@@ -554,14 +669,14 @@ async fn fetch_relay_dms(
     // fetch's own timeout starts consuming that time.
     tokio::time::sleep(std::time::Duration::from_millis(800)).await;
 
-    // `since` is inclusive in NIP-01, and `since` here is the `created_at` of
-    // the newest event we've already queued — so filter strictly after it,
-    // or the same event gets re-fetched (and its already-spent token
-    // re-attempted) every poll forever.
+    // Nostr timestamps have one-second resolution. Query the boundary second
+    // inclusively: a later-published payment may legitimately share that
+    // timestamp. `seen_dm_ids` performs the exact deduplication locally.
     let filter = Filter::new()
+        .author(server_pubkey)
         .pubkey(our_pubkey)
         .kind(Kind::from(4u16))
-        .since(Timestamp::from(since.saturating_add(1)))
+        .since(Timestamp::from(since))
         .limit(200);
 
     let result = match client
@@ -569,11 +684,18 @@ async fn fetch_relay_dms(
         .await
     {
         Ok(events) => {
-            let mut out: Vec<(String, u64, String)> = events
+            let mut out: Vec<(String, u64, String, String)> = events
                 .into_iter()
-                .map(|e| (e.content, e.created_at.as_u64(), e.pubkey.to_hex()))
+                .map(|e| {
+                    (
+                        e.content,
+                        e.created_at.as_secs(),
+                        e.pubkey.to_hex(),
+                        e.id.to_hex(),
+                    )
+                })
                 .collect();
-            out.sort_by_key(|(_, created_at, _)| *created_at);
+            out.sort_by_key(|(_, created_at, _, _)| *created_at);
             out
         }
         Err(e) => {
@@ -584,6 +706,31 @@ async fn fetch_relay_dms(
 
     client.shutdown().await;
     result
+}
+
+fn queue_relay_dm(
+    state: &mut MinibitsState,
+    content: String,
+    created_at: u64,
+    event_id: String,
+    sender_pubkey: String,
+) -> bool {
+    if state.seen_dm_ids.iter().any(|seen| seen == &event_id) {
+        return false;
+    }
+    state.pending_claims.push(PendingClaim::Attributed {
+        content,
+        sender_pubkey,
+    });
+    state.last_dm_seen_at = state.last_dm_seen_at.max(created_at);
+    state.seen_dm_ids.push(event_id);
+    // This is only a boundary-second dedupe window, not transaction history.
+    // Keep it bounded while retaining ample overlap for delayed relay delivery.
+    if state.seen_dm_ids.len() > 512 {
+        let excess = state.seen_dm_ids.len() - 512;
+        state.seen_dm_ids.drain(..excess);
+    }
+    true
 }
 
 async fn ensure_mint_accepted(data_dir: &Path, mint_url: &str) -> Result<()> {
@@ -609,6 +756,7 @@ async fn ensure_mint_accepted(data_dir: &Path, mint_url: &str) -> Result<()> {
 /// of being dropped, and `failed_count` tells the caller when that happened
 /// so it isn't purely a log-line event.
 pub async fn claim_and_redeem(data_dir: &Path) -> Result<ClaimOutcome> {
+    let _state_guard = MINIBITS_STATE_LOCK.lock().await;
     let network = ecash::load_network(data_dir).await;
     if network == EcashNetwork::Testnet {
         return Ok(NO_CLAIMS);
@@ -624,22 +772,36 @@ pub async fn claim_and_redeem(data_dir: &Path) -> Result<ClaimOutcome> {
     let identity = derive_identity(&phrase, &seed)?;
 
     let mut state = match load_state(data_dir).await? {
-        Some(st) => st,
+        Some(st) if state_matches_identity(&st, &identity) => st,
+        Some(_) => {
+            return Err(anyhow!(
+                "The cached Minibits profile belongs to a different ecash seed; open Receive → Ecash to register the restored wallet first"
+            ));
+        }
         // Nothing is addressable until a profile exists; registering lazily here
         // means a payment could not have arrived, so claiming is a no-op.
         None => return Ok(NO_CLAIMS),
     };
     ensure_token(&client, &mut state, &identity.keys).await?;
 
-    // Discover (and cache) the service key that wraps claimed tokens.
-    if state.server_nostr_pubkey.is_empty() {
-        match discover_server_nostr_pubkey(&client, &state.lud16).await {
-            Ok(pk) => state.server_nostr_pubkey = pk,
-            Err(e) => {
-                warn!("Minibits: could not read service Nostr pubkey ({e}); using fallback");
-                state.server_nostr_pubkey = FALLBACK_SERVER_NOSTR_PUBKEY.to_string();
-            }
+    // Refresh the service key that authors and encrypts claim DMs. Keeping the
+    // first discovered key forever would make a legitimate Minibits rotation
+    // invisible: the relay filter would exclude every event from the new key.
+    // A metadata outage retains the last known valid key; only a fresh profile
+    // with no cached key needs the compiled fallback.
+    match discover_server_nostr_pubkey(&client, &state.lud16).await {
+        Ok(candidate) if nostr_sdk::PublicKey::from_hex(&candidate).is_ok() => {
+            state.server_nostr_pubkey = candidate;
         }
+        Ok(candidate) => {
+            warn!("Minibits: LUD-16 metadata returned invalid Nostr pubkey {candidate:?}; retaining the last valid key");
+        }
+        Err(e) => {
+            warn!("Minibits: could not refresh service Nostr pubkey ({e}); retaining the last valid key");
+        }
+    }
+    if state.server_nostr_pubkey.is_empty() {
+        state.server_nostr_pubkey = FALLBACK_SERVER_NOSTR_PUBKEY.to_string();
     }
 
     let server_pk = nostr_sdk::PublicKey::from_hex(&state.server_nostr_pubkey)
@@ -663,7 +825,10 @@ pub async fn claim_and_redeem(data_dir: &Path) -> Result<ClaimOutcome> {
                     Ok(claims) => {
                         for claim in &claims {
                             match claim.get("token").and_then(|t| t.as_str()) {
-                                Some(t) => state.pending_claims.push(t.to_string()),
+                                Some(t) => state.pending_claims.push(PendingClaim::Attributed {
+                                    content: t.to_string(),
+                                    sender_pubkey: state.server_nostr_pubkey.clone(),
+                                }),
                                 None => warn!("Minibits claim had no 'token' field; skipping"),
                             }
                         }
@@ -674,21 +839,22 @@ pub async fn claim_and_redeem(data_dir: &Path) -> Result<ClaimOutcome> {
                 warn!("{}", minibits_error(status, &body));
             }
         }
-        Err(e) => warn!("Minibits claim request failed ({e}); retrying only previously-pending claims"),
+        Err(e) => {
+            warn!("Minibits claim request failed ({e}); retrying only previously-pending claims")
+        }
     }
 
     // The actual delivery channel: real Lightning payments arrive as a
     // NIP-04 DM on relays, not via `/claim` above. `since` is our own
     // watermark (Nostr events never expire off a relay, so without it we'd
     // re-fetch and re-attempt every claim ever sent on every poll).
-    let dms = fetch_relay_dms(identity.keys.public_key(), state.last_dm_seen_at).await;
-    for (content, created_at, author) in dms {
+    let dms = fetch_relay_dms(identity.keys.public_key(), server_pk, state.last_dm_seen_at).await;
+    for (content, created_at, author, event_id) in dms {
         if author != state.server_nostr_pubkey {
             warn!("Minibits: ignoring claim DM from unexpected pubkey {author}");
             continue;
         }
-        state.pending_claims.push(content);
-        state.last_dm_seen_at = state.last_dm_seen_at.max(created_at);
+        queue_relay_dm(&mut state, content, created_at, event_id, author);
     }
 
     // Persist immediately: everything in `pending_claims` right now has
@@ -705,12 +871,27 @@ pub async fn claim_and_redeem(data_dir: &Path) -> Result<ClaimOutcome> {
     let mut redeemed = 0usize;
     let mut sats = 0u64;
     let mut still_pending = Vec::new();
-    for enc in &to_process {
-        let decoded = match nip04::decrypt(identity.keys.secret_key(), &server_pk, enc) {
+    for claim in &to_process {
+        let claim_server_pk =
+            match nostr_sdk::PublicKey::from_hex(claim.sender_pubkey(&state.server_nostr_pubkey)) {
+                Ok(pubkey) => pubkey,
+                Err(e) => {
+                    warn!(
+                        "Minibits claim has an invalid sender pubkey ({e}); will retry next poll"
+                    );
+                    still_pending.push(claim.clone());
+                    continue;
+                }
+            };
+        let decoded = match nip04::decrypt(
+            identity.keys.secret_key(),
+            &claim_server_pk,
+            claim.content(),
+        ) {
             Ok(d) => d,
             Err(e) => {
                 warn!("Minibits claim could not be decrypted ({e}); will retry next poll");
-                still_pending.push(enc.clone());
+                still_pending.push(claim.clone());
                 continue;
             }
         };
@@ -722,7 +903,7 @@ pub async fn claim_and_redeem(data_dir: &Path) -> Result<ClaimOutcome> {
             }
             Err(e) => {
                 warn!("Minibits claim decrypted but failed to redeem ({e}); will retry next poll");
-                still_pending.push(enc.clone());
+                still_pending.push(claim.clone());
             }
         }
     }
@@ -731,7 +912,11 @@ pub async fn claim_and_redeem(data_dir: &Path) -> Result<ClaimOutcome> {
     state.pending_claims = still_pending;
     save_state(data_dir, &state).await?;
 
-    Ok(ClaimOutcome { claimed_count: redeemed, received_sats: sats, failed_count })
+    Ok(ClaimOutcome {
+        claimed_count: redeemed,
+        received_sats: sats,
+        failed_count,
+    })
 }
 
 #[cfg(test)]
@@ -744,7 +929,8 @@ mod tests {
         // empty BIP-39 passphrase (nostr-tools accountFromSeedWords). Lock to the
         // crate's own NIP-06 secret-key vector so a nostr-sdk bump cannot silently
         // move our derivation and orphan the registered address.
-        let phrase = "leader monkey parrot ring guide accident before fence cannon height naive bean";
+        let phrase =
+            "leader monkey parrot ring guide accident before fence cannon height naive bean";
         let keys = nostr_sdk::Keys::from_mnemonic(phrase, None::<&str>).unwrap();
         assert_eq!(
             hex::encode(keys.secret_key().as_secret_bytes()),
@@ -756,7 +942,8 @@ mod tests {
     fn seed_hash_is_sha256_of_the_bip39_seed() {
         // Minibits hashes the *seed*, not the phrase — a regression here would
         // make the node register a profile that the Minibits app cannot recover.
-        let phrase = "leader monkey parrot ring guide accident before fence cannon height naive bean";
+        let phrase =
+            "leader monkey parrot ring guide accident before fence cannon height naive bean";
         let m: bip39::Mnemonic = phrase.parse().unwrap();
         let seed = m.to_seed("");
         let want = hex::encode(Sha256::digest(seed));
@@ -765,13 +952,36 @@ mod tests {
     }
 
     #[test]
+    fn cached_profile_is_bound_to_the_current_ecash_identity() {
+        let phrase =
+            "leader monkey parrot ring guide accident before fence cannon height naive bean";
+        let mnemonic: bip39::Mnemonic = phrase.parse().unwrap();
+        let seed = mnemonic.to_seed("");
+        let identity = derive_identity(phrase, &seed).unwrap();
+        let mut state = MinibitsState {
+            seed_hash: identity.seed_hash.clone(),
+            nostr_pubkey: identity.keys.public_key().to_hex(),
+            ..Default::default()
+        };
+        assert!(state_matches_identity(&state, &identity));
+        state.seed_hash = "restored-different-seed".into();
+        assert!(!state_matches_identity(&state, &identity));
+    }
+
+    #[test]
     fn generated_names_are_readable_and_bounded() {
         for _ in 0..200 {
             let n = generate_wallet_id();
             assert!(!n.is_empty());
-            assert!(n.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit()));
+            assert!(n
+                .chars()
+                .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit()));
             // ends in at least one digit (the 1..=999 suffix)
-            assert!(n.chars().last().map(|c| c.is_ascii_digit()).unwrap_or(false));
+            assert!(n
+                .chars()
+                .last()
+                .map(|c| c.is_ascii_digit())
+                .unwrap_or(false));
         }
     }
 
@@ -789,6 +999,13 @@ mod tests {
             access_expires: now + 3600,
             ..Default::default()
         }));
+    }
+
+    #[test]
+    fn api_error_excerpt_is_utf8_safe() {
+        let body = "é".repeat(181);
+        let error = minibits_error(reqwest::StatusCode::BAD_GATEWAY, &body);
+        assert!(error.to_string().contains("Minibits API error 502"));
     }
 
     #[tokio::test]
@@ -813,7 +1030,10 @@ mod tests {
 
         let accepted = ecash::load_accepted_mints(tmp.path()).await.unwrap();
         assert!(accepted.mints.iter().any(|m| m == mint));
-        assert!(accepted.mints.iter().any(|m| m == "https://mint.example.com"));
+        assert!(accepted
+            .mints
+            .iter()
+            .any(|m| m == "https://mint.example.com"));
     }
 
     #[tokio::test]
@@ -839,6 +1059,64 @@ mod tests {
             watermark = watermark.max(created_at);
         }
         assert_eq!(watermark, 110);
+    }
+
+    #[test]
+    fn relay_dedupe_keeps_distinct_payments_from_the_same_second() {
+        let mut state = MinibitsState::default();
+        assert!(queue_relay_dm(
+            &mut state,
+            "first".into(),
+            100,
+            "id-1".into(),
+            "server-1".into(),
+        ));
+        assert!(queue_relay_dm(
+            &mut state,
+            "second".into(),
+            100,
+            "id-2".into(),
+            "server-2".into(),
+        ));
+        assert!(!queue_relay_dm(
+            &mut state,
+            "duplicate".into(),
+            100,
+            "id-1".into(),
+            "server-1".into(),
+        ));
+        assert_eq!(state.pending_claims.len(), 2);
+        assert_eq!(state.pending_claims[0].content(), "first");
+        assert_eq!(
+            state.pending_claims[0].sender_pubkey("fallback"),
+            "server-1"
+        );
+        assert_eq!(state.pending_claims[1].content(), "second");
+        assert_eq!(
+            state.pending_claims[1].sender_pubkey("fallback"),
+            "server-2"
+        );
+        assert_eq!(state.last_dm_seen_at, 100);
+    }
+
+    #[test]
+    fn legacy_pending_claims_remain_readable() {
+        let state: MinibitsState = serde_json::from_value(serde_json::json!({
+            "wallet_id": "legacy-wallet",
+            "lud16": "legacy-wallet@minibits.cash",
+            "nip05": "legacy-wallet@minibits.cash",
+            "nostr_pubkey": "node-key",
+            "seed_hash": "seed-hash",
+            "pending_claims": ["legacy-encrypted-token"]
+        }))
+        .unwrap();
+
+        assert_eq!(state.pending_claims.len(), 1);
+        assert_eq!(state.pending_claims[0].content(), "legacy-encrypted-token");
+        assert_eq!(
+            state.pending_claims[0].sender_pubkey("cached-server-key"),
+            "cached-server-key"
+        );
     }
 
     #[tokio::test]
@@ -869,6 +1147,51 @@ mod tests {
 
         let st = load_state(tmp.path()).await.unwrap();
         assert!(st.is_none());
+        assert!(!path.exists());
+        let backups = std::fs::read_dir(path.parent().unwrap())
+            .unwrap()
+            .filter_map(|entry| entry.ok())
+            .filter(|entry| {
+                entry
+                    .file_name()
+                    .to_string_lossy()
+                    .starts_with("minibits.recovery-")
+            })
+            .count();
+        assert_eq!(backups, 1);
+    }
+
+    #[tokio::test]
+    async fn save_state_is_atomic_private_and_round_trips() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let state = MinibitsState {
+            wallet_id: "quietisland7".into(),
+            lud16: "quietisland7@minibits.cash".into(),
+            nostr_pubkey: "abc".into(),
+            seed_hash: "def".into(),
+            pending_claims: vec![PendingClaim::Attributed {
+                content: "encrypted-value".into(),
+                sender_pubkey: "server-key".into(),
+            }],
+            ..Default::default()
+        };
+        save_state(tmp.path(), &state).await.unwrap();
+        let loaded = load_state(tmp.path()).await.unwrap().unwrap();
+        assert_eq!(loaded.pending_claims, state.pending_claims);
+        assert!(!state_path(tmp.path()).with_extension("json.tmp").exists());
+
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            assert_eq!(
+                std::fs::metadata(state_path(tmp.path()))
+                    .unwrap()
+                    .permissions()
+                    .mode()
+                    & 0o777,
+                0o600,
+            );
+        }
     }
 
     /// Live end-to-end against the production Minibits API: register a throwaway
@@ -893,7 +1216,9 @@ mod tests {
         let again = lnaddress(&dir).await.unwrap();
         assert_eq!(again["address"].as_str().unwrap(), addr.as_str());
 
-        let out = claim_and_redeem(&dir).await.expect("live claim poll failed");
+        let out = claim_and_redeem(&dir)
+            .await
+            .expect("live claim poll failed");
         println!("claim poll: {out:?}");
         assert_eq!(out.claimed_count, 0);
 

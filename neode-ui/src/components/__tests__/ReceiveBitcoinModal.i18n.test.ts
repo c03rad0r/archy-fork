@@ -21,6 +21,10 @@ vi.mock('@/api/rpc-client', () => ({
   rpcClient: { call: vi.fn() },
 }))
 
+vi.mock('qrcode', () => ({
+  toCanvas: vi.fn().mockResolvedValue(undefined),
+}))
+
 vi.mock('@/composables/useLightningRequired', () => ({
   useLightningRequired: () => ({
     requireLightningReady: vi.fn().mockResolvedValue(true),

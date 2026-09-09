@@ -16,6 +16,10 @@ vi.mock('@/api/rpc-client', () => ({
   rpcClient: { call: vi.fn() },
 }))
 
+vi.mock('qrcode', () => ({
+  toCanvas: vi.fn().mockResolvedValue(undefined),
+}))
+
 vi.mock('@/composables/useLightningRequired', () => ({
   useLightningRequired: () => ({
     requireLightningReady: vi.fn().mockResolvedValue(true),
@@ -69,5 +73,39 @@ describe('ReceiveBitcoinModal — ecash tab click', () => {
     expect(wrapper.emitted('close')).toBeFalsy()
     expect(document.body.querySelector('[role="dialog"]')).toBeTruthy()
     wrapper.unmount()
+  })
+
+  it('never overlaps slow Lightning-address claim polls', async () => {
+    vi.useFakeTimers()
+    let finishClaim!: (value: unknown) => void
+    const slowClaim = new Promise((resolve) => { finishClaim = resolve })
+    vi.mocked(rpcClient.call).mockImplementation(async ({ method }: { method: string }) => {
+      if (method === 'wallet.ecash-lnaddress') {
+        return { address: 'someone@minibits.cash' } as never
+      }
+      if (method === 'wallet.ecash-lnaddress-claim') return slowClaim as never
+      return {} as never
+    })
+
+    const wrapper = mount(ReceiveBitcoinModal, {
+      props: { show: true },
+      attachTo: document.body,
+    })
+    const ecashTab = Array.from(document.body.querySelectorAll('button')).find((b) =>
+      b.textContent?.toLowerCase().includes('ecash'),
+    )
+    ecashTab!.dispatchEvent(new Event('click', { bubbles: true }))
+    await flushPromises()
+
+    await vi.advanceTimersByTimeAsync(24_000)
+    const claimCalls = vi.mocked(rpcClient.call).mock.calls.filter(
+      ([request]) => request.method === 'wallet.ecash-lnaddress-claim',
+    )
+    expect(claimCalls).toHaveLength(1)
+
+    finishClaim({ claimed_count: 0, received_sats: 0, failed_count: 0 })
+    await flushPromises()
+    wrapper.unmount()
+    vi.useRealTimers()
   })
 })
