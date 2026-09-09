@@ -262,7 +262,12 @@ ROOTFS_STAMP="$WORK_DIR/archipelago-rootfs.recipe.sha256"
 # were added to the Dockerfile below — the cache condition never looked at
 # the recipe. Hash the rootfs-defining region of this script; any edit to it
 # forces a rebuild. `--rebuild` still forces one unconditionally.
-RECIPE_HASH=$(sed -n '/^# STEP 1: Build complete root filesystem/,/^# STEP 2: Build minimal installer/p' "$0" | sha256sum | cut -d' ' -f1)
+RECIPE_HASH=$(
+    {
+        sed -n '/^# STEP 1: Build complete root filesystem/,/^# STEP 2: Build minimal installer/p' "$0"
+        cat "$SCRIPT_DIR/../configs/install-ngit.sh"
+    } | sha256sum | cut -d' ' -f1
+)
 
 if [ ! -f "$ROOTFS_TAR" ] || [ "${1:-}" == "--rebuild" ] || [ "$(cat "$ROOTFS_STAMP" 2>/dev/null)" != "$RECIPE_HASH" ]; then
     echo "   Using Docker to create Debian root filesystem..."
@@ -450,6 +455,13 @@ RUN curl -fsSL https://pkgs.tailscale.com/stable/debian/trixie.noarmor.gpg | tee
 COPY --from=fips-builder /tmp/fips.deb /tmp/fips.deb
 RUN apt-get update && apt-get -y full-upgrade && apt-get install -y --no-install-recommends /tmp/fips.deb && \
     apt-get clean && rm -rf /var/lib/apt/lists/* && rm /tmp/fips.deb
+
+# Install the pinned Nostr Git runtime. The installer verifies the release
+# archive before copying ngit and git-remote-nostr into /usr/bin.
+COPY install-ngit.sh /tmp/install-ngit.sh
+RUN chmod 0755 /tmp/install-ngit.sh && \
+    /tmp/install-ngit.sh && \
+    rm /tmp/install-ngit.sh
 
 # Configure locale
 RUN echo "en_US.UTF-8 UTF-8" > /etc/locale.gen && locale-gen
@@ -794,6 +806,11 @@ NGINXCONF
     if [ -f "$SCRIPT_DIR/../configs/nostr-relay-config.toml" ]; then
         cp "$SCRIPT_DIR/../configs/nostr-relay-config.toml" "$WORK_DIR/nostr-relay-config.toml"
         echo "   Using nostr-relay-config.toml from configs/"
+    fi
+
+    if [ -f "$SCRIPT_DIR/../configs/install-ngit.sh" ]; then
+        cp "$SCRIPT_DIR/../configs/install-ngit.sh" "$WORK_DIR/install-ngit.sh"
+        echo "   Using pinned ngit installer from configs/"
     fi
 
     # Copy WireGuard helper script (privileged peer management)

@@ -13,6 +13,9 @@ export default defineConfig({
     screenshot: 'only-on-failure',
     trace: 'off',
     ignoreHTTPSErrors: true,
+    launchOptions: process.env.ARCHY_CHROMIUM_EXECUTABLE
+      ? { executablePath: process.env.ARCHY_CHROMIUM_EXECUTABLE }
+      : undefined,
   },
   projects: [
     {

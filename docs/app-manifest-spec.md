@@ -173,6 +173,37 @@ override wins over the manifest in both directions and applies on the next
 request — your app cannot assume the gate is or isn't in front of it, so it
 must always enforce its own authorization for sensitive operations.
 
+## Launch metadata
+
+`metadata.launch` is consumed by catalog generation and the dashboard
+launcher. It is currently an extension rather than a Rust-validated field:
+
+```yaml
+metadata:
+  launch:
+    open_in_new_tab: false
+    requires_host_frame: false
+```
+
+| Field | Default | Meaning |
+|---|---|---|
+| `open_in_new_tab` | `false` | The app must be top-level because header repair cannot solve its OAuth/WebAuthn flow, JavaScript frame-busting, or strict cookies. Desktop opens a browser tab; Android uses its native in-app browser. |
+| `requires_host_frame` | `false` | Keep the app in the dashboard iframe even in the Android companion because it consumes an app-specific parent-frame integration. Standard Archipelago NIP-07 works in iframes, tabs, and the companion WebView without this flag; the platform renders consent inside the active app surface. |
+
+Do not set both fields to `true`. The generated TypeScript launch tables are
+the runtime source used by the dashboard, so run
+`python3 scripts/generate-app-catalog.py` after changing either value. See
+[`app-developer-guide.md`](app-developer-guide.md#browser-iframe-and-companion-launch-modes)
+for the HTTP/HTTPS and test matrix.
+
+Platform-owned same-origin mounts are not manifest features. If Archipelago
+adds one, its nginx location must send a fixed
+`X-Forwarded-Prefix: /app/<id>` header to the app gate whenever `proxy_pass`
+strips that prefix. The gate uses it for challenge form/assets and the
+post-login redirect; without it, a fresh external browser posts to the
+dashboard root and receives 405. Ordinary registry apps should declare a
+gated `interfaces.main` port instead of requesting such a mount.
+
 ## Volumes
 
 ```yaml

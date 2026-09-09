@@ -84,6 +84,15 @@ const router = createRouter({
       meta: { public: true },
     },
     {
+      // Dashboard-origin broker embedded by top-level node apps. It reuses the
+      // exact contained identity/consent components used by app sessions; the
+      // route remains authenticated and accepts only same-node parent origins.
+      path: '/nostr-signer',
+      name: 'nostr-signer',
+      component: () => import('../views/NostrTabSigner.vue'),
+      meta: { signerBroker: true },
+    },
+    {
       // The kiosk display no longer has its own launcher screen. It runs the
       // normal app (onboarding → login → dashboard) like any other client.
       // This route only persists kiosk mode + safe-area insets, then redirects
@@ -268,10 +277,14 @@ const router = createRouter({
 // Session check with timeout - avoids endless spinner on mobile/slow networks
 const SESSION_CHECK_TIMEOUT_MS = 8000
 
-async function checkSessionWithTimeout(store: ReturnType<typeof useAppStore>): Promise<boolean> {
+async function checkSessionWithTimeout(
+  store: ReturnType<typeof useAppStore>,
+  allowCookieWithoutLocalMarker = false,
+  bootstrapDashboard = true,
+): Promise<boolean> {
   try {
     return await Promise.race([
-      store.checkSession(),
+      store.checkSession({ allowCookieWithoutLocalMarker, bootstrapDashboard }),
       new Promise<boolean>((resolve) =>
         setTimeout(() => resolve(false), SESSION_CHECK_TIMEOUT_MS)
       ),
@@ -339,7 +352,12 @@ router.beforeEach(async (to, _from, next) => {
 
   // Not authenticated at all (with timeout to avoid endless spinner on mobile)
   if (!store.isAuthenticated) {
-    const hasSession = await checkSessionWithTimeout(store)
+    // A direct app tab can authenticate through the app gate before its
+    // dashboard-origin signer iframe has ever loaded. Ports share the node's
+    // host-only cookie, but not localStorage, so the broker must probe that
+    // cookie instead of mistaking the missing dashboard marker for logout.
+    const signerBroker = Boolean(to.meta.signerBroker)
+    const hasSession = await checkSessionWithTimeout(store, signerBroker, !signerBroker)
     if (hasSession) {
       next()
       return

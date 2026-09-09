@@ -36,6 +36,7 @@ source "$ROOT/scripts/image-versions.sh"
 set +a
 
 UPDATED="$(date -u +%Y-%m-%d)" OUT="$OUT" APPS_DIR="$ROOT/apps" \
+PUBLIC_CATALOG="$ROOT/app-catalog/catalog.json" \
 EMBED_MANIFESTS="${EMBED_MANIFESTS:-1}" python3 - <<'PY'
 import glob
 import json, os
@@ -262,6 +263,18 @@ catalog = {
     "updated": os.environ["UPDATED"],
     "apps": dict(sorted(apps.items())),
 }
+
+# Storefront composition is release data, not node-OS UI code. Copy it from
+# the public catalog into the signed registry artifact so popular ordering and
+# promotions can change independently after the fleet supports this schema.
+# The legacy `featured` block remains for older dashboards.
+public_catalog_path = os.environ.get("PUBLIC_CATALOG")
+if public_catalog_path:
+    with open(public_catalog_path, encoding="utf-8") as fh:
+        public_catalog = json.load(fh)
+    for key in ("featured", "storefront"):
+        if key in public_catalog:
+            catalog[key] = public_catalog[key]
 
 with open(os.environ["OUT"], "w") as f:
     json.dump(catalog, f, indent=2)

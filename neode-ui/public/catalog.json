@@ -9,6 +9,29 @@
     "description": "Bitcoin documentaries with Nostr identity.",
     "tag": "NOSTR IDENTITY // YOUR NODE"
   },
+  "storefront": {
+    "popular": [
+      "bitcoin-knots",
+      "lnd",
+      "btcpay-server",
+      "mempool",
+      "filebrowser",
+      "homeassistant"
+    ],
+    "promotions": [
+      {
+        "id": "archipelago-source",
+        "banner": "/assets/img/featured/archipelago-source-banner.webp",
+        "eyebrow": "open source",
+        "headline": "Your node. Your source.",
+        "description": "Install GitWorkshop to browse Archipelago's code from your own node, clone it with ngit, and contribute issues, patches, and reviews over Nostr.",
+        "tag": "NGIT // NOSTR // NO SILO",
+        "launchLabel": "Open GitWorkshop",
+        "installLabel": "Install GitWorkshop",
+        "detailsLabel": "How contribution works →"
+      }
+    ]
+  },
   "apps": [
     {
       "id": "adguardhome",
@@ -246,6 +269,19 @@
         ]
       },
       "tier": "optional"
+    },
+    {
+      "id": "archipelago-source",
+      "title": "GitWorkshop",
+      "version": "0.4.0",
+      "description": "Get Archipelago's source, clone it with ngit, and contribute issues, patches, and reviews over Nostr using the upstream GitWorkshop client.",
+      "icon": "/assets/img/app-icons/gitworkshop-dc36db6.svg",
+      "author": "GitWorkshop contributors",
+      "maintainerNpub": "npub1w3sqdkrhn0gyuvsex32effzgnfpyde6qrrc4u467flg5e9txh4wsfn5vjg",
+      "category": "development",
+      "tier": "optional",
+      "repoUrl": "https://github.com/DanConwayDev/gitworkshop",
+      "dockerImage": "localhost/archipelago-source:local"
     },
     {
       "id": "grafana",

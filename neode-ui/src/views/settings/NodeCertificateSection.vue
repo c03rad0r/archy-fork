@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { onMounted, ref } from 'vue'
+import { installCertificateInCompanion } from '@/utils/openExternal'
 
 // This node signs its own certificates with a CA that never leaves it. Install
 // that CA once per device and every port on this node is trusted — which is what
@@ -73,6 +74,15 @@ async function probe() {
   }
 }
 
+function downloadCertificate(event: MouseEvent) {
+  // Android WebView does not implement HTML downloads by itself. Ask the
+  // companion to fetch this connected node's CA and open the system credential
+  // installer; normal browsers keep the Content-Disposition download.
+  if (installCertificateInCompanion()) {
+    event.preventDefault()
+  }
+}
+
 onMounted(probe)
 </script>
 
@@ -109,6 +119,7 @@ onMounted(probe)
         <a
           href="/ca.crt"
           download="archipelago-node-ca.crt"
+          @click="downloadCertificate"
           class="inline-flex items-center gap-2 px-4 py-3 glass-button rounded-lg text-sm font-semibold"
         >
           <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -132,29 +143,85 @@ onMounted(probe)
         <summary class="cursor-pointer text-sm font-medium text-white/80 py-2">
           How to install it
         </summary>
-        <div class="mt-2 space-y-3 text-sm text-white/60">
-          <p><strong class="text-white/80">macOS</strong> — open the file, add it to the
-            <em>login</em> keychain, then find it in Keychain Access, open it, expand Trust
-            and set “When using this certificate” to <em>Always Trust</em>.</p>
-          <p><strong class="text-white/80">iOS / iPadOS</strong> — download it in Safari and
-            allow the profile, then Settings → General → VPN &amp; Device Management to
-            install it, and finally Settings → General → About → Certificate Trust Settings
-            to switch it on. Both steps are required.</p>
-          <p><strong class="text-white/80">Windows</strong> — right-click → Install
-            Certificate → Local Machine → place it in <em>Trusted Root Certification
-            Authorities</em>.</p>
-          <p><strong class="text-white/80">Android</strong> — Settings → Security →
-            Encryption &amp; credentials → Install a certificate → CA certificate.</p>
-          <p><strong class="text-white/80">Linux</strong> — copy to
-            <code class="px-1 py-0.5 bg-black/30 rounded text-xs">/usr/local/share/ca-certificates/</code>
-            and run <code class="px-1 py-0.5 bg-black/30 rounded text-xs">sudo update-ca-certificates</code>.
-            Firefox keeps its own store — add it under Settings → Privacy &amp; Security →
-            View Certificates → Authorities.</p>
-          <p class="text-white/50">
+        <div class="mt-2 space-y-5 text-sm text-white/60">
+          <p class="text-white/70">
             You are trusting this node, not a company. The signing key stays on the node
             and only ever signs this node's own address. Anyone who takes the node also
             takes that key — remove the certificate from your devices if you retire it.
           </p>
+
+          <section class="space-y-2">
+            <h4 class="font-semibold text-white/80">macOS</h4>
+            <ol class="list-decimal pl-5 space-y-1">
+              <li>Double-click the file to add it to your <em>login keychain</em>.</li>
+              <li>Open Keychain Access and find it under Certificates.</li>
+              <li>Open it, expand Trust, set “When using this certificate” to <em>Always Trust</em>, then close the window and enter your password.</li>
+            </ol>
+            <p>Quit and reopen your browser after changing the trust setting.</p>
+          </section>
+
+          <section class="space-y-2">
+            <h4 class="font-semibold text-white/80">iOS / iPadOS</h4>
+            <ol class="list-decimal pl-5 space-y-1">
+              <li>Open the file in Safari and tap Allow to download the profile.</li>
+              <li>Settings → Profile Downloaded, or General → VPN &amp; Device Management → Install.</li>
+              <li>Settings → General → About → Certificate Trust Settings → switch the certificate on.</li>
+            </ol>
+            <p class="text-orange-200/80">The final Certificate Trust Settings step is required.</p>
+          </section>
+
+          <section class="space-y-2">
+            <h4 class="font-semibold text-white/80">Windows</h4>
+            <ol class="list-decimal pl-5 space-y-1">
+              <li>Right-click the file and choose Install Certificate.</li>
+              <li>Select Local Machine.</li>
+              <li>Choose “Place all certificates in the following store” → Trusted Root Certification Authorities → Finish.</li>
+            </ol>
+          </section>
+
+          <section class="space-y-2">
+            <h4 class="font-semibold text-white/80">Android</h4>
+            <p>Settings → Security → Encryption &amp; credentials → Install a certificate → CA certificate, then choose the file.</p>
+            <p>Browsers using the system certificate store will trust it after restart. Apps that pin their own certificates may still refuse it.</p>
+          </section>
+
+          <section class="space-y-2">
+            <h4 class="font-semibold text-white/80">Linux</h4>
+            <pre class="overflow-x-auto rounded-lg bg-black/30 p-3 text-xs text-white/75"><code>sudo install -m644 /path/to/node-ca.crt /usr/local/share/ca-certificates/node-ca.crt &amp;&amp; sudo update-ca-certificates</code></pre>
+            <p><strong class="text-white/70">Firefox:</strong> Settings → Privacy &amp; Security → View Certificates → Authorities → Import, then enable “Trust this CA to identify websites”.</p>
+            <p><strong class="text-white/70">Arch / Manjaro:</strong></p>
+            <pre class="overflow-x-auto rounded-lg bg-black/30 p-3 text-xs text-white/75"><code>sudo cp node-ca.crt /etc/ca-certificates/trust-source/anchors/ &amp;&amp; sudo update-ca-trust extract</code></pre>
+          </section>
+
+          <section class="space-y-2">
+            <h4 class="font-semibold text-white/80">Restart the browser first</h4>
+            <p>Chrome, Brave, Firefox, and Safari cache certificate decisions. Fully quit and reopen the browser before troubleshooting a certificate that still appears untrusted.</p>
+            <p>For a one-visit sanity check on a machine you own, Chrome and Brave accept the keyboard shortcut <code class="px-1 py-0.5 bg-black/30 rounded text-xs">thisisunsafe</code> on the certificate error page. Use this only for testing.</p>
+          </section>
+
+          <section class="space-y-2">
+            <h4 class="font-semibold text-white/80">If the node name does not resolve</h4>
+            <p>Certificate trust and DNS are separate. If <code class="px-1 py-0.5 bg-black/30 rounded text-xs">node.local</code> does not resolve, prefer the node's Tailscale MagicDNS name when available.</p>
+            <p>To keep using a local name on Linux or macOS, add the node address to <code class="px-1 py-0.5 bg-black/30 rounded text-xs">/etc/hosts</code>:</p>
+            <pre class="overflow-x-auto rounded-lg bg-black/30 p-3 text-xs text-white/75"><code>echo '192.168.x.y  mynode.local' | sudo tee -a /etc/hosts</code></pre>
+            <p>On Linux, if that still fails, inspect <code class="px-1 py-0.5 bg-black/30 rounded text-xs">grep '^hosts:' /etc/nsswitch.conf</code>. Put <code class="px-1 py-0.5 bg-black/30 rounded text-xs">files</code> before <code class="px-1 py-0.5 bg-black/30 rounded text-xs">mdns_minimal [NOTFOUND=return]</code> so an mDNS miss cannot block <code class="px-1 py-0.5 bg-black/30 rounded text-xs">/etc/hosts</code>.</p>
+          </section>
+
+          <section class="space-y-2">
+            <h4 class="font-semibold text-white/80">Symptoms</h4>
+            <div class="overflow-x-auto rounded-lg border border-white/10">
+              <table class="w-full text-left text-xs">
+                <thead class="bg-white/5 text-white/75">
+                  <tr><th class="p-2">What you see</th><th class="p-2">Likely cause</th></tr>
+                </thead>
+                <tbody class="divide-y divide-white/10">
+                  <tr><td class="p-2">Not trusted / ERR_CERT_AUTHORITY_INVALID</td><td class="p-2">The certificate is not installed, or the browser was not restarted.</td></tr>
+                  <tr><td class="p-2">This site can't be reached / DNS error</td><td class="p-2">Name resolution, not TLS. Check the DNS guidance above.</td></tr>
+                  <tr><td class="p-2">curl works, browser does not</td><td class="p-2">A separate browser certificate store or a stale browser process.</td></tr>
+                </tbody>
+              </table>
+            </div>
+          </section>
         </div>
       </details>
     </div>

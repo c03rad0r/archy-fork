@@ -93,29 +93,18 @@
       </div>
     </div>
 
-    <!-- Hero + Featured + Banner (only when no search) -->
+    <!-- Hero + registry-owned storefront (only when no search) -->
     <template v-if="!searchQuery">
       <DiscoverHero
         :total-apps="allApps.length"
         :installed-count="installedCount"
       />
 
-      <FeaturedApps
-        :featured-apps="featuredApps"
-        :show-stagger="showStagger"
-        :containers-scanned="containersScanned"
-        :installing-apps="installingApps"
-        :is-installed="isInstalled"
-        :is-starting-up="isStartingUp"
-        :get-app-tier="getAppTier"
-        @view-details="viewAppDetails"
-        @launch="launchInstalledApp"
-        @install="handleInstall"
-      />
-
-      <!-- Featured App Banner (from catalog or hardcoded) -->
+      <!-- A registry storefront extends the featured story; it does not
+           replace it. Keep the primary banner above Popular, then place
+           registry promotions after the popular rows. -->
       <div
-        v-if="featuredBanner"
+        v-if="catalogStorefront && featuredBanner"
         class="featured-banner glass-card mb-8 relative overflow-hidden cursor-pointer"
         @click="featuredBannerApp && viewAppDetails(featuredBannerApp)"
       >
@@ -152,15 +141,136 @@
         </div>
       </div>
 
-      <!-- Mobile companion app banner — opens the download/pairing modal -->
-      <CompanionBanner />
+      <!-- New catalogs own the store composition. Six popular cards make two
+           rows on desktop; registry operators can reorder them without an OS
+           release. Older catalogs retain the legacy featured fallback. -->
+      <div v-if="catalogStorefront" class="flex items-center gap-3 mb-5">
+        <span class="discover-terminal-tag">popular</span>
+        <h2 class="text-xl font-bold text-white">Popular Apps</h2>
+        <div class="flex-1 h-px bg-white/10"></div>
+        <span class="text-white/30 text-sm">{{ popularApps.length }} apps</span>
+      </div>
+
+      <AppGrid
+        v-if="catalogStorefront"
+        :filtered-apps="popularApps"
+        :show-stagger="showStagger"
+        :stagger-offset="0"
+        :containers-scanned="containersScanned"
+        :installing-apps="installingApps"
+        :is-installed="isInstalled"
+        :is-starting-up="isStartingUp"
+        :get-installed-state="getInstalledState"
+        :get-app-tier="getAppTier"
+        :is-loading="loadingCommunity"
+        loading-message="Loading..."
+        :nostr-error="''"
+        :is-nostr-category="false"
+        :search-query="''"
+        @view-details="viewAppDetails"
+        @launch="launchInstalledApp"
+        @install="handleInstall"
+      />
+
+      <FeaturedApps
+        v-else
+        :featured-apps="featuredApps"
+        :show-stagger="showStagger"
+        :containers-scanned="containersScanned"
+        :installing-apps="installingApps"
+        :is-installed="isInstalled"
+        :is-starting-up="isStartingUp"
+        :get-app-tier="getAppTier"
+        @view-details="viewAppDetails"
+        @launch="launchInstalledApp"
+        @install="handleInstall"
+      />
+
+      <!-- Featured App Banner (from catalog or hardcoded) -->
+      <div
+        v-if="!catalogStorefront && featuredBanner"
+        class="featured-banner glass-card mb-8 relative overflow-hidden cursor-pointer"
+        @click="featuredBannerApp && viewAppDetails(featuredBannerApp)"
+      >
+        <img
+          :src="featuredBanner.banner"
+          :alt="featuredBanner.headline"
+          class="featured-banner-img"
+          @error="(e: Event) => (e.target as HTMLImageElement).style.display = 'none'"
+        />
+        <div class="featured-banner-overlay">
+          <div class="flex items-center gap-3 mb-2">
+            <span class="discover-terminal-tag">featured</span>
+            <span class="text-white/50 text-sm font-mono">{{ featuredBanner.tag }}</span>
+          </div>
+          <h2 class="text-3xl md:text-4xl font-extrabold text-white mb-2 tracking-tight">{{ featuredBanner.headline }}</h2>
+          <p class="text-white/80 text-base md:text-lg max-w-2xl leading-relaxed mb-4">{{ featuredBanner.description }}</p>
+          <div class="flex items-center gap-3">
+            <button
+              v-if="featuredBannerApp && isInstalled(featuredBannerApp.id) && !isStartingUp(featuredBannerApp.id)"
+              @click.stop="launchInstalledApp(featuredBannerApp)"
+              class="glass-button rounded-lg px-6 py-2.5 text-sm font-medium"
+            >Launch</button>
+            <button
+              v-else-if="featuredBannerApp && !isInstalled(featuredBannerApp.id) && featuredBannerApp.dockerImage"
+              @click.stop="handleInstall(featuredBannerApp)"
+              :disabled="installingApps.has(featuredBannerApp.id)"
+              class="glass-button rounded-lg px-6 py-2.5 text-sm font-medium disabled:opacity-50"
+            >
+              <span v-if="installingApps.has(featuredBannerApp.id)">Installing...</span>
+              <span v-else>Install</span>
+            </button>
+            <span class="text-white/40 text-sm">{{ featuredBannerApp?.title }} {{ $ver(featuredBannerApp?.version) }}</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- Promotions are ordered and written by the registry catalog. -->
+      <div
+        v-for="promotion in storefrontPromotions"
+        :key="promotion.id"
+        class="featured-banner source-banner glass-card mb-8 relative overflow-hidden cursor-pointer"
+        @click="viewAppDetails(promotion.app)"
+      >
+        <img
+          :src="promotion.banner"
+          alt=""
+          class="featured-banner-img source-banner-img"
+          @error="(e: Event) => (e.target as HTMLImageElement).style.display = 'none'"
+        />
+        <div class="featured-banner-overlay source-banner-overlay">
+          <div class="flex items-center gap-3 mb-2">
+            <span class="discover-terminal-tag">{{ promotion.eyebrow }}</span>
+            <span class="text-white/50 text-sm font-mono">{{ promotion.tag }}</span>
+          </div>
+          <h2 class="text-3xl md:text-4xl font-extrabold text-white mb-2 tracking-tight">{{ promotion.headline }}</h2>
+          <p class="text-white/80 text-base md:text-lg max-w-2xl leading-relaxed mb-4">{{ promotion.description }}</p>
+          <div class="flex flex-wrap items-center gap-3">
+            <button
+              v-if="isInstalled(promotion.app.id) && !isStartingUp(promotion.app.id)"
+              @click.stop="launchInstalledApp(promotion.app)"
+              class="glass-button rounded-lg px-6 py-2.5 text-sm font-medium"
+            >{{ promotion.launchLabel || 'Launch' }}</button>
+            <button
+              v-else-if="!isInstalled(promotion.app.id) && promotion.app.dockerImage"
+              @click.stop="handleInstall(promotion.app)"
+              :disabled="installingApps.has(promotion.app.id)"
+              class="glass-button rounded-lg px-6 py-2.5 text-sm font-medium disabled:opacity-50"
+            >{{ installingApps.has(promotion.app.id) ? 'Installing…' : (promotion.installLabel || 'Install') }}</button>
+            <button
+              @click.stop="viewAppDetails(promotion.app)"
+              class="rounded-lg px-4 py-2.5 text-sm font-medium text-white/70 hover:text-white"
+            >{{ promotion.detailsLabel || 'View details →' }}</button>
+          </div>
+        </div>
+      </div>
 
       <!-- Category Section Divider -->
       <div class="flex items-center gap-3 mb-5">
         <span class="discover-terminal-tag">all</span>
-        <h2 class="text-xl font-bold text-white">Available to Install</h2>
+        <h2 class="text-xl font-bold text-white">All Apps</h2>
         <div class="flex-1 h-px bg-white/10"></div>
-        <span class="text-white/30 text-sm">{{ filteredApps.length }} apps</span>
+        <span class="text-white/30 text-sm">{{ remainingApps.length }} apps</span>
       </div>
     </template>
 
@@ -179,7 +289,7 @@
     </div>
 
     <AppGrid
-      :filtered-apps="filteredApps"
+      :filtered-apps="gridApps"
       :show-stagger="showStagger"
       :stagger-offset="selectedCategory === 'all' && !searchQuery ? 4 : 0"
       :containers-scanned="containersScanned"
@@ -198,6 +308,10 @@
       @install="handleInstall"
       @retry-nostr="retryNostr"
     />
+
+    <!-- The node-owned companion download is operational UI, not registry
+         merchandising, so it follows the complete app listing. -->
+    <CompanionBanner v-if="!searchQuery" />
 
     <!-- Manifesto Footer (only when no search) -->
     <div v-if="!searchQuery && filteredApps.length > 0" class="discover-manifesto glass-card p-8 mt-4 mb-8">
@@ -250,7 +364,7 @@ import CompanionBanner from './discover/CompanionBanner.vue'
 import AppGrid from './discover/AppGrid.vue'
 import InstallVersionModal from '@/components/InstallVersionModal.vue'
 import type { MarketplaceApp, FeaturedApp } from './discover/types'
-import { getCuratedAppList, INSTALLED_ALIASES, FEATURED_DEFINITIONS, categorizeCommunityApp, fetchAppCatalog, type CatalogFeatured } from './discover/curatedApps'
+import { getCuratedAppList, INSTALLED_ALIASES, FEATURED_DEFINITIONS, categorizeCommunityApp, fetchAppCatalog, type CatalogFeatured, type CatalogStorefront } from './discover/curatedApps'
 
 const router = useRouter()
 const store = useAppStore()
@@ -296,6 +410,12 @@ const catalogResource = useCachedResource<MarketplaceApp[]>({
 const catalogFeatured = useCachedResource<CatalogFeatured | null>({
   key: 'app-catalog:featured',
   fetcher: async () => (await fetchAppCatalog())?.featured ?? null,
+  ttlMs: 300_000,
+  persist: true,
+}).data
+const catalogStorefront = useCachedResource<CatalogStorefront | null>({
+  key: 'app-catalog:storefront',
+  fetcher: async () => (await fetchAppCatalog())?.storefront ?? null,
   ttlMs: 300_000,
   persist: true,
 }).data
@@ -450,6 +570,32 @@ const filteredApps = computed(() => {
   // Hide installed apps and web-only links (no dockerImage = not installable)
   apps = apps.filter(app => !isInstalled(app.id) && app.dockerImage)
   return apps
+})
+
+const popularApps = computed(() => {
+  const byId = new Map(allApps.value.map(app => [app.id, app]))
+  const popular: MarketplaceApp[] = []
+  for (const id of catalogStorefront.value?.popular ?? []) {
+    const app = byId.get(id)
+    if (app?.dockerImage) popular.push(app)
+  }
+  return popular
+})
+
+const popularIds = computed(() => new Set(popularApps.value.map(app => app.id)))
+const remainingApps = computed(() =>
+  catalogStorefront.value
+    ? filteredApps.value.filter(app => !popularIds.value.has(app.id))
+    : filteredApps.value
+)
+const gridApps = computed(() => searchQuery.value ? filteredApps.value : remainingApps.value)
+
+const storefrontPromotions = computed(() => {
+  if (!catalogStorefront.value) return []
+  return catalogStorefront.value.promotions.flatMap(promotion => {
+    const app = allApps.value.find(candidate => candidate.id === promotion.id)
+    return app ? [{ ...promotion, app }] : []
+  })
 })
 
 const installedCount = computed(() => {

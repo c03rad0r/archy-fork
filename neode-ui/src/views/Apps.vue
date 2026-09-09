@@ -637,10 +637,10 @@ function goToApp(id: string) {
 async function launchApp(id: string) {
   const shown = await maybeShowCredentialsBeforeLaunch(id)
   if (shown) return
-  launchAppNow(id)
+  launchAppNow(id, true)
 }
 
-function launchAppNow(id: string) {
+function launchAppNow(id: string, credentialsChecked = false) {
   const pkg = packages.value[id]
   const isMobile = typeof window !== 'undefined' && window.innerWidth < 768
   const webOnlyUrl = WEB_ONLY_APP_URLS[id]
@@ -664,7 +664,7 @@ function launchAppNow(id: string) {
       return
     }
   }
-  useAppLauncherStore().openSession(id)
+  useAppLauncherStore().openSession(id, { skipCredentialPrompt: credentialsChecked })
 }
 
 // Per-app credentials memo: the pre-launch RPC could hold an Apps-tab launch
@@ -721,7 +721,7 @@ function closeCredentialModal() {
 function continueCredentialLaunch() {
   const id = credentialModal.value.appId
   closeCredentialModal()
-  if (id) launchAppNow(id)
+  if (id) launchAppNow(id, true)
 }
 
 async function copyModalCredential(label: string, value: string) {

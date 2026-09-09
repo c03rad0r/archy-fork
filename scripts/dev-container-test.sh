@@ -214,7 +214,7 @@ run_smoke_tests() {
     # Test 8: Container doctor runs cleanly
     TESTS=$((TESTS + 1))
     local doctor_exit
-    ssh $SSH_OPTS "$SSH_HOST" "sudo /home/archipelago/archy/scripts/container-doctor.sh --local 2>&1 | tail -1"
+    ssh $SSH_OPTS "$SSH_HOST" "sudo /opt/archipelago/scripts/container-doctor.sh --local 2>&1 | tail -1"
     doctor_exit=$?
     if [ $doctor_exit -eq 0 ]; then
         pass "container-doctor.sh: clean exit"

@@ -4,11 +4,18 @@ import { rpcClient } from '@/api/rpc-client'
 import { recordAppLaunch } from '@/utils/appUsage'
 import { requestExternalOpen } from '@/api/remote-relay'
 import { openInAppOrNewTab, isCompanionApp, type InAppLaunchMeta } from '@/utils/openExternal'
-import { directAppUrl, HTTPS_APP_IDS, resolveAppUrl } from '@/views/appSession/appSessionConfig'
-import { portIsGateFronted } from '@/views/discover/curatedApps'
+import { directAppUrl, HOST_FRAME_APPS, HTTPS_APP_IDS, resolveAppUrl } from '@/views/appSession/appSessionConfig'
+import { appPortIsGateFronted } from '@/views/appSession/appSessionConfig'
 import { useAppStore } from '@/stores/app'
 import { resolveAppIcon } from '@/views/apps/appsConfig'
 import { IS_DEMO, isDemoApp, isDemoExternal, demoAppUrl } from '@/composables/useDemoIntro'
+import type { AppCredential, AppCredentialsResponse } from '@/types/api'
+import { resolveAppCredentials } from '@/views/apps/appCredentials'
+import {
+  consentKey,
+  hasRememberedConsent,
+  rememberConsent,
+} from '@/views/appSession/nostrConsent'
 
 /**
  * Open a URL in a new browser tab — but if a companion (phone) is currently
@@ -79,6 +86,22 @@ const NEW_TAB_APP_IDS = new Set([
   'netbird',
 ])
 
+/** Apps whose launch may require a platform-owned credential handoff. Keep
+ * this list deliberately narrow so ordinary new-tab launches retain their
+ * original synchronous user gesture. Portainer is dynamic (first-run only);
+ * File Browser and PhotoPrism have stable fallback credentials. */
+export const CREDENTIAL_INTERSTITIAL_APPS = new Set([
+  'filebrowser',
+  'photoprism',
+  'portainer',
+])
+
+interface LaunchOptions {
+  path?: string
+  /** The shared interstitial already ran and the user pressed Continue. */
+  skipCredentialPrompt?: boolean
+}
+
 function mustOpenInNewTab(url: string): boolean {
   try {
     const u = new URL(url)
@@ -148,6 +171,7 @@ const PORT_TO_APP_ID: Record<string, string> = {
   '8123': 'homeassistant',
   '8240': 'tailscale',
   '8334': 'bitcoin-knots',
+  '8337': 'archipelago-source',
   '8888': 'searxng',
   '9000': 'portainer',
   '8087': 'netbird',
@@ -163,30 +187,12 @@ const PORT_TO_APP_ID: Record<string, string> = {
   '50002': 'electrumx',
 }
 
-const APPROVED_ORIGINS_KEY = 'neode_nostr_approved_origins'
-function getApprovedOrigins(): Set<string> {
-  try {
-    const stored = localStorage.getItem(APPROVED_ORIGINS_KEY)
-    if (!stored) return new Set()
-    const parsed: unknown = JSON.parse(stored)
-    if (!Array.isArray(parsed)) return new Set()
-    return new Set(parsed.filter((s: unknown) => typeof s === 'string'))
-  } catch {
-    return new Set()
-  }
-}
-
-function saveApprovedOrigin(origin: string) {
-  const origins = getApprovedOrigins()
-  origins.add(origin)
-  try { localStorage.setItem(APPROVED_ORIGINS_KEY, JSON.stringify([...origins])) } catch { /* localStorage full or unavailable */ }
-}
-
 export interface NostrConsentRequest {
   appName: string
   method: string
   eventKind?: number
   content?: string
+  identityLabel?: string
   resolve: (remember: boolean) => void
   reject: () => void
 }
@@ -208,6 +214,22 @@ export const useAppLauncherStore = defineStore('appLauncher', () => {
   const title = ref('')
   const consentRequest = ref<NostrConsentRequest | null>(null)
   const showConsent = ref(false)
+  const consentPhase = ref<'review' | 'signing' | 'success' | 'error'>('review')
+  const consentError = ref('')
+  const credentialPrompt = ref({
+    show: false,
+    loading: false,
+    appId: '',
+    title: '',
+    description: '',
+    credentials: [] as AppCredential[],
+    copied: '',
+  })
+  let pendingCredentialLaunch: { appId: string; path?: string } | null = null
+  let credentialGeneration = 0
+  let consentApprovedAt = 0
+  let consentGeneration = 0
+  let approvedGeneration = 0
   let previousActiveElement: HTMLElement | null = null
 
   /** Active app in the store-driven session (no route change) */
@@ -215,15 +237,15 @@ export const useAppLauncherStore = defineStore('appLauncher', () => {
   /** Optional deep-link path inside the active app (e.g. /tx/<hash> for mempool) */
   const panelPath = ref<string | null>(null)
 
-  function openSession(appId: string, opts: { path?: string } = {}) {
+  function openSessionNow(appId: string, opts: LaunchOptions = {}) {
     recordAppLaunch(appId)
     const mobile = isMobileViewport()
 
-    // Companion app: EVERY app opens in the native in-app WebView — never an
-    // iframe. The WebView is more performant on the phone and carries the
-    // native back/forward/reload/close controls. Plain mobile browsers (PWA)
-    // keep the iframe session below.
-    if (!IS_DEMO && isCompanionApp()) {
+    // Companion app: ordinary apps open in the native in-app WebView for the
+    // phone controls and better performance. Apps with manifest-declared host
+    // integrations stay in the dashboard frame so their parent bridge remains
+    // connected (for example GitWorkshop's consent-gated NIP-07 provider).
+    if (!IS_DEMO && isCompanionApp() && !HOST_FRAME_APPS.has(appId)) {
       const runtimeUrl = useAppStore().data?.['package-data']?.[appId]?.installed?.['interface-addresses']?.main?.['lan-address'] || undefined
       const launchUrl = directAppUrl(appId) || resolveAppUrl(appId, opts.path, runtimeUrl)
       if (launchUrl) {
@@ -264,6 +286,94 @@ export const useAppLauncherStore = defineStore('appLauncher', () => {
     panelAppId.value = appId
   }
 
+  /** One launch gate for Home, My Apps, Discover, Spotlight and details.
+   * Previously each Apps view owned a private modal, so Home skipped the
+   * Portainer first-run token entirely. */
+  function openSession(appId: string, opts: LaunchOptions = {}) {
+    if (!opts.skipCredentialPrompt && CREDENTIAL_INTERSTITIAL_APPS.has(appId)) {
+      void prepareCredentialLaunch(appId, opts.path)
+      return
+    }
+    openSessionNow(appId, opts)
+  }
+
+  async function prepareCredentialLaunch(appId: string, path?: string) {
+    const generation = ++credentialGeneration
+    const appName = useAppStore().data?.['package-data']?.[appId]?.manifest?.title || appId
+    pendingCredentialLaunch = { appId, path }
+    credentialPrompt.value = {
+      show: true,
+      loading: true,
+      appId,
+      title: `Checking ${appName}`,
+      description: 'Checking whether this app needs a first-run token or login details…',
+      credentials: [],
+      copied: '',
+    }
+
+    let result: AppCredentialsResponse | null
+    try {
+      // Portainer's token is lifecycle-dependent, so this must be live on
+      // every launch. Caching a pre-initialisation null (or an already-used
+      // token) recreates the skipped/stale interstitial bug.
+      result = await rpcClient.call<AppCredentialsResponse>({
+        method: 'package.credentials',
+        params: { app_id: appId },
+        timeout: 5000,
+      })
+    } catch {
+      result = null
+    }
+    if (generation !== credentialGeneration) return
+
+    const resolved = resolveAppCredentials(appId, result)
+    if (!resolved) {
+      credentialPrompt.value.show = false
+      pendingCredentialLaunch = null
+      openSessionNow(appId, { path, skipCredentialPrompt: true })
+      return
+    }
+    credentialPrompt.value = {
+      show: true,
+      loading: false,
+      appId,
+      title: resolved.title || `${appName} credentials`,
+      description: resolved.description || 'Use these credentials when the app asks you to sign in.',
+      credentials: resolved.credentials,
+      copied: '',
+    }
+  }
+
+  function cancelCredentialLaunch() {
+    credentialGeneration += 1
+    pendingCredentialLaunch = null
+    credentialPrompt.value.show = false
+    credentialPrompt.value.loading = false
+  }
+
+  function continueCredentialLaunch() {
+    const pending = pendingCredentialLaunch
+    credentialGeneration += 1
+    pendingCredentialLaunch = null
+    credentialPrompt.value.show = false
+    credentialPrompt.value.loading = false
+    if (pending) openSessionNow(pending.appId, { path: pending.path, skipCredentialPrompt: true })
+  }
+
+  async function copyCredential(label: string, value: string) {
+    try {
+      await navigator.clipboard.writeText(value)
+    } catch {
+      const textarea = document.createElement('textarea')
+      textarea.value = value
+      document.body.appendChild(textarea)
+      textarea.select()
+      document.execCommand('copy')
+      document.body.removeChild(textarea)
+    }
+    credentialPrompt.value.copied = label
+  }
+
   function closePanel() {
     panelAppId.value = null
     panelPath.value = null
@@ -287,7 +397,7 @@ export const useAppLauncherStore = defineStore('appLauncher', () => {
       const sameHost = u.hostname === window.location.hostname
       const alwaysHttps = !!resolvedId && HTTPS_APP_IDS.has(resolvedId)
       const httpsPage = window.location.protocol === 'https:'
-      const gateFronted = !!resolvedId && portIsGateFronted(resolvedId, u.port)
+      const gateFronted = !!resolvedId && appPortIsGateFronted(resolvedId, u.port)
       if (u.protocol === 'http:' && sameHost && (alwaysHttps || (httpsPage && gateFronted))) {
         // Pure prefix swap — never re-serialize the URL (URL.href would add
         // a trailing slash and change the string the caller handed over).
@@ -366,6 +476,7 @@ export const useAppLauncherStore = defineStore('appLauncher', () => {
   }
 
   function close() {
+    if (showConsent.value) denyConsent()
     const toRestore = previousActiveElement
     previousActiveElement = null
     isOpen.value = false
@@ -384,22 +495,50 @@ export const useAppLauncherStore = defineStore('appLauncher', () => {
   function approveConsent(remember: boolean) {
     if (consentRequest.value) {
       consentRequest.value.resolve(remember)
-      consentRequest.value = null
     }
-    showConsent.value = false
+    consentApprovedAt = Date.now()
+    approvedGeneration = consentGeneration
+    consentPhase.value = 'signing'
   }
 
   function denyConsent() {
+    consentGeneration += 1
     if (consentRequest.value) {
       consentRequest.value.reject()
       consentRequest.value = null
     }
     showConsent.value = false
+    consentPhase.value = 'review'
+    consentError.value = ''
   }
 
-  function requestConsent(appName: string, method: string, eventKind?: number, content?: string): Promise<boolean> {
+  async function finishConsentSuccess() {
+    const generation = approvedGeneration
+    const remaining = Math.max(0, 350 - (Date.now() - consentApprovedAt))
+    if (remaining) await new Promise(resolve => setTimeout(resolve, remaining))
+    if (generation !== consentGeneration || !showConsent.value) return
+    consentPhase.value = 'success'
+    await new Promise(resolve => setTimeout(resolve, 325))
+    if (generation !== consentGeneration) return
+    consentRequest.value = null
+    showConsent.value = false
+    consentPhase.value = 'review'
+  }
+
+  function finishConsentError(error: unknown) {
+    consentError.value = error instanceof Error ? error.message : 'The node could not complete this request.'
+    consentPhase.value = 'error'
+  }
+
+  function requestConsent(appName: string, method: string, eventKind?: number, content?: string, identityLabel?: string): Promise<boolean> {
     return new Promise((resolve, reject) => {
-      consentRequest.value = { appName, method, eventKind, content, resolve, reject }
+      consentGeneration += 1
+      consentRequest.value = {
+        appName, method, eventKind, content, identityLabel,
+        resolve, reject,
+      }
+      consentPhase.value = 'review'
+      consentError.value = ''
       showConsent.value = true
     })
   }
@@ -416,6 +555,8 @@ export const useAppLauncherStore = defineStore('appLauncher', () => {
     if (!senderMatchesApp(url.value, event.origin)) return
 
     const origin = event.origin
+    let prompted = false
+    const activeAppId = resolveAppIdFromUrl(url.value) || inferAppIdFromTitle(title.value) || 'unknown-app'
 
     // Check if app has a per-app identity stored (from identity picker)
     const IDENTITY_KEY = 'archipelago_app_identity_'
@@ -440,12 +581,18 @@ export const useAppLauncherStore = defineStore('appLauncher', () => {
       'nip04.encrypt', 'nip04.decrypt',
       'nip44.encrypt', 'nip44.decrypt',
     ])
-    if (CONSENT_METHODS.has(method) && !getApprovedOrigins().has(origin)) {
+    const scopedKey = consentKey(origin, activeAppId, appIdentityId || 'node-default', method)
+    const alreadyApproved = hasRememberedConsent(scopedKey)
+    if (CONSENT_METHODS.has(method) && !alreadyApproved) {
+      prompted = true
       const eventKind = method === 'signEvent' ? (params?.event?.kind as number | undefined) : undefined
       const content = method === 'signEvent' ? (params?.event?.content as string | undefined) : undefined
       try {
-        const remember = await requestConsent(title.value || 'App', method, eventKind, content)
-        if (remember) saveApprovedOrigin(origin)
+        const remember = await requestConsent(
+          title.value || 'App', method, eventKind, content,
+          appIdentityId || 'Node default identity',
+        )
+        if (remember) rememberConsent(scopedKey)
       } catch {
         source.postMessage({ type: 'nostr-response', id, error: `User denied ${method} request` }, origin || '*')
         return
@@ -508,9 +655,11 @@ export const useAppLauncherStore = defineStore('appLauncher', () => {
         throw new Error(`Unsupported NIP-07 method: ${method}`)
       }
       source.postMessage({ type: 'nostr-response', id, result }, origin || '*')
+      if (prompted) void finishConsentSuccess()
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Unknown error'
       source.postMessage({ type: 'nostr-response', id, error: message }, origin || '*')
+      if (prompted && showConsent.value) finishConsentError(err)
     }
   }
 
@@ -533,8 +682,14 @@ export const useAppLauncherStore = defineStore('appLauncher', () => {
     closePanel,
     panelAppId,
     panelPath,
+    credentialPrompt,
+    cancelCredentialLaunch,
+    continueCredentialLaunch,
+    copyCredential,
     showConsent,
     consentRequest,
+    consentPhase,
+    consentError,
     approveConsent,
     denyConsent,
   }

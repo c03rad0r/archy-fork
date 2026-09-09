@@ -34,6 +34,7 @@ mod nostr;
 mod onboarding_gate;
 mod openwrt;
 mod package;
+pub(crate) use package::patch_indeedhub_nostr_provider;
 pub(crate) use package::wyoming_satellite_keeper;
 mod peers;
 mod pine_status;
@@ -71,11 +72,52 @@ pub use middleware::PeerAddr;
 // never added to it — the Phase-10 hard constraint this crate must hold.
 // The list's *contents* are unchanged; only its read-visibility widens from
 // "this module" to "this crate".
-pub(crate) use middleware::UNAUTHENTICATED_METHODS;
-use middleware::{
-    derive_csrf_token, extract_client_ip, extract_cookie, sanitize_error_message, CACHEABLE_METHODS,
-};
+pub(crate) use middleware::{derive_csrf_token, UNAUTHENTICATED_METHODS};
+use middleware::{extract_client_ip, extract_cookie, sanitize_error_message, CACHEABLE_METHODS};
 use response::{cookie_header, json_response, ResponseCache, RpcError, RpcRequest, RpcResponse};
+
+/// Browser apps run on dedicated high ports and can share the authenticated
+/// node cookie. Nostr signing must therefore be callable by the dashboard
+/// bridge (ports 80/443), not directly by an iframe that could bypass its
+/// consent dialog. Requests without Origin remain available to authenticated
+/// local CLI/integration clients. Development permits loopback origins.
+fn nostr_signing_origin_allowed(headers: &hyper::HeaderMap, dev_mode: bool) -> bool {
+    let Some(origin) = headers.get("origin").and_then(|value| value.to_str().ok()) else {
+        return true;
+    };
+    let Ok(url) = reqwest::Url::parse(origin) else {
+        return false;
+    };
+    if !matches!(url.scheme(), "http" | "https") || url.host_str().is_none() {
+        return false;
+    }
+    if dev_mode && matches!(url.host_str(), Some("localhost" | "127.0.0.1" | "::1")) {
+        return true;
+    }
+    matches!(url.port_or_known_default(), Some(80 | 443))
+}
+
+/// Read-only authenticated methods may skip CSRF, but they must still exist in
+/// the dispatcher. The tab signer uses `system.get-hostname` as its lightweight
+/// session probe, so keeping the policy in one testable function protects that
+/// cross-origin app-gate bootstrap contract.
+fn csrf_exempt_method(method: &str) -> bool {
+    matches!(
+        method,
+        "node-messages-received"
+            | "server.echo"
+            | "server.get-state"
+            | "system.stats"
+            | "tor.status"
+            | "tor.onion-addresses"
+            | "bitcoin.relay-status"
+            | "federation.list-nodes"
+            | "system.get-settings"
+            | "system.get-node-key"
+            | "system.get-metrics"
+            | "system.get-hostname"
+    )
+}
 
 /// Default dev password when no user is set up (matches mock-backend).
 /// Dev builds only — the pre-setup login bypass that reads this is
@@ -291,6 +333,18 @@ impl RpcHandler {
 
         debug!("RPC method: {}", rpc_req.method);
 
+        if matches!(
+            rpc_req.method.as_str(),
+            "node.nostr-sign" | "identity.nostr-sign"
+        ) && !nostr_signing_origin_allowed(&parts.headers, self.config.dev_mode)
+        {
+            return Ok(self.error_response(
+                403,
+                "Nostr signing from app origins requires the dashboard consent bridge",
+                StatusCode::FORBIDDEN,
+            ));
+        }
+
         // Enforce authentication for non-allowlisted methods
         let is_unauthenticated = UNAUTHENTICATED_METHODS.contains(&rpc_req.method.as_str());
         let mut new_session_cookies: Option<(String, String)> = None;
@@ -340,21 +394,7 @@ impl RpcHandler {
         // CSRF protection: validate X-CSRF-Token header via HMAC derivation from session token.
         // Skip CSRF for read-only methods (polling, status) — CSRF prevents state-changing forgery.
         // Skip when session was just auto-restored from remember-me (browser has stale CSRF cookie).
-        let csrf_exempt = matches!(
-            rpc_req.method.as_str(),
-            "node-messages-received"
-                | "server.echo"
-                | "server.get-state"
-                | "system.stats"
-                | "tor.status"
-                | "tor.onion-addresses"
-                | "bitcoin.relay-status"
-                | "federation.list-nodes"
-                | "system.get-settings"
-                | "system.get-node-key"
-                | "system.get-metrics"
-                | "system.get-version"
-        );
+        let csrf_exempt = csrf_exempt_method(&rpc_req.method);
         if !is_unauthenticated && new_session_cookies.is_none() && !csrf_exempt {
             let csrf_header = parts
                 .headers
@@ -733,5 +773,64 @@ impl RpcHandler {
                 remember_token, REMEMBER_TTL, secure_suffix
             )),
         );
+    }
+}
+
+#[cfg(test)]
+mod nostr_signing_origin_tests {
+    use super::*;
+    use hyper::header::{HeaderMap, HeaderValue, ORIGIN};
+
+    fn headers(origin: Option<&str>) -> HeaderMap {
+        let mut headers = HeaderMap::new();
+        if let Some(origin) = origin {
+            headers.insert(ORIGIN, HeaderValue::from_str(origin).unwrap());
+        }
+        headers
+    }
+
+    #[test]
+    fn signing_accepts_dashboard_and_authenticated_non_browser_clients() {
+        assert!(nostr_signing_origin_allowed(&headers(None), false));
+        assert!(nostr_signing_origin_allowed(
+            &headers(Some("https://node.local")),
+            false
+        ));
+        assert!(nostr_signing_origin_allowed(
+            &headers(Some("http://192.0.2.10")),
+            false
+        ));
+    }
+
+    #[test]
+    fn signing_rejects_app_ports_but_allows_loopback_dev_server() {
+        assert!(!nostr_signing_origin_allowed(
+            &headers(Some("https://node.local:8337")),
+            false
+        ));
+        assert!(!nostr_signing_origin_allowed(
+            &headers(Some("https://node.local:7778")),
+            false
+        ));
+        assert!(nostr_signing_origin_allowed(
+            &headers(Some("http://localhost:5173")),
+            true
+        ));
+    }
+}
+
+#[cfg(test)]
+mod session_probe_contract_tests {
+    use super::*;
+
+    #[test]
+    fn signer_session_probe_is_implemented_authenticated_and_read_only() {
+        const PROBE: &str = "system.get-hostname";
+        const DISPATCHER: &str = include_str!("dispatcher.rs");
+
+        assert!(csrf_exempt_method(PROBE));
+        assert!(!UNAUTHENTICATED_METHODS.contains(&PROBE));
+        assert!(DISPATCHER.contains("\"system.get-hostname\" =>"));
+        assert!(!DISPATCHER.contains("\"system.get-version\" =>"));
     }
 }

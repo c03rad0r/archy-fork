@@ -3074,9 +3074,27 @@ html.modal-scroll-locked .dashboard-scroll-panel {
   background: linear-gradient(to top, rgba(0,0,0,0.92) 0%, rgba(0,0,0,0.5) 40%, rgba(0,0,0,0.1) 100%);
   border-radius: 16px;
 }
+.source-banner {
+  border-color: rgba(147, 51, 234, 0.35);
+}
+.source-banner-img {
+  object-position: center center;
+  opacity: 0.72;
+}
+.source-banner:hover .source-banner-img {
+  opacity: 0.86;
+}
+.source-banner-overlay {
+  justify-content: center;
+  background: linear-gradient(90deg, rgba(3,5,9,0.97) 0%, rgba(3,5,9,0.86) 42%, rgba(3,5,9,0.2) 76%, rgba(3,5,9,0.08) 100%);
+}
 @media (max-width: 768px) {
   .featured-banner { min-height: 240px; }
   .featured-banner-overlay { padding: 1.5rem; min-height: 240px; }
+  .source-banner-img { object-position: 68% center; }
+  .source-banner-overlay {
+    background: linear-gradient(to right, rgba(3,5,9,0.96) 0%, rgba(3,5,9,0.78) 72%, rgba(3,5,9,0.42) 100%);
+  }
 }
 
 .discover-stat-pill {

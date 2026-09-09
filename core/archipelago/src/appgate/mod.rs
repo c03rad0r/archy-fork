@@ -148,9 +148,16 @@ impl AppGate {
         let app = live.as_ref().unwrap_or(app);
 
         let path = req.uri().path().to_string();
+        // A dashboard same-origin proxy strips `/app/<id>/` before this gate
+        // sees the URI. Carry that trusted proxy mount into the challenge's
+        // form/assets and its post-login redirect so the browser stays inside
+        // the mounted app instead of posting to the dashboard root.
+        let mount_prefix = forwarded_mount_prefix(req.headers());
 
         if let Some(action) = path.strip_prefix(GATE_PREFIX) {
-            return self.handle_gate_action(req, app, action, client_ip).await;
+            return self
+                .handle_gate_action(req, app, action, client_ip, &mount_prefix)
+                .await;
         }
 
         // A browser fetches a few subresources WITHOUT credentials by
@@ -188,10 +195,25 @@ impl AppGate {
             return proxy_to_app(req, app, false).await;
         }
 
+        // Capture the platform session before the request is moved into the
+        // upstream proxy. Older app-gate sessions (issued before the paired
+        // CSRF-cookie fix) can then repair themselves on the very next app
+        // response, before the app's provider creates its signer iframe.
+        let session_for_csrf = crate::session::extract_session_cookie(req.headers());
+        let needs_csrf_cookie = cookie_value(req.headers(), "csrf_token").is_none();
+
         match self.authorize(req.headers(), &app.app_id).await {
             // The credential was a cookie (or none was needed): the
             // Authorization header, if any, belongs to the app. Forward it.
-            Authorization::Allow => proxy_to_app(req, app, false).await,
+            Authorization::Allow => {
+                let mut response = proxy_to_app(req, app, false).await;
+                if needs_csrf_cookie {
+                    if let Some(token) = session_for_csrf {
+                        set_csrf_cookie(&mut response, &token).await;
+                    }
+                }
+                response
+            }
             // The credential WAS the Authorization header, and it was ours.
             Authorization::AllowGateToken => proxy_to_app(req, app, true).await,
             // 401 rather than a redirect: a redirect to a login page is
@@ -199,7 +221,9 @@ impl AppGate {
             // clients would follow it and parse HTML as if it were their API
             // response. The status says "you are not authenticated" in a way
             // every client understands, and browsers still render the body.
-            Authorization::Challenge => login_page(app, None, StatusCode::UNAUTHORIZED),
+            Authorization::Challenge => {
+                login_page(app, None, StatusCode::UNAUTHORIZED, &mount_prefix)
+            }
         }
     }
 
@@ -229,6 +253,7 @@ impl AppGate {
         app: &GatedPort,
         action: &str,
         client_ip: IpAddr,
+        mount_prefix: &str,
     ) -> Response<Body> {
         // Assets are GET and pre-auth by nature: the login page cannot
         // render its own background or logo without them.
@@ -236,7 +261,7 @@ impl AppGate {
             return self.serve_asset(name);
         }
         if req.method() != Method::POST {
-            return login_page(app, None, StatusCode::OK);
+            return login_page(app, None, StatusCode::OK, mount_prefix);
         }
 
         // Captured before the body is consumed. The pending-2FA session
@@ -253,17 +278,28 @@ impl AppGate {
                 app,
                 Some("Too many attempts. Wait a minute and try again."),
                 StatusCode::TOO_MANY_REQUESTS,
+                mount_prefix,
             );
         }
 
         let form = match read_form(req).await {
             Some(form) => form,
-            None => return login_page(app, Some("Malformed request."), StatusCode::BAD_REQUEST),
+            None => {
+                return login_page(
+                    app,
+                    Some("Malformed request."),
+                    StatusCode::BAD_REQUEST,
+                    mount_prefix,
+                )
+            }
         };
 
         match action {
-            "login" => self.do_login(app, &form, client_ip).await,
-            "totp" => self.do_totp(app, &form, pending, client_ip).await,
+            "login" => self.do_login(app, &form, client_ip, mount_prefix).await,
+            "totp" => {
+                self.do_totp(app, &form, pending, client_ip, mount_prefix)
+                    .await
+            }
             _ => not_found(),
         }
     }
@@ -288,14 +324,25 @@ impl AppGate {
             .expect("asset response builds")
     }
 
-    async fn do_login(&self, app: &GatedPort, form: &Form, client_ip: IpAddr) -> Response<Body> {
+    async fn do_login(
+        &self,
+        app: &GatedPort,
+        form: &Form,
+        client_ip: IpAddr,
+        mount_prefix: &str,
+    ) -> Response<Body> {
         let password = field(form, "password").unwrap_or_default();
 
         match self.auth.verify_password(&password).await {
             Ok(true) => {}
             _ => {
                 self.limiter.record_failure(client_ip).await;
-                return login_page(app, Some("Incorrect password."), StatusCode::UNAUTHORIZED);
+                return login_page(
+                    app,
+                    Some("Incorrect password."),
+                    StatusCode::UNAUTHORIZED,
+                    mount_prefix,
+                );
             }
         }
 
@@ -307,8 +354,8 @@ impl AppGate {
             if let Ok(Some(totp_data)) = self.auth.get_totp_data().await {
                 if let Ok(secret) = crate::totp::decrypt_secret(&totp_data, &password) {
                     let pending = self.sessions.create_pending(secret).await;
-                    let mut resp = totp_page(app, None, StatusCode::OK);
-                    set_session_cookie(&mut resp, &pending);
+                    let mut resp = totp_page(app, None, StatusCode::OK, mount_prefix);
+                    set_session_cookie(&mut resp, &pending).await;
                     return resp;
                 }
             }
@@ -319,12 +366,13 @@ impl AppGate {
                 app,
                 Some("Two-factor data could not be read. Sign in from the dashboard."),
                 StatusCode::INTERNAL_SERVER_ERROR,
+                mount_prefix,
             );
         }
 
         let token = self.sessions.create().await;
-        let mut resp = redirect_to_app();
-        set_session_cookie(&mut resp, &token);
+        let mut resp = redirect_to_app(mount_prefix);
+        set_session_cookie(&mut resp, &token).await;
         resp
     }
 
@@ -334,10 +382,16 @@ impl AppGate {
         form: &Form,
         pending: Option<String>,
         client_ip: IpAddr,
+        mount_prefix: &str,
     ) -> Response<Body> {
         let code = field(form, "code").unwrap_or_default();
         let Some(pending) = pending.filter(|s| !s.is_empty()) else {
-            return login_page(app, Some("Session expired."), StatusCode::UNAUTHORIZED);
+            return login_page(
+                app,
+                Some("Session expired."),
+                StatusCode::UNAUTHORIZED,
+                mount_prefix,
+            );
         };
 
         let Some(secret) = self.sessions.get_pending_secret(&pending).await else {
@@ -345,6 +399,7 @@ impl AppGate {
                 app,
                 Some("Session expired. Start again."),
                 StatusCode::UNAUTHORIZED,
+                mount_prefix,
             );
         };
 
@@ -371,17 +426,27 @@ impl AppGate {
                 }
                 match self.sessions.upgrade_to_full(&pending).await {
                     Some(full) => {
-                        let mut resp = redirect_to_app();
-                        set_session_cookie(&mut resp, &full);
+                        let mut resp = redirect_to_app(mount_prefix);
+                        set_session_cookie(&mut resp, &full).await;
                         resp
                     }
-                    None => login_page(app, Some("Session expired."), StatusCode::UNAUTHORIZED),
+                    None => login_page(
+                        app,
+                        Some("Session expired."),
+                        StatusCode::UNAUTHORIZED,
+                        mount_prefix,
+                    ),
                 }
             }
             _ => {
                 self.limiter.record_failure(client_ip).await;
-                let mut resp = totp_page(app, Some("Incorrect code."), StatusCode::UNAUTHORIZED);
-                set_session_cookie(&mut resp, &pending);
+                let mut resp = totp_page(
+                    app,
+                    Some("Incorrect code."),
+                    StatusCode::UNAUTHORIZED,
+                    mount_prefix,
+                );
+                set_session_cookie(&mut resp, &pending).await;
                 resp
             }
         }
@@ -634,7 +699,7 @@ fn strip_gate_cookies(headers: &mut hyper::HeaderMap) {
     }
 }
 
-fn set_session_cookie(resp: &mut Response<Body>, token: &str) {
+async fn set_session_cookie(resp: &mut Response<Body>, token: &str) {
     // No Domain attribute, so the cookie is host-only. Cookies ignore port,
     // which is what makes one sign-in cover the dashboard and every app port
     // on the same host — and equally why an app on a *different* host (its
@@ -644,12 +709,82 @@ fn set_session_cookie(resp: &mut Response<Body>, token: &str) {
     {
         resp.headers_mut().append(header::SET_COOKIE, value);
     }
+
+    // The dashboard RPC layer requires a readable CSRF cookie as well as the
+    // HttpOnly session cookie. An app-gate login is a complete node login, so
+    // it must establish the same pair as auth.login; otherwise a fresh browser
+    // can open the signer broker but every identity/signing RPC is rejected
+    // with `has_session=true, has_header=false`.
+    set_csrf_cookie(resp, token).await;
 }
 
-fn redirect_to_app() -> Response<Body> {
+async fn set_csrf_cookie(resp: &mut Response<Body>, token: &str) {
+    let csrf = crate::api::rpc::derive_csrf_token(token).await;
+    if let Ok(value) =
+        header::HeaderValue::from_str(&format!("csrf_token={csrf}; SameSite=Lax; Path=/"))
+    {
+        resp.headers_mut().append(header::SET_COOKIE, value);
+    }
+}
+
+fn cookie_value(headers: &HeaderMap, name: &str) -> Option<String> {
+    let prefix = format!("{name}=");
+    headers
+        .get_all(header::COOKIE)
+        .iter()
+        .filter_map(|value| value.to_str().ok())
+        .flat_map(|value| value.split(';'))
+        .map(str::trim)
+        .find_map(|pair| pair.strip_prefix(&prefix))
+        .filter(|value| !value.is_empty())
+        .map(str::to_owned)
+}
+
+/// Validate the mount supplied by the node's own nginx proxy.
+///
+/// Treat this as untrusted input even though our canonical proxy sets it: a
+/// client can reach an app-gate port directly and forge request headers. Only
+/// a short absolute path made from ordinary URL-path characters is accepted;
+/// protocol-relative URLs, dot segments, escaping and query/fragment syntax
+/// all fall back to the direct-port root.
+fn forwarded_mount_prefix(headers: &HeaderMap) -> String {
+    let Some(raw) = headers
+        .get("x-forwarded-prefix")
+        .and_then(|value| value.to_str().ok())
+    else {
+        return String::new();
+    };
+    let value = raw.trim_end_matches('/');
+    if value.is_empty()
+        || value.len() > 256
+        || !value.starts_with('/')
+        || value.starts_with("//")
+        || value
+            .bytes()
+            .any(|b| !(b.is_ascii_alphanumeric() || matches!(b, b'/' | b'-' | b'_' | b'.')))
+        || value
+            .split('/')
+            .skip(1)
+            .any(|segment| segment.is_empty() || segment == "." || segment == "..")
+    {
+        return String::new();
+    }
+    value.to_owned()
+}
+
+fn gate_url(mount_prefix: &str, action: &str) -> String {
+    format!("{mount_prefix}{GATE_PREFIX}{action}")
+}
+
+fn redirect_to_app(mount_prefix: &str) -> Response<Body> {
+    let location = if mount_prefix.is_empty() {
+        "/".to_owned()
+    } else {
+        format!("{mount_prefix}/")
+    };
     Response::builder()
         .status(StatusCode::SEE_OTHER)
-        .header(header::LOCATION, "/")
+        .header(header::LOCATION, location)
         .body(Body::empty())
         .expect("static response builds")
 }
@@ -674,7 +809,13 @@ dashboard and check {name} under My Apps.</p>"#,
         icon = icon_markup(app),
         name = esc(&app.app_name),
     );
-    let mut resp = page("App not responding", app, &body, StatusCode::BAD_GATEWAY);
+    let mut resp = page(
+        "App not responding",
+        app,
+        &body,
+        StatusCode::BAD_GATEWAY,
+        "",
+    );
     // Header-based refresh, not <meta> or script: page()'s CSP allows no
     // script, and the header keeps the retry out of the document entirely.
     resp.headers_mut()
@@ -707,7 +848,7 @@ fn esc(s: &str) -> String {
 /// the app's own port, so any asset URL would either hit the unauthenticated
 /// app behind it or a different origin the browser may not reach.
 /// One stacked layer per background, each delayed so they cross-fade in turn.
-fn background_layers() -> String {
+fn background_layers(mount_prefix: &str) -> String {
     let step = LOGIN_BACKGROUNDS.len() as u32 * 9 / LOGIN_BACKGROUNDS.len() as u32;
     LOGIN_BACKGROUNDS
         .iter()
@@ -715,7 +856,7 @@ fn background_layers() -> String {
         .map(|(i, name)| {
             format!(
                 r#"<div class="bg" style="background-image:url('{prefix}asset/{name}');animation-delay:{delay}s"></div>"#,
-                prefix = GATE_PREFIX,
+                prefix = gate_url(mount_prefix, ""),
                 delay = i as u32 * step,
             )
         })
@@ -938,7 +1079,13 @@ fn base64_encode(bytes: &[u8]) -> String {
     base64::engine::general_purpose::STANDARD.encode(bytes)
 }
 
-fn page(title: &str, app: &GatedPort, body: &str, status: StatusCode) -> Response<Body> {
+fn page(
+    title: &str,
+    app: &GatedPort,
+    body: &str,
+    status: StatusCode,
+    mount_prefix: &str,
+) -> Response<Body> {
     let html = format!(
         r#"<!doctype html>
 <html lang="en"><head>
@@ -1055,7 +1202,7 @@ button.loading .busy {{ display:inline-flex; align-items:center; gap:.5rem; }}
         app_name = esc(&app.app_name),
         body = body,
         submit_feedback = SUBMIT_FEEDBACK_JS,
-        backgrounds = background_layers(),
+        backgrounds = background_layers(mount_prefix),
         cycle = LOGIN_BACKGROUNDS.len() as u32 * 9,
         hold = 100 / LOGIN_BACKGROUNDS.len() as u32,
         fade = 100 / LOGIN_BACKGROUNDS.len() as u32 + 4,
@@ -1092,7 +1239,12 @@ button.loading .busy {{ display:inline-flex; align-items:center; gap:.5rem; }}
 /// The challenge. Names and pictures the app being opened, so the visitor can
 /// confirm what they are authenticating to rather than being asked for a
 /// password by an unexplained page.
-fn login_page(app: &GatedPort, error: Option<&str>, status: StatusCode) -> Response<Body> {
+fn login_page(
+    app: &GatedPort,
+    error: Option<&str>,
+    status: StatusCode,
+    mount_prefix: &str,
+) -> Response<Body> {
     let body = format!(
         r#"{logo}
 {icon}
@@ -1110,14 +1262,19 @@ fn login_page(app: &GatedPort, error: Option<&str>, status: StatusCode) -> Respo
         err = error
             .map(|e| format!(r#"<div class="err">{}</div>"#, esc(e)))
             .unwrap_or_default(),
-        prefix = GATE_PREFIX,
+        prefix = gate_url(mount_prefix, ""),
     );
-    page("Sign in", app, &body, status)
+    page("Sign in", app, &body, status, mount_prefix)
 }
 
 /// Second factor. Reached only after the password verified, and the session
 /// backing it cannot authorise anything until this completes.
-fn totp_page(app: &GatedPort, error: Option<&str>, status: StatusCode) -> Response<Body> {
+fn totp_page(
+    app: &GatedPort,
+    error: Option<&str>,
+    status: StatusCode,
+    mount_prefix: &str,
+) -> Response<Body> {
     let body = format!(
         r#"{icon}
 <h1>Two-factor code</h1>
@@ -1133,9 +1290,9 @@ fn totp_page(app: &GatedPort, error: Option<&str>, status: StatusCode) -> Respon
         err = error
             .map(|e| format!(r#"<div class="err">{}</div>"#, esc(e)))
             .unwrap_or_default(),
-        prefix = GATE_PREFIX,
+        prefix = gate_url(mount_prefix, ""),
     );
-    page("Two-factor", app, &body, status)
+    page("Two-factor", app, &body, status, mount_prefix)
 }
 
 #[cfg(test)]
@@ -1207,9 +1364,35 @@ mod tests {
         assert_eq!(bearer_token(&headers), None);
     }
 
+    #[test]
+    fn forwarded_mount_prefix_accepts_only_a_safe_absolute_path() {
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            "x-forwarded-prefix",
+            "/app/archipelago-source/".parse().unwrap(),
+        );
+        assert_eq!(forwarded_mount_prefix(&headers), "/app/archipelago-source");
+
+        for unsafe_value in [
+            "//other.example/app",
+            "/app/../admin",
+            "/app//source",
+            "/app/source?next=//other.example",
+            "https://other.example/app",
+            "/app/%2e%2e/admin",
+        ] {
+            headers.insert("x-forwarded-prefix", unsafe_value.parse().unwrap());
+            assert_eq!(
+                forwarded_mount_prefix(&headers),
+                "",
+                "accepted {unsafe_value}"
+            );
+        }
+    }
+
     #[tokio::test]
     async fn login_page_names_the_app() {
-        let resp = login_page(&app(), None, StatusCode::UNAUTHORIZED);
+        let resp = login_page(&app(), None, StatusCode::UNAUTHORIZED, "");
         assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
         let body = hyper::body::to_bytes(resp.into_body()).await.unwrap();
         let html = String::from_utf8_lossy(&body);
@@ -1222,7 +1405,7 @@ mod tests {
     async fn page_escapes_app_names() {
         let mut app = app();
         app.app_name = r#"<script>alert(1)</script>"#.to_string();
-        let resp = login_page(&app, None, StatusCode::UNAUTHORIZED);
+        let resp = login_page(&app, None, StatusCode::UNAUTHORIZED, "");
         let body = hyper::body::to_bytes(resp.into_body()).await.unwrap();
         let html = String::from_utf8_lossy(&body);
         assert!(!html.contains("<script>alert"));
@@ -1235,6 +1418,7 @@ mod tests {
             &app(),
             Some("<img src=x onerror=1>"),
             StatusCode::UNAUTHORIZED,
+            "",
         );
         let body = hyper::body::to_bytes(resp.into_body()).await.unwrap();
         let html = String::from_utf8_lossy(&body);
@@ -1293,7 +1477,7 @@ mod tests {
 
     #[test]
     fn challenge_pages_are_uncacheable_and_framable_only_by_this_node() {
-        let resp = login_page(&app(), None, StatusCode::UNAUTHORIZED);
+        let resp = login_page(&app(), None, StatusCode::UNAUTHORIZED, "");
         assert_eq!(resp.headers()[header::CACHE_CONTROL], "no-store");
         assert!(
             !resp.headers().contains_key("X-Frame-Options"),
@@ -1329,7 +1513,7 @@ mod tests {
     /// never 404 at all.
     #[tokio::test]
     async fn login_page_sources_its_art_from_the_gate() {
-        let resp = login_page(&app(), None, StatusCode::UNAUTHORIZED);
+        let resp = login_page(&app(), None, StatusCode::UNAUTHORIZED, "");
         let body = hyper::body::to_bytes(resp.into_body()).await.unwrap();
         let html = String::from_utf8_lossy(&body).to_string();
         assert_eq!(
@@ -1345,13 +1529,32 @@ mod tests {
         }
     }
 
+    #[tokio::test]
+    async fn mounted_login_keeps_forms_assets_and_redirect_inside_the_app() {
+        let mount = "/app/archipelago-source";
+        let resp = login_page(&app(), None, StatusCode::UNAUTHORIZED, mount);
+        let body = hyper::body::to_bytes(resp.into_body()).await.unwrap();
+        let html = String::from_utf8_lossy(&body);
+        assert!(html.contains(r#"action="/app/archipelago-source/__archipelago-gate/login""#));
+        for name in LOGIN_BACKGROUNDS {
+            assert!(html.contains(&format!("/app/archipelago-source{GATE_PREFIX}asset/{name}")));
+        }
+
+        let redirect = redirect_to_app(mount);
+        assert_eq!(redirect.status(), StatusCode::SEE_OTHER);
+        assert_eq!(
+            redirect.headers()[header::LOCATION],
+            "/app/archipelago-source/"
+        );
+    }
+
     /// The only script the challenge pages may run is the submit-feedback
     /// snippet, admitted by hash. The page must carry exactly that script,
     /// and the CSP must name its hash — anything injected has a different
     /// hash and stays inert.
     #[tokio::test]
     async fn submit_feedback_script_is_present_and_hash_pinned() {
-        let resp = login_page(&app(), None, StatusCode::UNAUTHORIZED);
+        let resp = login_page(&app(), None, StatusCode::UNAUTHORIZED, "");
         let csp = resp.headers()["Content-Security-Policy"]
             .to_str()
             .unwrap()
@@ -1453,6 +1656,54 @@ mod tests {
         );
         strip_gate_cookies(&mut headers);
         assert!(headers.get(header::COOKIE).is_none());
+    }
+
+    #[test]
+    fn cookie_value_finds_only_a_nonempty_named_cookie() {
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            header::COOKIE,
+            "app_session=keep; csrf_token=csrf123; empty="
+                .parse()
+                .unwrap(),
+        );
+        assert_eq!(
+            cookie_value(&headers, "csrf_token"),
+            Some("csrf123".to_string())
+        );
+        assert_eq!(cookie_value(&headers, "session"), None);
+        assert_eq!(cookie_value(&headers, "empty"), None);
+    }
+
+    /// An app-gate login must be equivalent to a dashboard login. The session
+    /// cookie alone can load the broker route, but every identity/signing RPC
+    /// also needs the matching readable CSRF cookie.
+    #[tokio::test]
+    async fn app_gate_login_establishes_the_dashboard_csrf_cookie() {
+        let token = "app-gate-session-token";
+        let mut resp = redirect_to_app("");
+
+        set_session_cookie(&mut resp, token).await;
+
+        let cookies: Vec<_> = resp
+            .headers()
+            .get_all(header::SET_COOKIE)
+            .iter()
+            .filter_map(|value| value.to_str().ok())
+            .collect();
+        let expected_csrf = crate::api::rpc::derive_csrf_token(token).await;
+        assert!(cookies
+            .iter()
+            .any(|cookie| cookie.starts_with(&format!("session={token};"))));
+        assert!(cookies
+            .iter()
+            .any(|cookie| cookie.starts_with(&format!("csrf_token={expected_csrf};"))));
+        assert!(cookies
+            .iter()
+            .any(|cookie| cookie.starts_with("session=") && cookie.contains("HttpOnly")));
+        assert!(cookies
+            .iter()
+            .any(|cookie| cookie.starts_with("csrf_token=") && !cookie.contains("HttpOnly")));
     }
 
     /// The regression that killed every Nostr login on 2026-08-06.

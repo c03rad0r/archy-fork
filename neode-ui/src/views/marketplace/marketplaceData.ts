@@ -438,5 +438,16 @@ export function getCuratedAppList(): MarketplaceApp[] {
       manifestUrl: undefined,
       repoUrl: 'https://gitea.com',
     },
+    {
+      id: 'archipelago-source',
+      title: 'GitWorkshop',
+      version: '0.4.0',
+      category: 'development',
+      description: "Get Archipelago's source, clone it with ngit, and contribute issues, patches, and reviews over Nostr using the upstream GitWorkshop client.",
+      icon: '/assets/img/app-icons/gitworkshop-dc36db6.svg',
+      author: 'GitWorkshop contributors',
+      dockerImage: 'localhost/archipelago-source:local',
+      repoUrl: 'https://github.com/DanConwayDev/gitworkshop',
+    },
   ]
 }

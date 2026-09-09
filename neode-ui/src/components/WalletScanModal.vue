@@ -234,35 +234,16 @@
             </div>
 
             <!-- ============ SUCCESS PANE ============ -->
-            <div v-else key="success" class="text-center py-2">
-              <div class="scan-success-badge mx-auto mb-5">
-                <ScreensaverRing size="badge" />
-                <div class="scan-success-core">
-                  <svg class="w-14 h-14 text-green-400" fill="none" stroke="currentColor" stroke-width="3" viewBox="0 0 24 24">
-                    <path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7" />
-                  </svg>
-                </div>
-              </div>
-
-              <div v-if="successAmount > 0" class="text-5xl font-black text-green-400 mb-1">
-                {{ successAmount.toLocaleString() }}<span class="text-2xl font-bold text-green-400/70"> sats</span>
-              </div>
-              <div class="text-2xl font-bold tracking-widest text-white mb-2">{{ successVerb }}</div>
-              <p class="text-sm text-white/50 mb-1">{{ successDetail }}</p>
-              <p v-if="successRef" class="text-[11px] text-white/30 font-mono break-all px-4 mb-4">{{ successRef }}</p>
-
-              <div v-if="balance !== null" class="inline-flex items-center gap-2 px-3 py-1.5 rounded-full bg-white/5 text-xs text-white/60 mb-5">
-                <span :class="railColor">{{ railLabel }}</span>
-                <span>balance now {{ balance.toLocaleString() }} sats</span>
-              </div>
-
-              <button
-                @click="close"
-                class="w-full py-3 rounded-xl font-semibold text-base bg-white/10 hover:bg-white/20 text-white transition-colors"
-              >
-                Done
-              </button>
-            </div>
+            <PaymentSuccessPane
+              v-else
+              key="success"
+              :amount="successAmount"
+              :verb="successVerb"
+              :method-label="railLabel"
+              :rows="successRows"
+              :note="successNote"
+              @done="close"
+            />
           </Transition>
         </div>
       </div>
@@ -277,7 +258,7 @@ import { rpcClient } from '@/api/rpc-client'
 import { useAnimatedQRDecoder } from '@/composables/useAnimatedQRDecoder'
 import { useModalKeyboard } from '@/composables/useModalKeyboard'
 import { useBodyScrollLock } from '@/composables/useBodyScrollLock'
-import ScreensaverRing from '@/components/ScreensaverRing.vue'
+import PaymentSuccessPane, { type SuccessRow } from '@/components/PaymentSuccessPane.vue'
 
 type Rail = 'onchain' | 'lightning' | 'cashu' | 'fedimint'
 type Action = 'pay-invoice' | 'send-onchain' | 'redeem-token' | 'fedimint-join'
@@ -706,6 +687,26 @@ const successAmount = ref(0)
 const successVerb = ref('SENT')
 const successDetail = ref('')
 const successRef = ref('')
+const successRows = computed<SuccessRow[]>(() => {
+  if (action.value === 'redeem-token' && dest.value) {
+    return [{
+      label: rail.value === 'fedimint' ? 'Notes redeemed' : 'Token redeemed',
+      value: dest.value,
+      hint: 'Keep this if you ever need to show what was redeemed.',
+      truncate: true,
+    }]
+  }
+  if (!successRef.value) return []
+  return [{
+    label: action.value === 'pay-invoice' ? 'Payment hash' : 'Transaction ID',
+    value: successRef.value,
+  }]
+})
+const successNote = computed(() => {
+  const parts = [successDetail.value]
+  if (balance.value !== null) parts.push(`${railLabel.value} balance now ${balance.value.toLocaleString()} sats.`)
+  return parts.filter(Boolean).join(' ')
+})
 
 async function confirmSend() {
   if (processing.value) return
@@ -798,6 +799,10 @@ function resetAll() {
   balance.value = null
   processing.value = false
   error.value = ''
+  successAmount.value = 0
+  successVerb.value = 'SENT'
+  successDetail.value = ''
+  successRef.value = ''
 }
 
 function close() {
@@ -868,34 +873,4 @@ onUnmounted(stopScanning)
   box-shadow: 0 0 0 9999px rgba(0, 0, 0, 0.35);
 }
 
-/* Paid tick (FED-06) — same composition as SendBitcoinModal: the branded
-   ScreensaverRing badge with the emerald checkmark core centred over it. */
-.scan-success-badge {
-  position: relative;
-  width: 160px;
-  height: 160px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-}
-@media (min-width: 768px) {
-  .scan-success-badge {
-    width: 192px;
-    height: 192px;
-  }
-}
-.scan-success-core {
-  position: absolute;
-  top: 50%;
-  left: 50%;
-  transform: translate(-50%, -50%);
-  width: 6rem;
-  height: 6rem;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  border-radius: 9999px;
-  background: rgba(16, 185, 129, 0.12);
-  box-shadow: 0 0 40px rgba(16, 185, 129, 0.25);
-}
 </style>

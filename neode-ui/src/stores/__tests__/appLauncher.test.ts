@@ -14,9 +14,10 @@ const SIGNED = {
 }
 
 // vi.hoisted runs before vi.mock hoisting
-const { mockPush, mockWindowOpen } = vi.hoisted(() => ({
+const { mockPush, mockWindowOpen, mockRpcCall } = vi.hoisted(() => ({
   mockPush: vi.fn(),
   mockWindowOpen: vi.fn(),
+  mockRpcCall: vi.fn(),
 }))
 
 // Mock vue-router
@@ -25,6 +26,9 @@ vi.mock('vue-router', () => ({
 }))
 vi.mock('@/router', () => ({
   default: { push: mockPush, currentRoute: { value: { fullPath: '/dashboard/apps', name: 'apps' } } },
+}))
+vi.mock('@/api/rpc-client', () => ({
+  rpcClient: { call: mockRpcCall },
 }))
 
 vi.stubGlobal('open', mockWindowOpen)
@@ -35,6 +39,7 @@ describe('useAppLauncherStore', () => {
   beforeEach(() => {
     setActivePinia(createPinia())
     vi.clearAllMocks()
+    mockRpcCall.mockResolvedValue({ credentials: [] })
     __setSignedCatalogForTests(SIGNED as never)
     // Default to HTTP to avoid proxy rewriting
     Object.defineProperty(window, 'location', {
@@ -66,9 +71,13 @@ describe('useAppLauncherStore', () => {
       delete (window as any).ArchipelagoNative
     })
 
-    it('openSession hands iframeable apps to the native WebView, never the iframe session', () => {
+    it('shows credentials before handing an app to the native WebView', async () => {
       const store = useAppLauncherStore()
       store.openSession('filebrowser')
+      await vi.waitFor(() => expect(store.credentialPrompt.loading).toBe(false))
+      expect(store.credentialPrompt.show).toBe(true)
+      expect(openInApp).not.toHaveBeenCalled()
+      store.continueCredentialLaunch()
       expect(openInApp).toHaveBeenCalledWith(expect.stringContaining(':8083'))
       expect(store.panelAppId).toBeNull()
       expect(store.isOpen).toBe(false)
@@ -82,6 +91,16 @@ describe('useAppLauncherStore', () => {
       expect(store.panelAppId).toBeNull()
     })
 
+    it('opens GitWorkshop in the companion native WebView, never a dashboard iframe', () => {
+      const store = useAppLauncherStore()
+      store.openSession('archipelago-source')
+      expect(openInApp).toHaveBeenCalledWith(
+        'http://192.0.2.10/app/archipelago-source/',
+      )
+      expect(store.panelAppId).toBeNull()
+      expect(store.isOpen).toBe(false)
+    })
+
     it('open() never falls through to the iframe overlay', () => {
       const store = useAppLauncherStore()
       store.open({ url: 'http://192.0.2.10:9999', title: 'Unknown app' })
@@ -90,16 +109,41 @@ describe('useAppLauncherStore', () => {
     })
   })
 
-  it('routes known port apps to full-page session', () => {
+  it('routes known port apps to full-page session after the credential gate', async () => {
     const store = useAppLauncherStore()
 
     // Port 8083 maps to /app/filebrowser/ — should route to session
     store.open({ url: 'http://192.0.2.10:8083', title: 'FileBrowser' })
+    await vi.waitFor(() => expect(store.credentialPrompt.loading).toBe(false))
+    store.continueCredentialLaunch()
 
     // Default panel mode: sets panelAppId, doesn't open overlay
     expect(store.isOpen).toBe(false)
     expect(store.panelAppId).toBe('filebrowser')
     expect(mockWindowOpen).not.toHaveBeenCalled()
+  })
+
+  it('gates a Home-style Portainer launch until its first-run token is shown', async () => {
+    mockRpcCall.mockResolvedValueOnce({
+      title: 'Portainer first-run token',
+      description: 'Use this token to create the administrator account.',
+      credentials: [{ label: 'Token', value: 'test-token', sensitive: true }],
+    })
+    const store = useAppLauncherStore()
+
+    store.openSession('portainer')
+    await vi.waitFor(() => expect(store.credentialPrompt.loading).toBe(false))
+
+    expect(store.credentialPrompt.show).toBe(true)
+    expect(store.credentialPrompt.credentials[0]?.value).toBe('test-token')
+    expect(mockWindowOpen).not.toHaveBeenCalled()
+
+    store.continueCredentialLaunch()
+    expect(mockWindowOpen).toHaveBeenCalledWith(
+      expect.stringContaining(':9000'),
+      '_blank',
+      'noopener,noreferrer',
+    )
   })
 
   it('uses the store-driven panel on mobile (no route change, no background swap)', () => {
@@ -378,7 +422,7 @@ describe('useAppLauncherStore', () => {
     expect(mockPush).not.toHaveBeenCalled()
   })
 
-  it('routes HTTPS same-host apps via session view', () => {
+  it('routes HTTPS same-host apps via session view after the credential gate', async () => {
     Object.defineProperty(window, 'location', {
       value: { origin: 'https://192.0.2.10', protocol: 'https:', hostname: '192.0.2.10' },
       writable: true,
@@ -387,6 +431,8 @@ describe('useAppLauncherStore', () => {
     const store = useAppLauncherStore()
 
     store.open({ url: 'http://192.0.2.10:8083', title: 'FileBrowser' })
+    await vi.waitFor(() => expect(store.credentialPrompt.loading).toBe(false))
+    store.continueCredentialLaunch()
 
     // Known port — routes to session (panel mode by default)
     expect(store.isOpen).toBe(false)

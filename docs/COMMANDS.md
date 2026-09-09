@@ -132,7 +132,7 @@ curl -s http://<node>/rpc/v1 -b jar.txt -H 'Content-Type: application/json' \
 
 Login returns a `session` cookie. State-changing calls also need the `X-CSRF-Token` header. Exactly twelve read-only methods are CSRF-exempt, so for those the cookie alone is enough:
 
-`node-messages-received` · `server.echo` · `server.get-state` · `system.stats` · `system.get-settings` · `system.get-node-key` · `system.get-metrics` · `system.get-version` · `tor.status` · `tor.onion-addresses` · `bitcoin.relay-status` · `federation.list-nodes`
+`node-messages-received` · `server.echo` · `server.get-state` · `system.stats` · `system.get-settings` · `system.get-node-key` · `system.get-metrics` · `system.get-hostname` · `tor.status` · `tor.onion-addresses` · `bitcoin.relay-status` · `federation.list-nodes`
 
 Anything not on that list — including `bitcoin.getinfo` and `monitoring.current` — needs the CSRF header. If TOTP is enabled, follow the login with `auth.login.totp`.
 

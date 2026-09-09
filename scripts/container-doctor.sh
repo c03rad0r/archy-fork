@@ -48,7 +48,12 @@ podman_rootless() {
 
 port_is_listening() {
     local port="$1"
-    ss -ltn 2>/dev/null | awk '{print $4}' | grep -Eq "(^|:)$port$"
+    local protocol="${2:-tcp}"
+    case "$protocol" in
+        tcp) ss -ltn 2>/dev/null ;;
+        udp) ss -lun 2>/dev/null ;;
+        *) return 1 ;;
+    esac | awk '{print $4}' | grep -Eq "(^|:)$port$"
 }
 
 run_fix() {
@@ -564,18 +569,19 @@ fix_missing_rootless_ports() {
     local fixed=false
     local name
     for name in $containers; do
-        local ports
-        ports=$(podman_rootless inspect "$name" --format '{{range $p,$bindings := .NetworkSettings.Ports}}{{if $bindings}}{{range $bindings}}{{.HostPort}}{{"\n"}}{{end}}{{end}}{{end}}' 2>/dev/null | sort -u)
-        [ -n "$ports" ] || continue
+        local bindings
+        bindings=$(podman_rootless inspect "$name" --format '{{range $p,$bindings := .NetworkSettings.Ports}}{{if $bindings}}{{range $bindings}}{{printf "%s %s\n" $p .HostPort}}{{end}}{{end}}{{end}}' 2>/dev/null | sort -u)
+        [ -n "$bindings" ] || continue
 
         local missing=()
-        local port
-        for port in $ports; do
-            [ -n "$port" ] || continue
-            if ! port_is_listening "$port"; then
-                missing+=("$port")
+        local container_binding host_port protocol
+        while read -r container_binding host_port; do
+            [ -n "$container_binding" ] && [ -n "$host_port" ] || continue
+            protocol="${container_binding##*/}"
+            if ! port_is_listening "$host_port" "$protocol"; then
+                missing+=("$host_port/$protocol")
             fi
-        done
+        done <<< "$bindings"
 
         if [ ${#missing[@]} -gt 0 ]; then
             log "Restarting $name: missing rootlessport listener(s): ${missing[*]}"

@@ -413,6 +413,11 @@ async fn main() -> Result<()> {
     // delays server readiness; best-effort, warnings only.
     tokio::spawn(bootstrap::ensure_doctor_installed());
 
+    // Dashboard-only updates can replace the NIP-07 provider without
+    // recreating a running IndeedHub container. Reconcile its injected copy on
+    // every daemon start so tab signing never remains pinned to an old asset.
+    tokio::spawn(api::rpc::patch_indeedhub_nostr_provider());
+
     // B17: heal already-deployed nodes whose archipelago.service lacks a mount
     // dependency on the data volume, so cold boots stop flapping. Boot-ordering
     // only — effective next reboot; never restarts the running service.

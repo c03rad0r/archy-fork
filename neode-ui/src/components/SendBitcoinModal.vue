@@ -188,17 +188,6 @@
           </div>
         </div>
 
-        <div v-if="ecashToken" class="mb-3 p-2 bg-white/5 rounded-lg">
-          <p class="text-white/50 text-xs mb-1">{{ t('sendBitcoin.tokenShareLabel') }}</p>
-          <!-- QR so the recipient can scan the token straight off this screen
-               (animated multi-frame not needed: qrcode handles these sizes). -->
-          <div class="flex justify-center my-2">
-            <canvas ref="tokenQrCanvas" class="rounded-lg bg-white p-2"></canvas>
-          </div>
-          <p class="text-xs font-mono text-white/80 break-all">{{ ecashToken }}</p>
-          <CopyButton :value="ecashToken" :label="t('common.copy')" size="sm" class="mt-2" />
-        </div>
-
         <div v-if="error" class="mb-3 alert-error">{{ error }}</div>
 
         <div class="flex gap-3">
@@ -218,12 +207,11 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, watch, nextTick } from 'vue'
+import { ref, computed, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { rpcClient } from '@/api/rpc-client'
 import { useLightningRequired } from '@/composables/useLightningRequired'
 import BaseModal from '@/components/BaseModal.vue'
-import CopyButton from '@/components/CopyButton.vue'
 import PaymentSuccessPane, { type SuccessRow } from '@/components/PaymentSuccessPane.vue'
 
 const { t } = useI18n()
@@ -285,9 +273,9 @@ const successInfo = ref<{
   methodLabel: string
   hash?: string
   txid?: string
+  rows?: SuccessRow[]
   note?: string
 } | null>(null)
-const ecashToken = ref('')
 
 // The identifiers worth keeping from a completed send, in the shape the
 // shared success pane takes. Which ones exist depends on the rail: Lightning
@@ -298,6 +286,7 @@ const successRows = computed<SuccessRow[]>(() => {
   const rows: SuccessRow[] = []
   if (info.hash) rows.push({ label: 'Payment hash', value: info.hash })
   if (info.txid) rows.push({ label: 'Transaction ID', value: info.txid })
+  if (info.rows) rows.push(...info.rows)
   return rows
 })
 
@@ -346,7 +335,6 @@ watch(() => props.show, (shown) => {
   dest.value = ''
   error.value = ''
   successInfo.value = null
-  ecashToken.value = ''
   sendAll.value = false
   onchainBalance.value = null
   feePreset.value = 'standard'
@@ -569,7 +557,6 @@ async function review() {
 
 function close() {
   error.value = ''
-  ecashToken.value = ''
   confirming.value = false
   successInfo.value = null
   emit('close')
@@ -585,24 +572,12 @@ function sendAnother() {
   error.value = ''
 }
 
-const tokenQrCanvas = ref<HTMLCanvasElement | null>(null)
-watch(ecashToken, async (token) => {
-  if (!token) return
-  await nextTick()
-  if (!tokenQrCanvas.value) return
-  try {
-    const QRCode = await import('qrcode')
-    await QRCode.toCanvas(tokenQrCanvas.value, token, { width: 220, margin: 1 })
-  } catch { /* QR is a convenience — the copyable text is authoritative */ }
-})
-
 async function send() {
   if (processing.value) return
   // Zero typed amount is fine when the invoice fixes the amount or we sweep.
   if (!amount.value && !isSweep.value && invoiceAmountSats.value === null) return
   processing.value = true
   error.value = ''
-  ecashToken.value = ''
 
   const method = effectiveMethod.value
   const paidAmount = confirmAmount.value
@@ -621,14 +596,32 @@ async function send() {
         method: 'wallet.ecash-send',
         params: { amount_sats: amount.value },
       })
-      ecashToken.value = res.token
+      successInfo.value = {
+        amount: paidAmount,
+        methodLabel: 'Sent as Cashu',
+        rows: [{
+          label: 'Token to share',
+          value: res.token,
+          hint: 'The recipient needs this token to claim the sats. Keep it until they confirm receipt.',
+          truncate: true,
+        }],
+      }
     } else if (method === 'fedimint') {
       const res = await rpcClient.call<{ token: string }>({
         method: 'wallet.fedimint-send',
         params: { amount_sats: amount.value },
         timeout: 60000,
       })
-      ecashToken.value = res.token
+      successInfo.value = {
+        amount: paidAmount,
+        methodLabel: 'Sent as Fedimint ecash',
+        rows: [{
+          label: 'Notes to share',
+          value: res.token,
+          hint: 'The recipient needs these notes to claim the sats. Keep them until they confirm receipt.',
+          truncate: true,
+        }],
+      }
     } else if (method === 'lightning') {
       if (!dest.value.trim()) { error.value = t('web5.pasteInvoice'); return }
       // Waits out slow multi-hop routing and only reports failure when LND
@@ -681,7 +674,7 @@ async function send() {
       }
     }
     emit('sent')
-    // Success pane (or the token pane for ecash mints) takes over the modal.
+    // The shared success pane takes over the modal for every payment rail.
     confirming.value = false
   } catch (err: unknown) {
     // Running node with nothing to pay with -> funding modal, not a raw string.

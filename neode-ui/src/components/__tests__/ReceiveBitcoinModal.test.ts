@@ -1,5 +1,5 @@
 import { flushPromises, mount } from '@vue/test-utils'
-import { describe, expect, it, vi } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 import ReceiveBitcoinModal from '../ReceiveBitcoinModal.vue'
 import { rpcClient } from '@/api/rpc-client'
 
@@ -26,6 +26,12 @@ vi.mock('@/composables/useLightningRequired', () => ({
     handleLightningFailure: vi.fn().mockReturnValue(false),
   }),
 }))
+
+beforeEach(() => {
+  vi.useRealTimers()
+  vi.clearAllMocks()
+  document.body.innerHTML = ''
+})
 
 // Guards an operator report (2026-09-08): clicking the Ecash tab appeared to
 // close the whole Receive modal. Not reproduced here — the tab switch alone
@@ -107,5 +113,72 @@ describe('ReceiveBitcoinModal — ecash tab click', () => {
     await flushPromises()
     wrapper.unmount()
     vi.useRealTimers()
+  })
+
+  it('shows a recent receipt claimed by another active browser context', async () => {
+    vi.mocked(rpcClient.call).mockImplementation(async ({ method }: { method: string }) => {
+      if (method === 'wallet.ecash-lnaddress') {
+        return { address: 'someone@minibits.cash' } as never
+      }
+      if (method === 'wallet.ecash-lnaddress-claim') {
+        return {
+          received_sats: 0,
+          failed_count: 0,
+          receipt_id: 7,
+          receipt_sats: 1000,
+          receipt_at: Math.floor(Date.now() / 1000),
+        } as never
+      }
+      return {} as never
+    })
+
+    const wrapper = mount(ReceiveBitcoinModal, {
+      props: { show: true },
+      attachTo: document.body,
+    })
+    const ecashTab = Array.from(document.body.querySelectorAll('button')).find((b) =>
+      b.textContent?.toLowerCase().includes('ecash'),
+    )
+    ecashTab!.dispatchEvent(new Event('click', { bubbles: true }))
+    await flushPromises()
+
+    expect(document.body.textContent).toContain('1,000')
+    expect(document.body.textContent).toContain('RECEIVED')
+    expect(document.body.querySelector('textarea')).toBeNull()
+    expect(document.body.querySelectorAll('[role="dialog"]')).toHaveLength(1)
+    expect(document.body.querySelector('[role="dialog"] h3')?.textContent).toBe('Payment received')
+    wrapper.unmount()
+  })
+
+  it('does not replay an older durable receipt when the receive screen is reopened', async () => {
+    vi.mocked(rpcClient.call).mockImplementation(async ({ method }: { method: string }) => {
+      if (method === 'wallet.ecash-lnaddress') {
+        return { address: 'someone@minibits.cash' } as never
+      }
+      if (method === 'wallet.ecash-lnaddress-claim') {
+        return {
+          received_sats: 0,
+          failed_count: 0,
+          receipt_id: 7,
+          receipt_sats: 1000,
+          receipt_at: Math.floor(Date.now() / 1000) - 30,
+        } as never
+      }
+      return {} as never
+    })
+
+    const wrapper = mount(ReceiveBitcoinModal, {
+      props: { show: true },
+      attachTo: document.body,
+    })
+    const ecashTab = Array.from(document.body.querySelectorAll('button')).find((b) =>
+      b.textContent?.toLowerCase().includes('ecash'),
+    )
+    ecashTab!.dispatchEvent(new Event('click', { bubbles: true }))
+    await flushPromises()
+
+    expect(document.body.querySelector('[role="dialog"] h3')?.textContent).not.toBe('Payment received')
+    expect(document.body.querySelector('textarea')).not.toBeNull()
+    wrapper.unmount()
   })
 })

@@ -497,6 +497,15 @@ function normalizeScreenshots(items: MarketplaceAppInfo['screenshots'] | undefin
 
 // Placeholder features
 const features = computed(() => {
+  if (appId.value === 'archipelago-source') {
+    return [
+      'Browse Archipelago source through the established GitWorkshop interface',
+      'Clone with ngit and fetch Git objects from redundant GRASP servers',
+      'Open issues, propose patches, and review changes over Nostr',
+      'Use a selected node identity through an explicit consent prompt',
+      'Contribute without receiving maintainer merge or release authority',
+    ]
+  }
   return [
     'Self-hosted and privacy-focused',
     'Easy installation and updates',

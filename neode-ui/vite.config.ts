@@ -39,7 +39,17 @@ export default defineConfig({
       workbox: {
         // /packages/ must bypass the SPA fallback — otherwise clicking the
         // companion APK download link gets index.html instead of the file.
-        navigateFallbackDenylist: [/^\/app\//, /^\/rpc\//, /^\/ws/, /^\/aiui\//, /^\/packages\//],
+        // The signer broker is a security-sensitive cross-window protocol,
+        // not an offline screen. Serving an old precached SPA shell here can
+        // preserve a broken session probe after the node has been updated.
+        navigateFallbackDenylist: [
+          /^\/app\//,
+          /^\/rpc\//,
+          /^\/ws/,
+          /^\/aiui\//,
+          /^\/packages\//,
+          /^\/nostr-signer(?:\/|$)/,
+        ],
         cleanupOutdatedCaches: true,
         globPatterns: ['**/*.{js,css,html,ico,png,svg,jpg,jpeg,mp4,webp}'],
         globIgnores: [
@@ -48,6 +58,7 @@ export default defineConfig({
           '**/bg-*.mp4', // Exclude large background videos from precache
           '**/video-intro*.mp4', // Exclude all intro video variants from precache
           '**/assets/icon/**', // Icons are in includeAssets — don't duplicate in glob precache
+          '**/nostr-provider.js', // Always use the node's current signer protocol
         ],
         maximumFileSizeToCacheInBytes: 10 * 1024 * 1024, // 10MB limit
         skipWaiting: false, // Wait for user to accept update

@@ -69,8 +69,8 @@ describe('paid tick renders the branded ring (FED-06)', () => {
     const rings = wrapper.findAllComponents(ScreensaverRing)
     expect(rings).toHaveLength(1)
     expect(rings[0]?.props('size')).toBe('badge')
-    expect(document.querySelector('.scan-success-core')).not.toBeNull()
-    expect(document.querySelector('svg path[d="M5 13l4 4L19 7"]')).not.toBeNull()
+    expect(document.querySelector('.burst-core')).not.toBeNull()
+    expect(document.querySelector('.burst-check')).not.toBeNull()
     // The plain fixed-size circle the ring replaced is gone.
     expect(document.querySelectorAll('.success-ring')).toHaveLength(0)
 

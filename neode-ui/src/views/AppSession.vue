@@ -85,14 +85,28 @@
           </svg>
         </button>
       </div>
-    </div>
 
-    <NostrIdentityPicker
-      :show="showIdentityPicker"
-      :app-name="appTitle"
-      @select="identity.onIdentitySelected"
-      @cancel="showIdentityPicker = false"
-    />
+      <!-- Host-owned signer stays inside the active app surface. This keeps
+           the context visible and works unchanged in the companion WebView. -->
+      <NostrSignConsent
+        :show="nostrBridge.showConsent.value"
+        :app-name="nostrBridge.consentRequest.value?.appName ?? appTitle"
+        :method="nostrBridge.consentRequest.value?.method ?? ''"
+        :identity-label="nostrBridge.consentRequest.value?.identityLabel"
+        :event-kind="nostrBridge.consentRequest.value?.eventKind"
+        :content="nostrBridge.consentRequest.value?.content"
+        :phase="nostrBridge.consentPhase.value"
+        :error="nostrBridge.consentError.value"
+        @approve="nostrBridge.approveConsent"
+        @deny="nostrBridge.denyConsent"
+      />
+      <NostrIdentityPicker
+        :show="showIdentityPicker"
+        :app-name="appTitle"
+        @select="identity.onIdentitySelected"
+        @cancel="identity.cancelIdentitySelection"
+      />
+    </div>
   </div>
   </Teleport>
   </div>
@@ -105,6 +119,7 @@ import { useAppLauncherStore } from '@/stores/appLauncher'
 import { useAppStore } from '@/stores/app'
 import { useScreensaverStore } from '@/stores/screensaver'
 import NostrIdentityPicker from '@/components/NostrIdentityPicker.vue'
+import NostrSignConsent from '@/components/NostrSignConsent.vue'
 import { isAutoTabApp, rememberAutoTabApp, forgetAutoTabApp } from '@/utils/autoTabApps'
 import AppSessionHeader from './appSession/AppSessionHeader.vue'
 import AppSessionFrame from './appSession/AppSessionFrame.vue'
@@ -265,7 +280,12 @@ function closeRouteSession() {
 const iframeRef = computed(() => frameRef.value?.iframeRef ?? null)
 
 const identity = useAppIdentity(appId, iframeRef, showIdentityPicker)
-const nostrBridge = useNostrBridge(identity.getStoredIdentity)
+const nostrBridge = useNostrBridge(identity.getStoredIdentity, {
+  appId: () => appId.value,
+  appName: () => appTitle.value,
+  appUrl: () => appUrl.value,
+  frameWindow: () => iframeRef.value?.contentWindow ?? null,
+})
 
 // --- Display mode ---
 
@@ -349,7 +369,7 @@ const backdropClasses = computed(() => {
 })
 
 const panelClasses = computed(() => {
-  const base = 'app-session-panel glass-card'
+  const base = 'app-session-panel glass-card relative overflow-hidden'
   if (inlinePanelMode.value) return `${base} app-session-inline`
   if (displayMode.value === 'fullscreen' && !isMobile.value) return `${base} app-session-fullscreen`
   return `${base} app-session-overlay`
@@ -443,6 +463,7 @@ function handleBackdropClick() {
 }
 
 function closeSession() {
+  if (nostrBridge.showConsent.value) nostrBridge.denyConsent()
   if (document.fullscreenElement) document.exitFullscreen().catch(() => {})
   if (isInlinePanel.value) emit('close')
   else closeRouteSession()
@@ -450,6 +471,11 @@ function closeSession() {
 
 function onKeyDown(e: KeyboardEvent) {
   if (e.key === 'Escape') {
+    if (nostrBridge.showConsent.value) {
+      nostrBridge.denyConsent()
+      e.preventDefault()
+      return
+    }
     if (document.fullscreenElement) document.exitFullscreen().catch(() => {})
     else closeSession()
     e.preventDefault()
@@ -465,7 +491,7 @@ function onFullscreenChange() {
 
 function onMessage(e: MessageEvent) {
   if (e.data?.type === 'nostr-request') nostrBridge.handleNostrRequest(e)
-  if (e.data?.type === 'archipelago:identity:request') identity.handleIdentityRequest()
+  if (e.data?.type === 'archipelago:identity:request') identity.handleIdentityRequest(e.data?.force === true)
   if (e.data?.type === 'archipelago:media:playing') screensaverStore.suppress(screensaverReason.value)
   if (e.data?.type === 'archipelago:media:idle') screensaverStore.resume(screensaverReason.value)
 }

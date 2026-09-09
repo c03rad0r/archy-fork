@@ -41,7 +41,15 @@ vi.mock('../appSession/useAppIdentity', () => ({
 }))
 
 vi.mock('../appSession/useNostrBridge', () => ({
-  useNostrBridge: () => ({ handleNostrRequest: vi.fn() }),
+  useNostrBridge: () => ({
+    handleNostrRequest: vi.fn(),
+    showConsent: { value: false },
+    consentRequest: { value: null },
+    consentPhase: { value: 'review' },
+    consentError: { value: '' },
+    approveConsent: vi.fn(),
+    denyConsent: vi.fn(),
+  }),
 }))
 
 vi.stubGlobal('open', mockWindowOpen)

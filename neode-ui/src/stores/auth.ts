@@ -92,22 +92,40 @@ export const useAuthStore = defineStore('auth', () => {
     }
   }
 
-  async function checkSession(): Promise<boolean> {
-    if (!localStorage.getItem('neode-auth')) {
+  async function checkSession(options: {
+    allowCookieWithoutLocalMarker?: boolean
+    bootstrapDashboard?: boolean
+  } = {}): Promise<boolean> {
+    // `neode-auth` is only a client-side hint; the HttpOnly session cookie is
+    // the authority. Most dashboard navigations deliberately require the hint
+    // so logging out does not immediately resurrect a still-expiring cookie.
+    // The contained tab signer is the exception: an app-gate login happens on
+    // the app's port and sets the shared host cookie, but cannot set dashboard-
+    // origin localStorage. Let that route validate the real cookie explicitly.
+    if (!options.allowCookieWithoutLocalMarker && !localStorage.getItem('neode-auth')) {
       return false
     }
 
     try {
-      await rpcClient.call({ method: 'server.echo', params: { message: 'ping' } })
+      // Unlike public `server.echo`, this implemented read-only method requires
+      // a valid session while remaining CSRF-exempt. That makes checkSession a
+      // real authentication check, including for the app-gate cookie bootstrap.
+      await rpcClient.call({ method: 'system.get-hostname' })
       isAuthenticated.value = true
       sessionValidated = true
+      try { localStorage.setItem('neode-auth', 'true') } catch { /* localStorage full or unavailable */ }
 
-      const sync = useSyncStore()
-      await sync.initializeData()
+      // The hidden signer broker only needs proof of the session cookie. Do
+      // not make its first consent prompt wait for a full dashboard snapshot
+      // and WebSocket connection; a normal dashboard check keeps this default.
+      if (options.bootstrapDashboard !== false) {
+        const sync = useSyncStore()
+        await sync.initializeData()
 
-      sync.connectWebSocket().catch((err) => {
-        if (import.meta.env.DEV) console.warn('[Store] WebSocket reconnection failed, will retry:', err)
-      })
+        sync.connectWebSocket().catch((err) => {
+          if (import.meta.env.DEV) console.warn('[Store] WebSocket reconnection failed, will retry:', err)
+        })
+      }
 
       return true
     } catch (err) {

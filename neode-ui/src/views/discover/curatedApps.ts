@@ -12,10 +12,31 @@ export interface CatalogFeatured {
   tag: string
 }
 
+/** Registry-owned App Store ordering and promotions. Keeping this alongside
+ * the app entries lets a catalog release change merchandising without an OS
+ * or dashboard release. */
+export interface CatalogPromotion {
+  id: string
+  banner: string
+  eyebrow: string
+  headline: string
+  description: string
+  tag: string
+  launchLabel?: string
+  installLabel?: string
+  detailsLabel?: string
+}
+
+export interface CatalogStorefront {
+  popular: string[]
+  promotions: CatalogPromotion[]
+}
+
 export interface AppCatalog {
   version: number
   registry: string
-  featured: CatalogFeatured
+  featured?: CatalogFeatured
+  storefront?: CatalogStorefront
   apps: MarketplaceApp[]
 }
 
@@ -28,6 +49,8 @@ export interface AppCatalog {
 export interface SignedAppCatalog {
   schema?: number
   updated?: string
+  featured?: CatalogFeatured
+  storefront?: CatalogStorefront
   apps: Record<string, SignedAppEntry>
 }
 
@@ -171,6 +194,8 @@ export async function fetchAppCatalog(): Promise<AppCatalog | null> {
   // dashboard release. The community catalog supplies the featured banner
   // and curated copy for shared ids; signed-only ids join the listing as-is.
   let signedApps: MarketplaceApp[] = []
+  let signedFeatured: CatalogFeatured | undefined
+  let signedStorefront: CatalogStorefront | undefined
   let signedOk = false
   try {
     const res = await fetch('/api/app-catalog', { credentials: 'include', signal: AbortSignal.timeout(20000) })
@@ -179,6 +204,8 @@ export async function fetchAppCatalog(): Promise<AppCatalog | null> {
       if (data.apps && !Array.isArray(data.apps)) {
         signedCatalogCache = data
         signedApps = signedCatalogToApps(data)
+        signedFeatured = data.featured
+        signedStorefront = data.storefront
         signedOk = signedApps.length > 0
       }
     }
@@ -214,7 +241,8 @@ export async function fetchAppCatalog(): Promise<AppCatalog | null> {
     const merged: AppCatalog = {
       version: community?.version ?? 1,
       registry: community?.registry ?? R,
-      featured: community?.featured ?? { id: 'bitcoin-knots', banner: '', headline: '', description: '', tag: '' },
+      featured: signedFeatured ?? community?.featured,
+      storefront: signedStorefront ?? community?.storefront,
       apps: [...byId.values()],
     }
     cachedCatalog = merged
@@ -269,6 +297,7 @@ export function getCuratedAppList(): MarketplaceApp[] {
     { id: 'nostrudel', title: 'noStrudel', version: '0.40.0', category: 'nostr', description: 'Feature-rich Nostr web client. Browse feeds, post notes, manage relays with NIP-07.', icon: '/assets/img/app-icons/nostrudel.svg', author: 'hzrd149', dockerImage: '', repoUrl: 'https://github.com/hzrd149/nostrudel', webUrl: 'https://nostrudel.ninja' },
     { id: 'botfights', title: 'BotFights', version: '1.0.0', category: 'community', description: 'Bot arena + 2-player arcade fighter with controller support. AI bots battle in trivia, humans duke it out with controllers.', icon: '/assets/img/app-icons/botfights.svg', author: 'BotFights', dockerImage: `${R}/botfights:1.1.0`, repoUrl: 'https://botfights.net' },
     { id: 'gitea', title: 'Gitea', version: '1.23', category: 'development', description: 'Self-hosted Git service with container registry, CI/CD, issue tracking, and package hosting.', icon: '/assets/img/app-icons/gitea.svg', author: 'Gitea', dockerImage: 'docker.io/gitea/gitea:1.23', repoUrl: 'https://gitea.com' },
+    { id: 'archipelago-source', title: 'GitWorkshop', version: '0.4.0', category: 'development', description: "Get Archipelago's source, clone it with ngit, and contribute issues, patches, and reviews over Nostr using the upstream GitWorkshop client.", icon: '/assets/img/app-icons/gitworkshop-dc36db6.svg', author: 'GitWorkshop contributors', maintainerNpub: 'npub1w3sqdkrhn0gyuvsex32effzgnfpyde6qrrc4u467flg5e9txh4wsfn5vjg', dockerImage: 'localhost/archipelago-source:local', repoUrl: 'https://github.com/DanConwayDev/gitworkshop' },
   ]
 }
 

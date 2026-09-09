@@ -64,6 +64,11 @@ pub(super) fn sanitize_error_message(msg: &str) -> String {
         "must be",
         "cannot",
         "Password",
+        // auth.changePassword verifies the existing node password before it
+        // writes either the web hash or the optional Linux/SSH password. This
+        // is safe, actionable validation text; masking it as an internal
+        // failure sent operators to the server logs for a simple typo.
+        "Current password is incorrect",
         // OTA apply/download errors are all operator-actionable ("download it
         // again", "download first") — sanitizing them to "Operation failed"
         // left users stuck with no idea what to do, and hid the "already
@@ -243,6 +248,12 @@ mod sanitize_tests {
     }
 
     #[test]
+    fn change_password_rejection_reaches_the_operator() {
+        let msg = "Current password is incorrect";
+        assert_eq!(sanitize_error_message(msg), msg);
+    }
+
+    #[test]
     fn tor_unavailable_precondition_passes_through() {
         let msg = "Tor address not available. Tor may not be running.";
         assert_eq!(sanitize_error_message(msg), msg);
@@ -306,7 +317,7 @@ mod sanitize_tests {
 /// Deterministic: same session token always produces the same CSRF token.
 /// Survives backend restarts because it depends only on the session token
 /// and the on-disk remember secret (not ephemeral state).
-pub(super) async fn derive_csrf_token(session_token: &str) -> String {
+pub(crate) async fn derive_csrf_token(session_token: &str) -> String {
     use hmac::{Hmac, Mac};
     use sha2::Sha256;
     type HmacSha256 = Hmac<Sha256>;

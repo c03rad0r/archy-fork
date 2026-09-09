@@ -1,5 +1,5 @@
 <template>
-  <BaseModal :show="show" :title="t('web5.receiveBitcoinTitle')" max-width="max-w-2xl" content-class="max-h-[90vh] overflow-y-auto" @close="close">
+  <BaseModal :show="show && !receiveSuccess" :title="t('web5.receiveBitcoinTitle')" max-width="max-w-2xl" content-class="max-h-[90vh] overflow-y-auto" @close="close">
         <!-- Method tabs -->
         <div class="flex gap-1 mb-4 p-1 bg-white/5 rounded-lg">
           <button
@@ -21,22 +21,7 @@
             <label class="text-white/60 text-sm block mb-1">{{ t('receiveBitcoin.memoOptional') }}</label>
             <input v-model="invoiceMemo" type="text" :placeholder="t('receiveBitcoin.memoPlaceholder')" class="w-full input-glass" />
           </div>
-          <!-- Paid: the invoice did its job — straight to the green check
-               (no broadcast step: Lightning settlement is final) -->
-          <div v-if="invoicePaid" class="mb-3 p-6 bg-white/5 rounded-lg text-center">
-            <div class="flex justify-center mb-4">
-              <div class="w-16 h-16 rounded-full flex items-center justify-center bg-green-500/15">
-                <svg class="w-8 h-8 text-green-400" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
-                  <path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7" />
-                </svg>
-              </div>
-            </div>
-            <p class="text-lg font-semibold text-white mb-1">{{ t('receiveBitcoin.paymentConfirmed') }}</p>
-            <p v-if="invoicePaid.amountSats > 0" class="text-2xl font-semibold text-white/95 mb-2">
-              {{ invoicePaid.amountSats.toLocaleString() }} sats
-            </p>
-          </div>
-          <div v-else-if="invoiceResult" class="mb-3 p-3 bg-white/5 rounded-lg text-center">
+          <div v-if="invoiceResult" class="mb-3 p-3 bg-white/5 rounded-lg text-center">
             <canvas ref="lightningQrCanvas" class="mx-auto mb-3 rounded-lg" style="image-rendering: pixelated;"></canvas>
             <p class="text-white/50 text-xs mb-2">{{ t('receiveBitcoin.invoiceShareLabel') }}</p>
             <CopyButton :value="invoiceResult" :label="t('common.copy')" />
@@ -45,50 +30,19 @@
 
         <!-- On-chain -->
         <div v-if="receiveMethod === 'onchain'">
-          <!-- Payment detected: the QR did its job — show the outcome -->
-          <div v-if="paymentSeen" class="mb-3 p-6 bg-white/5 rounded-lg text-center">
-            <div class="flex justify-center mb-4">
-              <div
-                class="w-16 h-16 rounded-full flex items-center justify-center"
-                :class="paymentSeen.confirmations > 0 ? 'bg-green-500/15' : 'bg-orange-500/15 animate-pulse'"
-              >
-                <!-- Check once confirmed, clock while in the mempool -->
-                <svg v-if="paymentSeen.confirmations > 0" class="w-8 h-8 text-green-400" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
-                  <path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7" />
-                </svg>
-                <svg v-else class="w-8 h-8 text-orange-400" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
-                  <path stroke-linecap="round" stroke-linejoin="round" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
-                </svg>
-              </div>
-            </div>
-            <p class="text-lg font-semibold text-white mb-1">
-              {{ paymentSeen.confirmations > 0 ? t('receiveBitcoin.paymentConfirmed') : t('receiveBitcoin.paymentBroadcast') }}
-            </p>
-            <p v-if="paymentSeen.amountSats > 0" class="text-2xl font-semibold text-white/95 mb-2">
-              {{ paymentSeen.amountSats.toLocaleString() }} sats
-            </p>
-            <p v-if="paymentSeen.confirmations === 0" class="text-sm text-white/50 mb-3 max-w-md mx-auto">
-              {{ t('receiveBitcoin.paymentBroadcastHint') }}
-            </p>
-            <p class="text-xs text-white/50 mb-1">{{ t('receiveBitcoin.transactionId') }}</p>
-            <p class="text-xs font-mono text-white/80" :title="paymentSeen.txid">{{ midTxid(paymentSeen.txid) }}</p>
-            <CopyButton :value="paymentSeen.txid" :label="t('common.copy')" class="mt-2" />
+          <div v-if="note" class="mb-3 p-3 rounded-lg bg-orange-500/10 border border-orange-500/20 text-sm text-white/80 leading-relaxed">
+            {{ note }}
           </div>
-          <template v-else>
-            <div v-if="note" class="mb-3 p-3 rounded-lg bg-orange-500/10 border border-orange-500/20 text-sm text-white/80 leading-relaxed">
-              {{ note }}
-            </div>
-            <div v-if="onchainAddress" class="mb-3 p-3 bg-white/5 rounded-lg text-center">
-              <canvas ref="onchainQrCanvas" class="mx-auto mb-3 rounded-lg" style="image-rendering: pixelated;"></canvas>
-              <p class="text-white/50 text-xs mb-2">{{ t('receiveBitcoin.yourBitcoinAddress') }}</p>
-              <p class="text-sm font-mono text-white/90 break-all">{{ onchainAddress }}</p>
-              <CopyButton :value="onchainAddress" :label="t('common.copy')" class="mt-2" />
-            </div>
-            <div v-else class="mb-3 text-center">
-              <p class="text-white/50 text-sm mb-2">{{ t('web5.generateFreshAddress') }}</p>
-              <p v-if="processing" class="text-xs text-white/40">Checking Lightning wallet readiness...</p>
-            </div>
-          </template>
+          <div v-if="onchainAddress" class="mb-3 p-3 bg-white/5 rounded-lg text-center">
+            <canvas ref="onchainQrCanvas" class="mx-auto mb-3 rounded-lg" style="image-rendering: pixelated;"></canvas>
+            <p class="text-white/50 text-xs mb-2">{{ t('receiveBitcoin.yourBitcoinAddress') }}</p>
+            <p class="text-sm font-mono text-white/90 break-all">{{ onchainAddress }}</p>
+            <CopyButton :value="onchainAddress" :label="t('common.copy')" class="mt-2" />
+          </div>
+          <div v-else class="mb-3 text-center">
+            <p class="text-white/50 text-sm mb-2">{{ t('web5.generateFreshAddress') }}</p>
+            <p v-if="processing" class="text-xs text-white/40">Checking Lightning wallet readiness...</p>
+          </div>
         </div>
 
         <!-- Ark -->
@@ -116,9 +70,6 @@
             <p class="text-base font-mono text-white/95 break-all mb-2">{{ lnAddress }}</p>
             <CopyButton :value="lnAddress" :label="t('common.copy')" />
             <p class="text-white/40 text-xs mt-3 leading-relaxed">{{ t('receiveBitcoin.lnAddressHint') }}</p>
-            <p v-if="lnClaimedSats > 0" class="text-green-400 text-sm mt-2">
-              {{ t('receiveBitcoin.lnAddressReceived', { amount: lnClaimedSats.toLocaleString() }) }}
-            </p>
             <p v-if="lnPendingClaims > 0" class="text-orange-400 text-sm mt-2">
               {{ t('receiveBitcoin.lnAddressPendingRetry', { count: lnPendingClaims }) }}
             </p>
@@ -134,16 +85,11 @@
             <label class="text-white/60 text-sm block mb-1">{{ t('receiveBitcoin.pasteEcashToken') }}</label>
             <textarea v-model="ecashToken" rows="3" placeholder="cashuB… (Cashu) or Fedimint notes" class="w-full input-glass font-mono"></textarea>
           </div>
-          <div v-if="ecashResult" class="mb-3 text-xs text-green-400">{{ ecashResult }}</div>
         </div>
 
         <div v-if="error" class="mb-3 alert-error">{{ error }}</div>
 
-        <!-- Once the payment is seen there is nothing left to do here -->
-        <div v-if="paymentSeen" class="flex">
-          <button @click="close" class="flex-1 glass-button glass-button-success px-4 py-2 rounded-lg text-sm font-medium">{{ t('common.done') }}</button>
-        </div>
-        <div v-else class="flex gap-3">
+        <div class="flex gap-3">
           <button @click="close" class="flex-1 glass-button px-4 py-2 rounded-lg text-sm">{{ t('common.close') }}</button>
           <button @click="$emit('scan')" class="flex-1 glass-button px-4 py-2 rounded-lg text-sm font-medium flex items-center justify-center gap-2">
             <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -156,6 +102,28 @@
           </button>
         </div>
   </BaseModal>
+
+  <!-- Completion is deliberately its own modal, matching the Lightning
+       payment moment. It is not an inline status inside the receive form. -->
+  <BaseModal
+    :show="show && !!receiveSuccess"
+    title="Payment received"
+    max-width="max-w-2xl"
+    content-class="max-h-[90vh] overflow-y-auto"
+    @close="close"
+  >
+    <PaymentSuccessPane
+      v-if="receiveSuccess"
+      :amount="receiveSuccess.amount"
+      :verb="receiveSuccess.verb"
+      :method-label="receiveSuccess.methodLabel"
+      :rows="receiveSuccess.rows"
+      :note="receiveSuccess.note"
+      again-label="Receive another"
+      @again="receiveAnother"
+      @done="close"
+    />
+  </BaseModal>
 </template>
 
 <script setup lang="ts">
@@ -164,6 +132,7 @@ import { useI18n } from 'vue-i18n'
 import { rpcClient } from '@/api/rpc-client'
 import BaseModal from '@/components/BaseModal.vue'
 import CopyButton from '@/components/CopyButton.vue'
+import PaymentSuccessPane, { type SuccessRow } from '@/components/PaymentSuccessPane.vue'
 import { explainReceiveAddressFailure } from '@/utils/bitcoinReceive'
 import { useLightningRequired } from '@/composables/useLightningRequired'
 
@@ -182,6 +151,8 @@ const emit = defineEmits<{ close: []; received: []; scan: [] }>()
 watch(() => props.show, (open) => {
   if (!open) {
     stopWatchingPayment()
+    stopWatchingInvoice()
+    stopLnClaimPoll()
     return
   }
   paymentSeen.value = null
@@ -198,13 +169,14 @@ watch(() => props.show, (open) => {
   onchainAddress.value = ''
   arkAddress.value = ''
   ecashToken.value = ''
-  ecashResult.value = ''
+  receiveSuccess.value = null
   stopLnClaimPoll()
   lnAddress.value = ''
   lnAddressLoading.value = false
   lnAddressError.value = false
-  lnClaimedSats.value = 0
   lnPendingClaims.value = 0
+  lastLnReceiptId.value = 0
+  lnWatchStartedAt.value = 0
   error.value = ''
   processing.value = false
   if (props.autoGenerate && receiveMethod.value === 'onchain') {
@@ -219,7 +191,13 @@ const invoiceResult = ref('')
 const onchainAddress = ref('')
 const arkAddress = ref('')
 const ecashToken = ref('')
-const ecashResult = ref('')
+const receiveSuccess = ref<{
+  amount: number
+  verb: string
+  methodLabel: string
+  rows: SuccessRow[]
+  note?: string
+} | null>(null)
 const onchainQrCanvas = ref<HTMLCanvasElement | null>(null)
 const lightningQrCanvas = ref<HTMLCanvasElement | null>(null)
 const arkQrCanvas = ref<HTMLCanvasElement | null>(null)
@@ -236,11 +214,15 @@ const error = ref('')
 const lnAddress = ref('')
 const lnAddressLoading = ref(false)
 const lnAddressError = ref(false)
-const lnClaimedSats = ref(0)
 // A payment the backend fetched (and so already consumed at Minibits) but
 // couldn't redeem yet — it's queued for automatic retry, not lost, but the
 // operator should see it rather than have it be a silent, unbounded wait.
 const lnPendingClaims = ref(0)
+const lastLnReceiptId = ref(0)
+// A durable receipt is shared across browser contexts. Only surface one whose
+// redemption happened after this receive watch began; reopening the modal must
+// not replay the previous payment as though it were new.
+const lnWatchStartedAt = ref(0)
 let lnClaimTimer: ReturnType<typeof setInterval> | null = null
 let lnClaimInFlight = false
 
@@ -277,7 +259,10 @@ function stopLnClaimPoll() {
 
 function startLnClaimPoll() {
   stopLnClaimPoll()
-  lnClaimTimer = setInterval(() => void pollLnClaims(), 8000)
+  // Do not make a newly opened receive screen wait a full interval before it
+  // can discover a payment (or a receipt claimed by another active client).
+  void pollLnClaims()
+  lnClaimTimer = setInterval(() => void pollLnClaims(), 3000)
 }
 
 async function pollLnClaims() {
@@ -288,7 +273,13 @@ async function pollLnClaims() {
   }
   lnClaimInFlight = true
   try {
-    const res = await rpcClient.call<{ received_sats?: number; failed_count?: number }>({
+    const res = await rpcClient.call<{
+      received_sats?: number
+      failed_count?: number
+      receipt_id?: number
+      receipt_sats?: number
+      receipt_at?: number
+    }>({
       method: 'wallet.ecash-lnaddress-claim',
       // Relay collection alone has a ten-second window and redemption may
       // then contact the mint. Keep the browser request alive long enough for
@@ -298,8 +289,28 @@ async function pollLnClaims() {
     // The user may have closed the modal while the relay fetch was in flight.
     // Do not resurrect its status or emit a stale received event afterward.
     if (!props.show || !lnAddress.value) return
-    if (res?.received_sats && res.received_sats > 0) {
-      lnClaimedSats.value += res.received_sats
+    const receiptId = res?.receipt_id || 0
+    const isNewReceipt = receiptId > 0 && receiptId !== lastLnReceiptId.value
+    const receiptAt = res?.receipt_at || 0
+    const receiptAgeSeconds = Math.floor(Date.now() / 1000) - receiptAt
+    const happenedDuringThisWatch = receiptAt >= Math.max(0, lnWatchStartedAt.value - 1)
+    const recentSharedReceipt = isNewReceipt
+      && happenedDuringThisWatch
+      && receiptAgeSeconds >= 0
+      && receiptAgeSeconds <= 180
+    const receivedSats = res?.received_sats && res.received_sats > 0
+      ? res.received_sats
+      : recentSharedReceipt ? (res?.receipt_sats || 0) : 0
+    if (receiptId > 0) lastLnReceiptId.value = receiptId
+    if (receivedSats > 0) {
+      receiveSuccess.value = {
+        amount: receivedSats,
+        verb: 'RECEIVED',
+        methodLabel: 'Lightning address to Cashu',
+        rows: [{ label: 'Lightning address', value: lnAddress.value }],
+        note: 'The payment was claimed into this node\'s Cashu balance.',
+      }
+      stopLnClaimPoll()
       emit('received')
     }
     lnPendingClaims.value = res?.failed_count || 0
@@ -314,7 +325,10 @@ onUnmounted(stopLnClaimPoll)
 
 // Fetch the address the first time the operator opens the ecash tab.
 watch(receiveMethod, (m) => {
-  if (m === 'ecash' && props.show) void loadLnAddress()
+  if (m === 'ecash' && props.show) {
+    lnWatchStartedAt.value = Math.floor(Date.now() / 1000)
+    void loadLnAddress()
+  }
 })
 
 // ── On-chain payment detection ────────────────────────────────────────────
@@ -325,10 +339,6 @@ watch(receiveMethod, (m) => {
 // upgrades it to a check, then stop.
 const paymentSeen = ref<null | { txid: string; amountSats: number; confirmations: number }>(null)
 let watchTimer: ReturnType<typeof setInterval> | null = null
-
-function midTxid(txid: string): string {
-  return txid.length > 24 ? `${txid.slice(0, 10)}…${txid.slice(-10)}` : txid
-}
 
 function stopWatchingPayment() {
   if (watchTimer) {
@@ -366,6 +376,15 @@ async function checkForPayment() {
       txid: hit.tx_hash,
       amountSats: hit.amount,
       confirmations: hit.num_confirmations,
+    }
+    receiveSuccess.value = {
+      amount: hit.amount,
+      verb: 'RECEIVED',
+      methodLabel: hit.num_confirmations > 0 ? 'Confirmed on-chain' : 'Received on-chain',
+      rows: [{ label: t('receiveBitcoin.transactionId'), value: hit.tx_hash }],
+      note: hit.num_confirmations > 0
+        ? 'The transaction has its first confirmation.'
+        : t('receiveBitcoin.paymentBroadcastHint'),
     }
     if (firstSighting) emit('received')
     if (hit.num_confirmations > 0) stopWatchingPayment()
@@ -407,6 +426,12 @@ async function checkInvoice() {
     })
     if (!res.settled) return
     invoicePaid.value = { amountSats: res.amt_paid_sat || invoiceAmount.value }
+    receiveSuccess.value = {
+      amount: res.amt_paid_sat || invoiceAmount.value,
+      verb: 'RECEIVED',
+      methodLabel: 'Received over Lightning',
+      rows: invoiceRHash.value ? [{ label: 'Payment hash', value: invoiceRHash.value }] : [],
+    }
     stopWatchingInvoice()
     emit('received')
   } catch {
@@ -430,18 +455,44 @@ async function renderQr(data: string, canvas: HTMLCanvasElement | null, prefix =
 
 function close() {
   stopWatchingPayment()
+  stopWatchingInvoice()
   stopLnClaimPoll()
   paymentSeen.value = null
   invoiceResult.value = ''
   onchainAddress.value = ''
   arkAddress.value = ''
   ecashToken.value = ''
-  ecashResult.value = ''
+  receiveSuccess.value = null
   lnAddress.value = ''
-  lnClaimedSats.value = 0
   lnPendingClaims.value = 0
+  lastLnReceiptId.value = 0
+  lnWatchStartedAt.value = 0
   error.value = ''
   emit('close')
+}
+
+/** Return to a clean form after a receipt without carrying a spent token or address forward. */
+function receiveAnother() {
+  receiveSuccess.value = null
+  error.value = ''
+  processing.value = false
+  if (receiveMethod.value === 'lightning') {
+    stopWatchingInvoice()
+    invoicePaid.value = null
+    invoiceRHash.value = ''
+    invoiceResult.value = ''
+    invoiceAmount.value = 0
+    invoiceMemo.value = ''
+  } else if (receiveMethod.value === 'onchain') {
+    stopWatchingPayment()
+    paymentSeen.value = null
+    onchainAddress.value = ''
+  } else if (receiveMethod.value === 'ecash') {
+    ecashToken.value = ''
+    if (lnAddress.value) startLnClaimPoll()
+  } else {
+    arkAddress.value = ''
+  }
 }
 
 async function receive() {
@@ -481,14 +532,27 @@ async function receive() {
       if (!ecashToken.value.trim()) { error.value = t('receiveBitcoin.pasteAnEcashToken'); return }
       // The backend auto-detects the token type: a Cashu token (cashuA/B…) is
       // redeemed at its mint, anything else is reissued as Fedimint notes.
-      const res = await rpcClient.call<{ received_sats?: number; kind?: string }>({
+      const token = ecashToken.value.trim()
+      const res = await rpcClient.call<{ received_sats?: number; kind?: string; mint_url?: string }>({
         method: 'wallet.ecash-receive',
-        params: { token: ecashToken.value.trim() },
+        params: { token },
       })
       const kind = res.kind === 'fedimint' ? 'Fedimint' : 'Cashu'
-      ecashResult.value = res.received_sats != null
-        ? `Received ${res.received_sats.toLocaleString()} sats (${kind})!`
-        : t('receiveBitcoin.tokenReceivedSuccess')
+      const rows: SuccessRow[] = []
+      if (res.mint_url) rows.push({ label: 'Mint', value: res.mint_url })
+      rows.push({
+        label: kind === 'Fedimint' ? 'Notes redeemed' : 'Token redeemed',
+        value: token,
+        hint: 'Keep this if you ever need to show what was redeemed.',
+        truncate: true,
+      })
+      receiveSuccess.value = {
+        amount: res.received_sats || 0,
+        verb: 'RECEIVED',
+        methodLabel: kind,
+        rows,
+      }
+      ecashToken.value = ''
       emit('received')
     }
   } catch (err: unknown) {

@@ -326,8 +326,9 @@ private object KioskWebView {
 private fun injectSafeAreaVars(view: WebView) {
     val insets = view.rootWindowInsets ?: return // listener re-fires when real
     val density = view.resources.displayMetrics.density
-    val sat = (insets.getInsets(android.view.WindowInsets.Type.statusBars()).top / density).toInt()
-    val sab = (insets.getInsets(android.view.WindowInsets.Type.navigationBars()).bottom / density).toInt()
+    val compatibleInsets = androidx.core.view.WindowInsetsCompat.toWindowInsetsCompat(insets, view)
+    val sat = (compatibleInsets.getInsets(androidx.core.view.WindowInsetsCompat.Type.statusBars()).top / density).toInt()
+    val sab = (compatibleInsets.getInsets(androidx.core.view.WindowInsetsCompat.Type.navigationBars()).bottom / density).toInt()
     // The insets listener fires on every pass (every IME show/hide); skip the
     // JS round-trip — and the Vue event it dispatches — when nothing changed.
     val stamp = "sa:$sat,$sab"
@@ -377,7 +378,8 @@ private fun injectSafeAreaVars(view: WebView) {
 private fun injectTopInset(view: WebView) {
     val insets = view.rootWindowInsets ?: return
     val density = view.resources.displayMetrics.density
-    val sat = (insets.getInsets(android.view.WindowInsets.Type.statusBars()).top / density).toInt()
+    val compatibleInsets = androidx.core.view.WindowInsetsCompat.toWindowInsetsCompat(insets, view)
+    val sat = (compatibleInsets.getInsets(androidx.core.view.WindowInsetsCompat.Type.statusBars()).top / density).toInt()
     if (sat <= 0) return
     view.evaluateJavascript(
         """
@@ -991,6 +993,51 @@ fun WebViewScreen(
                                         )
                                     }
                                 }
+
+                                /** HTML downloads are not handled by WebView.
+                                 *  Fetch only this connected node's public CA
+                                 *  over its always-available HTTP listener,
+                                 *  verify it is an actual CA certificate, then
+                                 *  hand it to Android's trusted system prompt.
+                                 *  No caller-controlled certificate bytes are
+                                 *  accepted by this bridge. */
+                                @android.webkit.JavascriptInterface
+                                fun installNodeCertificate() {
+                                    scope.launch {
+                                        try {
+                                            val der = withContext(Dispatchers.IO) {
+                                                val host = android.net.Uri.parse(serverUrl).host
+                                                    ?: error("node URL has no host")
+                                                val caUrl = java.net.URI(
+                                                    "http", null, host, 80, "/ca.crt", null, null,
+                                                ).toASCIIString()
+                                                val request = okhttp3.Request.Builder().url(caUrl).build()
+                                                okhttp3.OkHttpClient().newCall(request).execute().use { response ->
+                                                    if (!response.isSuccessful) error("CA download failed")
+                                                    val bytes = response.body?.bytes() ?: error("empty CA")
+                                                    if (bytes.size > 64 * 1024) error("CA is too large")
+                                                    val cert = java.security.cert.CertificateFactory
+                                                        .getInstance("X.509")
+                                                        .generateCertificate(java.io.ByteArrayInputStream(bytes))
+                                                        as java.security.cert.X509Certificate
+                                                    if (cert.basicConstraints < 0) error("certificate is not a CA")
+                                                    cert.encoded
+                                                }
+                                            }
+                                            val intent = android.security.KeyChain.createInstallIntent().apply {
+                                                putExtra(android.security.KeyChain.EXTRA_CERTIFICATE, der)
+                                                putExtra(
+                                                    android.security.KeyChain.EXTRA_NAME,
+                                                    "Archipelago node CA",
+                                                )
+                                                addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+                                            }
+                                            context.startActivity(intent)
+                                        } catch (_: Exception) {
+                                            // Network failure, invalid CA, or no credential installer.
+                                        }
+                                    }
+                                }
                             },
                             "ArchipelagoNative",
                         )
@@ -1523,6 +1570,11 @@ private fun InAppBrowser(
     var loaderIcon by remember { mutableStateOf<Bitmap?>(null) }
     var progress by remember { mutableIntStateOf(0) }
     var loading by remember { mutableStateOf(true) }
+    // Once this WebView has painted an app, keep that surface visible during
+    // same-app reloads/navigation. Covering every navigation with an opaque
+    // Compose loader caused GitWorkshop to flash, and an IndeeHub auth reload
+    // could remain covered when WebView omitted the final callback.
+    var hasCommittedPage by remember { mutableStateOf(false) }
     var canGoBack by remember { mutableStateOf(false) }
     var canGoForward by remember { mutableStateOf(false) }
     // Main-frame load failure — the branded offline screen renders instead of
@@ -1594,6 +1646,20 @@ private fun InAppBrowser(
                         // Node apps (BTCPay invoices, LND, Portainer tokens) are
                         // served over plain HTTP too — same dead-clipboard trap.
                         addClipboardBridge()
+                        val appBrowserView = this
+                        addJavascriptInterface(
+                            object {
+                                @android.webkit.JavascriptInterface
+                                fun expectPageTransition() {
+                                    appBrowserView.post {
+                                        hasCommittedPage = false
+                                        loading = true
+                                        appBrowserView.invalidate()
+                                    }
+                                }
+                            },
+                            "ArchipelagoSurface",
+                        )
 
                         webChromeClient = object : WebChromeClient() {
                             override fun onProgressChanged(view: WebView?, newProgress: Int) {
@@ -1623,7 +1689,7 @@ private fun InAppBrowser(
 
                         webViewClient = object : WebViewClient() {
                             override fun onPageStarted(view: WebView?, u: String?, favicon: Bitmap?) {
-                                loading = true
+                                loading = !hasCommittedPage
                                 loadError = false
                                 view?.let {
                                     injectTopInset(it)
@@ -1632,6 +1698,7 @@ private fun InAppBrowser(
                             }
 
                             override fun onPageFinished(view: WebView?, u: String?) {
+                                hasCommittedPage = true
                                 loading = false
                                 canGoBack = view?.canGoBack() == true
                                 canGoForward = view?.canGoForward() == true
@@ -1639,6 +1706,14 @@ private fun InAppBrowser(
                                     injectTopInset(it)
                                     injectClipboardShim(it)
                                 }
+                            }
+
+                            override fun onPageCommitVisible(view: WebView?, url: String?) {
+                                // Fires when the new main-frame pixels are ready,
+                                // earlier and more reliably than onPageFinished
+                                // for service-worker-controlled SPAs.
+                                hasCommittedPage = true
+                                loading = false
                             }
 
                             override fun onReceivedError(
@@ -1732,6 +1807,7 @@ private fun InAppBrowser(
                         text = stringResource(R.string.retry),
                         onClick = {
                             loadError = false
+                            hasCommittedPage = false
                             loading = true
                             browser?.reload()
                         },

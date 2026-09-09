@@ -6,7 +6,7 @@ After=archipelago.service
 Type=oneshot
 # Runs as root: needs to kill orphaned conmon processes, fix permissions
 User=root
-ExecStart=/home/archipelago/archy/scripts/container-doctor.sh --local
+ExecStart=/opt/archipelago/scripts/container-doctor.sh --local
 TimeoutStartSec=300
 StandardOutput=journal
 StandardError=journal

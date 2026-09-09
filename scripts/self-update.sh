@@ -38,6 +38,20 @@ ok()  { echo -e "${GREEN}[$(date '+%H:%M:%S')] OK${NC} $*" | tee -a "$LOG_FILE";
 err() { echo -e "${RED}[$(date '+%H:%M:%S')] ERROR${NC} $*" | tee -a "$LOG_FILE"; }
 warn(){ echo -e "${YELLOW}[$(date '+%H:%M:%S')] WARN${NC} $*" | tee -a "$LOG_FILE"; }
 
+ensure_ngit_runtime() {
+    local installer="$REPO_DIR/image-recipe/configs/install-ngit.sh"
+    if [ ! -f "$installer" ]; then
+        warn "Pinned ngit installer missing; Nostr source cloning remains unavailable"
+        return 0
+    fi
+    log "Checking pinned ngit source-contribution runtime..."
+    if sudo sh "$installer" >>"$LOG_FILE" 2>&1; then
+        ok "ngit source-contribution runtime ready"
+    else
+        warn "Unable to install ngit; HTTP source access remains available"
+    fi
+}
+
 cleanup() {
     rm -f "$LOCK_FILE"
 }
@@ -142,6 +156,13 @@ for pkg in python3-venv binutils libpython3.13; do
     fi
 done
 
+# Retry the pinned runtime on already-current nodes without making them rebuild
+# the backend. Nodes updating from an older checkout run it again after pull,
+# when the installer first becomes available.
+if [ -f "$REPO_DIR/image-recipe/configs/install-ngit.sh" ]; then
+    ensure_ngit_runtime
+fi
+
 # Fetch latest
 log "Fetching from origin..."
 git fetch origin main --quiet 2>>"$LOG_FILE"
@@ -187,6 +208,8 @@ git pull origin main --ff-only 2>>"$LOG_FILE" || {
     err "Git pull failed — local changes? Run: git reset --hard origin/main"
     exit 1
 }
+
+ensure_ngit_runtime
 
 NEW_VERSION=$(git rev-parse --short HEAD)
 log "Now at: $NEW_VERSION"
@@ -321,17 +344,18 @@ fi
 UI_DOCKER_DEST="/opt/archipelago/docker"
 sudo mkdir -p "$UI_DOCKER_DEST"
 UI_REBUILD_LIST=""
-# fips-ui and fedimint-ui are synced but NOT added to UI_REBUILD_LIST below:
-# container-specs.sh has no spec for either (and their container names break
+# fips-ui, fedimint-ui, and archipelago-source are synced but NOT added to
+# UI_REBUILD_LIST below:
+# container-specs.sh has no spec for these apps (and their container names break
 # the archy-<ui> assumption — the FIPS one is plain `fips-ui`). Their rebuilds
 # come from elsewhere — the daemon's companion installer for fedimint-ui, the
-# orchestrator's build context for fips-ui — but BOTH read
+# orchestrator's build context for fips-ui and archipelago-source — but all read
 # /opt/archipelago/docker/<ui>, and nothing was ever updating that directory.
-# So source edits to those two trees reached nodes through no path at all:
+# So source edits to these trees previously reached nodes through no path at all:
 # their nginx kept listening on 0.0.0.0 and served the Guardian and FIPS
 # screens unauthenticated on every interface (found by scanning a test node
 # from outside, 2026-08-05 — the in-node audit could not see them).
-for ui in bitcoin-ui lnd-ui electrs-ui fips-ui fedimint-ui; do
+for ui in bitcoin-ui lnd-ui electrs-ui fips-ui fedimint-ui archipelago-source; do
     src="$REPO_DIR/docker/$ui"
     dst="$UI_DOCKER_DEST/$ui"
     [ -d "$src" ] || continue

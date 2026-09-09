@@ -73,4 +73,36 @@ describe('Web5Identities', () => {
     expect(wrapper.text()).toContain('Personal')
     expect(wrapper.text()).not.toContain('Refreshing identities...')
   })
+
+  it('turns a saved profile into the identity success screen with honest relay coverage', async () => {
+    const identity = makeIdentity('Personal')
+    vi.mocked(rpcClient.call).mockImplementation((request: { method: string }) => {
+      if (request.method === 'identity.update-profile') return Promise.resolve({})
+      if (request.method === 'identity.list') return Promise.resolve({ identities: [identity] })
+      if (request.method === 'identity.publish-profile') {
+        return Promise.resolve({
+          event_id: 'event-123', accepted: ['wss://one'],
+          rejected: [['wss://two', 'write denied']], relays_attempted: 2, published: true,
+        })
+      }
+      return Promise.resolve({})
+    })
+    const wrapper = mount(Web5Identities, {
+      props: { showStagger: false },
+      global: { stubs: { Teleport: true } },
+    })
+    const vm = wrapper.vm as unknown as {
+      openProfileEditor: (identity: ManagedIdentity) => void
+      publishProfile: () => Promise<void>
+    }
+    vm.openProfileEditor(identity)
+    await wrapper.vm.$nextTick()
+    await vm.publishProfile()
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('IDENTITY UPDATED')
+    expect(wrapper.text()).toContain('Published to 1/2 configured relays.')
+    expect(wrapper.text()).toContain('wss://two rejected the event: write denied')
+    expect(wrapper.text()).toContain('event-123')
+  })
 })

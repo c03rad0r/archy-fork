@@ -64,6 +64,7 @@ use rand::seq::SliceRandom;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::path::Path;
+use std::sync::atomic::{AtomicU64, Ordering};
 use tokio::fs;
 use tracing::{debug, info, warn};
 
@@ -73,6 +74,12 @@ use tracing::{debug, info, warn};
 // lasts longer than the UI's poll interval; serialise them so two polls cannot
 // consume the same claim and race each other's state file writes.
 static MINIBITS_STATE_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+// A Companion WebView, its external browser tab, and a desktop dashboard can
+// all watch the same address. Once one caller has completed the expensive
+// relay fetch, callers already queued behind it should return the durable
+// receipt immediately instead of each opening another relay subscription.
+static LAST_MINIBITS_POLL_COMPLETED_AT: AtomicU64 = AtomicU64::new(0);
+const MINIBITS_POLL_COALESCE_SECS: u64 = 2;
 
 /// Minibits profile/LNURL API. Confirmed live: `/v3/auth/challenge`,
 /// `/v3/profile`, `/v3/claim` (the older `/v2` host no longer serves profiles).
@@ -166,6 +173,16 @@ pub struct MinibitsState {
     /// We query the boundary second inclusively and deduplicate by event id.
     #[serde(default)]
     pub seen_dm_ids: Vec<String>,
+    /// Monotonic id for the latest successfully redeemed claim batch. Claim
+    /// polling may come from several browser/Companion contexts; keeping the
+    /// latest receipt here lets every caller observe the result instead of
+    /// only whichever request happened to acquire the claim lock first.
+    #[serde(default)]
+    pub last_receipt_id: u64,
+    #[serde(default)]
+    pub last_receipt_sats: u64,
+    #[serde(default)]
+    pub last_receipt_at: u64,
 }
 
 /// A retryable encrypted token and the server key that encrypted it. The
@@ -611,6 +628,9 @@ async fn register_new_state(
         pending_claims: Vec::new(),
         last_dm_seen_at: 0,
         seen_dm_ids: Vec::new(),
+        last_receipt_id: 0,
+        last_receipt_sats: 0,
+        last_receipt_at: 0,
     })
 }
 
@@ -625,13 +645,37 @@ pub struct ClaimOutcome {
     /// dropped. Non-zero here means real, unswept value the operator should
     /// know about.
     pub failed_count: usize,
+    /// Most recent successful receipt, including one redeemed by another
+    /// concurrent UI poll. Zero means this wallet has no recorded receipt.
+    pub receipt_id: u64,
+    pub receipt_sats: u64,
+    pub receipt_at: u64,
 }
 
 const NO_CLAIMS: ClaimOutcome = ClaimOutcome {
     claimed_count: 0,
     received_sats: 0,
     failed_count: 0,
+    receipt_id: 0,
+    receipt_sats: 0,
+    receipt_at: 0,
 };
+
+fn outcome_with_latest_receipt(
+    state: &MinibitsState,
+    claimed_count: usize,
+    received_sats: u64,
+    failed_count: usize,
+) -> ClaimOutcome {
+    ClaimOutcome {
+        claimed_count,
+        received_sats,
+        failed_count,
+        receipt_id: state.last_receipt_id,
+        receipt_sats: state.last_receipt_sats,
+        receipt_at: state.last_receipt_at,
+    }
+}
 
 /// Make sure the Minibits mint is on the accepted-mints allow-list.
 ///
@@ -667,7 +711,7 @@ async fn fetch_relay_dms(
     client.connect().await;
     // Give relays a moment to finish the WebSocket handshake before the
     // fetch's own timeout starts consuming that time.
-    tokio::time::sleep(std::time::Duration::from_millis(800)).await;
+    tokio::time::sleep(std::time::Duration::from_millis(400)).await;
 
     // Nostr timestamps have one-second resolution. Query the boundary second
     // inclusively: a later-published payment may legitimately share that
@@ -680,7 +724,7 @@ async fn fetch_relay_dms(
         .limit(200);
 
     let result = match client
-        .fetch_events(filter, std::time::Duration::from_secs(10))
+        .fetch_events(filter, std::time::Duration::from_secs(5))
         .await
     {
         Ok(events) => {
@@ -782,6 +826,21 @@ pub async fn claim_and_redeem(data_dir: &Path) -> Result<ClaimOutcome> {
         // means a payment could not have arrived, so claiming is a no-op.
         None => return Ok(NO_CLAIMS),
     };
+
+    // The global lock serialises claim redemption, but without this fast path
+    // every browser waiting on that lock performed its own five-to-ten-second
+    // relay fetch in turn. Reuse the just-completed durable result for the
+    // short coalescing window; a later UI poll performs the next real fetch.
+    let now = chrono::Utc::now().timestamp().max(0) as u64;
+    let last_completed = LAST_MINIBITS_POLL_COMPLETED_AT.load(Ordering::Acquire);
+    if last_completed > 0 && now.saturating_sub(last_completed) <= MINIBITS_POLL_COALESCE_SECS {
+        return Ok(outcome_with_latest_receipt(
+            &state,
+            0,
+            0,
+            state.pending_claims.len(),
+        ));
+    }
     ensure_token(&client, &mut state, &identity.keys).await?;
 
     // Refresh the service key that authors and encrypts claim DMs. Keeping the
@@ -864,7 +923,11 @@ pub async fn claim_and_redeem(data_dir: &Path) -> Result<ClaimOutcome> {
     save_state(data_dir, &state).await?;
 
     if state.pending_claims.is_empty() {
-        return Ok(NO_CLAIMS);
+        LAST_MINIBITS_POLL_COMPLETED_AT.store(
+            chrono::Utc::now().timestamp().max(0) as u64,
+            Ordering::Release,
+        );
+        return Ok(outcome_with_latest_receipt(&state, 0, 0, 0));
     }
 
     let to_process = std::mem::take(&mut state.pending_claims);
@@ -910,13 +973,23 @@ pub async fn claim_and_redeem(data_dir: &Path) -> Result<ClaimOutcome> {
 
     let failed_count = still_pending.len();
     state.pending_claims = still_pending;
+    if sats > 0 {
+        state.last_receipt_id = state.last_receipt_id.saturating_add(1).max(1);
+        state.last_receipt_sats = sats;
+        state.last_receipt_at = chrono::Utc::now().timestamp().max(0) as u64;
+    }
     save_state(data_dir, &state).await?;
+    LAST_MINIBITS_POLL_COMPLETED_AT.store(
+        chrono::Utc::now().timestamp().max(0) as u64,
+        Ordering::Release,
+    );
 
-    Ok(ClaimOutcome {
-        claimed_count: redeemed,
-        received_sats: sats,
+    Ok(outcome_with_latest_receipt(
+        &state,
+        redeemed,
+        sats,
         failed_count,
-    })
+    ))
 }
 
 #[cfg(test)]
@@ -1117,6 +1190,24 @@ mod tests {
             state.pending_claims[0].sender_pubkey("cached-server-key"),
             "cached-server-key"
         );
+        assert_eq!(state.last_receipt_id, 0);
+        assert_eq!(state.last_receipt_sats, 0);
+        assert_eq!(state.last_receipt_at, 0);
+    }
+
+    #[test]
+    fn latest_receipt_survives_a_zero_claim_poll() {
+        let state = MinibitsState {
+            last_receipt_id: 9,
+            last_receipt_sats: 1_000,
+            last_receipt_at: 1_789_000_000,
+            ..Default::default()
+        };
+        let outcome = outcome_with_latest_receipt(&state, 0, 0, 0);
+        assert_eq!(outcome.received_sats, 0);
+        assert_eq!(outcome.receipt_id, 9);
+        assert_eq!(outcome.receipt_sats, 1_000);
+        assert_eq!(outcome.receipt_at, 1_789_000_000);
     }
 
     #[tokio::test]

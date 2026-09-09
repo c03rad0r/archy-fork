@@ -1,5 +1,7 @@
 <template>
   <div id="app">
+    <RouterView v-if="isSignerBroker && isReady" />
+    <template v-else>
     <!-- Splash Screen (only on first visit) -->
     <SplashScreen v-if="showSplash" @complete="handleSplashComplete" />
 
@@ -15,6 +17,7 @@
 
     <!-- App launcher overlay (iframe popup) -->
     <AppLauncherOverlay />
+    <AppCredentialInterstitial />
 
     <!-- Global toast notifications -->
     <ToastStack />
@@ -88,11 +91,12 @@
         </div>
       </Transition>
     </Teleport>
+    </template>
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, onBeforeUnmount, watch } from 'vue'
+import { computed, ref, onMounted, onBeforeUnmount, watch } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import SplashScreen from './components/SplashScreen.vue'
 import PWAUpdatePrompt from './components/PWAUpdatePrompt.vue'
@@ -100,6 +104,7 @@ import PWAInstallPrompt from './components/PWAInstallPrompt.vue'
 import SpotlightSearch from './components/SpotlightSearch.vue'
 import CLIPopup from './components/CLIPopup.vue'
 import AppLauncherOverlay from './components/AppLauncherOverlay.vue'
+import AppCredentialInterstitial from './components/AppCredentialInterstitial.vue'
 import ToastStack from './components/ToastStack.vue'
 import Screensaver from './components/Screensaver.vue'
 import HelpGuideModal from './components/HelpGuideModal.vue'
@@ -240,6 +245,7 @@ function onKeyDown(e: KeyboardEvent) {
 }
 
 const route = useRoute()
+const isSignerBroker = computed(() => route.meta.signerBroker === true)
 // Start with splash hidden — onMounted decides whether to show it
 const showSplash = ref(false)
 const isReady = ref(false)

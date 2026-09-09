@@ -392,6 +392,17 @@
   <Teleport to="body">
   <div v-if="profileEditorIdentity" class="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-md" @click.self="closeProfileEditor" @keydown.escape="closeProfileEditor">
     <div class="glass-card p-6 w-full max-w-2xl mx-4 max-h-[90vh] overflow-y-auto" role="dialog" aria-modal="true" aria-labelledby="profile-editor-title">
+      <IdentitySuccessPane
+        v-if="profileSuccess"
+        :identity-name="profileSuccess.identityName"
+        :event-id="profileSuccess.eventId"
+        :accepted="profileSuccess.accepted"
+        :attempted="profileSuccess.attempted"
+        :relay-note="profileSuccess.relayNote"
+        @again="profileSuccess = null"
+        @done="closeProfileEditor"
+      />
+      <template v-else>
       <div class="flex items-center gap-3 mb-5">
         <div class="relative w-16 h-16 rounded-full overflow-hidden bg-white/10 shrink-0">
           <img
@@ -455,11 +466,11 @@
         </div>
       </div>
       <div v-if="profileError" class="mt-3 alert-error"><p class="text-xs">{{ profileError }}</p></div>
-      <div v-if="profileSuccess" class="mt-3 alert-success"><p class="text-xs">{{ profileSuccess }}</p></div>
       <div class="flex gap-3 mt-5">
         <button @click="closeProfileEditor" class="flex-1 glass-button px-4 py-2 rounded-lg text-sm">Cancel</button>
         <button @click="publishProfile" :disabled="profilePublishing" class="flex-1 glass-button glass-button-warning px-4 py-2 rounded-lg text-sm font-medium">{{ profilePublishing ? 'Saving & publishing…' : 'Save' }}</button>
       </div>
+      </template>
     </div>
   </div>
   </Teleport>
@@ -471,6 +482,7 @@ import { useI18n } from 'vue-i18n'
 import { rpcClient } from '@/api/rpc-client'
 import { safeClipboardWrite } from './utils'
 import type { ManagedIdentity, IdentityProfile } from './types'
+import IdentitySuccessPane from '@/components/IdentitySuccessPane.vue'
 
 const { t } = useI18n()
 
@@ -618,7 +630,14 @@ async function uploadAsset(ev: Event, field: 'picture' | 'banner') {
   }
 }
 const profileError = ref('')
-const profileSuccess = ref('')
+interface ProfilePublishSuccess {
+  identityName: string
+  eventId: string
+  accepted: number
+  attempted: number
+  relayNote: string
+}
+const profileSuccess = ref<ProfilePublishSuccess | null>(null)
 
 async function loadIdentities() {
   const hadIdentities = managedIdentities.value.length > 0
@@ -739,58 +758,67 @@ function openProfileEditor(identity: ManagedIdentity) {
   profileEditorIdentity.value = identity
   profileForm.value = { ...identity.profile }
   profileError.value = ''
-  profileSuccess.value = ''
+  profileSuccess.value = null
 }
 
 function closeProfileEditor() {
   profileEditorIdentity.value = null
   profileForm.value = {}
   profileError.value = ''
-  profileSuccess.value = ''
+  profileSuccess.value = null
 }
 
 async function publishProfile() {
   if (!profileEditorIdentity.value || profilePublishing.value) return
   profilePublishing.value = true
   profileError.value = ''
-  profileSuccess.value = ''
+  profileSuccess.value = null
   try {
+    const identity = profileEditorIdentity.value
     await rpcClient.call({
       method: 'identity.update-profile',
-      params: { id: profileEditorIdentity.value.id, ...profileForm.value },
-    })
-    const res = await rpcClient.call<{
-      event_id: string
-      accepted: string[]
-      rejected: Array<[string, string]>
-      relays_attempted: number
-      published: boolean
-    }>({
-      method: 'identity.publish-profile',
-      params: { id: profileEditorIdentity.value.id },
+      params: { id: identity.id, ...profileForm.value },
     })
     await loadIdentities()
-    const n = res.accepted?.length ?? 0
-    const total = res.relays_attempted ?? 0
-    const tail = `(${res.event_id.slice(0, 12)}…)`
-    if (n === total) {
-      profileSuccess.value = `Published to all ${total} relays ${tail}`
-    } else if (n > 0) {
-      profileSuccess.value = `Published to ${n}/${total} relays ${tail}`
-      const first = res.rejected?.[0]
-      if (first) profileError.value = `Rejected by ${first[0]}: ${first[1]}`
-    } else {
-      profileError.value = `Published to 0/${total} relays — check Manage Relays`
+    try {
+      const res = await rpcClient.call<{
+        event_id: string
+        accepted: string[]
+        rejected: Array<[string, string]>
+        relays_attempted: number
+        published: boolean
+      }>({ method: 'identity.publish-profile', params: { id: identity.id } })
+      const accepted = res.accepted?.length ?? 0
+      const attempted = res.relays_attempted ?? 0
+      const rejected = res.rejected?.[0]
+      profileSuccess.value = {
+        identityName: profileForm.value.display_name?.trim() || identity.name,
+        eventId: res.event_id || '',
+        accepted,
+        attempted,
+        relayNote: accepted === attempted
+          ? ''
+          : rejected
+            ? `${rejected[0]} rejected the event: ${rejected[1]}`
+            : 'The profile is saved on this node. Check Manage Relays before retrying publication.',
+      }
+    } catch (publishError: unknown) {
+      profileSuccess.value = {
+        identityName: profileForm.value.display_name?.trim() || identity.name,
+        eventId: '',
+        accepted: 0,
+        attempted: 0,
+        relayNote: `The profile is saved on this node, but relay publication failed: ${publishError instanceof Error ? publishError.message : 'unknown error'}`,
+      }
     }
-    setTimeout(() => { profileSuccess.value = '' }, 5000)
   } catch (err: unknown) {
-    profileError.value = err instanceof Error ? err.message : 'Failed to publish'
+    profileError.value = err instanceof Error ? err.message : 'Failed to save profile'
   } finally {
     profilePublishing.value = false
   }
 }
 
-defineExpose({ loadIdentities, managedIdentities })
+defineExpose({ loadIdentities, managedIdentities, openProfileEditor, publishProfile })
 </script>
 
 <style scoped>

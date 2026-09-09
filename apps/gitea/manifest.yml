@@ -16,11 +16,13 @@ app:
     pull_policy: if-not-present
 
   dependencies:
-    - storage: 500Mi
+    # Source history, LFS objects, release artifacts and OCI layers all share
+    # this persistent store. 500Mi was only suitable for an empty demo node.
+    - storage: 50Gi
 
   resources:
     memory_limit: 256Mi
-    disk_limit: 500Mi
+    disk_limit: 50Gi
 
   security:
     capabilities: [CHOWN, FOWNER, SETUID, SETGID, DAC_OVERRIDE, NET_BIND_SERVICE]
@@ -66,6 +68,12 @@ app:
     - GITEA__server__SSH_LISTEN_PORT=22
     - GITEA__server__LFS_START_SERVER=true
     - GITEA__packages__ENABLED=true
+    # Package/LFS storage remains bounded by the node's disk, not an arbitrary
+    # per-owner quota. Release artifacts allow installer/OTA images up to 10GiB.
+    - GITEA__packages__LIMIT_TOTAL_OWNER_SIZE=-1
+    - GITEA__packages__LIMIT_SIZE_CONTAINER=-1
+    - GITEA__repository_0x2Erelease__FILE_MAX_SIZE=10240
+    - GITEA__repository_0x2Erelease__MAX_FILES=20
     - GITEA__repository__ENABLE_PUSH_CREATE_USER=true
     - GITEA__repository__ENABLE_PUSH_CREATE_ORG=true
 

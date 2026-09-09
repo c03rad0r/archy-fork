@@ -1,6 +1,6 @@
 import { describe, expect, it, beforeEach } from 'vitest'
-import { NEW_TAB_APPS, directAppUrl, resolveAppUrl } from '../appSessionConfig'
-import { GENERATED_NEW_TAB_APPS } from '../generatedAppSessionConfig'
+import { HOST_FRAME_APPS, NEW_TAB_APPS, directAppUrl, resolveAppUrl } from '../appSessionConfig'
+import { GENERATED_HOST_FRAME_APPS, GENERATED_NEW_TAB_APPS } from '../generatedAppSessionConfig'
 import { __setSignedCatalogForTests } from '../../discover/curatedApps'
 
 // Mirror of the live signed catalog's embedded manifests (the ports[] auth
@@ -43,6 +43,11 @@ describe('appSessionConfig', () => {
   it('keeps frontend-only new-tab overrides for apps without generated metadata', () => {
     expect(NEW_TAB_APPS.has('tailscale')).toBe(true)
     expect(GENERATED_NEW_TAB_APPS.has('tailscale')).toBe(false)
+  })
+
+  it('does not force GitWorkshop into a dashboard iframe in Companion', () => {
+    expect(GENERATED_HOST_FRAME_APPS.has('archipelago-source')).toBe(false)
+    expect(HOST_FRAME_APPS.has('archipelago-source')).toBe(false)
   })
 
   it('resolves direct app ports against the current browser host', () => {
@@ -146,5 +151,18 @@ describe('appSessionConfig', () => {
     expect(resolveAppUrl('filebrowser', undefined, 'http://localhost:18083')).toBe('http://192.0.2.10:18083')
     // Cuprate's UI port is auth:none — plain HTTP stays plain.
     expect(resolveAppUrl('cuprate', undefined, 'http://localhost:18090')).toBe('http://192.0.2.10:18090')
+  })
+
+  it('keeps the pre-catalog Source app on the dashboard origin', () => {
+    stubLocation({ hostname: '192.0.2.10', protocol: 'https:' })
+
+    // Source is intentionally absent from SIGNED until owner UAT passes. It
+    // must follow the already-working dashboard ingress instead of assuming
+    // that the same address also exposes a dedicated high port.
+    expect(resolveAppUrl('archipelago-source')).toBe('/app/archipelago-source/')
+    expect(resolveAppUrl('archipelago-source', undefined, 'http://localhost:8337'))
+      .toBe('/app/archipelago-source/')
+    expect(resolveAppUrl('archipelago-source', '/search'))
+      .toBe('/app/archipelago-source/search')
   })
 })

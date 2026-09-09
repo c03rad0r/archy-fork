@@ -26,7 +26,7 @@ const DOCTOR_SERVICE: &str =
     include_str!("../../../image-recipe/configs/archipelago-doctor.service");
 const DOCTOR_TIMER: &str = include_str!("../../../image-recipe/configs/archipelago-doctor.timer");
 
-const DOCTOR_SH_PATH: &str = "/home/archipelago/archy/scripts/container-doctor.sh";
+const DOCTOR_SH_PATH: &str = "/opt/archipelago/scripts/container-doctor.sh";
 const DOCTOR_SERVICE_PATH: &str = "/etc/systemd/system/archipelago-doctor.service";
 const DOCTOR_TIMER_PATH: &str = "/etc/systemd/system/archipelago-doctor.timer";
 
@@ -84,6 +84,15 @@ const RUNTIME_ASSETS_DIR: &str = "/opt/archipelago/web-ui/archipelago-runtime";
 /// `/api/app-catalog` proxy. Kept in sync with the canonical block in
 /// image-recipe/configs/nginx-archipelago.conf.
 const NGINX_APP_CATALOG_BLOCK: &str = "\n    # App Store catalog proxy — backend fetches from configured registries\n    # so the browser doesn't hit CORS/CSP. Without this block nginx falls\n    # through to the SPA index.html and the frontend gets HTML back instead\n    # of JSON.\n    location /api/app-catalog {\n        proxy_pass http://127.0.0.1:5678;\n        proxy_http_version 1.1;\n        proxy_set_header Host $host;\n        proxy_set_header X-Real-IP $remote_addr;\n        proxy_set_header Cookie $http_cookie;\n        proxy_connect_timeout 15s;\n        proxy_read_timeout 30s;\n        proxy_send_timeout 15s;\n        error_page 502 503 = @backend_unavailable;\n        error_page 504 = @backend_timeout;\n    }\n\n";
+
+const NGINX_SOURCE_PROXY_BLOCK: &str = "    # GitWorkshop follows the dashboard origin so LAN, Tailscale, FIPS, Tor,\n    # hostnames and reverse proxies all use the connection that already works.\n    location /app/archipelago-source/ {\n        proxy_pass http://127.0.0.2:8337/;\n        proxy_http_version 1.1;\n        proxy_set_header Host $http_host;\n        proxy_set_header Cookie $http_cookie;\n        proxy_set_header X-Real-IP $remote_addr;\n        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;\n        proxy_set_header X-Forwarded-Proto $scheme;\n        proxy_set_header X-Forwarded-Prefix /app/archipelago-source;\n        proxy_hide_header X-Frame-Options;\n        add_header X-Frame-Options \"SAMEORIGIN\" always;\n        add_header X-Content-Type-Options \"nosniff\" always;\n        proxy_read_timeout 300s;\n    }\n";
+
+const NGINX_SOURCE_PROXY_BLOCK_SNIPPET: &str = "# GitWorkshop follows the dashboard origin; the app gate keeps the route\n# session-authenticated before it reaches the loopback-only container.\nlocation /app/archipelago-source/ {\n    proxy_pass http://127.0.0.2:8337/;\n    proxy_http_version 1.1;\n    proxy_set_header Host $http_host;\n    proxy_set_header Cookie $http_cookie;\n    proxy_set_header X-Real-IP $remote_addr;\n    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;\n    proxy_set_header X-Forwarded-Proto $scheme;\n    proxy_set_header X-Forwarded-Prefix /app/archipelago-source;\n    proxy_hide_header X-Frame-Options;\n    add_header X-Frame-Options \"SAMEORIGIN\" always;\n    add_header X-Content-Type-Options \"nosniff\" always;\n    proxy_read_timeout 300s;\n}\n";
+
+/// The normal dashboard sends X-Frame-Options SAMEORIGIN. This one document
+/// must be frameable by an app on another port of the same node so tabs and
+/// companion WebViews can use the same authenticated signer UI.
+const NGINX_NOSTR_SIGNER_BLOCK: &str = "    # Dashboard-origin Nostr signer for tab/WebView apps.\n    location = /nostr-signer {\n        try_files /index.html =404;\n        add_header Cache-Control \"no-store\" always;\n        add_header X-Content-Type-Options \"nosniff\" always;\n        add_header Referrer-Policy \"no-referrer\" always;\n        add_header Content-Security-Policy \"default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; connect-src 'self'; frame-ancestors 'self' http://$host:* https://$host:*; base-uri 'none'; form-action 'none';\" always;\n    }\n\n";
 
 const NGINX_BITCOIN_STATUS_BLOCK: &str = "\n    location /bitcoin-status {\n        proxy_pass http://127.0.0.1:5678/bitcoin-status;\n        proxy_http_version 1.1;\n        proxy_set_header Host $host;\n        proxy_connect_timeout 10s;\n        proxy_read_timeout 10s;\n        proxy_send_timeout 5s;\n        error_page 502 503 = @backend_unavailable;\n        error_page 504 = @backend_timeout;\n    }\n";
 
@@ -1231,7 +1240,7 @@ async fn run() -> Result<bool> {
 
     let mut changed = false;
 
-    // 1. Script — lives in archipelago's home dir, user-writable.
+    // 1. Script — lives in the canonical OTA runtime scripts directory.
     if needs_write(DOCTOR_SH_PATH, DOCTOR_SH).await {
         fs::write(DOCTOR_SH_PATH, DOCTOR_SH)
             .await
@@ -1580,6 +1589,62 @@ fn heal_stale_web_search_block(content: &str) -> Option<String> {
     ))
 }
 
+fn heal_missing_source_proxy(content: &str) -> Option<String> {
+    if content.contains("location /app/archipelago-source/") {
+        return None;
+    }
+    let indented_anchor = "    location /app/gitea/ {";
+    if content.contains(indented_anchor) {
+        return Some(content.replace(
+            indented_anchor,
+            &format!("{}{}", NGINX_SOURCE_PROXY_BLOCK, indented_anchor),
+        ));
+    }
+    let snippet_anchor = "location /app/gitea/ {";
+    content.contains(snippet_anchor).then(|| {
+        content.replace(
+            snippet_anchor,
+            &format!("{}{}", NGINX_SOURCE_PROXY_BLOCK_SNIPPET, snippet_anchor),
+        )
+    })
+}
+
+/// Older same-origin GitWorkshop blocks stripped the app mount but did not
+/// tell the app gate what was stripped. Its challenge therefore posted to
+/// `/__archipelago-gate/login` on the dashboard and nginx returned 405. Add
+/// the mount header to every canonical source block (HTTP and HTTPS snippet).
+fn heal_source_forwarded_prefix(content: &str) -> Option<String> {
+    if !content.contains("proxy_pass http://127.0.0.2:8337/;") {
+        return None;
+    }
+    let mut healed = content.to_owned();
+    for indent in ["        ", "    "] {
+        let old = format!(
+            "proxy_pass http://127.0.0.2:8337/;\n{indent}proxy_http_version 1.1;\n{indent}proxy_set_header Host $http_host;\n{indent}proxy_set_header Cookie $http_cookie;\n{indent}proxy_set_header X-Real-IP $remote_addr;\n{indent}proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;\n{indent}proxy_set_header X-Forwarded-Proto $scheme;\n{indent}proxy_hide_header X-Frame-Options;"
+        );
+        let new = old.replace(
+            &format!("\n{indent}proxy_hide_header X-Frame-Options;"),
+            &format!(
+                "\n{indent}proxy_set_header X-Forwarded-Prefix /app/archipelago-source;\n{indent}proxy_hide_header X-Frame-Options;"
+            ),
+        );
+        healed = healed.replace(&old, &new);
+    }
+    (healed != content).then_some(healed)
+}
+
+fn heal_missing_nostr_signer(content: &str) -> Option<String> {
+    if content.contains("location = /nostr-signer") {
+        return None;
+    }
+    // The anchor occurs once in each complete HTTP/HTTPS dashboard server and
+    // does not occur in the separate app-proxy snippet.
+    let anchor = "    location /aiui/ {";
+    content
+        .contains(anchor)
+        .then(|| content.replace(anchor, &format!("{}{}", NGINX_NOSTR_SIGNER_BLOCK, anchor)))
+}
+
 async fn patch_nginx_conf(path: &str) -> Result<bool> {
     let content = fs::read_to_string(path)
         .await
@@ -1610,6 +1675,9 @@ async fn patch_nginx_conf(path: &str) -> Result<bool> {
     let missing_v6_https =
         content.contains("listen 443 ssl default_server;") && !content.contains("listen [::]:443");
     let stale_web_search = heal_stale_web_search_block(&content).is_some();
+    let missing_source_proxy = heal_missing_source_proxy(&content).is_some();
+    let missing_source_prefix = heal_source_forwarded_prefix(&content).is_some();
+    let missing_nostr_signer = heal_missing_nostr_signer(&content).is_some();
     if !missing_app_catalog
         && !missing_bitcoin_status
         && !missing_lnd_proxy
@@ -1620,6 +1688,9 @@ async fn patch_nginx_conf(path: &str) -> Result<bool> {
         && !missing_v6_http
         && !missing_v6_https
         && !stale_web_search
+        && !missing_source_proxy
+        && !missing_source_prefix
+        && !missing_nostr_signer
     {
         return Ok(false);
     }
@@ -1627,6 +1698,15 @@ async fn patch_nginx_conf(path: &str) -> Result<bool> {
     let mut patched = content.clone();
 
     if let Some(p) = heal_stale_web_search_block(&patched) {
+        patched = p;
+    }
+    if let Some(p) = heal_missing_source_proxy(&patched) {
+        patched = p;
+    }
+    if let Some(p) = heal_source_forwarded_prefix(&patched) {
+        patched = p;
+    }
+    if let Some(p) = heal_missing_nostr_signer(&patched) {
         patched = p;
     }
 
@@ -1797,6 +1877,17 @@ mod tests {
     use super::*;
 
     #[test]
+    fn doctor_service_uses_the_canonical_ota_script_path() {
+        let expected = format!("ExecStart={} --local", DOCTOR_SH_PATH);
+        assert!(DOCTOR_SERVICE.lines().any(|line| line == expected));
+        assert_eq!(
+            DOCTOR_SH_PATH,
+            "/opt/archipelago/scripts/container-doctor.sh"
+        );
+        assert!(!DOCTOR_SERVICE.contains("/home/archipelago/archy/"));
+    }
+
+    #[test]
     fn podman_heal_outcome_no_longer_has_cleanup_variant() {
         let outcome = PodmanHealOutcome::Unhealthy;
         assert_ne!(outcome, PodmanHealOutcome::Healthy);
@@ -1815,6 +1906,48 @@ mod tests {
         assert!(
             heal_stale_web_search_block("location / { try_files $uri /index.html; }").is_none()
         );
+    }
+
+    #[test]
+    fn source_proxy_uses_same_origin_through_authenticated_app_gate() {
+        let main = "server {\n    location /app/gitea/ {\n    }\n}\nserver {\n    location /app/gitea/ {\n    }\n}";
+        let healed = heal_missing_source_proxy(main).expect("source proxy must be added");
+        assert_eq!(
+            healed.matches("location /app/archipelago-source/").count(),
+            2
+        );
+        assert!(healed.contains("proxy_pass http://127.0.0.2:8337/;"));
+        assert!(healed.contains("proxy_set_header Cookie $http_cookie;"));
+        assert!(healed.contains("proxy_set_header X-Forwarded-Prefix /app/archipelago-source;"));
+        assert!(heal_missing_source_proxy(&healed).is_none());
+
+        let snippet = "location /app/gitea/ {\n}";
+        let healed = heal_missing_source_proxy(snippet).expect("snippet must be patched");
+        assert!(healed.starts_with("# GitWorkshop follows the dashboard origin"));
+    }
+
+    #[test]
+    fn existing_source_proxy_gets_the_forwarded_mount_once() {
+        let stale = "location /app/archipelago-source/ {\n    proxy_pass http://127.0.0.2:8337/;\n    proxy_http_version 1.1;\n    proxy_set_header Host $http_host;\n    proxy_set_header Cookie $http_cookie;\n    proxy_set_header X-Real-IP $remote_addr;\n    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;\n    proxy_set_header X-Forwarded-Proto $scheme;\n    proxy_hide_header X-Frame-Options;\n}";
+        let healed = heal_source_forwarded_prefix(stale).expect("mount header must be added");
+        assert_eq!(
+            healed
+                .matches("X-Forwarded-Prefix /app/archipelago-source")
+                .count(),
+            1
+        );
+        assert!(heal_source_forwarded_prefix(&healed).is_none());
+    }
+
+    #[test]
+    fn nostr_signer_is_added_to_each_dashboard_server_only_once() {
+        let main =
+            "server {\n    location /aiui/ {\n    }\n}\nserver {\n    location /aiui/ {\n    }\n}";
+        let healed = heal_missing_nostr_signer(main).expect("signer route must be added");
+        assert_eq!(healed.matches("location = /nostr-signer").count(), 2);
+        assert!(healed.contains("frame-ancestors 'self' http://$host:* https://$host:*"));
+        assert!(heal_missing_nostr_signer(&healed).is_none());
+        assert!(heal_missing_nostr_signer("location /app/gitea/ {}\n").is_none());
     }
 
     /// The exact ExecStart framework-pt shipped with must parse, and the

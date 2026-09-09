@@ -262,12 +262,23 @@ const canLaunch = computed(() => {
   return hasUI && pkg.value.state === 'running' && pkg.value.health !== 'starting' && pkg.value.health !== 'unhealthy'
 })
 
-const features = computed(() => [
-  'Self-hosted and privacy-focused',
-  'Easy installation and updates',
-  'Automatic backups',
-  'Secure by default'
-])
+const features = computed(() => {
+  if (packageKey.value === 'archipelago-source') {
+    return [
+      'Browse Archipelago source through the established GitWorkshop interface',
+      'Clone with ngit and fetch Git objects from redundant GRASP servers',
+      'Open issues, propose patches, and review changes over Nostr',
+      'Use a selected node identity through an explicit consent prompt',
+      'Contribute without receiving maintainer merge or release authority',
+    ]
+  }
+  return [
+    'Self-hosted and privacy-focused',
+    'Easy installation and updates',
+    'Automatic backups',
+    'Secure by default',
+  ]
+})
 
 function goBack() {
   if (route.query.from === 'discover') {

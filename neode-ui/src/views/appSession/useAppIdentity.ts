@@ -16,7 +16,7 @@ export interface SelectedIdentity {
 }
 
 function isIdentityAwareApp(id: string): boolean {
-  return id === 'indeedhub' || id === 'nostrudel'
+  return id === 'indeedhub' || id === 'nostrudel' || id === 'archipelago-source'
 }
 
 export function useAppIdentity(
@@ -68,11 +68,16 @@ export function useAppIdentity(
   }
 
   /** Handle identity request messages from iframe */
-  function handleIdentityRequest() {
+  function handleIdentityRequest(force = false) {
     if (IS_DEMO) return
     const stored = getStoredIdentity()
-    if (stored) sendIdentity(stored)
+    if (stored && !force) sendIdentity(stored)
     else showIdentityPicker.value = true
+  }
+
+  function cancelIdentitySelection() {
+    showIdentityPicker.value = false
+    iframeRef.value?.contentWindow?.postMessage({ type: 'archipelago:identity-cancelled' }, '*')
   }
 
   return {
@@ -81,5 +86,6 @@ export function useAppIdentity(
     onIdentitySelected,
     onIframeLoadIdentity,
     handleIdentityRequest,
+    cancelIdentitySelection,
   }
 }

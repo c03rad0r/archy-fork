@@ -4,6 +4,7 @@ export const GENERATED_APP_PORTS: Record<string, number> = {
   "adguardhome": 3030,
   "aiui": 5180,
   "alby-hub": 8187,
+  "archipelago-source": 8337,
   "archy-mempool-web": 4080,
   "archy-nbxplorer": 32838,
   "bitcoin-ui": 8334,
@@ -42,6 +43,7 @@ export const GENERATED_APP_TITLES: Record<string, string> = {
   "adguardhome": "AdGuard Home",
   "aiui": "AI Assistant",
   "alby-hub": "Alby Hub",
+  "archipelago-source": "GitWorkshop",
   "archy-btcpay-db": "BTCPay Postgres",
   "archy-mempool-db": "Mempool MariaDB",
   "archy-mempool-web": "Mempool Web",
@@ -113,4 +115,7 @@ export const GENERATED_NEW_TAB_APPS = new Set<string>([
   "portainer",
   "uptime-kuma",
   "vaultwarden",
+])
+
+export const GENERATED_HOST_FRAME_APPS = new Set<string>([
 ])

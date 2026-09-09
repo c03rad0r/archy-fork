@@ -914,9 +914,10 @@ async function loadStatus() {
     rollbackAvailable.value = res.rollback_available
     manifestMirror.value = res.manifest_mirror ?? null
 
-    if (res.update_in_progress) {
-      downloaded.value = true
-    }
+    // Mirror the backend in both directions. The old one-way assignment could
+    // set this after a completed download but never clear it after cancellation,
+    // leaving the Install button visible until the component remounted.
+    downloaded.value = res.update_in_progress
   } catch (e) {
     if (import.meta.env.DEV) console.warn('Failed to load update status', e)
   }
@@ -1043,6 +1044,10 @@ async function cancelDownload() {
     await rpcClient.call({ method: 'update.cancel-download' })
     downloading.value = false
     downloaded.value = false
+    // `update_in_progress` is the backend's staged/installable flag. Leaving
+    // this true made the card render Install until the next page refresh even
+    // though cancellation had already removed the partial staging files.
+    updateInProgress.value = false
     downloadPercent.value = 0
     downloadStalled.value = false
     showStatus(t('systemUpdate.cancelDownloadSuccess'))

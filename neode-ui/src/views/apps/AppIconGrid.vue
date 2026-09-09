@@ -222,7 +222,7 @@ async function handleTap(id: string, pkg: PackageDataEntry) {
   if (canLaunch(pkg)) {
     const shown = await maybeShowCredentialsBeforeLaunch(id, pkg)
     if (shown) return
-    launchNow(id, pkg)
+    launchNow(id, pkg, true)
   } else {
     emit('goToApp', id)
   }
@@ -248,7 +248,7 @@ function openAppOptions(id: string) {
   emit('goToApp', id)
 }
 
-function launchNow(id: string, pkg: PackageDataEntry) {
+function launchNow(id: string, pkg: PackageDataEntry, credentialsChecked = false) {
   markLaunching(id)
   const isMobile = typeof window !== 'undefined' && window.innerWidth < 768
   const webOnlyUrl = WEB_ONLY_APP_URLS[id]
@@ -270,7 +270,7 @@ function launchNow(id: string, pkg: PackageDataEntry) {
       return
     }
   }
-  appLauncher.openSession(id)
+  appLauncher.openSession(id, { skipCredentialPrompt: credentialsChecked })
 }
 
 async function maybeShowCredentialsBeforeLaunch(id: string, pkg: PackageDataEntry): Promise<boolean> {
@@ -308,7 +308,7 @@ function continueCredentialLaunch() {
   const id = credentialModal.value.appId
   const entry = props.apps.find(([appId]) => appId === id)
   closeCredentialModal()
-  if (entry) launchNow(entry[0], entry[1])
+  if (entry) launchNow(entry[0], entry[1], true)
 }
 
 async function copyModalCredential(label: string, value: string) {

@@ -1,252 +1,278 @@
 # Nostr Git Source Hosting Plan
 
-This plan describes how Archipelago can publish and accept contributions to its
-source code through `ngit`, NIP-34, and GRASP while keeping the developer
-experience inside Archipelago.
+**Reviewed:** 2026-09-08
 
-## Goals
+**Status:** GitWorkshop integration is deployed and engineering-tested on the
+development node, ready for owner UAT. Canonical repository publication and
+release work remain separate gates. No app-registry, OTA, ISO, or production
+artifact may be published until the owner accepts the node deployment.
 
-- Publish Archipelago source from a sanitized, fresh-history repository.
-- Make the in-app registry the primary onboarding path for contributors.
-- Let contributors clone, branch, push PR branches, open PRs, and discuss issues
-  with a Nostr identity from their Archipelago node.
-- Follow the Bitcoin Core development model: broad public review and easy forks,
-  with canonical merge authority held by a small maintainer set.
-- Give contributors full read, fork, and proposal rights, but no direct merge
-  rights on the canonical repository.
-- Keep the official maintainer identity and merge authority separate from user
-  node identities.
+The Android companion opens Source as a top-level page in its native in-app
+WebView. GitWorkshop's injected NIP-07 provider creates a small authenticated
+dashboard-origin signer broker within that page, so the app itself is never
+kept in a dashboard iframe. The App Store carries the upstream GitWorkshop
+icon, source-focused copy, and a dedicated contribution banner. Popular ordering and promotional
+placement are registry-owned `storefront` metadata rather than node-OS UI
+policy; these are also part of owner UAT.
 
-## Current Building Blocks
+## Goal
 
-Archipelago already has most of the primitives needed for this:
+Archipelago users can install a Source app from the app registry, obtain the
+Archipelago source, browse it, and contribute through the established Nostr Git
+ecosystem. Git remains the version-control engine, Nostr NIP-34 carries
+repository identity and collaboration events, and GRASP transports Git objects.
 
-- App manifests and the app registry already install developer tooling as
-  rootless Podman apps.
-- The `gitea` app provides a conventional fallback Git UI and package registry.
-- The app launcher already exposes a consent-gated NIP-07 bridge for launched
-  apps using `getPublicKey`, `signEvent`, NIP-04, and NIP-44 requests.
-- The backend exposes node and identity Nostr signing RPC methods.
-- FIPS gives nodes a stable mesh identity and private transport path, but repo
-  announcements and PRs should remain NIP-34 compatible on normal Nostr relays.
-- DWN protocol registration exists and can be used later for local contribution
-  metadata/cache, but should not be required for the first public workflow.
+The app must make public contribution easy without giving contributors direct
+merge or release authority. Canonical refs, merge status, release tags, and
+catalog signatures remain controlled by explicitly configured Archipelago
+maintainers.
 
-## Protocol Basis
+## Product Decision
 
-Use existing Nostr Git conventions rather than inventing an Archipelago-only
-protocol:
+Archipelago will package the upstream GitWorkshop web client instead of
+building another NIP-34 repository interface.
 
-- NIP-34 repository announcement events identify repositories with kind `30617`.
-- NIP-34 repository state events publish branch/tag refs with kind `30618`.
-- NIP-34 patches, pull requests, PR updates, issues, and status events use kinds
-  `1617`, `1618`, `1619`, `1621`, and `1630`-`1633`.
-- `ngit` provides the `git-remote-nostr` helper for `nostr://` clone URLs and PR
-  branches.
-- GRASP servers provide Git Smart HTTP storage while Nostr events remain the
-  authority for repository identity, refs, PRs, issues, and maintainer state.
+GitWorkshop already provides repository discovery, a sparse Git explorer,
+issues, pull requests, and review workflows. Archipelago owns only the node
+integration around it:
+
+- installable app metadata and a pinned upstream build;
+- a same-origin `/app/archipelago-source/` launch path that works through the
+  dashboard address the user already opened, whether that is LAN, Tailscale,
+  FIPS, DNS, IPv4, or IPv6;
+- authenticated routing through the existing app gate;
+- an injected, consent-gated NIP-07 provider so GitWorkshop can use a selected
+  node identity without receiving its private key;
+- source provenance, security validation, upgrades, and rollback.
+
+Archipelago will not duplicate GitWorkshop's repository browser, issue/PR,
+fork, diff, relay, or GRASP behavior in private `source.*` RPC methods.
 
 Primary references:
 
+- https://ngit.dev/how-it-works
+- https://github.com/DanConwayDev/gitworkshop
+- https://gitworkshop.dev/
 - https://nips.nostr.com/34
-- https://docs.rs/crate/ngit/latest/source/README.md
-- https://ngit.dev/grasp/
 
-## Recommended Architecture
+## Trust And Permissions
 
-### Apps
+- GitWorkshop runs as a static, read-only container behind the app gate.
+- The iframe may request NIP-07 operations through `postMessage`; only the
+  exact launched frame and expected origin are accepted.
+- `getPublicKey`, event signing, encryption, and decryption require explicit
+  dashboard consent. A remembered decision is scoped to node origin, app,
+  selected identity, and method.
+- Contributor private keys never enter the GitWorkshop container.
+- Browser-origin signing calls from direct high-port app origins are rejected;
+  they must pass through the dashboard consent bridge.
+- Maintainer and release keys must not be placed on ordinary user nodes.
+- Relay and GRASP data is untrusted. Canonical status is derived only from the
+  signed repository announcement and configured maintainer identities.
 
-Create two first-party apps:
+## Upstream Pin And Redistribution Gate
 
-- `ngit`: CLI/runtime package containing `ngit` and `git-remote-nostr`.
-- `archipelago-source`: web UI for cloning Archipelago source, viewing NIP-34
-  issues/PRs, opening branches, and submitting PR events.
+The development image currently pins GitWorkshop commit
+`dc36db64f6a2cca29d109829eabaf0a49d4bf4da` (2026-07-28). The integration patch
+only adds base-path support and the Archipelago NIP-07 provider.
 
-The `archipelago-source` app should depend on `ngit`. It can also recommend
-Gitea for users who want a conventional local web Git UI, but Gitea should not
-be the source of truth for public contribution permissions.
+The pinned revision and current upstream `main` have no license file, the npm
+package metadata declares no license, and GitHub reports no detected license.
+An earlier project-site description of “MIT” is not a license grant bundled
+with the code. Local engineering and owner evaluation may continue, but the
+compiled image must not be published to the production app registry until its
+redistribution terms are unambiguous.
 
-### Contributor Onboarding
+Preferred resolution: ask upstream to add an SPDX-recognized license file
+(MIT if that remains their intent), then re-pin at or after that commit and add
+GitWorkshop plus its copyright/license notice to Archipelago's `NOTICE` and
+generated image inventory. A written grant that explicitly permits compiling,
+modifying, and redistributing this app is an alternative, but is harder for
+downstream users to audit. A public GitHub repository or permission to fork is
+not sufficient redistribution permission. Production dependency-audit findings
+must also be resolved or explicitly accepted before release.
 
-When the user installs `archipelago-source` from the registry:
+The release-preparation audit on 2026-09-09 ran `npm audit --omit=dev` against
+the exact pinned commit and reported 4 high and 6 moderate advisories, with
+fixes available for every affected package. The same commit remains upstream
+`main`, so repinning alone does not resolve them. The final runtime image is
+static nginx rather than Node, which makes the Hono server findings unlikely to
+be runtime-reachable, but browser/runtime dependencies such as `fflate` and
+React Router still require an upstream dependency update or an explicit,
+written risk acceptance before registry publication.
 
-1. Show a modal before first launch: "Contribute to Archipelago".
-2. Explain that the app will use their Archipelago Nostr identity to clone and
-   sign contribution events.
-3. Display the maintainer repository announcement, clone URL, maintainer npub,
-   and relay/GRASP endpoints.
-4. Ask for consent to:
-   - fetch repository metadata from configured relays,
-   - clone source through `nostr://`,
-   - create local branches,
-   - sign NIP-34 issue/PR/comment events,
-   - push PR branches to approved GRASP servers.
-5. Store approval per app origin, identity id, repository id, and relay set.
+## Canonical Archipelago Repository
 
-This should build on the existing NIP-07 app-launcher bridge, but use a more
-specific permission scope than the generic sign-event approval.
+The canonical announcement maintainer is
+`npub1w3sqdkrhn0gyuvsex32effzgnfpyde6qrrc4u467flg5e9txh4wsfn5vjg`.
+The repository already contains a root MIT `LICENSE` and `CONTRIBUTING.md`;
+contributors agree to license their contributions under that MIT License.
 
-### Identity And Permissions
+The user-facing Source app can ship for local evaluation before the canonical
+Archipelago Nostr repository exists, but it must not pretend a placeholder is
+canonical. Canonical launch requires:
 
-Use four identity classes:
+1. A sanitized public `archy` source repository.
+2. An offline or tightly controlled maintainer identity.
+3. A signed NIP-34 kind `30617` repository announcement.
+4. At least one Archipelago-operated relay/GRASP endpoint and one independent
+   compatible mirror.
+5. Tested `nostr://` clone, proposal, update, review, merge-status, server-loss,
+   and recovery flows.
+6. A GitWorkshop link/configuration that opens the verified `archy` repository.
 
-- `archipelago-maintainer`: an offline or tightly controlled Nostr key that
-  signs the canonical kind `30617` repo announcement and status/merge events.
-- `archipelago-merge-maintainer`: one of the small set of maintainer npubs
-  allowed to advance canonical refs and publish valid merged/applied status.
-- `archipelago-build`: release automation key for signed release artifacts and
-  CI status events. It must not have merge authority.
-- `contributor`: user node or app-specific identity used for PRs, issues, and
-  comments.
+The existing HTTP Git remote remains a fallback until those drills pass.
 
-Contributor rights:
+## Delivery Milestones
 
-- Clone the repository.
-- Open issues.
-- Push proposal branches using `pr/<npub>/<short-topic>` or `pr/<event-id>`.
-- Publish NIP-34 PR/update/comment events.
-- Rebase and update their own PR branch.
-- Run local validation and attach status evidence.
+### 1. Plan And Protocol Review — complete
 
-Contributor restrictions:
+- Confirmed NIP-34/ngit/GRASP as the interoperability layer.
+- Defined contributor, maintainer, build, and release trust boundaries.
+- Confirmed that installation must ultimately come from the Archipelago app
+  registry and include a path to the upstream/source code.
 
-- Cannot update `refs/heads/main` or release branches in canonical state.
-- Cannot publish maintainer-valid merge/applied status.
-- Cannot alter the canonical repository announcement.
-- Cannot publish release catalog signatures.
+### 2. Runtime Feasibility — complete
 
-Maintainer rights:
+- Validated pinned `ngit` and `git-remote-nostr` binaries on supported node
+  architectures.
+- Exercised public `nostr://` discovery/clone behavior.
+- Established that app lifecycle dependencies do not share executables or
+  filesystems, avoiding an invalid two-container CLI design.
 
-- Publish/update the canonical repo announcement.
-- Publish canonical `refs/heads/main` state.
-- Mark PRs merged/closed/draft via NIP-34 status events.
-- Sign release tags and catalog updates.
+These CLI checks remain useful for canonical repository operations and release
+validation; they are not a reason to build a second browser client.
 
-Fork rights:
+### 3. Node Integration Foundation — complete
 
-- Any contributor can create their own NIP-34 kind `30617` repository
-  announcement for a fork.
-- Fork announcements should use the NIP-34 `u` tag to point back to the
-  canonical `archy` repository.
-- The source app should make forking a first-class path: "Fork on Nostr", clone
-  the fork locally, push branches to the contributor's GRASP list, and open PRs
-  back to canonical Archipelago when they want review.
-- Forks can have their own maintainer npubs, relays, policies, and release
-  cadence, but the app should clearly label them as forks unless signed by the
-  canonical maintainer set.
+- Added the installable app manifest, catalog metadata, icon, and port
+  reservation.
+- Added identity selection and a generic consent-gated NIP-07 bridge.
+- Kept signing secrets out of the app container.
 
-The GRASP server policy should enforce this by accepting pushes to maintainer
-refs only when backed by signed maintainer state, while allowing contributor PR
-refs from their own npubs.
+### 4. GitWorkshop Pivot — complete on the development node
 
-## Repository Layout
+- Replace the prototype Source UI and all private `source.*` APIs with the
+  pinned upstream GitWorkshop build.
+- Mount it below `/app/archipelago-source/` and proxy to the authenticated app
+  gate, eliminating hard-coded address and high-port launch behavior.
+- Validate upstream base-path routing, static assets, browser refresh/deep
+  links, NIP-07 requests, container hardening, and install/restart behavior.
+- Deploy the resulting daemon, dashboard, and app only on this development
+  node, then hand it to the owner for UAT.
 
-Canonical repo announcement:
+The pinned integration patch applies cleanly to a fresh upstream checkout. The
+upstream unit suite passes 152 tests, Archipelago's full frontend suite passes
+1,091 tests across 137 files, the production dashboard build and Android UAT
+lint/build pass, and the manifest passes all 16 validators. The read-only,
+capability-free container passes health, asset, manifest, and base-path checks.
+The live same-origin route reaches the authenticated app gate through the
+node's loopback, LAN, Tailscale, and FIPS addresses. A rollback snapshot is at
+`/var/backups/archipelago/pre-uat-fixes-20260908-1140` on the development node.
 
-- repo id: `archy`
-- display name: `Archipelago`
-- clone URLs:
-  - `nostr://<maintainer-npub>/<relay-hint>/archy`
-  - `https://<grasp-host>/<maintainer-npub>/archy.git`
-- relays:
-  - Archipelago-operated relay
-  - at least two public Nostr relays that support the event load
-- GRASP servers:
-  - Archipelago-operated GRASP instance
-  - one public GRASP-compatible mirror
+### 5. Owner UAT — pending owner action
 
-Keep the existing HTTP Git remote as a mirror during launch. The docs can
-present `nostr://` as the preferred contribution path once the workflow is
-proven.
+The owner validates install, launch, navigation, repository discovery, identity
+selection, consent prompts, source browsing, and available contribution flows.
+Engineering fixes UAT findings on this node and repeats the gate. Owner UAT is
+not inferred from automated tests.
 
-## UI Requirements
+For companion testing, the node hosts a local-only Archipelago Companion
+`0.5.32-uat` at `/packages/archipelago-companion-0.5.32-uat.apk`. It uses the
+separate package ID `com.archipelago.app.uat`, installs beside the existing
+companion, and includes the native WebView launch plus Android's native node-CA
+installer. Its SHA-256 is
+`8924d7ba3a013e0db09a5f1e72c21de7886e5e21ed1b2e31d585495183191fe7`.
+The production companion download remains unchanged.
 
-The source app should provide:
+Owner UAT should cover:
 
-- A first-run contribution modal with a real Archipelago source graphic, not a
-  generic text-only dialog.
-- Current clone status and local path.
-- Branch list, changed files, commit form, and push/open-PR flow.
-- PR inbox, issue list, maintainer status, and relay health.
-- Explicit identity indicator showing which npub will sign events.
-- A merge rights indicator that clearly says contributors can propose changes
-  but cannot merge them.
-- A fork flow that creates a user-owned NIP-34 repo announcement and remote,
-  then offers "Open PR to Archipelago" from any fork branch.
-- Maintainer badges based only on pinned canonical maintainer npubs, not relay
-  metadata or server-side account names.
-- Links to container docs, deployment docs, manifest spec, and open-source
-  readiness tasks.
+1. Install/reinstall GitWorkshop from the local App Store and open it from the
+   App Store, Apps screen, and Source banner. Confirm Discover shows Popular
+   Apps first, the banner after two desktop rows, and the remaining catalog
+   under All Apps; confirm the GitWorkshop mark is no longer the old icon.
+2. Confirm it opens as a top-level page in Companion's native in-app browser,
+   not a dashboard iframe, and loads without a blank or "webpage unavailable"
+   screen. Confirm Back and Close return through the Companion UI correctly.
+3. Select a node identity, exercise `getPublicKey` and signing prompts, verify
+   the contained consent surface, short identity-circle loader, success/error,
+   allow/deny/remember behavior, then change identity and confirm consent is
+   requested again. Repeat this flow inside the Companion WebView.
+4. Edit a Nostr identity and confirm the identity-specific success screen shows
+   the saved identity, relay coverage, event ID, copy action, and honest partial
+   publish warning when a relay does not accept the update.
+5. Browse a known NIP-34 repository and exercise the contribution actions that
+   GitWorkshop exposes without granting direct merge or release authority.
+6. From Companion settings, choose **Download this node's certificate** and
+   confirm Android opens the system CA-install prompt for this node. Confirm
+   the ordinary browser link still downloads the `.crt` file.
+7. Repeat launch through whichever of LAN, Tailscale, FIPS, DNS, IPv4, or IPv6
+   is available; the app must follow the dashboard origin rather than a stored
+   address. A raw numeric address works over HTTP; for HTTPS over Tailscale use
+   the node's MagicDNS hostname because the certificate is issued to that name,
+   not to the numeric Tailscale address.
 
-## Backend Work
+UAT follow-up on 2026-09-08 found three integration defects: the mounted gate
+used root-relative form/assets and returned nginx 405 in a fresh mobile
+browser; silent signer requests flashed the full-screen broker frame in the
+Companion WebView; and IndeeHub reloaded while the signer's success surface was
+still closing, leaving Android WebView blank. The fixes are implemented with a
+validated forwarded mount, consent-driven broker visibility, and a coordinated
+post-auth reload plus native page-commit fallback. These items remain pending
+owner retest on the development node; their implementation is not UAT
+acceptance. The fixes were deployed locally on 2026-09-08. Live engineering
+checks confirm that mounted gate pages and assets retain the app prefix, gate
+POSTs return the application's 401 response instead of nginx 405 over HTTP and
+LAN HTTPS, both apps are healthy, and the served provider and UAT APK match
+their build hashes.
 
-Add an RPC module for source contribution workflow:
+A further Companion retest showed a black surface immediately after the first
+identity selection even though authentication, reload, application data, and
+`/api/auth/me` all completed successfully. The common cause was the Android
+Chromium compositor retaining the hidden broker iframe's last full-screen black
+canvas. The broker route now has a genuinely transparent document, and hidden
+brokers stay loaded as a non-interactive 1px surface parked off-screen so the
+identity choice and immediately following sign request share one broker.
+Companion covers an expected authentication navigation with its branded loader
+until the app commits a new frame. This is deployed in `0.5.32-uat` and
+remains pending owner visual retest.
 
-- `source.repo-info`: returns canonical announcement, clone URL, relay set,
-  maintainer npubs, and local clone state.
-- `source.ensure-ngit`: verifies the `ngit` app/runtime is installed.
-- `source.clone`: clones or updates the local source checkout.
-- `source.status`: returns branch, dirty files, ahead/behind, and PR state.
-- `source.commit`: creates a local commit from selected files.
-- `source.fork`: creates a contributor-owned NIP-34 fork announcement and local
-  remote.
-- `source.open-pr`: pushes a PR branch and publishes a kind `1618` event.
-- `source.update-pr`: updates the branch and publishes kind `1619`.
-- `source.issue`: publishes a kind `1621` event.
+### 6. Canonical Nostr Launch — pending
 
-Backend must shell out through a narrow command wrapper, never arbitrary user
-commands. The wrapper should set an isolated working tree under
-`/var/lib/archipelago/source/archy`, run as the Archipelago service user, and
-deny operations outside that path.
+- Publish and configure the signed `archy` kind `30617` announcement.
+- Bring up and test the chosen relays and GRASP servers.
+- Deep-link/configure GitWorkshop to the verified repository.
+- Run the real-node proposal and recovery drills listed above.
 
-## Security Model
+### 7. Release — explicitly blocked pending prior gates
 
-- Never expose maintainer private keys to an Archipelago node.
-- Prefer app-specific contributor identities over the node's default identity.
-- Require per-action consent for first PR push, issue creation, and signing any
-  event that tags the canonical repository.
-- Pin the canonical maintainer npub in the app manifest and backend config.
-- Keep the canonical merge-maintainer allow list signed by the
-  `archipelago-maintainer` key; never infer merge rights from GRASP server
-  accounts.
-- Verify the canonical kind `30617` event signature before displaying clone
-  instructions.
-- Treat GRASP servers as untrusted storage; verify Git refs against signed
-  Nostr state.
-- Do not use destructive git operations from the UI without an explicit modal.
-- Store local clones and generated patches outside app container writable roots
-  unless the user exports them.
+Only after engineering tests, owner UAT acceptance, canonical launch tests,
+license confirmation, and dependency review may the team:
 
-## MVP
+- build and publish a production multi-architecture app image;
+- sign/update the production app-registry entry;
+- include the integration in an OTA or ISO;
+- add release notes and migration/rollback instructions.
 
-1. Package `ngit` as a first-party app.
-2. Stand up one Archipelago-operated GRASP server and one Nostr relay.
-3. Publish sanitized fresh-history `archy` through `ngit init`.
-4. Add a simple `archipelago-source` app that clones source and links out to the
-   preferred Nostr Git browser.
-5. Add app-launcher consent scopes for repository-specific NIP-34 signing.
-6. Allow issues and PR branch submission from contributor npubs.
-7. Add a one-click fork flow that publishes a contributor-owned fork
-   announcement referencing canonical Archipelago.
-8. Keep maintainer merge/status publication manual.
+The production companion signing path also needs an explicit release decision.
+The current branch omits the shared debug keystore expected by
+`scripts/publish-companion-apk.sh` (an older repository revision contains it),
+while the local UAT key is intentionally unsuitable for public artifacts.
+Before publishing, verify upgrade compatibility against the already-distributed
+companion's signing certificate and stage only the intended production-signed
+APK.
 
-## Later
+## Completed Next-OTA Follow-ups
 
-- Native PR review UI with file diffs and inline comments.
-- CI status events signed by the build identity.
-- FIPS-first source sync between trusted Archipelago nodes.
-- Private prerelease repositories using NIP-42 allow lists and/or protected
-  events if the ecosystem support is mature enough.
-- Multi-maintainer policy with threshold signatures or explicit maintainer-list
-  rotation events.
+- The container doctor detects a missing rootless Podman `pasta` listener and
+  restarts only the affected container, including the intermittent Nginx Proxy
+  Manager port 8081 case. TCP and UDP bindings are checked independently.
+- The node-certificate UI contains the approved macOS, iOS/iPadOS, Windows,
+  Android, Linux, browser restart, DNS, and symptom/cause guidance, while the
+  Companion hands the downloaded node CA to Android's system installer.
 
-## Open Questions
+## Open Decisions Before Canonical Launch
 
-- Which maintainer npub should become canonical for `archy`?
-- Should contributor identities be node-default or app-specific by default?
-- Which GRASP implementation should be deployed first: `ngit-grasp` or another
-  NIP-34/GRASP-compatible relay?
-- Should the source app include a full web Git UI in v1, or launch Gitea/ngit
-  browser links for review while keeping signing/submission native?
-- What exact license and contribution certificate should contributors accept
-  before submitting PR events?
+- Which Archipelago-operated and independent relay/GRASP endpoints are used?
+- Will upstream add an explicit GitWorkshop license file, or provide another
+  written redistribution grant suitable for registry publication?

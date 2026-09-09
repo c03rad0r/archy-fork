@@ -137,6 +137,38 @@ describe('useAppStore', () => {
     const valid = await store.checkSession()
 
     expect(valid).toBe(false)
+    expect(mockedRpc.call).not.toHaveBeenCalled()
+  })
+
+  it('checkSession can validate an app-gate cookie without a dashboard localStorage marker', async () => {
+    mockedRpc.call.mockResolvedValue('ping')
+    const store = useAppStore()
+
+    const valid = await store.checkSession({
+      allowCookieWithoutLocalMarker: true,
+      bootstrapDashboard: false,
+    })
+
+    expect(valid).toBe(true)
+    expect(mockedRpc.call).toHaveBeenCalledWith({
+      method: 'system.get-hostname',
+    })
+    expect(mockedRpc.call).toHaveBeenCalledOnce()
+    expect(mockedWs.connect).not.toHaveBeenCalled()
+    expect(store.data).toBeNull()
+    expect(store.isAuthenticated).toBe(true)
+    expect(localStorage.getItem('neode-auth')).toBe('true')
+  })
+
+  it('checkSession rejects a missing app-gate cookie when explicitly probed', async () => {
+    mockedRpc.call.mockRejectedValue(new Error('401 Unauthorized'))
+    const store = useAppStore()
+
+    const valid = await store.checkSession({ allowCookieWithoutLocalMarker: true })
+
+    expect(valid).toBe(false)
+    expect(store.isAuthenticated).toBe(false)
+    expect(localStorage.getItem('neode-auth')).toBeNull()
   })
 
   it('checkSession returns false and clears state on expired session', async () => {

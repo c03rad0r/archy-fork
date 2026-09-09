@@ -1,0 +1,418 @@
+diff --git a/index.html b/index.html
+index 6894507..a917f5d 100644
+--- a/index.html
++++ b/index.html
+@@ -14,7 +14,7 @@
+       property="og:description"
+       content="Decentralized GitHub alternative over Nostr"
+     />
+-    <meta property="og:image" content="/og-image.png" />
++    <meta property="og:image" content="%BASE_URL%og-image.png" />
+     <meta property="og:image:width" content="1200" />
+     <meta property="og:image:height" content="630" />
+     <meta
+@@ -22,15 +22,19 @@
+       content="%APP_NAME% — git collaboration without the platform"
+     />
+     <meta name="twitter:card" content="summary_large_image" />
+-    <meta name="twitter:image" content="/og-image.png" />
++    <meta name="twitter:image" content="%BASE_URL%og-image.png" />
+     <meta
+       http-equiv="content-security-policy"
+-      content="default-src 'none'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; frame-src 'self' https:; font-src 'self'; base-uri 'self'; manifest-src 'self'; connect-src 'self' blob: https: wss:; img-src 'self' data: blob: https:; media-src 'self' https:"
++      content="default-src 'none'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; frame-src 'self' http: https:; font-src 'self'; base-uri 'self'; manifest-src 'self'; connect-src 'self' blob: https: wss:; img-src 'self' data: blob: https:; media-src 'self' https:"
+     />
+-    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+-    <link rel="icon" type="image/png" href="/favicon.png" />
+-    <link rel="apple-touch-icon" href="/icons/apple-touch-icon.png" />
+-    <link rel="manifest" href="/manifest.webmanifest" />
++    <link rel="icon" type="image/svg+xml" href="%BASE_URL%favicon.svg" />
++    <link rel="icon" type="image/png" href="%BASE_URL%favicon.png" />
++    <link rel="apple-touch-icon" href="%BASE_URL%icons/apple-touch-icon.png" />
++    <link
++      rel="manifest"
++      href="/manifest.webmanifest"
++      crossorigin="use-credentials"
++    />
+     <style>
+       body {
+         margin: 0;
+@@ -41,7 +45,9 @@
+         background: #16171e;
+       }
+     </style>
+-    <script src="/theme-init.js"></script>
++    <script src="%BASE_URL%theme-init.js"></script>
++    <script src="%BASE_URL%archipelago-nostrdb-config.js"></script>
++    <script data-no-nip98 src="/nostr-provider.js?v=tab-signer-v4"></script>
+   </head>
+   <body>
+     <div id="root">
+@@ -119,7 +125,7 @@
+         <div id="splash-content">
+           <img
+             class="splash-logo"
+-            src="/icons/icon-192x192.png"
++            src="%BASE_URL%icons/icon-192x192.png"
+             width="64"
+             height="64"
+             alt=""
+diff --git a/public/archipelago-nostrdb-config.js b/public/archipelago-nostrdb-config.js
+new file mode 100644
+index 0000000..8f598c4
+--- /dev/null
++++ b/public/archipelago-nostrdb-config.js
+@@ -0,0 +1,7 @@
++// window.nostrdb.js probes a developer-only relay at localhost:4869 unless
++// configured before the app module graph loads. On an installed node that
++// address means the user's own device, can never be the app's cache relay,
++// and is correctly blocked by GitWorkshop's production CSP.
++window.nostrdbConfig = Object.assign({}, window.nostrdbConfig || {}, {
++  localRelays: [],
++});
+diff --git a/src/AppRouter.tsx b/src/AppRouter.tsx
+index 0f681e7..16dff02 100644
+--- a/src/AppRouter.tsx
++++ b/src/AppRouter.tsx
+@@ -20,6 +20,8 @@ import { MaintainerAcceptanceMonitor } from "./components/MaintainerAcceptanceMo
+ import { useRepoPath } from "./hooks/useRepoPath";
+ import { REPO_KIND } from "./lib/nip34";
+ import { getGitWorkshopPath } from "./lib/gitworkshopUrl";
++import { useLoginActions } from "./hooks/useLoginActions";
++import { accounts } from "./services/accounts";
+
+ /**
+  * Handles public GitWorkshop links in native builds. This stays inside the
+@@ -365,9 +367,46 @@ function LegacyRedirect() {
+   return <RepoLayout />;
+ }
+
++/** Turn an eager node identity choice into GitWorkshop's extension login. */
++function ArchipelagoIdentityLogin() {
++  const login = useLoginActions();
++  const loginRef = useRef(login.extension);
++  const loginRunning = useRef(false);
++  loginRef.current = login.extension;
++
++  useEffect(() => {
++    const bridge = (
++      window as Window & {
++        archipelagoNostr?: {
++          onIdentitySelected?: (
++            callback: (identity: { nostr_pubkey: string }) => void,
++          ) => () => void;
++        };
++      }
++    ).archipelagoNostr;
++    if (!bridge?.onIdentitySelected) return;
++
++    return bridge.onIdentitySelected(() => {
++      if (accounts.getActive() || loginRunning.current) return;
++      loginRunning.current = true;
++      void loginRef
++        .current()
++        .catch((error) => {
++          console.error("Archipelago automatic login failed:", error);
++        })
++        .finally(() => {
++          loginRunning.current = false;
++        });
++    });
++  }, []);
++
++  return null;
++}
++
+ function AppRouter() {
+   return (
+-    <BrowserRouter>
++    <BrowserRouter basename={import.meta.env.BASE_URL}>
++      <ArchipelagoIdentityLogin />
+       <NativeGitWorkshopLinks />
+       <NativeAndroidBackButton />
+       <ScrollToTop />
+diff --git a/src/components/AppFooter.tsx b/src/components/AppFooter.tsx
+index 3eb76d2..22b079b 100644
+--- a/src/components/AppFooter.tsx
++++ b/src/components/AppFooter.tsx
+@@ -62,7 +62,7 @@ export function AppFooter() {
+               className="flex items-center gap-2 hover:opacity-80 transition-opacity w-fit"
+             >
+               <img
+-                src="/icons/icon.svg"
++                src={`${import.meta.env.BASE_URL}icons/icon.svg`}
+                 alt="GitWorkshop"
+                 className="h-6 w-6"
+               />
+diff --git a/src/components/AppHeader.tsx b/src/components/AppHeader.tsx
+index b31aa79..cec9d39 100644
+--- a/src/components/AppHeader.tsx
++++ b/src/components/AppHeader.tsx
+@@ -155,7 +155,11 @@ export function AppHeader() {
+           to="/"
+           className="group transition-opacity hover:opacity-80 shrink-0"
+         >
+-          <img src="/icons/icon.svg" alt="GitWorkshop" className="h-8 w-8" />
++          <img
++            src={`${import.meta.env.BASE_URL}icons/icon.svg`}
++            alt="GitWorkshop"
++            className="h-8 w-8"
++          />
+         </Link>
+
+         <div className="flex items-center gap-2 ml-auto">
+diff --git a/src/main.tsx b/src/main.tsx
+index 1e4fead..ae3a045 100644
+--- a/src/main.tsx
++++ b/src/main.tsx
+@@ -10,9 +10,11 @@ import "@fontsource-variable/inter";
+ // itself, so subsequent loads are fully uncontrolled. Capacitor packages local
+ // assets and does not use this web-deployment cleanup worker.
+ if (!Capacitor.isNativePlatform() && "serviceWorker" in navigator) {
+-  navigator.serviceWorker.register("/sw.js").catch(() => {
+-    /* ignore — browser may block in certain envs */
+-  });
++  navigator.serviceWorker
++    .register(`${import.meta.env.BASE_URL}sw.js`)
++    .catch(() => {
++      /* ignore — browser may block in certain envs */
++    });
+ }
+
+ createRoot(document.getElementById("root")!).render(
+diff --git a/src/pages/NotFound.tsx b/src/pages/NotFound.tsx
+index 18e3593..685c422 100644
+--- a/src/pages/NotFound.tsx
++++ b/src/pages/NotFound.tsx
+@@ -28,7 +28,7 @@ const NotFound = () => {
+           Oops! Page not found
+         </p>
+         <a
+-          href="/"
++          href={import.meta.env.BASE_URL}
+           className="text-blue-500 hover:text-blue-700 dark:text-blue-400 dark:hover:text-blue-300 underline"
+         >
+           Return to Home
+diff --git a/src/services/settings.ts b/src/services/settings.ts
+index 8f9a1a7..5438a72 100644
+--- a/src/services/settings.ts
++++ b/src/services/settings.ts
+@@ -124,8 +124,6 @@ export const fallbackRelaysCustomised$ = isCustomised$(
+  * These are used by the event loaders to find events more efficiently.
+  */
+ export const DEFAULT_LOOKUP_RELAYS = normalizeRelayList([
+-  "wss://purplepag.es",
+-  "wss://index.hzrd149.com",
+   "wss://indexer.coracle.social",
+ ]);
+
+diff --git a/vite.config.ts b/vite.config.ts
+index 0534fb9..d94fc70 100644
+--- a/vite.config.ts
++++ b/vite.config.ts
+@@ -39,37 +39,38 @@ function htmlAppNamePlugin(): Plugin {
+  */
+ function manifestPlugin(): Plugin {
+   const virtualId = "/manifest.webmanifest";
++  const appBase = process.env.APP_BASE_PATH ?? "/";
+   const manifest = JSON.stringify(
+     {
+       name: "GitWorkshop.dev",
+       short_name: "GitWorkshop",
+       description: "Decentralized GitHub alternative over Nostr",
+-      start_url: "/",
++      start_url: appBase,
+       display: "standalone",
+       background_color: "#16171e",
+       theme_color: "#16171e",
+       categories: ["development", "productivity", "utilities"],
+       icons: [
+         {
+-          src: "/icons/icon-192x192.png",
++          src: `${appBase}icons/icon-192x192.png`,
+           sizes: "192x192",
+           type: "image/png",
+           purpose: "any",
+         },
+         {
+-          src: "/icons/icon-512x512.png",
++          src: `${appBase}icons/icon-512x512.png`,
+           sizes: "512x512",
+           type: "image/png",
+           purpose: "any",
+         },
+         {
+-          src: "/icons/pwa-maskable-192x192.png",
++          src: `${appBase}icons/pwa-maskable-192x192.png`,
+           sizes: "192x192",
+           type: "image/png",
+           purpose: "maskable",
+         },
+         {
+-          src: "/icons/pwa-maskable-512x512.png",
++          src: `${appBase}icons/pwa-maskable-512x512.png`,
+           sizes: "512x512",
+           type: "image/png",
+           purpose: "maskable",
+@@ -82,6 +83,12 @@ function manifestPlugin(): Plugin {
+
+   return {
+     name: "manifest",
++    transformIndexHtml(html) {
++      return html.replace(
++        'href="/manifest.webmanifest"',
++        `href="${appBase}manifest.webmanifest"`,
++      );
++    },
+     configureServer(server) {
+       server.middlewares.use((req, res, next) => {
+         if (req.url === virtualId) {
+@@ -104,6 +111,10 @@ function manifestPlugin(): Plugin {
+
+ // https://vitejs.dev/config/
+ export default defineConfig(() => ({
++  // Archipelago serves GitWorkshop behind the dashboard origin.  Vite's base
++  // controls emitted asset URLs while BrowserRouter consumes the same value
++  // below, so repository routes remain valid below that mount point.
++  base: process.env.APP_BASE_PATH ?? "/",
+   define: {
+     __APP_NAME__: JSON.stringify(name),
+     __APP_RELEASE_VERSION__: JSON.stringify(
+diff --git a/src/components/auth/AccountSwitcher.tsx b/src/components/auth/AccountSwitcher.tsx
+index f59a7d2..3168910 100644
+--- a/src/components/auth/AccountSwitcher.tsx
++++ b/src/components/auth/AccountSwitcher.tsx
+@@ -46,7 +46,7 @@ function SignerTypeBadge({ account }: { account: IAccount }) {
+     return (
+       <span className="flex items-center gap-1 text-[10px] text-muted-foreground">
+         <Puzzle className="w-3 h-3" />
+-        Extension
++        Extension / Archipelago
+       </span>
+     );
+   if (account instanceof NostrConnectAccount)
+diff --git a/src/components/auth/LoginDialog.tsx b/src/components/auth/LoginDialog.tsx
+index 11f6716..0bba6a2 100644
+--- a/src/components/auth/LoginDialog.tsx
++++ b/src/components/auth/LoginDialog.tsx
+@@ -239,9 +239,15 @@ const LoginDialog: React.FC<LoginDialogProps> = ({
+     try {
+       if (!("nostr" in window)) {
+         throw new Error(
+-          "Nostr extension not found. Please install a NIP-07 extension.",
++          "No NIP-07 signer found. Open GitWorkshop through Archipelago or install a browser extension.",
+         );
+       }
++      const archipelago = (
++        window as Window & {
++          archipelagoNostr?: { selectIdentity?: () => Promise<unknown> };
++        }
++      ).archipelagoNostr;
++      if (archipelago?.selectIdentity) await archipelago.selectIdentity();
+       await login.extension();
+       onLogin();
+       onClose();
+@@ -437,7 +443,9 @@ const LoginDialog: React.FC<LoginDialogProps> = ({
+                     disabled={isLoading}
+                   >
+                     <Puzzle className="w-4 h-4" />
+-                    {isLoading ? "Logging in..." : "Log in with Extension"}
++                    {isLoading
++                      ? "Logging in..."
++                      : "Log in with Extension / Archipelago"}
+                   </Button>
+                 )}
+
+diff --git a/src/pages/Dashboard.tsx b/src/pages/Dashboard.tsx
+index b8de377..7f72f31 100644
+--- a/src/pages/Dashboard.tsx
++++ b/src/pages/Dashboard.tsx
+@@ -23,6 +23,7 @@ import {
+   ChevronUp,
+   Pin,
+   Search,
++  Globe2,
+ } from "lucide-react";
+ import { CreateRepoDialog } from "@/components/CreateRepoDialog";
+ import { Button } from "@/components/ui/button";
+@@ -36,6 +37,7 @@ import { useUserActivity } from "@/hooks/useUserActivity";
+ import { useUserRepositories } from "@/hooks/useUserRepositories";
+ import { useUserFollowedRepos } from "@/hooks/useUserFollowedRepos";
+ import { useUserPinnedCoords } from "@/hooks/useUserPinnedRepos";
++import { useRepositorySearch } from "@/hooks/useRepositorySearch";
+ import { useNotifications } from "@/hooks/useNotifications";
+ import { useUserProfileSubscription } from "@/hooks/useUserProfileSubscription";
+ import { useUserPath } from "@/hooks/useUserPath";
+@@ -409,6 +411,63 @@ function FollowedReposPanel({ pubkey }: { pubkey: string }) {
+   );
+ }
+
++// ---------------------------------------------------------------------------
++// Recent repositories from the wider Nostr network
++// ---------------------------------------------------------------------------
++
++function NetworkRepositoriesPanel() {
++  const { repos, isLoading } = useRepositorySearch("");
++  const recent = repos?.slice(0, 6);
++
++  return (
++    <div className="h-fit">
++      <div className="pb-3 flex items-center justify-between gap-3">
++        <h3 className="text-base font-semibold flex items-center gap-2">
++          <Globe2 className="h-4 w-4 text-muted-foreground" />
++          Nostr network
++        </h3>
++        <Button
++          variant="ghost"
++          size="sm"
++          className="h-7 px-2 text-xs text-muted-foreground hover:text-foreground"
++          asChild
++        >
++          <Link to="/search">
++            Browse all
++            <ArrowRight className="h-3 w-3 ml-1" />
++          </Link>
++        </Button>
++      </div>
++
++      {recent === undefined || (isLoading && recent.length === 0) ? (
++        <div className="space-y-1">
++          {Array.from({ length: 5 }).map((_, i) => (
++            <RepoRowSkeleton key={i} />
++          ))}
++        </div>
++      ) : recent.length > 0 ? (
++        <div className="space-y-0.5">
++          {recent.map((repo) => (
++            <RepoListItem
++              key={`${repo.selectedMaintainer}:${repo.dTag}`}
++              repo={repo}
++            />
++          ))}
++        </div>
++      ) : (
++        <div className="py-6 text-center">
++          <p className="text-sm text-muted-foreground">
++            No network repositories available
++          </p>
++          <p className="text-xs text-muted-foreground/60 mt-1">
++            Check the git index relay in Settings
++          </p>
++        </div>
++      )}
++    </div>
++  );
++}
++
+ // ---------------------------------------------------------------------------
+ // Embedded notifications panel (compact, inbox only, max 5)
+ // ---------------------------------------------------------------------------
+@@ -591,6 +650,8 @@ export function Dashboard() {
+             <MyRepositoriesPanel pubkey={pubkey} />
+             <Separator className="opacity-40" />
+             <FollowedReposPanel pubkey={pubkey} />
++            <Separator className="opacity-40" />
++            <NetworkRepositoriesPanel />
+           </div>
+         </div>
+       </div>

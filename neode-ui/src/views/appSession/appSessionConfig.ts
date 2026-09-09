@@ -1,7 +1,12 @@
 /** Static configuration maps for app session routing and display */
 
 import { portIsGateFronted } from '../discover/curatedApps'
-import { GENERATED_APP_PORTS, GENERATED_APP_TITLES, GENERATED_NEW_TAB_APPS } from './generatedAppSessionConfig'
+import {
+  GENERATED_APP_PORTS,
+  GENERATED_APP_TITLES,
+  GENERATED_HOST_FRAME_APPS,
+  GENERATED_NEW_TAB_APPS,
+} from './generatedAppSessionConfig'
 import { IS_DEMO, demoAppUrl } from '@/composables/useDemoIntro'
 
 export type DisplayMode = 'panel' | 'overlay' | 'fullscreen'
@@ -50,6 +55,7 @@ export const APP_PORTS: Record<string, number> = {
 /** Apps that need nginx proxy for iframe embedding.
  *  IndeeHub web UI is on 7778. Port 7777 is the Nostr relay. */
 export const PROXY_APPS: Record<string, string> = {
+  'archipelago-source': '/app/archipelago-source/',
   'gitea': '/app/gitea/',
   'nginx-proxy-manager': '/app/nginx-proxy-manager/',
   'uptime-kuma': '/app/uptime-kuma/',
@@ -57,6 +63,21 @@ export const PROXY_APPS: Record<string, string> = {
 
 /** App launches use direct ports. Do not route through /app/... path proxies. */
 export const HTTPS_PROXY_PATHS: Record<string, string> = {
+}
+
+/**
+ * First-party apps that are deliberately being node-tested before their
+ * manifest reaches the release-signed catalog. Keep this list narrow: it is
+ * only a scheme-routing fallback, and does not make an app installable or
+ * trusted. Once the signed catalog carries the app, portIsGateFronted is the
+ * normal source of truth.
+ */
+const PRE_CATALOG_GATED_PORTS: Record<string, number> = {
+  'archipelago-source': 8337,
+}
+
+export function appPortIsGateFronted(appId: string, port: number | string): boolean {
+  return portIsGateFronted(appId, port) || PRE_CATALOG_GATED_PORTS[appId] === Number(port)
 }
 
 /** External HTTPS apps -- always loaded directly */
@@ -81,6 +102,13 @@ export const NEW_TAB_APPS = new Set([
   'tailscale',
 ])
 
+/** Apps that consume an integration supplied by the dashboard parent frame.
+ * The Android companion normally promotes sessions into a top-level native
+ * WebView; doing that to one of these apps would sever its postMessage bridge. */
+export const HOST_FRAME_APPS = new Set([
+  ...GENERATED_HOST_FRAME_APPS,
+])
+
 /** Sites known to block iframes -- skip the timeout and go straight to fallback */
 export const IFRAME_BLOCKED_APPS = new Set<string>([])
 
@@ -103,6 +131,16 @@ export function resolveAppUrl(id: string, routeQueryPath?: string, runtimeUrl?: 
   const ext = EXTERNAL_URLS[id]
   if (ext) return ext
 
+  // GitWorkshop is deliberately mounted below the dashboard origin. This is
+  // the only launch shape that survives every supported ingress (LAN,
+  // Tailscale, FIPS, Tor and reverse proxies) without assuming that a second
+  // high port is reachable through the same address.
+  if (id === 'archipelago-source') {
+    const base = PROXY_APPS['archipelago-source']!
+    if (!routeQueryPath) return base
+    return base.replace(/\/+$/, '') + (routeQueryPath.startsWith('/') ? routeQueryPath : `/${routeQueryPath}`)
+  }
+
   // Bitcoin UI is a host-network companion on :8334. Do not launch it via
   // /app/bitcoin-ui/: the static UI is built for root and renders a blank
   // shell when proxied under a path prefix on some nodes.
@@ -120,7 +158,7 @@ export function resolveAppUrl(id: string, routeQueryPath?: string, runtimeUrl?: 
     // would fail to connect over https at all.
     try {
       const port = new URL(base).port
-      if (portIsGateFronted(id, port)) base = matchPageScheme(base)
+      if (appPortIsGateFronted(id, port)) base = matchPageScheme(base)
     } catch { /* keep as-is */ }
     if (routeQueryPath) base += routeQueryPath
     return base
@@ -152,7 +190,7 @@ export function resolveAppUrl(id: string, routeQueryPath?: string, runtimeUrl?: 
  */
 export function appOrigin(port: number, appId?: string): string {
   const https = appId
-    ? HTTPS_APP_IDS.has(appId) || (portIsGateFronted(appId, port) && pageScheme() === 'https:')
+    ? HTTPS_APP_IDS.has(appId) || (appPortIsGateFronted(appId, port) && pageScheme() === 'https:')
     : pageScheme() === 'https:'
   return `${https ? 'https' : 'http'}://${window.location.hostname}:${port}`
 }

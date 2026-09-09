@@ -31,9 +31,6 @@ app:
     entrypoint: ["sh", "-lc"]
     custom_args:
       - /app/start.sh
-    derived_env:
-      - key: PUBLIC_URL
-        template: https://{{HOST_MDNS}}:8180
     secret_env:
       - key: APP_PASSWORD
         secret_file: my-app-password
@@ -55,6 +52,8 @@ app:
     - host: 8180
       container: 8080
       protocol: tcp
+      bind: 127.0.0.1
+      auth: gated
 
   volumes:
     - type: bind
@@ -125,12 +124,58 @@ app:
 | `app.environment` | Static `KEY=value` environment entries |
 | `app.health_check` | HTTP or TCP health check settings |
 | `app.devices` | Explicit device paths |
-| `app.metadata` | Catalog-facing presentation metadata such as icon, category, tier, repo/source, author, feature bullets, and launch hints |
+| `app.metadata` | Catalog-facing presentation metadata such as icon, category, tier, repo/source, author, feature bullets, and [launch hints](#browser-iframe-and-companion-launch-modes) |
 | `app.interfaces.main` | Optional primary UI launch surface with `port`, `protocol`, and `path` |
 
 Additional extension keys may exist for current integrations, for example Bitcoin, Lightning, or app-specific launch/interface metadata. Treat extension keys as transitional unless they are documented as reusable platform primitives.
 
 ### Iframe embedding — the rules
+
+#### What Archipelago decides, and what the app must declare
+
+Archipelago works out the reachable hostname and browser scheme at launch
+time. An app must not bake a LAN IP, Tailscale IP, FIPS address, `.local`
+name, or the dashboard's current `http`/`https` scheme into its UI URL.
+Declare the UI once in `interfaces.main`, put the matching port behind the
+app gate, and use relative URLs for the app's own assets and links.
+
+| Concern | App author | Archipelago |
+|---|---|---|
+| UI location | Declare `interfaces.main.port`, `protocol`, and `path` | Uses the address through which this browser reached the node |
+| Exposure | Bind a `gated`/`open` port to `127.0.0.1` | Publishes it on supported LAN, Tailscale, FIPS, and Tor ingress |
+| HTTP/HTTPS | Serve the declared upstream protocol locally | Keeps HTTP pages on HTTP; on an HTTPS dashboard, gate-fronted app ports use HTTPS on the same port |
+| Embedded or top-level | Default to iframe; declare an exception when required | Chooses iframe, browser tab, or companion-native view from generated launch metadata |
+| Navigation | Use relative same-app URLs and normal absolute external URLs | Preserves the selected node address and routes external links out of the companion app view |
+
+`interfaces.main.protocol` describes the service behind the gate. It does
+not tell application code to hard-code that scheme into browser links: the
+gate can terminate TLS in front of a locally plain-HTTP container.
+
+There are two important limits:
+
+- `auth: none` bypasses the gate, so Archipelago cannot add TLS or make that
+  port safe to embed from an HTTPS dashboard. Use it for protocols, not
+  ordinary web UIs.
+- Same-origin mounts such as `/app/archipelago-source/` are platform-owned
+  integrations. A normal app cannot request an arbitrary dashboard path in
+  its manifest; use `interfaces.main` and a gated port.
+
+When the platform does provide one of those same-origin mounts, the nginx
+location must pass its exact mount as `X-Forwarded-Prefix` to the app gate:
+
+```nginx
+location /app/example/ {
+    proxy_pass http://127.0.0.2:8123/;
+    proxy_set_header X-Forwarded-Prefix /app/example;
+}
+```
+
+The trailing slash on `proxy_pass` strips the mount from the upstream request;
+the header lets the gate put it back into its login form, login-page assets,
+and successful redirect. Omitting it makes a fresh mobile-browser session post
+to the dashboard's root `/__archipelago-gate/login`, which is not an app-gate
+endpoint and will normally return 405. This header is host integration config,
+not app-controlled manifest metadata, and must be a fixed literal path.
 
 The dashboard opens apps in an **embedded frame** (My Apps → app session) by
 default. Whether that works is decided by HTTP headers, not by wishes, so
@@ -145,7 +190,7 @@ know the mechanics:
   behind Archipelago's app gate the clickjacking threat those headers address
   is already handled — every proxied request is authenticated by the gate
   first.
-- Therefore **the gate neutralizes frame blocking on proxied responses**: it
+- Therefore **the gate neutralizes frame blocking on gate-fronted responses**: it
   removes `X-Frame-Options` and strips only the `frame-ancestors` directive
   from the app's CSP. The rest of the app's CSP (script-src, connect-src, …)
   passes through untouched — the gate never weakens the app's own content
@@ -214,6 +259,37 @@ underscores. Supported interface types are `ui`, `api`, and `metrics`; only
 `type: ui` is treated as a launchable app surface. Supported protocols are
 `http` and `https`, and `path` must start with `/`.
 
+### Browser, iframe, and companion launch modes
+
+Launch behavior is generated from the manifest. Application code should not
+sniff for a particular node IP or companion user-agent.
+
+```yaml
+metadata:
+  launch:
+    # Use only for OAuth/WebAuthn, JS frame-busting, or another top-level
+    # browser requirement that the gate cannot repair.
+    open_in_new_tab: false
+
+    # Keep a different, app-specific parent-frame integration alive in the
+    # Android companion. Standard Archipelago NIP-07 no longer needs this.
+    requires_host_frame: false
+```
+
+- Desktop/PWA: iframeable apps stay in the dashboard.
+  `open_in_new_tab: true` apps open in a browser tab.
+- Android companion: ordinary apps open in the native in-app browser with its
+  own navigation controls. `requires_host_frame: true` apps stay in the
+  dashboard iframe so `window.parent.postMessage` integrations remain alive.
+- Never set both flags. A top-level page cannot simultaneously require its
+  parent frame.
+- Relative app paths are resolved against the active dashboard origin before
+  a native launch, so the same package works through LAN, Tailscale, and FIPS.
+
+Test all four relevant paths before submission: HTTP dashboard iframe, HTTPS
+dashboard iframe with the node CA installed, companion launch, and every
+external link or login redirect that leaves the app.
+
 ### Nostr Signer Bridge (NIP-07)
 
 Apps embedded in the Archipelago iframe can use the node's Nostr identity to sign
@@ -221,42 +297,148 @@ events without managing their own keys. Archipelago injects a **NIP-07 provider*
 (`window.nostr` with `getPublicKey()` / `signEvent()` / `nip04` / `nip44`) that bridges
 to the host. Your app code uses standard NIP-07 — no Archipelago-specific API.
 
-**How injection works.** After install, the host copies `nostr-provider.js` into the
-app container and patches the app's web server so every page loads it and the app is
-iframe-embeddable. This is **best-effort** and depends on your server config exposing
-the right hooks. For an **nginx-served SPA** (the supported reference shape, e.g.
-IndeeHub) your `nginx.conf` must satisfy this contract:
+**How injection works.** The dashboard owns the consent UI and postMessage
+host, and ships the canonical `nostr-provider.js`, but generic containers are
+not silently rewritten. Package the provider explicitly with a manifest
+`copy_from_host` hook (or bake the same provider into the image) and inject it
+into every HTML document your app serves. IndeeHub's manifest is the
+hook-based reference; Archipelago Source's outer same-origin nginx mount is a
+platform-owned reference.
 
-1. **Be iframe-embeddable.** Do not send a hard `X-Frame-Options: DENY`. The host
-   strips a `SAMEORIGIN`/`DENY` `X-Frame-Options` header line if present; restrictive
-   CSP `frame-ancestors` will still block embedding.
-2. **Keep an exact-match `location = /sw.js {` block.** The provider's no-cache
-   `location = /nostr-provider.js` block is inserted immediately before it.
-3. **Keep an SPA fallback line `try_files $uri $uri/ /index.html;`.** A
-   `sub_filter` that injects `<script src="/nostr-provider.js"></script>` before
-   `</head>` is inserted right after it. (nginx must have `ngx_http_sub_module` —
-   stock `nginx:alpine` does.)
+For an **nginx-served SPA**, use this contract:
+
+1. **Be iframe-embeddable.** The app gate removes `X-Frame-Options` and only
+   the CSP `frame-ancestors` directive from responses, but your own config
+   should still express the intended embedded deployment rather than relying
+   on repair.
+2. Serve `/nostr-provider.js` with `Cache-Control: no-cache, no-store`. Never
+   precache the provider or the dashboard `/nostr-signer` navigation in an app
+   service worker; signing protocol updates must reach existing installations.
+3. Inject a versioned provider URL such as
+   `<script src="/nostr-provider.js?v=tab-signer-v4"></script>` before
+   `</head>` in every SPA document. The token prevents an older iframe-only
+   provider from surviving a dashboard update in the browser's asset cache.
+   `sub_filter` is suitable when nginx has
+   `ngx_http_sub_module` (stock `nginx:alpine` does).
 4. **If you proxy an API that does NIP-98 URL verification**, expose
    `proxy_set_header X-Forwarded-Prefix /api;`; the host rewrites it to honor the
    outer reverse proxy's prefix.
 
-The patch is **idempotent** (it checks for an existing `nostr-provider` reference
-before editing) and re-runs on reinstall. If you rename or remove any of the anchor
-strings above, injection silently no-ops and `window.nostr` will be undefined in your
-app — so guard those lines in your config (see the contract comment block at the top of
-IndeeHub's `nginx.conf` for a template).
+Make the hook **idempotent** and fail its verification step if the provider is
+not present after install. A silent no-op leaves `window.nostr` undefined and
+is not release-ready.
 
-> Non-nginx servers (Next.js `node server.js`, etc.) are not auto-patched today. Either
-> serve via nginx, or ship `nostr-provider.js` yourself and reference it in your HTML;
-> the canonical script lives at `/opt/archipelago/web-ui/nostr-provider.js` on the node.
+> Non-nginx servers (Next.js `node server.js`, etc.) should ship the provider
+> themselves and reference it in their HTML; the canonical host copy is
+> `/opt/archipelago/web-ui/nostr-provider.js`.
 
-Declare iframe intent in the manifest so the launcher embeds (vs. opens a new tab):
+Choose the launch mode for the app itself; the signer works in either shape:
 
 ```yaml
 metadata:
   launch:
-    open_in_new_tab: false   # default; set true only if the app cannot be iframed
+    open_in_new_tab: false
+    requires_host_frame: false
 ```
+
+The provider supports both launch shapes. In a dashboard iframe it talks to
+the dashboard parent directly. In a browser tab or the companion's standalone
+WebView it creates a dashboard-origin signer frame, which renders the same
+identity chooser and consent card over the app and relays NIP-07 requests to
+the authenticated node session. It deliberately does not depend on
+`window.opener`, so `noopener` tab launches remain safe and functional.
+The app gate's successful login supplies the host-wide session and CSRF cookie
+pair in a fresh external browser; the signer broker validates that session
+directly and does not require the browser to have visited or logged into the
+dashboard first. Existing session-only browser tabs are repaired on their next
+gate-fronted app response. Do not add a second dashboard-login prerequisite in
+application code.
+
+For that reason a NIP-07 app does **not** need `requires_host_frame: true`.
+Use the flag only if the app has some other parent-frame protocol. If a
+top-level app sends its own `Content-Security-Policy`, its `frame-src` must
+permit the dashboard origin; apps intended to work over every node address can
+allow `http:` and `https:` while relying on the provider's strict same-host
+parent validation. A policy limited to `frame-src 'self'` will block the
+broker when the app is running on a different port.
+
+**Consent UI belongs to the platform.** Do not build a second signer modal,
+request a top-level window, or overlay the entire dashboard. A standard NIP-07
+call pauses while Archipelago shows its contained consent card inside the
+active app surface. After approval, the shared Nostr identity ring provides a
+short signing loader and completion state. The same host-owned flow renders in
+desktop browsers, installed PWAs, and the Android companion WebView.
+Silent background requests and remembered approvals deliberately keep the
+broker frame hidden; only an identity choice or an actual consent prompt may
+reveal it. If an app performs NIP-98 bootstrap and then navigates, it must wait
+for the provider Promise to finish rather than independently reloading while
+the consent result is still visible. The canonical provider coordinates its
+automatic IndeeHub-style session reload with the broker's hide notification.
+For top-level apps, that broker document must remain transparent. When hidden,
+its iframe must stay loaded but be reduced to a non-interactive 1px surface and
+parked physically off-screen. Removing/display-hiding the full-viewport iframe,
+or leaving it full-size with only `visibility:hidden`, can make Android WebView
+and mobile Chromium retain its last black/grey compositor surface above a
+healthy app until refresh. Keeping one parked broker also prevents a visible
+hide/recreate flash between `getPublicKey` and `signEvent`. The canonical
+provider owns this lifecycle; apps must not copy or manipulate its iframe.
+
+Apps should treat the NIP-07 Promise as an ordinary asynchronous operation:
+disable only the initiating control, preserve the user's draft, handle a user
+denial as a normal rejected request, and render the returned result when it
+resolves. Never infer approval from elapsed time and never ask the user for an
+`nsec` as a fallback.
+
+Archipelago recognizes a synchronous, user-triggered `getPublicKey()` as an
+account-selection action. An Archipelago-packaged app should still ask the host
+to show the identity chooser explicitly before login, especially when other
+asynchronous work happens between the click and the NIP-07 call. This prevents
+a returning user from being silently locked to the identity chosen on first use:
+
+```js
+await window.archipelagoNostr?.selectIdentity?.()
+const pubkey = await window.nostr.getPublicKey()
+```
+
+`archipelagoNostr.selectIdentity()` is an optional host enhancement, not part of
+NIP-07. Apps must continue to work when it is absent (for example with a normal
+browser extension). Invoke it only from a deliberate login/account-switch
+action; routine signing calls should continue using the remembered identity.
+
+If a first-launch choice should create the app account automatically, use the
+provider's sticky identity subscription and call the ordinary extension-login
+action from it:
+
+```js
+const unsubscribe = window.archipelagoNostr?.onIdentitySelected?.(() => {
+  if (!alreadyLoggedIn()) loginWithNip07()
+})
+```
+
+The callback runs immediately when an identity was selected just before the
+React/Vue component mounted, closing the load-event race seen in browser tabs
+and Companion WebViews. Call `unsubscribe()` when the component unmounts. The
+selected public key remains available to the immediately following
+`getPublicKey()` call; do not add a timeout, reload, or second lookup between
+those operations. A plain `archipelago:identity` message remains available for
+backward compatibility, but it is not a reliable framework lifecycle API.
+
+Submission testing for a Nostr-signed app must include:
+
+1. `getPublicKey` allow, deny, and remembered consent;
+2. `signEvent` with a readable event-kind/content preview;
+3. the contained review → identity-ring loader → completion sequence;
+4. changing the selected identity and confirming remembered consent does not
+   cross identity boundaries;
+5. HTTP and HTTPS dashboard frames, a `noopener` browser-tab launch, and the
+   Android companion's standalone WebView;
+6. choosing an identity immediately when the first-launch picker appears, to
+   prove the app's account store is ready before the result arrives; and
+7. Companion → **Open in browser** in a browser with no prior dashboard
+   localStorage: complete the app gate, then prove the contained signer can
+   choose an identity and sign without asking for a second node login; and
+8. after the first identity choice and after NIP-98 authentication, confirm the
+   underlying app paints immediately—no black frame and no manual reload.
 
 ## Security Requirements
 

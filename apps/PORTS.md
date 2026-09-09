@@ -25,6 +25,7 @@ This document lists all port assignments for Archipelago apps.
 | did-wallet | 8083 | TCP | Web UI | 18083 |
 | router | 8084, 5353, 1900 | TCP/UDP | Web UI, mDNS, SSDP | 18084, 15353, 11900 |
 | meshtastic | 4403, 1883 | TCP | HTTP API, MQTT | 14403, 11883 |
+| archipelago-source | 8337 | TCP | Authenticated source UI | 18337 |
 
 ## Development Ports (Offset: +10000)
 
@@ -53,6 +54,7 @@ In development mode, all ports are offset by 10000 to avoid conflicts with produ
 | DID Wallet | http://localhost:18083 |
 | Router | http://localhost:18084 |
 | Meshtastic | http://localhost:14403 |
+| GitWorkshop | http://localhost:18337 |
 
 ## Port Conflict Resolution
 

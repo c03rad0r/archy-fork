@@ -1,0 +1,80 @@
+app:
+  id: archipelago-source
+  name: GitWorkshop
+  version: 0.4.0
+  upstream:
+    kind: github
+    repo: DanConwayDev/gitworkshop
+  description: >-
+    Get Archipelago's source, clone it with ngit, and contribute issues,
+    patches, and reviews over Nostr using the upstream GitWorkshop client.
+  category: development
+
+  container:
+    build:
+      context: /opt/archipelago/docker/archipelago-source
+      dockerfile: Dockerfile
+      tag: localhost/archipelago-source:local
+
+  resources:
+    cpu_limit: 1
+    memory_limit: 64Mi
+    disk_limit: 64Mi
+
+  security:
+    capabilities: []
+    readonly_root: true
+    no_new_privileges: true
+    network_policy: host
+
+  ports:
+    - host: 8337
+      container: 8337
+      protocol: tcp
+      bind: 127.0.0.1
+      auth: gated
+      session_passthrough: true
+
+  volumes:
+    - type: tmpfs
+      target: /tmp
+      tmpfs_options: rw,noexec,nosuid,size=16m,mode=1777
+
+  environment: []
+
+  health_check:
+    type: http
+    endpoint: http://127.0.0.1:8337
+    path: /healthz
+    interval: 30s
+    timeout: 5s
+    retries: 3
+
+  interfaces:
+    main:
+      name: GitWorkshop
+      description: NIP-34 repository browser, issues, pull requests, and review
+      type: ui
+      port: 8337
+      protocol: http
+      path: /
+
+  metadata:
+    # Versioned filename deliberately invalidates dashboard/browser icon caches
+    # when the Source prototype is replaced by the upstream GitWorkshop mark.
+    icon: /assets/img/app-icons/gitworkshop-dc36db6.svg
+    author: GitWorkshop contributors
+    repo: https://github.com/DanConwayDev/gitworkshop
+    maintainer_npub: npub1w3sqdkrhn0gyuvsex32effzgnfpyde6qrrc4u467flg5e9txh4wsfn5vjg
+    tier: optional
+    launch:
+      # GitWorkshop is top-level in Companion's native in-app WebView. Its
+      # injected NIP-07 provider creates the authenticated dashboard-origin
+      # signer broker itself, so no dashboard parent frame is required.
+      requires_host_frame: false
+    features:
+      - NIP-34 repository discovery and browsing
+      - Bandwidth-efficient Git explorer over GRASP
+      - Nostr issues, pull requests, and code review
+      - NIP-07 extension and NIP-46 remote-signer support
+      - Archipelago node identity through explicit signing consent

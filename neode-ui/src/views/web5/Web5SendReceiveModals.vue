@@ -5,6 +5,19 @@
     <div class="glass-card p-6 w-full max-w-2xl mx-4 max-h-[90vh] overflow-y-auto" role="dialog" aria-modal="true" aria-labelledby="send-bitcoin-title">
       <h2 id="send-bitcoin-title" class="text-lg font-bold text-white mb-4">{{ t('web5.sendBitcoinTitle') }}</h2>
 
+      <PaymentSuccessPane
+        v-if="sendSuccess"
+        :amount="sendSuccess.amount"
+        verb="SENT"
+        :method-label="sendSuccess.methodLabel"
+        :rows="sendSuccess.rows"
+        :note="sendSuccess.note"
+        again-label="Send another"
+        @again="sendAnother"
+        @done="closeUnifiedSendModal"
+      />
+
+      <template v-else>
       <!-- Method tabs -->
       <div class="flex gap-1 mb-4 p-1 bg-white/5 rounded-lg">
         <button
@@ -30,12 +43,6 @@
           {{ effectiveSendMethod === 'lightning' ? 'Lightning Invoice (BOLT11)' : 'Bitcoin Address' }}
         </label>
         <textarea v-model="unifiedSendDest" rows="2" :placeholder="effectiveSendMethod === 'lightning' ? 'lnbc...' : 'bc1...'" class="w-full input-glass font-mono"></textarea>
-      </div>
-
-      <div v-if="ecashSendToken && effectiveSendMethod === 'ecash'" class="mb-3 p-2 bg-white/5 rounded-lg">
-        <p class="text-white/50 text-xs mb-1">Token (share with recipient):</p>
-        <p class="text-xs font-mono text-white/80 break-all">{{ ecashSendToken }}</p>
-        <button @click="copyEcashToken(ecashSendToken)" class="mt-2 text-xs text-orange-400 hover:text-orange-300">Copy</button>
       </div>
 
       <div v-if="effectiveSendMethod === 'onchain'" class="mb-3 flex items-center gap-3 p-3 bg-white/5 rounded-lg">
@@ -93,8 +100,6 @@
         <p class="text-white/60 text-xs">{{ meshRelayStatus }}</p>
       </div>
 
-      <div v-if="sendResultTxid" class="mb-3 alert-success"><p class="text-xs">Sent! TX: {{ sendResultTxid }}</p></div>
-      <div v-if="sendResultHash" class="mb-3 alert-success"><p class="text-xs">Paid! Hash: {{ sendResultHash }}</p></div>
       <div v-if="unifiedSendError" class="mb-3 text-xs text-red-400">{{ unifiedSendError }}</div>
 
       <div class="flex gap-3">
@@ -106,6 +111,7 @@
           {{ unifiedSendProcessing ? 'Sending...' : (useHardwareWallet && effectiveSendMethod === 'onchain' ? 'Create PSBT' : 'Send') }}
         </button>
       </div>
+      </template>
     </div>
   </div>
   </Teleport>
@@ -177,7 +183,6 @@
           <label class="text-white/60 text-sm block mb-1">Paste ecash token (Cashu or Fedimint)</label>
           <textarea v-model="ecashReceiveToken" rows="3" placeholder="cashuB… or Fedimint notes" class="w-full input-glass"></textarea>
         </div>
-        <div v-if="ecashReceiveResult" class="mb-3 text-xs text-green-400">{{ ecashReceiveResult }}</div>
       </div>
 
       <div v-if="unifiedReceiveError" class="mb-3 text-xs text-red-400">{{ unifiedReceiveError }}</div>
@@ -233,7 +238,12 @@ const showMeshRelayPrompt = ref(false)
 const psbtData = ref('')
 const psbtStep = ref<'idle' | 'created' | 'finalizing'>('idle')
 const signedPsbtInput = ref('')
-const ecashSendToken = ref('')
+const sendSuccess = ref<{
+  amount: number
+  methodLabel: string
+  rows: SuccessRow[]
+  note?: string
+} | null>(null)
 
 // Receive state
 const showUnifiedReceiveModal = ref(false)
@@ -246,7 +256,6 @@ const onchainQrCanvas = ref<HTMLCanvasElement | null>(null)
 const unifiedReceiveProcessing = ref(false)
 const unifiedReceiveError = ref('')
 const ecashReceiveToken = ref('')
-const ecashReceiveResult = ref('')
 // Details of the last successful ecash receive, for the success screen.
 // Null = nothing to celebrate yet, so the form shows.
 const ecashSuccess = ref<{
@@ -265,12 +274,15 @@ const effectiveSendMethod = computed(() => {
   return 'lightning'
 })
 
-function openSend() { showUnifiedSendModal.value = true }
+function openSend() {
+  sendSuccess.value = null
+  showUnifiedSendModal.value = true
+}
 function openReceive() { showUnifiedReceiveModal.value = true }
 
 function closeUnifiedSendModal() {
   showUnifiedSendModal.value = false
-  ecashSendToken.value = ''
+  sendSuccess.value = null
   unifiedSendError.value = ''
   sendResultTxid.value = ''
   sendResultHash.value = ''
@@ -284,14 +296,8 @@ function closeUnifiedReceiveModal() {
   receiveInvoiceResult.value = ''
   receiveOnchainAddress.value = ''
   ecashReceiveToken.value = ''
-  ecashReceiveResult.value = ''
   ecashSuccess.value = null
   unifiedReceiveError.value = ''
-}
-
-function copyEcashToken(token: string) {
-  safeClipboardWrite(token)
-  emit('toast', t('web5.ecashTokenCopied'))
 }
 
 function copyToClipboard(text: string, msg: string) {
@@ -303,7 +309,7 @@ async function unifiedSend() {
   if (!unifiedSendAmount.value || unifiedSendProcessing.value) return
   unifiedSendProcessing.value = true
   unifiedSendError.value = ''
-  ecashSendToken.value = ''
+  sendSuccess.value = null
   sendResultTxid.value = ''
   sendResultHash.value = ''
   meshRelayActive.value = false
@@ -316,7 +322,16 @@ async function unifiedSend() {
         method: 'wallet.ecash-send',
         params: { amount_sats: unifiedSendAmount.value },
       })
-      ecashSendToken.value = res.token
+      sendSuccess.value = {
+        amount: unifiedSendAmount.value,
+        methodLabel: 'Sent as Cashu',
+        rows: [{
+          label: 'Token to share',
+          value: res.token,
+          hint: 'The recipient needs this token to claim the sats. Keep it until they confirm receipt.',
+          truncate: true,
+        }],
+      }
     } else if (method === 'lightning') {
       if (!unifiedSendDest.value.trim()) {
         unifiedSendError.value = t('web5.pasteInvoice')
@@ -327,6 +342,14 @@ async function unifiedSend() {
       const res = await rpcClient.payLightningInvoice({ payment_request: unifiedSendDest.value.trim() })
       if (res.status === 'failed') throw new Error(res.failure_reason || 'Payment failed')
       sendResultHash.value = res.payment_hash
+      sendSuccess.value = {
+        amount: res.amount_sats || unifiedSendAmount.value,
+        methodLabel: res.status === 'pending' ? 'Payment in flight' : 'Paid over Lightning',
+        rows: res.payment_hash ? [{ label: 'Payment hash', value: res.payment_hash }] : [],
+        ...(res.status === 'pending'
+          ? { note: 'This payment is taking longer than usual to settle. Check transactions before retrying.' }
+          : {}),
+      }
     } else {
       if (!unifiedSendDest.value.trim()) {
         unifiedSendError.value = t('web5.enterBitcoinAddress')
@@ -354,6 +377,12 @@ async function unifiedSend() {
           params: { addr: unifiedSendDest.value.trim(), amount: unifiedSendAmount.value },
         })
         sendResultTxid.value = res.txid
+        sendSuccess.value = {
+          amount: unifiedSendAmount.value,
+          methodLabel: 'Sent on-chain',
+          rows: [{ label: 'Transaction ID', value: res.txid }],
+          note: 'The transaction has been broadcast and will confirm over the next blocks.',
+        }
       } catch (sendErr: unknown) {
         const errMsg = sendErr instanceof Error ? sendErr.message : ''
         if (errMsg.includes('connection') || errMsg.includes('timeout') || errMsg.includes('unavailable')) {
@@ -416,6 +445,12 @@ function startMeshRelayPolling(_requestId: number) {
         const match = text.match(/txid:\s*(\w+)/)
         if (match && match[1]) {
           sendResultTxid.value = match[1]
+          sendSuccess.value = {
+            amount: unifiedSendAmount.value,
+            methodLabel: 'Sent on-chain over mesh',
+            rows: [{ label: 'Transaction ID', value: match[1] }],
+            note: 'Broadcast confirmed. The transaction is waiting for block confirmations.',
+          }
           meshRelayStatus.value = `Broadcast confirmed! txid: ${match[1].slice(0, 16)}... -- waiting for confirmations`
         }
       }
@@ -454,12 +489,31 @@ async function finalizePsbt() {
     psbtData.value = ''
     signedPsbtInput.value = ''
     sendResultTxid.value = t('web5.broadcastViaHwWallet')
+    sendSuccess.value = {
+      amount: unifiedSendAmount.value,
+      methodLabel: 'Sent on-chain with hardware wallet',
+      rows: [],
+      note: t('web5.broadcastViaHwWallet'),
+    }
     emit('balancesChanged')
   } catch (err: unknown) {
     unifiedSendError.value = err instanceof Error ? err.message : t('web5.broadcastFailed')
   } finally {
     unifiedSendProcessing.value = false
   }
+}
+
+function sendAnother() {
+  sendSuccess.value = null
+  unifiedSendAmount.value = 0
+  unifiedSendDest.value = ''
+  unifiedSendError.value = ''
+  sendResultTxid.value = ''
+  sendResultHash.value = ''
+  psbtData.value = ''
+  psbtStep.value = 'idle'
+  signedPsbtInput.value = ''
+  useHardwareWallet.value = false
 }
 
 function copyPsbt() {
@@ -526,7 +580,6 @@ async function unifiedReceive() {
         params: { token: ecashReceiveToken.value.trim() },
       })
       const label = res.kind === 'fedimint' ? 'Fedimint' : 'Cashu'
-      ecashReceiveResult.value = `Received ${res.received_sats} sats (${label})!`
       // Ecash leaves no public ledger entry behind, so the issuer and the
       // redeemed token are the only things a person can quote later if the
       // payment is ever questioned. Capture them before clearing the box.

@@ -442,6 +442,9 @@ impl RpcHandler {
             "claimed_count": outcome.claimed_count,
             "received_sats": outcome.received_sats,
             "failed_count": outcome.failed_count,
+            "receipt_id": outcome.receipt_id,
+            "receipt_sats": outcome.receipt_sats,
+            "receipt_at": outcome.receipt_at,
         }))
     }
 

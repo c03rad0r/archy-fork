@@ -4,6 +4,7 @@ mod dependencies;
 mod install;
 mod lifecycle;
 mod pine_ha;
+pub(crate) use install::patch_indeedhub_nostr_provider;
 pub(crate) use pine_ha::wyoming_satellite_keeper;
 mod progress;
 mod runtime;

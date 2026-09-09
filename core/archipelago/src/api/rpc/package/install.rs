@@ -74,110 +74,178 @@ async fn local_podman_image_exists(image: &str) -> Result<bool> {
     }
 }
 
-pub(super) async fn patch_indeedhub_nostr_provider() {
+fn patched_indeedhub_nginx_config(original: &str) -> String {
+    let mut conf = original
+        .lines()
+        .filter(|line| !line.contains("X-Frame-Options"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    conf.push('\n');
+    if !conf.contains("location = /nostr-provider.js {") {
+        conf = conf.replace(
+            "location = /sw.js {",
+            "location = /nostr-provider.js {\n\
+                    add_header Cache-Control \"no-cache, no-store, must-revalidate\";\n\
+                    expires off;\n\
+                }\n\n\
+                location = /sw.js {",
+        );
+    }
+    if conf.contains("try_files") && !conf.contains("sub_filter") {
+        conf = conf.replacen(
+            "try_files $uri $uri/ /index.html;",
+            "try_files $uri $uri/ /index.html;\n\
+                        sub_filter_once on;\n\
+                        sub_filter '</head>' '<script src=\"/nostr-provider.js?v=tab-signer-v4\"></script></head>';",
+            1,
+        );
+    }
+    conf = conf.replace(
+        "src=\"/nostr-provider.js\"",
+        "src=\"/nostr-provider.js?v=tab-signer-v4\"",
+    );
+    conf = conf.replace("tab-signer-v2", "tab-signer-v4");
+    conf = conf.replace("tab-signer-v3", "tab-signer-v4");
+    conf.replace(
+        "proxy_set_header X-Forwarded-Prefix /api;",
+        "proxy_set_header X-Forwarded-Prefix $http_x_forwarded_prefix/api;",
+    )
+}
+
+pub(crate) async fn patch_indeedhub_nostr_provider() {
     tokio::time::sleep(std::time::Duration::from_secs(5)).await;
 
-    let _ = tokio::process::Command::new("podman")
-        .args([
-            "exec",
-            "indeedhub",
-            "sed",
-            "-i",
-            "/X-Frame-Options/d",
-            "/etc/nginx/conf.d/default.conf",
-        ])
+    // Frontend assets can change during a dashboard-only OTA while the
+    // IndeedHub container keeps running. Reconcile the injected provider on
+    // daemon startup as well as app install/start, but stay quiet when the app
+    // is not installed or is intentionally stopped.
+    let running = tokio::process::Command::new("podman")
+        .args(["inspect", "-f", "{{.State.Running}}", "indeedhub"])
         .output()
-        .await;
-
-    let provider_src = "/opt/archipelago/web-ui/nostr-provider.js";
-    if tokio::fs::metadata(provider_src).await.is_ok() {
-        let _ = tokio::process::Command::new("podman")
-            .args([
-                "cp",
-                provider_src,
-                "indeedhub:/usr/share/nginx/html/nostr-provider.js",
-            ])
-            .output()
-            .await;
+        .await
+        .map(|out| out.status.success() && String::from_utf8_lossy(&out.stdout).trim() == "true")
+        .unwrap_or(false);
+    if !running {
+        return;
     }
 
-    let check = tokio::process::Command::new("podman")
-        .args([
-            "exec",
-            "indeedhub",
-            "grep",
-            "-q",
-            "nostr-provider",
-            "/etc/nginx/conf.d/default.conf",
-        ])
+    // `podman exec` cannot always join a rootless container's delegated cgroup
+    // from the system service, while Podman 5's copier refuses to overwrite an
+    // existing regular file. Mount the rootless storage namespace instead;
+    // this replaces both files without entering the container's cgroup.
+    let unique = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|duration| duration.as_nanos())
+        .unwrap_or(0);
+    let tmp_dir = format!("/tmp/indeedhub-nginx-patch-{}-{unique}", std::process::id());
+    let tmp_path = format!("{tmp_dir}/default.conf");
+    if tokio::fs::create_dir(&tmp_dir).await.is_err() {
+        tracing::warn!("IndeeHub signer reconciliation could not create its temporary directory");
+        return;
+    }
+
+    let mount_out = tokio::process::Command::new("podman")
+        .args(["unshare", "podman", "mount", "indeedhub"])
         .output()
         .await;
-    let already_patched = check.map(|o| o.status.success()).unwrap_or(false);
+    let container_root = mount_out
+        .ok()
+        .filter(|out| out.status.success())
+        .map(|out| String::from_utf8_lossy(&out.stdout).trim().to_string())
+        .filter(|path| {
+            std::path::Path::new(path).is_absolute()
+                && path.contains("/containers/storage/overlay/")
+                && path.ends_with("/merged")
+        });
+    let Some(container_root) = container_root else {
+        let _ = tokio::fs::remove_dir(&tmp_dir).await;
+        tracing::warn!("IndeeHub signer reconciliation could not mount rootless storage");
+        return;
+    };
 
-    if !already_patched {
-        let cat_out = tokio::process::Command::new("podman")
-            .args(["exec", "indeedhub", "cat", "/etc/nginx/conf.d/default.conf"])
+    let provider_src = "/opt/archipelago/web-ui/nostr-provider.js";
+    let provider_dest = format!("{container_root}/usr/share/nginx/html/nostr-provider.js");
+    let provider_copied = tokio::fs::metadata(provider_src).await.is_ok()
+        && tokio::process::Command::new("podman")
+            .args([
+                "unshare",
+                "install",
+                "-m",
+                "644",
+                provider_src,
+                &provider_dest,
+            ])
             .output()
-            .await;
+            .await
+            .map(|out| out.status.success())
+            .unwrap_or(false);
 
-        if let Ok(out) = cat_out {
-            if out.status.success() {
-                let conf = String::from_utf8_lossy(&out.stdout).to_string();
-                let conf = conf.replace(
-                    "location = /sw.js {",
-                    "location = /nostr-provider.js {\n\
-                            add_header Cache-Control \"no-cache, no-store, must-revalidate\";\n\
-                            expires off;\n\
-                        }\n\n\
-                        location = /sw.js {",
-                );
-                let conf = if conf.contains("try_files") && !conf.contains("sub_filter") {
-                    conf.replacen(
-                        "try_files $uri $uri/ /index.html;",
-                        "try_files $uri $uri/ /index.html;\n\
-                                sub_filter_once on;\n\
-                                sub_filter '</head>' '<script src=\"/nostr-provider.js\"></script></head>';",
-                        1,
-                    )
-                } else {
-                    conf
-                };
+    let copy_out = tokio::process::Command::new("podman")
+        .args(["cp", "indeedhub:/etc/nginx/conf.d/default.conf", &tmp_path])
+        .output()
+        .await;
 
-                let tmp_path = "/tmp/indeedhub-nginx-patch.conf";
-                if tokio::fs::write(tmp_path, &conf).await.is_ok() {
-                    let _ = tokio::process::Command::new("podman")
-                        .args(["cp", tmp_path, "indeedhub:/etc/nginx/conf.d/default.conf"])
+    let mut config_copied = false;
+    if let Ok(out) = copy_out {
+        if out.status.success() {
+            if let Ok(original) = tokio::fs::read_to_string(&tmp_path).await {
+                let conf = patched_indeedhub_nginx_config(&original);
+                if conf != original && tokio::fs::write(&tmp_path, &conf).await.is_ok() {
+                    config_copied = tokio::process::Command::new("podman")
+                        .args([
+                            "unshare",
+                            "install",
+                            "-m",
+                            "644",
+                            &tmp_path,
+                            &format!("{container_root}/etc/nginx/conf.d/default.conf"),
+                        ])
                         .output()
-                        .await;
-                    let _ = tokio::fs::remove_file(tmp_path).await;
+                        .await
+                        .map(|out| out.status.success())
+                        .unwrap_or(false);
+                    if config_copied {
+                        let _ = tokio::fs::remove_file(&tmp_path).await;
+                        config_copied = tokio::process::Command::new("podman")
+                            .args(["cp", "indeedhub:/etc/nginx/conf.d/default.conf", &tmp_path])
+                            .output()
+                            .await
+                            .map(|out| out.status.success())
+                            .unwrap_or(false)
+                            && tokio::fs::read_to_string(&tmp_path)
+                                .await
+                                .map(|actual| actual == conf)
+                                .unwrap_or(false);
+                    }
+                } else if conf == original
+                    && conf.contains("location = /nostr-provider.js {")
+                    && conf.contains("src=\"/nostr-provider.js?v=tab-signer-v4\"")
+                {
+                    config_copied = true;
                 }
             }
         }
     }
-
+    let _ = tokio::fs::remove_file(&tmp_path).await;
+    let _ = tokio::fs::remove_dir(&tmp_dir).await;
     let _ = tokio::process::Command::new("podman")
-        .args([
-            "exec",
-            "indeedhub",
-            "sed",
-            "-i",
-            "s|proxy_set_header X-Forwarded-Prefix /api;|proxy_set_header X-Forwarded-Prefix $http_x_forwarded_prefix/api;|",
-            "/etc/nginx/conf.d/default.conf",
-        ])
+        .args(["unshare", "podman", "unmount", "indeedhub"])
         .output()
         .await;
 
     let reload = tokio::process::Command::new("podman")
-        .args(["exec", "indeedhub", "nginx", "-s", "reload"])
+        .args(["kill", "--signal", "HUP", "indeedhub"])
         .output()
         .await;
     match reload {
-        Ok(o) if o.status.success() => {
+        Ok(o) if o.status.success() && provider_copied && config_copied => {
             info!("IndeeHub: NIP-07 provider injected, nginx patched and reloaded");
         }
         Ok(o) => {
             tracing::warn!(
-                "IndeeHub nginx reload failed: {}",
+                "IndeeHub signer reconciliation incomplete (provider_copied={}, config_copied={}): {}",
+                provider_copied,
+                config_copied,
                 String::from_utf8_lossy(&o.stderr)
             );
         }
@@ -1620,124 +1688,10 @@ autopilot.active=false\n",
             }
         }
 
-        // IndeeHub: inject nostr-provider.js and patch container nginx for NIP-07 signing
+        // IndeeHub: inject the current consent-gated provider and make it work
+        // in both the dashboard frame and a direct browser tab.
         if package_id == "indeedhub" {
-            tokio::time::sleep(std::time::Duration::from_secs(5)).await;
-
-            // 1. Remove X-Frame-Options so iframe embedding works
-            let _ = tokio::process::Command::new("podman")
-                .args([
-                    "exec",
-                    "indeedhub",
-                    "sed",
-                    "-i",
-                    "/X-Frame-Options/d",
-                    "/etc/nginx/conf.d/default.conf",
-                ])
-                .output()
-                .await;
-
-            // 2. Copy nostr-provider.js into container
-            let provider_src = "/opt/archipelago/web-ui/nostr-provider.js";
-            if tokio::fs::metadata(provider_src).await.is_ok() {
-                let _ = tokio::process::Command::new("podman")
-                    .args([
-                        "cp",
-                        provider_src,
-                        "indeedhub:/usr/share/nginx/html/nostr-provider.js",
-                    ])
-                    .output()
-                    .await;
-            }
-
-            // 3. Add nostr-provider.js location block + sub_filter injection
-            let check = tokio::process::Command::new("podman")
-                .args([
-                    "exec",
-                    "indeedhub",
-                    "grep",
-                    "-q",
-                    "nostr-provider",
-                    "/etc/nginx/conf.d/default.conf",
-                ])
-                .output()
-                .await;
-            let already_patched = check.map(|o| o.status.success()).unwrap_or(false);
-
-            if !already_patched {
-                // Read current nginx config from container
-                let cat_out = tokio::process::Command::new("podman")
-                    .args(["exec", "indeedhub", "cat", "/etc/nginx/conf.d/default.conf"])
-                    .output()
-                    .await;
-
-                if let Ok(out) = cat_out {
-                    if out.status.success() {
-                        let conf = String::from_utf8_lossy(&out.stdout).to_string();
-
-                        // Insert provider location block before the sw.js location
-                        let conf = conf.replace(
-                            "location = /sw.js {",
-                            "location = /nostr-provider.js {\n\
-                             \x20       add_header Cache-Control \"no-cache, no-store, must-revalidate\";\n\
-                             \x20       expires off;\n\
-                             \x20   }\n\n\
-                             \x20   location = /sw.js {"
-                        );
-
-                        // Inject script tag into HTML via sub_filter
-                        let conf = if conf.contains("try_files") && !conf.contains("sub_filter") {
-                            conf.replacen(
-                                "try_files $uri $uri/ /index.html;",
-                                "try_files $uri $uri/ /index.html;\n\
-                                 \x20       sub_filter_once on;\n\
-                                 \x20       sub_filter '</head>' '<script src=\"/nostr-provider.js\"></script></head>';",
-                                1,
-                            )
-                        } else {
-                            conf
-                        };
-
-                        // Write patched config back into container
-                        let tmp_path = "/tmp/indeedhub-nginx-patch.conf";
-                        if tokio::fs::write(tmp_path, &conf).await.is_ok() {
-                            let _ = tokio::process::Command::new("podman")
-                                .args(["cp", tmp_path, "indeedhub:/etc/nginx/conf.d/default.conf"])
-                                .output()
-                                .await;
-                            let _ = tokio::fs::remove_file(tmp_path).await;
-                        }
-                    }
-                }
-            }
-
-            // 4. Fix X-Forwarded-Prefix for NIP-98 URL reconstruction in iframe context
-            let _ = tokio::process::Command::new("podman")
-                .args(["exec", "indeedhub", "sed", "-i",
-                       "s|proxy_set_header X-Forwarded-Prefix /api;|proxy_set_header X-Forwarded-Prefix $http_x_forwarded_prefix/api;|",
-                       "/etc/nginx/conf.d/default.conf"])
-                .output()
-                .await;
-
-            // 5. Reload nginx to apply changes
-            let reload = tokio::process::Command::new("podman")
-                .args(["exec", "indeedhub", "nginx", "-s", "reload"])
-                .output()
-                .await;
-            match reload {
-                Ok(o) if o.status.success() => {
-                    info!("IndeeHub: NIP-07 provider injected, nginx patched and reloaded");
-                }
-                Ok(o) => {
-                    tracing::warn!(
-                        "IndeeHub nginx reload failed: {}",
-                        String::from_utf8_lossy(&o.stderr)
-                    );
-                }
-                Err(e) => {
-                    tracing::warn!("IndeeHub nginx reload error: {}", e);
-                }
-            }
+            patch_indeedhub_nostr_provider().await;
         }
 
         // Gitea: keep it on its native host port (3001). The UI opens Gitea
@@ -2800,10 +2754,42 @@ fn is_unknown_app_id_error(err: &anyhow::Error) -> bool {
 #[cfg(test)]
 mod tests {
     use super::{
-        orchestrator_install_app_id, parse_setup_token, should_try_orchestrator_install,
-        uses_orchestrator_install_flow,
+        orchestrator_install_app_id, parse_setup_token, patched_indeedhub_nginx_config,
+        should_try_orchestrator_install, uses_orchestrator_install_flow,
     };
     use crate::api::rpc::package::runtime::orchestrator_uninstall_app_ids;
+
+    #[test]
+    fn indeedhub_nginx_patch_is_complete_and_idempotent() {
+        let original = r#"server {
+    add_header X-Frame-Options SAMEORIGIN;
+    location = /sw.js {
+        expires off;
+    }
+    location /api/ {
+        proxy_set_header X-Forwarded-Prefix /api;
+    }
+    location / {
+        try_files $uri $uri/ /index.html;
+        sub_filter_once on;
+        sub_filter '</head>' '<script src="/nostr-provider.js"></script></head>';
+    }
+}
+"#;
+        let patched = patched_indeedhub_nginx_config(original);
+        assert!(!patched.contains("X-Frame-Options"));
+        assert!(patched.contains("location = /nostr-provider.js {"));
+        assert!(patched.contains("Cache-Control \"no-cache, no-store, must-revalidate\""));
+        assert!(patched.contains("src=\"/nostr-provider.js?v=tab-signer-v4\""));
+        assert!(patched.contains("X-Forwarded-Prefix $http_x_forwarded_prefix/api"));
+        assert_eq!(patched_indeedhub_nginx_config(&patched), patched);
+
+        let previous_broker = patched.replace("tab-signer-v4", "tab-signer-v3");
+        let migrated = patched_indeedhub_nginx_config(&previous_broker);
+        assert!(migrated.contains("tab-signer-v4"));
+        assert!(!migrated.contains("tab-signer-v3"));
+        assert_eq!(patched_indeedhub_nginx_config(&migrated), migrated);
+    }
 
     #[test]
     fn orchestrator_install_allowlist_includes_ported_backends() {

@@ -34,6 +34,37 @@ Add an entry to `catalog.json`:
 For apps with hardcoded backend configs (Bitcoin, LND, etc.), `containerConfig` is optional.
 For new apps, include `containerConfig` so the backend knows how to create the container.
 
+## Storefront layout
+
+Discovery merchandising is app-registry data, not node-OS layout. The optional
+top-level `storefront` block defines the ordered Popular Apps rows and the
+promotional banners placed before the remaining `All Apps` grid:
+
+```json
+{
+  "storefront": {
+    "popular": ["bitcoin-knots", "lnd", "btcpay-server"],
+    "promotions": [{
+      "id": "my-app",
+      "banner": "/assets/img/featured/my-app.webp",
+      "eyebrow": "open source",
+      "headline": "Build together.",
+      "description": "Catalog-controlled promotional copy.",
+      "tag": "NOSTR // SOURCE",
+      "launchLabel": "Open",
+      "installLabel": "Install",
+      "detailsLabel": "Learn more →"
+    }]
+  }
+}
+```
+
+Only IDs present in `apps` render. New dashboards prefer `storefront` from the
+daemon-verified signed catalog and use the bundled community copy as a local
+fallback. `scripts/generate-app-catalog.sh` carries this block into the signed
+release artifact; changing it does not require a node OS release once that
+artifact is published.
+
 ## Categories
 
 money, commerce, data, home, nostr, networking, community, development, l484

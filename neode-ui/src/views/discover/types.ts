@@ -18,6 +18,7 @@ export type MarketplaceApp = Partial<MarketplaceAppInfo> & {
   containerConfig?: ContainerConfig
   requires?: string[]
   tier?: string
+  maintainerNpub?: string
 }
 
 export type FeaturedApp = MarketplaceApp & {

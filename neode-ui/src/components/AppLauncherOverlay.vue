@@ -118,7 +118,22 @@
 
             <!-- Payment Confirmation Dialog -->
             <Transition name="content-fade">
-              <div v-if="pendingPayment" class="absolute inset-0 z-20 flex items-center justify-center bg-black/70 backdrop-blur-sm">
+              <div v-if="completedPayment" class="absolute inset-0 z-20 flex items-center justify-center bg-black/70 backdrop-blur-sm">
+                <div class="bg-black/80 border border-white/15 rounded-2xl p-6 w-full max-w-md mx-4 shadow-2xl max-h-[90%] overflow-y-auto">
+                  <PaymentSuccessPane
+                    :amount="completedPayment.amount"
+                    :verb="completedPayment.verb"
+                    :method-label="completedPayment.methodLabel"
+                    :rows="completedPayment.rows"
+                    :note="completedPayment.note"
+                    @done="completedPayment = null"
+                  />
+                </div>
+              </div>
+            </Transition>
+
+            <Transition name="content-fade">
+              <div v-if="pendingPayment && !completedPayment" class="absolute inset-0 z-20 flex items-center justify-center bg-black/70 backdrop-blur-sm">
                 <div class="bg-black/80 border border-white/15 rounded-2xl p-6 w-full max-w-sm mx-4 shadow-2xl">
                   <div class="flex items-center gap-3 mb-4">
                     <div class="w-10 h-10 rounded-lg bg-orange-500/20 flex items-center justify-center">
@@ -162,30 +177,31 @@
                 </div>
               </div>
             </Transition>
+
+            <NostrSignConsent
+              :show="store.showConsent"
+              :app-name="store.consentRequest?.appName ?? ''"
+              :method="store.consentRequest?.method ?? ''"
+              :identity-label="store.consentRequest?.identityLabel"
+              :event-kind="store.consentRequest?.eventKind"
+              :content="store.consentRequest?.content"
+              :phase="store.consentPhase"
+              :error="store.consentError"
+              @approve="store.approveConsent"
+              @deny="store.denyConsent"
+            />
+            <NostrIdentityPicker
+              :show="showIdentityPicker"
+              :app-name="store.title || 'App'"
+              @select="onIdentitySelected"
+              @cancel="cancelIdentitySelection"
+            />
           </div>
         </div>
       </div>
     </Transition>
   </Teleport>
 
-  <!-- Nostr signing consent modal -->
-  <NostrSignConsent
-    :show="store.showConsent"
-    :app-name="store.consentRequest?.appName ?? ''"
-    :method="store.consentRequest?.method ?? ''"
-    :event-kind="store.consentRequest?.eventKind"
-    :content="store.consentRequest?.content"
-    @approve="store.approveConsent"
-    @deny="store.denyConsent"
-  />
-
-  <!-- Nostr identity picker (first-launch for identity-aware apps) -->
-  <NostrIdentityPicker
-    :show="showIdentityPicker"
-    :app-name="store.title || 'App'"
-    @select="onIdentitySelected"
-    @cancel="showIdentityPicker = false"
-  />
 </template>
 
 <script setup lang="ts">
@@ -194,6 +210,7 @@ import { useAppLauncherStore } from '@/stores/appLauncher'
 import NostrSignConsent from '@/components/NostrSignConsent.vue'
 import NostrIdentityPicker from '@/components/NostrIdentityPicker.vue'
 import AppLoadingScreen from '@/components/AppLoadingScreen.vue'
+import PaymentSuccessPane, { type SuccessRow } from '@/components/PaymentSuccessPane.vue'
 import { DEFAULT_APP_ICON } from '@/views/apps/appsConfig'
 import { rpcClient } from '@/api/rpc-client'
 import { useLightningRequired } from '@/composables/useLightningRequired'
@@ -292,6 +309,11 @@ function onIdentitySelected(identity: SelectedIdentity) {
   sendSelectedIdentity(identity)
 }
 
+function cancelIdentitySelection() {
+  showIdentityPicker.value = false
+  iframeRef.value?.contentWindow?.postMessage({ type: 'archipelago:identity-cancelled' }, '*')
+}
+
 /** Send a specific identity to the iframe */
 async function sendSelectedIdentity(identity: SelectedIdentity) {
   try {
@@ -330,6 +352,13 @@ function clearTimers() {
 const pendingPayment = ref<PaymentRequest | null>(null)
 const paymentProcessing = ref(false)
 const paymentError = ref('')
+const completedPayment = ref<{
+  amount: number
+  verb: string
+  methodLabel: string
+  rows: SuccessRow[]
+  note?: string
+} | null>(null)
 const paymentOrigin = ref('')
 
 function refreshIframe() {
@@ -471,7 +500,8 @@ function onMessage(e: MessageEvent) {
   }
   // Iframe app requests identity on demand
   if (e.data?.type === 'archipelago:identity:request' && store.isOpen) {
-    sendIdentityIfSupported()
+    if (e.data?.force === true) showIdentityPicker.value = true
+    else sendIdentityIfSupported()
   }
   // Wallet connect — app requests a payment
   if (e.data?.type === 'archipelago:payment-request' && store.isOpen) {
@@ -495,6 +525,7 @@ function handlePaymentRequest(e: MessageEvent) {
     address: data.address,
   }
   paymentOrigin.value = e.origin
+  completedPayment.value = null
   paymentError.value = ''
   paymentProcessing.value = false
 }
@@ -561,6 +592,34 @@ async function approvePayment() {
     }
 
     sendPaymentResponse(paymentOrigin.value, pay.request_id, true, undefined, receipt)
+    const rows: SuccessRow[] = []
+    if (typeof receipt.payment_hash === 'string' && receipt.payment_hash) {
+      rows.push({ label: 'Payment hash', value: receipt.payment_hash })
+    }
+    if (typeof receipt.txid === 'string' && receipt.txid) {
+      rows.push({ label: 'Transaction ID', value: receipt.txid })
+    }
+    if (typeof receipt.token === 'string' && receipt.token) {
+      rows.push({
+        label: 'Token sent to app',
+        value: receipt.token,
+        hint: 'The app received this token. Keep a copy until it confirms the payment.',
+        truncate: true,
+      })
+    }
+    if (typeof receipt.payment_request === 'string' && receipt.payment_request) {
+      rows.push({ label: 'Invoice sent to app', value: receipt.payment_request, truncate: true })
+    }
+    const createdInvoice = method === 'lightning' && !pay.invoice
+    completedPayment.value = {
+      amount: Number(receipt.amount_sats) || pay.amount_sats,
+      verb: createdInvoice ? 'READY' : 'SENT',
+      methodLabel: createdInvoice
+        ? 'Lightning invoice created'
+        : method === 'lightning' ? 'Paid over Lightning' : method === 'ecash' ? 'Sent as Cashu' : 'Sent on-chain',
+      rows,
+      note: createdInvoice ? 'The invoice was returned to the requesting app.' : `Payment approved for ${store.title || 'the app'}.`,
+    }
     pendingPayment.value = null
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : 'Payment failed'
@@ -612,6 +671,7 @@ watch(
       if (pendingPayment.value) {
         rejectPayment()
       }
+      completedPayment.value = null
     }
   }
 )

@@ -11,8 +11,8 @@ android {
         applicationId = "com.archipelago.app"
         minSdk = 26
         targetSdk = 35
-        versionCode = 48
-        versionName = "0.5.28"
+        versionCode = 52
+        versionName = "0.5.32"
 
         vectorDrawables {
             useSupportLibrary = true
@@ -41,6 +41,17 @@ android {
             enableV1Signing = true
             enableV2Signing = true
         }
+        // Local-only UAT builds install beside both the production companion
+        // and its shared-key debug package. The ignored uat.keystore is made
+        // on the validation box; it must never be used for a public artifact.
+        create("uat") {
+            storeFile = file("uat.keystore")
+            storePassword = "android"
+            keyAlias = "androiduatkey"
+            keyPassword = "android"
+            enableV1Signing = true
+            enableV2Signing = true
+        }
     }
 
     buildTypes {
@@ -50,6 +61,13 @@ android {
             applicationIdSuffix = ".debug"
             versionNameSuffix = "-debug"
             signingConfig = signingConfigs.getByName("debug")
+        }
+        create("uat") {
+            initWith(getByName("debug"))
+            applicationIdSuffix = ".uat"
+            versionNameSuffix = "-uat"
+            signingConfig = signingConfigs.getByName("uat")
+            matchingFallbacks += listOf("debug")
         }
         release {
             isMinifyEnabled = true
@@ -118,8 +136,8 @@ tasks.register<Exec>("buildRustArm64") {
 
 tasks.matching {
     it.name in listOf(
-        "mergeDebugNativeLibs", "mergeReleaseNativeLibs",
-        "mergeDebugJniLibFolders", "mergeReleaseJniLibFolders",
+        "mergeDebugNativeLibs", "mergeUatNativeLibs", "mergeReleaseNativeLibs",
+        "mergeDebugJniLibFolders", "mergeUatJniLibFolders", "mergeReleaseJniLibFolders",
     )
 }.configureEach { dependsOn("buildRustArm64") }
 
