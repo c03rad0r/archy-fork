@@ -10,6 +10,7 @@
 //! | lnd              | archy-lnd-ui       | wallet/channel UI        |
 //! | electrumx        | archy-electrs-ui   | indexer status UI        |
 //! | fedimint         | archy-fedimint-ui  | wait/proxy Guardian UI   |
+//! | cuprate          | archy-cuprate-ui   | Monero node status UI    |
 //!
 //! Lifecycle: `install` writes a Quadlet `.container` unit to
 //! `~/.config/containers/systemd/`, daemon-reloads, then starts the
@@ -97,6 +98,7 @@ pub fn companions_for(package_id: &str) -> &'static [CompanionSpec] {
         "lnd" => LND_UI,
         "electrumx" | "electrs" | "mempool-electrs" => ELECTRS_UI,
         "fedimint" | "fedimintd" => FEDIMINT_UI,
+        "cuprate" => CUPRATE_UI,
         _ => &[],
     }
 }
@@ -104,7 +106,8 @@ pub fn companions_for(package_id: &str) -> &'static [CompanionSpec] {
 /// Every companion this build knows how to provision. Kept beside
 /// `companions_for` — a new companion must be added to both, or the reaper
 /// will not recognise it as one of ours and will leave it running forever.
-const ALL_COMPANIONS: &[&[CompanionSpec]] = &[BITCOIN_UI, LND_UI, ELECTRS_UI, FEDIMINT_UI];
+const ALL_COMPANIONS: &[&[CompanionSpec]] =
+    &[BITCOIN_UI, LND_UI, ELECTRS_UI, FEDIMINT_UI, CUPRATE_UI];
 
 const BITCOIN_UI: &[CompanionSpec] = &[CompanionSpec {
     name: "archy-bitcoin-ui",
@@ -166,6 +169,24 @@ const FEDIMINT_UI: &[CompanionSpec] = &[CompanionSpec {
         "/home/archipelago/archy/docker/fedimint-ui",
         "/home/archipelago/Projects/archy/docker/fedimint-ui",
     ],
+    pre_start: None,
+    bind_mounts: &[],
+    ports: &[],
+    host_network: true,
+}];
+
+const CUPRATE_UI: &[CompanionSpec] = &[CompanionSpec {
+    name: "archy-cuprate-ui",
+    image_base: "cuprate-ui",
+    build_dir_candidates: &[
+        "/opt/archipelago/docker/cuprate-ui",
+        "/home/archipelago/archy/docker/cuprate-ui",
+        "/home/archipelago/Projects/archy/docker/cuprate-ui",
+    ],
+    // No pre-start hook and no bind mounts: unlike bitcoin-ui there is no
+    // secret to inject. Cuprate's restricted RPC (the only thing this UI
+    // proxies) is unauthenticated by design — Monero's safe-for-public
+    // subset — so the nginx.conf is baked into the image.
     pre_start: None,
     bind_mounts: &[],
     ports: &[],
@@ -869,6 +890,7 @@ mod tests {
             "mempool-electrs",
             "fedimint",
             "fedimintd",
+            "cuprate",
         ];
         let known: std::collections::HashSet<&str> = ALL_COMPANIONS
             .iter()
@@ -893,6 +915,7 @@ mod tests {
             names(&orphan_companions(&[])),
             vec![
                 "archy-bitcoin-ui",
+                "archy-cuprate-ui",
                 "archy-electrs-ui",
                 "archy-fedimint-ui",
                 "archy-lnd-ui"
@@ -906,7 +929,10 @@ mod tests {
         // electrumx installed, fedimint and lnd not — yet all four companions
         // were running because the reconciler was fed the manifest list.
         let orphans = orphan_companions(&ids(&["bitcoin-knots", "electrumx"]));
-        assert_eq!(names(&orphans), vec!["archy-fedimint-ui", "archy-lnd-ui"]);
+        assert_eq!(
+            names(&orphans),
+            vec!["archy-cuprate-ui", "archy-fedimint-ui", "archy-lnd-ui"]
+        );
     }
 
     #[test]
@@ -926,12 +952,18 @@ mod tests {
     #[test]
     fn apps_without_companions_orphan_everything_and_panic_nothing() {
         let orphans = orphan_companions(&ids(&["nextcloud", "not-a-real-app"]));
-        assert_eq!(orphans.len(), 4);
+        assert_eq!(orphans.len(), 5);
     }
 
     #[test]
     fn every_backend_installed_leaves_no_orphans() {
-        let orphans = orphan_companions(&ids(&["bitcoin-knots", "lnd", "electrumx", "fedimint"]));
+        let orphans = orphan_companions(&ids(&[
+            "bitcoin-knots",
+            "lnd",
+            "electrumx",
+            "fedimint",
+            "cuprate",
+        ]));
         assert!(
             names(&orphans).is_empty(),
             "unexpected orphans: {:?}",
@@ -970,7 +1002,12 @@ mod tests {
         let due = due_after_grace(orphans, &names_seen, &mut since, start + ORPHAN_GRACE);
         assert_eq!(
             names(&due),
-            vec!["archy-electrs-ui", "archy-fedimint-ui", "archy-lnd-ui"]
+            vec![
+                "archy-cuprate-ui",
+                "archy-electrs-ui",
+                "archy-fedimint-ui",
+                "archy-lnd-ui"
+            ]
         );
     }
 
@@ -1024,6 +1061,7 @@ mod tests {
         assert_eq!(companions_for("mempool-electrs").len(), 1);
         assert_eq!(companions_for("fedimint").len(), 1);
         assert_eq!(companions_for("fedimintd").len(), 1);
+        assert_eq!(companions_for("cuprate").len(), 1);
         assert_eq!(companions_for("nextcloud").len(), 0);
         assert_eq!(companions_for("not-a-real-app").len(), 0);
     }

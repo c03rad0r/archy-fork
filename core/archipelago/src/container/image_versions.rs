@@ -146,6 +146,7 @@ fn image_var_for_app(app_id: &str) -> Option<&'static str> {
         "bitcoin-ui" | "archy-bitcoin-ui" => Some("BITCOIN_UI_IMAGE"),
         "lnd-ui" | "archy-lnd-ui" => Some("LND_UI_IMAGE"),
         "electrs-ui" | "archy-electrs-ui" => Some("ELECTRS_UI_IMAGE"),
+        "cuprate-ui" | "archy-cuprate-ui" => Some("CUPRATE_UI_IMAGE"),
 
         // Mempool stack (primary = web)
         "mempool" | "mempool-web" | "archy-mempool-web" => Some("MEMPOOL_WEB_IMAGE"),

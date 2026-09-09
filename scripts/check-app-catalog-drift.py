@@ -19,6 +19,7 @@ INTERNAL_MANIFEST_IDS = {
     "archy-nbxplorer",
     "bitcoin-ui",
     "core-lightning",
+    "cuprate-ui",
     "electrs-ui",
     "fips-ui",
     "lnd-ui",

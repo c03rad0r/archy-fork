@@ -53,8 +53,8 @@ fn container_tier(name: &str) -> StartupTier {
         | "indeedhub-api" => StartupTier::DependentService,
 
         // Tier 4: Frontend/UI
-        "mempool-web" | "bitcoin-ui" | "lnd-ui" | "electrs-ui" | "penpot-frontend"
-        | "penpot-exporter" | "indeedhub" => StartupTier::Frontend,
+        "mempool-web" | "bitcoin-ui" | "lnd-ui" | "electrs-ui" | "cuprate-ui"
+        | "penpot-frontend" | "penpot-exporter" | "indeedhub" => StartupTier::Frontend,
 
         // Tier 3: Application layer (everything else)
         _ => StartupTier::Application,
