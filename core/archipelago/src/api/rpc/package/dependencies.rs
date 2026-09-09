@@ -670,15 +670,11 @@ async fn detect_disk_gb() -> u64 {
         .unwrap_or(u64::MAX)
 }
 
-/// Smallest disk (GB, total) a cuprate node can live on. Monero mainnet is
-/// ~250 GiB of chain data in 2026 and grows ~60 GiB/year; cuprated's storage
-/// (block blobs + fjall index + logs) needs headroom above the raw chain.
-/// 450 lets a 500 GB-class disk work while refusing the 250 GB VPS class,
-/// where the chain does not fit at all.
-///
-/// Kept in lockstep with `prod_orchestrator::CUPRATE_MIN_DISK_GB` — same
-/// duplication pattern as `ARCHIVAL_BITCOIN_DISK_GB` above.
-pub(super) const CUPRATE_MIN_DISK_GB: u64 = 450;
+/// Smallest disk (GB, total) a cuprate node can live on. The value and its
+/// rationale live in ONE place — `crate::constants::CUPRATE_MIN_DISK_GB` —
+/// shared with the boot reconciler so install/start and boot can never
+/// disagree about where cuprate may run.
+use crate::constants::CUPRATE_MIN_DISK_GB;
 
 /// The bitcoin apps pick `-prune` automatically when disk is scarce, because
 /// bitcoind supports pruning. Cuprate CANNOT: upstream has no pruning config

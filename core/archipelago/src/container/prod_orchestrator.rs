@@ -49,15 +49,11 @@ use crate::update::host_sudo;
 /// so the rule is visible in one place and unit-testable.
 const UI_APP_IDS: &[&str] = &["bitcoin-ui", "electrs-ui", "lnd-ui", "cuprate-ui"];
 const ARCHIVAL_BITCOIN_DISK_GB: u64 = 1000;
-/// Smallest disk (GB, total) a cuprate node may run on. Cuprate cannot prune
-/// (upstream has no on-disk pruning — the bitcoin apps self-prune via their
-/// entrypoint, cuprated has no equivalent flag), so a node too small for the
-/// ~250 GiB Monero chain must not sync it at all: left running, it fills the
-/// filesystem and takes Archipelago down. Install/start carry the same gate
-/// (`dependencies::CUPRATE_MIN_DISK_GB`); this one covers boot reconcile, so
-/// an already-installed cuprate on a shrunken/remounted disk stays down
-/// instead of resuming a doomed sync.
-const CUPRATE_MIN_DISK_GB: u64 = 450;
+// The cuprate disk floor is `crate::constants::CUPRATE_MIN_DISK_GB` — one
+// value shared with the install/start/restart/update RPC gates so boot
+// reconcile can never resume below the line they refuse at.
+
+use crate::constants::CUPRATE_MIN_DISK_GB;
 
 fn requires_cuprate_disk(app_id: &str, disk_gb: u64) -> bool {
     app_id == "cuprate" && disk_gb < CUPRATE_MIN_DISK_GB

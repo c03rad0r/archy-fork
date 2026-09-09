@@ -44,12 +44,18 @@ app:
     # when disk is scarce (see the DISK_GB branch in
     # apps/bitcoin-knots/manifest.yml). Left running on a too-small disk it
     # syncs until the filesystem fills and takes Archipelago down. The
-    # disk-scarce equivalent is enforced in Rust instead: install/start
-    # refuse, and boot reconcile skips, on any node under
+    # disk-scarce equivalent is enforced in Rust instead: install, start,
+    # restart and update refuse, and boot reconcile skips, on any node under
     # CUPRATE_MIN_DISK_GB (450GB — chain + headroom; refuses the 250GB VPS
     # class, allows 500GB-class disks). If upstream ever ships a prune flag,
     # replace that gate with the bitcoin-style entrypoint branch.
-    - storage: 300Gi
+    #
+    # 450Gi, not the chain size (~250GiB): every manifest-driven surface
+    # (store size display, install pre-checks, docs) must show the number the
+    # Rust gate actually enforces, or a user provisioned to the displayed
+    # value gets refused at a different, unexplained one. Single source of
+    # truth is crate::constants::CUPRATE_MIN_DISK_GB — keep in lockstep.
+    - storage: 450Gi
 
   resources:
     cpu_limit: 0
@@ -59,7 +65,9 @@ app:
     # CPU and ~595GB/24h of block I/O on a fully-synced node. 10Gi leaves
     # headroom above the 8GiB cache for the process itself.
     memory_limit: 10Gi
-    disk_limit: 300Gi
+    # Matches the storage dependency above (= the enforced disk floor),
+    # not the raw chain size — see the CUPRATE_MIN_DISK_GB note.
+    disk_limit: 450Gi
 
   security:
     # FROM scratch, no package manager/shell, ownership fixed at build time
