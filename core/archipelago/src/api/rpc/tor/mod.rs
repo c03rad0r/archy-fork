@@ -378,6 +378,23 @@ async fn write_staged_torrc(content: &str, staging: &str) -> Result<()> {
 }
 
 #[cfg(test)]
+mod known_service_tests {
+    use super::{is_protocol_service, known_service_port};
+
+    #[test]
+    fn bitcoin_core_is_a_protocol_service_on_the_p2p_port() {
+        // Regression: apps/bitcoin-core/manifest.yml uses id "bitcoin-core",
+        // distinct from the legacy "bitcoin"/"bitcoin-knots" ids. Missing
+        // here means auto-enrollment silently skips it (known_service_port
+        // returns 0) and, separately, regenerate_torrc falls back to the
+        // web-app HiddenServicePort-80 default instead of forwarding 8333
+        // straight through.
+        assert_eq!(known_service_port("bitcoin-core"), 8333);
+        assert!(is_protocol_service("bitcoin-core"));
+    }
+}
+
+#[cfg(test)]
 mod torrc_tests {
     use super::app_hidden_service_port_line;
     use std::collections::HashSet;

@@ -657,10 +657,20 @@ fn apply_dynamic_metadata(app_id: &str, meta: &mut AppMetadata) {
 /// Map app_id to Tor hidden service directory name.
 /// "archipelago" is the main web UI (nginx port 80).
 /// Supports container names from deploy (archy-*, btcpay-server, etc.).
+///
+/// This must match what enrollment actually names the hidden service dir
+/// with — both the install-time auto-enroll (`install.rs`) and the manual
+/// `tor.create-service` RPC write `HiddenServiceDir` using the raw
+/// `package_id`/`name` verbatim, with no canonicalization. So `bitcoin-core`
+/// gets its own identity arm rather than folding into the "bitcoin" alias:
+/// aliasing it here without also canonicalizing the write side would point
+/// this lookup at `hidden_service_bitcoin`, which never gets created — the
+/// on-disk dir is always `hidden_service_bitcoin-core` for this app id.
 fn tor_service_name(app_id: &str) -> Option<&'static str> {
     match app_id {
         "archipelago" => Some("archipelago"),
-        "bitcoin" | "bitcoin-core" | "bitcoin-knots" | "bitcoind" => Some("bitcoin"),
+        "bitcoin-core" => Some("bitcoin-core"),
+        "bitcoin" | "bitcoin-knots" | "bitcoind" => Some("bitcoin"),
         "electrumx" | "electrs" | "electrum" => Some("electrumx"),
         "lnd" | "lnd-ui" => Some("lnd"),
         "btcpay" | "btcpay-server" | "btcpayserver" => Some("btcpay"),
@@ -903,6 +913,28 @@ mod launch_url_port_tests {
     #[test]
     fn rejects_url_without_port() {
         assert_eq!(launch_url_port("http://localhost/"), None);
+    }
+}
+
+#[cfg(test)]
+mod tor_service_name_tests {
+    use super::tor_service_name;
+
+    #[test]
+    fn bitcoin_core_resolves_to_its_own_hidden_service_dir() {
+        // Regression: enrollment (install.rs, tor.create-service) writes
+        // HiddenServiceDir/tor-hostnames entries using the raw package_id
+        // verbatim, never canonicalized. Aliasing "bitcoin-core" to the
+        // shared "bitcoin" name here would point reads at a directory
+        // enrollment never creates.
+        assert_eq!(tor_service_name("bitcoin-core"), Some("bitcoin-core"));
+    }
+
+    #[test]
+    fn legacy_bitcoin_ids_share_the_bitcoin_alias() {
+        assert_eq!(tor_service_name("bitcoin"), Some("bitcoin"));
+        assert_eq!(tor_service_name("bitcoin-knots"), Some("bitcoin"));
+        assert_eq!(tor_service_name("bitcoind"), Some("bitcoin"));
     }
 }
 
