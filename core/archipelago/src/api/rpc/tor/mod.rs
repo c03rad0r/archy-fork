@@ -594,7 +594,7 @@ fn is_valid_v3_onion(s: &str) -> bool {
 pub(in crate::api::rpc) fn known_service_port(name: &str) -> u16 {
     match name {
         "archipelago" => 80,
-        "bitcoin" | "bitcoin-knots" => 8333,
+        "bitcoin" | "bitcoin-core" | "bitcoin-knots" => 8333,
         "electrs" | "electrumx" => 50001,
         "lnd" => 8080,
         "btcpay" | "btcpay-server" | "btcpayserver" => 23000,
@@ -619,7 +619,7 @@ pub(in crate::api::rpc) fn known_service_port(name: &str) -> u16 {
 pub(in crate::api::rpc) fn is_protocol_service(name: &str) -> bool {
     matches!(
         name,
-        "bitcoin" | "bitcoin-knots" | "electrs" | "electrumx" | "lnd"
+        "bitcoin" | "bitcoin-core" | "bitcoin-knots" | "electrs" | "electrumx" | "lnd"
     )
 }
 

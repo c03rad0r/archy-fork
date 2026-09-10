@@ -660,7 +660,7 @@ fn apply_dynamic_metadata(app_id: &str, meta: &mut AppMetadata) {
 fn tor_service_name(app_id: &str) -> Option<&'static str> {
     match app_id {
         "archipelago" => Some("archipelago"),
-        "bitcoin" | "bitcoin-knots" | "bitcoind" => Some("bitcoin"),
+        "bitcoin" | "bitcoin-core" | "bitcoin-knots" | "bitcoind" => Some("bitcoin"),
         "electrumx" | "electrs" | "electrum" => Some("electrumx"),
         "lnd" | "lnd-ui" => Some("lnd"),
         "btcpay" | "btcpay-server" | "btcpayserver" => Some("btcpay"),
