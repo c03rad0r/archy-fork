@@ -40,7 +40,7 @@
 
 - **The App Store now makes Archipelago's source an invitation to contribute.** GitWorkshop has its real upstream icon and source-focused description, plus a dedicated “Your node. Your source.” banner explaining that users can browse the code, clone with ngit, and send issues, patches, and reviews over Nostr.
 
-- **Source now packages GitWorkshop instead of maintaining a separate Nostr Git interface.** The pinned upstream client runs read-only behind the authenticated app gate, launches at the dashboard's same origin under `/app/archipelago-source/`, and uses the node's consent-gated NIP-07 bridge. This remains development-node-only pending owner UAT, a clear upstream redistribution license, dependency review, and canonical Archipelago NIP-34/GRASP testing.
+- **Source now packages GitWorkshop instead of maintaining a separate Nostr Git interface.** The pinned upstream client runs read-only behind the authenticated app gate, launches at the dashboard's same origin under `/app/archipelago-source/`, and uses the node's consent-gated NIP-07 bridge. The upstream revision declares no license; Archipelago's owner accepted that redistribution risk without representing the client as licensed. Production publication still requires dependency-risk disposition and a tested canonical Archipelago NIP-34/GRASP announcement.
 
 - **Changing the node password now reports a wrong current password directly.** The backend was already rejecting the request before changing either the web or SSH password, but its error sanitizer replaced that safe, actionable explanation with “check server logs.” The real validation error now reaches the password dialog.
 

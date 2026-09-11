@@ -22,6 +22,9 @@ export interface CatalogPromotion {
   headline: string
   description: string
   tag: string
+  /** Optional route within the installed app. Used by the Source promotion to
+   * open the canonical Archipelago repository rather than a generic client. */
+  path?: string
   launchLabel?: string
   installLabel?: string
   detailsLabel?: string

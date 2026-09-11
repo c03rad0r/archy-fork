@@ -73,6 +73,47 @@ stage "git-diff-check"   git diff --check
 stage "cargo-fmt"        timeout 240 cargo fmt --manifest-path core/Cargo.toml --all --check
 stage "manifest-shell"  python3 scripts/check-manifest-shell.py
 stage "catalog-drift"    python3 scripts/check-app-catalog-drift.py --release --strict
+
+# Validate the artifact that will actually be signed and published, not only
+# the dashboard's list-form source catalog. This catches missing embedded
+# manifests, an untrusted image registry, or a storefront promotion that names
+# an app absent from the signed registry before the release-root ceremony.
+registry_candidate() {
+  local candidate rc=0
+  candidate=$(mktemp -t archipelago-app-catalog.XXXXXX.json)
+  bash scripts/generate-app-catalog.sh "$candidate" || rc=$?
+  if [[ $rc -eq 0 ]]; then
+    python3 scripts/check-app-catalog-drift.py \
+      --catalog "$candidate" --release --strict || rc=$?
+  fi
+  if [[ $rc -eq 0 ]]; then
+    python3 scripts/check-catalog-registry-trust.py \
+      --repo "$REPO" --catalog "$candidate" || rc=$?
+  fi
+  if [[ $rc -eq 0 ]]; then
+    python3 - "$candidate" <<'PY' || rc=$?
+import json
+import sys
+
+catalog = json.load(open(sys.argv[1], encoding="utf-8"))
+apps = catalog.get("apps", {})
+storefront = catalog.get("storefront", {})
+promotions = storefront.get("promotions", [])
+if "archipelago-source" not in apps:
+    raise SystemExit("registry candidate omits archipelago-source")
+source_promotions = [item for item in promotions if item.get("id") == "archipelago-source"]
+if not source_promotions:
+    raise SystemExit("registry candidate omits the Archipelago source promotion")
+expected_path = "/npub1w3sqdkrhn0gyuvsex32effzgnfpyde6qrrc4u467flg5e9txh4wsfn5vjg/archy"
+if source_promotions[0].get("path") != expected_path:
+    raise SystemExit("source promotion does not open the canonical Archipelago repository")
+print("registry candidate includes GitWorkshop and its source promotion")
+PY
+  fi
+  rm -f -- "$candidate"
+  return "$rc"
+}
+stage "registry-candidate" registry_candidate
 # Every release must surface its CHANGELOG entry in the Settings "What's New"
 # modal. The modal hardcodes a block per version and has drifted behind before
 # (sat at v1.7.84 while the fleet shipped to v1.7.92). Fail if any CHANGELOG

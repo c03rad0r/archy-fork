@@ -17,7 +17,8 @@ browser, issue, pull-request, or review interfaces.
 
 The pinned revision and current upstream `main` do not contain a license file,
 the package metadata declares no license, and GitHub reports no detected
-license. This development image is for local evaluation only. Do not publish
-it to the production app registry until upstream adds an explicit license (the
-preferred auditable resolution) or its maintainer provides a written grant
-covering compilation, modification, and redistribution.
+license. Archipelago's owner explicitly accepted the resulting redistribution
+risk on 2026-09-11. This is a project risk decision, not a claim that
+GitWorkshop is licensed or that downstream recipients receive rights from its
+copyright holders. An explicit upstream license remains the preferred,
+auditable resolution.

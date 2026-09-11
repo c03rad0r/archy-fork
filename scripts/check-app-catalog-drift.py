@@ -42,6 +42,7 @@ INTERNAL_MANIFEST_IDS = {
 }
 
 LEGACY_STACK_CATALOG_IDS = {
+    "btcpay",
     "immich",
     "netbird",
     "tailscale",
@@ -159,7 +160,12 @@ def main() -> int:
     )
     args = parser.parse_args()
 
-    catalog = load_catalog(Path(args.catalog))
+    catalog_path = Path(args.catalog)
+    with catalog_path.open("r", encoding="utf-8") as fh:
+        raw_catalog = json.load(fh)
+    registry_catalog = isinstance(raw_catalog.get("apps"), dict)
+
+    catalog = load_catalog(catalog_path)
     manifests = load_manifests(Path(args.apps_dir))
 
     catalog_ids = set(catalog)
@@ -172,14 +178,20 @@ def main() -> int:
 
     compared_fields = [
         "title",
-        "version",
         "description",
-        "dockerImage",
         "category",
         "tier",
         "icon",
         "repoUrl",
     ]
+    # The signed registry catalog deliberately overrides versions and images:
+    # that is how app updates are shipped independently of an OS release. The
+    # public storefront list, on the other hand, should match the manifest's
+    # advertised version/image. Treating registry overrides as metadata drift
+    # made a freshly generated, otherwise valid release artifact fail on every
+    # app whose image tag had advanced since its disk manifest was authored.
+    if not registry_catalog:
+        compared_fields[1:1] = ["version", "dockerImage"]
     drift: list[str] = []
     for app_id in sorted(catalog_ids & manifest_ids):
         catalog_app = catalog[app_id]

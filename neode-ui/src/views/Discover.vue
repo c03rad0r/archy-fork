@@ -248,7 +248,7 @@
           <div class="flex flex-wrap items-center gap-3">
             <button
               v-if="isInstalled(promotion.app.id) && !isStartingUp(promotion.app.id)"
-              @click.stop="launchInstalledApp(promotion.app)"
+              @click.stop="launchInstalledApp(promotion.app, promotion.path)"
               class="glass-button rounded-lg px-6 py-2.5 text-sm font-medium"
             >{{ promotion.launchLabel || 'Launch' }}</button>
             <button
@@ -660,8 +660,8 @@ function getAppTier(appId: string): string {
   return 'optional'
 }
 
-function launchInstalledApp(app: MarketplaceApp) {
-  appLauncher.openSession(app.id)
+function launchInstalledApp(app: MarketplaceApp, path?: string) {
+  appLauncher.openSession(app.id, path ? { path } : undefined)
 }
 
 async function handleInstall(app: MarketplaceApp) {

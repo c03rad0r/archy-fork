@@ -1,11 +1,13 @@
 # Nostr Git Source Hosting Plan
 
-**Reviewed:** 2026-09-08
+**Reviewed:** 2026-09-11
 
 **Status:** GitWorkshop integration is deployed and engineering-tested on the
-development node, ready for owner UAT. Canonical repository publication and
-release work remain separate gates. No app-registry, OTA, ISO, or production
-artifact may be published until the owner accepts the node deployment.
+development node. The owner reported the corrected flows working and requested
+a production release on 2026-09-11. Canonical repository publication remains
+incomplete: the checkout has no Nostr repository configuration and `ngit` is
+not logged into the canonical maintainer identity. The signed production app
+catalog also does not yet carry GitWorkshop or its storefront promotion.
 
 The Android companion opens Source as a top-level page in its native in-app
 WebView. GitWorkshop's injected NIP-07 provider creates a small authenticated
@@ -70,7 +72,7 @@ Primary references:
 - Relay and GRASP data is untrusted. Canonical status is derived only from the
   signed repository announcement and configured maintainer identities.
 
-## Upstream Pin And Redistribution Gate
+## Upstream Pin And Redistribution Decision
 
 The development image currently pins GitWorkshop commit
 `dc36db64f6a2cca29d109829eabaf0a49d4bf4da` (2026-07-28). The integration patch
@@ -79,11 +81,13 @@ only adds base-path support and the Archipelago NIP-07 provider.
 The pinned revision and current upstream `main` have no license file, the npm
 package metadata declares no license, and GitHub reports no detected license.
 An earlier project-site description of “MIT” is not a license grant bundled
-with the code. Local engineering and owner evaluation may continue, but the
-compiled image must not be published to the production app registry until its
-redistribution terms are unambiguous.
+with the code. On 2026-09-11 the Archipelago owner explicitly accepted the
+risk of publishing the patched build without an upstream license. That removes
+the project's internal release hold, but it does not turn the upstream code
+into open-source software or grant downstream rights. The absence is disclosed
+in `NOTICE` and the packaged `UPSTREAM.md`.
 
-Preferred resolution: ask upstream to add an SPDX-recognized license file
+Preferred follow-up: ask upstream to add an SPDX-recognized license file
 (MIT if that remains their intent), then re-pin at or after that commit and add
 GitWorkshop plus its copyright/license notice to Archipelago's `NOTICE` and
 generated image inventory. A written grant that explicitly permits compiling,
@@ -170,12 +174,12 @@ The live same-origin route reaches the authenticated app gate through the
 node's loopback, LAN, Tailscale, and FIPS addresses. A rollback snapshot is at
 `/var/backups/archipelago/pre-uat-fixes-20260908-1140` on the development node.
 
-### 5. Owner UAT — pending owner action
+### 5. Owner UAT — accepted, final release-candidate retest required
 
-The owner validates install, launch, navigation, repository discovery, identity
-selection, consent prompts, source browsing, and available contribution flows.
-Engineering fixes UAT findings on this node and repeats the gate. Owner UAT is
-not inferred from automated tests.
+The owner exercised the corrected node deployment and requested release on
+2026-09-11. A short final retest remains required after the 0.5.32 release-channel
+Companion APK and canonical Archipelago repository deep-link replace their UAT
+counterparts; those two release inputs were not present in the accepted build.
 
 For companion testing, the node hosts a local-only Archipelago Companion
 `0.5.32-uat` at `/packages/archipelago-companion-0.5.32-uat.apk`. It uses the
@@ -244,10 +248,10 @@ remains pending owner visual retest.
 - Deep-link/configure GitWorkshop to the verified repository.
 - Run the real-node proposal and recovery drills listed above.
 
-### 7. Release — explicitly blocked pending prior gates
+### 7. Release — pending canonical publication and signing gates
 
-Only after engineering tests, owner UAT acceptance, canonical launch tests,
-license confirmation, and dependency review may the team:
+Only after engineering tests, the final release-candidate retest, canonical
+launch tests, and dependency-risk disposition may the team:
 
 - build and publish a production multi-architecture app image;
 - sign/update the production app-registry entry;
@@ -274,5 +278,7 @@ APK.
 ## Open Decisions Before Canonical Launch
 
 - Which Archipelago-operated and independent relay/GRASP endpoints are used?
-- Will upstream add an explicit GitWorkshop license file, or provide another
-  written redistribution grant suitable for registry publication?
+- Does the owner accept the recorded 4 high and 6 moderate GitWorkshop npm
+  advisories for this release, or must the integration patch update them first?
+- Will upstream add an explicit GitWorkshop license as a post-release
+  clarification for downstream users?

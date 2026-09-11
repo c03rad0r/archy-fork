@@ -57,6 +57,13 @@ ElevenLabs TTS under a commercial-use plan.
 
 ## Redistributed software (ISO and container registry)
 
+- **GitWorkshop** — https://github.com/DanConwayDev/gitworkshop — pinned at
+  `dc36db64f6a2cca29d109829eabaf0a49d4bf4da`. The upstream revision declares
+  no software license. Archipelago applies a documented integration patch and
+  redistributes the resulting static application under an explicit owner risk
+  acceptance dated 2026-09-11; this notice does not claim or grant upstream
+  copyright permission. See `docker/archipelago-source/UPSTREAM.md`.
+
 The Archipelago OS image is based on Debian and redistributes Debian packages
 (including the Linux kernel, GRUB, and non-free firmware/microcode blobs
 required for hardware support); per-package license texts are preserved at

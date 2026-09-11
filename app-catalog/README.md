@@ -51,6 +51,7 @@ promotional banners placed before the remaining `All Apps` grid:
       "headline": "Build together.",
       "description": "Catalog-controlled promotional copy.",
       "tag": "NOSTR // SOURCE",
+      "path": "/npub1maintainer/project",
       "launchLabel": "Open",
       "installLabel": "Install",
       "detailsLabel": "Learn more →"
@@ -59,7 +60,9 @@ promotional banners placed before the remaining `All Apps` grid:
 }
 ```
 
-Only IDs present in `apps` render. New dashboards prefer `storefront` from the
+Only IDs present in `apps` render. An optional promotion `path` deep-links into
+the installed app; Archipelago uses this to open the canonical signed Nostr
+repository rather than GitWorkshop's generic dashboard. New dashboards prefer `storefront` from the
 daemon-verified signed catalog and use the bundled community copy as a local
 fallback. `scripts/generate-app-catalog.sh` carries this block into the signed
 release artifact; changing it does not require a node OS release once that
