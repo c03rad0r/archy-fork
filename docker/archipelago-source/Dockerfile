@@ -15,7 +15,11 @@ RUN git init \
 COPY gitworkshop-archipelago.patch /tmp/gitworkshop-archipelago.patch
 RUN git apply --check /tmp/gitworkshop-archipelago.patch \
     && git apply /tmp/gitworkshop-archipelago.patch
-RUN npm ci
+COPY gitworkshop-dependencies.patch /tmp/gitworkshop-dependencies.patch
+RUN git apply --check /tmp/gitworkshop-dependencies.patch \
+    && git apply /tmp/gitworkshop-dependencies.patch
+RUN npm ci \
+    && npm audit --audit-level=moderate
 RUN APP_BASE_PATH=/app/archipelago-source/ \
     APP_RELEASE_VERSION="archipelago-${GITWORKSHOP_COMMIT}" \
     npm run build

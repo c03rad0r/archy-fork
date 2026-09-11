@@ -30,7 +30,9 @@
           @click.stop="openCompanionIntro()"
           class="glass-button rounded-lg px-6 py-2.5 text-sm font-medium"
         >Install</button>
-        <span class="text-white/40 text-sm">Archipelago Companion · Android</span>
+        <span class="text-white/40 text-sm">
+          Archipelago Companion · Android<template v-if="companionRelease"> · v{{ companionRelease.versionName }} (build {{ companionRelease.versionCode }})</template>
+        </span>
       </div>
     </div>
 
@@ -44,11 +46,16 @@
 </template>
 
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, onMounted } from 'vue'
 import { isCompanionApp } from '@/utils/openExternal'
 import { openCompanionIntro } from '@/composables/useCompanionIntro'
+import { companionRelease, loadCompanionRelease } from '@/composables/useCompanionRelease'
 
 const showPitch = computed(() => !isCompanionApp())
+
+onMounted(() => {
+  if (showPitch.value) void loadCompanionRelease()
+})
 </script>
 
 <style scoped>

@@ -143,6 +143,11 @@ import { ref, onMounted, onUnmounted, watch } from 'vue'
 import * as QRCode from 'qrcode'
 import { IS_DEMO, DEMO_PASSWORD } from '@/composables/useDemoIntro'
 import { companionIntroRequested } from '@/composables/useCompanionIntro'
+import {
+  companionRelease,
+  companionReleaseMarker,
+  loadCompanionRelease,
+} from '@/composables/useCompanionRelease'
 import { isCompanionApp } from '@/utils/openExternal'
 import { useLoginTransitionStore } from '@/stores/loginTransition'
 import { useServerStore } from '@/stores/server'
@@ -163,17 +168,7 @@ const DEFAULT_DOWNLOAD_URL = IS_DEMO
 // metadata (ships in the frontend beside the APK at /packages/), written by
 // publish-companion-apk.sh from the same gradle config that built the APK.
 // Best-effort: no file, no note.
-const companionVersion = ref<{ versionName: string; versionCode: number } | null>(null)
-async function loadCompanionVersion() {
-  try {
-    const res = await fetch('/packages/archipelago-companion.json', { cache: 'no-store' })
-    if (!res.ok) return
-    const meta = await res.json()
-    if (meta && typeof meta.versionName === 'string' && meta.versionName) {
-      companionVersion.value = { versionName: meta.versionName, versionCode: Number(meta.versionCode) || 0 }
-    }
-  } catch { /* metadata is a nicety — the download works without it */ }
-}
+const companionVersion = companionRelease
 
 // Deep-link scheme the companion app registers; carries the server entry the
 // app should create (see docs/companion-pairing-qr.md for the contract).
@@ -213,10 +208,13 @@ let calmTicker: ReturnType<typeof setInterval> | null = null
 // it. Server management for connected companions lives in the NESMenu instead.
 const IN_COMPANION_APP = isCompanionApp()
 
-onMounted(() => {
+onMounted(async () => {
   if (IN_COMPANION_APP) return
+  // The prompt is remembered per APK build, not forever. A browser that saw
+  // 0.5.28 should be told once when this node begins serving 0.5.32.
+  await loadCompanionRelease()
   try {
-    if (localStorage.getItem(STORAGE_KEY) !== '1') {
+    if (localStorage.getItem(STORAGE_KEY) !== companionReleaseMarker(companionVersion.value)) {
       setTimeout(maybeShow, BASE_DELAY_MS)
     }
   } catch {
@@ -267,7 +265,7 @@ watch(companionIntroRequested, (requested) => {
 
 watch(visible, async (isVisible) => {
   if (!isVisible) return
-  if (!companionVersion.value) void loadCompanionVersion()
+  if (!companionVersion.value) void loadCompanionRelease()
   // Generate large and let CSS scale down — at 112px source a ~45-module QR
   // is 2.5px/module, which camera decoders (the companion app included)
   // routinely fail on. 512px keeps every module crisp.
@@ -454,7 +452,7 @@ function dismiss() {
   visible.value = false
   step.value = 'download'
   try {
-    localStorage.setItem(STORAGE_KEY, '1')
+    localStorage.setItem(STORAGE_KEY, companionReleaseMarker(companionVersion.value))
   } catch {
     // ignore
   }

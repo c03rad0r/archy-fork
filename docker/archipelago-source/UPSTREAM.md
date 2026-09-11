@@ -8,12 +8,19 @@ This image packages the GitWorkshop NIP-34 web client from:
 - App icon: `public/icons/icon.svg` from the same pinned revision (the artwork
   is only inset onto Archipelago's standard icon safe area).
 
-The small build patch only makes the upstream Vite/React application work
-below Archipelago's `/app/archipelago-source/` mount, injects the existing
-consent-gated Archipelago NIP-07 provider, disables the development-only
-`localhost:4869` cache-relay probe, and removes two unreachable lookup relays
-from the defaults. It does not replace GitWorkshop's NIP-34, GRASP, repository
-browser, issue, pull-request, or review interfaces.
+The Archipelago integration patch only makes the upstream Vite/React
+application work below Archipelago's `/app/archipelago-source/` mount, injects
+the existing consent-gated Archipelago NIP-07 provider, disables the
+development-only `localhost:4869` cache-relay probe, and removes two unreachable
+lookup relays from the defaults. It does not replace GitWorkshop's NIP-34,
+GRASP, repository browser, issue, pull-request, or review interfaces.
+
+The separate dependency patch refreshes the npm lockfile and moves `fflate` to
+0.8.3, `react-router-dom` to 7.18.3, and Vitest to 5.0.0. The resulting clean
+install reports zero npm advisories; its type-check, 152 unit tests, and
+Archipelago subpath production build pass. Keeping this mechanical security
+update separate makes both the upstream integration and future dependency
+refreshes auditable.
 
 The pinned revision and current upstream `main` do not contain a license file,
 the package metadata declares no license, and GitHub reports no detected

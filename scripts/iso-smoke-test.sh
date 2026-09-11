@@ -177,11 +177,13 @@ if [ -f "$WEB_UI/index.html" ]; then
 
     COMPANION_META="$WEB_UI/packages/archipelago-companion.json"
     COMPANION_APK="$WEB_UI/packages/archipelago-companion.apk"
-    if [ -s "$COMPANION_APK" ] && [ "$(jq -r '.versionName // empty' "$COMPANION_META" 2>/dev/null)" = "0.5.28" ] \
-            && [ "$(jq -r '.versionCode // empty' "$COMPANION_META" 2>/dev/null)" = "48" ]; then
-        ok "Companion 0.5.28 (versionCode 48) APK included"
+    EXPECTED_COMPANION_NAME="$(sed -n 's/^[[:space:]]*versionName = "\(.*\)"/\1/p' "$REPO/Android/app/build.gradle.kts" | head -1)"
+    EXPECTED_COMPANION_CODE="$(sed -n 's/^[[:space:]]*versionCode = \([0-9]*\).*/\1/p' "$REPO/Android/app/build.gradle.kts" | head -1)"
+    if [ -s "$COMPANION_APK" ] && [ "$(jq -r '.versionName // empty' "$COMPANION_META" 2>/dev/null)" = "$EXPECTED_COMPANION_NAME" ] \
+            && [ "$(jq -r '.versionCode // empty' "$COMPANION_META" 2>/dev/null)" = "$EXPECTED_COMPANION_CODE" ]; then
+        ok "Companion $EXPECTED_COMPANION_NAME (versionCode $EXPECTED_COMPANION_CODE) APK included"
     else
-        bad "Companion 0.5.28 APK/metadata missing or stale"
+        bad "Companion APK/metadata missing or stale (expected $EXPECTED_COMPANION_NAME/$EXPECTED_COMPANION_CODE)"
     fi
 
     SETTINGS_BUNDLE="$(grep -rlF "v$EXPECTED_VERSION" "$WEB_UI/assets" 2>/dev/null | head -1)"

@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- **The Companion download advertises and re-announces the APK it actually serves.** The Discover banner and its install prompt now share the no-cache APK metadata, visibly report Companion 0.5.32 build 52, and remember dismissal per Android build rather than forever, so an existing browser gets one useful update prompt when the APK changes. The ISO gate reads the expected version from the Android build itself instead of accepting the stale 0.5.28 payload.
+
+- **GitWorkshop's dependency audit is clean.** The pinned upstream client keeps its separately reviewable Archipelago integration patch and now applies a deterministic dependency patch: safe lock refreshes plus targeted `fflate`, React Router, and Vitest upgrades remove all ten production advisories and all eight development advisories. A clean install reports zero vulnerabilities; type-check, all 152 upstream unit tests, and the exact Archipelago subpath build pass.
+
 - **Every completed payment now gets the full Lightning-style receipt screen.** Cashu and Fedimint sends no longer leave the payment form open behind a token; wallet, QR-scan, Web5, and app-requested sends all replace their forms with the animated success state. Payment hashes, transaction IDs, ecash tokens/notes, mint details, and other useful references remain copyable in the receipt, and receive completions open the same distinct payment-success modal. Minibits claims retain a short-lived durable receipt so the visible modal still reports success when another dashboard or Companion context wins the claim-poll race, while concurrent watchers now share one bounded relay fetch instead of queueing several long polls.
 
 - **TollGate provisioning closes the free-access path without taking over an admin network.** Confirmed upstream `TollGate-*` access points are moved from LAN onto the paid network, mint URLs are normalized consistently, and operators can set a validated Lightning payout address without replacing merchant keys or other revenue-share identities. Malformed existing identity data now stops provisioning safely instead of being overwritten.
@@ -40,7 +44,7 @@
 
 - **The App Store now makes Archipelago's source an invitation to contribute.** GitWorkshop has its real upstream icon and source-focused description, plus a dedicated “Your node. Your source.” banner explaining that users can browse the code, clone with ngit, and send issues, patches, and reviews over Nostr.
 
-- **Source now packages GitWorkshop instead of maintaining a separate Nostr Git interface.** The pinned upstream client runs read-only behind the authenticated app gate, launches at the dashboard's same origin under `/app/archipelago-source/`, and uses the node's consent-gated NIP-07 bridge. The upstream revision declares no license; Archipelago's owner accepted that redistribution risk without representing the client as licensed. Production publication still requires dependency-risk disposition and a tested canonical Archipelago NIP-34/GRASP announcement.
+- **Source now packages GitWorkshop instead of maintaining a separate Nostr Git interface.** The pinned upstream client runs read-only behind the authenticated app gate, launches at the dashboard's same origin under `/app/archipelago-source/`, and uses the node's consent-gated NIP-07 bridge. The upstream revision declares no license; Archipelago's owner accepted that redistribution risk without representing the client as licensed. Production publication still requires a tested canonical Archipelago NIP-34/GRASP announcement.
 
 - **Changing the node password now reports a wrong current password directly.** The backend was already rejecting the request before changing either the web or SSH password, but its error sanitizer replaced that safe, actionable explanation with “check server logs.” The real validation error now reaches the password dialog.
 
