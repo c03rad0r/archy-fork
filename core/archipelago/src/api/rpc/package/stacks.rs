@@ -1559,6 +1559,31 @@ impl RpcHandler {
         self.set_install_progress("indeedhub", n_images, n_images)
             .await;
 
+        // The retired installer injected one fleet-wide AES root directly in
+        // the API/worker environment. Detect those consumers before removing
+        // anything, then persist the legacy value exactly once so an upgrade
+        // cannot orphan encrypted data. A genuinely fresh fallback install
+        // receives a random per-node root instead.
+        let mut had_existing_crypto_consumer = false;
+        for name in [
+            "indeedhub-api",
+            "indeedhub-ffmpeg",
+            "indeedhub-build_api_1",
+            "indeedhub-build_ffmpeg-worker_1",
+        ] {
+            let status =
+                podman_stack_status(&["container", "exists", name], PODMAN_STACK_PROBE_TIMEOUT)
+                    .await?;
+            had_existing_crypto_consumer |= status.success();
+        }
+        let secrets_dir = self.config.data_dir.join("secrets");
+        crate::container::secrets::ensure_indeedhub_aes_master_secret(
+            &secrets_dir,
+            had_existing_crypto_consumer,
+        )
+        .context("preparing IndeedHub encryption root")?;
+        let aes_master = crate::container::secrets::indeedhub_aes_master_secret(&secrets_dir)?;
+
         // Remove any leftover containers from a previous partial install (or
         // from the first-boot frontend stub that used to race the installer).
         // Without this, `podman run --name indeedhub` fails on name conflict
@@ -1759,7 +1784,7 @@ impl RpcHandler {
                 "-e".to_string(),
                 "NOSTR_JWT_EXPIRES_IN=7d".to_string(),
                 "-e".to_string(),
-                "AES_MASTER_SECRET=0123456789abcdef0123456789abcdef".to_string(),
+                format!("AES_MASTER_SECRET={aes_master}"),
                 "-e".to_string(),
                 "ENVIRONMENT=production".to_string(),
                 format!("{registry}/indeedhub-api:1.0.0"),
@@ -1810,7 +1835,7 @@ impl RpcHandler {
                 "-e".to_string(),
                 "ENVIRONMENT=production".to_string(),
                 "-e".to_string(),
-                "AES_MASTER_SECRET=0123456789abcdef0123456789abcdef".to_string(),
+                format!("AES_MASTER_SECRET={aes_master}"),
                 format!("{registry}/indeedhub-ffmpeg:1.0.0"),
             ],
             &tmp_env,

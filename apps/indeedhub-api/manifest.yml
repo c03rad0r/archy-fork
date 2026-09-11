@@ -19,14 +19,15 @@ app:
     pull_policy: if-not-present
     network: indeedhub-net
     network_aliases: [api]
-    # The JWT signing secret is owned here (no backend container owns it); the
-    # db + minio passwords are owned by indeedhub-postgres / indeedhub-minio and
-    # only consumed here. ensure_generated_secrets no-ops when a file already
-    # exists, so live values on .228 are preserved (postgres pw is fixed at
-    # PGDATA init — regenerating would lock the API out).
+    # The JWT signing secret and stable envelope-encryption root are owned here;
+    # the db + minio passwords are owned by indeedhub-postgres / indeedhub-minio
+    # and only consumed here. Existing nodes migrate the legacy AES value into
+    # the secret file once, while fresh nodes receive a unique per-node value.
     generated_secrets:
       - name: indeedhub-jwt
         kind: hex32
+      - name: indeedhub-aes-master
+        kind: hex16
     secret_env:
       - key: DATABASE_PASSWORD
         secret_file: indeedhub-db-password
@@ -34,6 +35,8 @@ app:
         secret_file: indeedhub-minio-password
       - key: NOSTR_JWT_SECRET
         secret_file: indeedhub-jwt
+      - key: AES_MASTER_SECRET
+        secret_file: indeedhub-aes-master
 
   dependencies:
     - app_id: indeedhub-postgres
@@ -67,9 +70,6 @@ app:
     - S3_PRIVATE_BUCKET_NAME=indeedhub-private
     - S3_PUBLIC_BUCKET_URL=/storage
     - NOSTR_JWT_EXPIRES_IN=7d
-    # Fixed across the fleet (envelope-encryption master key baked by the legacy
-    # installer); not node-specific, so a plain env literal, not a secret.
-    - AES_MASTER_SECRET=0123456789abcdef0123456789abcdef
     - ENVIRONMENT=production
 
   health_check:

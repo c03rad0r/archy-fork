@@ -140,6 +140,79 @@ fn random_base64(bytes: usize) -> String {
 /// daemon read `fedimint-gateway-hash`).
 pub const GATEWAY_HASH_SECRET_NAME: &str = "fedimint-gateway-hash";
 
+/// Canonical filename for IndeedHub's envelope-encryption root. API and media
+/// worker must receive the same stable value: changing it after data has been
+/// encrypted can make that data unreadable.
+pub const INDEEDHUB_AES_SECRET_NAME: &str = "indeedhub-aes-master";
+
+/// The fleet-wide value used by the legacy IndeedHub installers. It remains
+/// here only for the one-way migration of an already-installed stack: those
+/// nodes must persist the value they have been using before the manifest
+/// starts reading it from a file. Fresh installs must never receive it.
+const KNOWN_LEGACY_INDEEDHUB_AES_MASTER: &str = "0123456789abcdef0123456789abcdef";
+
+/// Ensure IndeedHub has a stable encryption root.
+///
+/// `preserve_legacy` is true only when an API/worker container already exists,
+/// proving this is an upgrade from the installer that shipped the known legacy
+/// value. In that case we persist that value once so recreating the containers
+/// does not orphan encrypted data. A fresh installation gets 16 random bytes
+/// encoded as 32 hex characters.
+///
+/// Unlike ordinary generated credentials, an existing-but-empty or unreadable
+/// encryption root is never self-healed by rotation: replacement could destroy
+/// access to data, so this fails loudly and leaves the file untouched.
+/// Returns true only when the legacy migration value was written.
+pub fn ensure_indeedhub_aes_master_secret(
+    secrets_dir: &Path,
+    preserve_legacy: bool,
+) -> Result<bool> {
+    fs::create_dir_all(secrets_dir)
+        .with_context(|| format!("creating secrets dir {}", secrets_dir.display()))?;
+    let path = secrets_dir.join(INDEEDHUB_AES_SECRET_NAME);
+
+    if path.exists() {
+        let value = fs::read_to_string(&path).with_context(|| {
+            format!(
+                "reading IndeedHub encryption root {} (refusing to replace it)",
+                path.display()
+            )
+        })?;
+        if value.trim().is_empty() {
+            anyhow::bail!(
+                "IndeedHub encryption root {} is empty; refusing to replace a potentially \
+                 data-bearing key",
+                path.display()
+            );
+        }
+        return Ok(false);
+    }
+
+    if preserve_legacy {
+        write_secret(&path, KNOWN_LEGACY_INDEEDHUB_AES_MASTER)?;
+        return Ok(true);
+    }
+
+    let spec = GeneratedSecret {
+        name: INDEEDHUB_AES_SECRET_NAME.to_string(),
+        kind: SecretGenKind::Hex16,
+    };
+    ensure_one(secrets_dir, &spec)?;
+    Ok(false)
+}
+
+/// Read the stable IndeedHub encryption root after it has been materialised.
+pub fn indeedhub_aes_master_secret(secrets_dir: &Path) -> Result<String> {
+    let path = secrets_dir.join(INDEEDHUB_AES_SECRET_NAME);
+    let value = fs::read_to_string(&path)
+        .with_context(|| format!("reading IndeedHub encryption root {}", path.display()))?;
+    let value = value.trim();
+    if value.is_empty() {
+        anyhow::bail!("IndeedHub encryption root {} is empty", path.display());
+    }
+    Ok(value.to_string())
+}
+
 /// Detection-only denylist of bcrypt hashes that shipped as hardcoded
 /// fallback credentials in this repository before FED-07. `t9YjjxkiktrlYvjajB
 /// /zgOMDnSNVg4HqrbDqh47u7Jf42whNdxNqC` was substituted for the Fedimint
@@ -354,6 +427,63 @@ mod tests {
             first, second,
             "a present readable secret is never rewritten"
         );
+    }
+
+    #[test]
+    fn indeedhub_fresh_installs_get_distinct_per_node_encryption_roots() {
+        let dir_a = tempfile::tempdir().unwrap();
+        let dir_b = tempfile::tempdir().unwrap();
+
+        assert!(!ensure_indeedhub_aes_master_secret(dir_a.path(), false).unwrap());
+        assert!(!ensure_indeedhub_aes_master_secret(dir_b.path(), false).unwrap());
+        let value_a = indeedhub_aes_master_secret(dir_a.path()).unwrap();
+        let value_b = indeedhub_aes_master_secret(dir_b.path()).unwrap();
+
+        assert_eq!(value_a.len(), 32);
+        assert!(value_a.chars().all(|c| c.is_ascii_hexdigit()));
+        assert_ne!(value_a, KNOWN_LEGACY_INDEEDHUB_AES_MASTER);
+        assert_ne!(value_a, value_b, "fresh nodes must not share an AES root");
+        let mode = std::fs::metadata(dir_a.path().join(INDEEDHUB_AES_SECRET_NAME))
+            .unwrap()
+            .permissions()
+            .mode()
+            & 0o777;
+        assert_eq!(mode, 0o600);
+    }
+
+    #[test]
+    fn indeedhub_existing_install_persists_legacy_root_once() {
+        let dir = tempfile::tempdir().unwrap();
+        assert!(ensure_indeedhub_aes_master_secret(dir.path(), true).unwrap());
+        assert_eq!(
+            indeedhub_aes_master_secret(dir.path()).unwrap(),
+            KNOWN_LEGACY_INDEEDHUB_AES_MASTER
+        );
+        assert!(
+            !ensure_indeedhub_aes_master_secret(dir.path(), true).unwrap(),
+            "a second migration pass must be a no-op"
+        );
+    }
+
+    #[test]
+    fn indeedhub_existing_unique_root_is_never_rotated() {
+        let dir = tempfile::tempdir().unwrap();
+        ensure_indeedhub_aes_master_secret(dir.path(), false).unwrap();
+        let before = indeedhub_aes_master_secret(dir.path()).unwrap();
+
+        assert!(!ensure_indeedhub_aes_master_secret(dir.path(), true).unwrap());
+        assert_eq!(before, indeedhub_aes_master_secret(dir.path()).unwrap());
+    }
+
+    #[test]
+    fn indeedhub_empty_root_fails_without_overwriting() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join(INDEEDHUB_AES_SECRET_NAME);
+        std::fs::write(&path, "").unwrap();
+
+        let err = ensure_indeedhub_aes_master_secret(dir.path(), true).unwrap_err();
+        assert!(err.to_string().contains("refusing to replace"));
+        assert_eq!(std::fs::read(&path).unwrap(), b"");
     }
 
     #[test]

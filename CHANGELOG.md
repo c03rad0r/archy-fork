@@ -4,6 +4,8 @@
 
 ## v1.8.12-alpha (2026-09-11)
 
+- **Fresh IndeedHub installs no longer share a fleet-wide encryption root.** The API now generates a persistent per-node AES master secret and shares it with the media worker through the platform's protected secret environment. Existing nodes migrate the exact legacy value they are already using before any container can be recreated, preserving access to encrypted data; an unreadable or empty existing root fails safely instead of being silently replaced. The manifest path, retired fallback installer, and container repair script follow the same rule.
+
 - **The Companion download advertises and re-announces the APK it actually serves.** The Discover banner and its install prompt now share the no-cache APK metadata, visibly report Companion 0.5.32 build 52, and remember dismissal per Android build rather than forever, so an existing browser gets one useful update prompt when the APK changes. The ISO gate reads the expected version from the Android build itself instead of accepting the stale 0.5.28 payload.
 
 - **GitWorkshop's dependency audit is clean.** The pinned upstream client keeps its separately reviewable Archipelago integration patch and now applies a deterministic dependency patch: safe lock refreshes plus targeted `fflate`, React Router, and Vitest upgrades remove all ten production advisories and all eight development advisories. A clean install reports zero vulnerabilities; type-check, all 152 upstream unit tests, and the exact Archipelago subpath build pass.

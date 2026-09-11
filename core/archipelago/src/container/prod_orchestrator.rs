@@ -3565,6 +3565,54 @@ impl ProdContainerOrchestrator {
         Ok(())
     }
 
+    /// Materialise IndeedHub's AES root before the generic generated-secret
+    /// pass. Old installers injected one known value directly into the API and
+    /// worker environments, so an upgrade with either consumer still present
+    /// must persist that value before container drift can recreate them. With
+    /// no existing consumer this is a fresh install and receives random bytes.
+    async fn ensure_indeedhub_aes_master(&self, manifest: &AppManifest) -> Result<()> {
+        if manifest.app.id != "indeedhub-api" {
+            return Ok(());
+        }
+
+        let secret_path = self
+            .secrets_dir
+            .join(crate::container::secrets::INDEEDHUB_AES_SECRET_NAME);
+        let preserve_legacy = if secret_path.exists() {
+            // The secret helper validates the existing file and, critically,
+            // refuses to replace a damaged encryption root.
+            false
+        } else {
+            let consumers = [
+                "indeedhub-api",
+                "indeedhub-ffmpeg",
+                "indeedhub-build_api_1",
+                "indeedhub-build_ffmpeg-worker_1",
+            ];
+            self.runtime
+                .list_containers()
+                .await
+                .context("detecting an existing IndeedHub encryption-key consumer")?
+                .iter()
+                .any(|container| {
+                    let name = container.name.trim_start_matches('/');
+                    consumers.contains(&name)
+                })
+        };
+
+        if crate::container::secrets::ensure_indeedhub_aes_master_secret(
+            &self.secrets_dir,
+            preserve_legacy,
+        )? {
+            tracing::info!(
+                app = "indeedhub-api",
+                path = %secret_path.display(),
+                "Persisted the legacy IndeedHub encryption root for upgrade compatibility"
+            );
+        }
+        Ok(())
+    }
+
     async fn resolve_dynamic_env(&self, manifest: &mut AppManifest) -> Result<()> {
         // Idempotency guard: partitioning already ran on this instance.
         // Re-running would re-taint against an environment that no longer
@@ -3573,6 +3621,11 @@ impl ProdContainerOrchestrator {
         if !manifest.app.container.secret_env_refs.is_empty() {
             return Ok(());
         }
+        // IndeedHub's data-encryption root needs an upgrade-aware first pass:
+        // generic generation alone would replace the fleet-wide legacy value
+        // and make previously encrypted data unreadable.
+        self.ensure_indeedhub_aes_master(manifest).await?;
+
         // Materialise any manifest-declared generated secrets before they're
         // read below. This is the single chokepoint every install/reconcile
         // path funnels through, so an app's secrets exist by the time its
@@ -5625,6 +5678,52 @@ app:
     /// the credential participate in secret_env_hash.
     fn gateway_manifest_yaml() -> &'static str {
         "app:\n  id: fedimint-gateway\n  name: Fedimint Gateway\n  version: 0.10.0\n  container:\n    image: x:1\n    generated_secrets:\n      - name: fedimint-gateway-hash\n        kind: bcrypt\n    secret_env:\n      - key: FEDI_HASH\n        secret_file: fedimint-gateway-hash\n"
+    }
+
+    fn indeedhub_api_manifest_yaml() -> &'static str {
+        "app:\n  id: indeedhub-api\n  name: IndeedHub API\n  version: 1.0.0\n  container:\n    image: x:1\n    generated_secrets:\n      - name: indeedhub-aes-master\n        kind: hex16\n    secret_env:\n      - key: AES_MASTER_SECRET\n        secret_file: indeedhub-aes-master\n"
+    }
+
+    #[tokio::test]
+    async fn existing_indeedhub_consumer_gets_migration_compatible_root() {
+        let rt = Arc::new(MockRuntime::default());
+        rt.set_state("indeedhub-api", ContainerState::Running);
+        let mut orch = orch_with(rt).await;
+        let tmp = tempfile::TempDir::new().unwrap();
+        orch.set_secrets_dir(tmp.path().to_path_buf());
+
+        let mut manifest = AppManifest::parse(indeedhub_api_manifest_yaml()).unwrap();
+        orch.resolve_dynamic_env(&mut manifest).await.unwrap();
+        let resolved = manifest
+            .app
+            .container
+            .secret_env_refs
+            .iter()
+            .find(|entry| entry.env_key == "AES_MASTER_SECRET")
+            .unwrap();
+        assert_eq!(resolved.value.len(), 32);
+        assert!(tmp.path().join("indeedhub-aes-master").exists());
+        assert!(
+            crate::container::secrets::ensure_indeedhub_aes_master_secret(tmp.path(), true).is_ok(),
+            "the migrated file remains valid and stable"
+        );
+    }
+
+    #[tokio::test]
+    async fn fresh_indeedhub_install_gets_random_root() {
+        let rt = Arc::new(MockRuntime::default());
+        let mut orch = orch_with(rt).await;
+        let tmp = tempfile::TempDir::new().unwrap();
+        orch.set_secrets_dir(tmp.path().to_path_buf());
+
+        let mut manifest = AppManifest::parse(indeedhub_api_manifest_yaml()).unwrap();
+        orch.resolve_dynamic_env(&mut manifest).await.unwrap();
+        let first = crate::container::secrets::indeedhub_aes_master_secret(tmp.path()).unwrap();
+
+        let other = tempfile::TempDir::new().unwrap();
+        crate::container::secrets::ensure_indeedhub_aes_master_secret(other.path(), false).unwrap();
+        let second = crate::container::secrets::indeedhub_aes_master_secret(other.path()).unwrap();
+        assert_ne!(first, second, "fresh installs must receive per-node roots");
     }
 
     /// FED-07. Rotating a compromised credential leaves the RUNNING container

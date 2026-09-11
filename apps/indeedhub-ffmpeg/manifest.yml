@@ -22,6 +22,8 @@ app:
         secret_file: indeedhub-db-password
       - key: AWS_SECRET_KEY
         secret_file: indeedhub-minio-password
+      - key: AES_MASTER_SECRET
+        secret_file: indeedhub-aes-master
 
   dependencies:
     - app_id: indeedhub-api
@@ -51,4 +53,3 @@ app:
     - S3_PUBLIC_BUCKET_NAME=indeedhub-public
     - S3_PRIVATE_BUCKET_NAME=indeedhub-private
     - ENVIRONMENT=production
-    - AES_MASTER_SECRET=0123456789abcdef0123456789abcdef

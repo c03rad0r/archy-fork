@@ -21,6 +21,63 @@ echo "Node IP: $NODE_IP"
 
 NETWORK="indeedhub-build_indeedhub-network"
 
+# Preserve every credential before any existing stack member is removed. Old
+# installs carried some only in container environments; fresh repairs get
+# random per-node values. Never print a value into repair logs.
+SECRETS_DIR="/var/lib/archipelago/secrets"
+ensure_secret_from_container_env() {
+  secret_name="$1"
+  random_bytes="$2"
+  shift 2
+  secret_path="$SECRETS_DIR/$secret_name"
+  if [ -e "$secret_path" ] && { [ ! -r "$secret_path" ] || [ ! -s "$secret_path" ]; }; then
+    echo "ERROR: $secret_name exists but is unreadable or empty; refusing to replace it."
+    exit 1
+  fi
+  if [ ! -e "$secret_path" ]; then
+    recovered=""
+    for source in "$@"; do
+      c="${source%%:*}"
+      env_key="${source#*:}"
+      if podman container exists "$c" 2>/dev/null; then
+        candidate=$(podman inspect "$c" --format '{{range .Config.Env}}{{println .}}{{end}}' 2>/dev/null | sed -n "s/^${env_key}=//p" | head -1)
+        if [ -n "$candidate" ]; then
+          recovered="$candidate"
+          break
+        fi
+      fi
+    done
+    if [ -z "$recovered" ]; then
+      recovered=$(openssl rand -hex "$random_bytes")
+    fi
+    mkdir -p "$SECRETS_DIR"
+    umask 077
+    secret_tmp=$(mktemp "$SECRETS_DIR/.${secret_name}.XXXXXX")
+    printf '%s' "$recovered" > "$secret_tmp"
+    chmod 600 "$secret_tmp"
+    mv "$secret_tmp" "$secret_path"
+  fi
+}
+
+ensure_secret_from_container_env indeedhub-aes-master 16 \
+  indeedhub-api:AES_MASTER_SECRET indeedhub-ffmpeg:AES_MASTER_SECRET \
+  indeedhub-build_api_1:AES_MASTER_SECRET indeedhub-build_ffmpeg-worker_1:AES_MASTER_SECRET
+ensure_secret_from_container_env indeedhub-db-password 24 \
+  indeedhub-api:DATABASE_PASSWORD indeedhub-ffmpeg:DATABASE_PASSWORD \
+  indeedhub-build_api_1:DATABASE_PASSWORD indeedhub-build_ffmpeg-worker_1:DATABASE_PASSWORD \
+  indeedhub-postgres:POSTGRES_PASSWORD
+ensure_secret_from_container_env indeedhub-minio-password 24 \
+  indeedhub-api:AWS_SECRET_KEY indeedhub-ffmpeg:AWS_SECRET_KEY \
+  indeedhub-build_api_1:AWS_SECRET_KEY indeedhub-build_ffmpeg-worker_1:AWS_SECRET_KEY \
+  indeedhub-minio:MINIO_ROOT_PASSWORD
+ensure_secret_from_container_env indeedhub-jwt 32 \
+  indeedhub-api:NOSTR_JWT_SECRET indeedhub-build_api_1:NOSTR_JWT_SECRET
+
+AES_MASTER_SECRET=$(tr -d '\r\n' < "$SECRETS_DIR/indeedhub-aes-master")
+DATABASE_PASSWORD=$(tr -d '\r\n' < "$SECRETS_DIR/indeedhub-db-password")
+MINIO_ROOT_PASSWORD=$(tr -d '\r\n' < "$SECRETS_DIR/indeedhub-minio-password")
+NOSTR_JWT_SECRET=$(tr -d '\r\n' < "$SECRETS_DIR/indeedhub-jwt")
+
 # Load custom images if tar exists
 if [ -f /tmp/indeedhub-images.tar ]; then
   echo "Loading custom images from tar..."
@@ -62,7 +119,7 @@ podman run -d --name indeedhub-postgres \
   --network "$NETWORK" --network-alias postgres \
   -v indeedhub-postgres-data:/var/lib/postgresql/data \
   -e POSTGRES_USER=indeedhub \
-  -e POSTGRES_PASSWORD=indeehhub-archy-2026 \
+  -e POSTGRES_PASSWORD="$DATABASE_PASSWORD" \
   -e POSTGRES_DB=indeedhub \
   "$INDEEDHUB_POSTGRES_IMAGE"
 
@@ -92,7 +149,7 @@ podman run -d --name indeedhub-minio \
   --network "$NETWORK" --network-alias minio \
   -v indeedhub-minio-data:/data \
   -e MINIO_ROOT_USER=indeeadmin \
-  -e MINIO_ROOT_PASSWORD=indeeadmin2026 \
+  -e MINIO_ROOT_PASSWORD="$MINIO_ROOT_PASSWORD" \
   "${MINIO_IMAGE}" \
   server /data --console-address ":9001"
 
@@ -116,7 +173,7 @@ podman run -d --name indeedhub-build_api_1 \
   -e DATABASE_HOST=postgres \
   -e DATABASE_PORT=5432 \
   -e DATABASE_USER=indeedhub \
-  -e DATABASE_PASSWORD=indeehhub-archy-2026 \
+  -e DATABASE_PASSWORD="$DATABASE_PASSWORD" \
   -e DATABASE_NAME=indeedhub \
   -e QUEUE_HOST=redis \
   -e QUEUE_PORT=6379 \
@@ -124,7 +181,7 @@ podman run -d --name indeedhub-build_api_1 \
   -e S3_ENDPOINT=http://minio:9000 \
   -e AWS_REGION=us-east-1 \
   -e AWS_ACCESS_KEY=indeeadmin \
-  -e AWS_SECRET_KEY=indeeadmin2026 \
+  -e AWS_SECRET_KEY="$MINIO_ROOT_PASSWORD" \
   -e S3_PRIVATE_BUCKET_NAME=indeedhub-private \
   -e S3_PUBLIC_BUCKET_NAME=indeedhub-public \
   -e S3_PUBLIC_BUCKET_URL=/storage \
@@ -132,9 +189,9 @@ podman run -d --name indeedhub-build_api_1 \
   -e "BTCPAY_API_KEY=" \
   -e "BTCPAY_STORE_ID=" \
   -e "BTCPAY_WEBHOOK_SECRET=" \
-  -e NOSTR_JWT_SECRET=archipelago-indeehhub-jwt-secret-2026 \
+  -e NOSTR_JWT_SECRET="$NOSTR_JWT_SECRET" \
   -e NOSTR_JWT_EXPIRES_IN=7d \
-  -e AES_MASTER_SECRET=0123456789abcdef0123456789abcdef \
+  -e AES_MASTER_SECRET="$AES_MASTER_SECRET" \
   -e "ADMIN_API_KEY=" \
   -e NODE_OPTIONS=--max-old-space-size=1024 \
   --health-cmd "wget --no-verbose --tries=1 --spider http://localhost:4000/nostr-auth/health || exit 1" \
@@ -154,7 +211,7 @@ podman run -d --name indeedhub-build_ffmpeg-worker_1 \
   -e DATABASE_HOST=postgres \
   -e DATABASE_PORT=5432 \
   -e DATABASE_USER=indeedhub \
-  -e DATABASE_PASSWORD=indeehhub-archy-2026 \
+  -e DATABASE_PASSWORD="$DATABASE_PASSWORD" \
   -e DATABASE_NAME=indeedhub \
   -e QUEUE_HOST=redis \
   -e QUEUE_PORT=6379 \
@@ -162,11 +219,11 @@ podman run -d --name indeedhub-build_ffmpeg-worker_1 \
   -e S3_ENDPOINT=http://minio:9000 \
   -e AWS_REGION=us-east-1 \
   -e AWS_ACCESS_KEY=indeeadmin \
-  -e AWS_SECRET_KEY=indeeadmin2026 \
+  -e AWS_SECRET_KEY="$MINIO_ROOT_PASSWORD" \
   -e S3_PRIVATE_BUCKET_NAME=indeedhub-private \
   -e S3_PUBLIC_BUCKET_NAME=indeedhub-public \
   -e S3_PUBLIC_BUCKET_URL=/storage \
-  -e AES_MASTER_SECRET=0123456789abcdef0123456789abcdef \
+  -e AES_MASTER_SECRET="$AES_MASTER_SECRET" \
   localhost/indeedhub-build_ffmpeg-worker:local
 
 # 7. IndeedHub Frontend
