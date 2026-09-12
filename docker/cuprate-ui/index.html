@@ -22,10 +22,10 @@
             position: fixed;
             inset: 0;
             z-index: -10;
-            background:
-                radial-gradient(1200px 600px at 80% -10%, rgba(247, 147, 26, 0.16), transparent 60%),
-                radial-gradient(900px 500px at 10% 110%, rgba(112, 76, 240, 0.12), transparent 60%),
-                #000;
+            background-image: url('assets/img/bg-network.jpg');
+            background-size: cover;
+            background-position: center;
+            opacity: .42;
         }
 
         .glass-card {
@@ -134,7 +134,7 @@
         <header class="glass-card" style="padding:1.5rem;">
             <div class="app-header">
                 <div class="app-header-id">
-                    <div class="node-mark" aria-hidden="true">C</div>
+                    <div class="node-mark"><img src="assets/img/app-icons/cuprate.svg" alt="Cuprate" style="width:2.35rem;height:2.35rem;object-fit:contain"></div>
                     <div class="app-header-text">
                         <h1><span class="accent">Cuprate</span> Monero Node</h1>
                         <div class="sub">Rust implementation of the Monero protocol, on Archipelago</div>
