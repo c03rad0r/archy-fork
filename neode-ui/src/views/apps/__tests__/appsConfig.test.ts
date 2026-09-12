@@ -118,7 +118,7 @@ describe('appsConfig service filtering', () => {
   it('keeps every curated app placeholder out of Services during install', () => {
     for (const id of Object.keys(APP_CATEGORY_MAP)) {
       if (isServiceContainer(id)) continue
-      const placeholder = makePkg(id, id, APP_CATEGORY_MAP[id])
+      const placeholder = makePkg(id, id, APP_CATEGORY_MAP[id] ?? 'other')
       placeholder.state = PackageState.Installing
       expect(isWebsitePackage(id, placeholder), id).toBe(false)
     }
