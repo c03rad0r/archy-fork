@@ -81,7 +81,6 @@ SINGLE = {
     "fedimint": "FEDIMINT_IMAGE",
     "fedimint-gateway": "FEDIMINT_GATEWAY_IMAGE",
     "nostr-rs-relay": "NOSTR_RS_RELAY_IMAGE",
-    "adguardhome": "ADGUARDHOME_IMAGE",
 }
 
 # Stack apps: app_id -> {container_name: image variable}. The FIRST entry is the

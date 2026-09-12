@@ -1746,11 +1746,6 @@ app:
             }
         }
         exempt.sort();
-        // 30 as of 2026-08-31: the 28 below plus adguardhome's two DNS ports
-        // (53 udp + tcp) — plain DNS answers unauthenticated by protocol, the
-        // same reason router's mDNS/SSDP and every p2p port is exempt; each
-        // carries its auth_rationale in the manifest.
-        //
         // 28 as of 2026-08-23: the 26 below plus cuprate's two exemptions —
         // 18183 (Monero p2p gossip, same reasoning as bitcoin's 8333) and
         // 18090 (host mapping for Monero's canonical 18089 restricted RPC,
@@ -1776,7 +1771,7 @@ app:
         // stage timed out that cycle, so the count here lagged at 17.
         assert_eq!(
             exempt.len(),
-            30,
+            28,
             "unauthenticated port set changed — review before updating this count: {exempt:?}"
         );
     }
@@ -1811,13 +1806,11 @@ app:
         // by anonymous payers), and — since the v1.8.7 platform round — the
         // three own-login consoles brought onto the manifest platform:
         // nginx-proxy-manager 8081 (NPM admin accounts), tailscale 8240
-        // (tailnet login on the web console), adguardhome 3000 (AGH admin
-        // accounts + first-run wizard). All enforce their own login, and an
-        // operator can re-gate any of them from Settings → Access control.
+        // (tailnet login on the web console). Both enforce their own login,
+        // and an operator can re-gate either from Settings → Access control.
         assert_eq!(
             open,
             vec![
-                ("adguardhome".to_string(), 3000u16),
                 ("btcpay-server".to_string(), 23000u16),
                 ("gitea".to_string(), 3001u16),
                 ("nginx-proxy-manager".to_string(), 8081u16),

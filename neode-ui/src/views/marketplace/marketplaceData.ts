@@ -140,7 +140,7 @@ export function categorizeCommunityApp(app: MarketplaceApp): string {
 
   if (id.includes('vpn') || id.includes('wireguard') || id.includes('tailscale') || id.includes('netbird') ||
       id.includes('proxy') || id.includes('dns') || id.includes('pihole') ||
-      id.includes('adguard') || id.includes('nginx') || id.includes('tor') ||
+      id.includes('nginx') || id.includes('tor') ||
       combined.includes('network') || combined.includes('firewall')) {
     return 'networking'
   }

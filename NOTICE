@@ -72,7 +72,7 @@ is available via Debian (https://snapshot.debian.org) as referenced in each
 release's notes. Container images offered through the app catalog and mirror
 registry remain under their upstream licenses (including GPL/AGPL software
 such as mempool, Nextcloud, Vaultwarden, SearXNG, PhotoPrism, Immich,
-Jellyfin, MariaDB, AdGuard Home, and strfry); source links are provided in
+Jellyfin, MariaDB, and strfry); source links are provided in
 the app catalog. The modified mempool-frontend image is built from
 `docker/mempool-frontend/` in this repository (AGPL-3.0 corresponding source).
 

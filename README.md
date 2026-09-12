@@ -11,7 +11,21 @@ Podman containers managed by the Rust backend.
 [![License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 [![Rust](https://img.shields.io/badge/rust-stable-orange)](https://www.rust-lang.org/)
 [![Vue.js](https://img.shields.io/badge/vue.js-3.5-brightgreen)](https://vuejs.org/)
-[![Version](https://img.shields.io/badge/version-1.8.0--alpha-blue)]()
+[![Version](https://img.shields.io/badge/version-1.8.13--alpha-blue)](https://source.archipelago-foundation.org/lfg2025/archy/releases)
+
+## Current release
+
+The current pre-release is **v1.8.13-alpha**. Release notes and signed OTA
+artifacts are published on [Gitea](https://source.archipelago-foundation.org/lfg2025/archy/releases).
+The same source is mirrored through ngit for Nostr-native cloning and
+contribution:
+
+```
+nostr://npub1w3sqdkrhn0gyuvsex32effzgnfpyde6qrrc4u467flg5e9txh4wsfn5vjg/relay.ngit.dev/archy
+```
+
+Clone with ngit, or use the Gitea mirror when you need a conventional Git
+remote. Contributions should follow [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## What is here
 

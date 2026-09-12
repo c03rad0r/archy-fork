@@ -182,7 +182,6 @@ fn image_var_for_app(app_id: &str) -> Option<&'static str> {
         "immich" | "immich_server" => Some("IMMICH_SERVER_IMAGE"),
 
         // Networking
-        "adguardhome" => Some("ADGUARDHOME_IMAGE"),
         "tor" | "archy-tor" => Some("ALPINE_TOR_IMAGE"),
 
         _ => None,

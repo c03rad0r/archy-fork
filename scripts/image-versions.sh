@@ -70,7 +70,6 @@ NETBIRD_DASHBOARD_IMAGE="docker.io/netbirdio/dashboard:v2.38.0"
 NETBIRD_SERVER_IMAGE="docker.io/netbirdio/netbird-server:0.71.2"
 NETBIRD_PROXY_IMAGE="docker.io/library/nginx:1.27-alpine"
 ALPINE_TOR_IMAGE="$ARCHY_REGISTRY/alpine-tor:0.4.8.13"
-ADGUARDHOME_IMAGE="$ARCHY_REGISTRY/adguardhome:v0.107.79"
 
 # Fedimint
 FEDIMINT_IMAGE="$ARCHY_REGISTRY/fedimintd:v0.10.1"

@@ -1601,7 +1601,7 @@ IMAGES_CAPTURED_FROM_SERVER=0
 if [ -n "$DEV_SERVER" ] && [ "$DEV_SERVER" != "localhost" ] && [ "$DEV_SERVER" != "127.0.0.1" ]; then
     echo "   Capturing container images from live server ($DEV_SERVER)..."
     # Patterns match against `podman images` repository names (not container names)
-    CAPTURE_PATTERNS="bitcoin-ui bitcoinknots lnd lnd-ui electrs-ui filebrowser mempool backend frontend electrs tailscale homeassistant home-assistant btcpayserver nbxplorer postgres alpine-tor nostr-rs-relay strfry fedimintd gatewayd dwn-server vaultwarden searxng mariadb valkey nginx-alpine portainer nginx-proxy-manager adguard"
+    CAPTURE_PATTERNS="bitcoin-ui bitcoinknots lnd lnd-ui electrs-ui filebrowser mempool backend frontend electrs tailscale homeassistant home-assistant btcpayserver nbxplorer postgres alpine-tor nostr-rs-relay strfry fedimintd gatewayd dwn-server vaultwarden searxng mariadb valkey nginx-alpine portainer nginx-proxy-manager"
     REMOTE_TMP="/tmp/archipelago-image-capture-$$"
     SAVED_LIST=$(ssh "$DEV_SERVER" "mkdir -p $REMOTE_TMP && for p in $CAPTURE_PATTERNS; do img=\$(podman images --format '{{.Repository}}:{{.Tag}}' 2>/dev/null | grep -i \"\$p\" | head -1); [ -n \"\$img\" ] && podman save -o \"$REMOTE_TMP/\$p.tar\" \"\$img\" 2>/dev/null && echo \"\$p\"; done" 2>/dev/null) || true
     for p in $SAVED_LIST; do
@@ -1648,7 +1648,6 @@ ${PHOTOPRISM_IMAGE} photoprism.tar
 ${NEXTCLOUD_IMAGE} nextcloud.tar
 ${NPM_IMAGE} nginx-proxy-manager.tar
 ${ONLYOFFICE_IMAGE} onlyoffice.tar
-${ADGUARDHOME_IMAGE} adguardhome.tar
 "
 
 # Pull and save each image (force target arch) only if not already present
