@@ -68,6 +68,7 @@ const REGISTRY = 'source.archipelago-foundation.org/lfg2025'
 
 /** Marketplace app ID -> backend package keys (for "Already Installed" when first-boot/deploy created them) */
 export const INSTALLED_ALIASES: Record<string, string[]> = {
+  'cuprate-ui': ['cuprate-ui', 'cuprate'],
   mempool: ['mempool-web', 'mempool-api', 'archy-mempool-web', 'archy-mempool-db'],
   bitcoin: ['bitcoin-knots'],
   btcpay: ['btcpay-server', 'archy-btcpay-db', 'archy-nbxplorer'],

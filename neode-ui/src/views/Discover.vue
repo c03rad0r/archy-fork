@@ -365,6 +365,7 @@ import AppGrid from './discover/AppGrid.vue'
 import InstallVersionModal from '@/components/InstallVersionModal.vue'
 import type { MarketplaceApp, FeaturedApp } from './discover/types'
 import { getCuratedAppList, INSTALLED_ALIASES, FEATURED_DEFINITIONS, categorizeCommunityApp, fetchAppCatalog, type CatalogFeatured, type CatalogStorefront } from './discover/curatedApps'
+import { isServiceContainer } from './apps/serviceNames'
 
 const router = useRouter()
 const store = useAppStore()
@@ -733,6 +734,16 @@ onBeforeUnmount(() => {
 
 const toast = useToast()
 
+function installToast(app: MarketplaceApp) {
+  const service = isServiceContainer(app.id)
+  const destination = service ? 'Services' : 'My Apps'
+  toast.action(
+    `Installing ${app.title ?? app.id} — it will appear in ${destination}`,
+    { label: `View ${destination}`, onClick: () => router.push({ path: '/dashboard/apps', query: service ? { tab: 'services' } : {} }) },
+    { variant: 'info', duration: 15000 },
+  )
+}
+
 function installBlockedReason(appId: string): string | undefined {
   if (!bitcoinPruned.value) return undefined
   if (appId !== 'electrumx' && appId !== 'electrs' && appId !== 'mempool-electrs') return undefined
@@ -766,8 +777,7 @@ function failInstall(app: MarketplaceApp, err: unknown) {
 async function installApp(app: MarketplaceApp, versionOverride?: string) {
   if (installingApps.has(app.id) || isInstalled(app.id)) return
   queueInstall(app)
-  toast.info("Installing " + (app.title ?? app.id) + " - check My Apps")
-  router.push('/dashboard/apps').catch(() => {})
+  installToast(app)
   try {
     const installUrl = app.url || app.manifestUrl || app.s9pkUrl
     await rpcClient.call({ method: 'package.install', params: { id: app.id, url: installUrl, version: versionOverride || app.version }, timeout: 600000 })
@@ -780,8 +790,7 @@ async function installApp(app: MarketplaceApp, versionOverride?: string) {
 async function installCommunityApp(app: MarketplaceApp, versionOverride?: string) {
   if (installingApps.has(app.id) || isInstalled(app.id) || !app.dockerImage) return
   queueInstall(app)
-  toast.info("Installing " + (app.title ?? app.id) + " - check My Apps")
-  router.push('/dashboard/apps').catch(() => {})
+  installToast(app)
   try {
     const installParams: Record<string, unknown> = { id: app.id, dockerImage: app.dockerImage, version: versionOverride || app.version }
     if ((app as Record<string, unknown>).containerConfig) {

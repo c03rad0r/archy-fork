@@ -308,6 +308,7 @@ export function getCuratedAppList(): MarketplaceApp[] {
 // Supporting containers (DBs, caches, workers) do NOT — having only a DB
 // without the main app should not mark the app as installed in the UI.
 export const INSTALLED_ALIASES: Record<string, string[]> = {
+  'cuprate-ui': ['cuprate-ui', 'cuprate'],
   mempool: ['mempool', 'mempool-web', 'archy-mempool-web'],
   bitcoin: ['bitcoin-knots'],
   btcpay: ['btcpay-server'],

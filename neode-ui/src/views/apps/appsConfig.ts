@@ -37,7 +37,7 @@ export function isServicePackage(id: string, pkg?: PackageDataEntry): boolean {
 
 // Known app -> category mappings (matches App Store categorisation)
 export const APP_CATEGORY_MAP: Record<string, string> = {
-  'bitcoin-core': 'money', 'bitcoin-knots': 'money', 'bitcoin-ui': 'money', 'electrumx': 'money', 'electrs': 'money',
+  'bitcoin-core': 'money', 'bitcoin-knots': 'money', 'bitcoin-ui': 'money', 'cuprate-ui': 'money', 'electrumx': 'money', 'electrs': 'money',
   'lnd': 'money', 'mempool': 'money', 'mempool-web': 'money', 'btcpay-server': 'commerce',
   'fedimint': 'money', 'fedimint-gateway': 'money',
   'indeedhub': 'media', 'jellyfin': 'media', 'photoprism': 'media', 'immich': 'media',

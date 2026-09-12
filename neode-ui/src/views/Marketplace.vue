@@ -185,6 +185,7 @@ import {
   getCuratedAppList,
 } from './marketplace/marketplaceData'
 import { fetchAppCatalog } from './discover/curatedApps'
+import { isServiceContainer } from './apps/serviceNames'
 
 const router = useRouter()
 const route = useRoute()
@@ -206,6 +207,17 @@ const appStoreSections = computed(() => APP_STORE_SECTIONS)
 // Installation state — uses global store so it persists across navigation
 const installingApps = server.installingApps
 const electrumxArchiveWarning = 'You need a full archival bitcoin node before downloading ElectrumX'
+
+function installToast(app: MarketplaceApp) {
+  const service = isServiceContainer(app.id)
+  const tab = service ? 'services' : 'apps'
+  const destination = service ? 'Services' : 'My Apps'
+  toast.action(
+    `Installing ${app.title ?? app.id} — it will appear in ${destination}`,
+    { label: `View ${destination}`, onClick: () => router.push({ path: '/dashboard/apps', query: service ? { tab } : {} }) },
+    { variant: 'info', duration: 15000 },
+  )
+}
 
 // Install progress tracking is now in serverStore (global watcher on WebSocket data)
 // so it works regardless of which page is active
@@ -518,7 +530,7 @@ async function installApp(app: MarketplaceApp) {
   // Stay on the store page: the tile itself shows install progress via the
   // global watcher, and a forced jump to My Apps yanked the user out of the
   // page they were deliberately browsing.
-  toast.info("Installing " + (app.title ?? app.id) + " — it will appear in My Apps")
+  installToast(app)
 
   try {
     const installUrl = app.url || app.manifestUrl || app.s9pkUrl
@@ -543,7 +555,7 @@ async function installCommunityApp(app: MarketplaceApp) {
 
   queueInstall(app)
   // Stay on the store page (see installApp).
-  toast.info("Installing " + (app.title ?? app.id) + " — it will appear in My Apps")
+  installToast(app)
 
   try {
     const installParams: Record<string, unknown> = { id: app.id, dockerImage: app.dockerImage, version: app.version }

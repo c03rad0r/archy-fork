@@ -14,6 +14,8 @@
 // SERVICE_NAMES set that used to live in appsConfig.ts verbatim.
 export const SERVICE_NAMES = new Set([
   'dwn', 'archy-mempool-db', 'archy-btcpay-db', 'archy-nbxplorer', 'archy-tor',
+  // Cuprate's daemon is the backend dependency of the Cuprate UI app.
+  'cuprate',
   // Headless backends with no user-facing UI: the Fedimint ecash client daemon,
   // the Nostr relay, and the Meshtastic LoRa daemon (its chat UI lives in the
   // built-in Mesh tab) belong in Services, not My Apps.
