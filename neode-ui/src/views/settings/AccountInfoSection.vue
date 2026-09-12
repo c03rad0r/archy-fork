@@ -362,6 +362,16 @@ init()
               </button>
             </div>
             <div class="overflow-y-auto flex-1 min-h-0 space-y-6 pr-1">
+              <!-- v1.8.13-alpha -->
+              <div>
+                <div class="flex items-center gap-2 mb-3">
+                  <span class="text-xs font-mono px-2 py-0.5 rounded bg-orange-500/20 text-orange-300">v1.8.13-alpha</span>
+                  <span class="text-xs text-white/40">September 12, 2026</span>
+                </div>
+                <div class="space-y-3 text-sm text-white/80 pl-3 border-l border-white/10">
+                  <p><strong>GitWorkshop installs reliably on fresh nodes.</strong> The app is classified as a user-facing app while its install placeholder is being created, so it remains visible under My Apps instead of Services. Fresh installs now use the production orchestrator to build the bundled GitWorkshop image rather than sending its local image reference through the legacy registry-pull path. Regression coverage now protects all curated app classifications.</p>
+                </div>
+              </div>
               <!-- v1.8.12-alpha -->
               <div>
                 <div class="flex items-center gap-2 mb-3">
@@ -369,6 +379,7 @@ init()
                   <span class="text-xs text-white/40">September 11, 2026</span>
                 </div>
                 <div class="space-y-3 text-sm text-white/80 pl-3 border-l border-white/10">
+                  <p><strong>Fresh IndeedHub installs no longer share a fleet-wide encryption root.</strong> The API now generates a persistent per-node AES master secret and shares it with the media worker through the platform's protected secret environment. Existing nodes migrate the exact legacy value they are already using before any container can be recreated, preserving access to encrypted data; an unreadable or empty existing root fails safely instead of being silently replaced. The manifest path, retired fallback installer, and container repair script follow the same rule.</p>
                   <p><strong>The Companion download advertises and re-announces the APK it actually serves.</strong> The Discover banner and its install prompt now share the no-cache APK metadata, visibly report Companion 0.5.32 build 52, and remember dismissal per Android build rather than forever, so an existing browser gets one useful update prompt when the APK changes. The ISO gate reads the expected version from the Android build itself instead of accepting the stale 0.5.28 payload.</p>
                   <p><strong>GitWorkshop's dependency audit is clean.</strong> The pinned upstream client keeps its separately reviewable Archipelago integration patch and now applies a deterministic dependency patch: safe lock refreshes plus targeted fflate, React Router, and Vitest upgrades remove all ten production advisories and all eight development advisories. A clean install reports zero vulnerabilities; type-check, all 152 upstream unit tests, and the exact Archipelago subpath build pass.</p>
                   <p><strong>Every completed payment now gets the full Lightning-style receipt screen.</strong> Cashu and Fedimint sends no longer leave the payment form open behind a token; wallet, QR-scan, Web5, and app-requested sends all replace their forms with the animated success state. Payment hashes, transaction IDs, ecash tokens/notes, mint details, and other useful references remain copyable in the receipt, and receive completions open the same distinct payment-success modal. Minibits claims retain a short-lived durable receipt so the visible modal still reports success when another dashboard or Companion context wins the claim-poll race, while concurrent watchers now share one bounded relay fetch instead of queueing several long polls.</p>
