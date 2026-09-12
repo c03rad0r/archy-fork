@@ -26,7 +26,7 @@
         "headline": "Your node. Your source.",
         "description": "Install GitWorkshop to browse Archipelago's code from your own node, clone it with ngit, and contribute issues, patches, and reviews over Nostr.",
         "tag": "NGIT // NOSTR // NO SILO",
-        "path": "/npub1w3sqdkrhn0gyuvsex32effzgnfpyde6qrrc4u467flg5e9txh4wsfn5vjg/archy",
+        "path": "/npub1w3sqdkrhn0gyuvsex32effzgnfpyde6qrrc4u467flg5e9txh4wsfn5vjg/relay.ngit.dev/archy",
         "launchLabel": "Open GitWorkshop",
         "installLabel": "Install GitWorkshop",
         "detailsLabel": "How contribution works →"

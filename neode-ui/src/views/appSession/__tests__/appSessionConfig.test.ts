@@ -1,5 +1,5 @@
 import { describe, expect, it, beforeEach } from 'vitest'
-import { HOST_FRAME_APPS, NEW_TAB_APPS, directAppUrl, resolveAppUrl } from '../appSessionConfig'
+import { DEFAULT_GITWORKSHOP_REPO_PATH, HOST_FRAME_APPS, NEW_TAB_APPS, directAppUrl, resolveAppUrl } from '../appSessionConfig'
 import { GENERATED_HOST_FRAME_APPS, GENERATED_NEW_TAB_APPS } from '../generatedAppSessionConfig'
 import { __setSignedCatalogForTests } from '../../discover/curatedApps'
 
@@ -159,9 +159,9 @@ describe('appSessionConfig', () => {
     // Source is intentionally absent from SIGNED until owner UAT passes. It
     // must follow the already-working dashboard ingress instead of assuming
     // that the same address also exposes a dedicated high port.
-    expect(resolveAppUrl('archipelago-source')).toBe('/app/archipelago-source/')
+    expect(resolveAppUrl('archipelago-source')).toBe(`/app/archipelago-source${DEFAULT_GITWORKSHOP_REPO_PATH}`)
     expect(resolveAppUrl('archipelago-source', undefined, 'http://localhost:8337'))
-      .toBe('/app/archipelago-source/')
+      .toBe(`/app/archipelago-source${DEFAULT_GITWORKSHOP_REPO_PATH}`)
     expect(resolveAppUrl('archipelago-source', '/search'))
       .toBe('/app/archipelago-source/search')
   })

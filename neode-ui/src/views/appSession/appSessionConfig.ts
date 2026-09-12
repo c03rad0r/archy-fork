@@ -61,6 +61,10 @@ export const PROXY_APPS: Record<string, string> = {
   'uptime-kuma': '/app/uptime-kuma/',
 }
 
+/** The repository shown when GitWorkshop is opened from the app launcher. */
+export const DEFAULT_GITWORKSHOP_REPO_PATH =
+  '/npub1w3sqdkrhn0gyuvsex32effzgnfpyde6qrrc4u467flg5e9txh4wsfn5vjg/relay.ngit.dev/archy'
+
 /** App launches use direct ports. Do not route through /app/... path proxies. */
 export const HTTPS_PROXY_PATHS: Record<string, string> = {
 }
@@ -137,8 +141,8 @@ export function resolveAppUrl(id: string, routeQueryPath?: string, runtimeUrl?: 
   // high port is reachable through the same address.
   if (id === 'archipelago-source') {
     const base = PROXY_APPS['archipelago-source']!
-    if (!routeQueryPath) return base
-    return base.replace(/\/+$/, '') + (routeQueryPath.startsWith('/') ? routeQueryPath : `/${routeQueryPath}`)
+    const path = routeQueryPath || DEFAULT_GITWORKSHOP_REPO_PATH
+    return base.replace(/\/+$/, '') + (path.startsWith('/') ? path : `/${path}`)
   }
 
   // Bitcoin UI is a host-network companion on :8334. Do not launch it via
