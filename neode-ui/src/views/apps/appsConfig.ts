@@ -259,9 +259,24 @@ export function canLaunch(pkg: PackageDataEntry): boolean {
   // the tile stays launchable while the backend is still 'starting' (ElectrumX
   // indexes for 10m+ on first run). A genuinely 'unhealthy' backend still
   // blocks. Apps that rely on a runtime interface-address keep the strict gate.
-  const blockedByHealth =
-    pkg.health === 'unhealthy' || (pkg.health === 'starting' && !hasKnownLaunchUrl)
+  const blockedByHealth = !isAppReadyForLaunch(pkg) ||
+    (pkg.health === 'starting' && !hasKnownLaunchUrl)
   return !!hasUI && pkg.state === 'running' && !blockedByHealth
+}
+
+/**
+ * A published port is not the same thing as a usable app.  During the short
+ * interval between the container entering `running` and its HTTP health check
+ * passing, nginx quite correctly returns 502 because the upstream has not
+ * bound its socket yet.  Keep every app with a declared health check out of
+ * the launch path until the platform has observed readiness.  Apps without a
+ * health check retain the legacy state/port behaviour.
+ */
+export function isAppReadyForLaunch(pkg: PackageDataEntry): boolean {
+  const manifest = pkg.manifest as unknown as Record<string, unknown>
+  const hasHealthCheck = Boolean(manifest.health_check || manifest['health-check'])
+  if (!hasHealthCheck) return pkg.health !== 'unhealthy'
+  return pkg.health === 'healthy'
 }
 
 export function launchBlockedReason(id: string, pkg?: PackageDataEntry | null): string {
@@ -271,6 +286,9 @@ export function launchBlockedReason(id: string, pkg?: PackageDataEntry | null): 
     (pkg?.state === PackageState.Starting || (pkg?.state === PackageState.Running && pkg?.health === 'starting'))
   ) {
     return 'Guardian opens a wait page until Bitcoin finishes initial sync.'
+  }
+  if (pkg && pkg.state === PackageState.Running && !isAppReadyForLaunch(pkg)) {
+    return 'Starting up — Launch will appear when the app is ready.'
   }
   return ''
 }

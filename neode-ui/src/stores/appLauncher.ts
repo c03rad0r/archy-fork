@@ -7,7 +7,8 @@ import { openInAppOrNewTab, isCompanionApp, type InAppLaunchMeta } from '@/utils
 import { directAppUrl, HOST_FRAME_APPS, HTTPS_APP_IDS, resolveAppUrl } from '@/views/appSession/appSessionConfig'
 import { appPortIsGateFronted } from '@/views/appSession/appSessionConfig'
 import { useAppStore } from '@/stores/app'
-import { resolveAppIcon } from '@/views/apps/appsConfig'
+import { resolveAppIcon, isAppReadyForLaunch } from '@/views/apps/appsConfig'
+import { useToast } from '@/composables/useToast'
 import { IS_DEMO, isDemoApp, isDemoExternal, demoAppUrl } from '@/composables/useDemoIntro'
 import type { AppCredential, AppCredentialsResponse } from '@/types/api'
 import { resolveAppCredentials } from '@/views/apps/appCredentials'
@@ -290,6 +291,14 @@ export const useAppLauncherStore = defineStore('appLauncher', () => {
    * Previously each Apps view owned a private modal, so Home skipped the
    * Portainer first-run token entirely. */
   function openSession(appId: string, opts: LaunchOptions = {}) {
+    // Home/goal/deep-link launchers do not pass through AppCard.canLaunch.
+    // Apply the same readiness gate here so a container that has just entered
+    // `running` cannot race nginx and show a transient 502 to the user.
+    const pkg = useAppStore().data?.['package-data']?.[appId]
+    if (pkg && pkg.state === 'running' && !isAppReadyForLaunch(pkg)) {
+      useToast().info(`${pkg.manifest?.title || appId} is still starting — try again in a moment`)
+      return
+    }
     if (!opts.skipCredentialPrompt && CREDENTIAL_INTERSTITIAL_APPS.has(appId)) {
       void prepareCredentialLaunch(appId, opts.path)
       return

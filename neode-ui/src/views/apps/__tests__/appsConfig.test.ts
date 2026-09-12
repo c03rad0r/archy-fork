@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { ref } from 'vue'
 import { PackageState, type PackageDataEntry } from '@/types/api'
-import { APP_CATEGORY_MAP, canLaunch, filterEntriesForTab, hasFrontendUi, isServiceContainer, isServicePackage, isWebsitePackage, launchBlockedReason, resolveAppIcon, useCategoriesWithApps, DEFAULT_APP_ICON } from '../appsConfig'
+import { APP_CATEGORY_MAP, canLaunch, filterEntriesForTab, hasFrontendUi, isServiceContainer, isServicePackage, isWebsitePackage, isAppReadyForLaunch, launchBlockedReason, resolveAppIcon, useCategoriesWithApps, DEFAULT_APP_ICON } from '../appsConfig'
 
 function makePkg(id: string, title: string, category: string): PackageDataEntry {
   return {
@@ -139,6 +139,19 @@ describe('appsConfig service filtering', () => {
     ;(confirmedUi.manifest as unknown as Record<string, unknown>).interfaces = { main: { ui: 'true' } }
     confirmedUi.installed = { 'interface-addresses': { main: { 'lan-address': 'http://localhost:8095' } }, status: 'running' } as unknown as PackageDataEntry['installed']
     expect(canLaunch(confirmedUi)).toBe(true)
+  })
+
+  it('does not launch a health-checked app during the running-before-ready race', () => {
+    const pkg = makePkg('archipelago-source', 'GitWorkshop', 'development')
+    ;(pkg.manifest as unknown as Record<string, unknown>).interfaces = { main: { ui: 'true' } }
+    ;(pkg.manifest as unknown as Record<string, unknown>).health_check = { path: '/healthz' }
+    pkg.installed = { 'interface-addresses': { main: { 'lan-address': 'http://localhost:8337' } }, status: 'running' } as unknown as PackageDataEntry['installed']
+    pkg.health = null
+    expect(isAppReadyForLaunch(pkg)).toBe(false)
+    expect(canLaunch(pkg)).toBe(false)
+    expect(launchBlockedReason(pkg.manifest.id, pkg)).toContain('Starting up')
+    pkg.health = 'healthy'
+    expect(canLaunch(pkg)).toBe(true)
   })
 
   it('never offers Launch for curated service containers even with a UI flag', () => {
