@@ -2743,6 +2743,11 @@ fn uses_orchestrator_install_flow(package_id: &str) -> bool {
             | "gitea"
             | "portainer"
             | "meshtastic"
+            // Build-backed user-facing app. Route it through the production
+            // orchestrator so a fresh node builds its bundled image instead
+            // of treating localhost/archipelago-source:local as a registry
+            // image in the legacy installer.
+            | "archipelago-source"
     )
 }
 
@@ -2822,6 +2827,7 @@ mod tests {
             "gitea",
             "portainer",
             "meshtastic",
+            "archipelago-source",
         ] {
             assert!(uses_orchestrator_install_flow(app));
             assert!(should_try_orchestrator_install(app, true));

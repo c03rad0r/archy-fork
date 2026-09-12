@@ -48,6 +48,9 @@ export const APP_CATEGORY_MAP: Record<string, string> = {
   'tailscale': 'networking', 'netbird': 'networking', 'nginx-proxy-manager': 'networking', 'portainer': 'networking',
   'uptime-kuma': 'networking',
   'botfights': 'community',
+  // User-facing app: keep the install placeholder in My Apps while its
+  // manifest (including interfaces.main.ui) is not available yet.
+  'archipelago-source': 'development',
 }
 
 export function getAppCategory(id: string, pkg: PackageDataEntry): string {

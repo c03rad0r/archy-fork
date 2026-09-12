@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { ref } from 'vue'
 import { PackageState, type PackageDataEntry } from '@/types/api'
-import { canLaunch, filterEntriesForTab, hasFrontendUi, isServiceContainer, isServicePackage, isWebsitePackage, launchBlockedReason, resolveAppIcon, useCategoriesWithApps, DEFAULT_APP_ICON } from '../appsConfig'
+import { APP_CATEGORY_MAP, canLaunch, filterEntriesForTab, hasFrontendUi, isServiceContainer, isServicePackage, isWebsitePackage, launchBlockedReason, resolveAppIcon, useCategoriesWithApps, DEFAULT_APP_ICON } from '../appsConfig'
 
 function makePkg(id: string, title: string, category: string): PackageDataEntry {
   return {
@@ -103,6 +103,25 @@ describe('appsConfig service filtering', () => {
     uiApp.installed = { 'interface-addresses': { main: { 'lan-address': 'http://localhost:9001' } } } as unknown as PackageDataEntry['installed']
     expect(hasFrontendUi(uiApp)).toBe(true)
     expect(isWebsitePackage('some-ui-app', uiApp)).toBe(false)
+  })
+
+  it('keeps GitWorkshop in My Apps while installing metadata is minimal', () => {
+    const installing = makePkg('archipelago-source', 'GitWorkshop', 'development')
+    installing.state = PackageState.Installing
+    expect(isWebsitePackage('archipelago-source', installing)).toBe(false)
+    expect(filterEntriesForTab([['archipelago-source', installing]], 'apps', 'all'))
+      .toEqual([['archipelago-source', installing]])
+    expect(filterEntriesForTab([['archipelago-source', installing]], 'services', 'all'))
+      .toEqual([])
+  })
+
+  it('keeps every curated app placeholder out of Services during install', () => {
+    for (const id of Object.keys(APP_CATEGORY_MAP)) {
+      if (isServiceContainer(id)) continue
+      const placeholder = makePkg(id, id, APP_CATEGORY_MAP[id])
+      placeholder.state = PackageState.Installing
+      expect(isWebsitePackage(id, placeholder), id).toBe(false)
+    }
   })
 
   it('never offers Launch for an unknown container with a bare exposed port', () => {
