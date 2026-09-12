@@ -154,7 +154,12 @@ const loadError = ref<string | null>(null)
 // explicitly; keep a defensive name/purpose fallback for older nodes that do
 // not send is_node yet.
 const userIdentities = computed(() => identities.value.filter(identity =>
-  !identity.is_node && identity.name.trim().toLowerCase() !== 'node'
+  // `node-<pubkey>` is the deterministic id used by older node APIs before
+  // the explicit is_node marker was added. Keep this fallback so an older
+  // backend can never expose the appliance key as a profile choice.
+  !identity.is_node
+  && !identity.id.trim().toLowerCase().startsWith('node-')
+  && identity.name.trim().toLowerCase() !== 'node'
 ))
 
 useModalKeyboard(modalRef, computed(() => props.show), () => emit('cancel'))
