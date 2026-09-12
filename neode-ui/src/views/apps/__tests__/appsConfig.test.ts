@@ -76,6 +76,16 @@ describe('appsConfig service filtering', () => {
     expect(services.map(([id]) => id)).toEqual(['core-lnd-ui'])
   })
 
+  it('shows Cuprate as one My Apps entry while hiding its daemon dependency', () => {
+    const entries: Array<[string, PackageDataEntry]> = [
+      ['cuprate-ui', makePkg('cuprate-ui', 'Cuprate UI', 'money')],
+      ['cuprate', makePkg('cuprate', 'Cuprate daemon', 'money')],
+    ]
+    ;(entries[0][1].manifest as unknown as Record<string, unknown>).interfaces = { main: { ui: 'http://localhost:18091' } }
+    expect(filterEntriesForTab(entries, 'apps', 'all').map(([id]) => id)).toEqual(['cuprate-ui'])
+    expect(filterEntriesForTab(entries, 'services', 'all').map(([id]) => id)).toEqual(['cuprate'])
+  })
+
   it('falls back to packaged app icon when static icon token is not a path', () => {
     const pkg = makePkg('gitea', 'Gitea', 'dev')
     pkg['static-files']!.icon = 'git-branch'
