@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+## v1.8.13-alpha (2026-09-12)
+
+- **GitWorkshop installs reliably on fresh nodes.** The app is classified as a user-facing app while its install placeholder is being created, so it remains visible under My Apps instead of Services. Fresh installs now use the production orchestrator to build the bundled GitWorkshop image rather than sending its local image reference through the legacy registry-pull path. Regression coverage now protects all curated app classifications.
+
 ## v1.8.12-alpha (2026-09-11)
 
 - **Fresh IndeedHub installs no longer share a fleet-wide encryption root.** The API now generates a persistent per-node AES master secret and shares it with the media worker through the platform's protected secret environment. Existing nodes migrate the exact legacy value they are already using before any container can be recreated, preserving access to encrypted data; an unreadable or empty existing root fails safely instead of being silently replaced. The manifest path, retired fallback installer, and container repair script follow the same rule.
