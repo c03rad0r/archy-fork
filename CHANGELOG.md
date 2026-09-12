@@ -4,7 +4,9 @@
 
 ## v1.8.13-alpha (2026-09-12)
 
-- **GitWorkshop installs reliably on fresh nodes.** The app is classified as a user-facing app while its install placeholder is being created, so it remains visible under My Apps instead of Services. Fresh installs now use the production orchestrator to build the bundled GitWorkshop image rather than sending its local image reference through the legacy registry-pull path. Regression coverage now protects all curated app classifications.
+- **GitWorkshop installs reliably on fresh nodes.** The app is classified as a user-facing app while its install placeholder is being created, so it remains visible under My Apps instead of Services.
+- **Fresh GitWorkshop installs build the correct image.** The production orchestrator handles its bundled build context instead of sending the local image reference through the legacy registry-pull path.
+- **Curated app classification is regression-tested.** Every user-facing app remains in My Apps during installation, while headless services stay in Services.
 
 ## v1.8.12-alpha (2026-09-11)
 
