@@ -45,13 +45,13 @@
               </button>
             </div>
 
-            <div v-else-if="identities.length === 0" class="text-center py-8">
+            <div v-else-if="userIdentities.length === 0" class="text-center py-8">
               <p class="text-white/50 text-sm">No identities found.</p>
               <p class="text-white/30 text-xs mt-1">Create one in Settings &rarr; Credentials</p>
             </div>
 
             <button
-              v-for="identity in identities"
+              v-for="identity in userIdentities"
               :key="identity.id"
               type="button"
               role="radio"
@@ -130,6 +130,7 @@ interface Identity {
   is_default: boolean
   nostr_pubkey?: string
   nostr_npub?: string
+  is_node?: boolean
 }
 
 const props = defineProps<{
@@ -148,10 +149,18 @@ const selectedId = ref<string | null>(null)
 const loading = ref(false)
 const loadError = ref<string | null>(null)
 
+// The node key authenticates the appliance itself (mesh/discovery and other
+// platform operations), not the person's public profile. The API marks it
+// explicitly; keep a defensive name/purpose fallback for older nodes that do
+// not send is_node yet.
+const userIdentities = computed(() => identities.value.filter(identity =>
+  !identity.is_node && identity.name.trim().toLowerCase() !== 'node'
+))
+
 useModalKeyboard(modalRef, computed(() => props.show), () => emit('cancel'))
 
 const hasNostrKey = computed(() => {
-  const selected = identities.value.find(i => i.id === selectedId.value)
+  const selected = userIdentities.value.find(i => i.id === selectedId.value)
   return selected?.nostr_pubkey != null
 })
 
@@ -169,8 +178,8 @@ async function loadIdentities() {
   try {
     const res = await rpcClient.call<{ identities: Identity[] }>({ method: 'identity.list' })
     identities.value = res.identities || []
-    const defaultId = identities.value.find(i => i.is_default && i.nostr_pubkey)
-      || identities.value.find(i => i.nostr_pubkey)
+    const defaultId = userIdentities.value.find(i => i.is_default && i.nostr_pubkey)
+      || userIdentities.value.find(i => i.nostr_pubkey)
     if (defaultId) selectedId.value = defaultId.id
   } catch (error) {
     identities.value = []
@@ -183,7 +192,7 @@ async function loadIdentities() {
 }
 
 function confirm() {
-  const selected = identities.value.find(i => i.id === selectedId.value)
+  const selected = userIdentities.value.find(i => i.id === selectedId.value)
   if (selected) emit('select', selected)
 }
 

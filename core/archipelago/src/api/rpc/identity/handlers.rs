@@ -55,6 +55,10 @@ impl RpcHandler {
                     "did": id.did,
                     "created_at": id.created_at,
                     "is_default": is_default,
+                    // The node's operational Nostr key is intentionally
+                    // distinguishable from user profile identities. Clients
+                    // must never offer it in app sign-in pickers.
+                    "is_node": is_node,
                     "nostr_pubkey": nostr_pubkey,
                     "nostr_npub": nostr_npub,
                     "profile": id.profile,
