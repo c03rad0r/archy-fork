@@ -378,6 +378,23 @@ async fn write_staged_torrc(content: &str, staging: &str) -> Result<()> {
 }
 
 #[cfg(test)]
+mod known_service_tests {
+    use super::{is_protocol_service, known_service_port};
+
+    #[test]
+    fn bitcoin_core_is_a_protocol_service_on_the_p2p_port() {
+        // Regression: apps/bitcoin-core/manifest.yml uses id "bitcoin-core",
+        // distinct from the legacy "bitcoin"/"bitcoin-knots" ids. Missing
+        // here means auto-enrollment silently skips it (known_service_port
+        // returns 0) and, separately, regenerate_torrc falls back to the
+        // web-app HiddenServicePort-80 default instead of forwarding 8333
+        // straight through.
+        assert_eq!(known_service_port("bitcoin-core"), 8333);
+        assert!(is_protocol_service("bitcoin-core"));
+    }
+}
+
+#[cfg(test)]
 mod torrc_tests {
     use super::app_hidden_service_port_line;
     use std::collections::HashSet;
@@ -594,7 +611,7 @@ fn is_valid_v3_onion(s: &str) -> bool {
 pub(in crate::api::rpc) fn known_service_port(name: &str) -> u16 {
     match name {
         "archipelago" => 80,
-        "bitcoin" | "bitcoin-knots" => 8333,
+        "bitcoin" | "bitcoin-core" | "bitcoin-knots" => 8333,
         "electrs" | "electrumx" => 50001,
         "lnd" => 8080,
         "btcpay" | "btcpay-server" | "btcpayserver" => 23000,
@@ -619,7 +636,7 @@ pub(in crate::api::rpc) fn known_service_port(name: &str) -> u16 {
 pub(in crate::api::rpc) fn is_protocol_service(name: &str) -> bool {
     matches!(
         name,
-        "bitcoin" | "bitcoin-knots" | "electrs" | "electrumx" | "lnd"
+        "bitcoin" | "bitcoin-core" | "bitcoin-knots" | "electrs" | "electrumx" | "lnd"
     )
 }
 
