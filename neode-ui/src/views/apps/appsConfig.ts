@@ -20,6 +20,10 @@ export const isServiceContainer = sharedIsServiceContainer
 
 const INTERNAL_TOOLING_NAMES = new Set([
   'buildx_buildkit_default',
+  // Cuprate's dashboard is bundled as a companion of the primary cuprate
+  // package; showing the generated container as a second Services entry
+  // defeats the one-app presentation.
+  'archy-cuprate-ui',
 ])
 
 export function isInternalToolingPackage(id: string, pkg?: PackageDataEntry): boolean {
@@ -37,7 +41,7 @@ export function isServicePackage(id: string, pkg?: PackageDataEntry): boolean {
 
 // Known app -> category mappings (matches App Store categorisation)
 export const APP_CATEGORY_MAP: Record<string, string> = {
-  'bitcoin-core': 'money', 'bitcoin-knots': 'money', 'bitcoin-ui': 'money', 'cuprate-ui': 'money', 'electrumx': 'money', 'electrs': 'money',
+  'bitcoin-core': 'money', 'bitcoin-knots': 'money', 'bitcoin-ui': 'money', 'cuprate': 'money', 'cuprate-ui': 'money', 'electrumx': 'money', 'electrs': 'money',
   'lnd': 'money', 'mempool': 'money', 'mempool-web': 'money', 'btcpay-server': 'commerce',
   'fedimint': 'money', 'fedimint-gateway': 'money',
   'indeedhub': 'media', 'jellyfin': 'media', 'photoprism': 'media', 'immich': 'media',

@@ -78,12 +78,11 @@ describe('appsConfig service filtering', () => {
 
   it('shows Cuprate as one My Apps entry while hiding its daemon dependency', () => {
     const entries: Array<[string, PackageDataEntry]> = [
-      ['cuprate-ui', makePkg('cuprate-ui', 'Cuprate UI', 'money')],
-      ['cuprate', makePkg('cuprate', 'Cuprate daemon', 'money')],
+      ['cuprate', makePkg('cuprate', 'Cuprate', 'money')],
+      ['archy-cuprate-ui', makePkg('archy-cuprate-ui', 'Cuprate UI companion', 'money')],
     ]
-    ;(entries[0]![1].manifest as unknown as Record<string, unknown>).interfaces = { main: { ui: 'http://localhost:18091' } }
-    expect(filterEntriesForTab(entries, 'apps', 'all').map(([id]) => id)).toEqual(['cuprate-ui'])
-    expect(filterEntriesForTab(entries, 'services', 'all').map(([id]) => id)).toEqual(['cuprate'])
+    expect(filterEntriesForTab(entries, 'apps', 'all').map(([id]) => id)).toEqual(['cuprate'])
+    expect(filterEntriesForTab(entries, 'services', 'all').map(([id]) => id)).toEqual([])
   })
 
   it('falls back to packaged app icon when static icon token is not a path', () => {
