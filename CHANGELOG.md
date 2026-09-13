@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+## v1.8.14-alpha (2026-09-13)
+
+- **Cuprate gains a first-party companion dashboard.** The Monero node now has a Bitcoin-style status UI, safe app grouping, a 450 GB disk-safety gate, and a restricted RPC that is never exposed as a launch page.
+- **Bitcoin Core Tor enrollment uses the correct protocol identity.** `bitcoin-core` is forwarded on port 8333 and resolves to its own hidden-service directory without disturbing legacy Bitcoin aliases.
+- **GitWorkshop opens Archipelago’s canonical ngit repository by default.** The launcher and registry promotion use the full maintainer/relay/`archy` coordinate, with regression coverage for Companion and browser-tab launches.
+- **Release validation is stricter.** The registry gate now checks the complete canonical source deep link, and the merged candidate passed the full frontend and focused backend test suites.
+
 ## v1.8.13-alpha (2026-09-12)
 
 - **GitWorkshop installs reliably on fresh nodes.** The app is classified as a user-facing app while its install placeholder is being created, so it remains visible under My Apps instead of Services.
