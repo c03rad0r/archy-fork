@@ -104,7 +104,7 @@ if "archipelago-source" not in apps:
 source_promotions = [item for item in promotions if item.get("id") == "archipelago-source"]
 if not source_promotions:
     raise SystemExit("registry candidate omits the Archipelago source promotion")
-expected_path = "/npub1w3sqdkrhn0gyuvsex32effzgnfpyde6qrrc4u467flg5e9txh4wsfn5vjg/archy"
+expected_path = "/npub1w3sqdkrhn0gyuvsex32effzgnfpyde6qrrc4u467flg5e9txh4wsfn5vjg/relay.ngit.dev/archy"
 if source_promotions[0].get("path") != expected_path:
     raise SystemExit("source promotion does not open the canonical Archipelago repository")
 print("registry candidate includes GitWorkshop and its source promotion")
