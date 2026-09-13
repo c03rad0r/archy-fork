@@ -1,29 +1,30 @@
 {
   "changelog": [
-    "**GitWorkshop installs reliably on fresh nodes.** The app is classified as a user-facing app while its install placeholder is being created, so it remains visible under My Apps instead of Services.",
-    "**Fresh GitWorkshop installs build the correct image.** The production orchestrator handles its bundled build context instead of sending the local image reference through the legacy registry-pull path.",
-    "**Curated app classification is regression-tested.** Every user-facing app remains in My Apps during installation, while headless services stay in Services."
+    "**Cuprate gains a first-party companion dashboard.** The Monero node now has a Bitcoin-style status UI, safe app grouping, a 450 GB disk-safety gate, and a restricted RPC that is never exposed as a launch page.",
+    "**Bitcoin Core Tor enrollment uses the correct protocol identity.** `bitcoin-core` is forwarded on port 8333 and resolves to its own hidden-service directory without disturbing legacy Bitcoin aliases.",
+    "**GitWorkshop opens Archipelago’s canonical ngit repository by default.** The launcher and registry promotion use the full maintainer/relay/`archy` coordinate, with regression coverage for Companion and browser-tab launches.",
+    "**Release validation is stricter.** The registry gate now checks the complete canonical source deep link, and the merged candidate passed the full frontend and focused backend test suites."
   ],
   "components": [
     {
-      "current_version": "1.8.13-alpha",
-      "download_url": "https://source.archipelago-foundation.org/lfg2025/archy/releases/download/v1.8.13-alpha/archipelago",
+      "current_version": "1.8.14-alpha",
+      "download_url": "https://source.archipelago-foundation.org/lfg2025/archy/releases/download/v1.8.14-alpha/archipelago",
       "name": "archipelago",
-      "new_version": "1.8.13-alpha",
-      "sha256": "832c7e75b395f94f919a21d1ad7d32d367e1ef84a0e0995b4e8fe87268aa21a4",
-      "size_bytes": 64585424
+      "new_version": "1.8.14-alpha",
+      "sha256": "3d8e5e7c79a261649e89c4f5ba8d90db9057ebbb002919a812ca82f664b315bf",
+      "size_bytes": 64568360
     },
     {
-      "current_version": "1.8.13-alpha",
-      "download_url": "https://source.archipelago-foundation.org/lfg2025/archy/releases/download/v1.8.13-alpha/archipelago-frontend-1.8.13-alpha.tar.gz",
-      "name": "archipelago-frontend-1.8.13-alpha.tar.gz",
-      "new_version": "1.8.13-alpha",
-      "sha256": "d0159b61f84eb30013634a97177801474376dddb1189024b94f16236ce7ff538",
-      "size_bytes": 97915796
+      "current_version": "1.8.14-alpha",
+      "download_url": "https://source.archipelago-foundation.org/lfg2025/archy/releases/download/v1.8.14-alpha/archipelago-frontend-1.8.14-alpha.tar.gz",
+      "name": "archipelago-frontend-1.8.14-alpha.tar.gz",
+      "new_version": "1.8.14-alpha",
+      "sha256": "e1c490e52571bf9238435e5986792c6bd602fd7e398783546f7592aa921d3386",
+      "size_bytes": 98792963
     }
   ],
-  "release_date": "2026-09-12",
-  "signature": "45a322e793a2fc7565cc148f14efbbcf03e0c934183590375368091368ffe49ed2a7e9962692caf54b3432c71976a6c1b0f06a48cf8c4634c7b2e573e5782a0f",
+  "release_date": "2026-09-13",
+  "signature": "dacfdd2707e415af8a42306a63658a7d41cdfeba29d43802d465d18f00a747ecbfa54ea4ee8ed1eedf94d4f30371453fd9c9d475af9d6a62eac4e2c8e783b405",
   "signed_by": "did:key:z6Mkfu5LT8d4DjETtrkATvHh9Dvcbnr7zBCUwfau8Sw7DLWT",
-  "version": "1.8.13-alpha"
+  "version": "1.8.14-alpha"
 }
