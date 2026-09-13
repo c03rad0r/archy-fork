@@ -6,6 +6,7 @@
 
 - Cuprate is presented as one user-facing app in My Apps, including its UI launch button; the generated dashboard companion is hidden as an implementation detail instead of appearing under Services.
 - Added regression coverage for Cuprate install and installed-state grouping.
+- Release validation was rerun on the corrected tree before OTA and ISO publication.
 
 ## v1.8.14-alpha (2026-09-13)
 
