@@ -47,8 +47,17 @@ use crate::update::host_sudo;
 ///
 /// Keep in sync with the running fixture on .116. Centralized as a constant
 /// so the rule is visible in one place and unit-testable.
-const UI_APP_IDS: &[&str] = &["bitcoin-ui", "electrs-ui", "lnd-ui"];
+const UI_APP_IDS: &[&str] = &["bitcoin-ui", "electrs-ui", "lnd-ui", "cuprate-ui"];
 const ARCHIVAL_BITCOIN_DISK_GB: u64 = 1000;
+// The cuprate disk floor is `crate::constants::CUPRATE_MIN_DISK_GB` — one
+// value shared with the install/start/restart/update RPC gates so boot
+// reconcile can never resume below the line they refuse at.
+
+use crate::constants::CUPRATE_MIN_DISK_GB;
+
+fn requires_cuprate_disk(app_id: &str, disk_gb: u64) -> bool {
+    app_id == "cuprate" && disk_gb < CUPRATE_MIN_DISK_GB
+}
 
 /// Apps expected to exist from first boot on every node — the ONLY apps the
 /// boot reconciler may install from nothing. Every other app needs
@@ -1939,6 +1948,23 @@ impl ProdContainerOrchestrator {
                 report.record(
                     &app_id,
                     ReconcileAction::Left("requires-archival-bitcoin".into()),
+                );
+                crate::crash_recovery::pending_boot_start_done(&app_id);
+                crate::crash_recovery::pending_boot_start_done(&container_name);
+                continue;
+            }
+            // Same shape as the archival-bitcoin skip above: recorded BEFORE
+            // ensure_running_with_mode, so the "absent" desired-state recovery
+            // below can never fire on this reason and undo it.
+            if mode == ReconcileMode::ExistingOnly && requires_cuprate_disk(&app_id, disk_gb) {
+                tracing::warn!(
+                    app_id = %app_id,
+                    disk_gb,
+                    "cuprate needs a larger disk (no pruning support) — skipping start"
+                );
+                report.record(
+                    &app_id,
+                    ReconcileAction::Left("cuprate-insufficient-disk".into()),
                 );
                 crate::crash_recovery::pending_boot_start_done(&app_id);
                 crate::crash_recovery::pending_boot_start_done(&container_name);
@@ -5365,6 +5391,27 @@ app:
         assert_eq!(compute_container_name(&m), "archy-electrs-ui");
         let m = pull_manifest("lnd-ui", "foo:1");
         assert_eq!(compute_container_name(&m), "archy-lnd-ui");
+        let m = pull_manifest("cuprate-ui", "foo:1");
+        assert_eq!(compute_container_name(&m), "archy-cuprate-ui");
+    }
+
+    #[test]
+    fn cuprate_disk_gate_blocks_only_cuprate_on_small_disks() {
+        // 250 GB VPS class: the ~250 GiB Monero chain cannot fit and cuprate
+        // has no pruning — boot reconcile must leave it down.
+        assert!(requires_cuprate_disk("cuprate", 250));
+        assert!(requires_cuprate_disk("cuprate", CUPRATE_MIN_DISK_GB - 1));
+        assert!(!requires_cuprate_disk("cuprate", CUPRATE_MIN_DISK_GB));
+        assert!(!requires_cuprate_disk("cuprate", 1000));
+        // df failure in detect_disk_gb reads as 0 → fail closed at boot: a
+        // doomed sync is worse than a node that stays down until it can
+        // measure (same direction as the archival-bitcoin skip).
+        assert!(requires_cuprate_disk("cuprate", 0));
+        // Nothing else is gated here: bitcoin apps self-prune, everything
+        // else is irrelevant to the Monero chain.
+        for app_id in ["bitcoin-knots", "bitcoin-core", "electrumx", "mempool"] {
+            assert!(!requires_cuprate_disk(app_id, 0), "{app_id}");
+        }
     }
 
     #[test]

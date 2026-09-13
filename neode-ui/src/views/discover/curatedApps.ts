@@ -123,6 +123,8 @@ const CATALOG_APP_ID_ALIASES: Record<string, string> = {
   'archy-lnd-ui': 'lnd-ui',
   'bitcoin-knots': 'bitcoin-ui',
   'bitcoin-core': 'bitcoin-ui',
+  'cuprate': 'cuprate-ui',
+  'archy-cuprate-ui': 'cuprate-ui',
   'fedimintd': 'fedimint',
   'immich_server': 'immich',
 }

@@ -149,8 +149,8 @@ describe('appSessionConfig', () => {
     // A runtime port the gate does NOT front keeps plain http (https would
     // fail to connect outright).
     expect(resolveAppUrl('filebrowser', undefined, 'http://localhost:18083')).toBe('http://192.0.2.10:18083')
-    // Cuprate's UI port is auth:none — plain HTTP stays plain.
-    expect(resolveAppUrl('cuprate', undefined, 'http://localhost:18090')).toBe('http://192.0.2.10:18090')
+    // Cuprate's raw RPC is never a launch surface; use the companion UI.
+    expect(resolveAppUrl('cuprate', undefined, 'http://localhost:18090')).toBe('/app/cuprate-ui/')
   })
 
   it('keeps the pre-catalog Source app on the dashboard origin', () => {

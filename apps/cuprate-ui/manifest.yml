@@ -1,0 +1,67 @@
+app:
+  id: cuprate-ui
+  name: Cuprate UI
+  version: 1.0.0
+  # Built by this project — there is no upstream release feed to watch.
+  upstream:
+    kind: internal
+  description: |
+    Archipelago-native HTTP frontend for the Cuprate Monero node. Runs nginx
+    inside a container, serves a static status dashboard, and proxies
+    /cuprate-rpc/ to the cuprate restricted RPC on 127.0.0.1:18090 (the
+    published host port for the container's 18089). No credentials are
+    injected — the restricted RPC is Monero's own safe-for-public subset — so
+    the nginx.conf is baked into the image and there is no rendered-config
+    bind-mount like bitcoin-ui's.
+
+  container:
+    build:
+      context: /opt/archipelago/docker/cuprate-ui
+      dockerfile: Dockerfile
+      tag: localhost/cuprate-ui:local
+
+  dependencies:
+    - app_id: cuprate
+
+  resources:
+    memory_limit: 64Mi
+
+  security:
+    readonly_root: false
+    network_policy: host
+
+  # Host networking: nginx listens on 18091 directly on the host IP.
+  # Declared so the APP GATE can see this port. Host networking means Podman
+  # publishes nothing (quadlet skips PublishPort in host mode), so `bind:` here
+  # is a statement of where the container's own nginx listens — 127.0.0.1 —
+  # not a publish instruction. Without this declaration the gate would have no
+  # idea the port existed: neither protected nor listed as unprotected.
+  ports:
+    - host: 18091
+      container: 18091
+      protocol: tcp
+      bind: 127.0.0.1
+      auth: gated
+      # First-party companion UI: its nginx forwards the node session cookie
+      # to the daemon's authenticated endpoints; without passthrough the gate
+      # strips it and every data call 401s while the page shell renders.
+      session_passthrough: true
+
+  volumes: []
+
+  environment: []
+
+  health_check:
+    type: http
+    endpoint: http://127.0.0.1:18091
+    path: /
+    interval: 30s
+    timeout: 5s
+    retries: 3
+
+  metadata:
+    icon: /assets/img/app-icons/cuprate.svg
+    category: money
+    tier: optional
+    author: Archipelago
+    repo: https://github.com/Cuprate/cuprate

@@ -670,6 +670,50 @@ async fn detect_disk_gb() -> u64 {
         .unwrap_or(u64::MAX)
 }
 
+/// Smallest disk (GB, total) a cuprate node can live on. The value and its
+/// rationale live in ONE place — `crate::constants::CUPRATE_MIN_DISK_GB` —
+/// shared with the boot reconciler so install/start and boot can never
+/// disagree about where cuprate may run.
+use crate::constants::CUPRATE_MIN_DISK_GB;
+
+/// The bitcoin apps pick `-prune` automatically when disk is scarce, because
+/// bitcoind supports pruning. Cuprate CANNOT: upstream has no pruning config
+/// at all (the `pruning` crate in its workspace is Monero's p2p *protocol*
+/// pruning, not on-disk pruning), so the disk-scarce equivalent is to refuse
+/// to run cuprate at all rather than let it sync until the filesystem fills —
+/// which took Archipelago itself down on nodes with too little disk.
+fn cuprate_insufficient_disk_message(disk_gb: u64) -> String {
+    format!(
+        "Cuprate needs a disk of at least {} GB and this node has {} GB. \
+         A Monero node cannot run pruned — upstream cuprate has no pruning \
+         support — so the chain (~250 GB and growing) would fill the disk and \
+         take Archipelago down with it. Attach a larger disk (or move \
+         /var/lib/archipelago to one) and try again. Bitcoin apps CAN run \
+         pruned on smaller disks; Monero currently cannot.",
+        CUPRATE_MIN_DISK_GB, disk_gb
+    )
+}
+
+/// Pure decision half of the cuprate disk gate — testable without df.
+pub(super) fn cuprate_disk_gate(disk_gb: u64) -> Option<String> {
+    (disk_gb < CUPRATE_MIN_DISK_GB).then(|| cuprate_insufficient_disk_message(disk_gb))
+}
+
+/// Install/start-time pre-check: refuse cuprate on disks too small to hold
+/// the Monero chain. Mirrors `check_bitcoin_pruning_compatibility`'s
+/// fail-open-on-unknown-disk behaviour (`detect_disk_gb` returns u64::MAX
+/// when df fails, so an unreadable disk never blocks an install).
+pub(super) async fn check_cuprate_disk_compatibility(package_id: &str) -> Result<()> {
+    if package_id != "cuprate" {
+        return Ok(());
+    }
+    let disk_gb = detect_disk_gb().await;
+    if let Some(message) = cuprate_disk_gate(disk_gb) {
+        anyhow::bail!(message);
+    }
+    Ok(())
+}
+
 /// Log informational messages about optional dependencies.
 pub(super) fn log_optional_dep_info(package_id: &str, deps: &RunningDeps) {
     if matches!(package_id, "btcpay-server" | "btcpayserver") && !deps.has_lnd {
@@ -873,9 +917,9 @@ pub(super) fn configure_fedimint_lnd(
 #[cfg(test)]
 mod tests {
     use super::{
-        bitcoin_is_warming_up, dependency_list_declares_archival_bitcoin,
+        bitcoin_is_warming_up, cuprate_disk_gate, dependency_list_declares_archival_bitcoin,
         manifest_declares_archival_bitcoin, order_present_containers, requires_unpruned_bitcoin,
-        startup_order, BITCOIN_WARMUP_BUDGET,
+        startup_order, BITCOIN_WARMUP_BUDGET, CUPRATE_MIN_DISK_GB,
     };
     use archipelago_container::Dependency;
 
@@ -1015,6 +1059,37 @@ mod tests {
         assert!(!manifest_declares_archival_bitcoin("bitcoin-knots"));
         // An id with no manifest on disk at all.
         assert!(!manifest_declares_archival_bitcoin("does-not-exist"));
+    }
+
+    #[test]
+    fn cuprate_disk_gate_refuses_disks_too_small_for_the_monero_chain() {
+        // 250 GB VPS class: the ~250 GiB chain does not fit, full stop.
+        assert!(cuprate_disk_gate(0).is_some());
+        assert!(cuprate_disk_gate(250).is_some());
+        assert!(cuprate_disk_gate(CUPRATE_MIN_DISK_GB - 1).is_some());
+        assert!(cuprate_disk_gate(CUPRATE_MIN_DISK_GB).is_none());
+        assert!(cuprate_disk_gate(1000).is_none());
+        // df failure reads as u64::MAX — an unreadable disk must not block.
+        assert!(cuprate_disk_gate(u64::MAX).is_none());
+    }
+
+    #[test]
+    fn cuprate_disk_gate_message_names_the_fix_not_just_the_problem() {
+        let msg = cuprate_disk_gate(250).expect("250 GB must be refused");
+        assert!(msg.contains("cannot run pruned"), "{msg}");
+        assert!(msg.contains("larger disk"), "{msg}");
+        assert!(msg.contains("250 GB"), "{msg}");
+    }
+
+    #[tokio::test]
+    async fn cuprate_disk_gate_only_applies_to_cuprate() {
+        // Every other package passes regardless of disk — including the
+        // bitcoin apps, which self-prune via their manifest entrypoint.
+        for package_id in ["bitcoin-knots", "bitcoin-core", "electrumx", "mempool"] {
+            super::check_cuprate_disk_compatibility(package_id)
+                .await
+                .expect("non-cuprate installs must not be gated here");
+        }
     }
 
     mod dep_wait {

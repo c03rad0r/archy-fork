@@ -1315,13 +1315,13 @@
           },
           "dependencies": [
             {
-              "storage": "300Gi"
+              "storage": "450Gi"
             }
           ],
           "resources": {
             "cpu_limit": 0,
             "memory_limit": "10Gi",
-            "disk_limit": "300Gi"
+            "disk_limit": "450Gi"
           },
           "security": {
             "capabilities": [],

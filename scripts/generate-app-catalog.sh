@@ -65,6 +65,7 @@ SINGLE = {
     "bitcoin-ui": "BITCOIN_UI_IMAGE",
     "lnd-ui": "LND_UI_IMAGE",
     "electrs-ui": "ELECTRS_UI_IMAGE",
+    "cuprate-ui": "CUPRATE_UI_IMAGE",
     "homeassistant": "HOMEASSISTANT_IMAGE",
     "grafana": "GRAFANA_IMAGE",
     "uptime-kuma": "UPTIME_KUMA_IMAGE",

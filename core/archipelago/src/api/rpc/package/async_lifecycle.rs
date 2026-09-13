@@ -55,6 +55,7 @@ impl RpcHandler {
             .to_string();
         super::validation::validate_app_id(&package_id)?;
         super::dependencies::check_bitcoin_pruning_compatibility(&package_id).await?;
+        super::dependencies::check_cuprate_disk_compatibility(&package_id).await?;
 
         // Reject if already in a transitional lifecycle (prevents double-click
         // queuing two installs on the same package).
@@ -294,6 +295,12 @@ impl RpcHandler {
             .ok_or_else(|| anyhow::anyhow!("Missing package id"))?
             .to_string();
         super::validation::validate_app_id(&package_id)?;
+        // Update is stop → pull → remove → recreate, i.e. a fresh start by
+        // another name: on a disk that shrank since install it would resume
+        // cuprate's unprunable sync unchecked. Same gate as install and
+        // start, run BEFORE the Updating flip so a refusal leaves the app
+        // cleanly in its previous state.
+        super::dependencies::check_cuprate_disk_compatibility(&package_id).await?;
 
         // Reject if already in a transitional lifecycle.
         {
