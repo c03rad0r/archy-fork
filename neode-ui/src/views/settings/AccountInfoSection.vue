@@ -362,6 +362,19 @@ init()
               </button>
             </div>
             <div class="overflow-y-auto flex-1 min-h-0 space-y-6 pr-1">
+              <!-- v1.8.14-alpha -->
+              <div>
+                <div class="flex items-center gap-2 mb-3">
+                  <span class="text-xs font-mono px-2 py-0.5 rounded bg-orange-500/20 text-orange-300">v1.8.14-alpha</span>
+                  <span class="text-xs text-white/40">September 13, 2026</span>
+                </div>
+                <div class="space-y-3 text-sm text-white/80 pl-3 border-l border-white/10">
+                  <p><strong>Cuprate gains a first-party companion dashboard.</strong> The Monero node now has a Bitcoin-style status UI, safe app grouping, a 450 GB disk-safety gate, and a restricted RPC that is never exposed as a launch page.</p>
+                  <p><strong>Bitcoin Core Tor enrollment uses the correct protocol identity.</strong> bitcoin-core is forwarded on port 8333 and resolves to its own hidden-service directory without disturbing legacy Bitcoin aliases.</p>
+                  <p><strong>GitWorkshop opens Archipelago’s canonical ngit repository by default.</strong> The launcher and registry promotion use the full maintainer/relay/archy coordinate, with regression coverage for Companion and browser-tab launches.</p>
+                  <p><strong>Release validation is stricter.</strong> The registry gate now checks the complete canonical source deep link, and the merged candidate passed the full frontend and focused backend test suites.</p>
+                </div>
+              </div>
               <!-- v1.8.13-alpha -->
               <div>
                 <div class="flex items-center gap-2 mb-3">
@@ -369,7 +382,9 @@ init()
                   <span class="text-xs text-white/40">September 12, 2026</span>
                 </div>
                 <div class="space-y-3 text-sm text-white/80 pl-3 border-l border-white/10">
-                  <p><strong>GitWorkshop installs reliably on fresh nodes.</strong> The app is classified as a user-facing app while its install placeholder is being created, so it remains visible under My Apps instead of Services. Fresh installs now use the production orchestrator to build the bundled GitWorkshop image rather than sending its local image reference through the legacy registry-pull path. Regression coverage now protects all curated app classifications.</p>
+                  <p><strong>GitWorkshop installs reliably on fresh nodes.</strong> The app is classified as a user-facing app while its install placeholder is being created, so it remains visible under My Apps instead of Services.</p>
+                  <p><strong>Fresh GitWorkshop installs build the correct image.</strong> The production orchestrator handles its bundled build context instead of sending the local image reference through the legacy registry-pull path.</p>
+                  <p><strong>Curated app classification is regression-tested.</strong> Every user-facing app remains in My Apps during installation, while headless services stay in Services.</p>
                 </div>
               </div>
               <!-- v1.8.12-alpha -->
