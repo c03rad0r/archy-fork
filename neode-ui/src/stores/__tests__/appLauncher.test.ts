@@ -95,7 +95,7 @@ describe('useAppLauncherStore', () => {
       const store = useAppLauncherStore()
       store.openSession('archipelago-source')
       expect(openInApp).toHaveBeenCalledWith(
-        'http://192.0.2.10/app/archipelago-source/',
+        'http://192.0.2.10/app/archipelago-source/npub1w3sqdkrhn0gyuvsex32effzgnfpyde6qrrc4u467flg5e9txh4wsfn5vjg/relay.ngit.dev/archy',
       )
       expect(store.panelAppId).toBeNull()
       expect(store.isOpen).toBe(false)
