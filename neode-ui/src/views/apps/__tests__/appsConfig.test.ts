@@ -81,7 +81,7 @@ describe('appsConfig service filtering', () => {
       ['cuprate-ui', makePkg('cuprate-ui', 'Cuprate UI', 'money')],
       ['cuprate', makePkg('cuprate', 'Cuprate daemon', 'money')],
     ]
-    ;(entries[0][1].manifest as unknown as Record<string, unknown>).interfaces = { main: { ui: 'http://localhost:18091' } }
+    ;(entries[0]![1].manifest as unknown as Record<string, unknown>).interfaces = { main: { ui: 'http://localhost:18091' } }
     expect(filterEntriesForTab(entries, 'apps', 'all').map(([id]) => id)).toEqual(['cuprate-ui'])
     expect(filterEntriesForTab(entries, 'services', 'all').map(([id]) => id)).toEqual(['cuprate'])
   })
