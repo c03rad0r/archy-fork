@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+## v1.8.15-alpha (2026-09-13)
+
+- Cuprate is presented as one user-facing app in My Apps, including its UI launch button; the generated dashboard companion is hidden as an implementation detail instead of appearing under Services.
+- Added regression coverage for Cuprate install and installed-state grouping.
+
 ## v1.8.14-alpha (2026-09-13)
 
 - **Cuprate gains a first-party companion dashboard.** The Monero node now has a Bitcoin-style status UI, safe app grouping, a 450 GB disk-safety gate, and a restricted RPC that is never exposed as a launch page.
