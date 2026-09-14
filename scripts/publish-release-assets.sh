@@ -53,24 +53,33 @@ if [ -x "$PROJECT_ROOT/core/target/release/archipelago" ]; then
 fi
 
 remote_url=$(git -C "$PROJECT_ROOT" remote get-url "$REMOTE")
-# https is accepted as well as http. Requiring http:// meant the only remote
-# whose credential actually works for git push (the https one) was rejected,
-# while the http remote it forced you to use had a dead token — so publishing
-# failed on auth after the manifest had already passed every check
-# (v1.7.121-alpha, 2026-08-04). The scheme is carried through to the API URL
-# rather than assumed.
+# Remote URLs are public metadata: ngit can include them in repository
+# announcements. Keep credentials in Git's credential helper, never in URLs.
 case "$remote_url" in
-    http://*@*|https://*@*) ;;
-    *) fail "$REMOTE must be an authenticated http(s):// Gitea remote URL for API uploads" ;;
+    http://*@*|https://*@*) fail "$REMOTE embeds credentials; move them to a Git credential helper and remove them from the remote URL" ;;
+    http://*|https://*) ;;
+    *) fail "$REMOTE must be an http(s):// Gitea remote URL for API uploads" ;;
 esac
 
 scheme=${remote_url%%://*}
-rest=${remote_url#*://}
-auth=${rest%%@*}
-host_path=${rest#*@}
+host_path=${remote_url#*://}
 host=${host_path%%/*}
 repo_path=${host_path#*/}
 repo_path=${repo_path%.git}
+credential=$(printf 'url=%s\n\n' "$remote_url" | GIT_TERMINAL_PROMPT=0 git -C "$PROJECT_ROOT" credential fill) \
+    || fail "no Git credential available for $REMOTE; configure a credential helper first"
+auth_user=""
+auth_password=""
+while IFS= read -r field; do
+    case "$field" in
+        username=*) auth_user=${field#username=} ;;
+        password=*) auth_password=${field#password=} ;;
+    esac
+done <<< "$credential"
+[ -n "$auth_user" ] && [ -n "$auth_password" ] \
+    || fail "Git credential helper did not provide a username and password for $REMOTE"
+auth="$auth_user:$auth_password"
+unset credential auth_user auth_password
 api="$scheme://$host/api/v1/repos/$repo_path"
 release_url="$api/releases/tags/v${VERSION}"
 
