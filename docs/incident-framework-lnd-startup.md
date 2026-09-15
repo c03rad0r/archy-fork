@@ -315,3 +315,37 @@ a hypothesis, not a confirmed root cause. Asked which wallets fail and whether
 an empty comment also fails. Need that result before selecting a code fix.
 The service controls the advertised limit; changing local Receive text or QR
 cannot raise it for other wallets.
+
+### Primal Spark: automatic recipient note exceeds the address limit
+
+User clarified that no comment was entered and the sender is Primal Spark.
+Checked Framework's management journal over the preceding 20 minutes: no
+comment-length errors, service active, and zero pending Minibits claims. Recent
+claim polling connected to and disconnected from the relay normally. Historical
+seed-authentication failures preceded the successful setup already documented.
+
+The live address's Minibits `text/plain` description is **101 ASCII characters**,
+while `commentAllowed` is **100**. Description template (address redacted):
+`Pay to [ADDRESS] with Lightning. Receiver will receive ecash into Minibits Wallet.`
+
+Primal Android source at `36939db97213e7f8eeefaa4adaf125d839fc662e`:
+- `WalletTextParserImpl.handleLnUrlText` assigns the parsed description to
+  `DraftTx.noteRecipient`, including for Lightning-address input.
+- `TransactionEditor` initializes its editable recipient note from that value.
+- `SparkWalletServiceImpl` passes it untrimmed to `PrepareLnurlPayRequest.comment`.
+- Breez Spark source at `8bb38ec292a590907360c4e7f2a4134b8f09de9e`,
+  `common/src/lnurl/pay.rs::validate_user_input`, rejects a comment exceeding the
+  limit with the exact reported error before requesting the callback.
+
+This identifies a concrete compatibility failure: the address description can
+become an automatic over-limit comment without the sender typing anything.
+The installed Primal platform/version and its actual request have not been
+captured, so final confirmation requires retrying after explicitly clearing the
+prefilled recipient note. Node logs alone cannot show sender-side validation
+or requests to the external Minibits callback.
+
+Durable upstream correction: Primal should keep receiver metadata separate from
+the sender's comment and enforce the limit on actual user comments. Minibits can
+also shorten its description or raise its advertised comment limit. Archy does
+not serve this external LNURL metadata; do not rename an existing wallet address,
+rotate its seed, or claim that a local dashboard edit fixes this sender behavior.
