@@ -1,6 +1,7 @@
 import { flushPromises, mount } from '@vue/test-utils'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import ReceiveBitcoinModal from '../ReceiveBitcoinModal.vue'
+import EcashSeedBackup from '../EcashSeedBackup.vue'
 import { rpcClient } from '@/api/rpc-client'
 
 vi.mock('vue-router', () => ({
@@ -39,6 +40,51 @@ beforeEach(() => {
 // unmounts the dialog — but the RPC-eager tab switch is exactly the kind of
 // path a future change could regress, so it's worth pinning down.
 describe('ReceiveBitcoinModal — ecash tab click', () => {
+  it('offers authenticated setup for an unseeded wallet and retries the address after setup', async () => {
+    let active = false
+    vi.mocked(rpcClient.call).mockImplementation(async ({ method }) => {
+      if (method === 'wallet.ecash-lnaddress') {
+        if (!active) throw new Error('The ecash wallet has no seed yet')
+        return { address: 'someone@minibits.cash' } as never
+      }
+      if (method === 'wallet.ecash-seed-status') {
+        return { active, can_activate: true, derivable_from_node_seed: true, source: null } as never
+      }
+      return {} as never
+    })
+    const wrapper = mount(ReceiveBitcoinModal, { props: { show: true }, attachTo: document.body })
+    const tab = Array.from(document.body.querySelectorAll('button')).find(b => b.textContent?.toLowerCase().includes('ecash'))!
+    tab.click()
+    await flushPromises()
+    expect(document.body.textContent).toContain('Set up your Cashu Lightning address')
+    expect(document.body.textContent).not.toContain('receiveBitcoin.lnAddressUnavailable')
+    expect(vi.mocked(rpcClient.call).mock.calls.some(([r]) => r.method === 'wallet.ecash-seed-reveal')).toBe(false)
+    active = true
+    wrapper.findComponent(EcashSeedBackup).vm.$emit('ready')
+    await flushPromises()
+    expect(document.body.textContent).toContain('someone@minibits.cash')
+    expect(wrapper.emitted('close')).toBeFalsy()
+    wrapper.unmount()
+  })
+
+  it('keeps a seeded wallet on the retry path during a service outage', async () => {
+    vi.mocked(rpcClient.call).mockImplementation(async ({ method }) => {
+      if (method === 'wallet.ecash-seed-status') return { active: true, can_activate: true } as never
+      throw new Error('service unavailable')
+    })
+    const wrapper = mount(ReceiveBitcoinModal, { props: { show: true }, attachTo: document.body })
+    Array.from(document.body.querySelectorAll('button')).find(b => b.textContent?.toLowerCase().includes('ecash'))!.click()
+    await flushPromises()
+    expect(wrapper.findComponent(EcashSeedBackup).exists()).toBe(false)
+    expect(document.body.textContent).toContain('receiveBitcoin.lnAddressUnavailable')
+    const retry = Array.from(document.body.querySelectorAll('button')).find(b => b.textContent === 'Retry')!
+    expect(retry).toBeTruthy()
+    retry.click()
+    await flushPromises()
+    expect(vi.mocked(rpcClient.call).mock.calls.filter(([r]) => r.method === 'wallet.ecash-lnaddress')).toHaveLength(2)
+    wrapper.unmount()
+  })
+
   it('does not close/emit when the ecash tab is clicked and the RPC succeeds', async () => {
     vi.mocked(rpcClient.call).mockResolvedValue({ address: 'someone@minibits.cash' } as never)
 

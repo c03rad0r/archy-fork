@@ -77,8 +77,13 @@
           <div v-else-if="lnAddressLoading" class="mb-4 text-center text-white/50 text-sm py-4">
             {{ t('receiveBitcoin.lnAddressLoading') }}
           </div>
+          <div v-else-if="lnAddressNeedsSetup" class="mb-3">
+            <p class="text-sm text-white/70 mb-3">Set up this wallet's recovery phrase once to enable its Lightning address.</p>
+            <EcashSeedBackup setup-only @ready="loadLnAddress" />
+          </div>
           <div v-else-if="lnAddressError" class="mb-3 text-xs text-white/40">
             {{ t('receiveBitcoin.lnAddressUnavailable') }}
+            <button type="button" class="glass-button rounded-lg px-3 py-2 ml-2" @click="loadLnAddress">Retry</button>
           </div>
 
           <div class="mb-3">
@@ -132,6 +137,7 @@ import { useI18n } from 'vue-i18n'
 import { rpcClient } from '@/api/rpc-client'
 import BaseModal from '@/components/BaseModal.vue'
 import CopyButton from '@/components/CopyButton.vue'
+import EcashSeedBackup from '@/components/EcashSeedBackup.vue'
 import PaymentSuccessPane, { type SuccessRow } from '@/components/PaymentSuccessPane.vue'
 import { explainReceiveAddressFailure } from '@/utils/bitcoinReceive'
 import { useLightningRequired } from '@/composables/useLightningRequired'
@@ -214,6 +220,7 @@ const error = ref('')
 const lnAddress = ref('')
 const lnAddressLoading = ref(false)
 const lnAddressError = ref(false)
+const lnAddressNeedsSetup = ref(false)
 // A payment the backend fetched (and so already consumed at Minibits) but
 // couldn't redeem yet — it's queued for automatic retry, not lost, but the
 // operator should see it rather than have it be a silent, unbounded wait.
@@ -230,6 +237,7 @@ async function loadLnAddress() {
   if (lnAddress.value || lnAddressLoading.value) return
   lnAddressLoading.value = true
   lnAddressError.value = false
+  lnAddressNeedsSetup.value = false
   try {
     const res = await rpcClient.call<{ address?: string }>({
       method: 'wallet.ecash-lnaddress',
@@ -245,6 +253,16 @@ async function loadLnAddress() {
     }
   } catch {
     lnAddressError.value = true
+    // A legacy wallet may hold valid proofs without having a recovery phrase.
+    // Use the existing authenticated setup flow; never silently create a new
+    // identity or send the user to an unexplained generic service error.
+    try {
+      const seedStatus = await rpcClient.call<{ active: boolean; can_activate: boolean }>({
+        method: 'wallet.ecash-seed-status',
+        timeout: 5000,
+      })
+      lnAddressNeedsSetup.value = seedStatus.active === false && seedStatus.can_activate === true
+    } catch { /* Keep the retryable service error when status is unavailable. */ }
   } finally {
     lnAddressLoading.value = false
   }

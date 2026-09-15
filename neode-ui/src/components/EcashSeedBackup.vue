@@ -3,6 +3,9 @@ import { ref, computed, onMounted } from 'vue'
 import { rpcClient } from '@/api/rpc-client'
 import SeedRevealPanel from '@/components/SeedRevealPanel.vue'
 
+defineProps<{ setupOnly?: boolean }>()
+const emit = defineEmits<{ ready: [] }>()
+
 // Ecash (Cashu) wallet backup card — the same shape as the node recovery
 // phrase and the Lightning seed cards, deliberately: a third reveal pattern
 // would be a third thing to learn.
@@ -102,12 +105,14 @@ async function submitReveal() {
 }
 
 function closeReveal() {
+  const established = revealedWords.value.length > 0
   showRevealModal.value = false
   revealedWords.value = []
   revealPassword.value = ''
   revealCode.value = ''
   revealPassphrase.value = ''
   showRevealPassphrase.value = false
+  if (established) emit('ready')
 }
 
 async function copyRevealedWords() {
@@ -223,7 +228,7 @@ async function restoreFromPhrase() {
 
     <div class="flex items-start justify-between gap-4">
       <div class="min-w-0">
-        <h2 class="text-xl font-semibold text-white/96 mb-1">Ecash backup phrase</h2>
+        <h2 class="text-xl font-semibold text-white/96 mb-1">{{ setupOnly ? 'Set up your Cashu Lightning address' : 'Ecash backup phrase' }}</h2>
 
         <p v-if="status?.active && status?.source === 'node-seed'" class="text-sm text-white/60">
           Your ecash wallet has its own 24-word phrase, derived from this node's recovery
@@ -262,10 +267,10 @@ async function restoreFromPhrase() {
         class="shrink-0 glass-button rounded-lg px-4 py-2 text-sm font-medium"
         :class="!status?.active ? 'bg-orange-500/20 border-orange-400/30' : ''"
         @click="openReveal"
-      >{{ status?.active ? 'Reveal' : 'Set up backup' }}</button>
+      >{{ status?.active ? 'Reveal' : (setupOnly ? 'Set up address' : 'Set up backup') }}</button>
     </div>
 
-    <div v-if="status?.active" class="mt-4 pt-4 border-t border-white/10">
+    <div v-if="status?.active && !setupOnly" class="mt-4 pt-4 border-t border-white/10">
       <div class="flex items-start justify-between gap-4">
         <p class="text-sm text-white/60 min-w-0">
           <span class="text-white/80 font-medium">Restore from this phrase.</span>
@@ -284,7 +289,7 @@ async function restoreFromPhrase() {
       <p v-if="restoreError" role="alert" class="mt-3 text-xs alert-error px-3 py-2 rounded-lg">{{ restoreError }}</p>
     </div>
 
-    <div class="mt-4 pt-4 border-t border-white/10">
+    <div v-if="!setupOnly" class="mt-4 pt-4 border-t border-white/10">
       <div class="flex items-start justify-between gap-4">
         <p class="text-sm text-white/60 min-w-0">
           <span class="text-white/80 font-medium">Use a phrase from another wallet.</span>
