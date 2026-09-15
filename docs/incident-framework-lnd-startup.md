@@ -286,3 +286,16 @@ record final human confirmation of the rendered dashboard balance (native balanc
 match exactly, and UI failure/recovery regressions pass). Keep this follow-up
 visible across sessions; do not rebuild/reboot/reinitialize a working wallet just
 to repeat already completed checks.
+
+### Backup copy and layout — 2026-09-15
+
+At the user's request, shortened the ecash backup explanations and stacked each
+card section's text and full-width action vertically. Kept the distinction
+between node-derived and separate phrases, and the warning that a newly created
+phrase covers future coins rather than existing legacy coins.
+
+All 10 Receive/backup tests and the production UI build pass. Deployed the UI to
+Framework without a restart; served index and backup-component bundle match the
+build byte-for-byte. The prior UI is saved as `web-ui-before-backup-copy` in the
+protected incident directory. Source integration and final rendered dashboard
+balance confirmation remain pending as above.

@@ -226,61 +226,54 @@ async function restoreFromPhrase() {
       Your ecash has no backup yet
     </div>
 
-    <div class="flex items-start justify-between gap-4">
+    <div class="flex flex-col gap-3">
       <div class="min-w-0">
         <h2 class="text-xl font-semibold text-white/96 mb-1">{{ setupOnly ? 'Set up your Cashu Lightning address' : 'Ecash backup phrase' }}</h2>
 
-        <p v-if="status?.active && status?.source === 'node-seed'" class="text-sm text-white/60">
-          Your ecash wallet has its own 24-word phrase, derived from this node's recovery
-          phrase — so the words you already wrote down cover your ecash too. Reveal it here
-          if you want to restore your ecash into another wallet (Minibits, Nutstash,
-          <span class="font-mono">cdk-cli</span>) without handing over the node's own seed.
+        <p v-if="status?.active && status?.source === 'node-seed'" class="text-sm leading-relaxed text-white/60">
+          Your node's recovery phrase also recovers this ecash phrase. Reveal its 24 words
+          to restore in a compatible Cashu wallet without sharing your node's phrase.
         </p>
-        <p v-else-if="status?.active" class="text-sm text-white/60">
-          Your ecash wallet has its own 24-word phrase. Reveal it to write it down, or to
-          restore your ecash into another wallet (Minibits, Nutstash,
-          <span class="font-mono">cdk-cli</span>).
+        <p v-else-if="status?.active" class="text-sm leading-relaxed text-white/60">
+          Save your 24-word ecash phrase to restore this wallet here or in another
+          compatible Cashu wallet.
         </p>
-        <p v-else class="text-sm text-white/60">
-          Ecash is a bearer instrument: the coins live in a file on this node, and right now
-          nothing can bring them back if that file is lost. Setting up a backup phrase fixes
-          that for every coin minted from then on.
+        <p v-else class="text-sm leading-relaxed text-white/60">
+          If this node's coin file is lost, your ecash is lost. Set up a phrase to recover
+          future coins; existing coins aren't covered.
           <template v-if="status?.derivable_from_node_seed">
-            It's derived from this node's recovery phrase, so there's nothing new to write down.
+            Your node's recovery phrase will also recover this phrase.
           </template>
           <template v-else>
-            This node has no encrypted seed backup to derive from, so the phrase will be its
-            own — you'll need to write these words down and keep them.
+            This node has no saved seed, so write down and keep the new phrase separately.
           </template>
         </p>
 
         <p v-if="status?.source === 'independent' || status?.source === 'imported'" class="mt-2 text-xs text-orange-300/90">
-          This wallet's phrase was <strong>not</strong> derived from the node's recovery
-          phrase{{ status?.source === 'imported' ? ' — it was imported' : '' }}, so restoring
-          the node will not bring the ecash back. Only these words will.
+          {{ status?.source === 'imported' ? 'This imported phrase' : 'This phrase' }} is separate
+          from your node's backup. <strong>Only these words recover this ecash wallet.</strong>
         </p>
 
       </div>
 
       <button
         type="button"
-        class="shrink-0 glass-button rounded-lg px-4 py-2 text-sm font-medium"
+        class="w-full glass-button rounded-lg px-4 py-2 text-sm font-medium"
         :class="!status?.active ? 'bg-orange-500/20 border-orange-400/30' : ''"
         @click="openReveal"
       >{{ status?.active ? 'Reveal' : (setupOnly ? 'Set up address' : 'Set up backup') }}</button>
     </div>
 
     <div v-if="status?.active && !setupOnly" class="mt-4 pt-4 border-t border-white/10">
-      <div class="flex items-start justify-between gap-4">
-        <p class="text-sm text-white/60 min-w-0">
+      <div class="flex flex-col gap-3">
+        <p class="text-sm leading-relaxed text-white/60 min-w-0">
           <span class="text-white/80 font-medium">Restore from this phrase.</span>
-          Asks your mint which coins it has signed for these words and puts back any that
-          are still unspent. Safe to run at any time — it never duplicates coins you already
-          hold.
+          Recover unspent coins from your mint. Safe to repeat; coins you already hold
+          won't be duplicated.
         </p>
         <button
           type="button"
-          class="shrink-0 glass-button rounded-lg px-4 py-2 text-sm font-medium disabled:opacity-50"
+          class="w-full glass-button rounded-lg px-4 py-2 text-sm font-medium disabled:opacity-50"
           :disabled="restoring"
           @click="restoreFromPhrase"
         >{{ restoring ? 'Scanning…' : 'Restore' }}</button>
@@ -290,15 +283,15 @@ async function restoreFromPhrase() {
     </div>
 
     <div v-if="!setupOnly" class="mt-4 pt-4 border-t border-white/10">
-      <div class="flex items-start justify-between gap-4">
-        <p class="text-sm text-white/60 min-w-0">
+      <div class="flex flex-col gap-3">
+        <p class="text-sm leading-relaxed text-white/60 min-w-0">
           <span class="text-white/80 font-medium">Use a phrase from another wallet.</span>
-          Point this wallet at a phrase you already have — from Minibits, Nutstash or
-          <span class="font-mono">cdk-cli</span> — so its coins can be restored here.
+          Import a phrase from Minibits, Nutstash or <span class="font-mono">cdk-cli</span>
+          to restore its coins here.
         </p>
         <button
           type="button"
-          class="shrink-0 glass-button rounded-lg px-4 py-2 text-sm font-medium"
+          class="w-full glass-button rounded-lg px-4 py-2 text-sm font-medium"
           @click="openImport"
         >Import</button>
       </div>
@@ -324,7 +317,7 @@ async function restoreFromPhrase() {
         </template>
 
         <template v-else>
-          <p class="text-sm text-white/60 mb-4">
+          <p class="text-sm leading-relaxed text-white/60 mb-4">
             Paste the 24-word phrase from the other wallet. The coins already in this wallet
             stay spendable either way.
           </p>
@@ -381,9 +374,8 @@ async function restoreFromPhrase() {
         </h3>
 
         <template v-if="revealedWords.length === 0">
-          <p class="text-sm text-white/60 mb-4">
-            Confirm your credentials to
-            {{ status?.active ? 'display the 24-word ecash phrase' : 'derive and display your ecash backup phrase' }}.
+          <p class="text-sm leading-relaxed text-white/60 mb-4">
+            Confirm your credentials to {{ status?.active ? 'reveal' : 'set up' }} your ecash phrase.
           </p>
           <form @submit.prevent="submitReveal" class="space-y-3">
             <div>
@@ -412,12 +404,12 @@ async function restoreFromPhrase() {
           <SeedRevealPanel :words="revealedWords" />
           <p class="text-xs text-white/40 mt-3">
             <template v-if="revealedSource === 'node-seed'">
-              Derived from this node's recovery phrase — restoring the node restores this
-              ecash wallet too. These words also restore it into any NUT-13 wallet.
+              Your node's recovery phrase recovers this ecash wallet too. Use these words
+              separately in a compatible Cashu (NUT-13) wallet.
             </template>
             <template v-else>
-              This phrase is independent of the node's recovery phrase. It is the
-              <strong>only</strong> way to restore this ecash wallet — write it down.
+              Write these words down. They are the <strong>only</strong> way to recover
+              this ecash wallet; your node's phrase won't recover it.
             </template>
           </p>
           <div class="flex gap-2 pt-4">
