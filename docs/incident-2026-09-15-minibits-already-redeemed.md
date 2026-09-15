@@ -66,11 +66,13 @@ Two parts:
 
 - **`core/archipelago/src/wallet/mint_client.rs`**: exposed the existing
   NUT error-code-11001 translation as a public constant,
-  `ALREADY_REDEEMED_MSG`, so other modules can recognize it without
-  duplicating the string.
+  `ALREADY_REDEEMED_MSG`, and a typed `AlreadyRedeemed` condition identified
+  only by the structured mint error code. Remote text cannot impersonate it.
 - **`core/archipelago/src/wallet/minibits.rs`**:
   - Added `is_already_redeemed(&anyhow::Error) -> bool`, checking the error
-    chain for `ALREADY_REDEEMED_MSG`.
+    chain for the typed `AlreadyRedeemed` condition. The ecash receive path
+    preserves it only when all failed mint entries report already-spent proofs;
+    mixed terminal/transient failures remain retryable.
   - In the claim redeem loop, a redeem failure matching
     `is_already_redeemed` is now dropped (logged at `info!`, not retried)
     instead of being pushed back onto `pending_claims`. Every other failure
@@ -79,8 +81,10 @@ Two parts:
     alone first via `try_connect_relay`, and only adds the two public
     fallback relays (`relay.damus.io`, `nos.lol`) if that primary relay is
     unreachable. Also paginates the DM fetch (200/page, capped at 5 pages)
-    so a backlog larger than one page can't silently strand older DMs
-    behind an un-advanced watermark.
+    backward with an inclusive `until` boundary. The cursor persists across
+    polls when capped or interrupted, independently of the forward watermark.
+    A full same-second boundary is fetched with a larger limit rather than
+    skipped, so multiple payments sharing a timestamp remain reachable.
 
 Deliberately **not** ported from the unmerged branch: its `STATE_LOCK`
 skip-if-busy guard and per-claim attempt-count backstop. `main`'s existing
@@ -104,3 +108,12 @@ actually deployed. Before trusting a memory or changelog claim that
 something "shipped," check which branch the running/released build was
 built from (`git log <branch>..main` / `main..<branch>`) rather than
 assuming a pushed branch was merged.
+
+## Pre-merge review regressions
+
+- A 450-event newest-first backlog is completely fetched.
+- 250 distinct payments sharing one timestamp are preserved.
+- A 1,300-event backlog resumes after the five-page cap and a state reload.
+- An interrupted relay fetch retains its unfinished cursor.
+- Only structured error 11001 is terminal, including when errors are wrapped;
+  remote free text and mixed mint failures cannot discard a retryable claim.

@@ -1205,6 +1205,7 @@ pub async fn receive_token(data_dir: &Path, token_str: &str) -> Result<u64> {
     // for the log. Remember the last one so a total failure can tell the user
     // *why* instead of just "nothing was received".
     let mut last_reason: Option<String> = None;
+    let mut all_already_redeemed = true;
 
     // Swap proofs at each mint
     for entry in &token.token {
@@ -1217,6 +1218,7 @@ pub async fn receive_token(data_dir: &Path, token_str: &str) -> Result<u64> {
             }
             Err(e) => {
                 warn!("Failed to swap proofs from mint {}: {:#}", entry.mint, e);
+                all_already_redeemed &= e.is::<super::mint_client::AlreadyRedeemed>();
                 last_reason = Some(e.to_string());
                 // Continue with other mints if any
             }
@@ -1224,10 +1226,7 @@ pub async fn receive_token(data_dir: &Path, token_str: &str) -> Result<u64> {
     }
 
     if received_total == 0 {
-        match last_reason {
-            Some(reason) => anyhow::bail!("Could not receive this ecash: {}", reason),
-            None => anyhow::bail!("Failed to receive any proofs from token"),
-        }
+        return Err(receive_failure(last_reason, all_already_redeemed));
     }
 
     wallet.record_tx(
@@ -1241,6 +1240,17 @@ pub async fn receive_token(data_dir: &Path, token_str: &str) -> Result<u64> {
 
     debug!("Received {} sats ecash token", received_total);
     Ok(received_total)
+}
+
+fn receive_failure(last_reason: Option<String>, all_already_redeemed: bool) -> anyhow::Error {
+    match last_reason {
+        Some(reason) if all_already_redeemed => {
+            anyhow::Error::new(super::mint_client::AlreadyRedeemed)
+                .context(format!("Could not receive this ecash: {reason}"))
+        }
+        Some(reason) => anyhow::anyhow!("Could not receive this ecash: {reason}"),
+        None => anyhow::anyhow!("Failed to receive any proofs from token"),
+    }
 }
 
 /// Receive a legacy format token (cashuSend_{amount}_{uuid}_{timestamp}).
@@ -1632,6 +1642,18 @@ fn default_mint_url() -> String {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn mixed_mint_failures_do_not_discard_a_retryable_claim() {
+        let reason = super::super::mint_client::ALREADY_REDEEMED_MSG.to_string();
+        assert!(super::receive_failure(Some(reason.clone()), true)
+            .is::<super::super::mint_client::AlreadyRedeemed>());
+        assert!(!super::receive_failure(Some(reason), false)
+            .is::<super::super::mint_client::AlreadyRedeemed>());
+        assert!(
+            !super::receive_failure(None, true).is::<super::super::mint_client::AlreadyRedeemed>()
+        );
+    }
+
     use super::*;
     use tempfile::TempDir;
 

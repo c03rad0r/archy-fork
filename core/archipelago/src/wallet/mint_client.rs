@@ -79,6 +79,16 @@ pub struct MintResult {
 pub const ALREADY_REDEEMED_MSG: &str =
     "This ecash has already been redeemed — it can't be claimed twice.";
 
+/// Typed terminal condition: never infer spent proofs from a mint's free text.
+#[derive(Debug)]
+pub(super) struct AlreadyRedeemed;
+impl std::fmt::Display for AlreadyRedeemed {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(ALREADY_REDEEMED_MSG)
+    }
+}
+impl std::error::Error for AlreadyRedeemed {}
+
 fn describe_mint_error_code(code: i64) -> Option<&'static str> {
     Some(match code {
         10001 => "The mint rejected these coins as invalid.",
@@ -132,8 +142,15 @@ fn describe_mint_error_body(status: reqwest::StatusCode, body: &str) -> String {
 /// translation layered on top via `.context()` so `{}` — what reaches the
 /// wallet user — shows something actionable instead of raw mint JSON.
 fn mint_error(op: &str, status: reqwest::StatusCode, body: &str) -> anyhow::Error {
-    let friendly = describe_mint_error_body(status, body);
-    anyhow::anyhow!("{} failed ({}): {}", op, status, body).context(friendly)
+    let cause = anyhow::anyhow!("{} failed ({}): {}", op, status, body);
+    if serde_json::from_str::<serde_json::Value>(body)
+        .ok()
+        .and_then(|v| v.get("code").and_then(|c| c.as_i64()))
+        == Some(11001)
+    {
+        return cause.context(AlreadyRedeemed);
+    }
+    cause.context(describe_mint_error_body(status, body))
 }
 
 /// HTTP client for a single Cashu mint.
@@ -811,6 +828,28 @@ impl MintClient {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn spent_condition_comes_from_code_not_remote_text_and_survives_context() {
+        let spent = super::mint_error(
+            "Swap",
+            reqwest::StatusCode::BAD_REQUEST,
+            r#"{"code":11001,"detail":"Token Already Spent"}"#,
+        )
+        .context("Receive failed");
+        assert!(spent.is::<super::AlreadyRedeemed>());
+        let body =
+            serde_json::json!({"code":11002,"detail":super::ALREADY_REDEEMED_MSG}).to_string();
+        assert!(
+            !super::mint_error("Swap", reqwest::StatusCode::BAD_REQUEST, &body)
+                .is::<super::AlreadyRedeemed>()
+        );
+        let body = serde_json::json!({"detail":super::ALREADY_REDEEMED_MSG}).to_string();
+        assert!(
+            !super::mint_error("Swap", reqwest::StatusCode::BAD_GATEWAY, &body)
+                .is::<super::AlreadyRedeemed>()
+        );
+    }
+
     use super::*;
 
     #[test]
