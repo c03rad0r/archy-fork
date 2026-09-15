@@ -1,6 +1,6 @@
 # Framework: LND startup, missing Receive address, false zero balance
 
-**Status: OPEN — fix applied; live reboot passed; awaiting user confirmation of the original Receive flow.**
+**Status: OPEN — LND reboot fix verified; Cashu Receive setup deployed, awaiting authenticated seed setup and address verification.**
 
 Reported: 2026-09-15. Source inspected: main at `3b9b74da` (v1.8.17-alpha publication).
 The Framework's installed version and exact incident time have not been verified.
@@ -227,3 +227,36 @@ Minibits seed absence was a separate finding and must not be mistaken for an
 LND startup failure. Candidate is a direct node deployment, not a newly signed
 fleet release. The source branch must be integrated before a subsequent release
 can preserve this fix across the fleet.
+
+### Cashu Receive follow-up
+
+The user confirmed that the remaining error is specifically on the Ecash tab:
+“Lightning address unavailable — you can still paste a token below.”
+
+Read-only checks confirm Framework has an encrypted node master seed, existing
+Cashu proofs, and neither `wallet/cashu_seed.json` nor `wallet/minibits.json`.
+The existing Minibits handler requires an ecash seed, but setup was available
+only through the Settings backup screen; Receive hid the actionable cause.
+
+UI fix commit: `a3b64670`.
+
+- Receive checks the non-secret seed status when registration fails.
+- Unseeded wallets get the existing password/TOTP/backup-passphrase-verified setup
+  component directly in Receive, with import/restore controls excluded from this
+  focused setup screen. Setup derives from the saved node seed when present.
+- The recovery words stay in the existing local reveal UI, are cleared on Done,
+  and are never emitted to Receive. Receive retries registration after Done.
+- Seeded wallets with service outages get Retry, without offering a new identity.
+- Ten focused Receive/backup tests and the production UI build passed.
+- Deployed the dashboard change without restarting services; live HTTP index and
+  setup bundle returned 200 and byte-matched the candidate.
+- Backed up original Cashu proofs to the root-only support directory as
+  `ecash-before-address-setup.json`. No seed or proof mutation was performed by
+  the assistant. Prior LND-fixed dashboard is also backed up there.
+
+The user was asked to refresh Receive → Ecash → Set up address, authenticate in
+that node UI, and click Done. Dashboard password is required to decrypt the node
+seed; the SSH password did not authenticate to the dashboard. Do not request or
+print recovery words, bypass authentication, or create an unrelated random seed.
+After completion, verify saved seed/profile presence, registration success,
+address display, and unchanged original proofs before closing the incident.
