@@ -362,6 +362,19 @@ init()
               </button>
             </div>
             <div class="overflow-y-auto flex-1 min-h-0 space-y-6 pr-1">
+              <!-- v1.8.17-alpha -->
+              <div>
+                <div class="flex items-center gap-2 mb-3">
+                  <span class="text-xs font-mono px-2 py-0.5 rounded bg-orange-500/20 text-orange-300">v1.8.17-alpha</span>
+                  <span class="text-xs text-white/40">September 15, 2026</span>
+                </div>
+                <div class="space-y-3 text-sm text-white/80 pl-3 border-l border-white/10">
+                  <p>Minibits claims that every mint reports as already spent leave the retry queue, clearing repeated failure notices. Network errors and mixed mint failures remain queued for another attempt.</p>
+                  <p>Minibits polls its primary relay first and connects to public fallback relays only when the primary is unreachable, reducing unnecessary connections.</p>
+                  <p>Large payment backlogs are fetched from newest to oldest with a saved cursor, so polling can resume after interruptions or page limits. Payments sharing the same timestamp remain reachable.</p>
+                  <p>Added regression coverage for spent-claim classification, wrapped and mixed mint errors, same-second payments, and interrupted or multi-poll backlogs.</p>
+                </div>
+              </div>
               <!-- v1.8.16-alpha -->
               <div>
                 <div class="flex items-center gap-2 mb-3">

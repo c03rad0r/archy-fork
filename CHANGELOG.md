@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+## v1.8.17-alpha (2026-09-15)
+
+- Minibits claims that every mint reports as already spent leave the retry queue, clearing repeated failure notices. Network errors and mixed mint failures remain queued for another attempt.
+- Minibits polls its primary relay first and connects to public fallback relays only when the primary is unreachable, reducing unnecessary connections.
+- Large payment backlogs are fetched from newest to oldest with a saved cursor, so polling can resume after interruptions or page limits. Payments sharing the same timestamp remain reachable.
+- Added regression coverage for spent-claim classification, wrapped and mixed mint errors, same-second payments, and interrupted or multi-poll backlogs.
+
 ## v1.8.16-alpha (2026-09-15)
 
 - App updates refresh and verify the signed catalog before changing containers. A failed refresh or manifest reload cancels the update, and automatic updates wait for a successful refresh.
