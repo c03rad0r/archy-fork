@@ -1,6 +1,6 @@
 # Framework: LND startup, missing Receive address, false zero balance
 
-**Status: OPEN — Framework inspected live; candidate fix under test; not fixed yet.**
+**Status: OPEN — fix applied; live reboot passed; awaiting user confirmation of the original Receive flow.**
 
 Reported: 2026-09-15. Source inspected: main at `3b9b74da` (v1.8.17-alpha publication).
 The Framework's installed version and exact incident time have not been verified.
@@ -113,17 +113,17 @@ tab and response once the user clarifies and the node can be inspected.
 
 ## Acceptance criteria — all required to close
 
-- [ ] Root cause of Framework startup failure supported by node evidence.
-- [ ] Fix implemented and focused regression tests pass.
+- [x] Root cause of Framework startup failure supported by node evidence.
+- [x] Fix implemented and focused regression tests pass.
 - [ ] Failed, locked, delayed, and partial LND responses never masquerade as a
       fresh zero balance; genuine zero remains correct.
-- [ ] Existing wallet identity and channel state preserved through the repair.
-- [ ] Framework starts LND and reaches usable wallet readiness after a controlled
+- [x] Existing wallet identity and channel state preserved through the repair.
+- [x] Framework starts LND and reaches usable wallet readiness after a controlled
       full reboot, without manually restarting LND.
 - [ ] The originally affected Receive flow works after boot and after recovery;
       outages show an actionable state and recover without requiring a page reload.
-- [ ] Balance display verified against authenticated LND data on the node.
-- [ ] Logs show no restart loop, repeated unlock failure, or wallet-recreation path.
+- [ ] Display confirmation pending; authenticated LND balances match pre-reboot values.
+- [x] LND logs show no restart loop, repeated unlock failure, or wallet-recreation path.
 - [ ] Evidence, tested versions, deployment, and limitations recorded here; user
       informed of live results. Only then set status RESOLVED and clear the blockers.
 
@@ -194,3 +194,36 @@ Source fix commit: `4237fb5e` on `investigate/framework-lnd-startup`.
   are authenticated using its existing local macaroon without printing it.
 
 Status remains OPEN until deployment and live boot/Receive/balance verification.
+
+### Authorized deployment and full reboot — 2026-09-15
+
+The user answered “yes please” to applying the staged fix and rebooting. Timing
+approval is no longer pending. Applied the staged backend and dashboard after
+rechecking both checksums and rollback copies. There were no pending channel
+HTLCs at reboot. No wallet data, secrets, or recovery identities were replaced.
+
+Live results:
+
+- A different boot ID confirms a full reboot occurred.
+- Running backend on disk matches candidate SHA-256
+  `5a354f76ebe619561eef0d318e4f41f177d04004682504d7434d632733f8e298`.
+- Management service started around 19:23:57 UTC; LND asked for its wallet
+  password at 19:24:10 and logged automatic unlock at 19:24:18. No manual LND
+  restart or interactive unlock was used after this reboot.
+- LND reports SERVER_ACTIVE and chain sync. Its identity and channel-point set
+  are identical to the private pre-reboot baseline; both channels are active.
+- On-chain and Lightning balances exactly equal the pre-reboot values.
+- LND container and systemd restart counts are zero after recovery.
+- Public HTTP checks on the node returned 200 for the dashboard index and new
+  Home bundle; their bytes match the installed candidate, including the new
+  unavailable-balance notice.
+- Captured post-reboot management and LND journals in the private local evidence
+  directory. Detailed before/after identity, channel, and balance records remain
+  in the root-only support directory on Framework.
+
+The user was asked to refresh the dashboard and confirm the originally missing
+Receive item and displayed balances. Keep OPEN until that reply is assessed;
+Minibits seed absence was a separate finding and must not be mistaken for an
+LND startup failure. Candidate is a direct node deployment, not a newly signed
+fleet release. The source branch must be integrated before a subsequent release
+can preserve this fix across the fleet.
