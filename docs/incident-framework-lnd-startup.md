@@ -339,13 +339,24 @@ Primal Android source at `36939db97213e7f8eeefaa4adaf125d839fc662e`:
 
 This identifies a concrete compatibility failure: the address description can
 become an automatic over-limit comment without the sender typing anything.
-The installed Primal platform/version and its actual request have not been
-captured, so final confirmation requires retrying after explicitly clearing the
-prefilled recipient note. Node logs alone cannot show sender-side validation
-or requests to the external Minibits callback.
+The user confirmed that explicitly clearing the prefilled recipient note made
+the payment work, and supplied the same description observed in live metadata.
+This confirms the automatic-comment compatibility failure. The installed Primal
+platform/version was not captured. Node logs alone cannot show sender-side
+validation or requests to the external Minibits callback.
 
 Durable upstream correction: Primal should keep receiver metadata separate from
 the sender's comment and enforce the limit on actual user comments. Minibits can
 also shorten its description or raise its advertised comment limit. Archy does
 not serve this external LNURL metadata; do not rename an existing wallet address,
 rotate its seed, or claim that a local dashboard edit fixes this sender behavior.
+
+### Primal workaround confirmed by user
+
+The user confirmed successful payment after removing the automatic description.
+The permanent sender-side correction is to leave the recipient comment empty by
+default and retain receiver metadata only as display text. In Primal Android,
+remove the assignment of the LNURL description to the draft recipient note in
+`WalletTextParserImpl.handleLnUrlText`; also validate explicitly entered comments
+against the endpoint's limit. No upstream change has been submitted or deployed.
+Existing Framework addresses and wallet identities remain unchanged.
