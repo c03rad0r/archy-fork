@@ -1,6 +1,6 @@
 # Framework: LND startup, missing Receive address, false zero balance
 
-**Status: OPEN — LND reboot fix verified; Cashu Receive setup deployed, awaiting authenticated seed setup and address verification.**
+**Status: OPEN — Framework startup and Cashu address verified live; source integration and final dashboard balance confirmation remain.**
 
 Reported: 2026-09-15. Source inspected: main at `3b9b74da` (v1.8.17-alpha publication).
 The Framework's installed version and exact incident time have not been verified.
@@ -260,3 +260,29 @@ seed; the SSH password did not authenticate to the dashboard. Do not request or
 print recovery words, bypass authentication, or create an unrelated random seed.
 After completion, verify saved seed/profile presence, registration success,
 address display, and unchanged original proofs before closing the incident.
+
+### Cashu setup completed and verified — 2026-09-15
+
+The user initially reported a forgotten passphrase, then said “did it now”. No
+independent-seed fallback was implemented or used. The user completed the existing
+password-verified setup themselves; the assistant did not receive recovery words.
+
+Read-only node verification confirmed:
+
+- `wallet/cashu_seed.json` exists, is nonempty, and records source `node-seed`.
+- `wallet/minibits.json` exists with a `@minibits.cash` address and no pending claims.
+- The original ecash wallet file is byte-for-byte unchanged from the protected
+  pre-setup copy; every original proof is preserved.
+- The registered address's public LNURL-pay metadata returns HTTP 200, tag
+  `payRequest`, an HTTPS callback, and a valid amount range. No invoice was paid
+  and no funded payment test was performed.
+
+LND automatic startup and native balances were already verified after the full
+reboot. Cashu setup and address registration are now also verified on Framework.
+Do not ask for the forgotten passphrase again or propose a replacement Cashu seed.
+
+Remaining: integrate the tested source branch before the next fleet release;
+record final human confirmation of the rendered dashboard balance (native balances
+match exactly, and UI failure/recovery regressions pass). Keep this follow-up
+visible across sessions; do not rebuild/reboot/reinitialize a working wallet just
+to repeat already completed checks.
