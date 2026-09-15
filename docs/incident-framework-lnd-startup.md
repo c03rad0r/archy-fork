@@ -299,3 +299,19 @@ Framework without a restart; served index and backup-component bundle match the
 build byte-for-byte. The prior UI is saved as `web-ui-before-backup-copy` in the
 protected incident directory. Source integration and final rendered dashboard
 balance confirmation remain pending as above.
+
+### LNURL comment-length report — 2026-09-15
+
+User reports a maximum-comment-length error in some sending wallets. Live
+Framework address metadata advertises integer `commentAllowed: 100`. The QR
+contains the address only; Archy's Receive UI does not add a comment. The
+Minibits-hosted callback returned invoices for omitted/empty comments, 100 ASCII
+characters, 101 ASCII characters, and 100 accented characters. These were unpaid
+invoice requests at the advertised minimum amount; no funds were sent.
+
+The callback did not reproduce the error, including beyond its advertised limit.
+Sending-wallet validation against the advertised 100-character limit is therefore
+a hypothesis, not a confirmed root cause. Asked which wallets fail and whether
+an empty comment also fails. Need that result before selecting a code fix.
+The service controls the advertised limit; changing local Receive text or QR
+cannot raise it for other wallets.
