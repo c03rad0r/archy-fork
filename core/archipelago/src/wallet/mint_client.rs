@@ -71,10 +71,18 @@ pub struct MintResult {
 /// keyset codes shared by NUT-02/03/04/05 — the codes a swap/melt/mint call
 /// can actually hit. Returns `None` for anything else (e.g. Lightning/quote
 /// codes in the 20000s) so the caller falls back to the mint's own `detail`.
+///
+/// Text of the NUT error-code-11001 translation, exposed so callers that
+/// received an `anyhow::Error` from a receive/redeem path (e.g. a replayed
+/// Minibits claim) can recognize an already-spent token as terminal rather
+/// than retrying it forever.
+pub const ALREADY_REDEEMED_MSG: &str =
+    "This ecash has already been redeemed — it can't be claimed twice.";
+
 fn describe_mint_error_code(code: i64) -> Option<&'static str> {
     Some(match code {
         10001 => "The mint rejected these coins as invalid.",
-        11001 => "This ecash has already been redeemed — it can't be claimed twice.",
+        11001 => ALREADY_REDEEMED_MSG,
         11002 => "This ecash is already being redeemed elsewhere — try again in a moment.",
         11003 => "The mint already issued new coins for this exact request — there's nothing left to redeem.",
         11004 => "This request is still being processed by the mint — try again in a moment.",

@@ -652,6 +652,17 @@ pub struct ClaimOutcome {
     pub receipt_at: u64,
 }
 
+/// True when `ecash::receive_token` failed because the token was already
+/// redeemed (mint error 11001, see `mint_client::describe_mint_error_code`) —
+/// a terminal condition, not a reason to retry. Seen on archy-x250-pa3,
+/// 2026-09-15: a claim that had already been swept kept failing this way on
+/// every poll forever, since nothing distinguished it from a transient
+/// failure worth retrying.
+fn is_already_redeemed(err: &anyhow::Error) -> bool {
+    err.to_string()
+        .contains(super::mint_client::ALREADY_REDEEMED_MSG)
+}
+
 const NO_CLAIMS: ClaimOutcome = ClaimOutcome {
     claimed_count: 0,
     received_sats: 0,
@@ -697,59 +708,102 @@ fn outcome_with_latest_receipt(
 /// three real payments that `/claim` never surfaced. Best-effort: a relay
 /// error here must not abort the poll, since `pending_claims` may still hold
 /// earlier fetches worth retrying.
+///
+/// Queries `RELAY_URL` (the service's own relay) alone first — the happy
+/// path for a poll is one WebSocket connection, not three, and the wallet's
+/// derived Nostr pubkey isn't broadcast to the public fallback relays unless
+/// it's actually needed. Only when that relay is unreachable does it fall
+/// back to all of `CLAIM_RELAY_URLS`. Results are paged (capped at
+/// `MAX_PAGES`) since a relay returns only the newest `limit` events for a
+/// filter — a backlog bigger than one page would otherwise silently strand
+/// older DMs forever, as `since` never advances past events that were never
+/// fetched.
 async fn fetch_relay_dms(
     our_pubkey: nostr_sdk::PublicKey,
     server_pubkey: nostr_sdk::PublicKey,
     since: u64,
 ) -> Vec<(String, u64, String, String)> {
     let client = Client::default();
-    for url in CLAIM_RELAY_URLS {
-        if let Err(e) = client.add_relay(*url).await {
-            warn!("Minibits: could not add relay {url}: {e}");
-        }
+    if let Err(e) = client.add_relay(RELAY_URL).await {
+        warn!("Minibits: could not add relay {RELAY_URL}: {e}");
     }
-    client.connect().await;
+    let primary_reachable = client
+        .try_connect_relay(RELAY_URL, std::time::Duration::from_secs(3))
+        .await
+        .is_ok();
+    if !primary_reachable {
+        warn!("Minibits: primary relay {RELAY_URL} unreachable, falling back to public relays too");
+        for url in &CLAIM_RELAY_URLS[1..] {
+            if let Err(e) = client.add_relay(*url).await {
+                warn!("Minibits: could not add relay {url}: {e}");
+            }
+        }
+        client.connect().await;
+    }
     // Give relays a moment to finish the WebSocket handshake before the
     // fetch's own timeout starts consuming that time.
     tokio::time::sleep(std::time::Duration::from_millis(400)).await;
 
-    // Nostr timestamps have one-second resolution. Query the boundary second
-    // inclusively: a later-published payment may legitimately share that
-    // timestamp. `seen_dm_ids` performs the exact deduplication locally.
-    let filter = Filter::new()
-        .author(server_pubkey)
-        .pubkey(our_pubkey)
-        .kind(Kind::from(4u16))
-        .since(Timestamp::from(since))
-        .limit(200);
+    const PAGE_LIMIT: usize = 200;
+    const MAX_PAGES: usize = 5;
+    let mut watermark = since;
+    let mut out: Vec<(String, u64, String, String)> = Vec::new();
+    for page in 0..MAX_PAGES {
+        // Nostr timestamps have one-second resolution. Query the boundary
+        // second inclusively: a later-published payment may legitimately
+        // share that timestamp. `seen_dm_ids` performs the exact
+        // deduplication locally.
+        let filter = Filter::new()
+            .author(server_pubkey)
+            .pubkey(our_pubkey)
+            .kind(Kind::from(4u16))
+            .since(Timestamp::from(watermark))
+            .limit(PAGE_LIMIT);
 
-    let result = match client
-        .fetch_events(filter, std::time::Duration::from_secs(5))
-        .await
-    {
-        Ok(events) => {
-            let mut out: Vec<(String, u64, String, String)> = events
-                .into_iter()
-                .map(|e| {
-                    (
-                        e.content,
-                        e.created_at.as_secs(),
-                        e.pubkey.to_hex(),
-                        e.id.to_hex(),
-                    )
-                })
-                .collect();
-            out.sort_by_key(|(_, created_at, _, _)| *created_at);
-            out
+        let events = match client
+            .fetch_events(filter, std::time::Duration::from_secs(5))
+            .await
+        {
+            Ok(events) => events,
+            Err(e) => {
+                warn!("Minibits: relay fetch for claim DMs failed: {e}");
+                break;
+            }
+        };
+        let got = events.len();
+        let mut page_events: Vec<(String, u64, String, String)> = events
+            .into_iter()
+            .map(|e| {
+                (
+                    e.content,
+                    e.created_at.as_secs(),
+                    e.pubkey.to_hex(),
+                    e.id.to_hex(),
+                )
+            })
+            .collect();
+        page_events.sort_by_key(|(_, created_at, _, _)| *created_at);
+        if let Some((_, newest, _, _)) = page_events.last() {
+            // Advance strictly past the newest event seen so a full page
+            // doesn't refetch its own boundary forever; `since` is inclusive
+            // in NIP-01.
+            watermark = watermark.max(newest.saturating_add(1));
         }
-        Err(e) => {
-            warn!("Minibits: relay fetch for claim DMs failed: {e}");
-            Vec::new()
+        out.extend(page_events);
+
+        if got < PAGE_LIMIT {
+            break;
         }
-    };
+        if page == MAX_PAGES - 1 {
+            warn!(
+                "Minibits: hit the {MAX_PAGES}-page claim DM pagination cap; \
+                 some older DMs may remain unfetched until the next poll"
+            );
+        }
+    }
 
     client.shutdown().await;
-    result
+    out
 }
 
 fn queue_relay_dm(
@@ -963,6 +1017,14 @@ pub async fn claim_and_redeem(data_dir: &Path) -> Result<ClaimOutcome> {
                 redeemed += 1;
                 sats += got;
                 info!("Minibits: redeemed a claimed payment ({got} sats)");
+            }
+            Err(e) if is_already_redeemed(&e) => {
+                // Terminal: the value was already swept (a relay-watermark
+                // replay, or a claim redeemed by an earlier run before a
+                // crash lost track of it). Retrying can never succeed, so
+                // drop it instead of leaving `failed_count` stuck non-zero
+                // forever — see archy-x250-pa3, 2026-09-15.
+                info!("Minibits claim was already redeemed; dropping (not a loss, value already received)");
             }
             Err(e) => {
                 warn!("Minibits claim decrypted but failed to redeem ({e}); will retry next poll");
