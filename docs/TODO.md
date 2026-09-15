@@ -3,6 +3,14 @@
 Working backlog of forward-looking items not yet scoped into a dedicated plan
 doc. See [`ROADMAP.md`](ROADMAP.md) for the curated, public-facing direction.
 
+## Blocking incident — before unrelated work
+
+- **OPEN: Framework LND startup / missing Receive address / false zero balance.**
+  User requires investigation and a verified fix on the actual node before later
+  unrelated work. Access is pending; a manual LND restart is only a workaround.
+  See [incident evidence and closure criteria](incident-framework-lnd-startup.md)
+  and the repository `AGENTS.md` session-start instructions.
+
 ## Dev & build process (priority)
 
 - Formalize the contributor workflow: releases, CI, maintainers, automated
