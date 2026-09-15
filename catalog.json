@@ -67,13 +67,13 @@
     {
       "id": "mempool",
       "title": "Mempool Explorer",
-      "version": "3.0.0",
+      "version": "3.3.1-archy1",
       "description": "Bitcoin mempool and blockchain explorer. Real-time transaction and block visualization.",
       "icon": "/assets/img/app-icons/mempool.webp",
       "author": "Mempool",
       "category": "money",
       "tier": "core",
-      "dockerImage": "source.archipelago-foundation.org/lfg2025/mempool-frontend:v3.3.1",
+      "dockerImage": "source.archipelago-foundation.org/chaum/mempool-frontend:v3.3.1-archy1",
       "repoUrl": "https://github.com/mempool/mempool",
       "requires": [
         "bitcoin-knots",

@@ -4667,6 +4667,27 @@ impl ContainerOrchestrator for ProdContainerOrchestrator {
         let lock = self.app_lock(app_id).await;
         let _guard = lock.lock().await;
         let name = compute_container_name(&lm.manifest);
+        let mut resolved = lm.manifest.clone();
+        resolve_catalog_image(&mut resolved);
+        if resolved.app.container.build.is_none() {
+            if let Some(target) = &resolved.app.container.image {
+                if let Ok(running) = self.runtime.get_container_status(&name).await {
+                    match crate::container::image_versions::compare_image_versions(
+                        target,
+                        &running.image,
+                    ) {
+                        Some(std::cmp::Ordering::Less) => anyhow::bail!(
+                            "Refusing to downgrade {} from {} to {} during update",
+                            app_id,
+                            running.image,
+                            target
+                        ),
+                        Some(std::cmp::Ordering::Equal) => return Ok(()),
+                        _ => {}
+                    }
+                }
+            }
+        }
         let _ = self.runtime.stop_container(&name).await;
         let _ = self.runtime.remove_container(&name).await;
         self.install_fresh(&lm).await
@@ -5076,6 +5097,7 @@ mod tests {
         calls: StdMutex<Vec<String>>,
         /// container_name -> ContainerState. Absence = "doesn't exist".
         containers: StdMutex<HashMap<String, ContainerState>>,
+        running_images: StdMutex<HashMap<String, String>>,
         /// container_name -> Podman health status.
         health: StdMutex<HashMap<String, String>>,
         /// image_ref -> present. Absence = "not present in local storage".
@@ -5200,7 +5222,13 @@ mod tests {
                 health,
                 exit_code: None,
                 started_at: None,
-                image: "test-image".to_string(),
+                image: self
+                    .running_images
+                    .lock()
+                    .unwrap()
+                    .get(name)
+                    .cloned()
+                    .unwrap_or_else(|| "test-image".to_string()),
                 created: "now".to_string(),
                 ports: vec![],
                 lan_address: None,
@@ -6769,6 +6797,41 @@ app:
         let mut ids = report.adopted.clone();
         ids.sort();
         assert_eq!(ids, vec!["bitcoin-knots", "bitcoin-ui"]);
+    }
+
+    #[tokio::test]
+    async fn upgrade_preserves_container_when_catalog_is_stale_or_already_installed() {
+        for (target, should_error) in [("v3.3.1", true), ("v3.3.1-archy1", false)] {
+            let rt = Arc::new(MockRuntime::default());
+            rt.set_state("update-regression", ContainerState::Running);
+            rt.running_images.lock().unwrap().insert(
+                "update-regression".into(),
+                "registry.test/old/mempool-frontend:v3.3.1-archy1".into(),
+            );
+            let orch = orch_with(rt.clone()).await;
+            orch.insert_manifest_for_test(
+                pull_manifest(
+                    "update-regression",
+                    &format!("registry.test/new/mempool-frontend:{target}"),
+                ),
+                PathBuf::from("/tmp/update-regression"),
+            )
+            .await;
+            assert_eq!(
+                orch.upgrade("update-regression").await.is_err(),
+                should_error
+            );
+            assert!(
+                !rt.calls()
+                    .iter()
+                    .any(|call| call.starts_with("stop_container:")
+                        || call.starts_with("remove_container:")
+                        || call.starts_with("pull_image:")
+                        || call.starts_with("create_container:")),
+                "{:?}",
+                rt.calls()
+            );
+        }
     }
 
     #[tokio::test]

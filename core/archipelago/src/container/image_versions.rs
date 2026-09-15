@@ -100,6 +100,12 @@ fn parse_image_versions(content: &str) -> HashMap<String, String> {
 
         // Match VAR="value" or VAR=value
         if let Some((key, val)) = parse_assignment(line) {
+            // Read a self-default assignment without evaluating shell code.
+            let default_prefix = format!("${{{key}:-");
+            let val = val
+                .strip_prefix(&default_prefix)
+                .and_then(|v| v.strip_suffix('}'))
+                .unwrap_or(val);
             let expanded = val.replace("$ARCHY_REGISTRY", &registry);
             if key == "ARCHY_REGISTRY" {
                 registry = expanded.clone();
@@ -205,46 +211,69 @@ pub fn available_update_for_app(app_id: &str, running_image: &str) -> Option<Str
 }
 
 pub fn available_update_for_images(pinned: &str, running_image: &str) -> Option<String> {
-    let pinned_version = extract_version_from_image(&pinned);
+    if image_without_registry_or_tag(pinned) != image_without_registry_or_tag(running_image) {
+        return None;
+    }
+    available_catalog_update_for_images(pinned, running_image)
+}
+
+/// A signed catalog binds the image to an app id, so a publisher namespace
+/// migration must not hide a real upgrade. Baseline pins still require the
+/// same repository via `available_update_for_images` above.
+pub fn available_catalog_update_for_images(pinned: &str, running_image: &str) -> Option<String> {
+    let pinned_version = extract_version_from_image(pinned);
     if is_floating_tag(&pinned_version) {
         return None;
     }
-
-    let running_version = extract_version_from_image(running_image);
-    if pinned_version == running_version {
-        return None;
-    }
-
-    let pinned_repo = image_without_registry_or_tag(&pinned);
-    let running_repo = image_without_registry_or_tag(running_image);
-    if pinned_repo != running_repo {
-        return None;
-    }
-
-    // Never advertise a LOWER version as an update.
-    //
-    // Everything upstream of here is a version claim that can go stale: the
-    // signed catalog, a legacy catalog entry with no manifest, the
-    // image-versions.sh baseline pin. When one lags behind what a node is
-    // actually running, a bare `pinned != running` check turns that staleness
-    // into an "Update" button that rolls the node BACKWARDS — and a rollback
-    // to a version withdrawn for a vulnerability is precisely the case where
-    // that must not happen. Observed with BTCPay: 2.4.2 installed, a stale
-    // 2.3.9 pin, and the UI offering "update" to the exploited release.
-    //
-    // Only suppress when both tags parse as comparable version numbers, so
-    // apps with opaque tags (RELEASE.2024-11-07T00-52-20Z, 14-vectorchord0.4.3)
-    // keep the previous behaviour rather than silently losing updates.
-    if let (Some(p), Some(r)) = (
-        parse_version_parts(&pinned_version),
-        parse_version_parts(&running_version),
+    if matches!(
+        compare_image_versions(pinned, running_image),
+        Some(std::cmp::Ordering::Less | std::cmp::Ordering::Equal)
     ) {
-        if p < r {
-            return None;
-        }
+        return None;
     }
-
     Some(pinned_version)
+}
+
+/// Compare explicit image tags, ignoring registry and namespace. `None` means
+/// unknown ordering (including floating tags), never permission to downgrade.
+/// Archipelago's `-archyN` is a downstream patch revision ABOVE the upstream
+/// release, not a SemVer prerelease below it.
+pub fn compare_image_versions(target: &str, running: &str) -> Option<std::cmp::Ordering> {
+    use std::cmp::Ordering;
+    let target = extract_version_from_image(target);
+    let running = extract_version_from_image(running);
+    if is_floating_tag(&target) || is_floating_tag(&running) {
+        return None;
+    }
+    let target = target.strip_prefix('v').unwrap_or(&target);
+    let running = running.strip_prefix('v').unwrap_or(&running);
+    if target == running {
+        return Some(Ordering::Equal);
+    }
+    let mut target_core = parse_version_parts(target)?;
+    let mut running_core = parse_version_parts(running)?;
+    while target_core.last() == Some(&0) {
+        target_core.pop();
+    }
+    while running_core.last() == Some(&0) {
+        running_core.pop();
+    }
+    match target_core.cmp(&running_core) {
+        Ordering::Equal => {
+            fn patch_revision(tag: &str) -> Option<u64> {
+                if let Some((base, revision)) = tag.rsplit_once("-archy") {
+                    if base.chars().all(|c| c.is_ascii_digit() || c == '.') {
+                        return revision.parse().ok();
+                    }
+                }
+                tag.chars()
+                    .all(|c| c.is_ascii_digit() || c == '.')
+                    .then_some(0)
+            }
+            Some(patch_revision(target)?.cmp(&patch_revision(running)?))
+        }
+        order => Some(order),
+    }
 }
 
 /// Numeric components of a version tag, for ordering comparisons only.
@@ -424,6 +453,57 @@ mod tests {
     }
 
     #[test]
+    fn downstream_patch_is_newer_than_upstream_and_orders_revisions() {
+        let upstream = "registry.test/team/mempool-frontend:v3.3.1";
+        let patch1 = "registry.test/team/mempool-frontend:v3.3.1-archy1";
+        let patch2 = "registry.test/team/mempool-frontend:v3.3.1-archy2";
+        assert_eq!(available_update_for_images(upstream, patch1), None);
+        assert_eq!(available_update_for_images(patch1, patch2), None);
+        assert_eq!(
+            available_update_for_images(patch1, upstream),
+            Some("v3.3.1-archy1".into())
+        );
+        assert_eq!(
+            available_update_for_images(patch2, patch1),
+            Some("v3.3.1-archy2".into())
+        );
+    }
+
+    #[test]
+    fn catalog_namespace_migration_does_not_hide_patch_or_offer_reinstall() {
+        let old = "registry.test/lfg2025/mempool-frontend:v3.3.1";
+        let patched = "registry.test/chaum/mempool-frontend:v3.3.1-archy1";
+        assert_eq!(
+            available_catalog_update_for_images(patched, old),
+            Some("v3.3.1-archy1".into())
+        );
+        assert_eq!(
+            available_catalog_update_for_images(
+                patched,
+                "registry.test/lfg2025/mempool-frontend:v3.3.1-archy1"
+            ),
+            None
+        );
+        assert_eq!(available_update_for_images(patched, old), None);
+    }
+
+    #[test]
+    fn equivalent_version_spelling_does_not_offer_update() {
+        assert_eq!(
+            available_update_for_images("r.test/team/app:v3.3.1", "r.test/team/app:3.3.1"),
+            None
+        );
+        assert_eq!(
+            available_update_for_images("r.test/team/app:3.3.0", "r.test/team/app:3.3"),
+            None
+        );
+        assert_eq!(
+            compare_image_versions("r.test/team/app:latest", "r.test/team/app:latest"),
+            None
+        );
+    }
+
+    #[test]
     fn test_parse_image_versions() {
         let content = r#"
 ARCHY_REGISTRY="source.archipelago-foundation.org/lfg2025"
@@ -443,6 +523,22 @@ NOT_AN_IMAGE="something"
         );
         assert!(!parsed.contains_key("NOT_AN_IMAGE"));
         assert!(!parsed.contains_key("ARCHY_REGISTRY"));
+    }
+
+    #[test]
+    fn shipped_image_pins_expand_shell_defaults_to_concrete_refs() {
+        let images = parse_image_versions(include_str!("../../../../scripts/image-versions.sh"));
+        assert_eq!(
+            images["MEMPOOL_WEB_IMAGE"],
+            "source.archipelago-foundation.org/chaum/mempool-frontend:v3.3.1-archy1"
+        );
+        assert_eq!(
+            images["MEMPOOL_BACKEND_IMAGE"],
+            "source.archipelago-foundation.org/lfg2025/mempool-backend:v3.3.1"
+        );
+        assert!(images
+            .values()
+            .all(|v| !v.contains('$') && !v.contains('}')));
     }
 
     #[test]

@@ -2159,20 +2159,25 @@ async fn apply_per_app_auto_updates(
     }
 }
 
-/// After a catalog refresh that changed the cached bytes, rebuild the
-/// orchestrator's manifest map so registry-shipped manifest changes take
-/// effect now instead of at the next service restart.
-async fn reload_manifests_if_changed(
-    refresh: crate::container::app_catalog::CatalogRefresh,
+/// Reload after every successful refresh, including unchanged bytes: the cache
+/// may have been written before a previous reload failed. Auto-updates only run
+/// when the catalog and the orchestrator's manifests are ready together.
+async fn reload_catalog_manifests(
+    _refresh: crate::container::app_catalog::CatalogRefresh,
     orchestrator: &Option<std::sync::Arc<dyn crate::container::traits::ContainerOrchestrator>>,
-) {
-    if !refresh.changed {
-        return;
-    }
-    let Some(orch) = orchestrator else { return };
+) -> bool {
+    let Some(orch) = orchestrator else {
+        return false;
+    };
     match orch.reload_manifests().await {
-        Ok(n) => info!("Update scheduler: catalog changed, reloaded {n} manifest(s)"),
-        Err(e) => warn!("Update scheduler: manifest reload after catalog change failed: {e}"),
+        Ok(n) => {
+            info!("Update scheduler: refreshed catalog, reloaded {n} manifest(s)");
+            true
+        }
+        Err(e) => {
+            warn!("Update scheduler: manifest reload failed; skipping auto-updates: {e}");
+            false
+        }
     }
 }
 
@@ -2188,7 +2193,9 @@ pub async fn run_update_scheduler(
     // Refresh the app catalog once at startup so per-app "update available"
     // badges appear without waiting for the first hourly tick.
     match crate::container::app_catalog::refresh_catalog(&data_dir).await {
-        Ok(refresh) => reload_manifests_if_changed(refresh, &orchestrator).await,
+        Ok(refresh) => {
+            reload_catalog_manifests(refresh, &orchestrator).await;
+        }
         Err(e) => debug!(
             "Update scheduler: initial app-catalog refresh failed: {}",
             e
@@ -2204,14 +2211,22 @@ pub async fn run_update_scheduler(
         // previously cached catalog stays in place (origin-always-wins).
         // A changed catalog also reloads the orchestrator's manifest overlay so
         // catalog-shipped manifest fixes apply without a service restart.
-        match crate::container::app_catalog::refresh_catalog(&data_dir).await {
-            Ok(refresh) => reload_manifests_if_changed(refresh, &orchestrator).await,
-            Err(e) => debug!("Update scheduler: app-catalog refresh failed: {}", e),
-        }
+        let catalog_ready = match crate::container::app_catalog::refresh_catalog(&data_dir).await {
+            Ok(refresh) => reload_catalog_manifests(refresh, &orchestrator).await,
+            Err(e) => {
+                debug!(
+                    "Update scheduler: app-catalog refresh failed; skipping auto-updates: {}",
+                    e
+                );
+                false
+            }
+        };
 
-        // Per-app auto-update-to-latest (multi-version support). Runs every tick
-        // regardless of the binary-OTA schedule below; opt-in + pin-respecting.
-        apply_per_app_auto_updates(&orchestrator).await;
+        // Per-app updates require fresh, loaded manifests; a failed refresh
+        // may still show cached badges but must not trigger container changes.
+        if catalog_ready {
+            apply_per_app_auto_updates(&orchestrator).await;
+        }
 
         let state = match load_state(&data_dir).await {
             Ok(s) => s,

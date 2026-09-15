@@ -400,7 +400,7 @@ pub fn available_update_for_app(app_id: &str, running_image: &str) -> Option<Str
     }
     if let Some(catalog_image) = catalog_primary_image(app_id) {
         // Catalog covers this app with a concrete image -> authoritative.
-        return crate::container::image_versions::available_update_for_images(
+        return crate::container::image_versions::available_catalog_update_for_images(
             &catalog_image,
             running_image,
         );

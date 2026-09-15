@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+## v1.8.16-alpha (2026-09-15)
+
+- App updates refresh and verify the signed catalog before changing containers. A failed refresh or manifest reload cancels the update, and automatic updates wait for a successful refresh.
+- Fixed repeated Mempool update offers: downstream `-archyN` patches now sort above their upstream release, and moving a published image between registry namespaces does not hide a genuine upgrade.
+- Updates inspect installed component versions, refuse known downgrades, skip containers already at the target versions, and verify the resulting versions before reporting success.
+- Added regression coverage for stale catalogs, matching versions, publisher namespace changes, stack component updates, and keeping running containers untouched when no upgrade is needed.
+
 ## v1.8.15-alpha (2026-09-13)
 
 - Cuprate is presented as one user-facing app in My Apps, including its UI launch button; the generated dashboard companion is hidden as an implementation detail instead of appearing under Services.

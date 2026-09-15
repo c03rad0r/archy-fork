@@ -362,6 +362,19 @@ init()
               </button>
             </div>
             <div class="overflow-y-auto flex-1 min-h-0 space-y-6 pr-1">
+              <!-- v1.8.16-alpha -->
+              <div>
+                <div class="flex items-center gap-2 mb-3">
+                  <span class="text-xs font-mono px-2 py-0.5 rounded bg-orange-500/20 text-orange-300">v1.8.16-alpha</span>
+                  <span class="text-xs text-white/40">September 15, 2026</span>
+                </div>
+                <div class="space-y-3 text-sm text-white/80 pl-3 border-l border-white/10">
+                  <p>App updates refresh and verify the signed catalog before changing containers. A failed refresh or manifest reload cancels the update, and automatic updates wait for a successful refresh.</p>
+                  <p>Fixed repeated Mempool update offers: downstream -archyN patches now sort above their upstream release, and moving a published image between registry namespaces does not hide a genuine upgrade.</p>
+                  <p>Updates inspect installed component versions, refuse known downgrades, skip containers already at the target versions, and verify the resulting versions before reporting success.</p>
+                  <p>Added regression coverage for stale catalogs, matching versions, publisher namespace changes, stack component updates, and keeping running containers untouched when no upgrade is needed.</p>
+                </div>
+              </div>
               <!-- v1.8.15-alpha -->
               <div>
                 <div class="flex items-center gap-2 mb-3">
@@ -371,6 +384,7 @@ init()
                 <div class="space-y-3 text-sm text-white/80 pl-3 border-l border-white/10">
                   <p>Cuprate is presented as one user-facing app in My Apps, including its UI launch button; the generated dashboard companion is hidden as an implementation detail instead of appearing under Services.</p>
                   <p>Added regression coverage for Cuprate install and installed-state grouping.</p>
+                  <p>Release validation was rerun on the corrected tree before OTA and ISO publication.</p>
                 </div>
               </div>
               <!-- v1.8.14-alpha -->

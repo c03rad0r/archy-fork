@@ -19,7 +19,7 @@ use tracing::{error, info, warn};
 const PODMAN_UPDATE_PULL_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(600);
 
 impl RpcHandler {
-    /// Update a package to the version pinned in image-versions.sh.
+    /// Update a package to the freshly verified catalog target.
     /// This is a manual operation — the user clicks "Update" in the UI.
     pub(in crate::api::rpc) async fn handle_package_update(
         &self,
@@ -32,6 +32,21 @@ impl RpcHandler {
             .ok_or_else(|| anyhow::anyhow!("Missing package id"))?;
         validate_app_id(package_id)?;
 
+        // An Update click must not act on an hourly cache that predates the
+        // button. Fetch and verify first; failure leaves running containers alone.
+        crate::container::app_catalog::refresh_catalog(&self.config.data_dir)
+            .await
+            .context(
+                "Cannot check the signed app catalog; update cancelled before changing containers",
+            )?;
+        if let Some(orch) = &self.orchestrator {
+            // Reload even when bytes did not change: a previous reload may have
+            // failed after the cache was written, or another refresher wrote it.
+            orch.reload_manifests()
+                .await
+                .context("Cannot load current app manifests; update cancelled")?;
+        }
+
         // Resolve the target image. Prefer the remote app catalog (decoupled
         // from the binary OTA), falling back to the image-versions.sh pin. This
         // is OPTIONAL for orchestrator-managed apps: the orchestrator resolves
@@ -41,6 +56,22 @@ impl RpcHandler {
         // still upgrades. Only the legacy/stack path below hard-requires it.
         let pinned = crate::container::app_catalog::catalog_primary_image(package_id)
             .or_else(|| image_versions::pinned_image_for_app(package_id));
+
+        let targets = pinned
+            .as_ref()
+            .map(|target| self.resolve_images_to_pull(package_id, target));
+        if let Some(targets) = &targets {
+            let installed = inspect_update_images(package_id).await?;
+            if !update_targets_need_change(targets, &installed)? {
+                install_log(&format!(
+                    "UPDATE SKIP: {} — target versions already installed",
+                    package_id
+                ))
+                .await;
+                self.clear_install_progress(package_id).await;
+                return Ok(serde_json::json!({"status": "up-to-date", "package_id": package_id}));
+            }
+        }
 
         // Note: the `already updating` guard lives in `spawn_package_update`
         // (the async wrapper that dispatch actually routes to). By the time
@@ -80,6 +111,12 @@ impl RpcHandler {
             if let Some(orchestrator) = self.orchestrator.as_ref() {
                 match orchestrator.upgrade(orchestrator_app_id).await {
                     Ok(()) => {
+                        if let Some(targets) = &targets {
+                            verify_update_targets(
+                                targets,
+                                &inspect_update_images(package_id).await?,
+                            )?;
+                        }
                         self.set_install_phase(package_id, InstallPhase::WaitingHealthy)
                             .await;
                         if let Ok(health) = orchestrator.health(orchestrator_app_id).await {
@@ -133,7 +170,8 @@ impl RpcHandler {
         };
 
         // Resolve images to pull — either a stack or single container
-        let images_to_pull = self.resolve_images_to_pull(package_id, &pinned);
+        let images_to_pull =
+            targets.unwrap_or_else(|| self.resolve_images_to_pull(package_id, &pinned));
 
         // Get all containers for this app
         let containers = get_containers_for_app(package_id).await?;
@@ -324,15 +362,22 @@ impl RpcHandler {
                 .await;
             if let Ok(o) = status {
                 let state = String::from_utf8_lossy(&o.stdout).trim().to_string();
-                if state == "exited" {
-                    warn!(
-                        "Update {}: container {} exited after recreate",
-                        package_id, name
-                    );
-                }
+                anyhow::ensure!(
+                    o.status.success() && state == "running",
+                    "Update {}: container {} is not running after recreate",
+                    package_id,
+                    name
+                );
+            } else {
+                anyhow::bail!(
+                    "Update {}: cannot inspect recreated container {}",
+                    package_id,
+                    name
+                );
             }
         }
 
+        verify_update_targets(images_to_pull, &inspect_update_images(package_id).await?)?;
         Ok(())
     }
 
@@ -514,6 +559,98 @@ impl RpcHandler {
     }
 }
 
+async fn inspect_update_images(package_id: &str) -> Result<Vec<(String, String)>> {
+    let containers = get_containers_for_app(package_id).await?;
+    anyhow::ensure!(
+        !containers.is_empty(),
+        "No containers found for {}",
+        package_id
+    );
+    let mut command = tokio::process::Command::new("podman");
+    command.arg("inspect").args(&containers).kill_on_drop(true);
+    let output = tokio::time::timeout(std::time::Duration::from_secs(30), command.output())
+        .await
+        .context("Timed out checking installed images")??;
+    anyhow::ensure!(
+        output.status.success(),
+        "Cannot inspect installed images; update cancelled"
+    );
+    let inspected: Vec<serde_json::Value> = serde_json::from_slice(&output.stdout)?;
+    inspected
+        .iter()
+        .map(|entry| {
+            let name = entry
+                .get("Name")
+                .and_then(|v| v.as_str())
+                .ok_or_else(|| anyhow::anyhow!("Container inspection omitted Name"))?;
+            let image = entry
+                .get("ImageName")
+                .and_then(|v| v.as_str())
+                .ok_or_else(|| anyhow::anyhow!("Container inspection omitted ImageName"))?;
+            Ok((name.trim_start_matches('/').to_string(), image.to_string()))
+        })
+        .collect()
+}
+
+fn installed_image_for_target<'a>(
+    app_id: &str,
+    installed: &'a [(String, String)],
+) -> Option<&'a str> {
+    installed
+        .iter()
+        .find(|(name, _)| {
+            candidate_app_ids_for_container(name)
+                .iter()
+                .any(|id| id == app_id)
+        })
+        .map(|(_, image)| image.as_str())
+}
+
+/// A successful recreate is not proof that it used the downloaded image.
+fn verify_update_targets(
+    targets: &[(String, String)],
+    installed: &[(String, String)],
+) -> Result<()> {
+    for (app_id, target) in targets {
+        let running = installed_image_for_target(app_id, installed).ok_or_else(|| {
+            anyhow::anyhow!("Update {}: target container missing after recreate", app_id)
+        })?;
+        anyhow::ensure!(
+            image_versions::extract_version_from_image(target)
+                == image_versions::extract_version_from_image(running)
+                || image_versions::compare_image_versions(target, running)
+                    == Some(std::cmp::Ordering::Equal),
+            "Update {}: recreated container did not reach target version {}",
+            app_id,
+            image_versions::extract_version_from_image(target)
+        );
+    }
+    Ok(())
+}
+
+/// Check every stack component, not just the version shown on its tile. A
+/// newer backend must still update when its frontend version is unchanged.
+/// A stale target for any component cancels before pulling or stopping anything.
+fn update_targets_need_change(
+    targets: &[(String, String)],
+    installed: &[(String, String)],
+) -> Result<bool> {
+    use std::cmp::Ordering;
+    let mut changed = false;
+    for (app_id, target) in targets {
+        let running = installed_image_for_target(app_id, installed);
+        match running.and_then(|image| image_versions::compare_image_versions(target, image)) {
+            Some(Ordering::Less) => anyhow::bail!(
+                "Catalog target for {} is older than the installed image; refusing downgrade",
+                app_id
+            ),
+            Some(Ordering::Equal) => {}
+            Some(Ordering::Greater) | None => changed = true,
+        }
+    }
+    Ok(changed)
+}
+
 fn should_try_orchestrator_update(package_id: &str, orchestrator_available: bool) -> bool {
     orchestrator_available && !uses_legacy_update_flow(package_id)
 }
@@ -526,11 +663,14 @@ fn orchestrator_update_app_id(package_id: &str) -> &str {
 }
 
 fn uses_legacy_update_flow(package_id: &str) -> bool {
-    matches!(
-        package_id,
-        // Multi-container stacks still updated via the stack-aware path.
-        "immich" | "penpot" | "penpot-frontend" | "indeedhub"
-    )
+    // A primary container already at its target does not mean its backend or
+    // database is current. Route every mapped stack through the component flow.
+    !image_versions::containers_for_stack(package_id).is_empty()
+        || matches!(
+            package_id,
+            // Multi-container stacks still updated via the stack-aware path.
+            "immich" | "penpot" | "penpot-frontend" | "indeedhub"
+        )
 }
 
 fn is_unknown_app_id_error(err: &anyhow::Error) -> bool {
@@ -554,7 +694,12 @@ fn candidate_app_ids_for_container(container_name: &str) -> Vec<String> {
         "archy-bitcoin-ui" => push("bitcoin-ui"),
         "archy-lnd-ui" => push("lnd-ui"),
         "archy-electrs-ui" => push("electrs-ui"),
-        "mempool" => {
+        "mysql-mempool" => push("archy-mempool-db"),
+        "btcpay" | "btcpayserver" | "archy-btcpay" => push("btcpay-server"),
+        "homeassistant" | "archy-homeassistant" => push("home-assistant"),
+        "fedimintd" => push("fedimint"),
+        "electrs" | "mempool-electrs" => push("electrumx"),
+        "mempool" | "mempool-web" => {
             push("archy-mempool-web");
             push("mempool");
         }
@@ -572,27 +717,89 @@ fn candidate_app_ids_for_container(container_name: &str) -> Vec<String> {
 mod tests {
     use super::{
         candidate_app_ids_for_container, orchestrator_update_app_id,
-        should_try_orchestrator_update, uses_legacy_update_flow,
+        should_try_orchestrator_update, update_targets_need_change, uses_legacy_update_flow,
+        verify_update_targets,
     };
 
     #[test]
+    fn mempool_update_preflight_rejects_stale_catalog_without_reinstalling() {
+        let installed = vec![(
+            "mempool".into(),
+            "r.test/lfg2025/mempool-frontend:v3.3.1-archy1".into(),
+        )];
+        let stale = vec![(
+            "archy-mempool-web".into(),
+            "r.test/lfg2025/mempool-frontend:v3.3.1".into(),
+        )];
+        assert!(update_targets_need_change(&stale, &installed).is_err());
+        let current = vec![(
+            "archy-mempool-web".into(),
+            "r.test/chaum/mempool-frontend:v3.3.1-archy1".into(),
+        )];
+        assert!(!update_targets_need_change(&current, &installed).unwrap());
+        let legacy = vec![(
+            "mempool-web".into(),
+            "r.test/old/mempool-frontend:v3.3.1-archy1".into(),
+        )];
+        assert!(!update_targets_need_change(&current, &legacy).unwrap());
+        let newer = vec![(
+            "archy-mempool-web".into(),
+            "r.test/chaum/mempool-frontend:v3.3.1-archy2".into(),
+        )];
+        assert!(update_targets_need_change(&newer, &installed).unwrap());
+    }
+
+    #[test]
+    fn stack_update_checks_backend_even_when_frontend_matches() {
+        let installed = vec![
+            ("mempool".into(), "r.test/team/web:3.3.1-archy1".into()),
+            ("mempool-api".into(), "r.test/team/api:3.3.1".into()),
+        ];
+        let mut targets = vec![
+            (
+                "archy-mempool-web".into(),
+                "r.test/team/web:3.3.1-archy1".into(),
+            ),
+            ("mempool-api".into(), "r.test/team/api:3.3.2".into()),
+        ];
+        assert!(update_targets_need_change(&targets, &installed).unwrap());
+        targets[0].1 = "r.test/team/web:3.3.1".into();
+        assert!(update_targets_need_change(&targets, &installed).is_err());
+    }
+
+    #[test]
+    fn update_completion_requires_the_target_version_to_be_installed() {
+        let targets = vec![(
+            "archy-mempool-web".into(),
+            "r.test/chaum/mempool-frontend:v3.3.1-archy1".into(),
+        )];
+        let mut installed = vec![(
+            "mempool".into(),
+            "r.test/lfg2025/mempool-frontend:v3.3.1".into(),
+        )];
+        assert!(verify_update_targets(&targets, &installed).is_err());
+        assert!(verify_update_targets(&targets, &[]).is_err());
+        installed[0].1 = "r.test/lfg2025/mempool-frontend:v3.3.1-archy1".into();
+        assert!(verify_update_targets(&targets, &installed).is_ok());
+    }
+
+    #[test]
     fn legacy_flow_for_stack_apps() {
-        for app in ["immich", "penpot", "indeedhub"] {
+        for app in [
+            "immich",
+            "penpot",
+            "indeedhub",
+            "mempool",
+            "btcpay-server",
+            "netbird",
+        ] {
             assert!(uses_legacy_update_flow(app), "{app} should stay legacy");
         }
     }
 
     #[test]
     fn orchestrator_flow_for_single_apps() {
-        for app in [
-            "lnd",
-            "bitcoin-core",
-            "searxng",
-            "grafana",
-            "btcpay-server",
-            "mempool",
-            "fedimint",
-        ] {
+        for app in ["lnd", "bitcoin-core", "searxng", "grafana", "fedimint"] {
             assert!(
                 !uses_legacy_update_flow(app),
                 "{app} should be orchestrator-first"

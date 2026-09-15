@@ -330,7 +330,7 @@ impl RpcHandler {
         let package_id_spawn = package_id.clone();
         tokio::spawn(async move {
             match handler.handle_package_update(params).await {
-                Ok(_) => {
+                Ok(result) => {
                     info!("package.update {}: complete", package_id_spawn);
                     // Same reasoning as install: the merge_preserving_transitional
                     // helper treats Updating as RPC-owned, so we MUST write the
@@ -345,7 +345,11 @@ impl RpcHandler {
                     set_package_state(
                         &handler.state_manager,
                         &package_id_spawn,
-                        PackageState::Running,
+                        if result.get("status").and_then(|v| v.as_str()) == Some("up-to-date") {
+                            pre_state.clone().unwrap_or(PackageState::Running)
+                        } else {
+                            PackageState::Running
+                        },
                     )
                     .await;
                 }
