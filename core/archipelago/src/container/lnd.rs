@@ -96,128 +96,20 @@ pub async fn ensure_wallet_initialized() -> Result<()> {
         if file_exists_as_root(admin_macaroon).await && lnd_getinfo_ready(admin_macaroon).await {
             return Ok(());
         }
-        match unlock_existing_wallet().await? {
-            true => {
-                wait_for_admin_macaroon(admin_macaroon).await?;
-                return Ok(());
-            }
-            false => {
-                // Every candidate password was actively rejected: this wallet was
-                // created with a password this node no longer has, so it can never
-                // auto-unlock unattended. Alpha nodes hold no real funds and a wallet
-                // locked with an unknown password is already inaccessible, so wipe +
-                // recreate it on the per-node secret to self-heal at boot.
-                recreate_wallet_destructively().await?;
-                wait_for_admin_macaroon(admin_macaroon).await?;
-                return Ok(());
-            }
-        }
+        unlock_existing_wallet_no_wipe().await?;
+        wait_for_admin_macaroon(admin_macaroon).await?;
+        return Ok(());
     }
 
     init_wallet_via_rest().await?;
     wait_for_admin_macaroon(admin_macaroon).await
 }
 
-/// LND data subdirectories holding wallet + channel + graph state. Removing them
-/// returns LND to a NON_EXISTING wallet state. Funds-bearing data lives here too,
-/// so deletion is destructive — only done once the wallet is already unrecoverable.
-const LND_STATE_DIRS: &[&str] = &[
-    "/var/lib/archipelago/lnd/data/chain",
-    "/var/lib/archipelago/lnd/data/graph",
-];
-
-/// Podman container name for the core LND app (see `compute_container_name`:
-/// non-UI core apps keep their bare id). LND runs as a plain bridge-network
-/// container, not a Quadlet unit, so it is restarted via `podman`, not systemctl.
-const LND_CONTAINER: &str = "lnd";
-
 /// Canonical on-host admin macaroon — same path the RPC layer reads.
 const LND_ADMIN_MACAROON: &str =
     "/var/lib/archipelago/lnd/data/chain/bitcoin/mainnet/admin.macaroon";
 
-/// Archipelago data dir (default; not overridden in prod). Holds the
-/// `user-stopped.json` that gates health-monitor auto-restart.
 const ARCHY_DATA_DIR: &str = "/var/lib/archipelago";
-
-/// Destroy an unrecoverable LND wallet and recreate a fresh one keyed to the
-/// per-node secret. Suppresses health-monitor auto-restart for the wipe window,
-/// stops LND, deletes its wallet/chain/graph state as root, restarts it, waits
-/// for NON_EXISTING, then inits a fresh wallet. Destructive — only called when no
-/// candidate password can open the existing wallet.
-async fn recreate_wallet_destructively() -> Result<()> {
-    tracing::warn!(
-        "[lnd] wallet is locked with an unknown password and cannot auto-unlock; \
-         wiping and recreating it on the per-node secret (DESTRUCTIVE)"
-    );
-
-    // The health monitor restarts any container it sees stopped; mark LND
-    // user-stopped so it doesn't re-launch (and re-open the wallet) mid-wipe.
-    // Always cleared below so LND auto-recovers normally afterwards.
-    let data_dir = std::path::Path::new(ARCHY_DATA_DIR);
-    crate::crash_recovery::mark_user_stopped(data_dir, LND_CONTAINER).await;
-    let result = wipe_and_reinit_wallet().await;
-    crate::crash_recovery::clear_user_stopped(data_dir, LND_CONTAINER).await;
-    result
-}
-
-async fn wipe_and_reinit_wallet() -> Result<()> {
-    podman_user_scoped(&["stop", LND_CONTAINER])
-        .await
-        .context("stopping lnd before wallet wipe")?;
-
-    for dir in LND_STATE_DIRS {
-        let status = host_sudo(&["rm", "-rf", dir])
-            .await
-            .with_context(|| format!("removing {dir}"))?;
-        if !status.success() {
-            anyhow::bail!("removing {dir} exited with {status}");
-        }
-    }
-
-    podman_user_scoped(&["start", LND_CONTAINER])
-        .await
-        .context("restarting lnd after wallet wipe")?;
-
-    wait_for_wallet_state("NON_EXISTING").await?;
-    init_wallet_via_rest().await
-}
-
-/// Run `podman <args>` inside a transient `systemd-run --user --scope`, matching
-/// how the orchestrator/health-monitor manage rootless containers (keeps the
-/// container out of the archipelago service's cgroup).
-async fn podman_user_scoped(args: &[&str]) -> Result<()> {
-    let out = tokio::process::Command::new("systemd-run")
-        .args(["--user", "--scope", "--quiet", "--collect", "podman"])
-        .args(args)
-        .output()
-        .await
-        .with_context(|| format!("systemd-run --user --scope podman {}", args.join(" ")))?;
-    if !out.status.success() {
-        anyhow::bail!(
-            "podman {} failed: {}",
-            args.join(" "),
-            String::from_utf8_lossy(&out.stderr).trim()
-        );
-    }
-    Ok(())
-}
-
-/// Poll `/v1/state` until LND reports `target`, or time out after ~120s.
-async fn wait_for_wallet_state(target: &str) -> Result<()> {
-    let client = reqwest::Client::builder()
-        .no_proxy()
-        .timeout(std::time::Duration::from_secs(5))
-        .danger_accept_invalid_certs(true)
-        .build()
-        .context("building LND REST client")?;
-    for _ in 0..120 {
-        if wallet_state(&client).await.as_deref() == Some(target) {
-            return Ok(());
-        }
-        tokio::time::sleep(std::time::Duration::from_secs(1)).await;
-    }
-    anyhow::bail!("LND did not reach state {target} after wallet wipe")
-}
 
 async fn file_exists_as_root(path: &str) -> bool {
     if std::path::Path::new(path).exists() {
@@ -390,14 +282,8 @@ async fn unlock_existing_wallet_via_rest() -> Result<bool> {
     )
 }
 
-/// Unlock an existing wallet WITHOUT the destructive fallback.
-///
-/// `ensure_wallet_initialized` wipes and recreates a wallet no candidate
-/// password can open — correct for a boot path that must self-heal, and exactly
-/// wrong for macaroon rotation, which restarts LND against a wallet the operator
-/// still wants. Rotation calls this instead, so there is no code path from
-/// "rotate my credentials" to "delete my wallet": a rejected password surfaces
-/// as an error the caller reports, never as a wipe.
+/// Unlock the existing wallet, preserving its identity and channel data when
+/// passwords are unavailable or rejected. Used by boot and credential rotation.
 pub(crate) async fn unlock_existing_wallet_no_wipe() -> Result<()> {
     match unlock_existing_wallet().await? {
         true => Ok(()),
@@ -538,7 +424,7 @@ async fn init_wallet_via_rest() -> Result<()> {
     {
         UnlockerResponse::Value(seed) => seed,
         UnlockerResponse::WalletAlreadyExists => {
-            unlock_existing_wallet().await?;
+            unlock_existing_wallet_no_wipe().await?;
             return Ok(());
         }
     };
@@ -569,7 +455,7 @@ async fn init_wallet_via_rest() -> Result<()> {
             .await;
         }
         UnlockerResponse::WalletAlreadyExists => {
-            unlock_existing_wallet().await?;
+            unlock_existing_wallet_no_wipe().await?;
         }
     }
 

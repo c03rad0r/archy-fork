@@ -1,6 +1,6 @@
 # Framework: LND startup, missing Receive address, false zero balance
 
-**Status: OPEN — live Framework access required; not fixed.**
+**Status: OPEN — Framework inspected live; candidate fix under test; not fixed yet.**
 
 Reported: 2026-09-15. Source inspected: main at `3b9b74da` (v1.8.17-alpha publication).
 The Framework's installed version and exact incident time have not been verified.
@@ -131,3 +131,42 @@ tab and response once the user clarifies and the node can be inspected.
 
 2026-09-15: source investigation and persistent session-start instructions only.
 No code fix, release, node deployment, or live reproduction for this incident yet.
+
+## Live evidence captured 2026-09-15
+
+Access was provided during the same session. Read-only inspection confirmed:
+
+- Framework runs `1.8.17-alpha-dev`; the current full boot began at 18:40:09 UTC.
+- LND opened its databases in 6.7 seconds and requested its wallet password at
+  18:40:20. It then rejected GetInfo/ChannelBalance/WalletBalance as wallet locked.
+- The management service's first sequential reconcile pass was occupied by
+  unrelated image recovery, including a missing voice image from 18:40:24 and
+  later a missing Core Lightning image. Manifests are iterated from a HashMap;
+  wallet readiness has no initial priority. Boot recovery itself completed at
+  18:40:18; the first full app-reconcile report appeared at 18:44:34.
+- The user's manual LND restart was recorded at 18:42:33. The replacement LND
+  process started at 18:42:40, requested its password at 18:43:05, and unlocked
+  at 18:43:07 through the explicit restart hook. This supports delayed unlock
+  behind unrelated recovery, rather than a missing wallet or bad password.
+- At inspection, `/v1/state` reports SERVER_ACTIVE; getinfo reports chain and
+  graph sync and two active channels. Both authenticated balance endpoints
+  report nonzero balances. No wallet-recreation event was found in captured logs.
+- The Minibits RPC separately fails with “The ecash wallet has no seed yet”.
+  `wallet/cashu_seed.json` and `wallet/minibits.json` are absent. The existing
+  ecash wallet is present with proofs and an August modification timestamp.
+  Do not overwrite it or generate an unrelated recovery identity. Still identify
+  which Receive item the user meant before declaring this part repaired.
+
+Private raw evidence: `/home/archipelago/.local/state/archy-incidents/framework-lnd-20260915/`.
+Files have mode 0600 and the directory 0700. Do not commit or publish raw logs.
+
+Candidate changes on `investigate/framework-lnd-startup`:
+
+- Run Bitcoin and LND reconciliation before unrelated image pulls/builds.
+- Reject failed/incomplete LND balance responses instead of manufacturing zeros.
+- Preserve known Home balances on invalid responses, visibly label unavailable
+  balances, and clear the warning after a successful refresh.
+- Remove automatic destructive wallet recreation; failed unlock preserves data.
+- Add backend outage/zero/ordering regressions and UI failure/recovery coverage.
+
+These changes are not yet deployed or verified through a Framework reboot.

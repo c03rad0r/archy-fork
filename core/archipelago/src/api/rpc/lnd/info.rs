@@ -73,6 +73,42 @@ struct LndChannelBalanceResponse {
     pending_open_local_balance: Option<LndAmount>,
 }
 
+/// Reject unavailable LND data before it can be decoded as an empty, zero wallet.
+async fn get_lnd_json<T: serde::de::DeserializeOwned>(
+    client: &reqwest::Client,
+    url: &str,
+    macaroon_hex: &str,
+) -> Result<T> {
+    client
+        .get(url)
+        .header("Grpc-Metadata-macaroon", macaroon_hex)
+        .send()
+        .await
+        .context("LND is unavailable; balance could not be checked")?
+        .error_for_status()
+        .context("LND is not ready; balance could not be checked")?
+        .json()
+        .await
+        .context("LND returned invalid wallet data")
+}
+
+fn checked_balances(
+    wallet: LndBalanceResponse,
+    channels: LndChannelBalanceResponse,
+) -> Result<(i64, i64, i64)> {
+    fn sats(value: Option<String>) -> Result<i64> {
+        let value = value.context("LND omitted a balance; balance is unavailable")?;
+        let amount: i64 = value.parse().context("LND returned an invalid balance")?;
+        anyhow::ensure!(amount >= 0, "LND returned a negative balance");
+        Ok(amount)
+    }
+    Ok((
+        sats(wallet.total_balance)?,
+        sats(channels.local_balance.and_then(|a| a.sat))?,
+        sats(channels.pending_open_local_balance.and_then(|a| a.sat))?,
+    ))
+}
+
 impl RpcHandler {
     pub(in crate::api::rpc) async fn handle_lnd_getinfo(&self) -> Result<serde_json::Value> {
         let macaroon_bytes = read_lnd_admin_macaroon().await?;
@@ -85,45 +121,26 @@ impl RpcHandler {
             .build()
             .context("Failed to create HTTP client")?;
 
-        let get_info: LndGetInfoResponse = client
-            .get(format!("{LND_REST_BASE_URL}/v1/getinfo"))
-            .header("Grpc-Metadata-macaroon", &macaroon_hex)
-            .send()
-            .await
-            .context("LND REST connection failed")?
-            .json()
-            .await
-            .context("Failed to parse LND getinfo response")?;
-
-        let channel_balance: LndChannelBalanceResponse = match client
-            .get(format!("{LND_REST_BASE_URL}/v1/balance/channels"))
-            .header("Grpc-Metadata-macaroon", &macaroon_hex)
-            .send()
-            .await
-        {
-            Ok(resp) => resp.json().await.unwrap_or(LndChannelBalanceResponse {
-                local_balance: None,
-                pending_open_local_balance: None,
-            }),
-            Err(_) => LndChannelBalanceResponse {
-                local_balance: None,
-                pending_open_local_balance: None,
-            },
-        };
-
-        let wallet_balance: LndBalanceResponse = match client
-            .get(format!("{LND_REST_BASE_URL}/v1/balance/blockchain"))
-            .header("Grpc-Metadata-macaroon", &macaroon_hex)
-            .send()
-            .await
-        {
-            Ok(resp) => resp.json().await.unwrap_or(LndBalanceResponse {
-                total_balance: None,
-            }),
-            Err(_) => LndBalanceResponse {
-                total_balance: None,
-            },
-        };
+        let get_info: LndGetInfoResponse = get_lnd_json(
+            &client,
+            &format!("{LND_REST_BASE_URL}/v1/getinfo"),
+            &macaroon_hex,
+        )
+        .await?;
+        let channel_balance: LndChannelBalanceResponse = get_lnd_json(
+            &client,
+            &format!("{LND_REST_BASE_URL}/v1/balance/channels"),
+            &macaroon_hex,
+        )
+        .await?;
+        let wallet_balance: LndBalanceResponse = get_lnd_json(
+            &client,
+            &format!("{LND_REST_BASE_URL}/v1/balance/blockchain"),
+            &macaroon_hex,
+        )
+        .await?;
+        let (balance_sats, channel_balance_sats, pending_open_balance) =
+            checked_balances(wallet_balance, channel_balance)?;
 
         let (identity_pubkey, uris) = map_identity(&get_info);
 
@@ -135,18 +152,9 @@ impl RpcHandler {
             num_peers: get_info.num_peers.unwrap_or(0),
             synced_to_chain: get_info.synced_to_chain.unwrap_or(false),
             block_height: get_info.block_height.unwrap_or(0),
-            balance_sats: wallet_balance
-                .total_balance
-                .and_then(|s| s.parse().ok())
-                .unwrap_or(0),
-            channel_balance_sats: channel_balance
-                .local_balance
-                .and_then(|a| a.sat.and_then(|s| s.parse().ok()))
-                .unwrap_or(0),
-            pending_open_balance: channel_balance
-                .pending_open_local_balance
-                .and_then(|a| a.sat.and_then(|s| s.parse().ok()))
-                .unwrap_or(0),
+            balance_sats,
+            channel_balance_sats,
+            pending_open_balance,
         };
 
         Ok(serde_json::to_value(info)?)
@@ -267,6 +275,76 @@ impl RpcHandler {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn unavailable_balances_are_not_zero() {
+        for body in [r#"{}"#, r#"{"code":14,"message":"wallet locked"}"#] {
+            assert!(checked_balances(
+                serde_json::from_str(body).unwrap(),
+                serde_json::from_str(body).unwrap(),
+            )
+            .is_err());
+        }
+        for value in ["bad", "-1", "9223372036854775808"] {
+            let wallet = LndBalanceResponse {
+                total_balance: Some(value.into()),
+            };
+            let channels = serde_json::from_str(
+                r#"{"local_balance":{"sat":"5"},"pending_open_local_balance":{"sat":"0"}}"#,
+            )
+            .unwrap();
+            assert!(checked_balances(wallet, channels).is_err());
+        }
+    }
+
+    #[test]
+    fn verified_zero_and_nonzero_balances_survive() {
+        for expected in [0, 42] {
+            let wallet = LndBalanceResponse {
+                total_balance: Some(expected.to_string()),
+            };
+            let channels = serde_json::from_value(serde_json::json!({
+                "local_balance":{"sat":expected.to_string()},
+                "pending_open_local_balance":{"sat":"0"}
+            }))
+            .unwrap();
+            assert_eq!(
+                checked_balances(wallet, channels).unwrap(),
+                (expected, expected, 0)
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn locked_wallet_http_response_is_not_successful_getinfo() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move {
+            let (mut stream, _) = listener.accept().await.unwrap();
+            let mut buf = [0; 2048];
+            stream.read(&mut buf).await.unwrap();
+            let body =
+                r#"{"code":9,"message":"wallet locked, unlock it to enable full RPC access"}"#;
+            stream.write_all(format!(
+                "HTTP/1.1 503 Service Unavailable\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                body.len(), body
+            ).as_bytes()).await.unwrap();
+        });
+        let client = reqwest::Client::builder()
+            .no_proxy()
+            .timeout(std::time::Duration::from_secs(2))
+            .build()
+            .unwrap();
+        assert!(get_lnd_json::<LndGetInfoResponse>(
+            &client,
+            &format!("http://{addr}/v1/getinfo"),
+            "test"
+        )
+        .await
+        .is_err());
+        server.await.unwrap();
+    }
 
     /// A real compressed secp256k1 pubkey shape: 66 hex characters.
     const GOOD_PUBKEY: &str = "03a1b2c3d4e5f60718293a4b5c6d7e8f90a1b2c3d4e5f60718293a4b5c6d7e8f90";

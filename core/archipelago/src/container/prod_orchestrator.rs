@@ -1864,7 +1864,7 @@ impl ProdContainerOrchestrator {
         // Durable installation record, consulted alongside the perishable
         // `was_running` snapshot for desired-state recovery below.
         let installed_apps = crate::crash_recovery::load_installed_apps(&self.data_dir).await;
-        let (manifests, container_name_by_app_id): (
+        let (mut manifests, container_name_by_app_id): (
             Vec<LoadedManifest>,
             std::collections::HashMap<String, String>,
         ) = {
@@ -1895,6 +1895,15 @@ impl ProdContainerOrchestrator {
                 .collect();
             (filtered, names)
         };
+        // Wallet readiness must not wait behind unrelated image pulls/builds.
+        // A running LND container can still be locked after boot; its post-start
+        // hook must run promptly. Reconcile Bitcoin first, then LND, before the
+        // rest of the catalog. Each app still honors stopped/uninstalled markers.
+        manifests.sort_by_key(|lm| match lm.manifest.app.id.as_str() {
+            "bitcoin-knots" | "bitcoin-core" | "bitcoin" => 0,
+            "lnd" => 1,
+            _ => 2,
+        });
         // Live container names (any state), for the same recovery check.
         let present_containers: std::collections::HashSet<String> = self
             .runtime
@@ -6396,6 +6405,42 @@ app:
             ("lnd", ReconcileAction::NoOp),
         ]);
         assert!(cascade_pairs_for_report(&r, &none).is_empty());
+    }
+
+    #[tokio::test]
+    async fn reconcile_wallet_start_precedes_unrelated_failed_image_pull() {
+        let rt = Arc::new(MockRuntime::default());
+        rt.set_state("bitcoin-knots", ContainerState::Exited);
+        rt.set_state("lnd", ContainerState::Exited);
+        *rt.fail_pull.lock().unwrap() = Some("registry unreachable".into());
+        let mut orch = orch_with(rt.clone()).await;
+        orch.set_disk_gb_for_test(2000);
+        for id in ["unrelated", "lnd", "bitcoin-knots"] {
+            orch.insert_manifest_for_test(
+                pull_manifest(id, &format!("docker.io/example/{id}:1")),
+                PathBuf::from(format!("/tmp/{id}")),
+            )
+            .await;
+        }
+        let report = orch.reconcile_all().await;
+        assert!(report.failures.iter().any(|(id, _)| id == "unrelated"));
+        let calls = rt.calls();
+        let bitcoin = calls
+            .iter()
+            .position(|c| c == "start_container:bitcoin-knots")
+            .unwrap();
+        let lnd = calls
+            .iter()
+            .position(|c| c == "start_container:lnd")
+            .unwrap();
+        let pull = calls
+            .iter()
+            .position(|c| c.starts_with("pull_image:"))
+            .unwrap();
+        assert!(
+            bitcoin < lnd && lnd < pull,
+            "wallet startup was delayed by unrelated recovery: {calls:?}"
+        );
     }
 
     #[tokio::test]

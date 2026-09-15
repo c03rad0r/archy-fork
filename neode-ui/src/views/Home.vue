@@ -133,6 +133,7 @@
           class="order-2 lg:order-none"
           :animate="animateCards"
           :wallet-connected="walletConnected"
+          :wallet-balance-unavailable="walletBalanceUnavailable"
           :wallet-onchain="walletOnchain"
           :wallet-lightning="walletLightning"
           :wallet-ecash="walletEcash"
@@ -685,6 +686,7 @@ async function devFaucet() { try { await rpcClient.call({ method: 'dev.faucet', 
 // readout instead; a rail only becomes a number when a call actually
 // succeeds, so a real 0 is still a real 0.
 const walletConnected = ref(false)
+const walletBalanceUnavailable = ref(false)
 const walletOnchain = ref<number | null>(null)
 const walletLightning = ref<number | null>(null)
 const walletEcash = ref<number | null>(null)
@@ -775,13 +777,24 @@ async function loadWeb5Status() {
   // call, which is what makes the card feel like an app launch.
   const balances = Promise.allSettled([
     rpcClient.call<{ balance_sats: number; channel_balance_sats: number }>({ method: 'lnd.getinfo', timeout: 5000, dedup: true })
-      .then(res => { walletOnchain.value = res.balance_sats || 0; walletLightning.value = res.channel_balance_sats || 0; walletConnected.value = true; walletInfoFailures = 0 })
+      .then(res => {
+        if (!Number.isSafeInteger(res.balance_sats) || res.balance_sats < 0 ||
+            !Number.isSafeInteger(res.channel_balance_sats) || res.channel_balance_sats < 0) {
+          throw new Error('LND balance is unavailable')
+        }
+        walletOnchain.value = res.balance_sats
+        walletLightning.value = res.channel_balance_sats
+        walletConnected.value = true
+        walletBalanceUnavailable.value = false
+        walletInfoFailures = 0
+      })
       .catch(() => {
         // A single slow poll must NOT flip the card to "disconnected" and
         // hide balances the user already knows — busy nodes routinely blow
         // the 5s budget mid-payment or during IO storms (a test node user
         // report: balances vanished while a payment settled). Only call it
         // disconnected after three consecutive failures (~30s of silence).
+        walletBalanceUnavailable.value = true
         walletInfoFailures += 1
         if (walletInfoFailures >= 3) walletConnected.value = false
       }),

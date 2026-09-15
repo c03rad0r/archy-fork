@@ -54,6 +54,12 @@
           </div>
         </div>
 
+        <p v-if="walletBalanceUnavailable" data-testid="wallet-balance-unavailable" class="text-sm text-amber-200 mb-3" role="status">
+          {{ walletOnchain != null || walletLightning != null
+            ? 'Bitcoin and Lightning balances could not be refreshed. Showing last known amounts.'
+            : 'Bitcoin and Lightning balances are unavailable while the wallet starts or reconnects.' }}
+        </p>
+
         <!-- Incoming Transactions Panel -->
         <transition name="incoming-tx-slide">
           <div v-if="showIncomingTxPanel && incomingTransactions.length > 0" class="mb-4 rounded-xl overflow-hidden border border-green-500/20">
@@ -221,6 +227,7 @@ export interface WalletTransaction {
 const props = defineProps<{
   animate: boolean
   walletConnected: boolean
+  walletBalanceUnavailable?: boolean
   // `null` = not loaded yet, `0` = genuinely empty. Keeping those apart is
   // what lets the card show a pixel readout instead of claiming a figure.
   walletOnchain: number | null

@@ -238,6 +238,47 @@ describe('Home tab cache (Task 2): system/update/storage groups + wallet freshne
     wrapper.unmount()
   })
 
+  it.each(['failure', 'missing', 'partial'])('preserves known balances during %s and clears the warning on recovery', async (failure) => {
+    const wrapper = mountHomeHost()
+    await settle()
+    const home = wrapper.findComponent(Home)
+    const refresh = () => (home.vm as unknown as { loadWeb5Status: () => Promise<void> }).loadWeb5Status()
+    rpcCallMock.mockImplementationOnce(async () => {
+      if (failure === 'failure') throw new Error('wallet locked')
+      return failure === 'partial' ? { balance_sats: 0 } : {}
+    })
+    await refresh()
+    await settle()
+    const card = wrapper.findComponent(HomeWalletCard)
+    expect(card.props('walletOnchain')).toBe(5000)
+    expect(card.props('walletLightning')).toBe(2500)
+    expect(card.find('[data-testid="wallet-balance-unavailable"]').text()).toContain('last known')
+    const snapshot = JSON.parse(localStorage.getItem('archy-wallet-snapshot-v1')!)
+    expect(snapshot.onchain).toBe(5000)
+    expect(snapshot.lightning).toBe(2500)
+    rpcCallMock.mockImplementationOnce(async () => ({ balance_sats: 0, channel_balance_sats: 0, synced_to_chain: true }))
+    await refresh()
+    await settle()
+    expect(card.props('walletOnchain')).toBe(0)
+    expect(card.props('walletLightning')).toBe(0)
+    expect(card.find('[data-testid="wallet-balance-unavailable"]').exists()).toBe(false)
+    wrapper.unmount()
+  })
+
+  it('shows unknown rather than zero when the first LND request fails', async () => {
+    rpcCallMock.mockImplementation(async (request) => {
+      if (request.method === 'lnd.getinfo') throw new Error('wallet locked')
+      return defaultRpcCallImpl(request)
+    })
+    const wrapper = mountHomeHost()
+    await settle()
+    const card = wrapper.findComponent(HomeWalletCard)
+    expect(card.props('walletOnchain')).toBeNull()
+    expect(card.props('walletLightning')).toBeNull()
+    expect(card.find('[data-testid="wallet-balance-unavailable"]').text()).toContain('unavailable')
+    wrapper.unmount()
+  })
+
   it('no sessionStorage key exists for the wallet resource after a mount and reactivation cycle', async () => {
     const wrapper = mountHomeHost()
     await settle()
