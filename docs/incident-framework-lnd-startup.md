@@ -170,3 +170,27 @@ Candidate changes on `investigate/framework-lnd-startup`:
 - Add backend outage/zero/ordering regressions and UI failure/recovery coverage.
 
 These changes are not yet deployed or verified through a Framework reboot.
+
+### Candidate validation and staging
+
+Source fix commit: `4237fb5e` on `investigate/framework-lnd-startup`.
+
+- 44 focused backend tests passed (including LND errors, genuine zero, startup ordering).
+- 58 additional reconciliation/update tests passed.
+- 12 Home UI tests passed, including outage/partial response/cold-load/recovery cases.
+- Rust formatting, frontend type checking and production build passed.
+- Optimized backend build passed in 8m02s.
+- Both candidate artifacts were copied to Framework and SHA-256 matched locally.
+- Private on-node baseline and static channel backup are under
+  `/var/lib/archipelago/support/framework-lnd-20260915/`, along with the previous
+  backend, dashboard, and `rollback.sh`. This directory is root-only.
+- Candidate staged at `/tmp/archy-framework-candidate/`; not applied yet.
+- A timing confirmation for the maintenance restart/full reboot was requested
+  because it interrupts all node services. Do not reboot while that is pending.
+- SSH works through the temporary control socket
+  `/tmp/archy-framework-connection/control`. No SSH password was saved to disk.
+- The supplied SSH password did not authenticate to the dashboard. Do not guess
+  additional passwords or alter dashboard authentication. Native LND diagnostics
+  are authenticated using its existing local macaroon without printing it.
+
+Status remains OPEN until deployment and live boot/Receive/balance verification.
