@@ -1,9 +1,9 @@
-# Incident — 2026-09-15: Minibits Cashu claim stuck retrying an already-redeemed token (archy-x250-pa3)
+# Incident — 2026-09-15: Minibits Cashu claim stuck retrying an already-redeemed token
 
 ## Report
 
 User: "The cashu server is unable to get it's tokens from nostr on
-archipelago@archy-x250-pa3" — clarified as the Cashu **client wallet**
+[affected node]" — clarified as the Cashu **client wallet**
 (Minibits `@minibits.cash` Lightning-address receive flow), not a mint
 server. UI showed: *"a payment arrived but couldn't be redeemed yet (1)"*.
 
@@ -28,8 +28,8 @@ WARN archipelago::wallet::ecash: Failed to swap proofs from mint https://mint.mi
 WARN archipelago::wallet::minibits: Minibits claim decrypted but failed to redeem (...); will retry next poll
 ```
 
-Confirmed via `sudo journalctl -u archipelago.service` on archy-x250-pa3, and
-via `/var/lib/archipelago/wallet/minibits.json`, which had exactly one
+Confirmed via `sudo journalctl -u archipelago.service` on the affected node,
+and via `/var/lib/archipelago/wallet/minibits.json`, which had exactly one
 `pending_claims` entry. Each poll also unconditionally queried all three
 `CLAIM_RELAY_URLS` (`relay.minibits.cash`, `relay.damus.io`, `nos.lol`)
 instead of the primary relay only, adding needless churn and leaking the
@@ -46,15 +46,15 @@ This exact bug (terminal-11001 handling + relay-query reduction) was fixed
 on 2026-09-09 on branch `feat/minibits-lnurl-receive` (commits `4e410d7`,
 `489995c`) and pushed to `origin`. **That branch was never merged into
 `main`.** `main` carries its own, independently-diverged rewrite of
-`minibits.rs` that never got those two hardening fixes. archy-x250-pa3 OTA'd
-to `1.8.16-alpha` (built from `main`) earlier on 2026-09-15, so the bug
+`minibits.rs` that never got those two hardening fixes. The affected node
+OTA'd to `1.8.16-alpha` (built from `main`) earlier on 2026-09-15, so the bug
 resurfaced on the first replayed/double-delivered claim after that update.
 
 ## Fix
 
 Two parts:
 
-### 1. Immediate unstick (archy-x250-pa3, operational, no code change)
+### 1. Immediate unstick (affected node, operational, no code change)
 
 - Backed up `/var/lib/archipelago/wallet/minibits.json`.
 - Stopped `archipelago.service`, emptied `pending_claims` (`[]`) in the
@@ -94,7 +94,7 @@ enum for marginal extra protection beyond what the 11001 fix already covers.
 - `cargo build -p archipelago` — clean, no new warnings.
 - `cargo test -p archipelago --bin archipelago wallet::minibits` — existing
   suite still green (see PR/commit for the run).
-- Live on archy-x250-pa3: claim poll loop confirmed quiet post-unstick
+- Live on the affected node: claim poll loop confirmed quiet post-unstick
   (only `relay.minibits.cash` connects logged, no redeem-failure warnings).
 
 ## Lesson (recorded in memory)
