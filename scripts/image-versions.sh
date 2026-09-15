@@ -33,7 +33,8 @@ ELECTRUMX_IMAGE="$ARCHY_REGISTRY/electrumx:v1.18.0"
 
 # Mempool stack
 MEMPOOL_BACKEND_IMAGE="$ARCHY_REGISTRY/mempool-backend:v3.3.1"
-MEMPOOL_WEB_IMAGE="$ARCHY_REGISTRY/mempool-frontend:v3.3.1-archy1"
+# The patched frontend is published by chaum on the same trusted registry.
+MEMPOOL_WEB_IMAGE="${MEMPOOL_WEB_IMAGE:-source.archipelago-foundation.org/chaum/mempool-frontend:v3.3.1-archy1}"
 MARIADB_IMAGE="$ARCHY_REGISTRY/mariadb:11.4.10"
 
 # BTCPay

@@ -15,7 +15,7 @@ import urllib.request
 import uuid
 
 IMAGE = sys.argv[1] if len(sys.argv) > 1 else (
-    "source.archipelago-foundation.org/lfg2025/mempool-frontend:v3.3.1-archy1"
+    "source.archipelago-foundation.org/chaum/mempool-frontend:v3.3.1-archy1"
 )
 BACKEND = "source.archipelago-foundation.org/lfg2025/mempool-backend:v3.3.1"
 prefix = "mempool-dns-test-" + uuid.uuid4().hex[:8]

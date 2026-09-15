@@ -386,7 +386,7 @@
             "sync_required": false
           },
           "container": {
-            "image": "source.archipelago-foundation.org/lfg2025/mempool-frontend:v3.3.1",
+            "image": "source.archipelago-foundation.org/chaum/mempool-frontend:v3.3.1-archy1",
             "network": "archy-net",
             "pull_policy": "if-not-present"
           },
@@ -405,7 +405,7 @@
           "health_check": {
             "endpoint": "http://127.0.0.1:8080",
             "interval": "30s",
-            "path": "/",
+            "path": "/api/v1/backend-info",
             "retries": 3,
             "timeout": "5s",
             "type": "http"
@@ -433,10 +433,10 @@
             "kind": "github",
             "repo": "mempool/mempool"
           },
-          "version": "3.0.1"
+          "version": "3.3.1-archy1"
         }
       },
-      "version": "3.0.1"
+      "version": "3.3.1-archy1"
     },
     "archy-nbxplorer": {
       "manifest": {
@@ -3399,10 +3399,10 @@
       "version": "1.7.123-alpha"
     },
     "mempool": {
-      "image": "source.archipelago-foundation.org/lfg2025/mempool-frontend:v3.3.1",
+      "image": "source.archipelago-foundation.org/chaum/mempool-frontend:v3.3.1-archy1",
       "images": {
         "archy-mempool-db": "source.archipelago-foundation.org/lfg2025/mariadb:11.4.10",
-        "archy-mempool-web": "source.archipelago-foundation.org/lfg2025/mempool-frontend:v3.3.1",
+        "archy-mempool-web": "source.archipelago-foundation.org/chaum/mempool-frontend:v3.3.1-archy1",
         "mempool-api": "source.archipelago-foundation.org/lfg2025/mempool-backend:v3.3.1"
       },
       "manifest": {
@@ -3412,7 +3412,7 @@
             "sync_required": true
           },
           "container": {
-            "image": "source.archipelago-foundation.org/lfg2025/mempool-frontend:v3.3.1",
+            "image": "source.archipelago-foundation.org/chaum/mempool-frontend:v3.3.1-archy1",
             "image_signature": "cosign://...",
             "pull_policy": "if-not-present"
           },
@@ -3471,7 +3471,7 @@
             "kind": "github",
             "repo": "mempool/mempool"
           },
-          "version": "3.0.0",
+          "version": "3.3.1-archy1",
           "volumes": [
             {
               "options": [
@@ -3484,7 +3484,7 @@
           ]
         }
       },
-      "version": "v3.3.1"
+      "version": "v3.3.1-archy1"
     },
     "mempool-api": {
       "manifest": {
@@ -5464,7 +5464,7 @@
     "tag": "NOSTR IDENTITY // YOUR NODE"
   },
   "schema": 1,
-  "signature": "a2320a29d10a04eaae8ebc5d4ce3d156733d413a43ab028ee2c980a16c0ff1c7ed26d5cc7f549f7872c95af19b15c1a8fcbd0a496f63d095bf433e742117040e",
+  "signature": "e716a9069021af87a2252d7561c01153f17c5630d7c36d8fdc1be1c7aa40560d09557513c0e09835a6b76b52b4f7edf0619cbaff02ac1d9d818066f67046e401",
   "signed_by": "did:key:z6Mkfu5LT8d4DjETtrkATvHh9Dvcbnr7zBCUwfau8Sw7DLWT",
   "storefront": {
     "popular": [
@@ -5490,5 +5490,5 @@
       }
     ]
   },
-  "updated": "2026-09-12"
+  "updated": "2026-09-15"
 }

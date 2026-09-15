@@ -7,7 +7,7 @@ continues to serve its static page, leaving all API/WebSocket requests offline.
 Build and test the derived image before publishing:
 
 ```sh
-podman build --pull=never -t source.archipelago-foundation.org/lfg2025/mempool-frontend:v3.3.1-archy1 docker/mempool-frontend
+podman build --pull=never -t source.archipelago-foundation.org/chaum/mempool-frontend:v3.3.1-archy1 docker/mempool-frontend
 python3 scripts/test-mempool-dns-recovery.py
 ```
 
