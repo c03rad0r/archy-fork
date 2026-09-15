@@ -1,29 +1,30 @@
 {
   "changelog": [
-    "Cuprate is presented as one user-facing app in My Apps, including its UI launch button; the generated dashboard companion is hidden as an implementation detail instead of appearing under Services.",
-    "Added regression coverage for Cuprate install and installed-state grouping.",
-    "Release validation was rerun on the corrected tree before OTA and ISO publication."
+    "App updates refresh and verify the signed catalog before changing containers. A failed refresh or manifest reload cancels the update, and automatic updates wait for a successful refresh.",
+    "Fixed repeated Mempool update offers: downstream `-archyN` patches now sort above their upstream release, and moving a published image between registry namespaces does not hide a genuine upgrade.",
+    "Updates inspect installed component versions, refuse known downgrades, skip containers already at the target versions, and verify the resulting versions before reporting success.",
+    "Added regression coverage for stale catalogs, matching versions, publisher namespace changes, stack component updates, and keeping running containers untouched when no upgrade is needed."
   ],
   "components": [
     {
-      "current_version": "1.8.15-alpha",
-      "download_url": "https://source.archipelago-foundation.org/lfg2025/archy/releases/download/v1.8.15-alpha/archipelago",
+      "current_version": "1.8.16-alpha",
+      "download_url": "https://source.archipelago-foundation.org/lfg2025/archy/releases/download/v1.8.16-alpha/archipelago",
       "name": "archipelago",
-      "new_version": "1.8.15-alpha",
-      "sha256": "3eee71563337f20cb348529925c58b8227afec796783a69176e0b59b9e113c91",
-      "size_bytes": 64571544
+      "new_version": "1.8.16-alpha",
+      "sha256": "1800f57678a0b994ab2e43a830ef06d1c96fd3cc7be47ce4e6e46b7df8a5420f",
+      "size_bytes": 64851944
     },
     {
-      "current_version": "1.8.15-alpha",
-      "download_url": "https://source.archipelago-foundation.org/lfg2025/archy/releases/download/v1.8.15-alpha/archipelago-frontend-1.8.15-alpha.tar.gz",
-      "name": "archipelago-frontend-1.8.15-alpha.tar.gz",
-      "new_version": "1.8.15-alpha",
-      "sha256": "86a32ef3334b03c197e47d9d28f4435c6f2fa7c4ccacc839a8fc4a0a749495dc",
-      "size_bytes": 98797600
+      "current_version": "1.8.16-alpha",
+      "download_url": "https://source.archipelago-foundation.org/lfg2025/archy/releases/download/v1.8.16-alpha/archipelago-frontend-1.8.16-alpha.tar.gz",
+      "name": "archipelago-frontend-1.8.16-alpha.tar.gz",
+      "new_version": "1.8.16-alpha",
+      "sha256": "7dd73c50a54bc530385d9e450a18cbff9c3f4ffaf289a2a7b21e5d3803116722",
+      "size_bytes": 98799570
     }
   ],
-  "release_date": "2026-09-13",
-  "signature": "5e13396e2f33571f136bb1a9ea0356486b3d42c6ba99ee5d33990cd565d9b1178f61eaf6a70a937a006e7de3fd388bcebd63f2daca4bb28accc1b810d8455d03",
+  "release_date": "2026-09-15",
+  "signature": "083b131a6b895e1ff8fb9e9a52b1ead260e2140081a0295ae6756cbbc4f8f2c30e8a8bc72822c905702e21ac90f7cb85d5cca9b5f8c10fc87f32a365da202c0d",
   "signed_by": "did:key:z6Mkfu5LT8d4DjETtrkATvHh9Dvcbnr7zBCUwfau8Sw7DLWT",
-  "version": "1.8.15-alpha"
+  "version": "1.8.16-alpha"
 }
