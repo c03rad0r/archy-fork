@@ -360,3 +360,19 @@ remove the assignment of the LNURL description to the draft recipient note in
 `WalletTextParserImpl.handleLnUrlText`; also validate explicitly entered comments
 against the endpoint's limit. No upstream change has been submitted or deployed.
 Existing Framework addresses and wallet identities remain unchanged.
+
+### Can Archy shorten the current address description?
+
+Inspected Minibits' public wallet client (`src/services/minibitsService.ts`,
+`updateWalletProfile`) and `WalletProfileRecord`. The supported profile update
+fields are name, lud16, and avatar; there is no exposed LNURL description or
+comment-limit setting. Its public web repository also contains no implementation
+of the LNURL metadata endpoint or description template.
+
+For the existing `@minibits.cash` address, no supported client-side mechanism
+to shorten this text was found. Do not send guessed profile-update fields or
+rename the address to disguise the problem. A Minibits server change could use
+`Pay to [ADDRESS]`, well below the current limit. Controlling this metadata in
+Archy would instead require an Archy-hosted LNURL service/address and correct
+invoice metadata binding; rewriting the QR label or only proxying edited metadata
+is insufficient. No wallet/profile mutations were made during this investigation.
