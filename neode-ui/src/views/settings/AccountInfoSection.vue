@@ -362,6 +362,18 @@ init()
               </button>
             </div>
             <div class="overflow-y-auto flex-1 min-h-0 space-y-6 pr-1">
+              <!-- v1.8.18-alpha -->
+              <div>
+                <div class="flex items-center gap-2 mb-3">
+                  <span class="text-xs font-mono px-2 py-0.5 rounded bg-orange-500/20 text-orange-300">v1.8.18-alpha</span>
+                  <span class="text-xs text-white/40">September 18, 2026</span>
+                </div>
+                <div class="space-y-3 text-sm text-white/80 pl-3 border-l border-white/10">
+                  <p>Framework startup now brings Bitcoin and LND up before unrelated containers, and the dashboard keeps balances unavailable instead of showing a false zero when LND is not ready.</p>
+                  <p>Cashu wallets can set up a recovery phrase from Receive, with clearer backup and restore guidance.</p>
+                  <p>Ecash backup guidance is shorter and arranged in a single column for easier use on small screens.</p>
+                </div>
+              </div>
               <!-- v1.8.17-alpha -->
               <div>
                 <div class="flex items-center gap-2 mb-3">

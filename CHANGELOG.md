@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+## v1.8.18-alpha (2026-09-18)
+
+- Framework startup prioritizes Bitcoin and LND before unrelated containers, and unavailable LND balances remain unavailable instead of appearing as false zeroes.
+- Cashu Receive guides unseeded wallets through recovery-phrase setup, with shorter backup guidance and a single-column layout.
+- Added live Framework verification for automatic LND unlock, native balance preservation, Cashu address registration, and proof preservation.
+
 ## v1.8.17-alpha (2026-09-15)
 
 - Minibits claims that every mint reports as already spent leave the retry queue, clearing repeated failure notices. Network errors and mixed mint failures remain queued for another attempt.
