@@ -1,30 +1,29 @@
 {
   "changelog": [
-    "Minibits claims that every mint reports as already spent leave the retry queue, clearing repeated failure notices. Network errors and mixed mint failures remain queued for another attempt.",
-    "Minibits polls its primary relay first and connects to public fallback relays only when the primary is unreachable, reducing unnecessary connections.",
-    "Large payment backlogs are fetched from newest to oldest with a saved cursor, so polling can resume after interruptions or page limits. Payments sharing the same timestamp remain reachable.",
-    "Added regression coverage for spent-claim classification, wrapped and mixed mint errors, same-second payments, and interrupted or multi-poll backlogs."
+    "Framework startup prioritizes Bitcoin and LND before unrelated containers, and unavailable LND balances remain unavailable instead of appearing as false zeroes.",
+    "Cashu Receive guides unseeded wallets through recovery-phrase setup, with shorter backup guidance and a single-column layout.",
+    "Added live Framework verification for automatic LND unlock, native balance preservation, Cashu address registration, and proof preservation."
   ],
   "components": [
     {
-      "current_version": "1.8.17-alpha",
-      "download_url": "https://source.archipelago-foundation.org/lfg2025/archy/releases/download/v1.8.17-alpha/archipelago",
+      "current_version": "1.8.18-alpha",
+      "download_url": "https://source.archipelago-foundation.org/lfg2025/archy/releases/download/v1.8.18-alpha/archipelago",
       "name": "archipelago",
-      "new_version": "1.8.17-alpha",
-      "sha256": "32a7b009eb58f8c9f256e6597711a77ded11e15d5865a3fe16901603264e1f70",
-      "size_bytes": 64953344
+      "new_version": "1.8.18-alpha",
+      "sha256": "c76415c295dd42159e45e74d93f7c2f6fa39b0351946a8303f8cfba1dd3a6087",
+      "size_bytes": 64497240
     },
     {
-      "current_version": "1.8.17-alpha",
-      "download_url": "https://source.archipelago-foundation.org/lfg2025/archy/releases/download/v1.8.17-alpha/archipelago-frontend-1.8.17-alpha.tar.gz",
-      "name": "archipelago-frontend-1.8.17-alpha.tar.gz",
-      "new_version": "1.8.17-alpha",
-      "sha256": "faf692e9a0e16268357bcac2bf86b62950ae49663e3c95982e54a132bb761980",
-      "size_bytes": 98801608
+      "current_version": "1.8.18-alpha",
+      "download_url": "https://source.archipelago-foundation.org/lfg2025/archy/releases/download/v1.8.18-alpha/archipelago-frontend-1.8.18-alpha.tar.gz",
+      "name": "archipelago-frontend-1.8.18-alpha.tar.gz",
+      "new_version": "1.8.18-alpha",
+      "sha256": "57da88b1a8f3d2841867994a95e9e4e728c19616abcde8e3d3f151c6d94ed501",
+      "size_bytes": 98801020
     }
   ],
-  "release_date": "2026-09-15",
-  "signature": "c8196fe278a5747b3c3ba3bf70998874f1e3e6eedbdab33b9e33c3339a3769ab4431f41d99924ec4cdd15a5ffed299a5af786c7ab5e9d084cdc11beabbee9103",
+  "release_date": "2026-09-20",
+  "signature": "84e0e1a20750f0d4ff27ba539c2e9424a5b02c19a5689f73cdf82813212acae19e0af244a62e66ac37a35d97d80deb2833819d809b91a7822f2bfd785d3fe30d",
   "signed_by": "did:key:z6Mkfu5LT8d4DjETtrkATvHh9Dvcbnr7zBCUwfau8Sw7DLWT",
-  "version": "1.8.17-alpha"
+  "version": "1.8.18-alpha"
 }
