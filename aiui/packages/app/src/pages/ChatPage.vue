@@ -2,13 +2,13 @@
   <div
     class="h-full flex flex-col relative overflow-hidden transition-colors duration-300"
     :class="[]"
-    :style="isDark
-      ? { background: '#000 url(' + bgImageUrl + ') center center / cover no-repeat fixed' }
-      : isEmbedded
-        ? { background: 'transparent' }
+    :style="isEmbedded
+      ? { background: 'transparent' }
+      : isDark
+        ? { background: '#000 url(' + bgImageUrl + ') center center / cover no-repeat fixed' }
         : { backgroundColor: '#f5f4f1' }"
   >
-    <div v-if="isDark" class="absolute inset-0 pointer-events-none bg-black/20" />
+    <div v-if="isDark && !isEmbedded" class="absolute inset-0 pointer-events-none bg-black/20" />
 
     <!-- Desktop layout -->
     <div
