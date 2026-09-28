@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+## v1.8.19-alpha (2026-09-28)
+
+- Fixed the embedded AIUI chat page painting a second background and dark scrim over Archy’s dashboard background.
+- Embedded AIUI now stays transparent so the dashboard background appears once.
+
 ## v1.8.18-alpha (2026-09-18)
 
 - Framework startup prioritizes Bitcoin and LND before unrelated containers, and unavailable LND balances remain unavailable instead of appearing as false zeroes.
