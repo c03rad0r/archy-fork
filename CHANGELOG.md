@@ -6,6 +6,7 @@
 
 - Fixed the embedded AIUI chat page painting a second background and dark scrim over Archy’s dashboard background.
 - Embedded AIUI now stays transparent so the dashboard background appears once.
+- AIUI background fixes are now included reliably in OTA updates and fresh installations.
 
 ## v1.8.18-alpha (2026-09-18)
 

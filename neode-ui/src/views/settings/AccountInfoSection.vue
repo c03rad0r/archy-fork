@@ -371,6 +371,7 @@ init()
                 <div class="space-y-3 text-sm text-white/80 pl-3 border-l border-white/10">
                   <p>Fixed the embedded AIUI chat page painting a second background and dark scrim over Archy’s dashboard background.</p>
                   <p>Embedded AIUI now stays transparent so the dashboard background appears once.</p>
+                  <p>AIUI background fixes are now included reliably in OTA updates and fresh installations.</p>
                 </div>
               </div>
               <!-- v1.8.18-alpha -->
