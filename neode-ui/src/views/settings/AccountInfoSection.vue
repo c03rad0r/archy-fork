@@ -362,6 +362,17 @@ init()
               </button>
             </div>
             <div class="overflow-y-auto flex-1 min-h-0 space-y-6 pr-1">
+              <!-- v1.8.19-alpha -->
+              <div>
+                <div class="flex items-center gap-2 mb-3">
+                  <span class="text-xs font-mono px-2 py-0.5 rounded bg-orange-500/20 text-orange-300">v1.8.19-alpha</span>
+                  <span class="text-xs text-white/40">September 28, 2026</span>
+                </div>
+                <div class="space-y-3 text-sm text-white/80 pl-3 border-l border-white/10">
+                  <p>Fixed the embedded AIUI chat page painting a second background and dark scrim over Archy’s dashboard background.</p>
+                  <p>Embedded AIUI now stays transparent so the dashboard background appears once.</p>
+                </div>
+              </div>
               <!-- v1.8.18-alpha -->
               <div>
                 <div class="flex items-center gap-2 mb-3">
@@ -369,9 +380,9 @@ init()
                   <span class="text-xs text-white/40">September 18, 2026</span>
                 </div>
                 <div class="space-y-3 text-sm text-white/80 pl-3 border-l border-white/10">
-                  <p>Framework startup now brings Bitcoin and LND up before unrelated containers, and the dashboard keeps balances unavailable instead of showing a false zero when LND is not ready.</p>
-                  <p>Cashu wallets can set up a recovery phrase from Receive, with clearer backup and restore guidance.</p>
-                  <p>Ecash backup guidance is shorter and arranged in a single column for easier use on small screens.</p>
+                  <p>Framework startup prioritizes Bitcoin and LND before unrelated containers, and unavailable LND balances remain unavailable instead of appearing as false zeroes.</p>
+                  <p>Cashu Receive guides unseeded wallets through recovery-phrase setup, with shorter backup guidance and a single-column layout.</p>
+                  <p>Added live Framework verification for automatic LND unlock, native balance preservation, Cashu address registration, and proof preservation.</p>
                 </div>
               </div>
               <!-- v1.8.17-alpha -->
