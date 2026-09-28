@@ -57,17 +57,20 @@ body {
   width: 100%;
   height: 100%;
   overflow: hidden;
-  /* Every page paints its own explicit background (bg-[#0a0a0a] / bg-[#faf9f6])
-     EXCEPT the embedded Chat page, which intentionally goes transparent so
-     Archy's own dark chrome can show behind it (Chat.vue's iframe host). With
-     no background-color here, "transparent" fell through to the browser's
-     default white canvas instead. Match the theme's own dark/light default so
-     nothing above this ever needs to guess. */
+  /* Standalone canvas fallback. Embedded mode overrides this below so
+     Archy's wallpaper remains visible through the iframe. */
   background-color: #0a0a0a;
 }
 
 html.light body {
   background-color: #faf9f6;
+}
+
+/* The host owns the wallpaper when AIUI is embedded. The document canvas
+   must be transparent too, otherwise it hides the host behind ChatPage. */
+html.aiui-embedded,
+html.aiui-embedded body {
+  background: transparent;
 }
 
 /* ===== DARK MODE GLASSMORPHISM — from Archy ===== */

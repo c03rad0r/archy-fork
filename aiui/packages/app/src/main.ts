@@ -33,6 +33,7 @@ const PWA_CACHE_VERSION = '2'
 // Only embedded when explicitly requested via ?embedded param
 const _embeddedFlag = new URLSearchParams(window.location.search).has('embedded')
 ;(window as unknown as Record<string, unknown>).__AIUI_EMBEDDED__ = _embeddedFlag
+document.documentElement.classList.toggle('aiui-embedded', _embeddedFlag)
 
 const router = createRouter({
   history: createWebHistory(import.meta.env.BASE_URL),

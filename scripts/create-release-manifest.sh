@@ -78,15 +78,17 @@ if [ -z "$FRONTEND_ARCHIVE" ]; then
         STAGING_DIR=$(mktemp -d -t archipelago-frontend.XXXXXX)
         echo "Staging frontend archive in $STAGING_DIR..."
         cp -r "$FRONTEND_DIST/." "$STAGING_DIR/"
-        # Bake AIUI in so fresh installs pick it up. OTA already
-        # carries-forward the existing aiui/ if the tarball lacks one
-        # (update.rs:922), but including it here makes the tarball
-        # the single source of truth instead of relying on a side-
-        # effect of the in-place swap.
-        if [ -d "$PROJECT_ROOT/demo/aiui" ] && [ -f "$PROJECT_ROOT/demo/aiui/index.html" ]; then
-            echo "  Including AIUI from demo/aiui/"
-            cp -r "$PROJECT_ROOT/demo/aiui" "$STAGING_DIR/aiui"
+        # create-release.sh folds the freshly built AIUI into FRONTEND_DIST.
+        # Never overlay it with the older demo bundle (or nest aiui/aiui/).
+        if [ ! -f "$STAGING_DIR/aiui/index.html" ] || \
+           [ ! -f "$STAGING_DIR/aiui/BUILD-INFO" ]; then
+            echo "Error: fresh AIUI payload missing from frontend dist" >&2
+            exit 1
         fi
+        grep -Fxq "commit=$(git -C "$PROJECT_ROOT" rev-parse HEAD)" "$STAGING_DIR/aiui/BUILD-INFO" || {
+            echo "Error: AIUI payload was not built from the current commit" >&2
+            exit 1
+        }
         # OTA bridge for nodes running older updaters: they only know how to
         # apply the backend binary and frontend archive. Carry host runtime
         # assets inside the frontend tarball; the new backend promotes them

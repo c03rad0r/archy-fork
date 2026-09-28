@@ -46,13 +46,14 @@ interface RateBucket {
 
 const rateBuckets = new Map<string, RateBucket>()
 
-// Clean up stale buckets every 5 minutes
+// Vite imports this module during builds too; cleanup must not keep the
+// process alive once compilation has finished.
 setInterval(() => {
   const now = Date.now()
   for (const [key, bucket] of rateBuckets) {
     if (now > bucket.resetAt) rateBuckets.delete(key)
   }
-}, 5 * 60_000)
+}, 5 * 60_000).unref()
 
 function getClientIp(req: IncomingMessage): string {
   return req.socket.remoteAddress ?? 'unknown'

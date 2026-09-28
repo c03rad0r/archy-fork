@@ -169,15 +169,11 @@ else
 fi
 cd "$PROJECT_ROOT"
 
-# npm run build wipes web/dist — fold AIUI straight back in. The OTA tarball
-# bakes it from demo/aiui independently, but build-iso-release.sh's
-# verify-artifacts guard checks web/dist/neode-ui/aiui and failed on two
-# consecutive releases (.127, .129) because this fold-in was manual.
-if [ -d "$PROJECT_ROOT/demo/aiui" ] && [ -f "$PROJECT_ROOT/demo/aiui/index.html" ]; then
-    rm -rf "$PROJECT_ROOT/web/dist/neode-ui/aiui"
-    cp -r "$PROJECT_ROOT/demo/aiui" "$PROJECT_ROOT/web/dist/neode-ui/aiui"
-    echo "  AIUI folded into web/dist from demo/aiui"
-fi
+# Build AIUI from the same source as the release. The checked-in demo bundle
+# can predate source fixes and must never overwrite the production payload.
+bash "$SCRIPT_DIR/build-aiui.sh"
+rm -rf "$PROJECT_ROOT/web/dist/neode-ui/aiui"
+cp -r "$PROJECT_ROOT/aiui/packages/app/dist" "$PROJECT_ROOT/web/dist/neode-ui/aiui"
 
 # npm run build can silently no-op (vue-tsc EACCES burned us before) — a stale
 # dist would ship with a perfectly valid sha256. Require the freshly built
