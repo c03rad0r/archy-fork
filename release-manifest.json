@@ -1,29 +1,29 @@
 {
   "changelog": [
-    "Framework startup prioritizes Bitcoin and LND before unrelated containers, and unavailable LND balances remain unavailable instead of appearing as false zeroes.",
-    "Cashu Receive guides unseeded wallets through recovery-phrase setup, with shorter backup guidance and a single-column layout.",
-    "Added live Framework verification for automatic LND unlock, native balance preservation, Cashu address registration, and proof preservation."
+    "Fixed the embedded AIUI chat page painting a second background and dark scrim over Archy’s dashboard background.",
+    "Embedded AIUI now stays transparent so the dashboard background appears once.",
+    "AIUI background fixes are now included reliably in OTA updates and fresh installations."
   ],
   "components": [
     {
-      "current_version": "1.8.18-alpha",
-      "download_url": "https://source.archipelago-foundation.org/lfg2025/archy/releases/download/v1.8.18-alpha/archipelago",
+      "current_version": "1.8.19-alpha",
+      "download_url": "https://source.archipelago-foundation.org/lfg2025/archy/releases/download/v1.8.19-alpha/archipelago",
       "name": "archipelago",
-      "new_version": "1.8.18-alpha",
-      "sha256": "c76415c295dd42159e45e74d93f7c2f6fa39b0351946a8303f8cfba1dd3a6087",
-      "size_bytes": 64497240
+      "new_version": "1.8.19-alpha",
+      "sha256": "bb500d02567ad16179179d43138cc6fdafee680835262026eeaa7d1bc8cdd307",
+      "size_bytes": 64495784
     },
     {
-      "current_version": "1.8.18-alpha",
-      "download_url": "https://source.archipelago-foundation.org/lfg2025/archy/releases/download/v1.8.18-alpha/archipelago-frontend-1.8.18-alpha.tar.gz",
-      "name": "archipelago-frontend-1.8.18-alpha.tar.gz",
-      "new_version": "1.8.18-alpha",
-      "sha256": "57da88b1a8f3d2841867994a95e9e4e728c19616abcde8e3d3f151c6d94ed501",
-      "size_bytes": 98801020
+      "current_version": "1.8.19-alpha",
+      "download_url": "https://source.archipelago-foundation.org/lfg2025/archy/releases/download/v1.8.19-alpha/archipelago-frontend-1.8.19-alpha.tar.gz",
+      "name": "archipelago-frontend-1.8.19-alpha.tar.gz",
+      "new_version": "1.8.19-alpha",
+      "sha256": "fbbaa237e2ea4e9e576dda9b15fdcf3c59c40bc55bfee4ebbea303b0172fc49b",
+      "size_bytes": 97142031
     }
   ],
-  "release_date": "2026-09-20",
-  "signature": "84e0e1a20750f0d4ff27ba539c2e9424a5b02c19a5689f73cdf82813212acae19e0af244a62e66ac37a35d97d80deb2833819d809b91a7822f2bfd785d3fe30d",
+  "release_date": "2026-09-28",
+  "signature": "4da9bf766d94c2de6641619a36663106791c7a1d342b729c666662cdde1feabdf11c51994c1cbbe2a0e2b270c316d77763435e976ce22730855b3822bc9d390a",
   "signed_by": "did:key:z6Mkfu5LT8d4DjETtrkATvHh9Dvcbnr7zBCUwfau8Sw7DLWT",
-  "version": "1.8.18-alpha"
+  "version": "1.8.19-alpha"
 }
