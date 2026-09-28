@@ -68,6 +68,12 @@ html.light body {
 
 /* The host owns the wallpaper when AIUI is embedded. The document canvas
    must be transparent too, otherwise it hides the host behind ChatPage. */
+html.aiui-embedded {
+  /* Match Archy's dark canvas scheme. Browsers otherwise give an iframe
+     with a different scheme an opaque canvas despite transparent CSS. */
+  color-scheme: dark;
+}
+
 html.aiui-embedded,
 html.aiui-embedded body {
   background: transparent;
