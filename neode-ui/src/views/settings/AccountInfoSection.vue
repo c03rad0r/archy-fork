@@ -371,6 +371,7 @@ init()
                 <div class="space-y-3 text-sm text-white/80 pl-3 border-l border-white/10">
                   <p>Fixed Cashu file payments rejected despite a shared mint, and preserved the payment amount when mint fees reduce change.</p>
                   <p>Payment failures now report whether a refund actually succeeded; missing files and unsupported payment methods are rejected before charging.</p>
+                  <p>Improved saving paid files into Files and reopening purchases without paying again.</p>
                   <p>Bitcoin Core and Knots installation offers optional pruning on larger disks, using the same settings as automatic pruning.</p>
                   <p>Fixed false missing-port checks that unnecessarily restarted Bitcoin and LND; recovery now respects managed shutdown timeouts.</p>
                   <p>LND explains when it is waiting for Bitcoin installation, startup, or sync, without treating normal synchronization as a restart-worthy failure.</p>

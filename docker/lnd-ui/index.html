@@ -1290,13 +1290,14 @@
             setText('balOnchainSub', !haveOnchain ? 'waiting for LND' : state.onchainStale ? 'last known balance'
                 : onchainUnconfirmed > 0 ? fmtAmount(onchainUnconfirmed) + ' unconfirmed' : 'confirmed');
 
-            setText('liqLocal', fmtAmount(lnLocal));
-            setText('liqRemote', fmtAmount(lnRemote));
+            const liquidityReady = haveChan && !state.chanbalStale && !!state.info;
+            setText('liqLocal', liquidityReady ? fmtAmount(lnLocal) : '—');
+            setText('liqRemote', liquidityReady ? fmtAmount(lnRemote) : '—');
             const total = lnLocal + lnRemote;
             const localPct = total > 0 ? (lnLocal / total) * 100 : 50;
-            document.getElementById('liqBarLocal').style.width = localPct + '%';
-            document.getElementById('liqBarRemote').style.width = (100 - localPct) + '%';
-            setText('liqHint', total > 0
+            document.getElementById('liqBarLocal').style.width = (liquidityReady ? localPct : 0) + '%';
+            document.getElementById('liqBarRemote').style.width = (liquidityReady ? 100 - localPct : 0) + '%';
+            setText('liqHint', !liquidityReady ? 'Channel capacity is unavailable while waiting for LND.' : total > 0
                 ? Math.round(localPct) + '% of your channel capacity is outbound (sendable).'
                 : 'Open a channel to start sending and receiving over Lightning.');
         }
@@ -1312,6 +1313,15 @@
 
         function renderSummary() {
             const g = state.info;
+            if (!g) {
+                for (const id of ['statPeers', 'statActiveChannels', 'statCapacity', 'statRoutingMonth', 'healthHeight', 'healthPending', 'chActive', 'chInactive', 'chPending', 'chCapacity']) setText(id, '—');
+                for (const id of ['statChannelsSub', 'channelsLinkSub']) setText(id, 'Waiting for LND');
+                for (const id of ['healthChain', 'healthGraph']) {
+                    const pill = document.getElementById(id);
+                    pill.textContent = '—'; pill.className = 'pill warn';
+                }
+                return;
+            }
             const chans = state.channels;
             const active = chans.filter(c => c.active).length;
             const inactive = chans.length - active;
@@ -1349,6 +1359,10 @@
         function renderChannels() {
             const el = document.getElementById('channelList');
             if (!el) return;
+            if (!state.info) {
+                el.innerHTML = '<div class="empty-state">Waiting for LND. Existing channels will appear when it is ready.</div>';
+                return;
+            }
             const q = (document.getElementById('channelFilter').value || '').toLowerCase();
             let list = state.channels.slice();
             if (q) list = list.filter(c => String(c.remote_pubkey || '').toLowerCase().includes(q) || String(c.chan_id || '').includes(q));

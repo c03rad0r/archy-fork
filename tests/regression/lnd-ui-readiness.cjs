@@ -92,3 +92,18 @@ test('waiting renders promptly without querying unavailable LND endpoints, then 
   assert.ok(calls.includes('/v1/getinfo'));
   assert.ok(calls.includes('/v1/balance/blockchain'));
 });
+
+test('cold waiting never invents zero channel capacity or an empty wallet recommendation',()=>{
+  const {ctx,el}=fixture();
+  Object.assign(ctx,{num:v=>Number(v)||0,fmtAmount:String,fmtAmountShort:String,setBalance:(id,v)=>el(id).value=v});
+  vm.runInContext(extract('renderBalances')+'\n'+extract('renderSummary')+'\n'+extract('renderChannels'),ctx);
+  ctx.state.channels=[];
+  ctx.renderBalances();ctx.renderSummary();ctx.renderChannels();
+  for(const id of ['liqLocal','liqRemote','statActiveChannels','healthPending','chActive']) assert.equal(el(id).textContent,'—');
+  assert.equal(el('balTotal').value,null);
+  assert.match(el('liqHint').textContent,/waiting for LND/);
+  assert.doesNotMatch(el('channelList').innerHTML,/No payment channels yet/);
+  ctx.state.info={};ctx.state.chanbal={local_balance:{sat:'0'}};
+  ctx.renderBalances();
+  assert.equal(el('liqLocal').textContent,'0');
+});

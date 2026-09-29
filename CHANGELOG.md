@@ -6,6 +6,7 @@
 
 - Fixed Cashu file payments rejected despite a shared mint, and preserved the payment amount when mint fees reduce change.
 - Payment failures now report whether a refund actually succeeded; missing files and unsupported payment methods are rejected before charging.
+- Improved saving paid files into Files and reopening purchases without paying again.
 - Bitcoin Core and Knots installation offers optional pruning on larger disks, using the same settings as automatic pruning.
 - Fixed false missing-port checks that unnecessarily restarted Bitcoin and LND; recovery now respects managed shutdown timeouts.
 - LND explains when it is waiting for Bitcoin installation, startup, or sync, without treating normal synchronization as a restart-worthy failure.

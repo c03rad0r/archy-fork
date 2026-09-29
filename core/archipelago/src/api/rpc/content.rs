@@ -43,6 +43,90 @@ async fn reclaim_spent_ecash(data_dir: &std::path::Path, token: &str, backend: &
     }
 }
 
+/// Keep first purchases and cached repeats compatible with both existing clients.
+fn paid_content_response(bytes: &[u8], mime: &str, paid_sats: u64) -> serde_json::Value {
+    use base64::Engine;
+    let data = base64::engine::general_purpose::STANDARD.encode(bytes);
+    serde_json::json!({
+        "data": data, "data_base64": data,
+        "size": bytes.len(), "size_bytes": bytes.len(),
+        "mime_type": mime, "paid_sats": paid_sats, "owned": true,
+    })
+}
+
+/// FileBrowser owns its files through a rootless UID mapping. Use its authenticated
+/// API rather than writing host paths with the backend's unrelated UID. Its
+/// override=false upload atomically refuses existing names, including races.
+async fn file_purchase_in_files(
+    client: &reqwest::Client,
+    base_url: &str,
+    token: &str,
+    filename: &str,
+    mime: &str,
+    bytes: &[u8],
+) -> Result<String> {
+    let folder = if mime.starts_with("image/") || mime.starts_with("video/") {
+        "Photos"
+    } else if mime.starts_with("audio/") {
+        "Music"
+    } else {
+        "Documents"
+    };
+    let mut folder_url = reqwest::Url::parse(base_url)?;
+    folder_url
+        .path_segments_mut()
+        .map_err(|_| anyhow::anyhow!("Invalid Files URL"))?
+        .extend(["api", "resources", folder, ""]);
+    let response = client
+        .get(folder_url.clone())
+        .header("X-Auth", token)
+        .send()
+        .await?;
+    if response.status() == reqwest::StatusCode::NOT_FOUND {
+        let response = client
+            .post(folder_url.clone())
+            .header("X-Auth", token)
+            .send()
+            .await?;
+        if response.status() != reqwest::StatusCode::CONFLICT {
+            response.error_for_status()?;
+        }
+    } else {
+        response.error_for_status()?;
+    }
+    let base = std::path::Path::new(filename)
+        .file_name()
+        .and_then(|n| n.to_str())
+        .filter(|n| !n.is_empty())
+        .unwrap_or("download");
+    let (stem, extension) = match base.rsplit_once('.') {
+        Some((stem, ext)) if !stem.is_empty() => (stem, format!(".{ext}")),
+        _ => (base, String::new()),
+    };
+    for attempt in 1..=100 {
+        let name = if attempt == 1 {
+            base.to_string()
+        } else {
+            format!("{stem} ({attempt}){extension}")
+        };
+        let mut url = folder_url.clone();
+        url.path_segments_mut().unwrap().pop_if_empty().push(&name);
+        url.query_pairs_mut().append_pair("override", "false");
+        let response = client
+            .post(url)
+            .header("X-Auth", token)
+            .body(bytes.to_vec())
+            .send()
+            .await?;
+        if response.status() == reqwest::StatusCode::CONFLICT {
+            continue;
+        }
+        response.error_for_status()?;
+        return Ok(format!("{folder}/{name}"));
+    }
+    anyhow::bail!("Too many existing copies; purchased file remains in the purchase cache")
+}
+
 impl RpcHandler {
     /// List content I'm sharing.
     pub(super) async fn handle_content_list_mine(&self) -> Result<serde_json::Value> {
@@ -464,17 +548,10 @@ impl RpcHandler {
                     crate::content_owned::read_owned(&self.config.data_dir, &o.onion, &o.content_id)
                         .await
                 {
-                    use base64::Engine;
-                    return Ok(serde_json::json!({
-                        "owned": true,
-                        "already_owned": true,
-                        "filename": o.filename,
-                        "mime_type": mime,
-                        "size_bytes": bytes.len(),
-                        "paid_sats": 0,
-                        "data_base64":
-                            base64::engine::general_purpose::STANDARD.encode(&bytes),
-                    }));
+                    let mut result = paid_content_response(&bytes, &mime, 0);
+                    result["already_owned"] = serde_json::json!(true);
+                    result["filename"] = serde_json::json!(o.filename);
+                    return Ok(result);
                 }
                 // Cache record exists but bytes are gone — fall through and
                 // repurchase rather than stranding the user.
@@ -649,63 +726,41 @@ impl RpcHandler {
             tracing::warn!("paid download: failed to cache purchased content (non-fatal): {e:#}");
         }
 
-        // Auto-file the purchase into the user's Files area (2026-07-22):
-        // Photos for images/video, Music for audio, Documents otherwise —
-        // same buckets the Cloud view uses. The in-app viewer still plays
-        // from the purchase cache; this makes the file ALSO show up where
-        // files live, on every device, without relying on a browser
-        // download. Best-effort: never fail a paid download over it.
-        {
-            let folder = if mime_type.starts_with("image/") || mime_type.starts_with("video/") {
-                "Photos"
-            } else if mime_type.starts_with("audio/") {
-                "Music"
-            } else {
-                "Documents"
-            };
-            let base = std::path::Path::new(&filename)
-                .file_name()
-                .and_then(|n| n.to_str())
-                .unwrap_or("download")
-                .to_string();
-            let dir = self.config.data_dir.join("filebrowser").join(folder);
-            if let Err(e) = tokio::fs::create_dir_all(&dir).await {
-                tracing::warn!("paid download: cannot create {}: {e}", dir.display());
-            } else {
-                // Don't clobber an existing file of the same name: "x.jpg"
-                // → "x (2).jpg" etc.
-                let mut target = dir.join(&base);
-                let (stem, ext) = match base.rsplit_once('.') {
-                    Some((s, e)) if !s.is_empty() => (s.to_string(), format!(".{e}")),
-                    _ => (base.clone(), String::new()),
-                };
-                let mut n = 2;
-                while target.exists() {
-                    target = dir.join(format!("{stem} ({n}){ext}"));
-                    n += 1;
-                }
-                match tokio::fs::write(&target, &bytes).await {
-                    Ok(()) => tracing::info!("paid download: filed into {}", target.display()),
-                    Err(e) => tracing::warn!(
-                        "paid download: filing into {} failed (non-fatal): {e}",
-                        target.display()
-                    ),
-                }
-            }
+        // The durable purchased-content cache above is primary. A Files copy
+        // remains optional: a stopped FileBrowser must not undo a paid download.
+        let filed = async {
+            let auth = self.handle_filebrowser_token().await?;
+            let token = auth
+                .get("token")
+                .and_then(|v| v.as_str())
+                .context("FileBrowser omitted its authentication token")?;
+            let client = reqwest::Client::builder()
+                .no_proxy()
+                .redirect(reqwest::redirect::Policy::none())
+                .timeout(std::time::Duration::from_secs(30))
+                .build()?;
+            file_purchase_in_files(
+                &client,
+                "http://127.0.0.1:8083",
+                token,
+                &filename,
+                &mime_type,
+                &bytes,
+            )
+            .await
+        }
+        .await;
+        match filed {
+            Ok(path) => tracing::info!("paid download: filed into Files/{path}"),
+            Err(error) => tracing::warn!(
+                "paid download: optional Files copy failed; purchase cache retained: {error}"
+            ),
         }
 
-        use base64::Engine;
-        let encoded = base64::engine::general_purpose::STANDARD.encode(&bytes);
-
         tracing::info!("paid download: received {} bytes from {onion} (paid {price_sats} sats via {used_backend})", bytes.len());
-        Ok(serde_json::json!({
-            "data": encoded,
-            "size": bytes.len(),
-            "paid_sats": price_sats,
-            "ecash_backend": used_backend,
-            "mime_type": mime_type,
-            "owned": true,
-        }))
+        let mut result = paid_content_response(&bytes, &mime_type, price_sats);
+        result["ecash_backend"] = serde_json::json!(used_backend);
+        Ok(result)
     }
 
     /// Buyer side (#46): ask the selling node to mint a Lightning invoice for a
@@ -1378,3 +1433,7 @@ impl RpcHandler {
         }
     }
 }
+
+#[cfg(test)]
+#[path = "content_tests.rs"]
+mod tests;

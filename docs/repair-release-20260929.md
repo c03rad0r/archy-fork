@@ -110,3 +110,49 @@ Bitcoin/LND fallback receives 600/330-second grace respectively. Regression uses
 read-only checks of the actual Bitcoin listener pass. Script deployed to dev and
 Shorty with root-only rollback copies. OTA runtime payload includes scripts/.
 This evidence supersedes the earlier unknown-caller/unknown-exit attribution.
+
+### Initial candidate live validation — 18:48 UTC
+
+Source 0f85f588, optimized backend SHA256
+84434c495c5f8472cf6bfcb6c65e762502c74718ad88271619373335c0054bb6,
+deployed to dev and Shorty with matching hashes and rollback copies. Both
+management services restarted; wallets/channels were not reset. Old embedded
+runtime assets restored the old doctor on backend startup; updated the live
+script AND embedded runtime copy on both nodes. Final OTA will contain the new
+script directly.
+
+Authenticated dev readiness transitioned from waiting_start to waiting_sync.
+Real Chromium at 1440px and 390px showed Waiting for Bitcoin to sync, an unknown
+balance, and no blocked native LND calls. Screenshot review also caught invented
+zero capacity/channel counts during waiting: corrected them and the empty-channel
+recommendation; five UI regression tests now pass.
+
+Real Minibits Cashu purchase from dev to Shorty succeeded for one sat and returned
+the expected 44 bytes. A rejected one-sat underpayment was refunded exactly, and
+two cached downloads charged zero. Temporary seller files/catalog entries removed.
+The first test runner expected data_base64 while the first-purchase API returns
+data; cached responses use data_base64. Existing purchase clients only consume
+data, so a follow-up normalizes both response variants to both fields.
+
+The optional Files copy failed because FileBrowser owns host paths as mapped UID
+100000. Follow-up uses its authenticated API with override=false and collision
+suffixes. A live API probe succeeded, refused overwrite with HTTP409, preserved
+original bytes, and cleaned up. New protocol tests cover folder creation, escaped
+names, collisions, authentication failure, disk-full, and unavailable service.
+Full backend suite for these follow-ups is running; do not package the earlier
+backend as final.
+
+### Follow-up validation and OTA delivery check
+
+Paid-response and Files API regressions passed in the full backend run: 1,552
+passed, zero failed, four existing ignored tests. Live browser waiting checks
+passed again after removing invented zero capacity and channel counts.
+
+OTA inspection found that companion image :local (created by old installers and
+used on dev) bypassed both source-staleness detection and rebuilding. The earlier
+assumption that build-context detection covered these nodes was incorrect.
+Follow-up applies the existing source-mtime/stamp checks to both :local and
+:latest, preserving the existing tag and rebuilding only stale source. Existing
+image-ID comparison then restarts the UI companion onto the new image. This does
+not restart LND itself. Regression covers every companion's two local tags; final
+backend suite is running. Verify the resulting live rebuilt image before release.
