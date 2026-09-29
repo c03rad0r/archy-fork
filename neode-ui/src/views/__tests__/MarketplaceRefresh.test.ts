@@ -124,7 +124,7 @@ describe('Marketplace tracer tab: background refresh failure (D-07)', () => {
     await modal.get('button.glass-button-warning').trigger('click')
     await flushPromises()
     expect(installs()).toHaveLength(1)
-    expect(installs()[0][0].params).toMatchObject({ id, version: '29.0', prune: true })
+    expect(installs()[0]?.[0].params).toMatchObject({ id, version: '29.0', prune: true })
     expect(modal.props('show')).toBe(false)
     wrapper.unmount()
   })
