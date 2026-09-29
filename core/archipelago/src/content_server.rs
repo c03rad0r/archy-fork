@@ -7,7 +7,7 @@ use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use tokio::fs;
-use tracing::{debug, warn};
+use tracing::{debug, info, warn};
 
 const CATALOG_FILE: &str = "content/catalog.json";
 const CONTENT_DIR: &str = "content/files";
@@ -238,6 +238,9 @@ pub enum ServeResult {
     Forbidden,
     /// Content not found.
     NotFound,
+    /// The catalog entry and file exist but this node can't read the file.
+    /// Returned before any payment is taken.
+    Unavailable,
 }
 
 /// Serve a content item by ID with access control and optional range request.
@@ -296,6 +299,37 @@ pub async fn serve_content(
         }
     }
 
+    let file_path = content_file_path(data_dir, item);
+    if !file_path.exists() {
+        // The catalog entry survived (it's a separate JSON file) but its
+        // backing file is gone — most likely lost in an unrelated data-dir
+        // reset (a shared filebrowser file, 2026-07-01: two catalog entries
+        // outlived a filebrowser reinstall that wiped the files themselves).
+        // Leaving the entry in place would keep advertising it as available
+        // to every peer forever, each hitting the exact same dead end this
+        // one just did. Prune it so it stops being offered.
+        warn!(
+            content_id = %id,
+            filename = %item.filename,
+            "content catalog entry's file is missing on disk — pruning the stale entry"
+        );
+        prune_missing_content_entry(data_dir, id).await;
+        return Ok(ServeResult::NotFound);
+    }
+
+    // Confirm the file is readable BEFORE the paid gate below redeems the
+    // buyer's token. Reading it only afterwards meant a permission error
+    // surfaced after the sale: the buyer was charged and got an error
+    // instead of the file (2026-09-29, a FileBrowser upload left 0640).
+    if let Err(e) = ensure_readable(&file_path).await {
+        warn!(
+            content_id = %id,
+            path = %file_path.display(),
+            "shared content file is not readable by this node: {e:#}"
+        );
+        return Ok(ServeResult::Unavailable);
+    }
+
     // Check access control
     if !owner_session {
         match &item.access {
@@ -336,23 +370,6 @@ pub async fn serve_content(
         }
     }
 
-    let file_path = content_file_path(data_dir, item);
-    if !file_path.exists() {
-        // The catalog entry survived (it's a separate JSON file) but its
-        // backing file is gone — most likely lost in an unrelated data-dir
-        // reset (a shared filebrowser file, 2026-07-01: two catalog entries
-        // outlived a filebrowser reinstall that wiped the files themselves).
-        // Leaving the entry in place would keep advertising it as available
-        // to every peer forever, each hitting the exact same dead end this
-        // one just did. Prune it so it stops being offered.
-        warn!(
-            content_id = %id,
-            filename = %item.filename,
-            "content catalog entry's file is missing on disk — pruning the stale entry"
-        );
-        prune_missing_content_entry(data_dir, id).await;
-        return Ok(ServeResult::NotFound);
-    }
 
     let metadata = fs::metadata(&file_path)
         .await
@@ -570,6 +587,38 @@ pub async fn serve_content_preview(data_dir: &Path, id: &str) -> Result<PreviewR
             Ok(PreviewResult::FullContent(bytes, item.mime_type.clone()))
         }
     }
+}
+
+/// Make sure this service can open `path`, granting read access if it can't.
+///
+/// FileBrowser writes uploads as its container user (a rootless subuid such
+/// as 100999), and some arrive 0640 — unreadable by this service, although
+/// most shared files are already 0644. Inside the rootless user namespace
+/// that subuid is ours, so `podman unshare chmod a+r` grants the same read
+/// access the other shared files have, without sudo.
+async fn ensure_readable(path: &Path) -> Result<()> {
+    match fs::File::open(path).await {
+        Ok(_) => return Ok(()),
+        Err(e) if e.kind() == std::io::ErrorKind::PermissionDenied => {}
+        Err(e) => return Err(e).context("Failed to open content file"),
+    }
+    let out = tokio::process::Command::new("podman")
+        .args(["unshare", "chmod", "a+r"])
+        .arg(path)
+        .output()
+        .await
+        .context("Failed to run podman unshare chmod")?;
+    if !out.status.success() {
+        anyhow::bail!(
+            "podman unshare chmod a+r failed: {}",
+            String::from_utf8_lossy(&out.stderr).trim()
+        );
+    }
+    info!("Granted read access to shared content file {}", path.display());
+    fs::File::open(path)
+        .await
+        .context("Content file still unreadable after chmod")?;
+    Ok(())
 }
 
 /// Verify a payment token covers the required amount.

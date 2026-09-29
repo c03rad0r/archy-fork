@@ -555,6 +555,9 @@ impl RpcHandler {
         .service(crate::settings::transport::PeerService::PeerFiles)
         .header("X-Federation-DID", local_did)
         .header("X-Payment-Token", token_str.clone())
+        // The token is a bearer instrument the seller redeems on first sight:
+        // a Tor replay after FIPS delivered it can only arrive spent.
+        .single_delivery()
         .timeout(std::time::Duration::from_secs(900))
         .send_get()
         .await
@@ -610,8 +613,12 @@ impl RpcHandler {
             let body = response.text().await.unwrap_or_default();
             tracing::warn!("paid download: seller {onion} returned {status}: {body}");
             reclaim_spent_ecash(&self.config.data_dir, &token_str, used_backend).await;
+            let reason = serde_json::from_str::<serde_json::Value>(&body)
+                .ok()
+                .and_then(|v| v.get("error").and_then(|e| e.as_str()).map(str::to_string))
+                .unwrap_or_else(|| format!("Peer returned an error ({status})."));
             return Ok(serde_json::json!({
-                "error": format!("Peer returned an error ({status}). Your ecash was refunded to your wallet.")
+                "error": format!("{reason} Your ecash was refunded to your wallet.")
             }));
         }
 

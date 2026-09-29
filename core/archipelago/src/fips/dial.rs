@@ -130,10 +130,18 @@ pub fn client_with_timeout(timeout: Duration) -> reqwest::Client {
 /// robust". Only connect/timeout errors are retried (a real HTTP response,
 /// including 4xx/5xx, is returned as-is for the caller to interpret).
 async fn send_with_retry(rb: reqwest::RequestBuilder) -> Result<reqwest::Response, reqwest::Error> {
+    send_with_retry_if(rb, |e| e.is_connect() || e.is_timeout()).await
+}
+
+/// [`send_with_retry`], retrying only on errors `retryable` accepts.
+async fn send_with_retry_if(
+    rb: reqwest::RequestBuilder,
+    retryable: impl Fn(&reqwest::Error) -> bool,
+) -> Result<reqwest::Response, reqwest::Error> {
     let retry = rb.try_clone();
     match rb.send().await {
         Ok(resp) => Ok(resp),
-        Err(e) if (e.is_connect() || e.is_timeout()) && retry.is_some() => {
+        Err(e) if retryable(&e) && retry.is_some() => {
             // Brief pause so the hole-punch packets from the first attempt can
             // traverse before we re-dial onto the warmed path.
             tokio::time::sleep(Duration::from_millis(600)).await;
@@ -350,6 +358,9 @@ pub struct PeerRequest<'a> {
     /// the per-peer FIPS/Tor badge reflects reality. Opt-in because not
     /// every caller has a data dir in scope.
     pub record_data_dir: Option<std::path::PathBuf>,
+    /// The request carries something that must reach the peer at most once
+    /// (a bearer ecash token). See [`PeerRequest::single_delivery`].
+    pub single_delivery: bool,
 }
 
 impl<'a> PeerRequest<'a> {
@@ -363,7 +374,23 @@ impl<'a> PeerRequest<'a> {
             fips_timeout: None,
             service: None,
             record_data_dir: None,
+            single_delivery: false,
         }
+    }
+
+    /// Never send this request twice. A paid download carries a bearer ecash
+    /// token that the seller redeems on first sight; replaying it over Tor
+    /// after FIPS already delivered it hands the seller a spent token, so the
+    /// buyer is charged and gets a 402 instead of the file (2026-09-29: FIPS
+    /// answered 404 after the seller redeemed, the Tor retry got 402).
+    ///
+    /// With this set, whatever FIPS answers is final, the FIPS retry fires
+    /// only when the first attempt never connected, and Tor is used only when
+    /// FIPS could not have delivered the request. An attempt that may have
+    /// been delivered but timed out is an error, not a fallback.
+    pub fn single_delivery(mut self) -> Self {
+        self.single_delivery = true;
+        self
     }
 
     /// Record the transport that serves this request into federation storage
@@ -481,7 +508,10 @@ impl<'a> PeerRequest<'a> {
         if matches!(pref, TransportPref::Auto | TransportPref::Fips) {
             match self.try_fips_get().await? {
                 Some(resp) => {
-                    if pref == TransportPref::Fips || !fips_should_fall_back(resp.status()) {
+                    if pref == TransportPref::Fips
+                        || self.single_delivery
+                        || !fips_should_fall_back(resp.status())
+                    {
                         telemetry::record_fips_ok();
                         self.spawn_record(crate::transport::TransportKind::Fips);
                         return Ok((resp, crate::transport::TransportKind::Fips));
@@ -617,8 +647,25 @@ impl<'a> PeerRequest<'a> {
         for (k, v) in &self.headers {
             rb = rb.header(*k, v);
         }
-        match tokio::time::timeout(budget, send_with_retry(rb)).await {
+        let single = self.single_delivery;
+        let attempt = send_with_retry_if(rb, |e| {
+            e.is_connect() || (!single && e.is_timeout())
+        });
+        match tokio::time::timeout(budget, attempt).await {
             Ok(Ok(r)) => Ok(Some(r)),
+            // Anything but a failed connect may have reached the peer.
+            Ok(Err(e)) if single && !e.is_connect() => Err(anyhow::anyhow!(
+                "FIPS GET {} failed after the request may have been delivered \
+                 (not retrying over Tor): {}",
+                self.path,
+                e
+            )),
+            Err(_) if single => Err(anyhow::anyhow!(
+                "FIPS GET {} exceeded its {:?} budget after the request may have \
+                 been delivered (not retrying over Tor)",
+                self.path,
+                budget
+            )),
             Ok(Err(e)) => {
                 telemetry::record_fallback(FallbackReason::ConnectFail);
                 tracing::info!(
