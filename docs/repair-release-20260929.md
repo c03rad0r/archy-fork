@@ -189,3 +189,28 @@ live wallet data, host process IDs, or external network. Bitcoin/LND start times
 remained unchanged during isolated execution. Production helpers are unchanged;
 the namespace-specific command behavior is compiled only into unit tests.
 Release and ISO gates now use the isolated runner.
+
+### Final backend deployment and App Store follow-up — 19:36 UTC
+
+Full release harness passed: static/catalog checks, frontend type-check and
+1,117 frontend tests, cargo-check, and isolated backend suite (1,553 passed,
+four existing ignored). Final optimized backend built successfully; SHA256
+16a173129672cbb40c250446ec52ba4a9bd1974cbb3a4988f90c6f3187b7a1f7.
+Deployed to dev. Legacy :local LND companion automatically rebuilt at 19:35 UTC
+and restarted onto image 702c0cd88fb5c8a561c76dabdb96c40648dd62d401c78f2e10d4318b06f02abe.
+Served UI bytes match candidate source. Native Bitcoin/LND start times unchanged.
+
+Actual desktop pruning screenshot exposed horizontal overflow; moved the
+explanation below the app header. The App Store uses Marketplace.vue, a separate
+install path from Discover.vue. Its first Install button bypassed the version
+modal. The browser check therefore sent an unintended Knots install request at
+19:28 UTC. Core remained running, no Knots container was created, and the full
+chain was not pruned. Removed only the newly created Knots installed-app record
+and newly created version config; preserved root-only rollback copies.
+
+Marketplace now uses the shared version/pruning modal. Added integration tests
+for both Core and Knots: no install request until confirmation, selected version
+and pruning forwarded, cancellation sends no install request. Four Marketplace
+tests pass (three new plus existing refresh check). Further browser checks block
+package.install requests at their network boundary. Final frontend rebuild and
+post-fix live checks remain pending. Final paid-file follow-up is still pending.
