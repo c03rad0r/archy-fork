@@ -989,7 +989,7 @@
 
         // ── State ───────────────────────────────────────────────────────
         let unit = 'sats';
-        let state = { info: null, channels: [], pending: null, peers: [], payments: [], invoices: [], txns: [], fees: null, graph: null };
+        let state = { readiness: null, info: null, channels: [], pending: null, peers: [], payments: [], invoices: [], txns: [], fees: null, graph: null };
         let peerSort = { col: 'peer', dir: 1 };
         let activityFilter = 'all';
         let logsLoaded = false;
@@ -1142,9 +1142,19 @@
         }
 
         async function refreshAll() {
+            if (state.refreshing) return;
+            state.refreshing = true;
             const icon = document.getElementById('refreshIcon');
             if (icon) icon.classList.add('animate-spin-slow');
             try {
+                state.readiness = await lndSafe('/archy-status', null);
+                if (state.readiness && state.readiness.state.startsWith('waiting_')) {
+                    state.info = null;
+                    state.onchainStale = true;
+                    state.chanbalStale = true;
+                    renderAll();
+                    return;
+                }
                 const [info, channels, pending, peers, fees, graph, payments, invoices, txns] = await Promise.all([
                     lndSafe('/v1/getinfo', null),
                     lndSafe('/v1/channels', { channels: [] }),
@@ -1166,10 +1176,17 @@
                 state.invoices = (invoices && invoices.invoices) || [];
                 state.txns = (txns && txns.transactions) || [];
 
-                // Balances are separate so one failing endpoint can't blank the rest.
-                state.onchain = await lndSafe('/v1/balance/blockchain', null);
-                state.chanbal = await lndSafe('/v1/balance/channels', null);
+                // Preserve known balances on outage; never decode an error as zero.
+                const [onchain, chanbal] = await Promise.all([
+                    lndSafe('/v1/balance/blockchain', null),
+                    lndSafe('/v1/balance/channels', null),
+                ]);
+                state.onchainStale = !validBalance(onchain && (onchain.confirmed_balance ?? onchain.total_balance));
+                state.chanbalStale = !validBalance(chanbal && (chanbal.local_balance?.sat ?? chanbal.balance));
+                if (!state.onchainStale) state.onchain = onchain;
+                if (!state.chanbalStale) state.chanbal = chanbal;
             } finally {
+                state.refreshing = false;
                 if (icon) icon.classList.remove('animate-spin-slow');
             }
             renderAll();
@@ -1192,11 +1209,17 @@
             const pill = document.getElementById('headerStatusPill');
             const dot = document.getElementById('headerStatusDot');
 
-            if (!g) {
-                setText('headerStatusText', 'Unreachable');
-                pill.className = 'pill bad';
-                dot.className = 'status-dot-sm bg-red';
-                document.getElementById('syncCard').style.display = 'none';
+            const waiting = state.readiness && state.readiness.state.startsWith('waiting_');
+            if (!g || waiting) {
+                setText('headerStatusText', waiting ? state.readiness.message : 'Connecting to LND');
+                pill.className = 'pill warn';
+                dot.className = 'status-dot-sm bg-yellow';
+                document.getElementById('syncCard').style.display = '';
+                setText('syncSubtitle', waiting ? state.readiness.message + '. Lightning will become available automatically.' : 'Checking Lightning availability. Retrying automatically.');
+                setText('syncBlockLabel', '');
+                setText('syncPercent', '');
+                document.getElementById('syncProgressBar').style.width = '0%';
+                for (const id of ['syncChain', 'syncGraph', 'syncHeight', 'syncPeers']) setText(id, '—');
                 return;
             }
 
@@ -1237,6 +1260,11 @@
         }
 
         // ── Balances ────────────────────────────────────────────────────
+        function validBalance(value) {
+            return (typeof value === 'number' || (typeof value === 'string' && /^\d+$/.test(value)))
+                && Number.isSafeInteger(Number(value)) && Number(value) >= 0;
+        }
+
         function renderBalances() {
             const onchainConfirmed = num(state.onchain && (state.onchain.confirmed_balance ?? state.onchain.total_balance));
             const onchainUnconfirmed = num(state.onchain && state.onchain.unconfirmed_balance);
@@ -1253,13 +1281,13 @@
             const haveOnchain = !!state.onchain;
             const haveChan = !!cb;
 
-            setBalance('balTotal', haveOnchain || haveChan ? onchainConfirmed + lnLocal : null);
-            setText('balTotalSub', haveOnchain || haveChan ? 'on-chain + lightning' : 'waiting for LND');
+            setBalance('balTotal', haveOnchain && haveChan ? onchainConfirmed + lnLocal : null);
+            setText('balTotalSub', state.onchainStale || state.chanbalStale ? 'balance unavailable · last known values' : haveOnchain && haveChan ? 'on-chain + lightning' : 'waiting for LND');
             setBalance('balLightning', haveChan ? lnLocal : null);
-            setText('balLightningSub', !haveChan ? 'waiting for LND'
+            setText('balLightningSub', !haveChan ? 'waiting for LND' : state.chanbalStale ? 'last known balance'
                 : lnPending > 0 ? fmtAmount(lnPending) + ' pending open' : 'spendable over channels');
             setBalance('balOnchain', haveOnchain ? onchainConfirmed : null);
-            setText('balOnchainSub', !haveOnchain ? 'waiting for LND'
+            setText('balOnchainSub', !haveOnchain ? 'waiting for LND' : state.onchainStale ? 'last known balance'
                 : onchainUnconfirmed > 0 ? fmtAmount(onchainUnconfirmed) + ' unconfirmed' : 'confirmed');
 
             setText('liqLocal', fmtAmount(lnLocal));

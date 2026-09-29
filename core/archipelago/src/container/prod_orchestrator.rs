@@ -1913,6 +1913,11 @@ impl ProdContainerOrchestrator {
             .unwrap_or_default();
         let mut report = ReconcileReport::default();
         let disk_gb = self.disk_gb().await;
+        let bitcoin_pruned = disk_gb < ARCHIVAL_BITCOIN_DISK_GB
+            || crate::settings::bitcoin_storage::load(&self.data_dir)
+                .await
+                .map(|settings| settings.prune)
+                .unwrap_or(true);
         // Register every candidate before the (sequential, possibly slow)
         // pass so the scanner overlays queued-but-down apps as Restarting
         // instead of Stopped. Each app is deregistered as its turn finishes,
@@ -1952,7 +1957,7 @@ impl ProdContainerOrchestrator {
             }
             if mode == ReconcileMode::ExistingOnly
                 && requires_archival_bitcoin(&app_id)
-                && disk_gb < ARCHIVAL_BITCOIN_DISK_GB
+                && bitcoin_pruned
             {
                 report.record(
                     &app_id,
@@ -3720,6 +3725,17 @@ impl ProdContainerOrchestrator {
         }
         let mut env = manifest.app.environment.clone();
         env.extend(manifest.app.container.resolve_derived_env(&facts));
+        if matches!(manifest.app.id.as_str(), "bitcoin-core" | "bitcoin-knots") {
+            let storage = crate::settings::bitcoin_storage::load(&self.data_dir).await?;
+            env.retain(|entry| !entry.starts_with("BITCOIN_PRUNE="));
+            if storage.prune {
+                anyhow::ensure!(
+                    manifest.app.container.custom_args.iter().any(|arg| arg.contains("BITCOIN_PRUNE")),
+                    "This Bitcoin app definition cannot honor the pruning choice. Refresh the app catalog and try again."
+                );
+                env.push("BITCOIN_PRUNE=1".to_string());
+            }
+        }
 
         // FM_BITCOIND_URL now comes from the manifest's {{BITCOIN_HOST}}
         // derived_env (works on Knots/Core/any distro). The old hardcoded
@@ -6071,6 +6087,48 @@ app:
             build.contains("context=/opt/archy/apps/bitcoin-ui/docker-context"),
             "unexpected build context in call: {build}"
         );
+    }
+
+    #[tokio::test]
+    async fn bitcoin_storage_choice_is_applied_and_old_catalog_cannot_silently_ignore_it() {
+        let rt = Arc::new(MockRuntime::default());
+        let mut orch = orch_with(rt).await;
+        let dir = tempfile::tempdir().unwrap();
+        orch.set_data_dir(dir.path().to_path_buf());
+        for id in ["bitcoin-core", "bitcoin-knots"] {
+            let mut old = pull_manifest(id, "docker.io/bitcoin/bitcoin:28");
+            // No preference: existing containers need no new environment flag.
+            crate::settings::bitcoin_storage::save(dir.path(), false)
+                .await
+                .unwrap();
+            orch.resolve_dynamic_env(&mut old).await.unwrap();
+            assert!(!old
+                .app
+                .environment
+                .iter()
+                .any(|s| s.starts_with("BITCOIN_PRUNE=")));
+            crate::settings::bitcoin_storage::save(dir.path(), true)
+                .await
+                .unwrap();
+            assert!(orch
+                .resolve_dynamic_env(&mut old)
+                .await
+                .unwrap_err()
+                .to_string()
+                .contains("cannot honor"));
+            let mut current = pull_manifest(id, "docker.io/bitcoin/bitcoin:28");
+            current
+                .app
+                .container
+                .custom_args
+                .push("if [ ${BITCOIN_PRUNE:-0} = 1 ]; then :; fi".into());
+            orch.resolve_dynamic_env(&mut current).await.unwrap();
+            assert!(current
+                .app
+                .environment
+                .iter()
+                .any(|s| s == "BITCOIN_PRUNE=1"));
+        }
     }
 
     #[tokio::test]

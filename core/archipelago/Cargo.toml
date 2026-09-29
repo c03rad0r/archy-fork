@@ -1,6 +1,6 @@
 [package]
 name = "archipelago"
-version = "1.8.19-alpha"
+version = "1.8.20-alpha"
 edition = "2021"
 license.workspace = true
 description = "Archipelago Bitcoin Node OS - Native backend"

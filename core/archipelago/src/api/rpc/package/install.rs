@@ -326,6 +326,10 @@ impl RpcHandler {
         // an older version pins it so install_fresh resolves that image and the
         // update badge stays suppressed. See docs/bitcoin-multi-version-design.md.
         if matches!(package_id, "bitcoin-core" | "bitcoin-knots") {
+            if let Some(value) = params.get("prune") {
+                let prune = value.as_bool().context("prune must be a boolean")?;
+                crate::settings::bitcoin_storage::save(&self.config.data_dir, prune).await?;
+            }
             if let Some(version) = params.get("version").and_then(|v| v.as_str()) {
                 persist_install_version_selection(package_id, version).await;
             }

@@ -72,6 +72,9 @@ summary() {
 stage "git-diff-check"   git diff --check
 stage "cargo-fmt"        timeout 240 cargo fmt --manifest-path core/Cargo.toml --all --check
 stage "manifest-shell"  python3 scripts/check-manifest-shell.py
+stage "doctor-ports" bash tests/regression/container-doctor-ports.sh
+stage "bitcoin-pruning" python3 tests/regression/bitcoin-prune-entrypoint.py
+stage "lnd-ui-readiness" node --test tests/regression/lnd-ui-readiness.cjs
 stage "catalog-drift"    python3 scripts/check-app-catalog-drift.py --release --strict
 
 # Validate the artifact that will actually be signed and published, not only
@@ -168,7 +171,7 @@ stage "cargo-check"      timeout 580 cargo check --manifest-path core/Cargo.toml
 # 3600s leaves headroom; a warm target/ finishes in a fraction of it.
 stage "cargo-test-weekly" timeout 3600 env CARGO_INCREMENTAL=0 \
   cargo test --manifest-path core/Cargo.toml -p archipelago -- \
-  update:: lnd container::image_versions upgrade_preserves_container scanner drift missing_secret collision
+  update:: lnd container::image_versions upgrade_preserves_container scanner drift missing_secret collision payment_tests bitcoin_storage bitcoin_status
 
 # ── Stage 4: live node smoke ─────────────────────────────────────────
 if [[ $LIVE -eq 1 ]]; then
@@ -215,7 +218,7 @@ if [[ $LIVE -eq 1 ]]; then
         [ -z "$st" ] && continue
         seen=1
         echo "LND($port) state: $st"
-        echo "$st" | grep -q "RPC_ACTIVE" && { echo "OK: LND wallet is unlocked"; exit 0; }
+        echo "$st" | grep -qE "UNLOCKED|RPC_ACTIVE|SERVER_ACTIVE" && { echo "OK: LND wallet is unlocked"; exit 0; }
         echo "$st" | grep -qE "NON_EXISTING|WAITING_TO_START" && { echo "OK: LND wallet not initialized yet — not a lock regression"; exit 0; }
       done
       [ -z "$seen" ] && { echo "SKIP: LND /v1/state not reachable on 18080/8080"; exit 0; }

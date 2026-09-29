@@ -138,6 +138,19 @@ impl ApiHandler {
         cors_origin: &str,
     ) -> Result<Response<hyper::Body>> {
         let suffix = path.strip_prefix("/proxy/lnd").unwrap_or("/");
+        if suffix == "/archy-status" {
+            return Ok(Response::builder()
+                .status(StatusCode::OK)
+                .header("Content-Type", "application/json")
+                .header("Cache-Control", "no-store")
+                .header("Access-Control-Allow-Origin", cors_origin)
+                .header("Access-Control-Allow-Credentials", "true")
+                .header("Vary", "Origin")
+                .body(hyper::Body::from(
+                    rpc.handle_lnd_readiness().await.to_string(),
+                ))?);
+        }
+
         let url = format!("{LND_REST_BASE_URL}{suffix}");
         // LND REST serves a self-signed cert and requires the admin macaroon.
         // A bare reqwest::get() uses the default client, which rejects the

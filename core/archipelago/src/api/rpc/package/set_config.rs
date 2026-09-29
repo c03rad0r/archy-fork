@@ -153,8 +153,18 @@ impl RpcHandler {
         let default = app_catalog::catalog_default_version(app_id);
         let cfg = version_config::read(app_id);
         let installed = installed_version(app_id).await;
+        let bitcoin_prune = if matches!(app_id, "bitcoin-core" | "bitcoin-knots") {
+            Some(
+                crate::settings::bitcoin_storage::load(&self.config.data_dir)
+                    .await?
+                    .prune,
+            )
+        } else {
+            None
+        };
 
         Ok(serde_json::json!({
+            "bitcoinPrune": bitcoin_prune,
             "id": app_id,
             "supportsVersions": supports_versions(app_id),
             "default": default,

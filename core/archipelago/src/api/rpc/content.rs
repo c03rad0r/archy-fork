@@ -22,9 +22,9 @@ const FILE_CATALOG_PROTOCOL: &str = "https://archipelago.dev/protocols/file-cata
 /// Best-effort reclaim of an ecash payment token that was minted but the sale
 /// didn't complete (seller unreachable or couldn't redeem it), so the buyer
 /// doesn't lose the value. For Fedimint the spender can reissue its own
-/// un-redeemed notes; for Cashu the proofs are received back. Fails silently if
-/// the seller already claimed the token (then the value is genuinely gone).
-async fn reclaim_spent_ecash(data_dir: &std::path::Path, token: &str, backend: &str) {
+/// un-redeemed notes; for Cashu the proofs are received back. Report the actual
+/// recovered amount, or explicitly say when a refund could not be confirmed.
+async fn reclaim_spent_ecash(data_dir: &std::path::Path, token: &str, backend: &str) -> String {
     let res = match backend {
         "fedimint" => crate::wallet::fedimint_client::reissue_into_any(data_dir, token)
             .await
@@ -32,13 +32,14 @@ async fn reclaim_spent_ecash(data_dir: &std::path::Path, token: &str, backend: &
         _ => ecash::receive_token(data_dir, token).await,
     };
     match res {
-        Ok(sats) => tracing::info!(
-            "paid download: reclaimed {sats} sats of unspent {backend} ecash after a failed sale"
-        ),
-        Err(e) => tracing::warn!(
-            "paid download: could not reclaim {backend} ecash (the peer may have already \
-             claimed it): {e:#}"
-        ),
+        Ok(sats) => {
+            tracing::info!("paid download: reclaimed {sats} sats after failed sale");
+            format!("Refunded {sats} sats to your wallet.")
+        }
+        Err(e) => {
+            tracing::warn!("paid download: refund not confirmed: {e}");
+            "Your refund could not be confirmed. The seller may have received the payment. Do not pay again until this is checked.".to_string()
+        }
     }
 }
 
@@ -547,29 +548,27 @@ impl RpcHandler {
         // Surface a real reason instead of the generic sanitized error (#30):
         // the dial already tries FIPS/mesh then falls back to Tor, so a failure
         // here means the peer is genuinely unreachable on both transports.
-        let (response, transport) = match crate::fips::dial::PeerRequest::new(
-            fips_npub.as_deref(),
-            onion,
-            &path,
-        )
-        .service(crate::settings::transport::PeerService::PeerFiles)
-        .header("X-Federation-DID", local_did)
-        .header("X-Payment-Token", token_str.clone())
-        .timeout(std::time::Duration::from_secs(900))
-        .send_get()
-        .await
-        {
-            Ok(v) => v,
-            Err(e) => {
-                tracing::warn!("paid peer download dial failed for {}: {:#}", onion, e);
-                // The token was already minted/spent — reclaim it so the buyer
-                // doesn't lose the value when the seller was simply unreachable.
-                reclaim_spent_ecash(&self.config.data_dir, &token_str, used_backend).await;
-                return Ok(serde_json::json!({
-                    "error": "Could not reach the peer over mesh or Tor — it may be offline. Your ecash was refunded to your wallet. Please try again."
-                }));
-            }
-        };
+        let (response, transport) =
+            match crate::fips::dial::PeerRequest::new(fips_npub.as_deref(), onion, &path)
+                .service(crate::settings::transport::PeerService::PeerFiles)
+                .header("X-Federation-DID", local_did)
+                .header("X-Payment-Token", token_str.clone())
+                .timeout(std::time::Duration::from_secs(900))
+                .send_get()
+                .await
+            {
+                Ok(v) => v,
+                Err(e) => {
+                    tracing::warn!("paid peer download dial failed for {}: {:#}", onion, e);
+                    // The token was already minted/spent — reclaim it so the buyer
+                    // doesn't lose the value when the seller was simply unreachable.
+                    let refund =
+                        reclaim_spent_ecash(&self.config.data_dir, &token_str, used_backend).await;
+                    return Ok(serde_json::json!({
+                        "error": format!("Could not reach the peer over mesh or Tor. {refund}")
+                    }));
+                }
+            };
         // Record which transport actually reached the peer (B14).
         if let Err(e) = crate::federation::record_peer_transport(
             &self.config.data_dir,
@@ -583,25 +582,17 @@ impl RpcHandler {
         }
 
         if response.status() == reqwest::StatusCode::PAYMENT_REQUIRED {
-            // Payment was rejected by the seller. Surface the most likely cause
-            // per backend — for ecash both sides must share a redemption network
-            // (a Cashu mint, or a Fedimint federation).
+            // A 402 can mean mint validation, network failure, underpayment,
+            // or an unaccepted mint. Do not invent a mint-mismatch diagnosis.
             let body = response.text().await.unwrap_or_default();
             tracing::warn!(
                 "paid download: seller {onion} rejected {used_backend} payment of {price_sats} sats: {body}"
             );
             // Seller couldn't redeem the token — reclaim it so the buyer keeps
             // their funds (the spent-but-unredeemed-notes case the user hit).
-            reclaim_spent_ecash(&self.config.data_dir, &token_str, used_backend).await;
-            let hint = match used_backend {
-                "fedimint" => "the seller isn't in the same Fedimint federation as you",
-                _ => "the seller doesn't accept your Cashu mint",
-            };
+            let refund = reclaim_spent_ecash(&self.config.data_dir, &token_str, used_backend).await;
             return Ok(serde_json::json!({
-                "error": format!(
-                    "Payment rejected by the seller — {hint}. Your ecash was refunded to \
-                     your wallet. Try the other ecash type, or use a shared mint/federation."
-                )
+                "error": format!("The seller could not verify the payment. {refund}")
             }));
         }
 
@@ -609,9 +600,9 @@ impl RpcHandler {
             let status = response.status();
             let body = response.text().await.unwrap_or_default();
             tracing::warn!("paid download: seller {onion} returned {status}: {body}");
-            reclaim_spent_ecash(&self.config.data_dir, &token_str, used_backend).await;
+            let refund = reclaim_spent_ecash(&self.config.data_dir, &token_str, used_backend).await;
             return Ok(serde_json::json!({
-                "error": format!("Peer returned an error ({status}). Your ecash was refunded to your wallet.")
+                "error": format!("Peer returned an error ({status}). {refund}")
             }));
         }
 

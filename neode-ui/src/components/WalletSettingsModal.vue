@@ -185,7 +185,7 @@
         @change="saveExplorer"
       />
       <p class="text-[11px] text-white/40 mt-1">
-        Any Mempool-compatible instance works. Default: tx1138.com.
+        Any Mempool-compatible instance works. Default: mempool.space.
       </p>
 
       <div class="mt-3 p-3 rounded-lg border border-amber-400/25 bg-amber-500/10 text-amber-200/80 text-xs leading-relaxed">

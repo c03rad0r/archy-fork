@@ -7,9 +7,26 @@ doc. See [`ROADMAP.md`](ROADMAP.md) for the curated, public-facing direction.
 
 - **OPEN: Framework LND startup / missing Receive address / false zero balance.**
   User requires investigation and a verified fix on the actual node before later
-  unrelated work. Access is pending; a manual LND restart is only a workaround.
+  unrelated work. Startup and native balances were verified on the actual node;
+  final display confirmation is pending. See the incident record for evidence.
   See [incident evidence and closure criteria](incident-framework-lnd-startup.md)
   and the repository `AGENTS.md` session-start instructions.
+
+## Current repair and release tasks — 2026-09-29
+
+Release is blocked until these pass; see [execution record](repair-release-20260929.md).
+
+- [ ] Fix Cashu paid-file redemption between dev and Shorty; test keyset IDs,
+  mint errors, fees, and refund reporting before live validation.
+- [ ] Complete the remaining Framework incident verification and evidence.
+- [ ] Replace the unavailable tx1138.com explorer default with mempool.space;
+  migrate the old default with fresh consent and preserve custom/local explorers.
+- [ ] Offer pruning in the Bitcoin installation version modal, using the same
+  pruning settings as automatic pruning even on large disks.
+- [ ] Explain Bitcoin warmup without raw RPC errors; gate LND unlock on Bitcoin
+  RPC readiness and show install/start/sync waiting states with automatic recovery.
+- [ ] Test the completed changes on this development box, then publish a new
+  signed OTA and raw ISO release. Record any remaining verification gaps.
 
 ## Dev & build process (priority)
 

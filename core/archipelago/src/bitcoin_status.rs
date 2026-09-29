@@ -100,7 +100,11 @@ fn friendly_transient_error(has_cached_state: bool, err_msg: &str) -> String {
         .trim()
         .trim_end_matches('.');
     let lower = detail.to_lowercase();
-    let state = if lower.contains("verifying blocks") {
+    let state = if lower.contains("loading block index") {
+        Some("loading its block index. This can take a while after installation or restart")
+    } else if lower.contains("replaying blocks") {
+        Some("checking saved blocks before startup completes")
+    } else if lower.contains("verifying blocks") {
         Some("verifying blocks after restart")
     } else if lower.contains("connection reset") {
         Some("starting up and not yet accepting RPC connections")
@@ -338,5 +342,23 @@ mod tests {
         let msg = friendly_transient_error(false, &long);
         assert!(msg.contains("Detail: weird new failure"));
         assert!(msg.len() < 260);
+    }
+}
+
+#[cfg(test)]
+mod startup_message_tests {
+    #[test]
+    fn loading_block_index_is_explained_without_rpc_error_dump() {
+        for cached in [false, true] {
+            let message = super::friendly_transient_error(
+                cached,
+                r#"getblockchaininfo: Bitcoin RPC returned 500 Internal Server Error: {"error":{"code":-28,"message":"Loading block index…"}}"#,
+            );
+            assert!(message.contains("loading its block index"));
+            for raw in ["500", "-28", "Detail:", "getblockchaininfo", "{", "RPC"] {
+                assert!(!message.contains(raw));
+            }
+            assert_eq!(message.contains("last known state"), cached);
+        }
     }
 }

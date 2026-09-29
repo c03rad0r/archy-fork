@@ -672,6 +672,11 @@ async function handleInstall(app: MarketplaceApp) {
     return
   }
   if (installingApps.has(app.id) || isInstalled(app.id)) return
+  if (['bitcoin-core', 'bitcoin-knots'].includes(app.id)) {
+    installModalApp.value = app
+    showInstallModal.value = true
+    return
+  }
   // Multi-version apps (Bitcoin Knots / Core): let the runner pick a version up
   // front via a full-screen modal (latest pre-selected) instead of silently
   // installing the default. Best-effort — if the lookup fails we install directly.
@@ -686,19 +691,19 @@ async function handleInstall(app: MarketplaceApp) {
   startInstall(app)
 }
 
-function startInstall(app: MarketplaceApp, versionOverride?: string) {
+function startInstall(app: MarketplaceApp, versionOverride?: string, prune?: boolean) {
   if (app.source === 'local') {
-    installApp(app, versionOverride)
+    installApp(app, versionOverride, prune)
   } else {
-    installCommunityApp(app, versionOverride)
+    installCommunityApp(app, versionOverride, prune)
   }
 }
 
-function onInstallModalConfirm(version: string) {
+function onInstallModalConfirm(version: string, prune?: boolean) {
   const app = installModalApp.value
   showInstallModal.value = false
   installModalApp.value = null
-  if (app) startInstall(app, version)
+  if (app) startInstall(app, version, prune)
 }
 
 function viewAppDetails(app: MarketplaceApp) {
@@ -774,25 +779,25 @@ function failInstall(app: MarketplaceApp, err: unknown) {
   trackTimeout(() => { serverStore.clearInstallProgress(app.id) }, 5000)
 }
 
-async function installApp(app: MarketplaceApp, versionOverride?: string) {
+async function installApp(app: MarketplaceApp, versionOverride?: string, prune?: boolean) {
   if (installingApps.has(app.id) || isInstalled(app.id)) return
   queueInstall(app)
   installToast(app)
   try {
     const installUrl = app.url || app.manifestUrl || app.s9pkUrl
-    await rpcClient.call({ method: 'package.install', params: { id: app.id, url: installUrl, version: versionOverride || app.version }, timeout: 600000 })
+    await rpcClient.call({ method: 'package.install', params: { id: app.id, url: installUrl, version: versionOverride || app.version, ...(prune === undefined ? {} : { prune }) }, timeout: 600000 })
   } catch (err) {
     if (import.meta.env.DEV) console.error('Installation failed:', err)
     failInstall(app, err)
   }
 }
 
-async function installCommunityApp(app: MarketplaceApp, versionOverride?: string) {
+async function installCommunityApp(app: MarketplaceApp, versionOverride?: string, prune?: boolean) {
   if (installingApps.has(app.id) || isInstalled(app.id) || !app.dockerImage) return
   queueInstall(app)
   installToast(app)
   try {
-    const installParams: Record<string, unknown> = { id: app.id, dockerImage: app.dockerImage, version: versionOverride || app.version }
+    const installParams: Record<string, unknown> = { id: app.id, dockerImage: app.dockerImage, version: versionOverride || app.version, ...(prune === undefined ? {} : { prune }) }
     if ((app as Record<string, unknown>).containerConfig) {
       installParams.containerConfig = (app as Record<string, unknown>).containerConfig
     }
