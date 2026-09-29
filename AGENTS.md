@@ -21,3 +21,11 @@ While its status is OPEN:
 This priority comes from the user's explicit instruction on 2026-09-15. It remains
 in effect across sessions until the documented acceptance criteria are met or the
 user explicitly changes it.
+
+## Unit tests on a live node
+
+Run backend unit tests through `scripts/test-backend-isolated.sh`. Do not run
+unrestricted `cargo test` on a node with installed apps: older mocked-runtime
+tests still reached real service commands. The runner isolates wallet data,
+service buses, container storage, networking, and process IDs. Compilation with
+`cargo test --no-run` is safe. Keep separately authorized live checks explicit.

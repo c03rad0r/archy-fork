@@ -156,3 +156,36 @@ Follow-up applies the existing source-mtime/stamp checks to both :local and
 image-ID comparison then restarts the UI companion onto the new image. This does
 not restart LND itself. Regression covers every companion's two local tags; final
 backend suite is running. Verify the resulting live rebuilt image before release.
+
+### Test isolation finding — release remains blocked
+
+The next full run passed 1,552 tests but one existing boot-loop timing test failed.
+Its output and node logs exposed an independent test defect: MockRuntime tests
+still invoked real Quadlet service operations and Podman socket recovery. These
+caused further LND/companion restarts during unrestricted unit runs. They were not
+a recurrence of the repaired doctor port check. Stopped unrestricted testing;
+LND has remained running since 19:02:46 UTC during isolated test execution.
+
+New isolated runner hides live wallets, service buses, container storage and host
+process IDs, supplies a private network and temporary writable fixture paths,
+and keeps host filesystems read-only. An independent boundary probe passed.
+Test-only service helpers use a temporary Quadlet directory and simulated service
+results; mocked runtimes skip real Podman socket/network provisioning. Host file
+helpers require the isolated-runner marker and execute inside the namespace
+instead of escaping through sudo/systemd-run. Release harness and AGENTS now
+require this runner. Initial isolation trials correctly blocked host operations
+and exposed fixture permission assumptions; final runner compiles and executes
+the full suite with those fixture paths isolated. No final pass claimed yet.
+
+Main dashboard candidate and AIUI build at b634f41a are now deployed on dev; served
+index SHA matches the build. Live package.versions returns bitcoinPrune=false
+for Core and Knots, preserving current automatic mode. Existing full chain stays
+unpruned. Final backend (Files/cached response/legacy UI delivery follow-ups) is
+not yet deployed; earlier 0f85f588 backend remains live on both nodes.
+
+Final isolated backend run: **1,553 passed, zero failed, four existing ignored**
+in 13 seconds after compilation. Boundary probe confirms no host service buses,
+live wallet data, host process IDs, or external network. Bitcoin/LND start times
+remained unchanged during isolated execution. Production helpers are unchanged;
+the namespace-specific command behavior is compiled only into unit tests.
+Release and ISO gates now use the isolated runner.

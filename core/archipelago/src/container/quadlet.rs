@@ -676,6 +676,13 @@ pub async fn unit_exists(name: &str) -> bool {
 
 /// Resolve the per-user quadlet dir under $HOME. Created if missing.
 pub async fn unit_dir() -> Result<PathBuf> {
+    #[cfg(test)]
+    {
+        static TEST_UNITS: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
+        return Ok(TEST_UNITS
+            .get_or_init(|| tempfile::tempdir().unwrap().keep())
+            .clone());
+    }
     let home = std::env::var_os("HOME")
         .map(PathBuf::from)
         .ok_or_else(|| anyhow!("HOME not set; cannot locate quadlet unit dir"))?;
@@ -810,6 +817,11 @@ async fn systemctl_user_status(
     args: &[&str],
     timeout: Duration,
 ) -> Result<std::process::ExitStatus> {
+    #[cfg(test)]
+    {
+        use std::os::unix::process::ExitStatusExt;
+        return Ok(std::process::ExitStatus::from_raw(0));
+    }
     let mut cmd = Command::new("systemctl");
     cmd.arg("--user").args(args);
     cmd.kill_on_drop(true);
@@ -856,6 +868,10 @@ async fn wait_not_deactivating(service: &str, timeout: Duration) -> bool {
 }
 
 async fn systemctl_user_output(args: &[&str], timeout: Duration) -> Result<std::process::Output> {
+    #[cfg(test)]
+    {
+        anyhow::bail!("Unit tests have no real user service manager");
+    }
     let mut cmd = Command::new("systemctl");
     cmd.arg("--user").args(args);
     cmd.kill_on_drop(true);
@@ -960,6 +976,9 @@ pub async fn disable_remove(unit_name: &str, dir: &Path) -> Result<()> {
 
 /// Is the quadlet-generated service currently active?
 pub async fn is_active(service: &str) -> bool {
+    if cfg!(test) {
+        return false;
+    }
     Command::new("systemctl")
         .args(["--user", "is-active", "--quiet", service])
         .status()

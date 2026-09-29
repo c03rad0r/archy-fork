@@ -169,9 +169,7 @@ stage "cargo-check"      timeout 580 cargo check --manifest-path core/Cargo.toml
 # 2026-08-20 1500s died at unit 427/429 (the archipelago bin test, the biggest
 # link) on a loaded, swapping dev box, again without running a single test.
 # 3600s leaves headroom; a warm target/ finishes in a fraction of it.
-stage "cargo-test-weekly" timeout 3600 env CARGO_INCREMENTAL=0 \
-  cargo test --manifest-path core/Cargo.toml -p archipelago -- \
-  update:: lnd container::image_versions upgrade_preserves_container scanner drift missing_secret collision payment_tests bitcoin_storage bitcoin_status
+stage "cargo-test-isolated" timeout 3600 bash scripts/test-backend-isolated.sh
 
 # ── Stage 4: live node smoke ─────────────────────────────────────────
 if [[ $LIVE -eq 1 ]]; then

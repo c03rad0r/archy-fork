@@ -798,6 +798,10 @@ fn host_port_bindings_drifted(
 }
 
 async fn ensure_user_podman_socket() -> Result<()> {
+    // Unit tests inject a runtime; they must not restart the host Podman API.
+    if cfg!(test) {
+        return Ok(());
+    }
     let socket_path = "/run/user/1000/podman/podman.sock";
     if podman_socket_accepts_connections(socket_path).await {
         return Ok(());
@@ -3231,6 +3235,9 @@ impl ProdContainerOrchestrator {
     }
 
     async fn ensure_container_network(&self, manifest: &AppManifest) -> Result<()> {
+        if cfg!(test) {
+            return Ok(());
+        }
         let Some(network) = manifest.app.container.network.as_deref() else {
             return Ok(());
         };

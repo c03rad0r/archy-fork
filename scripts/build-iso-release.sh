@@ -112,10 +112,9 @@ VERSION="$(grep -m1 '^version' core/archipelago/Cargo.toml | sed 's/.*"\(.*\)".*
 if [ "$SKIP_GATES" = "0" ]; then
     stage "release-gate-harness" bash tests/release/run.sh
     stage "catalog-drift-strict" python3 scripts/check-app-catalog-drift.py --release --strict
-    # Full Rust suite — the release harness only runs a 6-module slice;
-    # ~1000 tests otherwise go unverified at ISO time (hardening plan §H).
-    stage "cargo-test-full" timeout 5400 env CARGO_INCREMENTAL=0 \
-        nice -n 10 cargo test --manifest-path core/Cargo.toml -p archipelago --bin archipelago
+    # The release harness runs the full backend suite inside namespaces.
+    # Never execute unrestricted tests on a node with live wallets/services.
+
 else
     echo; echo "═══ [gates] SKIPPED (--skip-gates)"
 fi
