@@ -71,7 +71,6 @@
                 {{ $ver(v.version) }}{{ v.default ? ' — latest' : '' }}{{ v.deprecated ? ' (deprecated)' : '' }}
               </option>
             </select>
-          <BitcoinPruningChoice v-if="!isInstalled && isBitcoinInstall && prunePrefsLoaded" v-model="pruneOnInstall" />
             <button
               v-if="!isInstalled"
               @click="installApp"
@@ -90,6 +89,12 @@
             </button>
           </div>
         </div>
+
+        <BitcoinPruningChoice
+          v-if="!isInstalled && isBitcoinInstall && prunePrefsLoaded"
+          v-model="pruneOnInstall"
+          class="hidden md:block"
+        />
 
         <!-- Mobile: Two Column Grid Layout -->
         <div class="md:hidden">
@@ -138,7 +143,7 @@
               {{ $ver(v.version) }}{{ v.default ? ' — latest' : '' }}{{ v.deprecated ? ' (deprecated)' : '' }}
             </option>
           </select>
-          <BitcoinPruningChoice v-if="!isInstalled && isBitcoinInstall && prunePrefsLoaded" v-model="pruneOnInstall" />
+          <BitcoinPruningChoice v-if="!isInstalled && isBitcoinInstall && prunePrefsLoaded" v-model="pruneOnInstall" class="mb-4" />
 
           <!-- Bottom: Action Buttons -->
           <div class="grid grid-cols-2 gap-2">
