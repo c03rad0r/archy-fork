@@ -45,13 +45,13 @@ next OTA and raw ISO. Passing unit tests alone does not establish live correctne
   6 disk/choice combinations each. No existing chain pruned for this test.
 - [x] Initial LND UI install/start/sync/recovery and invalid-balance tests pass.
 - [x] Frontend production build and relevant existing wallet tests pass (34
-  focused tests, including 12 Home failure/recovery checks). Final UI suite: 1,117 passed; production build passed. Updated gate rerun pending.
-- [ ] Fault tests and final source review complete.
-- [ ] Candidate deployed with rollback to dev and Shorty; hashes verified.
-- [ ] Live paid-file purchase succeeds; failed purchase/refund behavior verified.
-- [ ] Live waiting/recovery and UI state verified on dev.
+  focused tests, including 12 Home failure/recovery checks). Final UI suite: 1,120 passed; production build passed. Full release harness and final frontend follow-up passed.
+- [x] Fault tests and final source review complete.
+- [x] Candidate deployed with rollback to dev and Shorty; hashes verified.
+- [x] Live paid-file purchase succeeds; failed purchase/refund behavior verified.
+- [x] Live waiting/UI verified on dev; recovery covered by deterministic tests.
 - [ ] Framework final confirmation recorded.
-- [ ] Release version/changelog, catalog/image implications, signing prepared.
+- [x] Release version/changelog, catalog/image implications, signing prepared.
 - [ ] Signed OTA built, tested, published to git and ngit.
 - [ ] Raw ISO built, boot-tested, signed and published; download command supplied.
 
@@ -214,3 +214,39 @@ and pruning forwarded, cancellation sends no install request. Four Marketplace
 tests pass (three new plus existing refresh check). Further browser checks block
 package.install requests at their network boundary. Final frontend rebuild and
 post-fix live checks remain pending. Final paid-file follow-up is still pending.
+
+### Unsigned release candidate ready — 19:46 UTC
+
+Final frontend source/build attribution: 3612458e. Production dashboard and AIUI
+builds passed. Final frontend suite: 1,120 tests across 139 files passed.
+Desktop 1280px and mobile 390px browser checks passed for the app detail pruning
+choice and App Store version modal; no horizontal overflow and no installation
+request. Screenshot review confirms readable controls and explanation. Browser
+installation requests are blocked during these selection-only checks.
+
+Final backend SHA above matches both dev and Shorty. A fresh one-sat purchase
+passed on those exact binaries: correct file bytes, both response field aliases,
+exact one-sat refund on underpayment, zero-charge cached repeat, and exact Files
+copy. Temporary seller entries/files and Files test copy removed; transaction
+audit and owned cache retained. Total net transfer during the two live purchase
+rounds: two sats from dev to Shorty. Desktop/mobile LND waiting checks passed
+again on the automatically rebuilt companion. Native Bitcoin and LND stayed up.
+
+Prepared, unsigned files:
+- releases/pending/v1.8.20-alpha/app-catalog.json
+- releases/pending/v1.8.20-alpha/manifest.json
+
+Staged OTA backend: 64,716,656 bytes, SHA256
+16a173129672cbb40c250446ec52ba4a9bd1974cbb3a4988f90c6f3187b7a1f7.
+Frontend archive: 97,152,297 bytes, SHA256
+658b78fce0dfa20a627c987dd153b24cbac15adbde905cc6518744c637e12802.
+Artifact sizes/hashes/release notes validate. Checked actual archive: flat
+layout, readable root permissions, exact doctor/LND UI source bytes, and fresh
+AIUI attribution. Catalog has zero metadata drift and passes fleet registry trust.
+
+Remaining: user-local release-root signatures, Framework's final display
+confirmation, signed publication to git/ngit, then raw ISO build/boot test/signing
+and publication. No v1.8.20 public release or tag exists yet. Four pre-existing
+hardware/live tests remain ignored. Bitcoin sync-to-ready recovery is covered
+by deterministic tests; the live node remains in initial sync. Do not describe
+these checks as proof against every possible network/payment failure.
