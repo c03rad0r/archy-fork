@@ -678,28 +678,12 @@ impl RpcHandler {
                 .unwrap_or("download")
                 .to_string();
             let dir = self.config.data_dir.join("filebrowser").join(folder);
-            if let Err(e) = tokio::fs::create_dir_all(&dir).await {
-                tracing::warn!("paid download: cannot create {}: {e}", dir.display());
-            } else {
-                // Don't clobber an existing file of the same name: "x.jpg"
-                // → "x (2).jpg" etc.
-                let mut target = dir.join(&base);
-                let (stem, ext) = match base.rsplit_once('.') {
-                    Some((s, e)) if !s.is_empty() => (s.to_string(), format!(".{e}")),
-                    _ => (base.clone(), String::new()),
-                };
-                let mut n = 2;
-                while target.exists() {
-                    target = dir.join(format!("{stem} ({n}){ext}"));
-                    n += 1;
-                }
-                match tokio::fs::write(&target, &bytes).await {
-                    Ok(()) => tracing::info!("paid download: filed into {}", target.display()),
-                    Err(e) => tracing::warn!(
-                        "paid download: filing into {} failed (non-fatal): {e}",
-                        target.display()
-                    ),
-                }
+            match crate::container::filebrowser::save_new_file(&dir, &base, &bytes).await {
+                Ok(path) => tracing::info!("paid download: filed into {}", path.display()),
+                Err(e) => tracing::warn!(
+                    "paid download: filing into {} failed (non-fatal): {e:#}",
+                    dir.display()
+                ),
             }
         }
 
