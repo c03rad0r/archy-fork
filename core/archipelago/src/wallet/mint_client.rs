@@ -514,6 +514,13 @@ impl MintClient {
     pub async fn swap(&self, inputs: &[Proof], target_amounts: &[u64]) -> Result<SwapResult> {
         let keyset = self.get_active_sat_keyset().await?;
 
+        // cashuB tokens carry NUT-02 v2 keyset ids in their 8-byte short form,
+        // which the mint rejects (bare 422). Repair here, not at each caller:
+        // the paid-download seller path swapped directly and every Minibits
+        // payment failed once the mint rotated to a v2 keyset.
+        let repaired = self.resolve_truncated_keyset_ids(inputs).await;
+        let inputs: &[Proof] = &repaired;
+
         // NUT-02: a mint may charge a per-input fee, and it rejects the swap
         // outright unless outputs == inputs - fee (`11005 Transaction inputs
         // should equal outputs less fee`). Applied here rather than at each
@@ -813,8 +820,7 @@ impl MintClient {
             let total: u64 = entry.proofs.iter().map(|p| p.amount).sum();
             let target_amounts = amount_to_denominations(total);
 
-            let proofs = self.resolve_truncated_keyset_ids(&entry.proofs).await;
-            let result = self.swap(&proofs, &target_amounts).await?;
+            let result = self.swap(&entry.proofs, &target_amounts).await?;
             all_new_proofs.extend(result.new_proofs);
         }
 
