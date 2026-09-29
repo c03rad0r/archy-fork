@@ -597,14 +597,42 @@ pub async fn serve_content_preview(data_dir: &Path, id: &str) -> Result<PreviewR
 /// that subuid is ours, so `podman unshare chmod a+r` grants the same read
 /// access the other shared files have, without sudo.
 async fn ensure_readable(path: &Path) -> Result<()> {
+    ensure_readable_with(path, grant_read_access).await
+}
+
+async fn ensure_readable_with<F, Fut>(path: &Path, grant: F) -> Result<()>
+where
+    F: FnOnce(PathBuf) -> Fut,
+    Fut: std::future::Future<Output = Result<()>>,
+{
     match fs::File::open(path).await {
         Ok(_) => return Ok(()),
         Err(e) if e.kind() == std::io::ErrorKind::PermissionDenied => {}
         Err(e) => return Err(e).context("Failed to open content file"),
     }
+    grant(path.to_path_buf()).await?;
+    info!("Granted read access to shared content file {}", path.display());
+    fs::File::open(path)
+        .await
+        .context("Content file still unreadable after chmod")?;
+    Ok(())
+}
+
+// Tests must not shell out to podman: whether it exists (and can chmod a
+// file the test user owns) would decide the outcome.
+#[cfg(not(test))]
+use grant_read_via_podman as grant_read_access;
+
+#[cfg(test)]
+async fn grant_read_access(_path: PathBuf) -> Result<()> {
+    anyhow::bail!("granting read access is disabled in tests")
+}
+
+#[cfg_attr(test, allow(dead_code))]
+async fn grant_read_via_podman(path: PathBuf) -> Result<()> {
     let out = tokio::process::Command::new("podman")
         .args(["unshare", "chmod", "a+r"])
-        .arg(path)
+        .arg(&path)
         .output()
         .await
         .context("Failed to run podman unshare chmod")?;
@@ -614,10 +642,6 @@ async fn ensure_readable(path: &Path) -> Result<()> {
             String::from_utf8_lossy(&out.stderr).trim()
         );
     }
-    info!("Granted read access to shared content file {}", path.display());
-    fs::File::open(path)
-        .await
-        .context("Content file still unreadable after chmod")?;
     Ok(())
 }
 
@@ -772,5 +796,139 @@ mod prune_missing_content_tests {
         let reloaded = load_catalog(data_dir).await.unwrap();
         assert_eq!(reloaded.items.len(), 1);
         assert_eq!(reloaded.items[0].id, "present-item");
+    }
+}
+
+#[cfg(test)]
+mod unreadable_content_tests {
+    use super::*;
+    use std::os::unix::fs::PermissionsExt;
+
+    /// Writes `bytes` to the FileBrowser area and makes it unreadable, the
+    /// way a 0640 upload owned by a container subuid looks to this service.
+    /// `None` when the test runs as root, where mode bits don't stop reads.
+    fn unreadable_file(data_dir: &Path, name: &str) -> Option<PathBuf> {
+        let dir = data_dir.join("filebrowser").join("Music");
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join(name);
+        std::fs::write(&path, b"audio").unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o000)).unwrap();
+        std::fs::File::open(&path).is_err().then_some(path)
+    }
+
+    fn paid_item(filename: &str) -> ContentItem {
+        ContentItem {
+            id: "paid-item".to_string(),
+            filename: filename.to_string(),
+            mime_type: "audio/mpeg".to_string(),
+            size_bytes: 5,
+            description: String::new(),
+            access: AccessControl::Paid {
+                price_sats: 10,
+                accepted: vec!["ecash".to_string()],
+            },
+            availability: Availability::AllPeers,
+            added_at: "2026-01-01T00:00:00Z".to_string(),
+        }
+    }
+
+    /// Regression (2026-09-29): the seller redeemed the buyer's token and
+    /// only then failed to read the file, so the buyer paid for nothing.
+    /// An unreadable file must be refused before the payment gate runs,
+    /// which is why a token that would never verify still gets Unavailable
+    /// rather than PaymentRequired.
+    #[tokio::test]
+    async fn an_unreadable_paid_file_is_refused_before_any_payment_is_taken() {
+        let dir = tempfile::tempdir().unwrap();
+        let data_dir = dir.path();
+        let Some(_path) = unreadable_file(data_dir, "song.mp3") else {
+            return; // running as root
+        };
+        save_catalog(
+            data_dir,
+            &ContentCatalog {
+                items: vec![paid_item("Music/song.mp3")],
+            },
+        )
+        .await
+        .unwrap();
+
+        let result = serve_content(
+            data_dir,
+            "paid-item",
+            Some("cashuBnot-a-real-token"),
+            None,
+            None,
+            None,
+            false,
+        )
+        .await
+        .unwrap();
+        assert!(matches!(result, ServeResult::Unavailable));
+        // An unreadable file is not a missing one: keep the catalog entry.
+        assert_eq!(load_catalog(data_dir).await.unwrap().items.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn a_readable_paid_file_still_demands_payment() {
+        let dir = tempfile::tempdir().unwrap();
+        let data_dir = dir.path();
+        let music = data_dir.join("filebrowser").join("Music");
+        std::fs::create_dir_all(&music).unwrap();
+        std::fs::write(music.join("song.mp3"), b"audio").unwrap();
+        save_catalog(
+            data_dir,
+            &ContentCatalog {
+                items: vec![paid_item("Music/song.mp3")],
+            },
+        )
+        .await
+        .unwrap();
+
+        let result = serve_content(data_dir, "paid-item", None, None, None, None, false)
+            .await
+            .unwrap();
+        assert!(matches!(result, ServeResult::PaymentRequired(10)));
+    }
+
+    #[tokio::test]
+    async fn ensure_readable_grants_access_once_then_reopens() {
+        let dir = tempfile::tempdir().unwrap();
+        let Some(path) = unreadable_file(dir.path(), "a.mp3") else {
+            return;
+        };
+        let calls = std::sync::atomic::AtomicUsize::new(0);
+        ensure_readable_with(&path, |p| {
+            calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            async move {
+                std::fs::set_permissions(&p, std::fs::Permissions::from_mode(0o644))?;
+                Ok(())
+            }
+        })
+        .await
+        .unwrap();
+        assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn ensure_readable_leaves_a_readable_file_alone() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("ok.mp3");
+        std::fs::write(&path, b"x").unwrap();
+        ensure_readable_with(&path, |_| async { anyhow::bail!("must not grant") })
+            .await
+            .unwrap();
+    }
+
+    #[tokio::test]
+    async fn ensure_readable_reports_a_failed_grant() {
+        let dir = tempfile::tempdir().unwrap();
+        let Some(path) = unreadable_file(dir.path(), "b.mp3") else {
+            return;
+        };
+        let err = ensure_readable_with(&path, |_| async { anyhow::bail!("no podman") })
+            .await
+            .unwrap_err();
+        assert!(err.to_string().contains("no podman"));
     }
 }

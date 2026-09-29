@@ -869,4 +869,136 @@ mod tests {
         let client = MintClient::new("http://mint.example.com").unwrap();
         assert_eq!(client.url(), "http://mint.example.com");
     }
+
+    /// A minimal mint on 127.0.0.1 answering `/v1/keys` and `/v1/keysets`
+    /// with one v2 keyset, and rejecting every `/v1/swap` as already spent.
+    /// Each swap request body is sent back on the returned channel.
+    async fn stub_mint(
+        full_id: &'static str,
+    ) -> (String, tokio::sync::mpsc::UnboundedReceiver<serde_json::Value>) {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
+        tokio::spawn(async move {
+            loop {
+                let Ok((mut stream, _)) = listener.accept().await else {
+                    return;
+                };
+                let mut buf = Vec::new();
+                let mut chunk = [0u8; 4096];
+                // Read headers, then as much body as Content-Length says.
+                let (head, body) = loop {
+                    let n = stream.read(&mut chunk).await.unwrap_or(0);
+                    if n == 0 {
+                        break (String::new(), Vec::new());
+                    }
+                    buf.extend_from_slice(&chunk[..n]);
+                    let Some(pos) = buf.windows(4).position(|w| w == b"\r\n\r\n") else {
+                        continue;
+                    };
+                    let head = String::from_utf8_lossy(&buf[..pos]).to_string();
+                    let len = head
+                        .lines()
+                        .find_map(|l| {
+                            let (k, v) = l.split_once(':')?;
+                            k.eq_ignore_ascii_case("content-length")
+                                .then(|| v.trim().parse::<usize>().ok())?
+                        })
+                        .unwrap_or(0);
+                    while buf.len() < pos + 4 + len {
+                        let n = stream.read(&mut chunk).await.unwrap_or(0);
+                        if n == 0 {
+                            break;
+                        }
+                        buf.extend_from_slice(&chunk[..n]);
+                    }
+                    break (head, buf[pos + 4..].to_vec());
+                };
+                let request_line = head.lines().next().unwrap_or_default().to_string();
+                let (status, reply) = if request_line.starts_with("GET /v1/keys ") {
+                    let key = "0279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798";
+                    let keys: serde_json::Map<String, serde_json::Value> = (0..16)
+                        .map(|i| ((1u64 << i).to_string(), serde_json::json!(key)))
+                        .collect();
+                    (
+                        "200 OK",
+                        serde_json::json!({"keysets": [
+                            {"id": full_id, "unit": "sat", "active": true, "keys": keys}
+                        ]}),
+                    )
+                } else if request_line.starts_with("GET /v1/keysets ") {
+                    (
+                        "200 OK",
+                        serde_json::json!({"keysets": [
+                            {"id": full_id, "unit": "sat", "active": true, "input_fee_ppk": 0}
+                        ]}),
+                    )
+                } else if request_line.starts_with("POST /v1/swap ") {
+                    let _ = tx.send(serde_json::from_slice(&body).unwrap_or_default());
+                    (
+                        "400 Bad Request",
+                        serde_json::json!({"code": 11001, "detail": "Token Already Spent"}),
+                    )
+                } else {
+                    ("404 Not Found", serde_json::json!({}))
+                };
+                let reply = reply.to_string();
+                let _ = stream
+                    .write_all(
+                        format!(
+                            "HTTP/1.1 {status}\r\nContent-Type: application/json\r\n\
+                             Content-Length: {}\r\nConnection: close\r\n\r\n{reply}",
+                            reply.len()
+                        )
+                        .as_bytes(),
+                    )
+                    .await;
+            }
+        });
+        (format!("http://{addr}"), rx)
+    }
+
+    fn proof_with_id(id: &str) -> Proof {
+        Proof {
+            amount: 8,
+            id: id.to_string(),
+            secret: "test-secret".to_string(),
+            c: "02".to_string() + &"11".repeat(32),
+        }
+    }
+
+    /// Regression (2026-09-29): the paid-download seller called `swap`
+    /// directly with a cashuB token's short v2 keyset id and the mint
+    /// answered 422. `swap` itself must send the full id.
+    #[tokio::test]
+    async fn swap_expands_a_short_v2_keyset_id_before_calling_the_mint() {
+        const FULL: &str = "01fc0ec0e59cd6fa01b7a88f8cd77fce81fd1e64bca67d752e984992b7a3c3a821";
+        let (url, mut swaps) = stub_mint(FULL).await;
+        let client = MintClient::new(&url).unwrap();
+
+        let Err(err) = client
+            .swap(&[proof_with_id("01fc0ec0e59cd6fa")], &[8])
+            .await
+        else {
+            panic!("stub mint rejects every swap");
+        };
+        assert!(err.is::<AlreadyRedeemed>(), "unexpected error: {err:#}");
+
+        let body = swaps.recv().await.expect("swap reached the mint");
+        assert_eq!(body["inputs"][0]["id"], FULL);
+    }
+
+    #[tokio::test]
+    async fn swap_passes_complete_keyset_ids_through_unchanged() {
+        const FULL: &str = "01fc0ec0e59cd6fa01b7a88f8cd77fce81fd1e64bca67d752e984992b7a3c3a821";
+        let (url, mut swaps) = stub_mint(FULL).await;
+        let client = MintClient::new(&url).unwrap();
+
+        for id in [FULL, "009a1f293253e41e"] {
+            let _ = client.swap(&[proof_with_id(id)], &[8]).await;
+            let body = swaps.recv().await.expect("swap reached the mint");
+            assert_eq!(body["inputs"][0]["id"], id);
+        }
+    }
 }
