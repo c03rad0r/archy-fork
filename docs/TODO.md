@@ -14,6 +14,39 @@ doc. See [`ROADMAP.md`](ROADMAP.md) for the curated, public-facing direction.
 
 ## Next release after 1.8.21 — reported 2026-09-30
 
+- [ ] **Release blocker: Gitea → Portainer repository integration.** Diagnose
+  smart-HTTP reachability from Portainer's actual request namespace, then provide
+  one declarative topology and idempotent migration for fresh installs and
+  existing nodes. Preserve gate/auth boundaries, operator configuration,
+  repository/key/database mounts and Portainer stacks. Cover install order,
+  lifecycle/reboot/update convergence, clone/push and source-branch/Compose-file
+  acceptance with a disposable integration setup. Ship in both OTA and ISO;
+  a healthy Gitea root page is insufficient. Operator supplied a private handover;
+  deployment addresses and credentials must not be committed.
+
+- [ ] **New X250: GitWorkshop failed at 70%; slow Nginx installation.** Missing
+  ISO build contexts restored on-node; package staging/smoke checks added.
+  GitWorkshop dependency audit refreshed and build/HTTP recovery verified;
+  Nginx was a slow successful image pull. Aggregate progress label corrected.
+  Include the validated repair in the next OTA/ISO. See lifecycle evidence.
+
+- [ ] **Angor indexer service in the app store**, requested after the other
+  current repair/review work (2026-09-30). Follow the repository's app-development
+  and packaging documentation; treat it as a headless service unless upstream
+  documentation establishes a UI. Verify Bitcoin/Mempool requirements, decide
+  whether an existing first-class relay meets Angor's requirements or a relay
+  must be packaged with the indexer, and use the Angor logo from angor.io for its
+  service icon. The mentioned setup-documentation link was not included; asked
+  the operator for it. Include this service in the next-release scope.
+
+- [ ] **App lifecycle: keep installed apps visible through restart and hard
+  refresh; gate embedded/browser launches on actual web and listener readiness.**
+  Source repair and scoped live acceptance passed; full release gate pending.
+  Includes durable inventory reconstruction,
+  concurrent inventory writes, stale scan/lifecycle updates, delayed HTTP startup,
+  and the app gate's post-install listener delay. See
+  [app lifecycle repair evidence](app-lifecycle-repair-20260930.md).
+
 - [x] Review and repair open paid-download PRs #161 and #162, refresh both
   branches from main, run independent and combined isolated suites, and verify
   rootless file permissions in disposable scratch storage. Combined result:
@@ -21,23 +54,17 @@ doc. See [`ROADMAP.md`](ROADMAP.md) for the curated, public-facing direction.
   [review evidence and remaining acceptance work](pr-review-20260930.md).
 - [ ] Integrate the reviewed PR branches into the next release and run funded
   candidate acceptance, including Tor-only transport and payments with change.
-  PRs remain open; the reviewed code has not been deployed to live wallets.
+  Operator authorized completing the normal merge/closure workflow on
+  2026-09-30. Both PRs are now merged and closed through Gitea; integrate
+  local repair commits and sync git/ngit before release. The reviewed code has not yet been deployed to live wallets.
 - [ ] Design durable recovery for an accepted payment whose response is lost.
   Preserve the truthful unconfirmed-refund warning and prevent automatic
   duplicate payment while that recovery work is outstanding.
-- [ ] **ThinkPad X250 kiosk: Bitcoin installation version selector is unreadable
-  and appears underneath the pruning information.** Operator reports white
-  styling with invisible text on the actual kiosk; the same flow works in remote
-  Brave. Reproduce on the X250's kiosk engine and record its version, display
-  scale and resolution. Inspect the native `<select>` in
-  `neode-ui/src/components/InstallVersionModal.vue`, its option colors, and the
-  scroll/stacking behavior in `BaseModal.vue`; these are investigation leads,
-  not a confirmed cause. Fix contrast and popup visibility without changing
-  version selection or pruning behavior. Validate Core and Knots, open/closed
-  and scrolled dropdowns, keyboard/touch selection, and pruning on/off on the
-  actual kiosk, with remote Brave and mobile regression checks. Browser mocks
-  alone do not establish that the kiosk rendering is fixed. Track for the next
-  release; the signed 1.8.21 artifacts remain unchanged.
+- [x] **ThinkPad X250 kiosk: Bitcoin version choices readable above pruning.**
+  Replaced the native popup with inline radio choices. Actual Chromium 152 kiosk
+  assertions and screenshot verify white-on-dark choices, selection changes and
+  layout above pruning controls. Focused component tests pass. Included in the
+  next-release source; published 1.8.21 artifacts remain unchanged.
 
 ## 1.8.21 repair and release tasks — completed 2026-09-30
 
