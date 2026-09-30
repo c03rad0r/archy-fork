@@ -107,7 +107,9 @@ fn rootless_network_mode_drifted(expected: Option<&str>, actual: &str) -> bool {
 fn missing_declared_capability(expected: &[String], actual: &[String]) -> bool {
     expected.iter().any(|required| {
         let required = required.strip_prefix("CAP_").unwrap_or(required);
-        !actual.iter().any(|cap| cap.strip_prefix("CAP_").unwrap_or(cap) == required)
+        !actual
+            .iter()
+            .any(|cap| cap.strip_prefix("CAP_").unwrap_or(cap) == required)
     })
 }
 
@@ -2484,7 +2486,8 @@ impl ProdContainerOrchestrator {
                             .await
                         {
                             tracing::info!(app_id = %app_id, container = %name, "container published-port drift detected — recreating");
-                            self.backup_runtime_change(&name, &resolved_manifest).await?;
+                            self.backup_runtime_change(&name, &resolved_manifest)
+                                .await?;
                             let _ = self.runtime.stop_container(&name).await;
                             let _ = self.runtime.remove_container(&name).await;
                             self.install_fresh(lm).await?;
@@ -2520,7 +2523,8 @@ impl ProdContainerOrchestrator {
                                 return Ok(ReconcileAction::NoOp);
                             }
                             tracing::info!(app_id = %app_id, container = %name, "container env drift detected — recreating");
-                            self.backup_runtime_change(&name, &resolved_manifest).await?;
+                            self.backup_runtime_change(&name, &resolved_manifest)
+                                .await?;
                             let _ = self.runtime.stop_container(&name).await;
                             let _ = self.runtime.remove_container(&name).await;
                             self.install_fresh(lm).await?;
@@ -2577,7 +2581,8 @@ impl ProdContainerOrchestrator {
                                 .await
                         {
                             tracing::info!(app_id = %app_id, container = %name, "stopped container env/port drift detected — recreating");
-                            self.backup_runtime_change(&name, &resolved_manifest).await?;
+                            self.backup_runtime_change(&name, &resolved_manifest)
+                                .await?;
                             let _ = self.runtime.remove_container(&name).await;
                             self.install_fresh(lm).await?;
                             return Ok(ReconcileAction::Installed);
@@ -2634,7 +2639,8 @@ impl ProdContainerOrchestrator {
                         self.prepare_for_start(&resolved_manifest).await?;
                         if self.container_env_drifted(&name, &resolved_manifest).await {
                             tracing::info!(app_id = %app_id, container = %name, "created container env drift detected — recreating");
-                            self.backup_runtime_change(&name, &resolved_manifest).await?;
+                            self.backup_runtime_change(&name, &resolved_manifest)
+                                .await?;
                             let _ = self.runtime.remove_container(&name).await;
                             self.install_fresh(lm).await?;
                             return Ok(ReconcileAction::Installed);
@@ -3899,7 +3905,9 @@ impl ProdContainerOrchestrator {
         // opted-in manifests identify their persistent state through bind mounts.
         let output = tokio::process::Command::new("podman")
             .args(["inspect", name, "--format", "{{.HostConfig.NetworkMode}}"])
-            .output().await.context("inspect network before migration backup")?;
+            .output()
+            .await
+            .context("inspect network before migration backup")?;
         let present = if output.status.success() {
             true
         } else {
@@ -3907,7 +3915,9 @@ impl ProdContainerOrchestrator {
             // leave only its data and old unit. Prove absence before snapshotting
             // stopped state; an inspect/Podman failure is not proof of absence.
             let exists = tokio::process::Command::new("podman")
-                .args(["container", "exists", name]).status().await?;
+                .args(["container", "exists", name])
+                .status()
+                .await?;
             if exists.code() != Some(1) {
                 anyhow::bail!("cannot verify existing container before runtime migration backup");
             }
@@ -3916,7 +3926,10 @@ impl ProdContainerOrchestrator {
         let service = format!("{name}.service");
         let managed = quadlet::unit_exists(name).await;
         let previous_unit = if managed {
-            Some(tokio::fs::read(quadlet::unit_dir().await?.join(format!("{name}.container"))).await?)
+            Some(
+                tokio::fs::read(quadlet::unit_dir().await?.join(format!("{name}.container")))
+                    .await?,
+            )
         } else {
             None
         };
@@ -3925,7 +3938,13 @@ impl ProdContainerOrchestrator {
         } else if present {
             self.runtime.stop_container(name).await?;
         }
-        match crate::container::migration_backup::snapshot(manifest, &self.data_dir, previous_unit.as_deref()).await {
+        match crate::container::migration_backup::snapshot(
+            manifest,
+            &self.data_dir,
+            previous_unit.as_deref(),
+        )
+        .await
+        {
             Ok(archive) => {
                 tracing::info!(container = %name, backup = %archive.display(), "Persistent state saved before runtime migration");
                 Ok(())
@@ -3961,11 +3980,13 @@ impl ProdContainerOrchestrator {
         if unmanaged && !manifest.app.security.capabilities.is_empty() {
             if let Ok(output) = tokio::process::Command::new("podman")
                 .args(["inspect", name, "--format", "{{json .BoundingCaps}}"])
-                .output().await
+                .output()
+                .await
             {
                 if output.status.success() {
                     if let Ok(actual) = serde_json::from_slice::<Vec<String>>(&output.stdout) {
-                        if missing_declared_capability(&manifest.app.security.capabilities, &actual) {
+                        if missing_declared_capability(&manifest.app.security.capabilities, &actual)
+                        {
                             return true;
                         }
                     }
@@ -3975,16 +3996,23 @@ impl ProdContainerOrchestrator {
 
         // Quadlet handles declarative Network= drift above. Legacy rootless
         // Podman containers need the same convergence when no unit owns them.
-        if unmanaged && matches!(manifest.app.container.network.as_deref(), Some("slirp4netns" | "pasta")) {
+        if unmanaged
+            && matches!(
+                manifest.app.container.network.as_deref(),
+                Some("slirp4netns" | "pasta")
+            )
+        {
             if let Ok(output) = tokio::process::Command::new("podman")
                 .args(["inspect", name, "--format", "{{.HostConfig.NetworkMode}}"])
                 .output()
                 .await
             {
-                if output.status.success() && rootless_network_mode_drifted(
-                    manifest.app.container.network.as_deref(),
-                    &String::from_utf8_lossy(&output.stdout),
-                ) {
+                if output.status.success()
+                    && rootless_network_mode_drifted(
+                        manifest.app.container.network.as_deref(),
+                        &String::from_utf8_lossy(&output.stdout),
+                    )
+                {
                     return true;
                 }
             }
@@ -4560,21 +4588,38 @@ impl ContainerOrchestrator for ProdContainerOrchestrator {
         // Optional shared-service preconditions are checked before recording
         // installation or creating anything. A headless adapter must not claim
         // successful installation against a missing indexing stack.
-        if let Some(required) = lm.manifest.app.extensions.get("install_prerequisites")
-            .and_then(|value| value.as_sequence()) {
-            let present = self.runtime.list_containers().await
+        if let Some(required) = lm
+            .manifest
+            .app
+            .extensions
+            .get("install_prerequisites")
+            .and_then(|value| value.as_sequence())
+        {
+            let present = self
+                .runtime
+                .list_containers()
+                .await
                 .context("check installed prerequisite services")?;
             for id in required.iter().filter_map(|value| value.as_str()) {
                 let dependency = self.loaded(id).await.map_err(|_| InstallPrerequisiteError(
                     format!("Required app {id} is unavailable. Refresh the app catalog before installing {}.",
                         lm.manifest.app.name)))?;
                 let name = compute_container_name(&dependency.manifest);
-                if !present.iter().any(|container| container.name.trim_start_matches('/') == name) {
+                if !present
+                    .iter()
+                    .any(|container| container.name.trim_start_matches('/') == name)
+                {
                     let owner = crate::app_ops::owning_package(id);
-                    let title = self.loaded(owner).await.map(|app| app.manifest.app.name)
+                    let title = self
+                        .loaded(owner)
+                        .await
+                        .map(|app| app.manifest.app.name)
                         .unwrap_or(dependency.manifest.app.name);
                     return Err(InstallPrerequisiteError(format!(
-                        "Install {title} first, then install {}.", lm.manifest.app.name)).into());
+                        "Install {title} first, then install {}.",
+                        lm.manifest.app.name
+                    ))
+                    .into());
                 }
             }
         }
@@ -5055,37 +5100,71 @@ mod tests {
     /// is not a stack member at all.
     #[tokio::test]
     async fn gitea_fresh_url_seed_preserves_operator_config_and_reports_write_failure() {
-        let manifest = AppManifest::parse(include_str!("../../../../apps/gitea/manifest.yml")).unwrap();
+        let manifest =
+            AppManifest::parse(include_str!("../../../../apps/gitea/manifest.yml")).unwrap();
         let seed = &manifest.app.files[0];
         assert!(!seed.overwrite);
         let content = seed.content.replace("{{HOST_IP}}", "192.0.2.1");
         assert!(content.contains("ROOT_URL = http://192.0.2.1:3001/"));
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("fresh/app.ini");
-        assert_eq!(ensure_rendered_file(path.to_str().unwrap(), &content, seed.overwrite).await.unwrap(), HookOutcome::Rewritten);
-        assert!(tokio::fs::read_to_string(&path).await.unwrap().contains("ROOT_URL"));
-        let custom = "[server]\nROOT_URL = https://git.example.test/\n[database]\nDB_TYPE = postgres\n";
+        assert_eq!(
+            ensure_rendered_file(path.to_str().unwrap(), &content, seed.overwrite)
+                .await
+                .unwrap(),
+            HookOutcome::Rewritten
+        );
+        assert!(tokio::fs::read_to_string(&path)
+            .await
+            .unwrap()
+            .contains("ROOT_URL"));
+        let custom =
+            "[server]\nROOT_URL = https://git.example.test/\n[database]\nDB_TYPE = postgres\n";
         tokio::fs::write(&path, custom).await.unwrap();
-        assert_eq!(ensure_rendered_file(path.to_str().unwrap(), &content, seed.overwrite).await.unwrap(), HookOutcome::Unchanged);
+        assert_eq!(
+            ensure_rendered_file(path.to_str().unwrap(), &content, seed.overwrite)
+                .await
+                .unwrap(),
+            HookOutcome::Unchanged
+        );
         assert_eq!(tokio::fs::read_to_string(&path).await.unwrap(), custom);
         let impossible = path.join("app.ini");
-        assert!(ensure_rendered_file(impossible.to_str().unwrap(), &content, seed.overwrite).await.is_err());
+        assert!(
+            ensure_rendered_file(impossible.to_str().unwrap(), &content, seed.overwrite)
+                .await
+                .is_err()
+        );
     }
 
     #[test]
     fn ssh_sandbox_capability_repair_uses_bounding_set_and_preserves_extra_overrides() {
         let required = vec!["CHOWN".into(), "SYS_CHROOT".into()];
-        assert!(missing_declared_capability(&required, &["CAP_CHOWN".into()]));
-        assert!(!missing_declared_capability(&required, &["CAP_CHOWN".into(), "CAP_SYS_CHROOT".into()]));
-        assert!(!missing_declared_capability(&required, &["CHOWN".into(), "SYS_CHROOT".into(), "CAP_KILL".into()]));
+        assert!(missing_declared_capability(
+            &required,
+            &["CAP_CHOWN".into()]
+        ));
+        assert!(!missing_declared_capability(
+            &required,
+            &["CAP_CHOWN".into(), "CAP_SYS_CHROOT".into()]
+        ));
+        assert!(!missing_declared_capability(
+            &required,
+            &["CHOWN".into(), "SYS_CHROOT".into(), "CAP_KILL".into()]
+        ));
     }
 
     #[test]
     fn explicit_rootless_network_change_converges_without_guessing_defaults() {
         assert!(rootless_network_mode_drifted(Some("slirp4netns"), "pasta"));
         assert!(rootless_network_mode_drifted(Some("slirp4netns"), "bridge"));
-        assert!(!rootless_network_mode_drifted(Some("slirp4netns"), "slirp4netns"));
-        assert!(!rootless_network_mode_drifted(Some("slirp4netns"), "slirp4netns:allow_host_loopback=true"));
+        assert!(!rootless_network_mode_drifted(
+            Some("slirp4netns"),
+            "slirp4netns"
+        ));
+        assert!(!rootless_network_mode_drifted(
+            Some("slirp4netns"),
+            "slirp4netns:allow_host_loopback=true"
+        ));
         assert!(!rootless_network_mode_drifted(None, "pasta"));
         assert!(!rootless_network_mode_drifted(Some("slirp4netns"), ""));
         assert!(!rootless_network_mode_drifted(Some("archy-net"), "bridge"));
@@ -5777,19 +5856,31 @@ app:
         let rt = Arc::new(MockRuntime::default());
         let orch = orch_with(rt.clone()).await;
         let mut app = pull_manifest("indexer-adapter", "docker.io/library/alpine:3.20");
-        app.app.extensions.insert("install_prerequisites".into(),
-            serde_yaml::to_value(vec!["shared-index"]).unwrap());
-        orch.insert_manifest_for_test(app, PathBuf::from("/tmp")).await;
-        orch.insert_manifest_for_test(pull_manifest("shared-index", "index:1"), PathBuf::from("/tmp")).await;
+        app.app.extensions.insert(
+            "install_prerequisites".into(),
+            serde_yaml::to_value(vec!["shared-index"]).unwrap(),
+        );
+        orch.insert_manifest_for_test(app, PathBuf::from("/tmp"))
+            .await;
+        orch.insert_manifest_for_test(
+            pull_manifest("shared-index", "index:1"),
+            PathBuf::from("/tmp"),
+        )
+        .await;
         let error = orch.install("indexer-adapter").await.unwrap_err();
         assert!(error.downcast_ref::<InstallPrerequisiteError>().is_some());
-        assert!(!crate::crash_recovery::load_installed_apps(&orch.data_dir).await.contains("indexer-adapter"));
+        assert!(!crate::crash_recovery::load_installed_apps(&orch.data_dir)
+            .await
+            .contains("indexer-adapter"));
         assert_eq!(rt.calls(), vec!["list_containers"]);
         // An installed prerequisite satisfies the guard; it is never recreated
         // or reconfigured as part of installing this adapter.
         rt.set_state("shared-index", ContainerState::Running);
         orch.install("indexer-adapter").await.unwrap();
-        assert!(!rt.calls().iter().any(|c| c.starts_with("create_container:shared-index")));
+        assert!(!rt
+            .calls()
+            .iter()
+            .any(|c| c.starts_with("create_container:shared-index")));
     }
 
     fn pull_manifest_with_dynamic_env(id: &str, image: &str) -> AppManifest {

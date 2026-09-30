@@ -990,14 +990,20 @@ impl AppManifest {
         validate_ports(&self.app.ports)?;
         validate_interfaces(&self.app.interfaces)?;
         if let Some(value) = self.app.extensions.get("install_prerequisites") {
-            let items = value.as_sequence().ok_or_else(|| ManifestError::Invalid(
-                "install_prerequisites must be a list of app ids".into()))?;
+            let items = value.as_sequence().ok_or_else(|| {
+                ManifestError::Invalid("install_prerequisites must be a list of app ids".into())
+            })?;
             for item in items {
                 let id = item.as_str().unwrap_or_default();
-                if id.is_empty() || id == self.app.id || !id.bytes().all(|b|
-                    b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-') {
+                if id.is_empty()
+                    || id == self.app.id
+                    || !id
+                        .bytes()
+                        .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-')
+                {
                     return Err(ManifestError::Invalid(
-                        "install_prerequisites must contain valid other app ids".into()));
+                        "install_prerequisites must contain valid other app ids".into(),
+                    ));
                 }
             }
         }
@@ -1088,7 +1094,9 @@ impl AppManifest {
 
         if let Some(value) = self.app.extensions.get("backup_before_runtime_change") {
             if value.as_bool().is_none() {
-                return Err(ManifestError::Invalid("backup_before_runtime_change must be boolean".into()));
+                return Err(ManifestError::Invalid(
+                    "backup_before_runtime_change must be boolean".into(),
+                ));
             }
         }
 
@@ -1769,18 +1777,38 @@ app:
         // disappeared; Cuprate restricted RPC moved from none to gate-open.
         // Compare exact endpoints, not just a count that can hide substitutions.
         let expected = [
-            ("bitcoin-core", 8333), ("bitcoin-knots", 8333),
-            ("core-lightning", 9736), ("core-lightning", 9835),
-            ("cuprate", 18183), ("electrumx", 50001),
-            ("fedimint", 8173), ("fedimint", 8174),
-            ("fedimint-gateway", 8176), ("fedimint-gateway", 9737),
-            ("gitea", 2222), ("lnd", 9735), ("lnd", 10009), ("lnd", 18080),
-            ("netbird", 8087), ("netbird-server", 3478), ("netbird-server", 8086),
-            ("phoenixd", 9740), ("pine", 10381), ("pine-openwakeword", 10400),
-            ("pine-piper", 10200), ("pine-whisper", 10300),
-            ("router", 1900), ("router", 5353),
-        ].into_iter().map(|(id, port)| (id.to_owned(), port)).collect::<Vec<_>>();
-        assert_eq!(exempt, expected, "unauthenticated endpoint set changed; review each exemption");
+            ("bitcoin-core", 8333),
+            ("bitcoin-knots", 8333),
+            ("core-lightning", 9736),
+            ("core-lightning", 9835),
+            ("cuprate", 18183),
+            ("electrumx", 50001),
+            ("fedimint", 8173),
+            ("fedimint", 8174),
+            ("fedimint-gateway", 8176),
+            ("fedimint-gateway", 9737),
+            ("gitea", 2222),
+            ("lnd", 9735),
+            ("lnd", 10009),
+            ("lnd", 18080),
+            ("netbird", 8087),
+            ("netbird-server", 3478),
+            ("netbird-server", 8086),
+            ("phoenixd", 9740),
+            ("pine", 10381),
+            ("pine-openwakeword", 10400),
+            ("pine-piper", 10200),
+            ("pine-whisper", 10300),
+            ("router", 1900),
+            ("router", 5353),
+        ]
+        .into_iter()
+        .map(|(id, port)| (id.to_owned(), port))
+        .collect::<Vec<_>>();
+        assert_eq!(
+            exempt, expected,
+            "unauthenticated endpoint set changed; review each exemption"
+        );
     }
 
     /// `auth: open` ports are served by the gate WITHOUT its login challenge,
@@ -1839,7 +1867,10 @@ app:
     fn invalid_install_prerequisites_are_rejected() {
         for value in ["not-a-list", "[demo]", "['../other']", "[false]", "['']"] {
             let yaml = format!("app:\n  id: demo\n  name: Demo\n  version: 1.0.0\n  container:\n    image: docker.io/library/alpine:3.20\n  install_prerequisites: {value}\n");
-            assert!(AppManifest::parse(&yaml).unwrap_err().to_string().contains("install_prerequisites"));
+            assert!(AppManifest::parse(&yaml)
+                .unwrap_err()
+                .to_string()
+                .contains("install_prerequisites"));
         }
     }
 

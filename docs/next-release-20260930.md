@@ -34,7 +34,7 @@ See the Framework incident and 1.8.21 execution records for evidence/limits.
 | X250 Bitcoin picker | Inline choices; actual Chromium kiosk selection, readability and pruning layout passed | Include in final UI/build checks |
 | App disappearance/readiness | Durable inventory and safe lifecycle repair; delayed HTTP and desktop/mobile hard-refresh checks passed | Final lifecycle/reboot gate on candidate |
 | X250 GitWorkshop/Nginx | Missing build contexts restored, dependency/build checks and live UI passed; Nginx slow pull diagnosed; truthful progress label | Verify both artifact payloads contain all build contexts |
-| PRs 161/162 | Reviewed, repaired, merged/closed normally; combined regression suite passed | Candidate funded Tor-only purchase, change and Files acceptance |
+| PRs 161/162 | Reviewed, repaired, merged/closed normally; combined regression suite passed | Funded Tor-only candidate purchase, retained change, refund, Files bytes and cached repeat passed; include in signed artifacts |
 | Gitea/Portainer | Root cause confirmed; source network/backup/retry/catalog changes; real X250 routing repair and restart verified; private Git, SSH, LFS, registry and browser fixture checks passed | Automatic migration, scratch restore, failed-start recovery and reverse installation order passed. Operator confirms production site works through Portainer; still need final candidate reboot convergence and signed delivery |
 | Angor headless store service | Implemented standard Mempool adapter and separate optional relay, official logo, headless store entries and declarative dependency guard. API security/outage/DNS tests and five relay lifecycle cycles passed | Final candidate prerequisite/install acceptance, management restart/reboot checks and signed catalog delivery; real indexing on dev waits for Bitcoin sync |
 
@@ -82,5 +82,34 @@ ignored tests. This is one layer of evidence, not a substitute for live gates.
 - Delivery target is the development box, as clarified by the operator. Do not
   install Angor on the separate Portainer node. Full indexer availability still
   requires the dev box's Bitcoin sync and Mempool/Electrum indexing to finish.
-- Funded PR acceptance remains pending spendable test ecash. No spent proofs
-  were reactivated and no native wallet funds were moved for these checks.
+- Funded PR acceptance passed after the operator funded the dev Cashu wallet
+  with 16 sats. Exact net payment was 1 sat; underpayment refunded in full;
+  repeat delivery cost zero. Both endpoints ran the combined candidate.
+  No spent proofs were reactivated and no native Bitcoin/LND funds were moved.
+
+## Development candidate and cleanup
+
+The combined optimized backend and production UI are deployed on the development
+box with a private rollback copy. Native Bitcoin/LND containers were unchanged
+during deployment. The operator separately uninstalled/reinstalled Bitcoin Core
+to select an unpruned node; RPC confirmed `pruned=false`, and a separate baseline
+was recorded after that operator action. Do not compare subsequent checks with
+the pre-reinstall container start times.
+
+Completed Gitea setup/private-repository and Portainer integration fixtures were
+uninstalled through the supported lifecycle and removed from installed inventory.
+Their private evidence/data were retained outside the active manifests. The old
+Cuprate UI review container was also removed. Active Angor acceptance fixtures
+must be removed on completion; the requested Angor services remain installed.
+
+Funded acceptance used Tor-only peer-file transport, verified exact delivery
+bytes and compatibility response fields, and read the result back through
+FileBrowser. The original transport preference was restored, and temporary
+seller catalog entries/files and the exact buyer test document were removed.
+Financial receipt history was retained.
+
+The final managed-install fixture exposed a separate Quadlet quoting defect:
+whitespace-free command arguments containing apostrophes lost those characters
+in the generated service. The renderer now quotes these arguments and
+environment values; the updated isolated backend suite passed (1,607 passed, four opt-in tests
+ignored), and the final candidate rebuild is in progress. Do not tag a release before this live regression is verified.

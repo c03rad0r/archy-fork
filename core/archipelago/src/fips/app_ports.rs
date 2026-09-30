@@ -5,6 +5,7 @@
 //! are reachable over the mesh; ports of apps that aren't installed have
 //! no listener, so allowing them is inert.
 
+#[rustfmt::skip]
 pub const APP_LAUNCH_PORTS: &[u16] = &[
     2283,
     2342,

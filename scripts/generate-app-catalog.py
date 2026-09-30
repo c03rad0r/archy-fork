@@ -208,6 +208,7 @@ def render_rust_ports(ports: dict[str, int], extra_ports: list[int]) -> str:
         "//! are reachable over the mesh; ports of apps that aren\'t installed have",
         "//! no listener, so allowing them is inert.",
         "",
+        "#[rustfmt::skip]",
         "pub const APP_LAUNCH_PORTS: &[u16] = &[",
     ]
     lines.extend(f"    {port}," for port in distinct)

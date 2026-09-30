@@ -39,8 +39,10 @@ Release status and acceptance gates: [execution checklist](next-release-20260930
   whether an existing first-class relay meets Angor's requirements or a relay
   must be packaged with the indexer, and use the Angor logo from angor.io for its
   service icon. Official current deployment documentation located and reviewed: stock Mempool
-  plus an optional strfry relay. Reuse of existing indexing services is the
-  proposed approach; implementation and acceptance remain pending. Include this service in the next-release scope.
+  plus an optional strfry relay. Both headless services and the dependency guard
+  are implemented; API outage/recovery and five relay lifecycle cycles passed.
+  Final candidate install/lifecycle checks and signed delivery remain pending.
+  Install on the development box; Bitcoin must finish syncing for indexed queries.
 
 - [ ] **App lifecycle: keep installed apps visible through restart and hard
   refresh; gate embedded/browser launches on actual web and listener readiness.**
@@ -55,11 +57,14 @@ Release status and acceptance gates: [execution checklist](next-release-20260930
   rootless file permissions in disposable scratch storage. Combined result:
   1,585 passed, zero failed, four existing tests ignored. See the
   [review evidence and remaining acceptance work](pr-review-20260930.md).
-- [ ] Integrate the reviewed PR branches into the next release and run funded
+- [x] Integrate the reviewed PR branches into the next release and run funded
   candidate acceptance, including Tor-only transport and payments with change.
   Operator authorized completing the normal merge/closure workflow on
   2026-09-30. Both PRs are now merged and closed through Gitea; integrate
-  local repair commits and sync git/ngit before release. The reviewed code has not yet been deployed to live wallets.
+  local repair commits and sync git/ngit before release. The combined candidate
+  is deployed on both test endpoints. Funded Tor-only purchase with change,
+  confirmed refund, exact Files bytes and zero-cost repeat delivery passed.
+  The updated source still needs inclusion in signed OTA/ISO artifacts.
 - [ ] Design durable recovery for an accepted payment whose response is lost.
   Preserve the truthful unconfirmed-refund warning and prevent automatic
   duplicate payment while that recovery work is outstanding.

@@ -1080,10 +1080,19 @@ mod tests {
     #[test]
     fn portainer_manifest_keeps_private_network_and_loopback_api_publication() {
         let m = AppManifest::parse(include_str!("../../../apps/portainer/manifest.yml")).unwrap();
-        assert_eq!(podman_network_settings(m.app.container.network.as_deref(), &m.app.security.network_policy), ("slirp4netns", None));
-        assert_eq!(podman_publish_mapping(&m.app.ports[0]), serde_json::json!({
-            "container_port": 9000, "host_port": 9000, "protocol": "tcp", "host_ip": "127.0.0.1"
-        }));
+        assert_eq!(
+            podman_network_settings(
+                m.app.container.network.as_deref(),
+                &m.app.security.network_policy
+            ),
+            ("slirp4netns", None)
+        );
+        assert_eq!(
+            podman_publish_mapping(&m.app.ports[0]),
+            serde_json::json!({
+                "container_port": 9000, "host_port": 9000, "protocol": "tcp", "host_ip": "127.0.0.1"
+            })
+        );
     }
 
     #[test]

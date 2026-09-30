@@ -390,7 +390,10 @@ fn shell_join(parts: &[String]) -> String {
         .iter()
         .map(|p| {
             let p = p.replace(['\r', '\n'], " ").replace('%', "%%");
-            if p.is_empty() || p.chars().any(|c| c.is_whitespace() || "\"\\$`".contains(c)) {
+            if p.is_empty()
+                || p.chars()
+                    .any(|c| c.is_whitespace() || "'\"\\$`".contains(c))
+            {
                 let escaped = p
                     .replace('\\', "\\\\")
                     .replace('"', "\\\"")
@@ -410,7 +413,7 @@ fn quote_environment(env: &str) -> String {
     if env.is_empty()
         || env
             .chars()
-            .any(|c| c.is_whitespace() || "\"\\$`".contains(c))
+            .any(|c| c.is_whitespace() || "'\"\\$`".contains(c))
     {
         let escaped = env
             .replace('\\', "\\\\")
@@ -992,13 +995,21 @@ pub fn publish_ports_changed(old_body: &str, new_body: &str) -> bool {
 }
 
 pub fn security_changed(old_body: &str, new_body: &str) -> bool {
-    ["AddCapability=", "DropCapability=", "NoNewPrivileges=", "ReadOnly=", "User="]
-        .iter().any(|directive| {
-            let mut old = directive_values(old_body, directive);
-            let mut new = directive_values(new_body, directive);
-            old.sort(); new.sort();
-            old != new
-        })
+    [
+        "AddCapability=",
+        "DropCapability=",
+        "NoNewPrivileges=",
+        "ReadOnly=",
+        "User=",
+    ]
+    .iter()
+    .any(|directive| {
+        let mut old = directive_values(old_body, directive);
+        let mut new = directive_values(new_body, directive);
+        old.sort();
+        new.sort();
+        old != new
+    })
 }
 
 pub fn network_aliases_changed(old_body: &str, new_body: &str) -> bool {
@@ -1387,6 +1398,18 @@ app:
     }
 
     #[test]
+    fn apostrophes_survive_quadlet_argument_and_environment_parsing() {
+        // A whitespace-free Node script reproduced this in a real Quadlet:
+        // unquoted apostrophes were consumed by the parser, changing JS strings
+        // into identifiers and preventing the app from starting.
+        assert_eq!(
+            shell_join(&["require('http')".into()]),
+            "\"require('http')\""
+        );
+        assert_eq!(quote_environment("NAME=O'Brien"), "\"NAME=O'Brien\"");
+    }
+
+    #[test]
     fn quote_environment_quotes_values_with_spaces() {
         assert_eq!(
             quote_environment("BITCOIN_RPC_PASS=secret"),
@@ -1600,10 +1623,8 @@ app:
 
     #[test]
     fn portainer_catalog_network_repairs_same_node_routing_without_exposing_backend() {
-        let manifest = AppManifest::parse(include_str!(
-            "../../../../apps/portainer/manifest.yml"
-        ))
-        .expect("shipped Portainer manifest must parse");
+        let manifest = AppManifest::parse(include_str!("../../../../apps/portainer/manifest.yml"))
+            .expect("shipped Portainer manifest must parse");
         let new = QuadletUnit::from_manifest(&manifest, "portainer").render();
         assert!(new.contains("Network=slirp4netns\n"));
         assert!(!new.contains("NetworkAlias="));
@@ -1983,9 +2004,15 @@ app:
         // Simulate systemctl failure or daemon interruption after unit rewrite.
         drop(pending);
         let retry = RestartObligation::prepare(&unit, false).await.unwrap();
-        assert!(retry.is_pending(), "matching unit must not discard failed restart");
+        assert!(
+            retry.is_pending(),
+            "matching unit must not discard failed restart"
+        );
         retry.complete().await.unwrap();
-        assert!(!RestartObligation::prepare(&unit, false).await.unwrap().is_pending());
+        assert!(!RestartObligation::prepare(&unit, false)
+            .await
+            .unwrap()
+            .is_pending());
     }
 
     #[tokio::test]
@@ -1995,20 +2022,26 @@ app:
         assert!(RestartObligation::prepare(&missing, true).await.is_err());
         let unit = dir.path().join("app.container");
         let pending = RestartObligation::prepare(&unit, true).await.unwrap();
-        tokio::fs::remove_file(unit.with_extension("restart-pending")).await.unwrap();
+        tokio::fs::remove_file(unit.with_extension("restart-pending"))
+            .await
+            .unwrap();
         assert!(pending.complete().await.is_err());
     }
 
     #[test]
     fn gitea_ssh_sandbox_capability_is_applied_as_a_runtime_change() {
-        let manifest = AppManifest::parse(include_str!("../../../../apps/gitea/manifest.yml")).unwrap();
+        let manifest =
+            AppManifest::parse(include_str!("../../../../apps/gitea/manifest.yml")).unwrap();
         manifest.validate().unwrap();
         let new = QuadletUnit::from_manifest(&manifest, "gitea").render();
         assert!(new.contains("AddCapability=SYS_CHROOT\n"));
         let old = new.replace("AddCapability=SYS_CHROOT\n", "");
         assert!(security_changed(&old, &new));
         assert!(!security_changed(&new, &new));
-        assert!(!security_changed("AddCapability=CHOWN\nAddCapability=SETUID\n", "AddCapability=SETUID\nAddCapability=CHOWN\n"));
+        assert!(!security_changed(
+            "AddCapability=CHOWN\nAddCapability=SETUID\n",
+            "AddCapability=SETUID\nAddCapability=CHOWN\n"
+        ));
     }
 
     #[test]
