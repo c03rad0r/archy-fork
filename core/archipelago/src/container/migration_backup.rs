@@ -30,6 +30,9 @@ fn relative_sources(manifest: &AppManifest, data_dir: &Path) -> Result<Vec<PathB
         let relative = path
             .strip_prefix(data_dir)
             .context("network migration state must be inside the node data directory")?;
+        if relative.starts_with("migration-backups") {
+            bail!("migration backup cannot include its own archive directory");
+        }
         if relative.as_os_str().is_empty()
             || relative
                 .components()

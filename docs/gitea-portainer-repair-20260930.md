@@ -73,7 +73,11 @@ verification stays enabled and API redirects are refused.
 
 ## Upgrade and rollback
 
-The signed catalog embeds manifests and overrides installed disk copies. A disk
+The signed catalog embeds manifests and overrides installed disk copies.
+Capability-gated manifest variants keep the previous Portainer manifest as the
+base for older daemons; only daemons supporting `network-migration-backup-v1`
+select the network repair. This prevents catalog refresh from triggering an
+unbacked recreation before the OTA is installed. A disk
 edit alone cannot deliver this fix. Publish the matching catalog with the tested
 runtime, then verify the generated unit, actual network mode and Source API.
 Expect a Portainer interruption while the snapshot and recreation run; duration
@@ -94,11 +98,15 @@ repositories or the production Portainer database with disposable test data.
   saved account/Source survive recreation; restart succeeds.
 - Invalid Git credentials produce a repository-authentication error, distinct
   from TCP refusal. Requested branch and Compose file read from Portainer context.
-- Final expanded backend suite: 1,575 passed, zero failed, four existing ignored
+- Combined backend suite including the reviewed paid-download PRs and catalog
+  rollout guard: 1,602 passed, zero failed, four existing ignored
   tests, including stopped-state archive round trips and failure preservation. Container runtime suite: 78 passed.
-  Five diagnostic regression tests passed. Combined tests with the merged
-  paid-download PRs remain pending.
+  Five diagnostic regression tests passed; catalog regeneration is idempotent
+  and the generated catalog has zero manifest metadata drift.
+- Fresh managed Gitea and Portainer fixtures: authenticated private Source
+  creation, invalid-token rejection, workstation clone/push and exact branch
+  lookup from Portainer namespace passed.
 - Still required before release: live automatic migration with the new runtime,
-  snapshot/rollback verification, private-repository and install-order acceptance,
+  snapshot/rollback verification and reversed install-order acceptance,
   lifecycle/reboot convergence, and signed-catalog delivery to the existing app.
   Record LFS/registry/SSH/browser checks and actual hardware/runtime coverage.

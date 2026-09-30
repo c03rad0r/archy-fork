@@ -102,6 +102,28 @@ pub struct AppCatalogEntry {
     /// `docs/registry-manifest-design.md`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub manifest: Option<serde_json::Value>,
+    /// Backward-compatible catalog rollout: old daemons ignore these and keep
+    /// the base manifest. New daemons choose only variants they can safely apply.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub manifest_variants: Vec<CatalogManifestVariant>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CatalogManifestVariant {
+    pub requires: Vec<String>,
+    pub manifest: serde_json::Value,
+}
+
+fn selected_manifest(entry: AppCatalogEntry) -> Option<serde_json::Value> {
+    // Never let an unknown future requirement become an unsafe partial match.
+    for variant in entry.manifest_variants.into_iter().rev() {
+        if !variant.requires.is_empty() && variant.requires.iter().all(|capability| {
+            capability == "network-migration-backup-v1"
+        }) {
+            return Some(variant.manifest);
+        }
+    }
+    entry.manifest
 }
 
 /// One selectable version in an app's `versions[]` list. The catalog carries a
@@ -234,7 +256,7 @@ pub fn catalog_manifest_values() -> Vec<(String, serde_json::Value)> {
     load_catalog()
         .apps
         .into_iter()
-        .filter_map(|(id, e)| e.manifest.map(|m| (id, m)))
+        .filter_map(|(id, e)| selected_manifest(e).map(|m| (id, m)))
         .collect()
 }
 
@@ -556,6 +578,27 @@ fn write_cache(data_dir: &Path, body: &str) -> anyhow::Result<bool> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn catalog_migration_variant_is_compatible_with_old_and_future_daemons() {
+        let raw = serde_json::json!({
+            "version": "2.45.0", "manifest": {"app": {"id": "portainer", "container": {}}},
+            "manifest_variants": [{"requires": ["network-migration-backup-v1"],
+                "manifest": {"app": {"id": "portainer", "container": {"network": "slirp4netns"}, "backup_on_network_change": true}}}]
+        });
+        #[derive(Deserialize)]
+        struct OldEntry { manifest: serde_json::Value }
+        let old: OldEntry = serde_json::from_value(raw.clone()).unwrap();
+        assert!(old.manifest["app"]["container"].get("network").is_none());
+        let current: AppCatalogEntry = serde_json::from_value(raw.clone()).unwrap();
+        let chosen = selected_manifest(current).unwrap();
+        assert_eq!(chosen["app"]["container"]["network"], "slirp4netns");
+        assert_eq!(chosen["app"]["backup_on_network_change"], true);
+        let mut future = raw;
+        future["manifest_variants"][0]["requires"].as_array_mut().unwrap().push(serde_json::json!("unknown-next-capability"));
+        let chosen = selected_manifest(serde_json::from_value(future).unwrap()).unwrap();
+        assert!(chosen["app"]["container"].get("network").is_none());
+    }
 
     #[test]
     fn parses_and_ignores_unknown_fields() {

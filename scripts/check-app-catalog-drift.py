@@ -81,6 +81,11 @@ def load_catalog(path: Path) -> dict[str, dict[str, Any]]:
             if not isinstance(entry, dict):
                 continue
             manifest = entry.get("manifest")
+            for variant in reversed(entry.get("manifest_variants", [])):
+                requires = variant.get("requires", [])
+                if requires and all(cap == "network-migration-backup-v1" for cap in requires):
+                    manifest = variant.get("manifest")
+                    break
             if isinstance(manifest, dict) and isinstance(manifest.get("app"), dict):
                 # Embedded manifest: compare against the same fields the disk
                 # manifests expose, plus the entry's own version.

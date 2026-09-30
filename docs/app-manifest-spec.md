@@ -302,3 +302,10 @@ symlinked mount roots fail closed rather than silently producing an incomplete
 backup. A failed snapshot resumes the original service and leaves migration
 pending. Private archives are retained under `migration-backups/`; fresh installs
 and unchanged network configurations do not create migration snapshots.
+
+Catalog generation preserves the previously published base manifest for older
+daemons and puts opted-in network changes in a signed `manifest_variants` entry
+requiring `network-migration-backup-v1`. New runtimes select only variants whose
+complete requirement list they support. Supply `BASE_CATALOG` when generating
+against a different reviewed pre-migration catalog. This keeps catalog refresh
+from applying a migration before the matching OTA code is installed.

@@ -36,10 +36,14 @@ source "$ROOT/scripts/image-versions.sh"
 set +a
 
 UPDATED="$(date -u +%Y-%m-%d)" OUT="$OUT" APPS_DIR="$ROOT/apps" \
+BASE_CATALOG="${BASE_CATALOG:-$ROOT/releases/app-catalog.json}" \
 PUBLIC_CATALOG="$ROOT/app-catalog/catalog.json" \
 EMBED_MANIFESTS="${EMBED_MANIFESTS:-1}" python3 - <<'PY'
 import glob
 import json, os
+
+with open(os.environ["BASE_CATALOG"], encoding="utf-8") as baseline_file:
+    baseline_entries = json.load(baseline_file).get("apps", {})
 
 try:
     import yaml
@@ -182,7 +186,17 @@ if os.environ.get("EMBED_MANIFESTS") and apps_dir:
             continue
         entry = apps.setdefault(str(app_id), {})
         entry.setdefault("version", str(app.get("version", "")) or "0")
-        entry["manifest"] = _retarget_registry(data)
+        rendered = _retarget_registry(data)
+        if data["app"].get("backup_on_network_change"):
+            baseline = baseline_entries.get(app_id, {}).get("manifest")
+            if not baseline or baseline.get("app", {}).get("backup_on_network_change"):
+                raise SystemExit(f"{app_id}: a pre-migration BASE_CATALOG manifest is required for old-node compatibility")
+            entry["manifest"] = baseline
+            entry["manifest_variants"] = [{
+                "requires": ["network-migration-backup-v1"], "manifest": rendered,
+            }]
+        else:
+            entry["manifest"] = rendered
         embedded += 1
 
 # Multi-version support (docs/bitcoin-multi-version-design.md §3 Phase 1):
