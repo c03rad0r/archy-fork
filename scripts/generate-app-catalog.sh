@@ -187,13 +187,13 @@ if os.environ.get("EMBED_MANIFESTS") and apps_dir:
         entry = apps.setdefault(str(app_id), {})
         entry.setdefault("version", str(app.get("version", "")) or "0")
         rendered = _retarget_registry(data)
-        if data["app"].get("backup_on_network_change"):
+        if data["app"].get("backup_before_runtime_change"):
             baseline = baseline_entries.get(app_id, {}).get("manifest")
-            if not baseline or baseline.get("app", {}).get("backup_on_network_change"):
+            if not baseline or baseline.get("app", {}).get("backup_before_runtime_change"):
                 raise SystemExit(f"{app_id}: a pre-migration BASE_CATALOG manifest is required for old-node compatibility")
             entry["manifest"] = baseline
             entry["manifest_variants"] = [{
-                "requires": ["network-migration-backup-v1"], "manifest": rendered,
+                "requires": ["runtime-migration-backup-v1"], "manifest": rendered,
             }]
         else:
             entry["manifest"] = rendered

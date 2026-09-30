@@ -118,7 +118,7 @@ fn selected_manifest(entry: AppCatalogEntry) -> Option<serde_json::Value> {
     // Never let an unknown future requirement become an unsafe partial match.
     for variant in entry.manifest_variants.into_iter().rev() {
         if !variant.requires.is_empty() && variant.requires.iter().all(|capability| {
-            capability == "network-migration-backup-v1"
+            capability == "runtime-migration-backup-v1"
         }) {
             return Some(variant.manifest);
         }
@@ -583,8 +583,8 @@ mod tests {
     fn catalog_migration_variant_is_compatible_with_old_and_future_daemons() {
         let raw = serde_json::json!({
             "version": "2.45.0", "manifest": {"app": {"id": "portainer", "container": {}}},
-            "manifest_variants": [{"requires": ["network-migration-backup-v1"],
-                "manifest": {"app": {"id": "portainer", "container": {"network": "slirp4netns"}, "backup_on_network_change": true}}}]
+            "manifest_variants": [{"requires": ["runtime-migration-backup-v1"],
+                "manifest": {"app": {"id": "portainer", "container": {"network": "slirp4netns"}, "backup_before_runtime_change": true}}}]
         });
         #[derive(Deserialize)]
         struct OldEntry { manifest: serde_json::Value }
@@ -593,7 +593,7 @@ mod tests {
         let current: AppCatalogEntry = serde_json::from_value(raw.clone()).unwrap();
         let chosen = selected_manifest(current).unwrap();
         assert_eq!(chosen["app"]["container"]["network"], "slirp4netns");
-        assert_eq!(chosen["app"]["backup_on_network_change"], true);
+        assert_eq!(chosen["app"]["backup_before_runtime_change"], true);
         let mut future = raw;
         future["manifest_variants"][0]["requires"].as_array_mut().unwrap().push(serde_json::json!("unknown-next-capability"));
         let chosen = selected_manifest(serde_json::from_value(future).unwrap()).unwrap();

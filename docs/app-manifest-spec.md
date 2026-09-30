@@ -291,21 +291,22 @@ Validate with `scripts/validate-app-manifest.sh` and regenerate the catalog
 with `scripts/generate-app-catalog.py` (drift-checked in CI by
 `scripts/check-app-catalog-drift.py`).
 
-### Persistent-state backup for network migrations
+### Persistent-state backup for runtime repairs
 
-`app.backup_on_network_change: true` opts an app into a stopped-state snapshot
-before an explicitly selected rootless network mode is migrated. The orchestrator
+`app.backup_before_runtime_change: true` opts an app into a stopped-state snapshot
+before reconciliation changes a service’s network, ports, security settings,
+command or health configuration. Image-upgrade backup policy remains separate. The orchestrator
 archives writable persistent bind mounts under the node data directory, collapses
 nested mounts, excludes the runtime Podman socket, and preserves the previous
 Quadlet definition for rollback. Named volumes, outside-data-root state and
 symlinked mount roots fail closed rather than silently producing an incomplete
 backup. A failed snapshot resumes the original service and leaves migration
 pending. Private archives are retained under `migration-backups/`; fresh installs
-and unchanged network configurations do not create migration snapshots.
+and unchanged runtime configurations do not create migration snapshots.
 
 Catalog generation preserves the previously published base manifest for older
 daemons and puts opted-in network changes in a signed `manifest_variants` entry
-requiring `network-migration-backup-v1`. New runtimes select only variants whose
+requiring `runtime-migration-backup-v1`. New runtimes select only variants whose
 complete requirement list they support. Supply `BASE_CATALOG` when generating
 against a different reviewed pre-migration catalog. This keeps catalog refresh
 from applying a migration before the matching OTA code is installed.

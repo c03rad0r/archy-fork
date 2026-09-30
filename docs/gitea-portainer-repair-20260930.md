@@ -1,7 +1,7 @@
 # Same-node Gitea sources in Portainer
 
-Status: root cause reproduced and network repair verified in disposable Portainer
-instances; final migration integration and release acceptance remain in progress.
+Status: root cause reproduced and network repair verified in disposable and actual
+production Portainer instances; final migration integration and release acceptance remain in progress.
 This change belongs to the next signed catalog, OTA and ISO. It does not modify
 published 1.8.21 artifacts.
 
@@ -37,12 +37,16 @@ this public record.
   authentication. Remove obsolete port-3000 nginx metadata/template and the old
   best-effort installer commands which silently rewrote app.ini and falsely
   claimed success. Gitea owns first-run setup and operator configuration.
+- Gitea SSH also failed before authentication: OpenSSH logged a denied
+  `chroot("/var/empty")` because the manifest dropped `SYS_CHROOT`. Add that
+  specific sandbox capability and reconcile security-directive changes. A
+  disposable fixture then passed SSH clone/push with host-key checking enabled.
 - Existing Quadlet reconciliation applies Network= drift. Record a durable
   pending restart before updating the unit and clear it only after a successful
   restart, so failed reloads/restarts and management interruptions retry.
 - Detect explicit rootless network-mode drift in the older Podman runtime too.
   Unspecified networks do not trigger inferred changes to unrelated apps.
-- Portainer opts into `backup_on_network_change`. Before recreation, gracefully
+- Portainer and Gitea opt into `backup_before_runtime_change`. Before recreation, gracefully
   stop the app and archive its writable persistent bind mounts, including nested
   Compose state, once each. Runtime sockets are excluded. Save the previous
   Quadlet definition, where present. Archives live under the node data directory's
@@ -75,14 +79,16 @@ verification stays enabled and API redirects are refused.
 
 The signed catalog embeds manifests and overrides installed disk copies.
 Capability-gated manifest variants keep the previous Portainer manifest as the
-base for older daemons; only daemons supporting `network-migration-backup-v1`
+base for older daemons; only daemons supporting `runtime-migration-backup-v1`
 select the network repair. This prevents catalog refresh from triggering an
 unbacked recreation before the OTA is installed. A disk
 edit alone cannot deliver this fix. Publish the matching catalog with the tested
 runtime, then verify the generated unit, actual network mode and Source API.
 Expect a Portainer interruption while the snapshot and recreation run; duration
 depends on its saved state size.
-Gitea does not need recreation or an app.ini rewrite for this repair.
+The Portainer routing repair does not require a Gitea configuration change.
+The separate SSH capability repair does recreate Gitea, preserving and snapshotting
+both data/config mounts first. Supported systemd drop-in overrides remain intact.
 
 Keep the previous trusted catalog/runtime for rollback. Restore that catalog
 before restoring the saved `previous.container`, reloading user systemd and
@@ -99,14 +105,42 @@ repositories or the production Portainer database with disposable test data.
 - Invalid Git credentials produce a repository-authentication error, distinct
   from TCP refusal. Requested branch and Compose file read from Portainer context.
 - Combined backend suite including the reviewed paid-download PRs and catalog
-  rollout guard: 1,602 passed, zero failed, four existing ignored
+  rollout guard: 1,605 passed, zero failed, four existing ignored
   tests, including stopped-state archive round trips and failure preservation. Container runtime suite: 78 passed.
   Five diagnostic regression tests passed; catalog regeneration is idempotent
   and the generated catalog has zero manifest metadata drift.
 - Fresh managed Gitea and Portainer fixtures: authenticated private Source
   creation, invalid-token rejection, workstation clone/push and exact branch
-  lookup from Portainer namespace passed.
+  lookup from Portainer namespace passed. LFS batch/upload/download and OCI
+  registry authentication/blob/manifest round trips passed. Desktop and mobile
+  login/private-repository/assets/hard-refresh checks passed.
 - Still required before release: live automatic migration with the new runtime,
   snapshot/rollback verification and reversed install-order acceptance,
   lifecycle/reboot convergence, and signed-catalog delivery to the existing app.
   Record LFS/registry/SSH/browser checks and actual hardware/runtime coverage.
+
+### Affected X250: production routing repair verified
+
+Applied the tested rootless network setting to the actual installed Portainer
+through a persistent Quadlet drop-in, after gracefully stopping it and creating a
+private archive of its database and Compose directory. Compared the archive
+against the stopped original before changing configuration; retained the original
+unit and a rollback path. A verification helper initially compared mount list
+order rather than mount identity and safely rolled back; the corrected check
+compares sorted source/destination/write-mode tuples and passed.
+
+The actual production Portainer namespace reproduced connection refusal before
+repair. After repair it received a Git smart-HTTP advertisement, fetched the
+requested branch at its current tip and read its Compose file. Repeating these
+checks after restarting the managed Portainer service passed. All original data
+and socket mounts and the loopback-only HTTP binding are retained. Gitea,
+Bitcoin and the wallet container IDs and start times were unchanged. No stack
+was deployed and no repository credential was changed.
+
+This establishes the routing repair on the affected hardware. A logged-in
+production Portainer Source UI/API acceptance has not yet been recorded; the
+corresponding API checks passed on disposable instances as documented above.
+The installed-node drop-in persists through service restart/reboot but is not the
+fleet delivery mechanism. Automatic migration and signed catalog/OTA/ISO release
+validation remain pending; the source manifest declares the same network mode.
+Private deployment addresses, branch details and state archives are not committed.

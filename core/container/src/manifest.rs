@@ -1074,6 +1074,12 @@ impl AppManifest {
         // `..` copy sources). See docs/manifest-hooks-design.md.
         self.app.hooks.validate()?;
 
+        if let Some(value) = self.app.extensions.get("backup_before_runtime_change") {
+            if value.as_bool().is_none() {
+                return Err(ManifestError::Invalid("backup_before_runtime_change must be boolean".into()));
+            }
+        }
+
         Ok(())
     }
 }
@@ -1111,6 +1117,7 @@ fn validate_security(policy: &SecurityPolicy) -> Result<(), ManifestError> {
         "SETGID",
         "SETUID",
         "SYS_ADMIN",
+        "SYS_CHROOT",
     ];
     let mut seen = HashSet::new();
     for cap in &policy.capabilities {

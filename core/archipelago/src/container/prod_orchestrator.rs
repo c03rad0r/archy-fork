@@ -99,6 +99,13 @@ fn rootless_network_mode_drifted(expected: Option<&str>, actual: &str) -> bool {
         && actual.trim().split(':').next() != expected
 }
 
+fn missing_declared_capability(expected: &[String], actual: &[String]) -> bool {
+    expected.iter().any(|required| {
+        let required = required.strip_prefix("CAP_").unwrap_or(required);
+        !actual.iter().any(|cap| cap.strip_prefix("CAP_").unwrap_or(cap) == required)
+    })
+}
+
 fn uses_pasta_network(manifest: &AppManifest) -> bool {
     manifest.app.container.network.as_deref() == Some("pasta")
 }
@@ -2472,6 +2479,7 @@ impl ProdContainerOrchestrator {
                             .await
                         {
                             tracing::info!(app_id = %app_id, container = %name, "container published-port drift detected — recreating");
+                            self.backup_runtime_change(&name, &resolved_manifest).await?;
                             let _ = self.runtime.stop_container(&name).await;
                             let _ = self.runtime.remove_container(&name).await;
                             self.install_fresh(lm).await?;
@@ -2507,7 +2515,7 @@ impl ProdContainerOrchestrator {
                                 return Ok(ReconcileAction::NoOp);
                             }
                             tracing::info!(app_id = %app_id, container = %name, "container env drift detected — recreating");
-                            self.backup_network_change(&name, &resolved_manifest).await?;
+                            self.backup_runtime_change(&name, &resolved_manifest).await?;
                             let _ = self.runtime.stop_container(&name).await;
                             let _ = self.runtime.remove_container(&name).await;
                             self.install_fresh(lm).await?;
@@ -2564,7 +2572,7 @@ impl ProdContainerOrchestrator {
                                 .await
                         {
                             tracing::info!(app_id = %app_id, container = %name, "stopped container env/port drift detected — recreating");
-                            self.backup_network_change(&name, &resolved_manifest).await?;
+                            self.backup_runtime_change(&name, &resolved_manifest).await?;
                             let _ = self.runtime.remove_container(&name).await;
                             self.install_fresh(lm).await?;
                             return Ok(ReconcileAction::Installed);
@@ -2621,6 +2629,7 @@ impl ProdContainerOrchestrator {
                         self.prepare_for_start(&resolved_manifest).await?;
                         if self.container_env_drifted(&name, &resolved_manifest).await {
                             tracing::info!(app_id = %app_id, container = %name, "created container env drift detected — recreating");
+                            self.backup_runtime_change(&name, &resolved_manifest).await?;
                             let _ = self.runtime.remove_container(&name).await;
                             self.install_fresh(lm).await?;
                             return Ok(ReconcileAction::Installed);
@@ -3128,11 +3137,13 @@ impl ProdContainerOrchestrator {
             quadlet::network_aliases_changed(&old_body, &new_body);
         let restart_for_exec_change = quadlet::exec_changed(&old_body, &new_body);
         let restart_for_health_change = quadlet::health_cmd_changed(&old_body, &new_body);
+        let restart_for_security_change = quadlet::security_changed(&old_body, &new_body);
         let needs_restart = restart_required
             || restart_for_port_change
             || restart_for_network_alias_change
             || restart_for_exec_change
-            || restart_for_health_change;
+            || restart_for_health_change
+            || restart_for_security_change;
         // Record the obligation BEFORE replacing the unit. A failed reload or
         // restart must not become a no-op on the next tick just because the
         // generated file already matches the manifest.
@@ -3140,8 +3151,8 @@ impl ProdContainerOrchestrator {
         if pending.is_pending() {
             self.ensure_resolved_source_available(lm).await?;
         }
-        if restart_for_network_alias_change {
-            self.backup_network_change(name, &resolved).await?;
+        if needs_restart {
+            self.backup_runtime_change(name, &resolved).await?;
         }
         let changed = quadlet::write_if_changed(&unit, &unit_dir)
             .await
@@ -3870,18 +3881,21 @@ impl ProdContainerOrchestrator {
         Ok(())
     }
 
-    async fn backup_network_change(&self, name: &str, manifest: &AppManifest) -> Result<()> {
+    async fn backup_runtime_change(&self, name: &str, manifest: &AppManifest) -> Result<()> {
         if !crate::container::migration_backup::enabled(manifest)? {
             return Ok(());
         }
-        // Only back up an actual network migration, not ordinary env drift.
+        // A persistent disk/permission failure must not repeatedly stop a
+        // working old service. Reuse the reconciler's bounded repair budget.
+        if !self.should_attempt_repair(name).await {
+            anyhow::bail!("runtime migration retry budget exhausted; original service retained, inspect backup failure before retrying");
+        }
+        // Called only before a known runtime change. No app-specific commands;
+        // opted-in manifests identify their persistent state through bind mounts.
         let output = tokio::process::Command::new("podman")
             .args(["inspect", name, "--format", "{{.HostConfig.NetworkMode}}"])
             .output().await.context("inspect network before migration backup")?;
         let present = if output.status.success() {
-            if !rootless_network_mode_drifted(manifest.app.container.network.as_deref(), &String::from_utf8_lossy(&output.stdout)) {
-                return Ok(());
-            }
             true
         } else {
             // A crash after gracefully stopping a --rm Quadlet container can
@@ -3934,9 +3948,29 @@ impl ProdContainerOrchestrator {
             return true;
         }
 
+        // Generated-unit drift handles managed services; preserve deliberate
+        // systemd drop-in overrides instead of recreating them every tick.
+        let unmanaged = !quadlet::unit_exists(name).await;
+        // Podman's effective bounding set, not Docker-compatible CapAdd (which
+        // can be empty even when Quadlet supplied capabilities).
+        if unmanaged && !manifest.app.security.capabilities.is_empty() {
+            if let Ok(output) = tokio::process::Command::new("podman")
+                .args(["inspect", name, "--format", "{{json .BoundingCaps}}"])
+                .output().await
+            {
+                if output.status.success() {
+                    if let Ok(actual) = serde_json::from_slice::<Vec<String>>(&output.stdout) {
+                        if missing_declared_capability(&manifest.app.security.capabilities, &actual) {
+                            return true;
+                        }
+                    }
+                }
+            }
+        }
+
         // Quadlet handles declarative Network= drift above. Legacy rootless
         // Podman containers need the same convergence when no unit owns them.
-        if matches!(manifest.app.container.network.as_deref(), Some("slirp4netns" | "pasta")) {
+        if unmanaged && matches!(manifest.app.container.network.as_deref(), Some("slirp4netns" | "pasta")) {
             if let Ok(output) = tokio::process::Command::new("podman")
                 .args(["inspect", name, "--format", "{{.HostConfig.NetworkMode}}"])
                 .output()
@@ -4993,6 +5027,33 @@ mod tests {
     /// recovered when its siblings have live containers (the stack is
     /// installed), and left alone when the whole stack is gone or the app
     /// is not a stack member at all.
+    #[tokio::test]
+    async fn gitea_fresh_url_seed_preserves_operator_config_and_reports_write_failure() {
+        let manifest = AppManifest::parse(include_str!("../../../../apps/gitea/manifest.yml")).unwrap();
+        let seed = &manifest.app.files[0];
+        assert!(!seed.overwrite);
+        let content = seed.content.replace("{{HOST_IP}}", "192.0.2.1");
+        assert!(content.contains("ROOT_URL = http://192.0.2.1:3001/"));
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("fresh/app.ini");
+        assert_eq!(ensure_rendered_file(path.to_str().unwrap(), &content, seed.overwrite).await.unwrap(), HookOutcome::Rewritten);
+        assert!(tokio::fs::read_to_string(&path).await.unwrap().contains("ROOT_URL"));
+        let custom = "[server]\nROOT_URL = https://git.example.test/\n[database]\nDB_TYPE = postgres\n";
+        tokio::fs::write(&path, custom).await.unwrap();
+        assert_eq!(ensure_rendered_file(path.to_str().unwrap(), &content, seed.overwrite).await.unwrap(), HookOutcome::Unchanged);
+        assert_eq!(tokio::fs::read_to_string(&path).await.unwrap(), custom);
+        let impossible = path.join("app.ini");
+        assert!(ensure_rendered_file(impossible.to_str().unwrap(), &content, seed.overwrite).await.is_err());
+    }
+
+    #[test]
+    fn ssh_sandbox_capability_repair_uses_bounding_set_and_preserves_extra_overrides() {
+        let required = vec!["CHOWN".into(), "SYS_CHROOT".into()];
+        assert!(missing_declared_capability(&required, &["CAP_CHOWN".into()]));
+        assert!(!missing_declared_capability(&required, &["CAP_CHOWN".into(), "CAP_SYS_CHROOT".into()]));
+        assert!(!missing_declared_capability(&required, &["CHOWN".into(), "SYS_CHROOT".into(), "CAP_KILL".into()]));
+    }
+
     #[test]
     fn explicit_rootless_network_change_converges_without_guessing_defaults() {
         assert!(rootless_network_mode_drifted(Some("slirp4netns"), "pasta"));

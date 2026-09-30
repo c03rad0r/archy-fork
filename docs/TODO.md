@@ -14,6 +14,8 @@ doc. See [`ROADMAP.md`](ROADMAP.md) for the curated, public-facing direction.
 
 ## Next release after 1.8.21 — reported 2026-09-30
 
+Release status and acceptance gates: [execution checklist](next-release-20260930.md).
+
 - [ ] **Release blocker: Gitea → Portainer repository integration.** Diagnose
   smart-HTTP reachability from Portainer's actual request namespace, then provide
   one declarative topology and idempotent migration for fresh installs and
@@ -36,8 +38,9 @@ doc. See [`ROADMAP.md`](ROADMAP.md) for the curated, public-facing direction.
   documentation establishes a UI. Verify Bitcoin/Mempool requirements, decide
   whether an existing first-class relay meets Angor's requirements or a relay
   must be packaged with the indexer, and use the Angor logo from angor.io for its
-  service icon. The mentioned setup-documentation link was not included; asked
-  the operator for it. Include this service in the next-release scope.
+  service icon. Official current deployment documentation located and reviewed: stock Mempool
+  plus an optional strfry relay. Reuse of existing indexing services is the
+  proposed approach; implementation and acceptance remain pending. Include this service in the next-release scope.
 
 - [ ] **App lifecycle: keep installed apps visible through restart and hard
   refresh; gate embedded/browser launches on actual web and listener readiness.**

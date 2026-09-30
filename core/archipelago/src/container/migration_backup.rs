@@ -1,15 +1,15 @@
-//! Consistent, private snapshots for declaratively opted-in network migrations.
+//! Consistent, private snapshots for declaratively opted-in runtime migrations.
 use anyhow::{bail, Context, Result};
 use archipelago_container::AppManifest;
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 
 pub fn enabled(manifest: &AppManifest) -> Result<bool> {
-    match manifest.app.extensions.get("backup_on_network_change") {
+    match manifest.app.extensions.get("backup_before_runtime_change") {
         None => Ok(false),
         Some(value) => value
             .as_bool()
-            .context("backup_on_network_change must be boolean"),
+            .context("backup_before_runtime_change must be boolean"),
     }
 }
 
@@ -24,12 +24,12 @@ fn relative_sources(manifest: &AppManifest, data_dir: &Path) -> Result<Vec<PathB
             continue;
         }
         if volume.volume_type != "bind" {
-            bail!("network migration backup requires bind-mounted persistent state");
+            bail!("runtime migration backup requires bind-mounted persistent state");
         }
         let path = Path::new(&volume.source);
         let relative = path
             .strip_prefix(data_dir)
-            .context("network migration state must be inside the node data directory")?;
+            .context("runtime migration state must be inside the node data directory")?;
         if relative.starts_with("migration-backups") {
             bail!("migration backup cannot include its own archive directory");
         }
@@ -38,7 +38,7 @@ fn relative_sources(manifest: &AppManifest, data_dir: &Path) -> Result<Vec<PathB
                 .components()
                 .any(|c| !matches!(c, std::path::Component::Normal(_)))
         {
-            bail!("invalid network migration state path");
+            bail!("invalid runtime migration state path");
         }
         sources.push(relative.to_path_buf());
     }
@@ -51,7 +51,7 @@ fn relative_sources(manifest: &AppManifest, data_dir: &Path) -> Result<Vec<PathB
         }
     }
     if roots.is_empty() {
-        bail!("network migration backup has no persistent state mounts");
+        bail!("runtime migration backup has no persistent state mounts");
     }
     Ok(roots)
 }
@@ -83,11 +83,11 @@ async fn snapshot_with_command(
             .file_type()
             .is_symlink()
         {
-            bail!("network migration state mount is a symlink; explicit backup required");
+            bail!("runtime migration state mount is a symlink; explicit backup required");
         }
         let canonical = tokio::fs::canonicalize(&path).await?;
         if !canonical.starts_with(&canonical_root) {
-            bail!("network migration state path resolves outside node data directory");
+            bail!("runtime migration state path resolves outside node data directory");
         }
     }
     let root = data_dir.join("migration-backups");
@@ -129,7 +129,7 @@ async fn snapshot_with_command(
     tokio::fs::File::open(&partial).await?.sync_all().await?;
     tokio::fs::rename(&partial, &archive).await?;
     let metadata = serde_json::json!({"app": manifest.app.id, "version": manifest.app.version,
-        "network": manifest.app.container.network, "sources": sources});
+        "network": manifest.app.container.network, "capabilities": manifest.app.security.capabilities, "sources": sources});
     tokio::fs::write(
         dir.join("metadata.json"),
         serde_json::to_vec_pretty(&metadata)?,

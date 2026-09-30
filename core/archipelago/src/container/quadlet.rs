@@ -991,6 +991,16 @@ pub fn publish_ports_changed(old_body: &str, new_body: &str) -> bool {
     old_ports != new_ports
 }
 
+pub fn security_changed(old_body: &str, new_body: &str) -> bool {
+    ["AddCapability=", "DropCapability=", "NoNewPrivileges=", "ReadOnly=", "User="]
+        .iter().any(|directive| {
+            let mut old = directive_values(old_body, directive);
+            let mut new = directive_values(new_body, directive);
+            old.sort(); new.sort();
+            old != new
+        })
+}
+
 pub fn network_aliases_changed(old_body: &str, new_body: &str) -> bool {
     let old_network = directive_values(old_body, "Network=");
     let new_network = directive_values(new_body, "Network=");
@@ -1987,6 +1997,18 @@ app:
         let pending = RestartObligation::prepare(&unit, true).await.unwrap();
         tokio::fs::remove_file(unit.with_extension("restart-pending")).await.unwrap();
         assert!(pending.complete().await.is_err());
+    }
+
+    #[test]
+    fn gitea_ssh_sandbox_capability_is_applied_as_a_runtime_change() {
+        let manifest = AppManifest::parse(include_str!("../../../../apps/gitea/manifest.yml")).unwrap();
+        manifest.validate().unwrap();
+        let new = QuadletUnit::from_manifest(&manifest, "gitea").render();
+        assert!(new.contains("AddCapability=SYS_CHROOT\n"));
+        let old = new.replace("AddCapability=SYS_CHROOT\n", "");
+        assert!(security_changed(&old, &new));
+        assert!(!security_changed(&new, &new));
+        assert!(!security_changed("AddCapability=CHOWN\nAddCapability=SETUID\n", "AddCapability=SETUID\nAddCapability=CHOWN\n"));
     }
 
     #[test]

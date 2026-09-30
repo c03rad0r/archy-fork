@@ -15,6 +15,9 @@ app:
     image: source.archipelago-foundation.org/lfg2025/gitea:1.27.3
     pull_policy: if-not-present
 
+  # Preserve repositories, database, keys and configuration during runtime repairs.
+  backup_before_runtime_change: true
+
   dependencies:
     # Source history, LFS objects, release artifacts and OCI layers all share
     # this persistent store. 500Mi was only suitable for an empty demo node.
@@ -25,7 +28,7 @@ app:
     disk_limit: 50Gi
 
   security:
-    capabilities: [CHOWN, FOWNER, SETUID, SETGID, DAC_OVERRIDE, NET_BIND_SERVICE]
+    capabilities: [CHOWN, FOWNER, SETUID, SETGID, DAC_OVERRIDE, NET_BIND_SERVICE, SYS_CHROOT]
     readonly_root: false
     no_new_privileges: false
     network_policy: bridge
@@ -61,6 +64,17 @@ app:
       source: /var/lib/archipelago/gitea/config
       target: /etc/gitea
       options: [rw]
+
+  # Seed a fresh installation with the same origin advertised by the app gate.
+  # Existing app.ini (including custom HTTPS/domain settings) is never replaced.
+  files:
+    - path: /var/lib/archipelago/gitea/data/gitea/conf/app.ini
+      overwrite: false
+      content: |
+        [server]
+        DOMAIN = {{HOST_IP}}
+        SSH_DOMAIN = {{HOST_IP}}
+        ROOT_URL = http://{{HOST_IP}}:3001/
 
   environment:
     - GITEA__database__DB_TYPE=sqlite3

@@ -22,7 +22,7 @@ app:
     data_uid: "1000:1000"
 
   # Snapshot state before an upgrade recreates this app with new networking.
-  backup_on_network_change: true
+  backup_before_runtime_change: true
 
   dependencies:
     - storage: 1Gi
