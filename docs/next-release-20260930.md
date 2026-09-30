@@ -302,3 +302,14 @@ ID/start time, every API probe returned success, and Bitcoin/LND/production-site
 container IDs/start times were unchanged. This supersedes the initial short
 restart-only acceptance recorded above. The generic backend fix is committed
 for release, while the live node uses the equivalent internal NPM health check.
+
+### Final-gate Angor health-check correction
+
+Final release observation found the adapter healthy over IPv4 but marked
+unhealthy by its in-container BusyBox wget: `localhost` resolved to `::1`, where
+nginx does not listen. Its manifest now explicitly probes `127.0.0.1`. The live
+managed service was refreshed and its real Podman health check passed. The
+rootless gateway integration now runs the manifest's health check inside the
+actual image, in addition to endpoint/security/outage/DNS recovery assertions;
+all passed. A metadata regression covers the address-family requirement. Test
+containers and their network were removed by the fixture cleanup.

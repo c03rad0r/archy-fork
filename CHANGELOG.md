@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Fixed Angor Indexer health checks choosing IPv6 localhost for an IPv4 listener and unnecessarily restarting the working service.
+
 - Prevented false app restarts by probing each published port at its actual bind address; Nginx Proxy Manager now checks its internal admin API.
 - Added a backed-up migration for the recognized legacy Nginx Proxy Manager tunnel/LND port conflict in both OTA and ISO startup paths.
 

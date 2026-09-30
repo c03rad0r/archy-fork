@@ -19,6 +19,11 @@ class ServiceMetadata(unittest.TestCase):
             self.assertEqual(app['ports'][0]['bind'], '127.0.0.1')
             self.assertEqual(app['security']['capabilities'], [])
 
+    def test_indexer_health_targets_ipv4_listener(self):
+        app = yaml.safe_load((ROOT / 'apps/angor-indexer/manifest.yml').read_text())['app']
+        self.assertEqual(app['health_check']['endpoint'], 'http://127.0.0.1:8080')
+        self.assertEqual(app['health_check']['path'], '/health')
+
     def test_host_local_api_never_opens_mesh_port(self):
         app = {'interfaces': {'main': {'type': 'api', 'port': 8999}},
                'ports': [{'host': 8999, 'auth': 'local'}],

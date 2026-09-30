@@ -1,8 +1,12 @@
 #!/usr/bin/env python3
 """Opt-in disposable rootless Angor gateway integration checks. No native app changes."""
-import subprocess,pathlib,json,urllib.request,urllib.error,time,tempfile,os,uuid
+import subprocess,pathlib,json,urllib.request,urllib.error,time,tempfile,os,uuid,shlex
+import yaml
 if os.environ.get('ARCHY_ALLOW_DISPOSABLE_CONTAINERS') != '1':
  raise SystemExit('Set ARCHY_ALLOW_DISPOSABLE_CONTAINERS=1 to run isolated test containers')
+manifest=yaml.safe_load((pathlib.Path(__file__).resolve().parents[2]/'apps/angor-indexer/manifest.yml').read_text())['app']
+health=manifest['health_check']
+health_url=health['endpoint'].rstrip('/')+health.get('path','/')
 run_id=uuid.uuid4().hex[:12]
 net='archy-angor-test-'+run_id;backend='angor-test-backend-'+run_id;gateway='angor-test-gateway-'+run_id
 def run(*a):
@@ -28,8 +32,11 @@ assert subprocess.run(['podman','network','exists',net]).returncode==1
 run('podman','network','create',net)
 try:
  start_backend()
- run('podman','run','-d','--name',gateway,'--network',net,'--read-only','--cap-drop=all','--security-opt=no-new-privileges','--memory','128m','-p','127.0.0.1:19098:8080','source.archipelago-foundation.org/chaum/angor-indexer:1.0.1')
+ run('podman','run','-d','--name',gateway,'--network',net,'--read-only','--cap-drop=all','--security-opt=no-new-privileges','--memory','128m','--health-cmd','wget -q -T 5 -O /dev/null '+shlex.quote(health_url),'--health-interval','5s','--health-retries','2','-p','127.0.0.1:19098:8080','source.archipelago-foundation.org/chaum/angor-indexer:1.0.1')
  ready()
+ run('podman','healthcheck','run',gateway)
+ assert json.loads(run('podman','inspect',gateway))[0]['State']['Health']['Status']=='healthy'
+ print('PASS manifest health check inside actual image (including localhost address family)',flush=True)
  for path in ['/api/v1/address/bc1fixture/txs?after_txid=abc','/api/v1/fees/recommended','/api/tx/fixture/hex']:
   status,headers,body=req(path,headers={'Cookie':'node-secret=do-not-forward','Authorization':'Bearer do-not-forward'})
   result=json.loads(body);assert status==200 and result['url']==(path if path.startswith('/api/v1/') else path.replace('/api/','/api/v1/',1)) and result['cookie'] is None and result['auth'] is None
