@@ -162,3 +162,20 @@ async fn files_copy_fails_without_overwriting_or_claiming_success_on_errors() {
         assert_eq!(api.seen.lock().unwrap().len(), expected);
     }
 }
+
+#[test]
+fn seller_errors_are_bounded_printable_and_identified_as_peer_text() {
+    let status = reqwest::StatusCode::SERVICE_UNAVAILABLE;
+    let message = seller_error_message(status, r#"{"error":"Cannot read file\n\u0000"}"#);
+    assert!(message.starts_with("Seller response (503"));
+    assert!(message.ends_with("Cannot read file"));
+    assert!(!message.contains('\n') && !message.contains('\0'));
+    let body = serde_json::json!({"error": "é".repeat(1000)}).to_string();
+    assert!(seller_error_message(status, &body).chars().count() < 300);
+    for body in ["not JSON", r#"{"error": 7}"#, r#"{"error":"   "}"#] {
+        assert_eq!(
+            seller_error_message(status, body),
+            "Peer returned an error (503 Service Unavailable)."
+        );
+    }
+}

@@ -43,6 +43,25 @@ async fn reclaim_spent_ecash(data_dir: &std::path::Path, token: &str, backend: &
     }
 }
 
+/// Only pass through the peer's bounded, printable explanation; refund status
+/// is always determined locally and must never come from the peer's wording.
+fn seller_error_message(status: reqwest::StatusCode, body: &str) -> String {
+    let reason = serde_json::from_str::<serde_json::Value>(body)
+        .ok()
+        .and_then(|v| v.get("error").and_then(|e| e.as_str()).map(str::to_owned));
+    match reason {
+        Some(reason) if !reason.trim().is_empty() => {
+            let clean: String = reason
+                .chars()
+                .filter(|c| !c.is_control())
+                .take(240)
+                .collect();
+            format!("Seller response ({status}): {clean}")
+        }
+        _ => format!("Peer returned an error ({status})."),
+    }
+}
+
 /// Keep first purchases and cached repeats compatible with both existing clients.
 fn paid_content_response(bytes: &[u8], mime: &str, paid_sats: u64) -> serde_json::Value {
     use base64::Engine;
@@ -623,13 +642,14 @@ impl RpcHandler {
 
         let path = format!("/content/{}", content_id);
         // Surface a real reason instead of the generic sanitized error (#30):
-        // the dial already tries FIPS/mesh then falls back to Tor, so a failure
-        // here means the peer is genuinely unreachable on both transports.
+        // A bearer token must not be replayed after an ambiguous delivery.
+        // A transport error can mean the seller received it without replying.
         let (response, transport) =
             match crate::fips::dial::PeerRequest::new(fips_npub.as_deref(), onion, &path)
                 .service(crate::settings::transport::PeerService::PeerFiles)
                 .header("X-Federation-DID", local_did)
                 .header("X-Payment-Token", token_str.clone())
+                .single_delivery()
                 .timeout(std::time::Duration::from_secs(900))
                 .send_get()
                 .await
@@ -642,7 +662,7 @@ impl RpcHandler {
                     let refund =
                         reclaim_spent_ecash(&self.config.data_dir, &token_str, used_backend).await;
                     return Ok(serde_json::json!({
-                        "error": format!("Could not reach the peer over mesh or Tor. {refund}")
+                        "error": format!("The purchase could not be completed. {refund}")
                     }));
                 }
             };
@@ -679,7 +699,7 @@ impl RpcHandler {
             tracing::warn!("paid download: seller {onion} returned {status}: {body}");
             let refund = reclaim_spent_ecash(&self.config.data_dir, &token_str, used_backend).await;
             return Ok(serde_json::json!({
-                "error": format!("Peer returned an error ({status}). {refund}")
+                "error": format!("{} {refund}", seller_error_message(status, &body))
             }));
         }
 
@@ -693,10 +713,17 @@ impl RpcHandler {
             .filter(|s| !s.is_empty())
             .unwrap_or_else(|| "application/octet-stream".to_string());
 
-        let bytes = response
-            .bytes()
-            .await
-            .context("Failed to read response body")?;
+        let bytes = match response.bytes().await {
+            Ok(bytes) => bytes,
+            Err(error) => {
+                tracing::warn!("paid download: response body failed: {error}");
+                let refund =
+                    reclaim_spent_ecash(&self.config.data_dir, &token_str, used_backend).await;
+                return Ok(serde_json::json!({
+                    "error": format!("The file transfer was interrupted after payment was sent. {refund}")
+                }));
+            }
+        };
 
         // Persist the purchase so it "stays unlocked" for this buyer: cache the
         // bytes + metadata keyed by (onion, content_id). The gallery then renders
