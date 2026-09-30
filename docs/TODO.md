@@ -14,6 +14,17 @@ doc. See [`ROADMAP.md`](ROADMAP.md) for the curated, public-facing direction.
 
 ## Next release after 1.8.21 — reported 2026-09-30
 
+- [x] Review and repair open paid-download PRs #161 and #162, refresh both
+  branches from main, run independent and combined isolated suites, and verify
+  rootless file permissions in disposable scratch storage. Combined result:
+  1,585 passed, zero failed, four existing tests ignored. See the
+  [review evidence and remaining acceptance work](pr-review-20260930.md).
+- [ ] Integrate the reviewed PR branches into the next release and run funded
+  candidate acceptance, including Tor-only transport and payments with change.
+  PRs remain open; the reviewed code has not been deployed to live wallets.
+- [ ] Design durable recovery for an accepted payment whose response is lost.
+  Preserve the truthful unconfirmed-refund warning and prevent automatic
+  duplicate payment while that recovery work is outstanding.
 - [ ] **ThinkPad X250 kiosk: Bitcoin installation version selector is unreadable
   and appears underneath the pruning information.** Operator reports white
   styling with invisible text on the actual kiosk; the same flow works in remote
