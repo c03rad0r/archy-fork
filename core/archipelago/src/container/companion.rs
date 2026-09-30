@@ -313,7 +313,7 @@ async fn image_id(image_ref: &str) -> Option<String> {
 /// should reference (`localhost/<base>:latest` for build, registry
 /// URL for pull).
 async fn ensure_image_present(spec: &CompanionSpec) -> Result<String> {
-    let local_image = format!("localhost/{}:latest", spec.image_base);
+    let mut local_image = format!("localhost/{}:latest", spec.image_base);
     let local_image_compat = format!("localhost/{}:local", spec.image_base);
     let registry_image = format!("{}/{}:latest", COMPANION_REGISTRY, spec.image_base);
 
@@ -322,11 +322,13 @@ async fn ensure_image_present(spec: &CompanionSpec) -> Result<String> {
     for dir in spec.build_dir_candidates {
         let dockerfile = PathBuf::from(dir).join("Dockerfile");
         if fs::try_exists(&dockerfile).await.unwrap_or(false) {
-            // `:local` is a deliberate manual override — never auto-rebuild it.
+            // Older installers and self-update create :local themselves. It
+            // must receive source updates too; treating it as a permanent
+            // manual override silently kept the old LND UI after an OTA.
             if image_exists(&local_image_compat).await {
-                return Ok(local_image_compat);
+                local_image = local_image_compat.clone();
             }
-            // Reuse the auto-built `:latest` only when the build context has NOT
+            // Reuse either local tag only when the build context has NOT
             // changed since it was built. Without this staleness check an
             // already-present image is reused forever, so edits to the baked-in
             // context (Dockerfile, nginx.conf, …) never reach the node — this is
@@ -849,20 +851,43 @@ async fn needs_repair(spec: &CompanionSpec) -> Result<bool> {
     if !matches_known_shape {
         return Ok(true);
     }
-    if on_disk.contains(&local_image) && !on_disk.contains(&local_image_compat) {
+    if let Some(image) = managed_local_image(spec, &on_disk) {
         for dir in spec.build_dir_candidates {
             let dockerfile = PathBuf::from(dir).join("Dockerfile");
             if fs::try_exists(&dockerfile).await.unwrap_or(false) {
                 // Conservative on any timeout/error inside: reuse the cache.
-                return Ok(context_is_newer_than_image(dir, &local_image).await);
+                return Ok(context_is_newer_than_image(dir, &image).await);
             }
         }
     }
     Ok(false)
 }
 
+fn managed_local_image(spec: &CompanionSpec, unit: &str) -> Option<String> {
+    ["latest", "local"]
+        .iter()
+        .map(|tag| format!("localhost/{}:{tag}", spec.image_base))
+        .find(|image| build_unit(spec, image).render() == unit)
+}
+
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn legacy_installer_local_tag_is_checked_for_source_updates_like_latest() {
+        for spec in ALL_COMPANIONS.iter().flat_map(|group| group.iter()) {
+            for tag in ["local", "latest"] {
+                let image = format!("localhost/{}:{tag}", spec.image_base);
+                let unit = build_unit(spec, &image).render();
+                assert_eq!(managed_local_image(spec, &unit), Some(image));
+            }
+            let registry = format!("{}/{}:latest", COMPANION_REGISTRY, spec.image_base);
+            assert_eq!(
+                managed_local_image(spec, &build_unit(spec, &registry).render()),
+                None
+            );
+        }
+    }
+
     use super::*;
 
     fn names(specs: &[&'static CompanionSpec]) -> Vec<&'static str> {

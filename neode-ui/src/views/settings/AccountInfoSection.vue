@@ -362,6 +362,36 @@ init()
               </button>
             </div>
             <div class="overflow-y-auto flex-1 min-h-0 space-y-6 pr-1">
+              <!-- v1.8.21-alpha -->
+              <div>
+                <div class="flex items-center gap-2 mb-3">
+                  <span class="text-xs font-mono px-2 py-0.5 rounded bg-orange-500/20 text-orange-300">v1.8.21-alpha</span>
+                  <span class="text-xs text-white/40">September 30, 2026</span>
+                </div>
+                <div class="space-y-3 text-sm text-white/80 pl-3 border-l border-white/10">
+                  <p>Fixed Bitcoin and other containers being forcibly stopped after ten seconds during managed updates and restarts.</p>
+                  <p>Existing installations now receive the same graceful shutdown allowance as new containers, without restarting apps just to apply this setting.</p>
+                  <p>Prevented unnecessary Lightning restarts when Bitcoin has stayed running; dependency restarts now require an observed Bitcoin container change.</p>
+                  <p>Includes the Cashu payment, optional Bitcoin pruning, Lightning readiness, and explorer improvements from 1.8.20.</p>
+                </div>
+              </div>
+              <!-- v1.8.20-alpha -->
+              <div>
+                <div class="flex items-center gap-2 mb-3">
+                  <span class="text-xs font-mono px-2 py-0.5 rounded bg-orange-500/20 text-orange-300">v1.8.20-alpha</span>
+                  <span class="text-xs text-white/40">September 29, 2026</span>
+                </div>
+                <div class="space-y-3 text-sm text-white/80 pl-3 border-l border-white/10">
+                  <p>Fixed Cashu file payments rejected despite a shared mint, and preserved the payment amount when mint fees reduce change.</p>
+                  <p>Payment failures now report whether a refund actually succeeded; missing files and unsupported payment methods are rejected before charging.</p>
+                  <p>Improved saving paid files into Files and reopening purchases without paying again.</p>
+                  <p>Bitcoin Core and Knots installation offers optional pruning on larger disks, using the same settings as automatic pruning.</p>
+                  <p>Fixed false missing-port checks that unnecessarily restarted Bitcoin and LND; recovery now respects managed shutdown timeouts.</p>
+                  <p>LND explains when it is waiting for Bitcoin installation, startup, or sync, without treating normal synchronization as a restart-worthy failure.</p>
+                  <p>Bitcoin startup messages explain block-index loading without exposing raw RPC errors, and Lightning keeps known balances clearly marked during outages.</p>
+                  <p>Changed the public transaction-explorer default to mempool.space while preserving local explorers and custom choices.</p>
+                </div>
+              </div>
               <!-- v1.8.19-alpha -->
               <div>
                 <div class="flex items-center gap-2 mb-3">

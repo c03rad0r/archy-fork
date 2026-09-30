@@ -296,6 +296,24 @@ pub async fn serve_content(
         }
     }
 
+    let file_path = content_file_path(data_dir, item);
+    if !file_path.exists() {
+        // The catalog entry survived (it's a separate JSON file) but its
+        // backing file is gone — most likely lost in an unrelated data-dir
+        // reset (a shared filebrowser file, 2026-07-01: two catalog entries
+        // outlived a filebrowser reinstall that wiped the files themselves).
+        // Leaving the entry in place would keep advertising it as available
+        // to every peer forever, each hitting the exact same dead end this
+        // one just did. Prune it so it stops being offered.
+        warn!(
+            content_id = %id,
+            filename = %item.filename,
+            "content catalog entry's file is missing on disk — pruning the stale entry"
+        );
+        prune_missing_content_entry(data_dir, id).await;
+        return Ok(ServeResult::NotFound);
+    }
+
     // Check access control
     if !owner_session {
         match &item.access {
@@ -307,8 +325,12 @@ pub async fn serve_content(
                 // Each path only counts when the sharer accepts that method.
                 let mut authorized = false;
                 if let Some(token) = payment_token {
-                    if (method_accepted(&item.access, "ecash")
-                        || method_accepted(&item.access, "fedimint"))
+                    let method = if token.trim().starts_with("cashu") {
+                        "ecash"
+                    } else {
+                        "fedimint"
+                    };
+                    if method_accepted(&item.access, method)
                         && verify_payment_token(data_dir, token, *price_sats).await
                     {
                         authorized = true;
@@ -334,24 +356,6 @@ pub async fn serve_content(
             }
             AccessControl::Free => {}
         }
-    }
-
-    let file_path = content_file_path(data_dir, item);
-    if !file_path.exists() {
-        // The catalog entry survived (it's a separate JSON file) but its
-        // backing file is gone — most likely lost in an unrelated data-dir
-        // reset (a shared filebrowser file, 2026-07-01: two catalog entries
-        // outlived a filebrowser reinstall that wiped the files themselves).
-        // Leaving the entry in place would keep advertising it as available
-        // to every peer forever, each hitting the exact same dead end this
-        // one just did. Prune it so it stops being offered.
-        warn!(
-            content_id = %id,
-            filename = %item.filename,
-            "content catalog entry's file is missing on disk — pruning the stale entry"
-        );
-        prune_missing_content_entry(data_dir, id).await;
-        return Ok(ServeResult::NotFound);
     }
 
     let metadata = fs::metadata(&file_path)
@@ -573,7 +577,7 @@ pub async fn serve_content_preview(data_dir: &Path, id: &str) -> Result<PreviewR
 }
 
 /// Verify a payment token covers the required amount.
-/// Accepts both cashuA tokens (real Cashu) and legacy cashuSend_ format.
+/// Accepts real Cashu tokens and Fedimint notes.
 /// Swaps proofs at the mint to verify they're unspent before accepting.
 async fn verify_payment_token(data_dir: &Path, token: &str, required_sats: u64) -> bool {
     match crate::wallet::ecash::verify_and_receive_payment(data_dir, token, required_sats).await {

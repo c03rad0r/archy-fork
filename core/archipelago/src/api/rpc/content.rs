@@ -22,9 +22,9 @@ const FILE_CATALOG_PROTOCOL: &str = "https://archipelago.dev/protocols/file-cata
 /// Best-effort reclaim of an ecash payment token that was minted but the sale
 /// didn't complete (seller unreachable or couldn't redeem it), so the buyer
 /// doesn't lose the value. For Fedimint the spender can reissue its own
-/// un-redeemed notes; for Cashu the proofs are received back. Fails silently if
-/// the seller already claimed the token (then the value is genuinely gone).
-async fn reclaim_spent_ecash(data_dir: &std::path::Path, token: &str, backend: &str) {
+/// un-redeemed notes; for Cashu the proofs are received back. Report the actual
+/// recovered amount, or explicitly say when a refund could not be confirmed.
+async fn reclaim_spent_ecash(data_dir: &std::path::Path, token: &str, backend: &str) -> String {
     let res = match backend {
         "fedimint" => crate::wallet::fedimint_client::reissue_into_any(data_dir, token)
             .await
@@ -32,14 +32,60 @@ async fn reclaim_spent_ecash(data_dir: &std::path::Path, token: &str, backend: &
         _ => ecash::receive_token(data_dir, token).await,
     };
     match res {
-        Ok(sats) => tracing::info!(
-            "paid download: reclaimed {sats} sats of unspent {backend} ecash after a failed sale"
-        ),
-        Err(e) => tracing::warn!(
-            "paid download: could not reclaim {backend} ecash (the peer may have already \
-             claimed it): {e:#}"
-        ),
+        Ok(sats) => {
+            tracing::info!("paid download: reclaimed {sats} sats after failed sale");
+            format!("Refunded {sats} sats to your wallet.")
+        }
+        Err(e) => {
+            tracing::warn!("paid download: refund not confirmed: {e}");
+            "Your refund could not be confirmed. The seller may have received the payment. Do not pay again until this is checked.".to_string()
+        }
     }
+}
+
+/// Keep first purchases and cached repeats compatible with both existing clients.
+fn paid_content_response(bytes: &[u8], mime: &str, paid_sats: u64) -> serde_json::Value {
+    use base64::Engine;
+    let data = base64::engine::general_purpose::STANDARD.encode(bytes);
+    serde_json::json!({
+        "data": data, "data_base64": data,
+        "size": bytes.len(), "size_bytes": bytes.len(),
+        "mime_type": mime, "paid_sats": paid_sats, "owned": true,
+    })
+}
+
+/// File purchases through an atomic no-clobber write in Files' own namespace.
+async fn file_purchase_in_files(
+    data_dir: &std::path::Path,
+    filename: &str,
+    mime: &str,
+    bytes: &[u8],
+) -> Result<String> {
+    let folder = if mime.starts_with("image/") || mime.starts_with("video/") {
+        "Photos"
+    } else if mime.starts_with("audio/") {
+        "Music"
+    } else {
+        "Documents"
+    };
+    let root = data_dir.join("filebrowser");
+    anyhow::ensure!(
+        tokio::fs::metadata(&root).await?.is_dir(),
+        "Files storage is unavailable"
+    );
+    let name = std::path::Path::new(filename)
+        .file_name()
+        .and_then(|n| n.to_str())
+        .filter(|n| !n.is_empty())
+        .unwrap_or("download");
+    let path =
+        crate::container::filebrowser::save_new_file(&root.join(folder), name, bytes).await?;
+    Ok(format!(
+        "{folder}/{}",
+        path.file_name()
+            .and_then(|n| n.to_str())
+            .context("Invalid Files name")?
+    ))
 }
 
 impl RpcHandler {
@@ -463,17 +509,10 @@ impl RpcHandler {
                     crate::content_owned::read_owned(&self.config.data_dir, &o.onion, &o.content_id)
                         .await
                 {
-                    use base64::Engine;
-                    return Ok(serde_json::json!({
-                        "owned": true,
-                        "already_owned": true,
-                        "filename": o.filename,
-                        "mime_type": mime,
-                        "size_bytes": bytes.len(),
-                        "paid_sats": 0,
-                        "data_base64":
-                            base64::engine::general_purpose::STANDARD.encode(&bytes),
-                    }));
+                    let mut result = paid_content_response(&bytes, &mime, 0);
+                    result["already_owned"] = serde_json::json!(true);
+                    result["filename"] = serde_json::json!(o.filename);
+                    return Ok(result);
                 }
                 // Cache record exists but bytes are gone — fall through and
                 // repurchase rather than stranding the user.
@@ -547,29 +586,27 @@ impl RpcHandler {
         // Surface a real reason instead of the generic sanitized error (#30):
         // the dial already tries FIPS/mesh then falls back to Tor, so a failure
         // here means the peer is genuinely unreachable on both transports.
-        let (response, transport) = match crate::fips::dial::PeerRequest::new(
-            fips_npub.as_deref(),
-            onion,
-            &path,
-        )
-        .service(crate::settings::transport::PeerService::PeerFiles)
-        .header("X-Federation-DID", local_did)
-        .header("X-Payment-Token", token_str.clone())
-        .timeout(std::time::Duration::from_secs(900))
-        .send_get()
-        .await
-        {
-            Ok(v) => v,
-            Err(e) => {
-                tracing::warn!("paid peer download dial failed for {}: {:#}", onion, e);
-                // The token was already minted/spent — reclaim it so the buyer
-                // doesn't lose the value when the seller was simply unreachable.
-                reclaim_spent_ecash(&self.config.data_dir, &token_str, used_backend).await;
-                return Ok(serde_json::json!({
-                    "error": "Could not reach the peer over mesh or Tor — it may be offline. Your ecash was refunded to your wallet. Please try again."
-                }));
-            }
-        };
+        let (response, transport) =
+            match crate::fips::dial::PeerRequest::new(fips_npub.as_deref(), onion, &path)
+                .service(crate::settings::transport::PeerService::PeerFiles)
+                .header("X-Federation-DID", local_did)
+                .header("X-Payment-Token", token_str.clone())
+                .timeout(std::time::Duration::from_secs(900))
+                .send_get()
+                .await
+            {
+                Ok(v) => v,
+                Err(e) => {
+                    tracing::warn!("paid peer download dial failed for {}: {:#}", onion, e);
+                    // The token was already minted/spent — reclaim it so the buyer
+                    // doesn't lose the value when the seller was simply unreachable.
+                    let refund =
+                        reclaim_spent_ecash(&self.config.data_dir, &token_str, used_backend).await;
+                    return Ok(serde_json::json!({
+                        "error": format!("Could not reach the peer over mesh or Tor. {refund}")
+                    }));
+                }
+            };
         // Record which transport actually reached the peer (B14).
         if let Err(e) = crate::federation::record_peer_transport(
             &self.config.data_dir,
@@ -583,25 +620,17 @@ impl RpcHandler {
         }
 
         if response.status() == reqwest::StatusCode::PAYMENT_REQUIRED {
-            // Payment was rejected by the seller. Surface the most likely cause
-            // per backend — for ecash both sides must share a redemption network
-            // (a Cashu mint, or a Fedimint federation).
+            // A 402 can mean mint validation, network failure, underpayment,
+            // or an unaccepted mint. Do not invent a mint-mismatch diagnosis.
             let body = response.text().await.unwrap_or_default();
             tracing::warn!(
                 "paid download: seller {onion} rejected {used_backend} payment of {price_sats} sats: {body}"
             );
             // Seller couldn't redeem the token — reclaim it so the buyer keeps
             // their funds (the spent-but-unredeemed-notes case the user hit).
-            reclaim_spent_ecash(&self.config.data_dir, &token_str, used_backend).await;
-            let hint = match used_backend {
-                "fedimint" => "the seller isn't in the same Fedimint federation as you",
-                _ => "the seller doesn't accept your Cashu mint",
-            };
+            let refund = reclaim_spent_ecash(&self.config.data_dir, &token_str, used_backend).await;
             return Ok(serde_json::json!({
-                "error": format!(
-                    "Payment rejected by the seller — {hint}. Your ecash was refunded to \
-                     your wallet. Try the other ecash type, or use a shared mint/federation."
-                )
+                "error": format!("The seller could not verify the payment. {refund}")
             }));
         }
 
@@ -609,9 +638,9 @@ impl RpcHandler {
             let status = response.status();
             let body = response.text().await.unwrap_or_default();
             tracing::warn!("paid download: seller {onion} returned {status}: {body}");
-            reclaim_spent_ecash(&self.config.data_dir, &token_str, used_backend).await;
+            let refund = reclaim_spent_ecash(&self.config.data_dir, &token_str, used_backend).await;
             return Ok(serde_json::json!({
-                "error": format!("Peer returned an error ({status}). Your ecash was refunded to your wallet.")
+                "error": format!("Peer returned an error ({status}). {refund}")
             }));
         }
 
@@ -658,47 +687,21 @@ impl RpcHandler {
             tracing::warn!("paid download: failed to cache purchased content (non-fatal): {e:#}");
         }
 
-        // Auto-file the purchase into the user's Files area (2026-07-22):
-        // Photos for images/video, Music for audio, Documents otherwise —
-        // same buckets the Cloud view uses. The in-app viewer still plays
-        // from the purchase cache; this makes the file ALSO show up where
-        // files live, on every device, without relying on a browser
-        // download. Best-effort: never fail a paid download over it.
-        {
-            let folder = if mime_type.starts_with("image/") || mime_type.starts_with("video/") {
-                "Photos"
-            } else if mime_type.starts_with("audio/") {
-                "Music"
-            } else {
-                "Documents"
-            };
-            let base = std::path::Path::new(&filename)
-                .file_name()
-                .and_then(|n| n.to_str())
-                .unwrap_or("download")
-                .to_string();
-            let dir = self.config.data_dir.join("filebrowser").join(folder);
-            match crate::container::filebrowser::save_new_file(&dir, &base, &bytes).await {
-                Ok(path) => tracing::info!("paid download: filed into {}", path.display()),
-                Err(e) => tracing::warn!(
-                    "paid download: filing into {} failed (non-fatal): {e:#}",
-                    dir.display()
-                ),
-            }
+        // The durable purchased-content cache above is primary. A Files copy
+        // remains optional: a stopped FileBrowser must not undo a paid download.
+        let filed =
+            file_purchase_in_files(&self.config.data_dir, &filename, &mime_type, &bytes).await;
+        match filed {
+            Ok(path) => tracing::info!("paid download: filed into Files/{path}"),
+            Err(error) => tracing::warn!(
+                "paid download: optional Files copy failed; purchase cache retained: {error}"
+            ),
         }
 
-        use base64::Engine;
-        let encoded = base64::engine::general_purpose::STANDARD.encode(&bytes);
-
         tracing::info!("paid download: received {} bytes from {onion} (paid {price_sats} sats via {used_backend})", bytes.len());
-        Ok(serde_json::json!({
-            "data": encoded,
-            "size": bytes.len(),
-            "paid_sats": price_sats,
-            "ecash_backend": used_backend,
-            "mime_type": mime_type,
-            "owned": true,
-        }))
+        let mut result = paid_content_response(&bytes, &mime_type, price_sats);
+        result["ecash_backend"] = serde_json::json!(used_backend);
+        Ok(result)
     }
 
     /// Buyer side (#46): ask the selling node to mint a Lightning invoice for a
@@ -1371,3 +1374,7 @@ impl RpcHandler {
         }
     }
 }
+
+#[cfg(test)]
+#[path = "content_tests.rs"]
+mod tests;

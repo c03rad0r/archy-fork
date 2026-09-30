@@ -35,6 +35,8 @@
       <p class="text-white/40 text-xs">{{ t('marketplace.installModalHint') }}</p>
     </div>
 
+    <BitcoinPruningChoice v-if="isBitcoin && !loading" v-model="prune" />
+
     <template #footer>
       <div class="flex gap-2 mt-6">
         <button
@@ -58,9 +60,10 @@
 </template>
 
 <script setup lang="ts">
-import { ref, watch } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import BaseModal from './BaseModal.vue'
+import BitcoinPruningChoice from './BitcoinPruningChoice.vue'
 import { rpcClient, type CatalogVersionInfo } from '../api/rpc-client'
 import { displayVersion } from '@/utils/version'
 
@@ -73,13 +76,16 @@ const props = defineProps<{
 const emit = defineEmits<{
   close: []
   // Emits the version string the runner chose (e.g. "latest" or "29.3.knots20260508").
-  confirm: [version: string]
+  confirm: [version: string, prune?: boolean]
 }>()
 
 const { t } = useI18n()
 const loading = ref(false)
 const versions = ref<CatalogVersionInfo[]>([])
 const selected = ref('')
+const prune = ref(false)
+const pruneKnown = ref(false)
+const isBitcoin = computed(() => ['bitcoin-core', 'bitcoin-knots'].includes(props.appId))
 
 // Latest reads as a sentence (no "v" prefix); concrete versions are normalized.
 function optionLabel(v: CatalogVersionInfo): string {
@@ -92,12 +98,16 @@ function optionLabel(v: CatalogVersionInfo): string {
 
 async function load() {
   loading.value = true
+  prune.value = false
+  pruneKnown.value = false
   versions.value = []
   selected.value = ''
   try {
     const info = await rpcClient.getPackageVersions(props.appId)
     // catalog_versions() returns the list default(=latest)-first, so versions[0]
     // is the latest — pre-select it.
+    pruneKnown.value = typeof info.bitcoinPrune === 'boolean'
+    prune.value = info.bitcoinPrune === true
     versions.value = info.versions || []
     selected.value = info.default || versions.value.find((v) => v.default)?.version || versions.value[0]?.version || 'latest'
   } catch (err) {
@@ -111,7 +121,7 @@ async function load() {
 
 function confirm() {
   if (!selected.value) return
-  emit('confirm', selected.value)
+  emit('confirm', selected.value, isBitcoin.value && (pruneKnown.value || prune.value) ? prune.value : undefined)
 }
 
 watch(

@@ -54,7 +54,7 @@ app:
         if [ -n "$RPC_TXRELAY_AUTH" ]; then
           RPC_TXRELAY_FLAGS="$RPC_TXRELAY_FLAGS -rpcauth=$RPC_TXRELAY_AUTH -rpcwhitelist=txrelay:sendrawtransaction,submitpackage,testmempoolaccept,getmempoolinfo,getrawmempool,getmempoolentry,getnetworkinfo,getblockchaininfo,getblockcount,getblockhash,getblock,getblockheader,getrawtransaction,gettxout,gettxspendingprevout,decoderawtransaction,decodescript,estimatesmartfee,uptime,ping,getconnectioncount,getpeerinfo,getindexinfo,getdeploymentinfo,getchaintips";
         fi;
-        if [ "${DISK_GB_VALUE:-0}" -lt 1000 ]; then
+        if [ "${BITCOIN_PRUNE:-0}" = "1" ] || [ "${DISK_GB_VALUE:-0}" -lt 1000 ]; then
           exec "$BITCOIND" -datadir=/home/bitcoin/.bitcoin -conf="$RPC_CONF" -allowignoredconf=1 -printtoconsole=0 -server=1 -prune=50000 -rpcallowip=0.0.0.0/0 -rpcbind=0.0.0.0:8332 -listen=1 -bind=0.0.0.0:8333 -dbcache=1024 -par=0 -maxconnections=125 $RPC_HEADROOM $RPC_TXRELAY_FLAGS;
         else
           exec "$BITCOIND" -datadir=/home/bitcoin/.bitcoin -conf="$RPC_CONF" -allowignoredconf=1 -printtoconsole=0 -server=1 -txindex=1 -rpcallowip=0.0.0.0/0 -rpcbind=0.0.0.0:8332 -listen=1 -bind=0.0.0.0:8333 -dbcache=4096 -par=0 -maxconnections=125 $RPC_HEADROOM $RPC_TXRELAY_FLAGS;

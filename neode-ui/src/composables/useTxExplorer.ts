@@ -17,8 +17,8 @@ import { ref } from 'vue'
 import { useAppLauncherStore } from '@/stores/appLauncher'
 import { useContainerStore } from '@/stores/container'
 
-export const DEFAULT_TX_EXPLORER = 'https://tx1138.com'
-export const EXPLORER_PLACEHOLDER = 'https://mempool.guide'
+export const DEFAULT_TX_EXPLORER = 'https://mempool.space'
+export const EXPLORER_PLACEHOLDER = DEFAULT_TX_EXPLORER
 
 const KEY = 'archipelago.tx-explorer.v1'
 
@@ -30,7 +30,13 @@ interface TxExplorerPrefs {
 function loadPrefs(): TxExplorerPrefs {
   const defaults: TxExplorerPrefs = { url: DEFAULT_TX_EXPLORER, acknowledged: false }
   try {
-    return { ...defaults, ...JSON.parse(localStorage.getItem(KEY) || '{}') }
+    const stored = { ...defaults, ...JSON.parse(localStorage.getItem(KEY) || '{}') }
+    // Changing operators requires fresh consent, even if the old one was trusted.
+    if (typeof stored.url === 'string' && /^https?:\/\/tx1138\.com\/*$/i.test(stored.url.trim())) {
+      localStorage.setItem(KEY, JSON.stringify(defaults))
+      return defaults
+    }
+    return stored
   } catch {
     return defaults
   }

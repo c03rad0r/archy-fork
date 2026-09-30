@@ -775,7 +775,9 @@ pub async fn send_token_at(data_dir: &Path, mint_url: &str, amount_sats: u64) ->
         let mut all_target: Vec<u64> = send_denoms.clone();
         all_target.extend(&change_denoms);
 
-        let swap_result = client.swap(&selected_proofs, &all_target).await?;
+        let swap_result = client
+            .swap_at_least(&selected_proofs, &all_target, amount_sats)
+            .await?;
 
         // Mark original proofs as spent
         wallet.mark_spent(&indices);
@@ -1192,7 +1194,11 @@ pub async fn receive_token(data_dir: &Path, token_str: &str) -> Result<u64> {
     // Verify all mints in the token are accepted
     let accepted = load_accepted_mints(data_dir).await?;
     for mint_url in token.mint_urls() {
-        if !accepted.mints.iter().any(|m| m == mint_url) {
+        if !accepted
+            .mints
+            .iter()
+            .any(|m| m.trim_end_matches('/') == mint_url.trim_end_matches('/'))
+        {
             anyhow::bail!("Mint '{}' is not in accepted mints list", mint_url);
         }
     }
@@ -1217,7 +1223,7 @@ pub async fn receive_token(data_dir: &Path, token_str: &str) -> Result<u64> {
                 received_total += amount;
             }
             Err(e) => {
-                warn!("Failed to swap proofs from mint {}: {:#}", entry.mint, e);
+                warn!("Failed to swap proofs from mint {}: {}", entry.mint, e);
                 all_already_redeemed &= e.is::<super::mint_client::AlreadyRedeemed>();
                 last_reason = Some(e.to_string());
                 // Continue with other mints if any
@@ -1298,22 +1304,10 @@ pub async fn verify_and_receive_payment(
     token_str: &str,
     required_sats: u64,
 ) -> Result<u64> {
-    // Handle legacy tokens
+    let token_str = token_str.trim();
+    // Synthetic legacy balances are not cryptographic proof of payment.
     if token_str.starts_with("cashuSend_") {
-        let amount = token_str
-            .split('_')
-            .nth(1)
-            .and_then(|s| s.parse::<u64>().ok())
-            .unwrap_or(0);
-        if amount < required_sats {
-            anyhow::bail!(
-                "Insufficient payment: {} sats, need {} sats",
-                amount,
-                required_sats
-            );
-        }
-        let received = receive_legacy_token(data_dir, token_str).await?;
-        return Ok(received);
+        anyhow::bail!("Legacy ecash cannot authorize a paid download");
     }
 
     // Fedimint notes (#3): a buyer whose balance is in Fedimint pays with notes
@@ -1336,52 +1330,45 @@ pub async fn verify_and_receive_payment(
 
     // Parse and validate the token (cashuA or cashuB)
     let token = CashuToken::deserialize(token_str)?;
-    let total = token.total_amount();
-
+    if token.unit.as_deref().unwrap_or("sat") != "sat" {
+        anyhow::bail!("Payment must be denominated in sats");
+    }
+    // A sale must redeem atomically at one mint. Otherwise a later mint
+    // failure can consume earlier inputs without delivering the purchase.
+    let entry = match token.token.as_slice() {
+        [entry] => entry,
+        _ => anyhow::bail!("Use a single-mint token for this payment"),
+    };
+    let total = entry
+        .proofs
+        .iter()
+        .try_fold(0u64, |sum, p| sum.checked_add(p.amount))
+        .ok_or_else(|| anyhow::anyhow!("Payment amount overflow"))?;
     if total < required_sats {
-        anyhow::bail!(
-            "Insufficient payment: {} sats, need {} sats",
-            total,
-            required_sats
-        );
+        anyhow::bail!("Insufficient payment: {total} sats, need {required_sats} sats");
     }
-
-    // Verify mints are accepted
     let accepted = load_accepted_mints(data_dir).await?;
-    for mint_url in token.mint_urls() {
-        if !accepted.mints.iter().any(|m| m == mint_url) {
-            anyhow::bail!("Mint '{}' not accepted", mint_url);
-        }
+    if !accepted
+        .mints
+        .iter()
+        .any(|m| m.trim_end_matches('/') == entry.mint.trim_end_matches('/'))
+    {
+        anyhow::bail!("Mint is not in the seller's accepted mints list");
     }
 
-    // Swap proofs at mint (this verifies they're unspent and gives us fresh proofs)
+    let client = mint_client(data_dir, &entry.mint).await?;
+    let result = client
+        .swap_at_least(
+            &entry.proofs,
+            &amount_to_denominations(total),
+            required_sats,
+        )
+        .await?;
+    let received_total = result.new_proofs.iter().map(|p| p.amount).sum();
+    // Load after the network call, so an unrelated wallet update during the
+    // swap is not overwritten with a pre-swap snapshot.
     let mut wallet = load_wallet(data_dir).await?;
-    let mut received_total = 0u64;
-
-    for entry in &token.token {
-        let client = mint_client(data_dir, &entry.mint).await?;
-        let entry_total: u64 = entry.proofs.iter().map(|p| p.amount).sum();
-        let target_amounts = amount_to_denominations(entry_total);
-
-        match client.swap(&entry.proofs, &target_amounts).await {
-            Ok(result) => {
-                let amount: u64 = result.new_proofs.iter().map(|p| p.amount).sum();
-                wallet.add_proofs(&entry.mint, result.new_proofs);
-                received_total += amount;
-            }
-            Err(e) => {
-                warn!("Payment verification failed at mint {}: {}", entry.mint, e);
-            }
-        }
-    }
-
-    if received_total < required_sats {
-        anyhow::bail!(
-            "Payment verification failed: only {} of {} sats verified",
-            received_total,
-            required_sats
-        );
-    }
+    wallet.add_proofs(entry.mint.trim_end_matches('/'), result.new_proofs);
 
     wallet.record_tx(
         TransactionType::Receive,
@@ -2465,3 +2452,7 @@ mod tests {
         assert_eq!(w.mint_url, "https://mint.minibits.cash/Bitcoin");
     }
 }
+
+#[cfg(test)]
+#[path = "payment_tests.rs"]
+mod payment_tests;

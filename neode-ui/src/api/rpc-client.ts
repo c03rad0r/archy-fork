@@ -42,6 +42,7 @@ export interface PackageVersionsResponse {
   pinnedVersion: string | null
   autoUpdate: boolean
   versions: CatalogVersionInfo[]
+  bitcoinPrune?: boolean | null
 }
 
 export interface AppGatePortStatus {

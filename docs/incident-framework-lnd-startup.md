@@ -1,6 +1,6 @@
 # Framework: LND startup, missing Receive address, false zero balance
 
-**Status: OPEN — Framework startup and Cashu address verified live; source integration and final dashboard balance confirmation remain.**
+**Status: CLOSED WITH OPERATOR ACCEPTANCE — startup, native balances, Cashu address and source integration verified; user accepted the remaining display check and authorized release on 2026-09-30.**
 
 Reported: 2026-09-15. Source inspected: main at `3b9b74da` (v1.8.17-alpha publication).
 The Framework's installed version and exact incident time have not been verified.
@@ -376,3 +376,30 @@ rename the address to disguise the problem. A Minibits server change could use
 Archy would instead require an Archy-hosted LNURL service/address and correct
 invoice metadata binding; rewriting the QR label or only proxying edited metadata
 is insufficient. No wallet/profile mutations were made during this investigation.
+
+### Source integration confirmed — 2026-09-29
+
+`git merge-base --is-ancestor 4237fb5e HEAD` succeeds on main at
+`540639d2`. The previously tested startup ordering, safe unlock, and unavailable
+balance fixes are integrated and included in the intervening releases. The
+earlier “source integration pending” notes above are historical, not current.
+The user reports no further Framework incidents. Requested final confirmation
+of rendered balances and Receive; do not mark closed without that response.
+
+A separate startup failure was observed on the development box today when Core
+was installed against existing block data: Core made steady replay progress,
+while LND exited on its short “bitcoind start timeout”. Candidate work defers
+unlock until authenticated Bitcoin RPC answers, with dependency waiting states
+in the LND UI. This is not evidence of a new failure on Framework.
+
+### Operator acceptance and release authorization — 2026-09-30
+
+After being told that final rendered balance/Receive confirmation remained and
+SSH access was unavailable, the user replied: “that's fine I believe it'd fixed,
+please release”. This explicitly accepts proceeding past the remaining human
+display check. Close this incident with operator acceptance based on the earlier
+controlled reboot, preserved identity/channels/native balances, working Receive
+address/payment, source integration, and the user's report of no further issues.
+No new direct Framework inspection or on-screen verification is claimed today.
+Reopen investigation if the original startup, Receive, or false-zero symptom
+recurs; preserve the wallet and channels.

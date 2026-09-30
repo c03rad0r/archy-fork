@@ -31,7 +31,7 @@
         class="w-full rounded-lg bg-white/[0.06] border border-white/10 text-white px-3 py-2 text-sm font-mono focus:outline-none focus:border-orange-400/60"
       />
       <p class="text-[11px] text-white/40 mt-1">
-        Defaults to tx1138.com. Any Mempool-compatible instance works — you can change this
+        Defaults to mempool.space. Any Mempool-compatible instance works — you can change this
         any time in Settings → System.
       </p>
     </div>

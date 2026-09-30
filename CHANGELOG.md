@@ -2,6 +2,24 @@
 
 ## Unreleased
 
+## v1.8.21-alpha (2026-09-30)
+
+- Fixed Bitcoin and other containers being forcibly stopped after ten seconds during managed updates and restarts.
+- Existing installations now receive the same graceful shutdown allowance as new containers, without restarting apps just to apply this setting.
+- Prevented unnecessary Lightning restarts when Bitcoin has stayed running; dependency restarts now require an observed Bitcoin container change.
+- Includes the Cashu payment, optional Bitcoin pruning, Lightning readiness, and explorer improvements from 1.8.20.
+
+## v1.8.20-alpha (2026-09-29)
+
+- Fixed Cashu file payments rejected despite a shared mint, and preserved the payment amount when mint fees reduce change.
+- Payment failures now report whether a refund actually succeeded; missing files and unsupported payment methods are rejected before charging.
+- Improved saving paid files into Files and reopening purchases without paying again.
+- Bitcoin Core and Knots installation offers optional pruning on larger disks, using the same settings as automatic pruning.
+- Fixed false missing-port checks that unnecessarily restarted Bitcoin and LND; recovery now respects managed shutdown timeouts.
+- LND explains when it is waiting for Bitcoin installation, startup, or sync, without treating normal synchronization as a restart-worthy failure.
+- Bitcoin startup messages explain block-index loading without exposing raw RPC errors, and Lightning keeps known balances clearly marked during outages.
+- Changed the public transaction-explorer default to mempool.space while preserving local explorers and custom choices.
+
 ## v1.8.19-alpha (2026-09-28)
 
 - Fixed the embedded AIUI chat page painting a second background and dark scrim over Archy’s dashboard background.

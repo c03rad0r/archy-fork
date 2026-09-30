@@ -47,13 +47,33 @@ podman_rootless() {
 }
 
 port_is_listening() {
-    local port="$1"
-    local protocol="${2:-tcp}"
+    local port="$1" protocol="${2:-tcp}" listeners
     case "$protocol" in
-        tcp) ss -ltn 2>/dev/null ;;
-        udp) ss -lun 2>/dev/null ;;
-        *) return 1 ;;
-    esac | awk '{print $4}' | grep -Eq "(^|:)$port$"
+        tcp) listeners=$(ss -ltn 2>/dev/null) || return 2 ;;
+        udp) listeners=$(ss -lun 2>/dev/null) || return 2 ;;
+        *) return 2 ;;
+    esac
+    # Consume the whole snapshot. grep -q closed the old pipe early, so awk
+    # received SIGPIPE and pipefail turned a FOUND port into a failed check.
+    awk -v port="$port" '$4 ~ ("(^|:)" port "$") { found=1 } END { exit !found }' <<< "$listeners"
+}
+
+restart_rootless_container() {
+    local name="$1" unit
+    unit=$(podman_rootless inspect "$name" --format '{{index .Config.Labels "PODMAN_SYSTEMD_UNIT"}}' 2>/dev/null) || return 1
+    if [[ "$unit" =~ ^[a-zA-Z0-9_.@-]+\.service$ ]]; then
+        # Respect the managed service's shutdown timeout and --rm lifecycle.
+        # Raw podman restart uses a short timeout and races Quadlet cleanup.
+        if [ "$(id -u)" = 0 ]; then
+            sudo -u archipelago env XDG_RUNTIME_DIR="/run/user/$(id -u archipelago)" systemctl --user restart "$unit"
+        else
+            systemctl --user restart "$unit"
+        fi
+    else
+        local grace=30
+        case "$name" in bitcoin|bitcoin-core|bitcoin-knots) grace=600 ;; lnd) grace=330 ;; esac
+        podman_rootless restart --time "$grace" "$name"
+    fi
 }
 
 run_fix() {
@@ -573,19 +593,27 @@ fix_missing_rootless_ports() {
         bindings=$(podman_rootless inspect "$name" --format '{{range $p,$bindings := .NetworkSettings.Ports}}{{if $bindings}}{{range $bindings}}{{printf "%s %s\n" $p .HostPort}}{{end}}{{end}}{{end}}' 2>/dev/null | sort -u)
         [ -n "$bindings" ] || continue
 
-        local missing=()
+        local missing=() inspection_failed=false status
         local container_binding host_port protocol
         while read -r container_binding host_port; do
             [ -n "$container_binding" ] && [ -n "$host_port" ] || continue
             protocol="${container_binding##*/}"
-            if ! port_is_listening "$host_port" "$protocol"; then
-                missing+=("$host_port/$protocol")
-            fi
+            status=0
+            port_is_listening "$host_port" "$protocol" || status=$?
+            case "$status" in
+                0) ;;
+                1) missing+=("$host_port/$protocol") ;;
+                *) inspection_failed=true ;;
+            esac
         done <<< "$bindings"
 
+        if $inspection_failed; then
+            log "WARN: cannot inspect listeners for $name; leaving it running"
+            continue
+        fi
         if [ ${#missing[@]} -gt 0 ]; then
             log "Restarting $name: missing rootlessport listener(s): ${missing[*]}"
-            if podman_rootless restart "$name" >/dev/null 2>&1; then
+            if restart_rootless_container "$name" >/dev/null 2>&1; then
                 fixed=true
             else
                 log "WARN: failed to restart $name for missing rootlessport listener(s)"
@@ -675,6 +703,9 @@ fix_archipelago_dialout() {
 }
 
 # ── Main ─────────────────────────────────────────────────────
+
+# Allow regression tests to source helpers without running repairs.
+[[ "${BASH_SOURCE[0]}" != "$0" ]] && return 0
 
 # If remote host provided, run via SSH
 if [ -n "$1" ] && [ "$1" != "--local" ]; then

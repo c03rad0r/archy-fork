@@ -618,7 +618,7 @@
           },
           "container": {
             "custom_args": [
-              "BITCOIND=\"$(command -v bitcoind || true)\"; if [ -z \"$BITCOIND\" ]; then\n  BITCOIND=\"$(find /opt -path '*/bin/bitcoind' -type f 2>/dev/null | sort | tail -n 1)\";\nfi; if [ -z \"$BITCOIND\" ]; then\n  echo \"bitcoind not found in image\" >&2;\n  exit 127;\nfi; RPC_USER=\"$(printenv BITCOIN_RPC_USER)\"; RPC_PASS=\"$(printenv BITCOIN_RPC_PASS)\"; RPC_CONF=\"/tmp/rpc.conf\"; umask 077; { echo \"rpcuser=$RPC_USER\"; echo \"rpcpassword=$RPC_PASS\"; } > \"$RPC_CONF\"; if [ -f /home/bitcoin/.bitcoin/bitcoin.conf ]; then\n  echo \"archipelago: ignoring legacy datadir bitcoin.conf; RPC config comes from $RPC_CONF\" >&2;\nfi; RPC_TXRELAY_AUTH=\"$(printenv BITCOIN_RPC_TXRELAY_RPCAUTH || true)\"; DISK_GB_VALUE=\"$(printenv DISK_GB || true)\"; RPC_HEADROOM=\"-rpcthreads=16 -rpcworkqueue=256\"; RPC_TXRELAY_FLAGS=\"-rpcwhitelistdefault=0\"; if [ -n \"$RPC_TXRELAY_AUTH\" ]; then\n  RPC_TXRELAY_FLAGS=\"$RPC_TXRELAY_FLAGS -rpcauth=$RPC_TXRELAY_AUTH -rpcwhitelist=txrelay:sendrawtransaction,submitpackage,testmempoolaccept,getmempoolinfo,getrawmempool,getmempoolentry,getnetworkinfo,getblockchaininfo,getblockcount,getblockhash,getblock,getblockheader,getrawtransaction,gettxout,gettxspendingprevout,decoderawtransaction,decodescript,estimatesmartfee,uptime,ping,getconnectioncount,getpeerinfo,getindexinfo,getdeploymentinfo,getchaintips\";\nfi; if [ \"${DISK_GB_VALUE:-0}\" -lt 1000 ]; then\n  exec \"$BITCOIND\" -datadir=/home/bitcoin/.bitcoin -conf=\"$RPC_CONF\" -allowignoredconf=1 -printtoconsole=0 -server=1 -prune=50000 -rpcallowip=0.0.0.0/0 -rpcbind=0.0.0.0:8332 -listen=1 -bind=0.0.0.0:8333 -dbcache=1024 -par=0 -maxconnections=125 $RPC_HEADROOM $RPC_TXRELAY_FLAGS;\nelse\n  exec \"$BITCOIND\" -datadir=/home/bitcoin/.bitcoin -conf=\"$RPC_CONF\" -allowignoredconf=1 -printtoconsole=0 -server=1 -txindex=1 -rpcallowip=0.0.0.0/0 -rpcbind=0.0.0.0:8332 -listen=1 -bind=0.0.0.0:8333 -dbcache=4096 -par=0 -maxconnections=125 $RPC_HEADROOM $RPC_TXRELAY_FLAGS;\nfi"
+              "BITCOIND=\"$(command -v bitcoind || true)\"; if [ -z \"$BITCOIND\" ]; then\n  BITCOIND=\"$(find /opt -path '*/bin/bitcoind' -type f 2>/dev/null | sort | tail -n 1)\";\nfi; if [ -z \"$BITCOIND\" ]; then\n  echo \"bitcoind not found in image\" >&2;\n  exit 127;\nfi; RPC_USER=\"$(printenv BITCOIN_RPC_USER)\"; RPC_PASS=\"$(printenv BITCOIN_RPC_PASS)\"; RPC_CONF=\"/tmp/rpc.conf\"; umask 077; { echo \"rpcuser=$RPC_USER\"; echo \"rpcpassword=$RPC_PASS\"; } > \"$RPC_CONF\"; if [ -f /home/bitcoin/.bitcoin/bitcoin.conf ]; then\n  echo \"archipelago: ignoring legacy datadir bitcoin.conf; RPC config comes from $RPC_CONF\" >&2;\nfi; RPC_TXRELAY_AUTH=\"$(printenv BITCOIN_RPC_TXRELAY_RPCAUTH || true)\"; DISK_GB_VALUE=\"$(printenv DISK_GB || true)\"; RPC_HEADROOM=\"-rpcthreads=16 -rpcworkqueue=256\"; RPC_TXRELAY_FLAGS=\"-rpcwhitelistdefault=0\"; if [ -n \"$RPC_TXRELAY_AUTH\" ]; then\n  RPC_TXRELAY_FLAGS=\"$RPC_TXRELAY_FLAGS -rpcauth=$RPC_TXRELAY_AUTH -rpcwhitelist=txrelay:sendrawtransaction,submitpackage,testmempoolaccept,getmempoolinfo,getrawmempool,getmempoolentry,getnetworkinfo,getblockchaininfo,getblockcount,getblockhash,getblock,getblockheader,getrawtransaction,gettxout,gettxspendingprevout,decoderawtransaction,decodescript,estimatesmartfee,uptime,ping,getconnectioncount,getpeerinfo,getindexinfo,getdeploymentinfo,getchaintips\";\nfi; if [ \"${BITCOIN_PRUNE:-0}\" = \"1\" ] || [ \"${DISK_GB_VALUE:-0}\" -lt 1000 ]; then\n  exec \"$BITCOIND\" -datadir=/home/bitcoin/.bitcoin -conf=\"$RPC_CONF\" -allowignoredconf=1 -printtoconsole=0 -server=1 -prune=50000 -rpcallowip=0.0.0.0/0 -rpcbind=0.0.0.0:8332 -listen=1 -bind=0.0.0.0:8333 -dbcache=1024 -par=0 -maxconnections=125 $RPC_HEADROOM $RPC_TXRELAY_FLAGS;\nelse\n  exec \"$BITCOIND\" -datadir=/home/bitcoin/.bitcoin -conf=\"$RPC_CONF\" -allowignoredconf=1 -printtoconsole=0 -server=1 -txindex=1 -rpcallowip=0.0.0.0/0 -rpcbind=0.0.0.0:8332 -listen=1 -bind=0.0.0.0:8333 -dbcache=4096 -par=0 -maxconnections=125 $RPC_HEADROOM $RPC_TXRELAY_FLAGS;\nfi"
             ],
             "data_uid": "100101:100101",
             "derived_env": [
@@ -768,7 +768,7 @@
           },
           "container": {
             "custom_args": [
-              "BITCOIND=\"$(command -v bitcoind || true)\"; if [ -z \"$BITCOIND\" ]; then\n  BITCOIND=\"$(find /opt -path '*/bin/bitcoind' -type f 2>/dev/null | sort | tail -n 1)\";\nfi; if [ -z \"$BITCOIND\" ]; then\n  echo \"bitcoind not found in image\" >&2;\n  exit 127;\nfi; RPC_USER=\"$(printenv BITCOIN_RPC_USER)\"; RPC_PASS=\"$(printenv BITCOIN_RPC_PASS)\"; RPC_CONF=\"/tmp/rpc.conf\"; umask 077; { echo \"rpcuser=$RPC_USER\"; echo \"rpcpassword=$RPC_PASS\"; } > \"$RPC_CONF\"; if [ -f /home/bitcoin/.bitcoin/bitcoin.conf ]; then\n  echo \"archipelago: ignoring legacy datadir bitcoin.conf; RPC config comes from $RPC_CONF\" >&2;\nfi; RPC_TXRELAY_AUTH=\"$(printenv BITCOIN_RPC_TXRELAY_RPCAUTH || true)\"; DISK_GB_VALUE=\"$(printenv DISK_GB || true)\"; RPC_HEADROOM=\"-rpcthreads=16 -rpcworkqueue=256\"; RPC_TXRELAY_FLAGS=\"-rpcwhitelistdefault=0\"; if [ -n \"$RPC_TXRELAY_AUTH\" ]; then\n  RPC_TXRELAY_FLAGS=\"$RPC_TXRELAY_FLAGS -rpcauth=$RPC_TXRELAY_AUTH -rpcwhitelist=txrelay:sendrawtransaction,submitpackage,testmempoolaccept,getmempoolinfo,getrawmempool,getmempoolentry,getnetworkinfo,getblockchaininfo,getblockcount,getblockhash,getblock,getblockheader,getrawtransaction,gettxout,gettxspendingprevout,decoderawtransaction,decodescript,estimatesmartfee,uptime,ping,getconnectioncount,getpeerinfo,getindexinfo,getdeploymentinfo,getchaintips\";\nfi; if [ \"${DISK_GB_VALUE:-0}\" -lt 1000 ]; then\n  exec \"$BITCOIND\" -datadir=/home/bitcoin/.bitcoin -conf=\"$RPC_CONF\" -allowignoredconf=1 -printtoconsole=0 -server=1 -prune=50000 -rpcallowip=0.0.0.0/0 -rpcbind=0.0.0.0:8332 -listen=1 -bind=0.0.0.0:8333 -dbcache=2048 -par=0 -maxconnections=125 $RPC_HEADROOM $RPC_TXRELAY_FLAGS;\nelse\n  exec \"$BITCOIND\" -datadir=/home/bitcoin/.bitcoin -conf=\"$RPC_CONF\" -allowignoredconf=1 -printtoconsole=0 -server=1 -txindex=1 -rpcallowip=0.0.0.0/0 -rpcbind=0.0.0.0:8332 -listen=1 -bind=0.0.0.0:8333 -dbcache=4096 -par=0 -maxconnections=125 $RPC_HEADROOM $RPC_TXRELAY_FLAGS;\nfi"
+              "BITCOIND=\"$(command -v bitcoind || true)\"; if [ -z \"$BITCOIND\" ]; then\n  BITCOIND=\"$(find /opt -path '*/bin/bitcoind' -type f 2>/dev/null | sort | tail -n 1)\";\nfi; if [ -z \"$BITCOIND\" ]; then\n  echo \"bitcoind not found in image\" >&2;\n  exit 127;\nfi; RPC_USER=\"$(printenv BITCOIN_RPC_USER)\"; RPC_PASS=\"$(printenv BITCOIN_RPC_PASS)\"; RPC_CONF=\"/tmp/rpc.conf\"; umask 077; { echo \"rpcuser=$RPC_USER\"; echo \"rpcpassword=$RPC_PASS\"; } > \"$RPC_CONF\"; if [ -f /home/bitcoin/.bitcoin/bitcoin.conf ]; then\n  echo \"archipelago: ignoring legacy datadir bitcoin.conf; RPC config comes from $RPC_CONF\" >&2;\nfi; RPC_TXRELAY_AUTH=\"$(printenv BITCOIN_RPC_TXRELAY_RPCAUTH || true)\"; DISK_GB_VALUE=\"$(printenv DISK_GB || true)\"; RPC_HEADROOM=\"-rpcthreads=16 -rpcworkqueue=256\"; RPC_TXRELAY_FLAGS=\"-rpcwhitelistdefault=0\"; if [ -n \"$RPC_TXRELAY_AUTH\" ]; then\n  RPC_TXRELAY_FLAGS=\"$RPC_TXRELAY_FLAGS -rpcauth=$RPC_TXRELAY_AUTH -rpcwhitelist=txrelay:sendrawtransaction,submitpackage,testmempoolaccept,getmempoolinfo,getrawmempool,getmempoolentry,getnetworkinfo,getblockchaininfo,getblockcount,getblockhash,getblock,getblockheader,getrawtransaction,gettxout,gettxspendingprevout,decoderawtransaction,decodescript,estimatesmartfee,uptime,ping,getconnectioncount,getpeerinfo,getindexinfo,getdeploymentinfo,getchaintips\";\nfi; if [ \"${BITCOIN_PRUNE:-0}\" = \"1\" ] || [ \"${DISK_GB_VALUE:-0}\" -lt 1000 ]; then\n  exec \"$BITCOIND\" -datadir=/home/bitcoin/.bitcoin -conf=\"$RPC_CONF\" -allowignoredconf=1 -printtoconsole=0 -server=1 -prune=50000 -rpcallowip=0.0.0.0/0 -rpcbind=0.0.0.0:8332 -listen=1 -bind=0.0.0.0:8333 -dbcache=2048 -par=0 -maxconnections=125 $RPC_HEADROOM $RPC_TXRELAY_FLAGS;\nelse\n  exec \"$BITCOIND\" -datadir=/home/bitcoin/.bitcoin -conf=\"$RPC_CONF\" -allowignoredconf=1 -printtoconsole=0 -server=1 -txindex=1 -rpcallowip=0.0.0.0/0 -rpcbind=0.0.0.0:8332 -listen=1 -bind=0.0.0.0:8333 -dbcache=4096 -par=0 -maxconnections=125 $RPC_HEADROOM $RPC_TXRELAY_FLAGS;\nfi"
             ],
             "data_uid": "100101:100101",
             "derived_env": [
@@ -1377,6 +1377,67 @@
         }
       },
       "version": "0.1.0-preview"
+    },
+    "cuprate-ui": {
+      "image": "source.archipelago-foundation.org/lfg2025/cuprate-ui:1.7.123-alpha",
+      "manifest": {
+        "app": {
+          "container": {
+            "build": {
+              "context": "/opt/archipelago/docker/cuprate-ui",
+              "dockerfile": "Dockerfile",
+              "tag": "localhost/cuprate-ui:local"
+            }
+          },
+          "dependencies": [
+            {
+              "app_id": "cuprate"
+            }
+          ],
+          "description": "Archipelago-native HTTP frontend for the Cuprate Monero node. Runs nginx\ninside a container, serves a static status dashboard, and proxies\n/cuprate-rpc/ to the cuprate restricted RPC on 127.0.0.1:18090 (the\npublished host port for the container's 18089). No credentials are\ninjected — the restricted RPC is Monero's own safe-for-public subset — so\nthe nginx.conf is baked into the image and there is no rendered-config\nbind-mount like bitcoin-ui's.\n",
+          "environment": [],
+          "health_check": {
+            "endpoint": "http://127.0.0.1:18091",
+            "interval": "30s",
+            "path": "/",
+            "retries": 3,
+            "timeout": "5s",
+            "type": "http"
+          },
+          "id": "cuprate-ui",
+          "metadata": {
+            "author": "Archipelago",
+            "category": "money",
+            "icon": "/assets/img/app-icons/cuprate.svg",
+            "repo": "https://github.com/Cuprate/cuprate",
+            "tier": "optional"
+          },
+          "name": "Cuprate UI",
+          "ports": [
+            {
+              "auth": "gated",
+              "bind": "127.0.0.1",
+              "container": 18091,
+              "host": 18091,
+              "protocol": "tcp",
+              "session_passthrough": true
+            }
+          ],
+          "resources": {
+            "memory_limit": "64Mi"
+          },
+          "security": {
+            "network_policy": "host",
+            "readonly_root": false
+          },
+          "upstream": {
+            "kind": "internal"
+          },
+          "version": "1.0.0",
+          "volumes": []
+        }
+      },
+      "version": "1.7.123-alpha"
     },
     "electrs-ui": {
       "image": "source.archipelago-foundation.org/lfg2025/electrs-ui:1.7.123-alpha",
@@ -5464,7 +5525,7 @@
     "tag": "NOSTR IDENTITY // YOUR NODE"
   },
   "schema": 1,
-  "signature": "e716a9069021af87a2252d7561c01153f17c5630d7c36d8fdc1be1c7aa40560d09557513c0e09835a6b76b52b4f7edf0619cbaff02ac1d9d818066f67046e401",
+  "signature": "bbcc938b855c1cb5d803e4510e1aac3259fbf3eabf6f36294c7773634047a3d5edb5b37a17d01d62d1407e5701c62853e15e20e15cc7f486b8975b22eeb94c07",
   "signed_by": "did:key:z6Mkfu5LT8d4DjETtrkATvHh9Dvcbnr7zBCUwfau8Sw7DLWT",
   "storefront": {
     "popular": [
@@ -5485,10 +5546,10 @@
         "id": "archipelago-source",
         "installLabel": "Install GitWorkshop",
         "launchLabel": "Open GitWorkshop",
-        "path": "/npub1w3sqdkrhn0gyuvsex32effzgnfpyde6qrrc4u467flg5e9txh4wsfn5vjg/archy",
+        "path": "/npub1w3sqdkrhn0gyuvsex32effzgnfpyde6qrrc4u467flg5e9txh4wsfn5vjg/relay.ngit.dev/archy",
         "tag": "NGIT // NOSTR // NO SILO"
       }
     ]
   },
-  "updated": "2026-09-15"
+  "updated": "2026-09-29"
 }
