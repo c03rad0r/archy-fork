@@ -257,3 +257,48 @@ Bitcoin, LND and the production site container identities/start times were
 unchanged by the port repair. Rollback copies and the data archive are retained
 in the node's private support directory. No global OTA or ISO was published by
 this repair; the remaining release gates above still apply.
+
+#### Follow-up: fleet delivery and false health failures
+
+A longer observation exposed a second, generic defect after the port conflict
+was repaired: the health monitor probed all published ports at `127.0.0.1`,
+including NPM's tunnel-only listeners. Every monitor interval could therefore
+restart a healthy app. The short initial restart check did not catch this.
+
+The next backend now probes the actual `host_ip` from Podman; only wildcard
+addresses map to the corresponding loopback family. Regression tests cover
+explicit IPv4/IPv6 binds, wildcards, UDP/unpublished/invalid entries, and a real
+listener on a different loopback address. NPM's manifest now checks its internal
+admin HTTP API. The same check is deployed as a persistent Quadlet drop-in on
+the affected node so its older backend stops making false recovery attempts.
+
+The backend embeds `scripts/repair-npm-tunnel.py` and runs it before app
+reconciliation, after runtime asset promotion. This makes the targeted legacy
+port migration available to both OTA and ISO installations without relying on
+an independently installed script. Standard fresh installs are a no-op. Only
+the recognized legacy tunnel/firewall profile is migrated; unknown operator
+routing, occupied replacement ports and live-only firewall changes fail closed
+with a startup warning. Configuration backups, an interrupted-migration journal,
+atomic nft transactions and rollback protect the existing routing. Native wallet
+services and certificate databases are never modified by this fleet migration.
+
+The Python migration tests run in the release gate. The unsigned next catalog
+was regenerated successfully with the new NPM HTTP health check. These changes
+are prepared for the next release; existing published OTA/ISO artifacts remain
+unchanged and the new signed artifacts still require the release gates above.
+
+Verification for this follow-up: 18 migration tests passed; 43 health-monitor
+backend tests passed through the isolated runner. A disposable network-namespace
+regression exercised actual peer traffic through the nft redirect while a
+separate simulated LND listener retained port 18080. The generated rules also
+passed nft validation and atomic replacement. Run that regression with
+`sudo unshare --net python3 tests/regression/npm-tunnel-network.py`; it refuses
+to run in the host network namespace. The migration is a verified no-op on the
+already repaired node and on a standard development install without the override.
+
+After deploying the API health check, a 270-second live observation crossed
+multiple health-monitor intervals: NPM stayed healthy with the same container
+ID/start time, every API probe returned success, and Bitcoin/LND/production-site
+container IDs/start times were unchanged. This supersedes the initial short
+restart-only acceptance recorded above. The generic backend fix is committed
+for release, while the live node uses the equivalent internal NPM health check.

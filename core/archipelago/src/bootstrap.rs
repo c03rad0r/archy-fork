@@ -147,6 +147,26 @@ pub async fn ensure_runtime_assets_ready() {
         Ok(_) => debug!("No OTA runtime payload to synchronize"),
         Err(e) => warn!("Runtime asset bootstrap failed (non-fatal): {:#}", e),
     }
+    // Repair the narrowly recognized legacy NPM tunnel override before app
+    // reconciliation. The embedded script ships in both OTA and ISO binaries.
+    // It preserves native wallet services and refuses unknown custom routing.
+    match tokio::process::Command::new("python3")
+        .arg("-c")
+        .arg(include_str!("../../../scripts/repair-npm-tunnel.py"))
+        .output()
+        .await
+    {
+        Ok(output) if output.status.success() => {
+            if !output.stdout.is_empty() {
+                info!("{}", String::from_utf8_lossy(&output.stdout).trim());
+            }
+        }
+        Ok(output) => warn!(
+            "NPM tunnel migration needs attention: {}",
+            String::from_utf8_lossy(&output.stderr).trim()
+        ),
+        Err(error) => warn!("NPM tunnel migration could not run: {error}"),
+    }
     match run_apps_dir_repair().await {
         Ok(true) => {
             info!("Populated /opt/archipelago/apps from installer copy at /etc/archipelago/apps")

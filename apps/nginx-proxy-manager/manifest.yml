@@ -64,9 +64,11 @@ app:
 
   environment: []
 
+  # Probe the admin API inside the container, independent of optional
+  # tunnel listeners. This also verifies the Node backend is ready.
   health_check:
-    type: tcp
-    endpoint: localhost:81
+    type: http
+    endpoint: http://127.0.0.1:81/api/
     interval: 30s
     timeout: 5s
     retries: 3

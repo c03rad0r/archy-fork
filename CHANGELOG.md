@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Prevented false app restarts by probing each published port at its actual bind address; Nginx Proxy Manager now checks its internal admin API.
+- Added a backed-up migration for the recognized legacy Nginx Proxy Manager tunnel/LND port conflict in both OTA and ISO startup paths.
+
 - Checked Bitcoin and Electrum companion dashboards instead of backend protocol ports, preserving dashboard access during initial sync.
 - Removed web-interface waiting messages from headless services such as Phoenixd and clarified which interface is unavailable for launchable apps.
 

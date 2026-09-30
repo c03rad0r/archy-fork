@@ -501,12 +501,12 @@ async fn check_containers() -> Vec<ContainerHealth> {
     out
 }
 
-fn host_tcp_ports_from_container(c: &serde_json::Value) -> Vec<u16> {
+fn host_tcp_ports_from_container(c: &serde_json::Value) -> Vec<std::net::SocketAddr> {
     let Some(ports) = c.get("Ports").and_then(|v| v.as_array()) else {
         return Vec::new();
     };
 
-    let mut out: Vec<u16> = ports
+    let mut out: Vec<std::net::SocketAddr> = ports
         .iter()
         .filter(|p| {
             p.get("protocol")
@@ -515,9 +515,19 @@ fn host_tcp_ports_from_container(c: &serde_json::Value) -> Vec<u16> {
                 .eq_ignore_ascii_case("tcp")
         })
         .filter_map(|p| {
-            p.get("host_port")
-                .and_then(|v| v.as_u64())
-                .and_then(|port| u16::try_from(port).ok())
+            let port = p.get("host_port")?.as_u64()?;
+            let port = u16::try_from(port).ok().filter(|port| *port != 0)?;
+            let bind = p.get("host_ip").and_then(|v| v.as_str()).unwrap_or("");
+            // Wildcard listeners are reachable through the corresponding
+            // loopback family. Explicit binds must be probed at that address:
+            // probing a WireGuard-only port on 127.0.0.1 creates false failures
+            // and endlessly restarts an otherwise healthy app.
+            let address: std::net::IpAddr = match bind {
+                "" | "0.0.0.0" => "127.0.0.1".parse().ok()?,
+                "::" => "::1".parse().ok()?,
+                explicit => explicit.parse().ok()?,
+            };
+            Some(std::net::SocketAddr::new(address, port))
         })
         .collect();
     out.sort_unstable();
@@ -525,11 +535,11 @@ fn host_tcp_ports_from_container(c: &serde_json::Value) -> Vec<u16> {
     out
 }
 
-async fn host_ports_ready(ports: &[u16]) -> bool {
+async fn host_ports_ready(ports: &[std::net::SocketAddr]) -> bool {
     for port in ports {
         let ready = tokio::time::timeout(
             std::time::Duration::from_secs(2),
-            tokio::net::TcpStream::connect(("127.0.0.1", *port)),
+            tokio::net::TcpStream::connect(*port),
         )
         .await
         .is_ok_and(|r| r.is_ok());
@@ -1661,5 +1671,52 @@ mod tests {
         assert!(!looks_like_corrupt_electrumx_db(
             "Prefetcher:catching up to daemon height 953,480"
         ));
+    }
+    #[test]
+    fn published_port_probes_preserve_explicit_bind_addresses() {
+        let c = serde_json::json!({"Ports": [
+            {"host_ip":"127.0.0.1","host_port":8081,"protocol":"tcp"},
+            {"host_ip":"10.77.0.2","host_port":18081,"protocol":"tcp"},
+            {"host_ip":"10.77.0.2","host_port":18443,"protocol":"tcp"},
+            {"host_ip":"::1","host_port":8082,"protocol":"tcp"}
+        ]});
+        let targets = host_tcp_ports_from_container(&c);
+        for target in [
+            "127.0.0.1:8081",
+            "10.77.0.2:18081",
+            "10.77.0.2:18443",
+            "[::1]:8082",
+        ] {
+            assert!(targets.contains(&target.parse().unwrap()));
+        }
+        assert!(!targets.contains(&"127.0.0.1:18081".parse().unwrap()));
+    }
+
+    #[test]
+    fn published_port_probes_normalize_wildcards_and_ignore_invalid_entries() {
+        let c = serde_json::json!({"Ports": [
+            {"host_ip":"0.0.0.0","host_port":8080},
+            {"host_ip":"","host_port":8080},
+            {"host_ip":"::","host_port":8080},
+            {"host_ip":"10.0.0.1","host_port":53,"protocol":"udp"},
+            {"host_ip":"bad","host_port":8080},
+            {"host_port":0}, {"host_port":65536}, {"container_port":80}
+        ]});
+        let targets = host_tcp_ports_from_container(&c);
+        assert_eq!(targets.len(), 2);
+        assert!(targets.contains(&"127.0.0.1:8080".parse().unwrap()));
+        assert!(targets.contains(&"[::1]:8080".parse().unwrap()));
+    }
+
+    #[tokio::test]
+    async fn health_probe_reaches_non_default_loopback_and_detects_closed_port() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.2:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        assert!(host_ports_ready(&[address]).await);
+        // Same port, wrong local address reproduces the former false failure.
+        let wrong = std::net::SocketAddr::new("127.0.0.1".parse().unwrap(), address.port());
+        assert!(!host_ports_ready(&[wrong]).await);
+        drop(listener);
+        assert!(!host_ports_ready(&[address]).await);
     }
 }
