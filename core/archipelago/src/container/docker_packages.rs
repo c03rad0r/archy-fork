@@ -16,6 +16,16 @@ use crate::data_model::{
     PackageDataEntry, PackageState, ServiceStatus, StaticFiles,
 };
 
+/// One displayed package for each known container/manifest alias. Keep the
+/// stopped-app restoration path in agreement with live-container discovery.
+fn canonical_package_id(name: &str) -> &str {
+    match name.strip_prefix("archy-").unwrap_or(name) {
+        "immich_server" => "immich",
+        "mempool-web" | "mempool-frontend" => "mempool",
+        name => name,
+    }
+}
+
 pub struct DockerPackageScanner {
     runtime: Arc<dyn ContainerRuntimeTrait>,
 }
@@ -99,24 +109,8 @@ impl DockerPackageScanner {
         debug!("Found {} UI containers", ui_containers.len());
 
         for container in containers {
-            // Extract app ID from container name
-            // Support both archy-* containers (docker-compose) and plain names (manual)
-            let app_id = if container.name.starts_with("archy-") {
-                container
-                    .name
-                    .strip_prefix("archy-")
-                    .unwrap_or(&container.name)
-                    .to_string()
-            } else {
-                // Use the container name as-is for manually started containers
-                container.name.clone()
-            };
-
-            // Normalize multi-container app IDs to their canonical names
-            let app_id = match app_id.as_str() {
-                "immich_server" => "immich".to_string(),
-                _ => app_id,
-            };
+            // Use the same alias mapping as stopped-app restoration.
+            let app_id = canonical_package_id(&container.name).to_owned();
 
             // Skip backend services (databases, APIs, etc.)
             if excluded_services.contains(&app_id.as_str()) {
@@ -388,21 +382,16 @@ fn restore_absent_installed(
     installed: &std::collections::HashSet<String>,
     uninstalled: &std::collections::HashSet<String>,
 ) {
-    fn canonical(name: &str) -> &str {
-        let name = name.strip_prefix("archy-").unwrap_or(name);
-        match name {
-            "immich_server" => "immich",
-            _ => name,
-        }
-    }
     let mut present: std::collections::HashSet<String> = containers
         .iter()
-        .map(|c| canonical(&c.name).to_owned())
+        .map(|c| canonical_package_id(&c.name).to_owned())
         .collect();
-    let removed: std::collections::HashSet<_> =
-        uninstalled.iter().map(|id| canonical(id)).collect();
+    let removed: std::collections::HashSet<_> = uninstalled
+        .iter()
+        .map(|id| canonical_package_id(id))
+        .collect();
     for name in installed {
-        let id = canonical(name);
+        let id = canonical_package_id(name);
         if removed.contains(id) || !present.insert(id.to_owned()) {
             continue;
         }
@@ -473,6 +462,33 @@ mod lifecycle_regression_tests {
         restore_absent_installed(&mut containers, &installed, &removed);
         assert_eq!(containers.len(), 2);
         assert_eq!(containers[0].state, ContainerState::Running);
+    }
+
+    #[test]
+    fn mempool_frontend_inventory_alias_does_not_create_a_second_package() {
+        let installed = ["mempool", "archy-mempool-web", "mempool-web"]
+            .into_iter()
+            .map(str::to_owned)
+            .collect();
+        let mut containers = Vec::new();
+        restore_absent_installed(&mut containers, &installed, &Default::default());
+        assert_eq!(containers.len(), 1);
+        assert_eq!(containers[0].name, "mempool");
+        containers[0].id = "live-frontend".into();
+        containers[0].state = ContainerState::Running;
+        restore_absent_installed(&mut containers, &installed, &Default::default());
+        assert_eq!(containers.len(), 1);
+        assert_eq!(containers[0].id, "live-frontend");
+        assert_eq!(containers[0].state, ContainerState::Running);
+        assert_eq!(canonical_package_id("archy-mempool-web"), "mempool");
+        assert_eq!(canonical_package_id("mempool-api"), "mempool-api");
+        containers.clear();
+        restore_absent_installed(
+            &mut containers,
+            &installed,
+            &["mempool".into()].into_iter().collect(),
+        );
+        assert!(containers.is_empty());
     }
 
     #[tokio::test]
