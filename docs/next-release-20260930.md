@@ -225,3 +225,35 @@ or ISO has been created.
   `/tmp/archy-readiness-final-ui-tests.log`.
 - These are live development fixes. The new signed catalog, versioned OTA and
   raw ISO still need preparation, artifact verification, signing and publication.
+
+### X250 Nginx Proxy Manager tunnel repair (2026-09-30)
+
+A further live report was a real startup failure, separate from the earlier slow
+image pull. An operator-specific Quadlet `web-tunnel.conf` published NPM's HTTP
+listener on tunnel port 18080. LND subsequently occupied 18080 on all addresses;
+pasta failed before NPM could start, with more than 1,400 systemd retries. The
+standard NPM manifest only publishes admin port 8081 and did not introduce this
+extra mapping. Changing the standard manifest would not repair this override.
+
+The node's override now uses free tunnel-local port 18081. Its persistent nftables
+configuration redirects only HTTP arriving from the configured WireGuard peer on
+the original tunnel destination to that port. The peer/public routing is unchanged;
+the input rule accepts the translated port and retains the existing interface,
+peer and forwarding restrictions. LND's REST port and native processes were not
+changed. This deployment-specific topology must not be copied into global app
+manifests or applied indiscriminately to other nodes.
+
+An abandoned certificate request also left an unreferenced database record and
+a temporary nginx challenge server for the same hostname. After backing up the
+entire NPM data directory and both configuration files, the unused failed record
+was soft-deleted and the stale challenge file archived. The referenced, valid
+certificate, proxy host, keys and user accounts were preserved.
+
+Live checks: NPM admin and API HTTP 200; nginx configuration validation with no
+duplicate-host warning; public HTTP redirects to HTTPS; valid public TLS reaches
+the site's existing authentication response, matching its direct upstream. NPM
+starts with zero automatic restarts and no missing-certificate renewal error.
+Bitcoin, LND and the production site container identities/start times were
+unchanged by the port repair. Rollback copies and the data archive are retained
+in the node's private support directory. No global OTA or ISO was published by
+this repair; the remaining release gates above still apply.
