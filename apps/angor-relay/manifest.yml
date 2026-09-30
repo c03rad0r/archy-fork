@@ -214,7 +214,7 @@ app:
       protocol: http
       path: /
   metadata:
-    icon: /assets/img/app-icons/angor.svg
+    icon: /assets/img/app-icons/angor-green.png
     tier: optional
     repo: https://github.com/hoytech/strfry
     features:

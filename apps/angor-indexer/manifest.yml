@@ -58,7 +58,7 @@ app:
     sync_required: true
     pruning_support: false
   metadata:
-    icon: /assets/img/app-icons/angor.svg
+    icon: /assets/img/app-icons/angor-green.png
     tier: optional
     repo: https://github.com/block-core/angor
     features:

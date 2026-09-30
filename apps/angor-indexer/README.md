@@ -46,7 +46,7 @@ Mempool recreation does not require editing IP addresses or restarting this app.
 No app-specific Rust installer is required.
 
 Source documentation: [Angor's official deployment guide](https://github.com/block-core/angor/blob/869dd43cf38332dd7128a284a6bf4c1cac44c1a7/docker/DEPLOY-INDEXER-AND-RELAY.md).
-The unmodified icon comes from [angor.io/images/logo-text.svg](https://angor.io/images/logo-text.svg), retrieved 2026-09-30.
+The app icon is based on [Angor’s dark-mode app icon](https://angor.io/images/app-icon-dark-mode.png), retrieved 2026-09-30. At the operator’s request, the outer corners use the same green as the background. The built-in imagegen edit preserved the black mark and filled the square green; the project asset is `neode-ui/public/assets/img/app-icons/angor-green.png`.
 
 Tests and release acceptance are recorded in the next-release checklist. The
 health probe establishes backend availability, not a guarantee that every

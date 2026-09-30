@@ -111,7 +111,12 @@ export function filterEntriesForTab(
   activeTab: AppsTab,
   selectedCategory: string,
 ): Array<[string, PackageDataEntry]> {
+  const hasMempool = entries.some(([id]) => id === 'mempool')
   return entries.filter(([id, pkg]) => {
+    // Older daemons can retain the frontend manifest alias during a restart.
+    // Keep one tile while the updated scanner converges; a legacy-only node
+    // must still be able to see and operate its sole Mempool entry.
+    if (hasMempool && ['mempool-web', 'mempool-frontend', 'archy-mempool-web'].includes(id)) return false
     if (isInternalToolingPackage(id, pkg)) return false
     const wantsWebsites = activeTab === 'websites' || activeTab === 'services'
     const isWebsite = isWebsitePackage(id, pkg)
@@ -231,6 +236,7 @@ function serviceParentIcon(id: string): string | undefined {
 export const DEFAULT_APP_ICON = '/assets/icon/favico-black-v2.svg'
 
 export function resolveAppIcon(id: string, pkg: PackageDataEntry, curatedIcon?: string): string {
+  if (id === 'angor-indexer' || id === 'angor-relay') return '/assets/img/app-icons/angor-green.png'
   const rawIcon = (pkg["static-files"]?.icon || "").trim()
   const icon = rawIcon === '/assets/img/favico.png' ? '' : rawIcon
   if (
@@ -296,9 +302,10 @@ export function isAppReadyForLaunch(pkg: PackageDataEntry): boolean {
 
 export function launchBlockedReason(id: string, pkg?: PackageDataEntry | null): string {
   const appId = pkg?.manifest?.id || id
+  const title = pkg ? resolveAppTitle(appId, pkg) : id
   if (pkg?.['ui-ready'] === false && !isServicePackage(appId, pkg)) {
     if (pkg.state === PackageState.Stopped || pkg.state === PackageState.Exited) return 'App is stopped. Start it to open it.'
-    return 'Waiting for the app to be ready…'
+    return `Waiting for ${title}…`
   }
   if (
     (appId === 'fedimint' || appId === 'fedimintd') &&
@@ -307,7 +314,7 @@ export function launchBlockedReason(id: string, pkg?: PackageDataEntry | null): 
     return 'Guardian opens a wait page until Bitcoin finishes initial sync.'
   }
   if (pkg && pkg.state === PackageState.Running && !isAppReadyForLaunch(pkg)) {
-    return 'Starting up — Launch will appear when the app is ready.'
+    return `Waiting for ${title}…`
   }
   return ''
 }

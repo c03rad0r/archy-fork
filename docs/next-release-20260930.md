@@ -120,3 +120,25 @@ smart-HTTP response type, current branch ref and Compose contents. Its
 slirp4netns route and all production app containers survived. The temporary
 Portainer fixture was absent. This verifies the repaired production route
 across reboot; it does not substitute for final new-runtime delivery checks.
+
+## Follow-up acceptance: app cards and Angor icon
+
+- Mempool duplicate traced to `archy-mempool-web` durable inventory alias being
+  restored beside the real `mempool` frontend. Shared scanner canonicalization
+  fixes live and absent-container paths without deleting installed markers.
+  Frontend suppresses aliases only while a canonical tile exists.
+- Readiness text names the app: “Waiting for Gitea…”. It shares the status row,
+  with full text available through its title; card actions use bottom alignment.
+- Angor uses the operator-supplied dark-mode icon with green outer corners.
+  Built-in imagegen prompt: fill transparent/white corners with the existing
+  flat green, preserve the black symbol, square opaque PNG, no added details.
+- Backend alias suite: 1608 passed, 4 ignored. Focused readiness/frame UI tests:
+  30 passed. Production UI build passed and is live on dev. Browser checks at
+  1440 and 1024 pixels verified named waiting text, bottom-aligned actions,
+  equal row heights, no overflow and one Mempool card after hard refresh.
+  The 390-pixel mobile icon layout also passed hard refresh. Final-source
+  isolated Mempool alias regression passed after the scanner simplification.
+- Managed Angor adapter acceptance: five stop/start/restart cycles, missing
+  prerequisite refusal, management restart and cleanup all passed. Both temporary
+  fixtures and their network were removed. Actual dev API verification remains
+  pending after removing an incomplete legacy-created adapter.

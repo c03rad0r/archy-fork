@@ -4,7 +4,7 @@
     :data-controller-launch="canLaunch(pkg) ? '' : undefined"
     tabindex="0"
     role="link"
-    class="glass-card p-6 transition-all hover:-translate-y-1 cursor-pointer relative min-w-0 overflow-hidden"
+    class="glass-card flex flex-col h-full p-6 transition-all hover:-translate-y-1 cursor-pointer relative min-w-0 overflow-hidden"
     :class="{ 'card-stagger': showStagger }"
     :style="{ '--stagger-index': index }"
     @click="$emit('goToApp', id)"
@@ -56,9 +56,9 @@
       {{ description }}
     </p>
 
-    <div v-if="!isInstalling && !isUninstalling && pkg.state !== 'installing'" class="flex items-center gap-2">
+    <div v-if="!isInstalling && !isUninstalling && pkg.state !== 'installing'" class="flex items-center gap-2 min-w-0">
       <span
-        class="inline-flex items-center gap-1.5 px-2 py-1 rounded text-xs font-medium"
+        class="shrink-0 inline-flex items-center gap-1.5 px-2 py-1 rounded text-xs font-medium"
         :class="getStatusClass(pkg.state, pkg.health, pkg['exit-code'])"
       >
         <svg
@@ -74,14 +74,14 @@
         <span v-if="pkg.state === 'running' && pkg.health === 'unhealthy'" class="w-1.5 h-1.5 rounded-full bg-orange-400 animate-pulse"></span>
         {{ getStatusLabel(pkg.state, pkg.health, pkg['exit-code']) }}
       </span>
+      <p v-if="blockedReason" :title="blockedReason" class="min-w-0 truncate text-xs leading-snug text-yellow-200/80">
+        {{ blockedReason }}
+      </p>
     </div>
-    <p v-if="blockedReason" class="mt-2 text-xs leading-snug text-yellow-200/80">
-      {{ blockedReason }}
-    </p>
 
     <!-- Quick Actions — icon buttons in uniform dark containers -->
     <!-- Installing progress — replaces action buttons -->
-    <div v-if="isInstalling || pkg.state === 'installing'" class="mt-4">
+    <div v-if="isInstalling || pkg.state === 'installing'" class="mt-auto pt-4">
       <div class="flex items-center justify-between mb-1.5">
         <span class="text-xs text-white/70 flex items-center gap-1.5">
           <svg class="animate-spin h-3 w-3" fill="none" viewBox="0 0 24 24">
@@ -101,7 +101,7 @@
     </div>
 
     <!-- Uninstalling progress — truthful stage-driven bar (mirrors install) -->
-    <div v-else-if="isUninstalling" class="mt-4">
+    <div v-else-if="isUninstalling" class="mt-auto pt-4">
       <div class="flex items-center justify-between mb-1.5">
         <span class="text-xs text-white/70 flex items-center gap-1.5">
           <svg class="animate-spin h-3 w-3" fill="none" viewBox="0 0 24 24">
@@ -120,7 +120,7 @@
       </div>
     </div>
 
-    <div v-else class="mt-4 flex gap-2">
+    <div v-else class="mt-auto pt-4 flex gap-2">
       <!-- Update available -->
       <button
         v-if="pkg['available-update'] && pkg.state !== 'updating'"

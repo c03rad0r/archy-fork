@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Named the app in compact readiness messages and kept app-card actions aligned at the bottom.
+- Removed duplicate Mempool cards caused by frontend container aliases in restored inventory.
+
 - Kept installed apps visible through restarts and hard refreshes, and delayed app launches until their web interface is ready.
 - Made Bitcoin version selection readable and usable in the ThinkPad kiosk, above the pruning settings.
 - Restored GitWorkshop build files in installation/update payloads and made slow image-pull progress clearer.

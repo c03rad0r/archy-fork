@@ -167,7 +167,7 @@ describe('appsConfig service filtering', () => {
     pkg.health = null
     expect(isAppReadyForLaunch(pkg)).toBe(false)
     expect(canLaunch(pkg)).toBe(false)
-    expect(launchBlockedReason(pkg.manifest.id, pkg)).toContain('Starting up')
+    expect(launchBlockedReason(pkg.manifest.id, pkg)).toBe('Waiting for GitWorkshop…')
     pkg.health = 'healthy'
     expect(canLaunch(pkg)).toBe(true)
   })
@@ -202,7 +202,7 @@ describe('HTTP readiness independent of container health', () => {
       pkg.health = 'healthy'
       expect(canLaunch(pkg)).toBe(false)
       expect(isAppReadyForLaunch(pkg)).toBe(false)
-      expect(launchBlockedReason(id, pkg)).toContain('Waiting')
+      expect(launchBlockedReason(id, pkg)).toBe(`Waiting for ${resolveAppTitle(id, pkg)}…`)
       pkg['ui-ready'] = true
       expect(isAppReadyForLaunch(pkg)).toBe(true)
     }
@@ -223,4 +223,14 @@ describe('manifest-generated service names', () => {
     expect(resolveAppTitle('angor-relay', pkg)).toBe('My project relay')
     expect(resolveAppTitle('unknown-service', makePkg('unknown-service', 'unknown-service', ''))).toBe('unknown-service')
   })
+})
+
+it('does not display a stale Mempool frontend alias beside its live package', () => {
+  const main = makePkg('mempool', 'Mempool', 'money')
+  const alias = makePkg('mempool-web', 'Mempool', 'money')
+  alias.state = PackageState.Restarting
+  const entries: Array<[string, PackageDataEntry]> = [['mempool', main], ['mempool-web', alias]]
+  const shown = [...filterEntriesForTab(entries, 'apps', 'all'), ...filterEntriesForTab(entries, 'services', 'all')]
+  expect(shown.map(([id]) => id)).toEqual(['mempool'])
+  expect(filterEntriesForTab([['mempool-web', alias]], 'apps', 'all').map(([id]) => id)).toEqual(['mempool-web'])
 })

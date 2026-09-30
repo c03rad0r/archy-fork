@@ -658,7 +658,7 @@
       ],
       "category": "money",
       "tier": "optional",
-      "icon": "/assets/img/app-icons/angor.svg",
+      "icon": "/assets/img/app-icons/angor-green.png",
       "repoUrl": "https://github.com/block-core/angor"
     },
     {
@@ -671,7 +671,7 @@
       "requires": [],
       "category": "nostr",
       "tier": "optional",
-      "icon": "/assets/img/app-icons/angor.svg",
+      "icon": "/assets/img/app-icons/angor-green.png",
       "repoUrl": "https://github.com/hoytech/strfry"
     }
   ]
