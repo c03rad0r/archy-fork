@@ -46,9 +46,9 @@ completed. See PR review for the accepted scope and coverage limits.
 ## Final release checklist
 
 - [ ] Finish all new-scope implementation and specific acceptance above.
-- [ ] Remove disposable fixtures and temporary test overrides; verify native
+- [x] Remove disposable fixtures and temporary test overrides; verify native
       Bitcoin/LND identity and start-state baselines remain protected.
-- [ ] Commit and push completed source changes to git and ngit.
+- [x] Commit and push completed source changes to git and ngit.
 - [ ] Run final backend/UI/regression/release gates on the final source; inspect
       skipped tests and report actual hardware/runtime coverage.
 - [ ] Prepare compatible signed app catalog; old runtimes must not apply a
@@ -127,7 +127,7 @@ across reboot; it does not substitute for final new-runtime delivery checks.
   restored beside the real `mempool` frontend. Shared scanner canonicalization
   fixes live and absent-container paths without deleting installed markers.
   Frontend suppresses aliases only while a canonical tile exists.
-- Readiness text names the app: “Waiting for Gitea…”. It shares the status row,
+- Readiness text names the app and condition: “Web UI not ready: Gitea”. It shares the status row,
   with full text available through its title; card actions use bottom alignment.
 - Angor uses the operator-supplied dark-mode icon with green outer corners.
   Built-in imagegen prompt: fill transparent/white corners with the existing
@@ -155,15 +155,15 @@ rootless Quadlet service with its declared port and network.
 Runtime promotion and the legacy installer-directory repair now finish before
 orchestrator construction. The background doctor no longer changes that tree.
 The final source backend suite passed 1,608 tests (four existing opt-in tests
-ignored). Optimized build and normal-path live restart verification remain pending.
+ignored). Optimized build and normal-path live startup/restart verification have now passed (see final follow-up below).
 
 Actual dev Angor acceptance passed managed service identity, no capabilities,
 UID 101:101, archy-net, public block height, CORS and both fee URL forms. During
 Bitcoin initial sync, the real Mempool fee API returns 503; the adapter faithfully
 returns the same status and body. Full-sync fee availability remains unverified;
 ready-backend API and failure/recovery behavior passed the isolated live fixture.
-The temporary `/run/archy-candidate-manifests` snapshot override must be removed
-when deploying the startup-order fix, then normal startup/reload must be checked.
+The temporary `/run/archy-candidate-manifests` snapshot override and snapshot
+are now removed; normal startup/reload verification passed.
 
 The latest complete UI suite passed 140 files / 1,132 tests. Release preflight
 passed all static, manifest, catalog, type and UI gates. The requested named
@@ -196,3 +196,32 @@ managed Angor restarts. No new release version/tag, OTA or ISO has been created.
 - Phoenixd has no browser UI. Headless services now omit web-readiness messages;
   actual browser apps name their web interface rather than waiting for
   themselves. Focused 23 UI tests and production build passed; deployed to dev.
+
+## Final live follow-up: all three reported readiness/display defects fixed
+
+- Final optimized backend is deployed on dev. Bitcoin Core's launch address is
+  `http://localhost:8334` and `ui-ready` is true during initial block download.
+  Live verification recorded height 293,855 with `initialblockdownload=true`.
+  Chromium at 1440 and 390 pixels opened the embedded dashboard, read a numeric
+  current block height, and repeated that check after hard refresh.
+- One healthy Mempool remains in server state and in desktop/mobile My Apps
+  after hard refresh. Its durable install markers were preserved.
+- Phoenixd remains a running headless service without a web launcher or false
+  web-readiness message. Desktop/mobile browser checks passed. For actual web
+  apps, the compact copy is “Web UI not ready: [app]”; the reason comes first so
+  narrower cards do not truncate it into a misleading self-dependency.
+- Five normal management startup and managed Angor restart cycles passed
+  across the two acceptance logs. The retry harness uses bounded readiness
+  polling; it does not accept a running container alone as API readiness.
+  Disk + catalog manifest count remained 62 across startup refreshes, replacing
+  the previous 62-to-54 failure. Temporary override and snapshot are removed.
+- Final backend tests: 1,609 passed, zero failed, four existing opt-in ignored.
+  Final UI tests: 140 files / 1,133 passed. Production UI build passed and is live.
+  Bitcoin/LND container identities and start timestamps stayed unchanged.
+- Evidence: `/tmp/archy-dashboard-address-deploy.log`,
+  `/tmp/archy-bitcoin-ibd-browser.log`, `/tmp/archy-mempool-live-browser.log`,
+  `/tmp/archy-service-readiness-browser.log`,
+  `/tmp/archy-runtime-order-remaining-cycles.log`, and
+  `/tmp/archy-readiness-final-ui-tests.log`.
+- These are live development fixes. The new signed catalog, versioned OTA and
+  raw ISO still need preparation, artifact verification, signing and publication.

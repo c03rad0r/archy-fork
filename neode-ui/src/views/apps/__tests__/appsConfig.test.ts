@@ -167,7 +167,7 @@ describe('appsConfig service filtering', () => {
     pkg.health = null
     expect(isAppReadyForLaunch(pkg)).toBe(false)
     expect(canLaunch(pkg)).toBe(false)
-    expect(launchBlockedReason(pkg.manifest.id, pkg)).toBe('Waiting for GitWorkshop’s web interface…')
+    expect(launchBlockedReason(pkg.manifest.id, pkg)).toBe('Web UI not ready: GitWorkshop')
     pkg.health = 'healthy'
     expect(canLaunch(pkg)).toBe(true)
   })
@@ -214,7 +214,7 @@ describe('HTTP readiness independent of container health', () => {
       pkg.health = 'healthy'
       expect(canLaunch(pkg)).toBe(false)
       expect(isAppReadyForLaunch(pkg)).toBe(false)
-      expect(launchBlockedReason(id, pkg)).toBe(`Waiting for ${resolveAppTitle(id, pkg)}’s web interface…`)
+      expect(launchBlockedReason(id, pkg)).toBe(`Web UI not ready: ${resolveAppTitle(id, pkg)}`)
       pkg['ui-ready'] = true
       expect(isAppReadyForLaunch(pkg)).toBe(true)
     }

@@ -308,7 +308,7 @@ export function launchBlockedReason(id: string, pkg?: PackageDataEntry | null): 
   if (pkg && isWebsitePackage(appId, pkg)) return ''
   if (pkg?.['ui-ready'] === false && !isServicePackage(appId, pkg)) {
     if (pkg.state === PackageState.Stopped || pkg.state === PackageState.Exited) return 'App is stopped. Start it to open it.'
-    return `Waiting for ${title}’s web interface…`
+    return `Web UI not ready: ${title}`
   }
   if (
     (appId === 'fedimint' || appId === 'fedimintd') &&
@@ -317,7 +317,7 @@ export function launchBlockedReason(id: string, pkg?: PackageDataEntry | null): 
     return 'Guardian opens a wait page until Bitcoin finishes initial sync.'
   }
   if (pkg && pkg.state === PackageState.Running && !isAppReadyForLaunch(pkg)) {
-    return `Waiting for ${title}’s web interface…`
+    return `Web UI not ready: ${title}`
   }
   return ''
 }
