@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { ref } from 'vue'
 import { PackageState, type PackageDataEntry } from '@/types/api'
-import { APP_CATEGORY_MAP, canLaunch, filterEntriesForTab, hasFrontendUi, isServiceContainer, isServicePackage, isWebsitePackage, isAppReadyForLaunch, launchBlockedReason, resolveAppIcon, useCategoriesWithApps, DEFAULT_APP_ICON } from '../appsConfig'
+import { APP_CATEGORY_MAP, canLaunch, filterEntriesForTab, hasFrontendUi, isServiceContainer, isServicePackage, isWebsitePackage, isAppReadyForLaunch, launchBlockedReason, resolveAppIcon, resolveAppTitle, useCategoriesWithApps, DEFAULT_APP_ICON } from '../appsConfig'
 
 function makePkg(id: string, title: string, category: string): PackageDataEntry {
   return {
@@ -212,5 +212,15 @@ describe('HTTP readiness independent of container health', () => {
     pkg.health = 'starting'
     pkg['ui-ready'] = true
     expect(isAppReadyForLaunch(pkg)).toBe(true)
+  })
+})
+
+describe('manifest-generated service names', () => {
+  it('gives a new headless service its declared name without a hardcoded curated entry', () => {
+    const pkg = makePkg('angor-relay', 'angor-relay', 'money')
+    expect(resolveAppTitle('angor-relay', pkg)).toBe('Angor Relay')
+    pkg.manifest.title = 'My project relay'
+    expect(resolveAppTitle('angor-relay', pkg)).toBe('My project relay')
+    expect(resolveAppTitle('unknown-service', makePkg('unknown-service', 'unknown-service', ''))).toBe('unknown-service')
   })
 })

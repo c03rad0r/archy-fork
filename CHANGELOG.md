@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+- Kept installed apps visible through restarts and hard refreshes, and delayed app launches until their web interface is ready.
+- Made Bitcoin version selection readable and usable in the ThinkPad kiosk, above the pruning settings.
+- Restored GitWorkshop build files in installation/update payloads and made slow image-pull progress clearer.
+- Fixed same-node Gitea access from Portainer, with persistent runtime migration, state backups and recovery after failed restarts.
+- Preserved Gitea configuration and SSH operation during fresh setup and upgrades.
+- Improved paid-file delivery, saved-file permissions and repeat-download compatibility; verified Tor-only payment with change, rejection refunds and free repeat downloads.
+- Added a headless Angor Indexer service using the existing Mempool/ElectrumX stack, and an optional separate Angor relay.
+- Prevented manifest command arguments containing apostrophes from being corrupted in generated services.
+
 ## v1.8.21-alpha (2026-09-30)
 
 - Fixed Bitcoin and other containers being forcibly stopped after ten seconds during managed updates and restarts.

@@ -214,7 +214,7 @@ import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 import type { PackageDataEntry } from '@/types/api'
 import {
-  isWebOnlyApp, opensInTab, canLaunch, launchBlockedReason, resolveAppIcon,
+  isWebOnlyApp, opensInTab, canLaunch, launchBlockedReason, resolveAppIcon, resolveAppTitle,
   getStatusClass, getStatusLabel, handleImageError,
 } from './appsConfig'
 import { getCuratedAppList } from '../discover/curatedApps'
@@ -255,10 +255,7 @@ const isWebOnly = computed(() => isWebOnlyApp(props.id))
 
 // Enrich from marketplace when backend data is sparse (e.g. during install)
 const curated = computed(() => curatedMap.get(props.id))
-const title = computed(() => {
-  const t = props.pkg.manifest?.title
-  return (t && t !== props.id) ? t : (curated.value?.title || t || props.id)
-})
+const title = computed(() => resolveAppTitle(props.id, props.pkg, curated.value?.title))
 const description = computed(() => {
   const d = props.pkg.manifest?.description?.short
   return (d && d !== 'Installing...') ? d : (curated.value?.description || d || '')

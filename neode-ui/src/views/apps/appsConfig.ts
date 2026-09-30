@@ -4,6 +4,7 @@ import type { Ref } from 'vue'
 import { computed } from 'vue'
 import { PackageState, type PackageDataEntry } from '@/types/api'
 import { matchPageScheme, resolveAppUrl } from '../appSession/appSessionConfig'
+import { GENERATED_APP_TITLES } from '../appSession/generatedAppSessionConfig'
 import { portIsGateFronted } from '../discover/curatedApps'
 import { isAutoTabApp } from '@/utils/autoTabApps'
 import {
@@ -12,6 +13,14 @@ import {
 } from './serviceNames'
 
 export type AppsTab = 'apps' | 'websites' | 'services'
+
+/** Use manifest-generated names when a new service has only its ID in runtime state. */
+export function resolveAppTitle(id: string, pkg: PackageDataEntry, curatedTitle?: string): string {
+  const title = pkg.manifest?.title
+  if (title && title !== id) return title
+  return curatedTitle || GENERATED_APP_TITLES[id] || title || id
+}
+
 
 // Re-exported for every existing caller — the canon moved to serviceNames.ts
 // so the App Store's catalog merge can share it without a circular import.

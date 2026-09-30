@@ -35,7 +35,7 @@ See the Framework incident and 1.8.21 execution records for evidence/limits.
 | App disappearance/readiness | Durable inventory and safe lifecycle repair; delayed HTTP and desktop/mobile hard-refresh checks passed | Final lifecycle/reboot gate on candidate |
 | X250 GitWorkshop/Nginx | Missing build contexts restored, dependency/build checks and live UI passed; Nginx slow pull diagnosed; truthful progress label | Verify both artifact payloads contain all build contexts |
 | PRs 161/162 | Reviewed, repaired, merged/closed normally; combined regression suite passed | Funded Tor-only candidate purchase, retained change, refund, Files bytes and cached repeat passed; include in signed artifacts |
-| Gitea/Portainer | Root cause confirmed; source network/backup/retry/catalog changes; real X250 routing repair and restart verified; private Git, SSH, LFS, registry and browser fixture checks passed | Automatic migration, scratch restore, failed-start recovery and reverse installation order passed. Operator confirms production site works through Portainer; still need final candidate reboot convergence and signed delivery |
+| Gitea/Portainer | Root cause confirmed; source network/backup/retry/catalog changes; real X250 routing repair and restart verified; private Git, SSH, LFS, registry and browser fixture checks passed | Automatic migration, scratch restore, failed-start recovery and reverse installation order passed. Operator confirms production site works through Portainer; production host reboot also preserved network/Git/Compose access; final candidate delivery and release checks remain |
 | Angor headless store service | Implemented standard Mempool adapter and separate optional relay, official logo, headless store entries and declarative dependency guard. API security/outage/DNS tests and five relay lifecycle cycles passed | Final candidate prerequisite/install acceptance, management restart/reboot checks and signed catalog delivery; real indexing on dev waits for Bitcoin sync |
 
 Durable payment receipts after a lost seller response remain a separately
@@ -113,3 +113,10 @@ whitespace-free command arguments containing apostrophes lost those characters
 in the generated service. The renderer now quotes these arguments and
 environment values; the updated isolated backend suite passed (1,607 passed, four opt-in tests
 ignored), and the final candidate rebuild is in progress. Do not tag a release before this live regression is verified.
+
+The production Portainer host subsequently rebooted after the routing repair.
+A post-boot probe from the actual Portainer namespace again verified the Git
+smart-HTTP response type, current branch ref and Compose contents. Its
+slirp4netns route and all production app containers survived. The temporary
+Portainer fixture was absent. This verifies the repaired production route
+across reboot; it does not substitute for final new-runtime delivery checks.

@@ -132,7 +132,7 @@ import type { AppCredential, AppCredentialsResponse, PackageDataEntry } from '@/
 import { rpcClient } from '@/api/rpc-client'
 import { resolveAppUrl } from '@/views/appSession/appSessionConfig'
 import { resolveAppCredentials } from './appCredentials'
-import { canLaunch, handleImageError, isWebsitePackage, opensInTab, resolveAppIcon, resolveRuntimeLaunchUrl, WEB_ONLY_APP_URLS } from './appsConfig'
+import { canLaunch, handleImageError, isWebsitePackage, opensInTab, resolveAppIcon, resolveAppTitle, resolveRuntimeLaunchUrl, WEB_ONLY_APP_URLS } from './appsConfig'
 import { getCuratedAppList } from '../discover/curatedApps'
 
 const ITEMS_PER_PAGE = 16 // 4 columns x 4 rows
@@ -194,9 +194,7 @@ const pages = computed(() => {
 })
 
 function getTitle(id: string, pkg: PackageDataEntry): string {
-  const t = pkg.manifest?.title
-  if (t && t !== id) return t
-  return curatedMap.get(id)?.title || t || id
+  return resolveAppTitle(id, pkg, curatedMap.get(id)?.title)
 }
 
 function getIcon(id: string, pkg: PackageDataEntry): string {
