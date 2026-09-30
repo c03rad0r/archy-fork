@@ -144,3 +144,24 @@ The installed-node drop-in persists through service restart/reboot but is not th
 fleet delivery mechanism. Automatic migration and signed catalog/OTA/ISO release
 validation remain pending; the source manifest declares the same network mode.
 Private deployment addresses, branch details and state archives are not committed.
+
+### Managed automatic migration and archive restore
+
+The new runtime candidate migrated an existing managed fixture from pasta to
+slirp without a manual unit edit. It preserved the account, saved Source and
+mount set, saved a private stopped-state archive plus the previous unit, restored
+Source API access, and cleared the pending restart marker. A management-service
+restart preserved the new container identity/start time and did not create
+another archive. The archive extracted into an isolated scratch directory and
+compared cleanly, including the database and Compose directory. Rootless archive
+ownership required scratch cleanup inside `podman unshare`; no production data
+was overwritten. Native Bitcoin and LND IDs/start times remained unchanged.
+
+This optimized candidate predates the final bounded backup-retry guard; that
+latest source passed the isolated 1,605-test suite and must also be exercised in
+the final release build. A fixture-only systemd start failure was then injected during a security
+directive migration. The failure retained the durable restart marker. After
+removing the injected failure, the reconciler restarted the service without a
+manual container start, restored Source API access and cleared the marker.
+Reverse install order, final-build retry-budget coverage, full reboot and
+signed delivery remain open.

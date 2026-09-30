@@ -35,7 +35,7 @@ See the Framework incident and 1.8.21 execution records for evidence/limits.
 | App disappearance/readiness | Durable inventory and safe lifecycle repair; delayed HTTP and desktop/mobile hard-refresh checks passed | Final lifecycle/reboot gate on candidate |
 | X250 GitWorkshop/Nginx | Missing build contexts restored, dependency/build checks and live UI passed; Nginx slow pull diagnosed; truthful progress label | Verify both artifact payloads contain all build contexts |
 | PRs 161/162 | Reviewed, repaired, merged/closed normally; combined regression suite passed | Candidate funded Tor-only purchase, change and Files acceptance |
-| Gitea/Portainer | Root cause confirmed; source network/backup/retry/catalog changes; real X250 routing repair and restart verified; private Git, SSH, LFS, registry and browser fixture checks passed | Automatic migration/rollback, failure retry, reverse install order, reboot convergence, production Source API/UI, signed delivery |
+| Gitea/Portainer | Root cause confirmed; source network/backup/retry/catalog changes; real X250 routing repair and restart verified; private Git, SSH, LFS, registry and browser fixture checks passed | Automatic migration, scratch restore and failure retry passed; still need reverse install order, reboot convergence, production Source API/UI, signed delivery |
 | Angor headless store service | Current official guide reviewed: standard Mempool with optional strfry relay | Implement using app-development docs; safe dependency/relay integration; official logo; API and lifecycle acceptance |
 
 Durable payment receipts after a lost seller response remain a separately

@@ -1,6 +1,9 @@
 # Repair and release execution — 2026-09-29
 
-**Status: IN PROGRESS. Do not publish an OTA or ISO until the release gates pass.**
+**Status: 1.8.21 PUBLISHED — see the completion record at the end.**
+
+The next release is tracked in [the current execution checklist](next-release-20260930.md).
+The dated entries below preserve the investigation history.
 
 User requires all tasks completed and tested on the development box before the
 next OTA and raw ISO. Passing unit tests alone does not establish live correctness.
@@ -52,8 +55,8 @@ next OTA and raw ISO. Passing unit tests alone does not establish live correctne
 - [x] Live waiting/UI verified on dev; recovery covered by deterministic tests.
 - [x] Framework operator acceptance and authorization to release recorded.
 - [x] Release version/changelog, catalog/image implications, signing prepared.
-- [ ] Signed OTA built, tested, published to git and ngit.
-- [ ] Raw ISO built, boot-tested, signed and published; download command supplied.
+- [x] Signed OTA built, tested, published to git and ngit.
+- [x] Raw ISO built, boot-tested, signed and published; download command supplied.
 
 Tests must not wipe/recreate wallets, prune the operator's existing full chain,
 or claim that arbitrary failures can never happen. Record material gaps before
