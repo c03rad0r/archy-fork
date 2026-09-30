@@ -64,6 +64,13 @@ for f in live/vmlinuz live/initrd.img live/filesystem.squashfs \
     fi
 done
 
+# Verify the mounted artifact carries every manifest-declared build source.
+if python3 "$REPO/scripts/check-app-build-contexts.py" "$MNT/archipelago"; then
+    ok "app build contexts and Dockerfiles"
+else
+    bad "incomplete app build payload"
+fi
+
 # ── GRUB must boot the live system ───────────────────────────────────
 if grep -q "boot=live" "$MNT/boot/grub/grub.cfg" 2>/dev/null; then
     ok "grub.cfg has boot=live"

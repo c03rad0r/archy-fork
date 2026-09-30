@@ -101,6 +101,7 @@ if [ -z "$FRONTEND_ARCHIVE" ]; then
                 cp -r "$PROJECT_ROOT/$runtime_path" "$RUNTIME_DIR/$runtime_path"
             fi
         done
+        python3 "$PROJECT_ROOT/scripts/check-app-build-contexts.py" "$RUNTIME_DIR"
         # KEEP IN SYNC with the `for unit in [...]` array in
         # core/archipelago/src/bootstrap.rs (run_runtime_assets). A unit that
         # bootstrap installs but this list does not ship simply never reaches a

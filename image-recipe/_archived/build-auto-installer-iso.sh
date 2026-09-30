@@ -2607,21 +2607,14 @@ if [ -f "$SCRIPT_DIR/../../scripts/image-versions.sh" ]; then
     echo "   ✅ Bundled image-versions.sh"
 fi
 
-# Bundle docker UI source files for building custom UIs on first boot
-# Always bundle — these are tiny HTML/CSS files, not container images
-if true; then
-    DOCKER_UI_DIR="$SCRIPT_DIR/../../docker"
-    if [ -d "$DOCKER_UI_DIR" ]; then
-        echo "   Bundling docker UI source files..."
-        mkdir -p "$ARCH_DIR/docker"
-        for ui_dir in bitcoin-ui lnd-ui electrs-ui; do
-            if [ -d "$DOCKER_UI_DIR/$ui_dir" ]; then
-                cp -r "$DOCKER_UI_DIR/$ui_dir" "$ARCH_DIR/docker/"
-                echo "   ✅ Bundled $ui_dir source"
-            fi
-        done
-    fi
-fi
+# Build-source apps need their complete contexts even on unbundled ISOs.
+# Keep this identical to the OTA runtime payload; a per-app allowlist silently
+# omitted GitWorkshop, FIPS and Cuprate and made fresh installs fail at 70%.
+DOCKER_UI_DIR="$SCRIPT_DIR/../../docker"
+[ -d "$DOCKER_UI_DIR" ] || { echo "Missing docker build sources" >&2; exit 1; }
+mkdir -p "$ARCH_DIR/docker"
+cp -a "$DOCKER_UI_DIR/." "$ARCH_DIR/docker/"
+python3 "$SCRIPT_DIR/../../scripts/check-app-build-contexts.py" "$ARCH_DIR"
 
 if [ "$UNBUNDLED" = "1" ]; then
     echo "   ✅ Unbundled build ready (Tor setup included, no container images)"

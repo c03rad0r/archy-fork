@@ -71,6 +71,7 @@ summary() {
 # ── Stage 1: static ──────────────────────────────────────────────────
 stage "git-diff-check"   git diff --check
 stage "cargo-fmt"        timeout 240 cargo fmt --manifest-path core/Cargo.toml --all --check
+stage "app-build-contexts" python3 tests/regression/app-build-contexts.py
 stage "manifest-shell"  python3 scripts/check-manifest-shell.py
 stage "doctor-ports" bash tests/regression/container-doctor-ports.sh
 stage "bitcoin-pruning" python3 tests/regression/bitcoin-prune-entrypoint.py

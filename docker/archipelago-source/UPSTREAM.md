@@ -16,9 +16,11 @@ lookup relays from the defaults. It does not replace GitWorkshop's NIP-34,
 GRASP, repository browser, issue, pull-request, or review interfaces.
 
 The separate dependency patch refreshes the npm lockfile and moves `fflate` to
-0.8.3, `react-router-dom` to 7.18.3, and Vitest to 5.0.0. The resulting clean
-install reports zero npm advisories; its type-check, 152 unit tests, and
-Archipelago subpath production build pass. Keeping this mechanical security
+0.8.3, `react-router-dom` to 7.18.3, and Vitest to 5.0.0. On 2026-09-30 the lockfile was refreshed again for `brace-expansion`
+1.1.21/5.0.12, `fast-uri` 3.1.8 and `ip-address` 10.7.2 after fresh node
+installs failed the retained dependency audit. The resulting clean install
+reports zero npm advisories; its type-check, 152 unit tests, and Archipelago
+subpath production build pass. The complete image also builds on the X250. Keeping this mechanical security
 update separate makes both the upstream integration and future dependency
 refreshes auditable.
 
