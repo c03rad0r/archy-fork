@@ -362,6 +362,31 @@ init()
               </button>
             </div>
             <div class="overflow-y-auto flex-1 min-h-0 space-y-6 pr-1">
+              <!-- v1.8.22-alpha -->
+              <div>
+                <div class="flex items-center gap-2 mb-3">
+                  <span class="text-xs font-mono px-2 py-0.5 rounded bg-orange-500/20 text-orange-300">v1.8.22-alpha</span>
+                  <span class="text-xs text-white/40">September 30, 2026</span>
+                </div>
+                <div class="space-y-3 text-sm text-white/80 pl-3 border-l border-white/10">
+                  <p>Fixed Angor Indexer health checks choosing IPv6 localhost for an IPv4 listener and unnecessarily restarting the working service.</p>
+                  <p>Prevented false app restarts by probing each published port at its actual bind address; Nginx Proxy Manager now checks its internal admin API.</p>
+                  <p>Added a backed-up migration for the recognized legacy Nginx Proxy Manager tunnel/LND port conflict in both OTA and ISO startup paths.</p>
+                  <p>Checked Bitcoin and Electrum companion dashboards instead of backend protocol ports, preserving dashboard access during initial sync.</p>
+                  <p>Removed web-interface waiting messages from headless services such as Phoenixd and clarified which interface is unavailable for launchable apps.</p>
+                  <p>Finished runtime app-file promotion before manifest loading, preventing startup catalog refresh from forgetting disk-only apps.</p>
+                  <p>Named the app in compact readiness messages and kept app-card actions aligned at the bottom.</p>
+                  <p>Removed duplicate Mempool cards caused by frontend container aliases in restored inventory.</p>
+                  <p>Kept installed apps visible through restarts and hard refreshes, and delayed app launches until their web interface is ready.</p>
+                  <p>Made Bitcoin version selection readable and usable in the ThinkPad kiosk, above the pruning settings.</p>
+                  <p>Restored GitWorkshop build files in installation/update payloads and made slow image-pull progress clearer.</p>
+                  <p>Fixed same-node Gitea access from Portainer, with persistent runtime migration, state backups and recovery after failed restarts.</p>
+                  <p>Preserved Gitea configuration and SSH operation during fresh setup and upgrades.</p>
+                  <p>Improved paid-file delivery, saved-file permissions and repeat-download compatibility; verified Tor-only payment with change, rejection refunds and free repeat downloads.</p>
+                  <p>Added a headless Angor Indexer service using the existing Mempool/ElectrumX stack, and an optional separate Angor relay.</p>
+                  <p>Prevented manifest command arguments containing apostrophes from being corrupted in generated services.</p>
+                </div>
+              </div>
               <!-- v1.8.21-alpha -->
               <div>
                 <div class="flex items-center gap-2 mb-3">

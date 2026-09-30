@@ -313,3 +313,24 @@ rootless gateway integration now runs the manifest's health check inside the
 actual image, in addition to endpoint/security/outage/DNS recovery assertions;
 all passed. A metadata regression covers the address-family requirement. Test
 containers and their network were removed by the fixture cleanup.
+
+## 1.8.22-alpha release preparation
+
+Final implementation gate passed: 1,612 isolated backend tests, zero failures,
+four existing opt-in tests ignored; 140 frontend files / 1,133 tests; frontend
+type check and production build; static/catalog/trust/build-context checks.
+The four exclusions require external AI backends, Reticulum subprocess/live
+transport, physical RNode hardware, or creation of a live Minibits profile.
+They are not claimed as executed by the isolated suite. Existing funded
+Cashu/Minibits and Framework acceptance remains recorded above.
+
+The real dev Angor stack now returns HTTP 200 fee estimates through both API
+forms; Bitcoin is still in initial sync, so full-chain completion remains an
+operational prerequisite rather than a completed test. The image-level health
+probe, outage/recovery and live native-state preservation checks passed after
+reloading the corrected manifest. Production Portainer again fetched the exact
+repository branch and Compose content from its own network namespace.
+
+Version preparation is 1.8.22-alpha. No new release tag or fleet-visible update
+manifest is published by the version commit. Optimized candidate deployment,
+artifact inspection, ISO smoke/boot checks and offline signatures follow.

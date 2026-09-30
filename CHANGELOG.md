@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## v1.8.22-alpha (2026-09-30)
 
 - Fixed Angor Indexer health checks choosing IPv6 localhost for an IPv4 listener and unnecessarily restarting the working service.
 
