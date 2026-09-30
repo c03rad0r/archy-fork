@@ -9,7 +9,12 @@ command -v setpriv >/dev/null
 sudo -n true || { echo 'Isolated backend tests require noninteractive sudo for systemd namespaces.' >&2; exit 1; }
 metadata=$(mktemp)
 trap 'rm -f "$metadata"' EXIT
-if ! cargo test --manifest-path "$REPO/core/Cargo.toml" -p archipelago --bin archipelago \
+case "${ARCHY_TEST_PACKAGE:-archipelago}" in
+  archipelago) test_target=(-p archipelago --bin archipelago) ;;
+  archipelago-container) test_target=(-p archipelago-container --lib) ;;
+  *) echo 'Unsupported isolated test package' >&2; exit 2 ;;
+esac
+if ! cargo test --manifest-path "$REPO/core/Cargo.toml" "${test_target[@]}" \
   --locked --no-run --message-format=json --config 'profile.test.package.archipelago.opt-level=0' > "$metadata"; then
     python3 - "$metadata" <<'PYDIAG'
 import json,sys

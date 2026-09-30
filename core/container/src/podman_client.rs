@@ -310,59 +310,7 @@ impl PodmanClient {
                 );
                 continue;
             }
-            // Honour the manifest's protocol (default tcp). netbird's STUN port
-            // is 3478/udp; forcing tcp here would publish the wrong protocol and
-            // silently break relay discovery.
-            let protocol = match port.protocol.to_ascii_lowercase().as_str() {
-                "udp" => "udp",
-                "sctp" => "sctp",
-                _ => "tcp",
-            };
-            // Effective bind. A gated port with no declared bind would
-            // publish 0.0.0.0 — the app would own every host address, which
-            // is both the exposure itself and the reason the daemon's app
-            // gate cannot bind those addresses to authenticate them. Pin it
-            // to loopback so the gate can take the external addresses.
-            //
-            // Doing it HERE, at container creation, is the point: the pin and
-            // the gate's takeover then both come from the daemon and cannot
-            // disagree. The earlier attempt put this decision in manifest
-            // data instead, and a node whose manifests lagged the binary
-            // published Bitcoin's loopback-only RPC across the LAN
-            // (test node, 2026-08-03).
-            //
-            // A port that already declares a bind is never overridden — that
-            // is exactly what keeps `bind: 127.0.0.1` ports host-local and
-            // leaves `auth: none` protocol ports (LND gRPC/REST, electrum)
-            // published as they are, so remote wallets keep working.
-            // NOTE: the daemon deliberately does NOT rewrite this. Pinning a
-            // published port to loopback is how an app hands its external
-            // addresses to the gate, but it belongs in the manifest, not in
-            // daemon-side inference:
-            //
-            //   * `bind` is already honoured by every publish path (here and
-            //     in package::install), so a manifest edit needs no code.
-            //   * inference here would cover only THIS path — proven on
-            //     a test node, where a recreate went through another one and
-            //     the pin never applied.
-            //   * and inferring from an ABSENT field is what republished
-            //     Bitcoin's loopback RPC across the LAN, and came within one
-            //     container-recreate of pinning LND's gRPC/REST and breaking
-            //     every remote wallet.
-            //
-            // So the migration ships as `bind: 127.0.0.1` in the signed
-            // catalog. Verified 2026-08-03 that a disk-only manifest edit is
-            // overridden by the catalog, which is precisely why the catalog is
-            // the right and only place to carry it.
-            let mut mapping = serde_json::json!({
-                "container_port": port.container,
-                "host_port": port.host,
-                "protocol": protocol,
-            });
-            if !port.bind.is_empty() {
-                mapping["host_ip"] = serde_json::json!(port.bind);
-            }
-            port_mappings.push(mapping);
+            port_mappings.push(podman_publish_mapping(port));
         }
 
         let mut mounts = Vec::new();
@@ -751,6 +699,25 @@ pub fn image_uses_insecure_registry(image: &str) -> bool {
         .is_some_and(|host| INSECURE_REGISTRY_HOSTS.contains(&host))
 }
 
+// Keep the explicitly declared bind and transport identical to Quadlet. The
+// app gate owns external listeners; container publication must not bypass it.
+fn podman_publish_mapping(port: &crate::manifest::PortMapping) -> serde_json::Value {
+    let protocol = match port.protocol.to_ascii_lowercase().as_str() {
+        "udp" => "udp",
+        "sctp" => "sctp",
+        _ => "tcp",
+    };
+    let mut mapping = serde_json::json!({
+        "container_port": port.container,
+        "host_port": port.host,
+        "protocol": protocol,
+    });
+    if !port.bind.is_empty() {
+        mapping["host_ip"] = serde_json::json!(port.bind);
+    }
+    mapping
+}
+
 fn podman_network_settings(
     network: Option<&str>,
     network_policy: &str,
@@ -1108,6 +1075,15 @@ mod tests {
         assert!(!image_uses_insecure_registry(
             "evil.example:80/source.archipelago-foundation.org/lfg2025/x:latest"
         ));
+    }
+
+    #[test]
+    fn portainer_manifest_keeps_private_network_and_loopback_api_publication() {
+        let m = AppManifest::parse(include_str!("../../../apps/portainer/manifest.yml")).unwrap();
+        assert_eq!(podman_network_settings(m.app.container.network.as_deref(), &m.app.security.network_policy), ("slirp4netns", None));
+        assert_eq!(podman_publish_mapping(&m.app.ports[0]), serde_json::json!({
+            "container_port": 9000, "host_port": 9000, "protocol": "tcp", "host_ip": "127.0.0.1"
+        }));
     }
 
     #[test]

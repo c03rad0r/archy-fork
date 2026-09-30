@@ -12,6 +12,7 @@ pub mod hooks;
 pub mod image_policy;
 pub mod image_versions;
 pub mod lnd;
+pub mod migration_backup;
 pub mod prod_orchestrator;
 pub mod quadlet;
 pub mod registry;

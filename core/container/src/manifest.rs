@@ -1746,40 +1746,28 @@ app:
             }
         }
         exempt.sort();
-        // 28 as of 2026-08-23: the 26 below plus cuprate's two exemptions —
-        // 18183 (Monero p2p gossip, same reasoning as bitcoin's 8333) and
-        // 18090 (host mapping for Monero's canonical 18089 restricted RPC,
-        // upstream's own safe-for-public
-        // subset that wallets connect to directly as a "remote node" over
-        // plain HTTP JSON-RPC — same reasoning as electrumx's 50001).
-        // cuprate's unrestricted RPC (full node control) stays loopback-only
-        // (auth: local), not in this set.
-        //
-        // 26 as of 2026-08-16: the 25 below plus phoenixd 9740, a
-        // loopback-only JSON API whose own generated http password
-        // authenticates every request (added with the phoenixd onboarding,
-        // which did not update this count — exactly the drift this test
-        // exists to catch).
-        //
-        // 25 as of the v1.7.123 port-policy round: bitcoin p2p (8333 ×2),
-        // core-lightning 9736/9835, electrumx 50001, fedimint 8173/8174,
-        // fedimint-gateway 8176/9737, gitea ssh 2222, lightning-stack
-        // 8091/9738/10010, lnd 9735/10009/18080, netbird 3478/8086/8087,
-        // pine TLS 10381 + the three voice ports (10200/10300/10400 — the
-        // disclosed known gap), router SSDP/mDNS 1900/5353. Every one is a
-        // deliberate, rationale-carrying exemption; the release-gate test
-        // stage timed out that cycle, so the count here lagged at 17.
-        assert_eq!(
-            exempt.len(),
-            28,
-            "unauthenticated port set changed — review before updating this count: {exempt:?}"
-        );
+        // Reviewed 2026-09-30: lightning-stack's three retired endpoints
+        // disappeared; Cuprate restricted RPC moved from none to gate-open.
+        // Compare exact endpoints, not just a count that can hide substitutions.
+        let expected = [
+            ("bitcoin-core", 8333), ("bitcoin-knots", 8333),
+            ("core-lightning", 9736), ("core-lightning", 9835),
+            ("cuprate", 18183), ("electrumx", 50001),
+            ("fedimint", 8173), ("fedimint", 8174),
+            ("fedimint-gateway", 8176), ("fedimint-gateway", 9737),
+            ("gitea", 2222), ("lnd", 9735), ("lnd", 10009), ("lnd", 18080),
+            ("netbird", 8087), ("netbird-server", 3478), ("netbird-server", 8086),
+            ("phoenixd", 9740), ("pine", 10381), ("pine-openwakeword", 10400),
+            ("pine-piper", 10200), ("pine-whisper", 10300),
+            ("router", 1900), ("router", 5353),
+        ].into_iter().map(|(id, port)| (id.to_owned(), port)).collect::<Vec<_>>();
+        assert_eq!(exempt, expected, "unauthenticated endpoint set changed; review each exemption");
     }
 
     /// `auth: open` ports are served by the gate WITHOUT its login challenge,
     /// so they are the second unauthenticated-by-the-gate surface and get the
-    /// same review guard as `auth: none`. Each one must be an app that
-    /// enforces a real login of its own.
+    /// same review guard as `auth: none`. Each must enforce its own login or
+    /// have an explicitly reviewed public protocol purpose.
     #[test]
     fn gate_open_ports_are_all_accounted_for() {
         let apps = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../apps");
@@ -1801,6 +1789,8 @@ app:
             }
         }
         open.sort();
+        // Cuprate 18090 is its deliberately public restricted RPC subset;
+        // unrestricted node-control RPC remains container-loopback-only.
         // Gitea 3001 (git clients speak basic-auth, not browser cookies),
         // BTCPay 23000 (checkout/invoice/webhook endpoints must be reachable
         // by anonymous payers), and — since the v1.8.7 platform round — the
@@ -1812,11 +1802,12 @@ app:
             open,
             vec![
                 ("btcpay-server".to_string(), 23000u16),
+                ("cuprate".to_string(), 18090u16),
                 ("gitea".to_string(), 3001u16),
                 ("nginx-proxy-manager".to_string(), 8081u16),
                 ("tailscale".to_string(), 8240u16),
             ],
-            "gate-open port set changed — every entry must be an app with its own login"
+            "gate-open port set changed — review login or intentional public protocol purpose"
         );
     }
 

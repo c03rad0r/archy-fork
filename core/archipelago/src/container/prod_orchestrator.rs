@@ -91,6 +91,14 @@ fn is_builtin_network_mode(network: &str) -> bool {
     )
 }
 
+// Only an explicitly selected rootless mode establishes drift. An omitted
+// network delegates to Podman and must not recreate unrelated installed apps.
+fn rootless_network_mode_drifted(expected: Option<&str>, actual: &str) -> bool {
+    matches!(expected, Some("slirp4netns" | "pasta"))
+        && !actual.trim().is_empty()
+        && actual.trim().split(':').next() != expected
+}
+
 fn uses_pasta_network(manifest: &AppManifest) -> bool {
     manifest.app.container.network.as_deref() == Some("pasta")
 }
@@ -2499,6 +2507,7 @@ impl ProdContainerOrchestrator {
                                 return Ok(ReconcileAction::NoOp);
                             }
                             tracing::info!(app_id = %app_id, container = %name, "container env drift detected — recreating");
+                            self.backup_network_change(&name, &resolved_manifest).await?;
                             let _ = self.runtime.stop_container(&name).await;
                             let _ = self.runtime.remove_container(&name).await;
                             self.install_fresh(lm).await?;
@@ -2555,6 +2564,7 @@ impl ProdContainerOrchestrator {
                                 .await
                         {
                             tracing::info!(app_id = %app_id, container = %name, "stopped container env/port drift detected — recreating");
+                            self.backup_network_change(&name, &resolved_manifest).await?;
                             let _ = self.runtime.remove_container(&name).await;
                             self.install_fresh(lm).await?;
                             return Ok(ReconcileAction::Installed);
@@ -3080,13 +3090,9 @@ impl ProdContainerOrchestrator {
     /// app is a companion (companion.rs owns those units), or when no
     /// unit file exists yet (install_via_quadlet handles first-write).
     ///
-    /// We DON'T restart the .service when content changes — running
-    /// containers keep their current config until an operator-initiated
-    /// restart picks up the new file. That's the right tradeoff: file
-    /// updates are cheap and non-destructive; service restarts are
-    /// destructive (the SIGKILL cascade we're trying to eliminate).
-    /// systemctl --user daemon-reload runs only when content actually
-    /// changed, so steady-state reconcile ticks pay just one fs read.
+    /// Ordinary metadata changes wait for an operator restart. Runtime-affecting
+    /// changes restart the service and retain a durable pending marker until
+    /// that succeeds, including across daemon restarts and failed reloads.
     async fn sync_quadlet_unit(&self, lm: &LoadedManifest, name: &str) -> Result<()> {
         // Companions: same reasoning as migrate_to_quadlet_if_needed —
         // companion.rs renders these units with a different shape, syncing
@@ -3106,7 +3112,7 @@ impl ProdContainerOrchestrator {
         }
         let old_body = tokio::fs::read_to_string(&unit_path)
             .await
-            .unwrap_or_default();
+            .with_context(|| format!("read existing quadlet for {name}"))?;
         let restart_required = quadlet::contains_stale_health_gate(&old_body);
 
         let mut resolved = lm.manifest.clone();
@@ -3122,49 +3128,47 @@ impl ProdContainerOrchestrator {
             quadlet::network_aliases_changed(&old_body, &new_body);
         let restart_for_exec_change = quadlet::exec_changed(&old_body, &new_body);
         let restart_for_health_change = quadlet::health_cmd_changed(&old_body, &new_body);
+        let needs_restart = restart_required
+            || restart_for_port_change
+            || restart_for_network_alias_change
+            || restart_for_exec_change
+            || restart_for_health_change;
+        // Record the obligation BEFORE replacing the unit. A failed reload or
+        // restart must not become a no-op on the next tick just because the
+        // generated file already matches the manifest.
+        let pending = quadlet::RestartObligation::prepare(&unit_path, needs_restart).await?;
+        if pending.is_pending() {
+            self.ensure_resolved_source_available(lm).await?;
+        }
+        if restart_for_network_alias_change {
+            self.backup_network_change(name, &resolved).await?;
+        }
         let changed = quadlet::write_if_changed(&unit, &unit_dir)
             .await
             .with_context(|| format!("drift-sync quadlet unit for {name}"))?;
-        if changed {
+        if changed || pending.is_pending() {
             quadlet::daemon_reload_user()
                 .await
                 .context("systemctl --user daemon-reload after drift-syncing quadlet unit")?;
-            tracing::info!(
-                app_id = %lm.manifest.app.id,
-                container = %name,
-                "Quadlet unit drift-synced — file rewritten, .service NOT restarted (operator restart picks up new config)"
-            );
         }
-        if changed
-            && (restart_required
-                || restart_for_port_change
-                || restart_for_network_alias_change
-                || restart_for_exec_change
-                || restart_for_health_change)
-        {
-            self.ensure_resolved_source_available(lm).await?;
+        if pending.is_pending() {
             let service = unit.service_name();
-            let reason = if restart_required {
-                "stale health gate"
-            } else if restart_for_port_change {
-                "port binding drift"
-            } else if restart_for_network_alias_change {
-                "network alias drift"
-            } else if restart_for_health_change {
-                "health command drift"
-            } else {
-                "exec drift"
-            };
             tracing::info!(
                 app_id = %lm.manifest.app.id,
                 container = %name,
                 service = %service,
-                reason = reason,
-                "Quadlet unit rewrite requires service restart"
+                "Applying pending Quadlet runtime change"
             );
             quadlet::restart_service(&service)
                 .await
                 .with_context(|| format!("restart drifted quadlet service {service}"))?;
+            pending.complete().await?;
+        } else if changed {
+            tracing::info!(
+                app_id = %lm.manifest.app.id,
+                container = %name,
+                "Quadlet metadata updated; operator restart will apply it"
+            );
         }
         Ok(())
     }
@@ -3866,6 +3870,61 @@ impl ProdContainerOrchestrator {
         Ok(())
     }
 
+    async fn backup_network_change(&self, name: &str, manifest: &AppManifest) -> Result<()> {
+        if !crate::container::migration_backup::enabled(manifest)? {
+            return Ok(());
+        }
+        // Only back up an actual network migration, not ordinary env drift.
+        let output = tokio::process::Command::new("podman")
+            .args(["inspect", name, "--format", "{{.HostConfig.NetworkMode}}"])
+            .output().await.context("inspect network before migration backup")?;
+        let present = if output.status.success() {
+            if !rootless_network_mode_drifted(manifest.app.container.network.as_deref(), &String::from_utf8_lossy(&output.stdout)) {
+                return Ok(());
+            }
+            true
+        } else {
+            // A crash after gracefully stopping a --rm Quadlet container can
+            // leave only its data and old unit. Prove absence before snapshotting
+            // stopped state; an inspect/Podman failure is not proof of absence.
+            let exists = tokio::process::Command::new("podman")
+                .args(["container", "exists", name]).status().await?;
+            if exists.code() != Some(1) {
+                anyhow::bail!("cannot verify existing container before network migration backup");
+            }
+            false
+        };
+        let service = format!("{name}.service");
+        let managed = quadlet::unit_exists(name).await;
+        let previous_unit = if managed {
+            Some(tokio::fs::read(quadlet::unit_dir().await?.join(format!("{name}.container"))).await?)
+        } else {
+            None
+        };
+        if managed {
+            quadlet::stop_service(&service).await?;
+        } else if present {
+            self.runtime.stop_container(name).await?;
+        }
+        match crate::container::migration_backup::snapshot(manifest, &self.data_dir, previous_unit.as_deref()).await {
+            Ok(archive) => {
+                tracing::info!(container = %name, backup = %archive.display(), "Persistent state saved before network migration");
+                Ok(())
+            }
+            Err(error) => {
+                // The unit has not been rewritten yet. Restore its previous
+                // service on backup failure and report the migration failure.
+                let restored = if managed {
+                    quadlet::enable_now(&service).await
+                } else {
+                    self.runtime.start_container(name).await
+                };
+                restored.context("restore original app after failed migration snapshot")?;
+                Err(error)
+            }
+        }
+    }
+
     async fn container_env_drifted(&self, name: &str, manifest: &AppManifest) -> bool {
         if cfg!(test) {
             return false;
@@ -3873,6 +3932,23 @@ impl ProdContainerOrchestrator {
 
         if self.container_command_drifted(name, manifest).await {
             return true;
+        }
+
+        // Quadlet handles declarative Network= drift above. Legacy rootless
+        // Podman containers need the same convergence when no unit owns them.
+        if matches!(manifest.app.container.network.as_deref(), Some("slirp4netns" | "pasta")) {
+            if let Ok(output) = tokio::process::Command::new("podman")
+                .args(["inspect", name, "--format", "{{.HostConfig.NetworkMode}}"])
+                .output()
+                .await
+            {
+                if output.status.success() && rootless_network_mode_drifted(
+                    manifest.app.container.network.as_deref(),
+                    &String::from_utf8_lossy(&output.stdout),
+                ) {
+                    return true;
+                }
+            }
         }
 
         let inspect = tokio::process::Command::new("podman")
@@ -4917,6 +4993,17 @@ mod tests {
     /// recovered when its siblings have live containers (the stack is
     /// installed), and left alone when the whole stack is gone or the app
     /// is not a stack member at all.
+    #[test]
+    fn explicit_rootless_network_change_converges_without_guessing_defaults() {
+        assert!(rootless_network_mode_drifted(Some("slirp4netns"), "pasta"));
+        assert!(rootless_network_mode_drifted(Some("slirp4netns"), "bridge"));
+        assert!(!rootless_network_mode_drifted(Some("slirp4netns"), "slirp4netns"));
+        assert!(!rootless_network_mode_drifted(Some("slirp4netns"), "slirp4netns:allow_host_loopback=true"));
+        assert!(!rootless_network_mode_drifted(None, "pasta"));
+        assert!(!rootless_network_mode_drifted(Some("slirp4netns"), ""));
+        assert!(!rootless_network_mode_drifted(Some("archy-net"), "bridge"));
+    }
+
     #[test]
     fn absent_stack_member_recovery_requires_a_live_sibling() {
         let present: HashSet<String> = ["indeedhub-redis", "indeedhub-relay", "indeedhub"]
