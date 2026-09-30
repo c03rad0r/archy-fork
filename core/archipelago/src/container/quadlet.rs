@@ -938,6 +938,53 @@ pub fn health_cmd_changed(old_body: &str, new_body: &str) -> bool {
             != directive_values(new_body, "HealthRetries=")
 }
 
+/// A unit rewrite and a successful systemd restart are separate operations.
+/// Keep the restart obligation across errors or a management-daemon restart.
+pub struct RestartObligation {
+    marker: PathBuf,
+    pending: bool,
+}
+
+impl RestartObligation {
+    pub async fn prepare(unit_path: &Path, newly_required: bool) -> Result<Self> {
+        let marker = unit_path.with_extension("restart-pending");
+        if newly_required {
+            // Contents contain no manifest environment or credentials. sync_all
+            // makes the obligation durable before the subsequent unit rename.
+            let file = tokio::fs::OpenOptions::new()
+                .write(true)
+                .create(true)
+                .truncate(false)
+                .open(&marker)
+                .await
+                .context("record pending Quadlet restart")?;
+            file.sync_all().await?;
+            if let Some(parent) = marker.parent() {
+                tokio::fs::File::open(parent).await?.sync_all().await?;
+            }
+        }
+        let pending = tokio::fs::try_exists(&marker).await?;
+        Ok(Self { marker, pending })
+    }
+
+    pub fn is_pending(&self) -> bool {
+        self.pending
+    }
+
+    /// Call only after systemd accepted the replacement service successfully.
+    pub async fn complete(self) -> Result<()> {
+        if self.pending {
+            tokio::fs::remove_file(&self.marker)
+                .await
+                .context("clear completed Quadlet restart")?;
+            if let Some(parent) = self.marker.parent() {
+                tokio::fs::File::open(parent).await?.sync_all().await?;
+            }
+        }
+        Ok(())
+    }
+}
+
 pub fn publish_ports_changed(old_body: &str, new_body: &str) -> bool {
     let old_ports = directive_values(old_body, "PublishPort=");
     let new_ports = directive_values(new_body, "PublishPort=");
@@ -1542,6 +1589,28 @@ app:
     }
 
     #[test]
+    fn portainer_catalog_network_repairs_same_node_routing_without_exposing_backend() {
+        let manifest = AppManifest::parse(include_str!(
+            "../../../../apps/portainer/manifest.yml"
+        ))
+        .expect("shipped Portainer manifest must parse");
+        let new = QuadletUnit::from_manifest(&manifest, "portainer").render();
+        assert!(new.contains("Network=slirp4netns\n"));
+        assert!(!new.contains("NetworkAlias="));
+        assert!(new.contains("PublishPort=127.0.0.1:9000:9000/tcp"));
+        assert!(!new.contains("PublishPort=0.0.0.0"));
+        // The upgrade changes networking only: retain both state mounts and the
+        // existing rootless socket, without an app.ini or repository rewrite.
+        assert!(new.contains("Volume=/var/lib/archipelago/portainer:/data"));
+        assert!(new.contains("Volume=/var/lib/archipelago/portainer/compose:/data/compose"));
+        assert!(new.contains("Volume=/run/user/1000/podman/podman.sock:/var/run/docker.sock"));
+        let old = new.replace("Network=slirp4netns\n", "");
+        assert!(network_aliases_changed(&old, &new));
+        assert!(!network_aliases_changed(&new, &new));
+        assert!(!publish_ports_changed(&old, &new));
+    }
+
+    #[test]
     fn from_manifest_slirp4netns_omits_network_alias() {
         let yaml = r#"
 app:
@@ -1889,6 +1958,35 @@ app:
         let new = "[Container]\nNetwork=archy-net\nNetworkAlias=bitcoin-knots\n";
         assert!(network_aliases_changed(old, new));
         assert!(!network_aliases_changed(new, new));
+    }
+
+    #[tokio::test]
+    async fn failed_runtime_change_remains_pending_when_unit_already_matches() {
+        let dir = tempfile::tempdir().unwrap();
+        let unit = dir.path().join("portainer.container");
+        tokio::fs::write(&unit, "[Container]\n").await.unwrap();
+        let pending = RestartObligation::prepare(&unit, true).await.unwrap();
+        assert!(pending.is_pending());
+        tokio::fs::write(&unit, "[Container]\nNetwork=slirp4netns\n")
+            .await
+            .unwrap();
+        // Simulate systemctl failure or daemon interruption after unit rewrite.
+        drop(pending);
+        let retry = RestartObligation::prepare(&unit, false).await.unwrap();
+        assert!(retry.is_pending(), "matching unit must not discard failed restart");
+        retry.complete().await.unwrap();
+        assert!(!RestartObligation::prepare(&unit, false).await.unwrap().is_pending());
+    }
+
+    #[tokio::test]
+    async fn pending_runtime_change_errors_are_not_reported_as_success() {
+        let dir = tempfile::tempdir().unwrap();
+        let missing = dir.path().join("missing/app.container");
+        assert!(RestartObligation::prepare(&missing, true).await.is_err());
+        let unit = dir.path().join("app.container");
+        let pending = RestartObligation::prepare(&unit, true).await.unwrap();
+        tokio::fs::remove_file(unit.with_extension("restart-pending")).await.unwrap();
+        assert!(pending.complete().await.is_err());
     }
 
     #[test]

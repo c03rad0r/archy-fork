@@ -618,6 +618,28 @@ impl DockerRuntime {
     }
 }
 
+// Docker is a development fallback. Refuse Podman-only network modes instead
+// of silently installing a different topology; still honor binds for other apps.
+fn docker_network_and_ports(manifest: &AppManifest, offset: u16) -> Result<Vec<String>> {
+    let network = manifest.app.container.network.as_deref()
+        .filter(|v| !v.is_empty())
+        .unwrap_or(&manifest.app.security.network_policy);
+    if matches!(network, "slirp4netns" | "pasta") {
+        anyhow::bail!("this app requires rootless Podman networking ({network})");
+    }
+    let mut args = Vec::new();
+    if !network.is_empty() && network != "isolated" {
+        args.extend(["--network".to_owned(), network.to_owned()]);
+    }
+    for port in &manifest.app.ports {
+        let host = port.host.checked_add(offset).context("published port offset overflow")?;
+        let bind = if port.bind.is_empty() { String::new() } else { format!("{}:", port.bind) };
+        let protocol = if port.protocol.is_empty() { "tcp" } else { &port.protocol };
+        args.extend(["-p".to_owned(), format!("{bind}{host}:{}/{protocol}", port.container)]);
+    }
+    Ok(args)
+}
+
 #[async_trait]
 impl ContainerRuntime for DockerRuntime {
     async fn pull_image(&self, image: &str, signature: Option<&str>) -> Result<()> {
@@ -657,25 +679,7 @@ impl ContainerRuntime for DockerRuntime {
             cmd.arg("--read-only");
         }
 
-        match manifest.app.security.network_policy.as_str() {
-            "host" => {
-                cmd.arg("--network").arg("host");
-            }
-            "isolated" => {
-                // Docker uses bridge network by default
-            }
-            _ => {
-                cmd.arg("--network")
-                    .arg(&manifest.app.security.network_policy);
-            }
-        }
-
-        // Port mappings with offset
-        for port in &manifest.app.ports {
-            let host_port = port.host + port_offset;
-            cmd.arg("-p")
-                .arg(format!("{}:{}", host_port, port.container));
-        }
+        cmd.args(docker_network_and_ports(manifest, port_offset)?);
 
         // Volumes
         for volume in &manifest.app.volumes {
@@ -1034,6 +1038,17 @@ impl ContainerRuntime for AutoRuntime {
 mod tests {
     use super::*;
     use std::collections::HashMap;
+
+    #[test]
+    fn docker_fallback_rejects_rootless_only_topology_and_preserves_bind_protocol() {
+        let mut m = AppManifest::parse(include_str!("../../../apps/portainer/manifest.yml")).unwrap();
+        assert!(docker_network_and_ports(&m, 0).is_err());
+        m.app.container.network = Some("bridge".into());
+        m.app.ports[0].protocol = "udp".into();
+        let args = docker_network_and_ports(&m, 1).unwrap();
+        assert_eq!(args, vec!["--network", "bridge", "-p", "127.0.0.1:9001:9000/udp"]);
+        assert!(docker_network_and_ports(&m, u16::MAX).is_err());
+    }
 
     #[test]
     fn missing_container_classifier_covers_podman5_phrasings() {

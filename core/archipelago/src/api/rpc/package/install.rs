@@ -1699,32 +1699,10 @@ autopilot.active=false\n",
             patch_indeedhub_nostr_provider().await;
         }
 
-        // Gitea: keep it on its native host port (3001). The UI opens Gitea
-        // in a new tab on that direct port so absolute asset URLs must be
-        // rooted at the host port rather than Archipelago's /app/gitea/ path.
-        if package_id == "gitea" {
-            let _ = tokio::fs::remove_file("/etc/nginx/conf.d/gitea-iframe.conf").await;
-
-            // Set ROOT_URL to the direct launch route so links/assets stay
-            // anchored under the same origin Gitea is launched from.
-            let host_ip = &self.config.host_ip;
-            let _ = tokio::process::Command::new("podman")
-                .args(["exec", "gitea", "sh", "-c",
-                       &format!("grep -q ROOT_URL /data/gitea/conf/app.ini && sed -i 's|ROOT_URL.*|ROOT_URL = http://{}:3001/|' /data/gitea/conf/app.ini || true", host_ip)])
-                .output()
-                .await;
-            // Also ensure X_FRAME_OPTIONS is empty so Gitea doesn't send the header
-            let _ = tokio::process::Command::new("podman")
-                .args(["exec", "gitea", "sh", "-c",
-                       "grep -q X_FRAME_OPTIONS /data/gitea/conf/app.ini && sed -i 's|X_FRAME_OPTIONS.*|X_FRAME_OPTIONS =|' /data/gitea/conf/app.ini || sed -i '/^\\[security\\]/a X_FRAME_OPTIONS =' /data/gitea/conf/app.ini"])
-                .output()
-                .await;
-
-            info!(
-                "Gitea: ROOT_URL set to http://{}:3001/, X_FRAME_OPTIONS cleared",
-                host_ip
-            );
-        }
+        // Gitea owns its public URL and security settings in app.ini, including
+        // values chosen in its first-run setup. Do not rewrite operator values
+        // or claim success from best-effort grep/sed commands. The app gate
+        // fronts its declared HTTP port and handles frame headers separately.
 
         if package_id == "nextcloud" {
             let host_ip = &self.config.host_ip;

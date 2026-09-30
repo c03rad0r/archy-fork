@@ -14,7 +14,15 @@ app:
   container:
     image: source.archipelago-foundation.org/lfg2025/portainer:2.45.0
     pull_policy: if-not-present
+    # Portainer fetches Git sources and images from services on this same node.
+    # Rootless pasta copies the host LAN address into its namespace, so a LAN
+    # URL points back at Portainer itself. Give it a private address with the
+    # supported rootless slirp backend; public app URLs still traverse the gate.
+    network: slirp4netns
     data_uid: "1000:1000"
+
+  # Snapshot state before an upgrade recreates this app with new networking.
+  backup_on_network_change: true
 
   dependencies:
     - storage: 1Gi
