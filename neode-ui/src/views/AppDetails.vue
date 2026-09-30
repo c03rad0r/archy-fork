@@ -259,7 +259,7 @@ const canLaunch = computed(() => {
   const hasRuntimeAddress = !!pkg.value.installed?.['interface-addresses']?.main?.['lan-address']
   const hasKnownLaunchUrl = typeof window !== 'undefined' && !!resolveAppUrl(pkg.value.manifest.id)
   const hasUI = !!(pkg.value.manifest.interfaces?.main?.ui || hasRuntimeAddress || hasKnownLaunchUrl)
-  return hasUI && pkg.value.state === 'running' && pkg.value.health !== 'starting' && pkg.value.health !== 'unhealthy'
+  return hasUI && pkg.value['ui-ready'] !== false && pkg.value.state === 'running' && pkg.value.health !== 'starting' && pkg.value.health !== 'unhealthy'
 })
 
 const features = computed(() => {

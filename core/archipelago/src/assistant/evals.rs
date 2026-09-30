@@ -322,6 +322,7 @@ async fn eval_rpc_handler() -> (Arc<RpcHandler>, tempfile::TempDir) {
 fn installed_entry(app_id: &str) -> crate::data_model::PackageDataEntry {
     use crate::data_model::{Description, Manifest, PackageDataEntry, PackageState, StaticFiles};
     PackageDataEntry {
+        ui_ready: None,
         state: PackageState::Running,
         health: None,
         exit_code: None,

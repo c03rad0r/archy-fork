@@ -6,7 +6,7 @@
            first, then sync status arrives), and the sync screen is strictly
            more informative, so it takes precedence instead of the two
            rendering on top of each other. -->
-      <AppLoadingScreen v-if="loading && !(electrsSync && !electrsSync.stale)" :icon="appIcon" :title="appTitle" :progress="loadProgress" />
+      <AppLoadingScreen v-if="loading && !uiReadyBlocked && !(electrsSync && !electrsSync.stale)" :icon="appIcon" :title="appTitle" :progress="loadProgress" />
     </Transition>
 
     <!-- ElectrumX sync screen — shown before the real UI while the on-chain
@@ -43,7 +43,7 @@
     </Transition>
 
     <div
-      v-if="appUrl && !iframeBlocked && (!electrsSync || electrsSync.stale)"
+      v-if="appUrl && !iframeBlocked && !uiReadyBlocked && (!electrsSync || electrsSync.stale)"
       class="absolute inset-0 app-session-frame-scroll-host"
       tabindex="-1"
       @pointerdown="focusIframe"
@@ -66,7 +66,7 @@
          reachable yet, so the "App not reachable / retry" overlay would just
          paint over the sync progress and read as a hard error. -->
     <Transition name="content-fade">
-      <div v-if="iframeBlocked && !electrsSync" class="absolute inset-0 z-10 flex flex-col items-center justify-center">
+      <div v-if="(iframeBlocked || uiReadyBlocked) && !electrsSync" class="absolute inset-0 z-10 flex flex-col items-center justify-center">
         <div class="text-center px-8">
           <!-- Warm-up uses the app's own icon, pulsing, rather than the padlock:
                the padlock reads as "blocked/denied" and this state is neither. -->
@@ -78,7 +78,8 @@
           </div>
           <h3 class="text-lg font-semibold text-white mb-2">{{ warmingUp ? `${appTitle} is starting…` : blockedReason ? blockedTitle : (mustOpenNewTab ? 'This app opens in a new tab' : 'App not reachable') }}</h3>
           <p class="text-white/50 text-sm mb-6">
-            <template v-if="mustOpenNewTab">{{ appTitle }} sets security headers that prevent iframe embedding.<br>Open it in a new browser tab instead.</template>
+            <template v-if="uiReadyBlocked">{{ blockedReason }} This screen opens automatically when it is ready.</template>
+            <template v-else-if="mustOpenNewTab">{{ appTitle }} sets security headers that prevent iframe embedding.<br>Open it in a new browser tab instead.</template>
             <template v-else-if="warmingUp">The container is running but hasn't finished warming up yet.<br>This screen opens on its own as soon as it answers.<span v-if="autoRetryCount > 0" class="block text-yellow-400/70">Checking again automatically ({{ autoRetryCount }})...</span></template>
             <template v-else-if="blockedReason">{{ blockedReason }}<br><span v-if="autoRetryCount > 0" class="text-yellow-400/70">Checking again automatically ({{ autoRetryCount }})...</span></template>
             <template v-else>{{ appTitle }} may still be starting up or the container is stopped.<br><span v-if="autoRetryCount > 0" class="text-yellow-400/70">Retrying automatically ({{ autoRetryCount }})...</span></template>
@@ -95,6 +96,7 @@
               Retry now
             </button>
             <button
+              v-if="!uiReadyBlocked"
               @click="$emit('openNewTabAndBack')"
               class="glass-button px-6 py-3 rounded-lg text-sm font-semibold inline-flex items-center gap-2"
             >
@@ -108,7 +110,7 @@
       </div>
     </Transition>
 
-    <div v-if="!appUrl" class="absolute inset-0 flex items-center justify-center">
+    <div v-if="!appUrl && !uiReadyBlocked" class="absolute inset-0 flex items-center justify-center">
       <div class="text-center px-8">
         <h3 class="text-lg font-semibold text-white mb-2">App not configured</h3>
         <p class="text-white/50 text-sm">No URL found for {{ appId }}</p>
@@ -133,6 +135,7 @@ const props = defineProps<{
   mustOpenNewTab: boolean
   autoRetryCount: number
   refreshKey: number
+  uiReadyBlocked?: boolean
   blockedReason?: string
   blockedTitle?: string
   // True while the container is up but its probe hasn't answered yet and the

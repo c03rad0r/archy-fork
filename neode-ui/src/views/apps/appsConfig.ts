@@ -244,6 +244,7 @@ export function resolveAppIcon(id: string, pkg: PackageDataEntry, curatedIcon?: 
 
 export function canLaunch(pkg: PackageDataEntry): boolean {
   if (isWebOnlyApp(pkg.manifest.id)) return true
+  if (pkg['ui-ready'] === false) return false
   // Headless backends never get a Launch button, even with a published port.
   if (isServicePackage(pkg.manifest.id, pkg)) return false
   const hasRuntimeAddress = !!pkg.installed?.['interface-addresses']?.main?.['lan-address']
@@ -277,6 +278,7 @@ export function canLaunch(pkg: PackageDataEntry): boolean {
  * health check retain the legacy state/port behaviour.
  */
 export function isAppReadyForLaunch(pkg: PackageDataEntry): boolean {
+  if (pkg['ui-ready'] !== undefined) return pkg['ui-ready']
   const manifest = pkg.manifest as unknown as Record<string, unknown>
   const hasHealthCheck = Boolean(manifest.health_check || manifest['health-check'])
   if (!hasHealthCheck) return pkg.health !== 'unhealthy'
@@ -285,6 +287,10 @@ export function isAppReadyForLaunch(pkg: PackageDataEntry): boolean {
 
 export function launchBlockedReason(id: string, pkg?: PackageDataEntry | null): string {
   const appId = pkg?.manifest?.id || id
+  if (pkg?.['ui-ready'] === false && !isServicePackage(appId, pkg)) {
+    if (pkg.state === PackageState.Stopped || pkg.state === PackageState.Exited) return 'App is stopped. Start it to open it.'
+    return 'Waiting for the app to be ready…'
+  }
   if (
     (appId === 'fedimint' || appId === 'fedimintd') &&
     (pkg?.state === PackageState.Starting || (pkg?.state === PackageState.Running && pkg?.health === 'starting'))

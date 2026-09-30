@@ -89,6 +89,15 @@ impl RpcHandler {
             match handler.handle_package_install(params).await {
                 Ok(_) => {
                     info!("package.install {}: complete", package_id_spawn);
+                    for id in [&package_id_spawn, &format!("archy-{}", package_id_spawn)] {
+                        crate::crash_recovery::clear_user_uninstalled(&handler.config.data_dir, id)
+                            .await;
+                    }
+                    crate::crash_recovery::mark_installed(
+                        &handler.config.data_dir,
+                        &package_id_spawn,
+                    )
+                    .await;
                     // The install pipeline has verified the container is up
                     // and healthy (see install.rs post-start exit check).
                     // Kick the scanner first so the fresh manifest (with
@@ -184,17 +193,20 @@ impl RpcHandler {
                     // phase is cleared (None) so no stale InstallPhase
                     // lingers on the card.
                     let err_msg = format!("Install failed: {:#}", e);
-                    let (mut data, _) = handler.state_manager.get_snapshot().await;
-                    if let Some(entry) = data.package_data.get_mut(&package_id_spawn) {
-                        entry.state = PackageState::Stopped;
-                        entry.install_progress = Some(crate::data_model::InstallProgress {
-                            size: 0,
-                            downloaded: 0,
-                            phase: None,
-                            message: Some(err_msg),
-                        });
-                        handler.state_manager.update_data(data).await;
-                    }
+                    handler
+                        .state_manager
+                        .mutate_data(|data| {
+                            if let Some(entry) = data.package_data.get_mut(&package_id_spawn) {
+                                entry.state = PackageState::Stopped;
+                                entry.install_progress = Some(crate::data_model::InstallProgress {
+                                    size: 0,
+                                    downloaded: 0,
+                                    phase: None,
+                                    message: Some(err_msg),
+                                });
+                            }
+                        })
+                        .await;
                 }
             }
         });
@@ -252,6 +264,11 @@ impl RpcHandler {
             match handler.handle_package_uninstall(params).await {
                 Ok(_) => {
                     info!("package.uninstall {}: complete", package_id_spawn);
+                    for id in [&package_id_spawn, &format!("archy-{}", package_id_spawn)] {
+                        crate::crash_recovery::mark_user_uninstalled(&handler.config.data_dir, id)
+                            .await;
+                        crate::crash_recovery::clear_installed(&handler.config.data_dir, id).await;
+                    }
                     // Inner handler already removed the package entry on
                     // success. Nothing more to do here.
                 }
@@ -382,52 +399,56 @@ impl RpcHandler {
 /// call, but fires before the spawn so the UI sees it immediately.
 async fn flip_to_installing(state_manager: &StateManager, package_id: &str) {
     use crate::data_model::{Description, Manifest, PackageDataEntry, StaticFiles};
-    let (mut data, _) = state_manager.get_snapshot().await;
-    let entry = data
-        .package_data
-        .entry(package_id.to_string())
-        .or_insert_with(|| PackageDataEntry {
-            state: PackageState::Installing,
-            health: None,
-            exit_code: None,
-            static_files: StaticFiles {
-                license: String::new(),
-                instructions: String::new(),
-                // Leave icon empty during the transient Installing window:
-                // hardcoding `<id>.png` is wrong for ~half our apps (many use
-                // `.svg` / `.webp`), producing a broken-image flicker until
-                // the scanner refreshes the entry. The frontend's `icon`
-                // computed falls through to `curatedMap.get(id)?.icon` which
-                // has the correct extensions for known apps.
-                icon: String::new(),
-            },
-            manifest: Manifest {
-                id: package_id.to_string(),
-                title: package_id.to_string(),
-                version: String::new(),
-                description: Description {
-                    short: "Installing...".to_string(),
-                    long: String::new(),
-                },
-                release_notes: String::new(),
-                license: String::new(),
-                wrapper_repo: String::new(),
-                upstream_repo: String::new(),
-                support_site: String::new(),
-                marketing_site: String::new(),
-                donation_url: None,
-                author: None,
-                website: None,
-                interfaces: None,
-                tier: None,
-            },
-            installed: None,
-            install_progress: None,
-            uninstall_stage: None,
-            available_update: None,
-        });
-    entry.state = PackageState::Installing;
-    state_manager.update_data(data).await;
+    state_manager
+        .mutate_data(|data| {
+            let entry = data
+                .package_data
+                .entry(package_id.to_string())
+                .or_insert_with(|| PackageDataEntry {
+                    ui_ready: None,
+                    state: PackageState::Installing,
+                    health: None,
+                    exit_code: None,
+                    static_files: StaticFiles {
+                        license: String::new(),
+                        instructions: String::new(),
+                        // Leave icon empty during the transient Installing window:
+                        // hardcoding `<id>.png` is wrong for ~half our apps (many use
+                        // `.svg` / `.webp`), producing a broken-image flicker until
+                        // the scanner refreshes the entry. The frontend's `icon`
+                        // computed falls through to `curatedMap.get(id)?.icon` which
+                        // has the correct extensions for known apps.
+                        icon: String::new(),
+                    },
+                    manifest: Manifest {
+                        id: package_id.to_string(),
+                        title: package_id.to_string(),
+                        version: String::new(),
+                        description: Description {
+                            short: "Installing...".to_string(),
+                            long: String::new(),
+                        },
+                        release_notes: String::new(),
+                        license: String::new(),
+                        wrapper_repo: String::new(),
+                        upstream_repo: String::new(),
+                        support_site: String::new(),
+                        marketing_site: String::new(),
+                        donation_url: None,
+                        author: None,
+                        website: None,
+                        interfaces: None,
+                        tier: None,
+                    },
+                    installed: None,
+                    install_progress: None,
+                    uninstall_stage: None,
+                    available_update: None,
+                });
+            entry.ui_ready = Some(false);
+            entry.state = PackageState::Installing;
+        })
+        .await;
 }
 
 /// True when the failed install still has a real footprint: any container
@@ -485,20 +506,23 @@ async fn remove_entry_with_notification(
     id_prefix: &str,
     message: &str,
 ) {
-    let (mut data, _) = handler.state_manager.get_snapshot().await;
-    data.package_data.remove(package_id);
-    data.notifications.push(crate::data_model::Notification {
-        id: format!("{id_prefix}-{package_id}"),
-        level: crate::data_model::NotificationLevel::Error,
-        title: format!("Could not install {package_id}"),
-        message: message.to_string(),
-        timestamp: chrono::Utc::now().to_rfc3339(),
-        app_id: Some(package_id.to_string()),
-    });
-    while data.notifications.len() > 20 {
-        data.notifications.remove(0);
-    }
-    handler.state_manager.update_data(data).await;
+    handler
+        .state_manager
+        .mutate_data(|data| {
+            data.package_data.remove(package_id);
+            data.notifications.push(crate::data_model::Notification {
+                id: format!("{id_prefix}-{package_id}"),
+                level: crate::data_model::NotificationLevel::Error,
+                title: format!("Could not install {package_id}"),
+                message: message.to_string(),
+                timestamp: chrono::Utc::now().to_rfc3339(),
+                app_id: Some(package_id.to_string()),
+            });
+            while data.notifications.len() > 20 {
+                data.notifications.remove(0);
+            }
+        })
+        .await;
 }
 
 /// Flip an existing entry's state and return the pre-flip value (or None if
@@ -508,18 +532,23 @@ async fn flip_package_state(
     package_id: &str,
     new_state: PackageState,
 ) -> Option<PackageState> {
-    let (mut data, _) = state_manager.get_snapshot().await;
-    let prev = data.package_data.get(package_id).map(|e| e.state.clone());
-    if let Some(entry) = data.package_data.get_mut(package_id) {
-        entry.state = new_state;
-        state_manager.update_data(data).await;
-    } else {
-        warn!(
-            "flip_package_state: no entry for {} — cannot flip",
-            package_id
-        );
-    }
-    prev
+    state_manager
+        .mutate_data(|data| {
+            let prev = data.package_data.get(package_id).map(|e| e.state.clone());
+            if let Some(entry) = data.package_data.get_mut(package_id) {
+                if new_state != PackageState::Running {
+                    entry.ui_ready = Some(false);
+                }
+                entry.state = new_state;
+            } else {
+                warn!(
+                    "flip_package_state: no entry for {} — cannot flip",
+                    package_id
+                );
+            }
+            prev
+        })
+        .await
 }
 
 /// Set state unconditionally (no-op if entry no longer exists).
@@ -528,13 +557,18 @@ async fn set_package_state(
     package_id: &str,
     new_state: PackageState,
 ) {
-    let (mut data, _) = state_manager.get_snapshot().await;
-    if let Some(entry) = data.package_data.get_mut(package_id) {
-        if entry.state != new_state {
-            entry.state = new_state;
-            state_manager.update_data(data).await;
-        }
-    }
+    state_manager
+        .mutate_data(|data| {
+            if let Some(entry) = data.package_data.get_mut(package_id) {
+                if entry.state != new_state {
+                    if new_state != PackageState::Running {
+                        entry.ui_ready = Some(false);
+                    }
+                    entry.state = new_state;
+                }
+            }
+        })
+        .await
 }
 
 /// Set state and clear the uninstall_stage label. Used when an uninstall
@@ -545,12 +579,17 @@ async fn set_package_state_and_clear_uninstall_stage(
     package_id: &str,
     new_state: PackageState,
 ) {
-    let (mut data, _) = state_manager.get_snapshot().await;
-    if let Some(entry) = data.package_data.get_mut(package_id) {
-        entry.state = new_state;
-        entry.uninstall_stage = None;
-        state_manager.update_data(data).await;
-    }
+    state_manager
+        .mutate_data(|data| {
+            if let Some(entry) = data.package_data.get_mut(package_id) {
+                if new_state != PackageState::Running {
+                    entry.ui_ready = Some(false);
+                }
+                entry.state = new_state;
+                entry.uninstall_stage = None;
+            }
+        })
+        .await
 }
 
 /// Kick the container scanner to run immediately and wait for it to finish

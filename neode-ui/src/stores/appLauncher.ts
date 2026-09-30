@@ -239,6 +239,11 @@ export const useAppLauncherStore = defineStore('appLauncher', () => {
   const panelPath = ref<string | null>(null)
 
   function openSessionNow(appId: string, opts: LaunchOptions = {}) {
+    const pkg = useAppStore().data?.['package-data']?.[appId]
+    if (pkg?.['ui-ready'] === false) {
+      useToast().info(`${pkg.manifest?.title || appId} is not ready to open yet`)
+      return
+    }
     recordAppLaunch(appId)
     const mobile = isMobileViewport()
 
@@ -295,7 +300,7 @@ export const useAppLauncherStore = defineStore('appLauncher', () => {
     // Apply the same readiness gate here so a container that has just entered
     // `running` cannot race nginx and show a transient 502 to the user.
     const pkg = useAppStore().data?.['package-data']?.[appId]
-    if (pkg && pkg.state === 'running' && !isAppReadyForLaunch(pkg)) {
+    if (pkg && (pkg['ui-ready'] === false || (pkg.state === 'running' && !isAppReadyForLaunch(pkg)))) {
       useToast().info(`${pkg.manifest?.title || appId} is still starting — try again in a moment`)
       return
     }
@@ -394,6 +399,12 @@ export const useAppLauncherStore = defineStore('appLauncher', () => {
     let launchUrl = normalizeLaunchUrl(payload.url, titleHintId)
     const resolvedId = resolveAppIdFromUrl(launchUrl) || titleHintId
 
+    const pkg = resolvedId ? useAppStore().data?.['package-data']?.[resolvedId] : undefined
+    if (pkg?.['ui-ready'] === false) {
+      useToast().info(`${pkg.manifest?.title || resolvedId} is not ready to open yet`)
+      return
+    }
+
     // Scheme discipline for everything launched on this host. Ports fronted
     // by the node's app gate (manifest auth gated/open) serve TLS on the same
     // port — on an HTTPS connection those must open over https. Ports that
@@ -472,6 +483,17 @@ export const useAppLauncherStore = defineStore('appLauncher', () => {
       // Check /app/{id}/ path-style routes first (HTTPS proxy mode)
       const m = u.pathname.match(/^\/app\/([a-z0-9._-]+)(?:\/|$)/i)
       if (m?.[1]) return m[1].toLowerCase()
+      // Dynamic/sideloaded apps have no entry in the static port map.
+      if (u.hostname === window.location.hostname && u.port) {
+        for (const [id, pkg] of Object.entries(useAppStore().data?.['package-data'] || {})) {
+          const address = pkg.installed?.['interface-addresses']?.main?.['lan-address']
+          if (!address) continue
+          try {
+            const runtime = new URL(address)
+            if (runtime.port === u.port && ['localhost', '127.0.0.1', window.location.hostname].includes(runtime.hostname)) return id
+          } catch { /* malformed runtime address is not a launch target */ }
+        }
+      }
       // Check port-based apps
       const appId = PORT_TO_APP_ID[u.port]
       if (appId) return appId

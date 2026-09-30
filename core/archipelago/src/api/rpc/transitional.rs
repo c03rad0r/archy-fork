@@ -150,23 +150,31 @@ async fn flip_to_transitional(
     app_id: &str,
     transitional: PackageState,
 ) -> Option<PackageState> {
-    let (mut data, _) = state_manager.get_snapshot().await;
-    let prev = data.package_data.get(app_id).map(|e| e.state.clone());
-    if let Some(entry) = data.package_data.get_mut(app_id) {
-        entry.state = transitional;
-        state_manager.update_data(data).await;
-    }
-    prev
+    state_manager
+        .mutate_data(|data| {
+            let prev = data.package_data.get(app_id).map(|e| e.state.clone());
+            if let Some(entry) = data.package_data.get_mut(app_id) {
+                entry.ui_ready = Some(false);
+                entry.state = transitional;
+            }
+            prev
+        })
+        .await
 }
 
 /// Set the entry's state to `new_state`. No-ops if the entry has since been
 /// removed (e.g. uninstall ran concurrently).
 async fn set_state(state_manager: &StateManager, app_id: &str, new_state: PackageState) {
-    let (mut data, _) = state_manager.get_snapshot().await;
-    if let Some(entry) = data.package_data.get_mut(app_id) {
-        if entry.state != new_state {
-            entry.state = new_state;
-            state_manager.update_data(data).await;
-        }
-    }
+    state_manager
+        .mutate_data(|data| {
+            if let Some(entry) = data.package_data.get_mut(app_id) {
+                if entry.state != new_state {
+                    if new_state != PackageState::Running {
+                        entry.ui_ready = Some(false);
+                    }
+                    entry.state = new_state;
+                }
+            }
+        })
+        .await
 }

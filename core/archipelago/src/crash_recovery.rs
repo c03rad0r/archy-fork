@@ -194,6 +194,7 @@ pub async fn clear_user_stopped(data_dir: &Path, name: &str) {
 // Installation is a decision, not a runtime observation, so it gets a record
 // of its own that no amount of downtime erodes.
 const INSTALLED_APPS_FILE: &str = "installed-apps.json";
+static INSTALLED_APPS_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 
 /// Load the durable set of installed app ids / container names.
 pub async fn load_installed_apps(data_dir: &Path) -> std::collections::HashSet<String> {
@@ -220,12 +221,23 @@ pub async fn load_installed_apps_if_recorded(
 async fn save_installed_apps(data_dir: &Path, installed: &std::collections::HashSet<String>) {
     let path = data_dir.join(INSTALLED_APPS_FILE);
     if let Ok(json) = serde_json::to_string_pretty(installed) {
-        let _ = fs::write(&path, json).await;
+        let tmp = path.with_extension("json.tmp");
+        let result = async {
+            fs::write(&tmp, json).await?;
+            fs::File::open(&tmp).await?.sync_all().await?;
+            fs::rename(&tmp, &path).await?;
+            fs::File::open(data_dir).await?.sync_all().await
+        }
+        .await;
+        if let Err(error) = result {
+            warn!(%error, "could not persist installed apps");
+        }
     }
 }
 
 /// Record that an app is installed. Called when an install succeeds.
 pub async fn mark_installed(data_dir: &Path, name: &str) {
+    let _guard = INSTALLED_APPS_LOCK.lock().await;
     let mut installed = load_installed_apps(data_dir).await;
     if installed.insert(name.to_string()) {
         save_installed_apps(data_dir, &installed).await;
@@ -235,6 +247,7 @@ pub async fn mark_installed(data_dir: &Path, name: &str) {
 /// Forget an app. Called on uninstall, beside `mark_user_uninstalled` — the
 /// two must move together or a reinstall-after-uninstall leaves a stale claim.
 pub async fn clear_installed(data_dir: &Path, name: &str) {
+    let _guard = INSTALLED_APPS_LOCK.lock().await;
     let mut installed = load_installed_apps(data_dir).await;
     if installed.remove(name) {
         save_installed_apps(data_dir, &installed).await;
@@ -252,6 +265,7 @@ pub async fn clear_installed(data_dir: &Path, name: &str) {
 /// need it. Runs on every boot, so an app installed before the upgrade is
 /// still picked up whenever it is next seen alive.
 pub async fn backfill_installed_apps(data_dir: &Path, present_container_names: &[String]) {
+    let _guard = INSTALLED_APPS_LOCK.lock().await;
     if present_container_names.is_empty() {
         return;
     }
@@ -1495,5 +1509,28 @@ mod tests {
                 .anchor,
             "indeedhub-postgres"
         );
+    }
+}
+
+#[cfg(test)]
+mod installed_concurrency_tests {
+    use super::*;
+    #[tokio::test]
+    async fn concurrent_install_records_are_not_lost() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut tasks = Vec::new();
+        for i in 0..24 {
+            let path = dir.path().to_owned();
+            tasks.push(tokio::spawn(async move {
+                mark_installed(&path, &format!("app-{i}")).await;
+            }));
+        }
+        for task in tasks {
+            task.await.unwrap();
+        }
+        assert_eq!(load_installed_apps(dir.path()).await.len(), 24);
+        clear_installed(dir.path(), "app-3").await;
+        assert_eq!(load_installed_apps(dir.path()).await.len(), 23);
+        assert!(!dir.path().join("installed-apps.json.tmp").exists());
     }
 }

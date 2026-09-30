@@ -14,20 +14,23 @@ impl RpcHandler {
     /// the rare case where the pull stream actually parses, but podman
     /// almost never emits parseable progress on a piped stderr.
     pub(super) async fn set_install_progress(&self, package_id: &str, downloaded: u64, size: u64) {
-        let (mut data, _rev) = self.state_manager.get_snapshot().await;
-        let entry = data
-            .package_data
-            .entry(package_id.to_string())
-            .or_insert_with(|| create_installing_entry(package_id));
-        entry.state = PackageState::Installing;
-        let existing_phase = entry.install_progress.as_ref().and_then(|p| p.phase);
-        entry.install_progress = Some(InstallProgress {
-            size,
-            downloaded,
-            phase: existing_phase,
-            message: None,
-        });
-        self.state_manager.update_data(data).await;
+        self.state_manager
+            .mutate_data(|data| {
+                let entry = data
+                    .package_data
+                    .entry(package_id.to_string())
+                    .or_insert_with(|| create_installing_entry(package_id));
+                entry.ui_ready = Some(false);
+                entry.state = PackageState::Installing;
+                let existing_phase = entry.install_progress.as_ref().and_then(|p| p.phase);
+                entry.install_progress = Some(InstallProgress {
+                    size,
+                    downloaded,
+                    phase: existing_phase,
+                    message: None,
+                });
+            })
+            .await;
     }
 
     /// Set the install pipeline phase and broadcast. This is the
@@ -35,76 +38,86 @@ impl RpcHandler {
     /// percentage and a user-facing label. Byte counters are retained
     /// for the rare case podman emits parseable progress.
     pub(super) async fn set_install_phase(&self, package_id: &str, phase: InstallPhase) {
-        let (mut data, _rev) = self.state_manager.get_snapshot().await;
-        let entry = data
-            .package_data
-            .entry(package_id.to_string())
-            .or_insert_with(|| create_installing_entry(package_id));
-        // Preparing / PullingImage / CreatingContainer / StartingContainer /
-        // WaitingHealthy / PostInstall all map to the Installing state.
-        // Updates use Updating state — the wrapper has already flipped
-        // state to Updating, so don't clobber it.
-        if entry.state != PackageState::Updating {
-            entry.state = PackageState::Installing;
-        }
-        let (size, downloaded) = entry
-            .install_progress
-            .as_ref()
-            .map(|p| (p.size, p.downloaded))
-            .unwrap_or((0, 0));
-        entry.install_progress = Some(InstallProgress {
-            size,
-            downloaded,
-            phase: Some(phase),
-            message: None,
-        });
-        self.state_manager.update_data(data).await;
+        self.state_manager
+            .mutate_data(|data| {
+                let entry = data
+                    .package_data
+                    .entry(package_id.to_string())
+                    .or_insert_with(|| create_installing_entry(package_id));
+                // Preparing / PullingImage / CreatingContainer / StartingContainer /
+                // WaitingHealthy / PostInstall all map to the Installing state.
+                // Updates use Updating state — the wrapper has already flipped
+                // state to Updating, so don't clobber it.
+                if entry.state != PackageState::Updating {
+                    entry.ui_ready = Some(false);
+                    entry.state = PackageState::Installing;
+                }
+                let (size, downloaded) = entry
+                    .install_progress
+                    .as_ref()
+                    .map(|p| (p.size, p.downloaded))
+                    .unwrap_or((0, 0));
+                entry.install_progress = Some(InstallProgress {
+                    size,
+                    downloaded,
+                    phase: Some(phase),
+                    message: None,
+                });
+            })
+            .await;
     }
 
     /// Set a user-facing install status message (e.g. "Waiting for Bitcoin
     /// to start…") without disturbing the current phase/byte counters.
     pub(super) async fn set_install_message(&self, package_id: &str, message: &str) {
-        let (mut data, _rev) = self.state_manager.get_snapshot().await;
-        let entry = data
-            .package_data
-            .entry(package_id.to_string())
-            .or_insert_with(|| create_installing_entry(package_id));
-        if entry.state != PackageState::Updating {
-            entry.state = PackageState::Installing;
-        }
-        let (size, downloaded, phase) = entry
-            .install_progress
-            .as_ref()
-            .map(|p| (p.size, p.downloaded, p.phase))
-            .unwrap_or((0, 0, None));
-        entry.install_progress = Some(InstallProgress {
-            size,
-            downloaded,
-            phase,
-            message: Some(message.to_string()),
-        });
-        self.state_manager.update_data(data).await;
+        self.state_manager
+            .mutate_data(|data| {
+                let entry = data
+                    .package_data
+                    .entry(package_id.to_string())
+                    .or_insert_with(|| create_installing_entry(package_id));
+                if entry.state != PackageState::Updating {
+                    entry.ui_ready = Some(false);
+                    entry.state = PackageState::Installing;
+                }
+                let (size, downloaded, phase) = entry
+                    .install_progress
+                    .as_ref()
+                    .map(|p| (p.size, p.downloaded, p.phase))
+                    .unwrap_or((0, 0, None));
+                entry.install_progress = Some(InstallProgress {
+                    size,
+                    downloaded,
+                    phase,
+                    message: Some(message.to_string()),
+                });
+            })
+            .await;
     }
 
     /// Clear install progress after pull completes or fails.
     pub(super) async fn clear_install_progress(&self, package_id: &str) {
-        let (mut data, _rev) = self.state_manager.get_snapshot().await;
-        if let Some(entry) = data.package_data.get_mut(package_id) {
-            entry.install_progress = None;
-        }
-        self.state_manager.update_data(data).await;
+        self.state_manager
+            .mutate_data(|data| {
+                if let Some(entry) = data.package_data.get_mut(package_id) {
+                    entry.install_progress = None;
+                }
+            })
+            .await;
     }
 
     /// Set the uninstall stage label so the UI can show what's happening
     /// instead of a generic spinner. Each call broadcasts a state change
     /// — call sparingly (one per pipeline phase, not per container).
     pub(super) async fn set_uninstall_stage(&self, package_id: &str, stage: &str) {
-        let (mut data, _rev) = self.state_manager.get_snapshot().await;
-        if let Some(entry) = data.package_data.get_mut(package_id) {
-            entry.uninstall_stage = Some(stage.to_string());
-            entry.state = crate::data_model::PackageState::Removing;
-        }
-        self.state_manager.update_data(data).await;
+        self.state_manager
+            .mutate_data(|data| {
+                if let Some(entry) = data.package_data.get_mut(package_id) {
+                    entry.uninstall_stage = Some(stage.to_string());
+                    entry.state = crate::data_model::PackageState::Removing;
+                }
+            })
+            .await;
     }
 
     /// Update install progress (static method for use in async closures).
@@ -114,25 +127,28 @@ impl RpcHandler {
         downloaded: u64,
         total: u64,
     ) {
-        let (mut data, _rev) = state_manager.get_snapshot().await;
-        let entry = data
-            .package_data
-            .entry(package_id.to_string())
-            .or_insert_with(|| create_installing_entry(package_id));
-        let existing_phase = entry.install_progress.as_ref().and_then(|p| p.phase);
-        entry.install_progress = Some(InstallProgress {
-            size: total,
-            downloaded,
-            phase: existing_phase,
-            message: None,
-        });
-        state_manager.update_data(data).await;
+        state_manager
+            .mutate_data(|data| {
+                let entry = data
+                    .package_data
+                    .entry(package_id.to_string())
+                    .or_insert_with(|| create_installing_entry(package_id));
+                let existing_phase = entry.install_progress.as_ref().and_then(|p| p.phase);
+                entry.install_progress = Some(InstallProgress {
+                    size: total,
+                    downloaded,
+                    phase: existing_phase,
+                    message: None,
+                });
+            })
+            .await;
     }
 }
 
 /// Create a minimal PackageDataEntry for a package being installed.
 fn create_installing_entry(package_id: &str) -> PackageDataEntry {
     PackageDataEntry {
+        ui_ready: None,
         state: PackageState::Installing,
         health: None,
         exit_code: None,

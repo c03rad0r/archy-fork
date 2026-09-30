@@ -146,6 +146,10 @@ pub enum PackageState {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct PackageDataEntry {
+    /// Whether the app's HTTP upstream answered this scan (independent of
+    /// container health and blockchain sync). Missing on older nodes.
+    #[serde(rename = "ui-ready", default, skip_serializing_if = "Option::is_none")]
+    pub ui_ready: Option<bool>,
     pub state: PackageState,
     /// Container health: "healthy", "unhealthy", "starting", or null
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -297,6 +301,8 @@ pub enum InstallPhase {
     /// `podman pull` in progress (the longest phase — up to several
     /// minutes for large images on slow networks).
     PullingImage,
+    /// Orchestrator owns download/build and startup as one operation.
+    PreparingApp,
     /// Creating data directories, writing app-specific configs
     /// (bitcoin.conf, lnd.conf, searxng settings.yml, chown).
     CreatingContainer,

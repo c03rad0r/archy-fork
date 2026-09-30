@@ -1431,10 +1431,9 @@ async fn repair_before_package_start(container_name: &str) {
     // published port and the data-dir file locks, so the replacement either
     // fails to bind (`address already in use`) or starts and dies on the
     // lock — and `Restart=always` loops it there forever. Ordered before
-    // the port cleanup below: killing the owner is what actually frees the
-    // port, and the port sweep alone cannot tell a ghost from a live app.
+    // starting the replacement. A port sweep cannot distinguish a ghost
+    // from the dashboard gate or another live app and must never kill it.
     crate::container::ghost_reaper::reap_for_app(container_name).await;
-    cleanup_runtime_host_ports(container_name).await;
 }
 
 async fn wait_before_package_start(container_name: &str) {
@@ -1579,7 +1578,6 @@ async fn repair_netbird_network() {
 async fn repair_nginx_proxy_manager_container() {
     repair_nginx_proxy_manager_dirs().await;
     if !nginx_proxy_manager_has_legacy_admin_port().await {
-        cleanup_nginx_proxy_manager_ports().await;
         return;
     }
 
@@ -1588,7 +1586,7 @@ async fn repair_nginx_proxy_manager_container() {
     )
     .await;
     let _ = podman_control(&["rm", "-f", "nginx-proxy-manager"]).await;
-    cleanup_nginx_proxy_manager_ports().await;
+    crate::container::ghost_reaper::reap_for_app("nginx-proxy-manager").await;
     if let Err(err) = recreate_nginx_proxy_manager_container().await {
         tracing::warn!(error = %err, "failed to recreate stale nginx-proxy-manager container");
     }
@@ -1812,6 +1810,9 @@ fn manifest_host_ports(container_name: &str) -> Vec<u16> {
 
 pub(super) fn manifest_apps_dirs() -> Vec<std::path::PathBuf> {
     let mut dirs = Vec::new();
+    if let Some(root) = std::env::var_os("ARCHIPELAGO_APPS_DIR") {
+        dirs.push(root.into());
+    }
     if let Ok(manifest_dir) = std::env::var("CARGO_MANIFEST_DIR") {
         dirs.push(Path::new(&manifest_dir).join("../../apps"));
     }
@@ -2032,51 +2033,10 @@ async fn cleanup_start_conflict(container_name: &str, stderr: &str) {
         return;
     }
 
-    let ports = runtime_host_ports(container_name);
-    if !ports.is_empty() {
-        cleanup_ports(&ports).await;
-        return;
-    }
-}
-
-async fn cleanup_runtime_host_ports(container_name: &str) {
-    let ports = runtime_host_ports(container_name);
-    if !ports.is_empty() {
-        cleanup_ports(&ports).await;
-    }
-}
-
-async fn cleanup_nginx_proxy_manager_ports() {
-    cleanup_ports(&[8081, 8084, 8444]).await;
-}
-
-async fn cleanup_ports(ports: &[u16]) {
-    for port in ports {
-        cleanup_stale_pasta_port(&port.to_string()).await;
-    }
-}
-
-async fn cleanup_stale_pasta_port(port: &str) {
-    let kill_listener = format!(
-        "ss -ltnp 'sport = :{}' 2>/dev/null | sed -n 's/.*pid=\\([0-9]*\\).*/\\1/p' | xargs -r kill 2>/dev/null || true",
-        port
-    );
-    let _ = tokio::process::Command::new("sh")
-        .args(["-c", &kill_listener])
-        .output()
-        .await;
-
-    let pattern = format!("pasta.*{}", port);
-    let _ = tokio::process::Command::new("pkill")
-        .args(["-f", &pattern])
-        .output()
-        .await;
-    let pattern = format!("rootlessport.*{}", port);
-    let _ = tokio::process::Command::new("pkill")
-        .args(["-f", &pattern])
-        .output()
-        .await;
-    tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+    // Only reap processes proven to belong to an absent container. The app
+    // gate shares the app's port on other addresses and lives in this daemon;
+    // killing port owners (or matching argv with pkill) kills the dashboard.
+    crate::container::ghost_reaper::reap_for_app(container_name).await;
 }
 
 pub(super) fn is_missing_companion_ok(name: &str, stderr: &str) -> bool {
@@ -2095,13 +2055,16 @@ async fn flip_package_state(
     package_id: &str,
     transitional: PackageState,
 ) -> Option<PackageState> {
-    let (mut data, _) = state_manager.get_snapshot().await;
-    let prev = data.package_data.get(package_id).map(|e| e.state.clone());
-    if let Some(entry) = data.package_data.get_mut(package_id) {
-        entry.state = transitional;
-        state_manager.update_data(data).await;
-    }
-    prev
+    state_manager
+        .mutate_data(|data| {
+            let prev = data.package_data.get(package_id).map(|e| e.state.clone());
+            if let Some(entry) = data.package_data.get_mut(package_id) {
+                entry.ui_ready = Some(false);
+                entry.state = transitional;
+            }
+            prev
+        })
+        .await
 }
 
 /// Write the package entry's final state. No-op if the entry has since
@@ -2111,13 +2074,18 @@ async fn set_package_state(
     package_id: &str,
     new_state: PackageState,
 ) {
-    let (mut data, _) = state_manager.get_snapshot().await;
-    if let Some(entry) = data.package_data.get_mut(package_id) {
-        if entry.state != new_state {
-            entry.state = new_state;
-            state_manager.update_data(data).await;
-        }
-    }
+    state_manager
+        .mutate_data(|data| {
+            if let Some(entry) = data.package_data.get_mut(package_id) {
+                if entry.state != new_state {
+                    if new_state != PackageState::Running {
+                        entry.ui_ready = Some(false);
+                    }
+                    entry.state = new_state;
+                }
+            }
+        })
+        .await
 }
 
 pub(super) async fn reconcile_companions_for(package_id: &str) {
@@ -2184,6 +2152,20 @@ pub(super) fn orchestrator_uninstall_app_ids(package_id: &str) -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn port_conflict_cleanup_preserves_live_host_listener() {
+        // The previous ss|kill sweep terminated the daemon's app gate on a
+        // restart. Keep a real listening socket owned by this test process.
+        let listener = tokio::net::TcpListener::bind("127.0.0.2:2342")
+            .await
+            .unwrap();
+        let addr = listener.local_addr().unwrap();
+        cleanup_start_conflict("photoprism", "address already in use").await;
+        let client = tokio::net::TcpStream::connect(addr).await.unwrap();
+        let _connection = listener.accept().await.unwrap();
+        drop(client);
+    }
 
     #[test]
     fn missing_container_classifier_covers_podman5_phrasings() {

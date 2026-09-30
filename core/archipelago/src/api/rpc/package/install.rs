@@ -545,7 +545,7 @@ impl RpcHandler {
         // Keep legacy install flow as default while migration is in progress.
         if orchestrator_managed {
             let orchestrator_app_id = orchestrator_install_app_id(package_id);
-            self.set_install_phase(package_id, InstallPhase::CreatingContainer)
+            self.set_install_phase(package_id, InstallPhase::PreparingApp)
                 .await;
             install_log(&format!(
                 "INSTALL ORCH: {} — attempting orchestrator install as {}",
@@ -2053,25 +2053,8 @@ fn parse_setup_token(lines: &[&str]) -> Option<String> {
 }
 
 async fn cleanup_stale_package_ports(package_id: &str) {
-    match package_id {
-        "grafana" => cleanup_stale_pasta_port("3000").await,
-        "homeassistant" | "home-assistant" => cleanup_stale_pasta_port("8123").await,
-        "searxng" => cleanup_stale_pasta_port("8888").await,
-        "uptime-kuma" => cleanup_stale_pasta_port("3002").await,
-        "gitea" => {
-            cleanup_stale_pasta_port("3001").await;
-            cleanup_stale_pasta_port("2222").await;
-            cleanup_stale_pasta_port("3000").await;
-        }
-        "nginx-proxy-manager" => {
-            cleanup_stale_pasta_port("8081").await;
-            cleanup_stale_pasta_port("8084").await;
-            cleanup_stale_pasta_port("8444").await;
-        }
-        "nextcloud" => cleanup_stale_pasta_port("8085").await,
-        "portainer" => cleanup_stale_pasta_port("9000").await,
-        _ => {}
-    }
+    // Never kill by port: another app or the management gate may own it.
+    crate::container::ghost_reaper::reap_for_app(package_id).await;
 }
 
 fn install_command_tail(
@@ -2196,93 +2179,11 @@ async fn cleanup_start_conflict(package_id: &str, stderr: &str) -> bool {
         return true;
     }
 
-    match package_id {
-        "grafana"
-            if stderr.contains("pasta failed") || stderr.contains("address already in use") =>
-        {
-            cleanup_stale_pasta_port("3000").await;
-            true
-        }
-        "homeassistant" | "home-assistant"
-            if stderr.contains("pasta failed") || stderr.contains("address already in use") =>
-        {
-            cleanup_stale_pasta_port("8123").await;
-            true
-        }
-        "searxng"
-            if stderr.contains("pasta failed") || stderr.contains("address already in use") =>
-        {
-            cleanup_stale_pasta_port("8888").await;
-            true
-        }
-        "uptime-kuma"
-            if stderr.contains("pasta failed") || stderr.contains("address already in use") =>
-        {
-            cleanup_stale_pasta_port("3002").await;
-            true
-        }
-        "gitea" if stderr.contains("pasta failed") || stderr.contains("address already in use") => {
-            cleanup_stale_pasta_port("3001").await;
-            cleanup_stale_pasta_port("2222").await;
-            cleanup_stale_pasta_port("3000").await;
-            true
-        }
-        "nginx-proxy-manager"
-            if stderr.contains("pasta failed") || stderr.contains("address already in use") =>
-        {
-            cleanup_stale_pasta_port("8081").await;
-            cleanup_stale_pasta_port("8084").await;
-            cleanup_stale_pasta_port("8444").await;
-            true
-        }
-        "nextcloud"
-            if stderr.contains("pasta failed") || stderr.contains("address already in use") =>
-        {
-            cleanup_stale_pasta_port("8085").await;
-            true
-        }
-        "portainer"
-            if stderr.contains("pasta failed") || stderr.contains("address already in use") =>
-        {
-            cleanup_stale_pasta_port("9000").await;
-            true
-        }
-        _ => false,
+    if stderr.contains("pasta failed") || stderr.contains("address already in use") {
+        crate::container::ghost_reaper::reap_for_app(package_id).await;
+        return true;
     }
-}
-
-async fn cleanup_stale_pasta_port(port: &str) {
-    // NEVER kill our own process. The daemon holds catalog app ports over
-    // IPv6 (the mesh app-port relay), so a blunt `fuser -k <port>/tcp` would
-    // terminate archipelago itself mid-install — installs failed and apps
-    // vanished on a test node 2026-07-27. Kill every listener on the port
-    // EXCEPT our PID (and our process group), leaving the relay/daemon alive.
-    let self_pid = std::process::id();
-    let kill_listener = format!(
-        "ss -ltnp 'sport = :{port}' 2>/dev/null | sed -n 's/.*pid=\\([0-9]*\\).*/\\1/p' | \
-         while read p; do [ \"$p\" = \"{self_pid}\" ] || kill \"$p\" 2>/dev/null; done || true",
-    );
-    let _ = tokio::process::Command::new("sh")
-        .args(["-c", &kill_listener])
-        .output()
-        .await;
-
-    // sudo fuser -k, but exclude our own PID: fuser prints the PIDs holding
-    // the port; kill each except self. (`fuser -k` has no exclusion flag.)
-    let fuser_kill = format!(
-        "for p in $(sudo fuser {port}/tcp 2>/dev/null); do [ \"$p\" = \"{self_pid}\" ] || sudo kill \"$p\" 2>/dev/null; done || true",
-    );
-    let _ = tokio::process::Command::new("sh")
-        .args(["-c", &fuser_kill])
-        .output()
-        .await;
-
-    let pattern = format!("pasta.*{}", port);
-    let _ = tokio::process::Command::new("pkill")
-        .args(["-f", &pattern])
-        .output()
-        .await;
-    tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+    false
 }
 
 async fn repair_nextcloud_permissions() {

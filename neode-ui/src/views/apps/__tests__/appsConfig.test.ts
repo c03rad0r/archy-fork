@@ -184,3 +184,24 @@ describe('appsConfig service filtering', () => {
     expect(canLaunch(pkg)).toBe(true)
   })
 })
+
+describe('HTTP readiness independent of container health', () => {
+  it('blocks fixed launch URLs while the HTTP upstream is unavailable', () => {
+    for (const id of ['gitea', 'filebrowser', 'fedimint', 'lnd']) {
+      const pkg = makePkg(id, id, 'other')
+      pkg['ui-ready'] = false
+      pkg.health = 'healthy'
+      expect(canLaunch(pkg)).toBe(false)
+      expect(isAppReadyForLaunch(pkg)).toBe(false)
+      expect(launchBlockedReason(id, pkg)).toContain('Waiting')
+      pkg['ui-ready'] = true
+      expect(isAppReadyForLaunch(pkg)).toBe(true)
+    }
+  })
+  it('allows a ready companion while its backend is syncing', () => {
+    const pkg = makePkg('lnd', 'Lightning', 'bitcoin')
+    pkg.health = 'starting'
+    pkg['ui-ready'] = true
+    expect(isAppReadyForLaunch(pkg)).toBe(true)
+  })
+})

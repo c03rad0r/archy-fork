@@ -114,6 +114,9 @@ impl PortMap {
 /// there.
 fn apps_dirs() -> Vec<PathBuf> {
     let mut dirs = Vec::new();
+    if let Some(root) = std::env::var_os("ARCHIPELAGO_APPS_DIR") {
+        dirs.push(root.into());
+    }
     if let Ok(manifest_dir) = std::env::var("CARGO_MANIFEST_DIR") {
         dirs.push(PathBuf::from(manifest_dir).join("../../apps"));
     }

@@ -39,6 +39,7 @@
         :must-open-new-tab="mustOpenNewTab"
         :auto-retry-count="autoRetryCount"
         :refresh-key="refreshKey"
+        :ui-ready-blocked="packageEntry?.['ui-ready'] === false"
         :blocked-reason="blockedReason"
         :blocked-title="blockedTitle"
         :warming-up="warmingUp"
@@ -375,6 +376,20 @@ const panelClasses = computed(() => {
   return `${base} app-session-overlay`
 })
 
+// A cold/restarting upstream is held outside the iframe. Start one fresh
+// load when the scanner observes HTTP readiness; no manual refresh required.
+watch(() => packageEntry.value?.['ui-ready'], (ready, previous) => {
+  if (ready === false) {
+    if (loadTimeoutId) clearTimeout(loadTimeoutId)
+    if (autoRetryId) clearTimeout(autoRetryId)
+    if (iframeCheckId) clearTimeout(iframeCheckId)
+    loading.value = false
+  } else if (previous === false && ready === true) {
+    autoRetryCount.value = 0
+    refresh()
+  }
+})
+
 // --- Lifecycle handlers ---
 
 function onLoad() {
@@ -433,6 +448,7 @@ function refresh() {
 
 function startLoadTimeout() {
   if (loadTimeoutId) clearTimeout(loadTimeoutId)
+  if (packageEntry.value?.['ui-ready'] === false) return
   loadTimeoutId = setTimeout(() => {
     if (loading.value) {
       loading.value = false
@@ -442,11 +458,13 @@ function startLoadTimeout() {
 }
 
 function openNewTabAndBack() {
+  if (packageEntry.value?.['ui-ready'] === false) return
   if (appUrl.value) openExternalUrl(appUrl.value)
   closeSession()
 }
 
 function openNewTab() {
+  if (packageEntry.value?.['ui-ready'] === false) return
   if (appUrl.value) openExternalUrl(appUrl.value)
 }
 

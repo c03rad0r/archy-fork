@@ -1765,12 +1765,17 @@ fn merge_preserving_transitional(
     };
 
     crate::data_model::PackageDataEntry {
-        state,
+        state: state.clone(),
         // install_progress and uninstall_stage are also owned by the
         // initiating op (same reason as state) — keep them.
         install_progress: existing.install_progress.clone(),
         uninstall_stage: existing.uninstall_stage.clone(),
         // Everything else comes from the fresh scan.
+        ui_ready: if state == crate::data_model::PackageState::Running {
+            fresh.ui_ready
+        } else {
+            Some(false)
+        },
         health: fresh.health.clone(),
         exit_code: fresh.exit_code,
         static_files: fresh.static_files.clone(),
@@ -1809,7 +1814,10 @@ async fn scan_and_update_packages(
     absence_tracker: &mut HashMap<String, u32>,
     transitional_since: &mut HashMap<String, Instant>,
 ) -> Result<()> {
-    let mut packages = scanner.scan_containers().await?;
+    let (before_scan, _) = state.get_snapshot().await;
+    let mut packages = scanner
+        .scan_containers(data_dir, &before_scan.package_data)
+        .await?;
     let user_stopped = crate::crash_recovery::load_user_stopped(data_dir).await;
     for (id, pkg) in packages.iter_mut() {
         if pkg.state == crate::data_model::PackageState::Exited && user_stopped.contains(id) {
@@ -1870,11 +1878,14 @@ async fn scan_and_update_packages(
     // once at load ~2). Better to keep saying "scanning…" than to say "empty".
     if packages.is_empty() && (!first_scan || !installed_registry.is_empty()) {
         if tor_changed || update_changed {
-            let mut data = current_data;
-            data.server_info.tor_address = tor_addr.clone();
-            data.server_info.node_address = tor_addr.as_ref().map(|t| identity.node_address(t));
-            data.server_info.status_info.updated = update_available;
-            state.update_data(data).await;
+            state
+                .mutate_data(|data| {
+                    data.server_info.tor_address = tor_addr.clone();
+                    data.server_info.node_address =
+                        tor_addr.as_ref().map(|t| identity.node_address(t));
+                    data.server_info.status_info.updated = update_available;
+                })
+                .await;
         }
         return Ok(());
     }
@@ -1899,6 +1910,13 @@ async fn scan_and_update_packages(
     // died without cleanup and let the scan override it.
     let now = Instant::now();
     for (id, pkg) in &packages {
+        if user_uninstalled.contains(id)
+            || user_uninstalled.contains(&format!("archy-{id}"))
+            || (before_scan.package_data.contains_key(id)
+                && !current_data.package_data.contains_key(id))
+        {
+            continue;
+        }
         absence_tracker.remove(id);
         let existing = merged.get(id);
         let overwrite = match existing {
@@ -2054,20 +2072,38 @@ async fn scan_and_update_packages(
     }
 
     if changed || tor_changed || first_scan || update_changed {
-        let mut data = current_data;
-        data.package_data = merged;
-        data.server_info.tor_address = tor_addr.clone();
-        data.server_info.node_address = tor_addr.as_ref().map(|t| identity.node_address(t));
-        data.server_info.status_info.containers_scanned = true;
-        data.server_info.status_info.updated = update_available;
-        state.update_data(data).await;
-        debug!(
-            "📦 State changed (packages={}, tor={}, first_scan={}, update={}), broadcasting update",
-            changed, tor_changed, first_scan, update_changed
-        );
+        state
+            .mutate_data(|data| {
+                // A lifecycle operation may have started/finished while this scan
+                // awaited probes or disk I/O. Never overwrite that newer entry or
+                // resurrect one that an uninstall removed in the meantime.
+                apply_scanned_packages(&mut data.package_data, &current_data.package_data, &merged);
+                data.server_info.tor_address = tor_addr.clone();
+                data.server_info.node_address = tor_addr.as_ref().map(|t| identity.node_address(t));
+                data.server_info.status_info.containers_scanned = true;
+                data.server_info.status_info.updated = update_available;
+            })
+            .await;
     }
 
     Ok(())
+}
+
+fn apply_scanned_packages(
+    latest: &mut HashMap<String, crate::data_model::PackageDataEntry>,
+    base: &HashMap<String, crate::data_model::PackageDataEntry>,
+    scanned: &HashMap<String, crate::data_model::PackageDataEntry>,
+) {
+    for (id, fresh) in scanned {
+        if latest.get(id) == base.get(id) {
+            latest.insert(id.clone(), fresh.clone());
+        }
+    }
+    for id in base.keys() {
+        if !scanned.contains_key(id) && latest.get(id) == base.get(id) {
+            latest.remove(id);
+        }
+    }
 }
 
 async fn normalize_reachable_package_health(
@@ -2268,6 +2304,7 @@ mod merge_tests {
 
     fn make_entry(state: PackageState, health: Option<&str>) -> PackageDataEntry {
         PackageDataEntry {
+            ui_ready: None,
             state,
             health: health.map(|s| s.to_string()),
             exit_code: None,
@@ -2278,6 +2315,37 @@ mod merge_tests {
             uninstall_stage: None,
             available_update: None,
         }
+    }
+
+    #[test]
+    fn stale_scan_cannot_remove_new_installs_or_overwrite_lifecycle_changes() {
+        let running = make_entry(PackageState::Running, Some("healthy"));
+        let restarting = make_entry(PackageState::Restarting, None);
+        let base = [
+            ("restart".into(), running.clone()),
+            ("uninstalled".into(), running.clone()),
+        ]
+        .into_iter()
+        .collect();
+        let mut latest = [
+            ("restart".into(), restarting.clone()),
+            ("new".into(), running.clone()),
+        ]
+        .into_iter()
+        .collect();
+        let scanned = [
+            ("restart".into(), running.clone()),
+            ("uninstalled".into(), running.clone()),
+        ]
+        .into_iter()
+        .collect();
+        apply_scanned_packages(&mut latest, &base, &scanned);
+        assert_eq!(latest.get("restart"), Some(&restarting));
+        assert_eq!(latest.get("new"), Some(&running));
+        assert!(!latest.contains_key("uninstalled"));
+        apply_scanned_packages(&mut latest, &base, &HashMap::new());
+        assert_eq!(latest.get("restart"), Some(&restarting));
+        assert!(latest.contains_key("new"));
     }
 
     #[test]

@@ -1069,6 +1069,7 @@ mod tests {
             Description, Manifest, PackageDataEntry, PackageState, StaticFiles,
         };
         PackageDataEntry {
+            ui_ready: None,
             state: PackageState::Running,
             health: None,
             exit_code: None,

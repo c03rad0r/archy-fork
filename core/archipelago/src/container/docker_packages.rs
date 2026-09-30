@@ -3,8 +3,9 @@
 
 use anyhow::Result;
 use archipelago_container::{
-    ContainerRuntime as ContainerRuntimeTrait, ContainerState, PodmanClient,
+    ContainerRuntime as ContainerRuntimeTrait, ContainerState, ContainerStatus, PodmanClient,
 };
+use futures_util::StreamExt;
 use std::collections::HashMap;
 use std::sync::Arc;
 use tracing::{debug, info};
@@ -25,8 +26,15 @@ impl DockerPackageScanner {
     }
 
     /// Scan Docker containers and convert to package data
-    pub async fn scan_containers(&self) -> Result<HashMap<String, PackageDataEntry>> {
-        let containers = self.runtime.list_containers().await?;
+    pub async fn scan_containers(
+        &self,
+        data_dir: &std::path::Path,
+        cached: &HashMap<String, PackageDataEntry>,
+    ) -> Result<HashMap<String, PackageDataEntry>> {
+        let mut containers = self.runtime.list_containers().await?;
+        let installed = crate::crash_recovery::load_installed_apps(data_dir).await;
+        let uninstalled = crate::crash_recovery::load_user_uninstalled(data_dir).await;
+        restore_absent_installed(&mut containers, &installed, &uninstalled);
 
         debug!("Found {} containers", containers.len());
 
@@ -139,6 +147,18 @@ impl DockerPackageScanner {
                 continue;
             }
 
+            if container.id.is_empty() {
+                if let Some(previous) = cached.get(&app_id) {
+                    let mut held = previous.clone();
+                    held.state = PackageState::Stopped;
+                    held.ui_ready = Some(false);
+                    held.health = None;
+                    held.exit_code = None;
+                    packages.insert(app_id.clone(), held);
+                    continue;
+                }
+            }
+
             // Get metadata for this app
             let metadata = get_app_metadata(&app_id);
             // Manifest-owned metadata (icon) wins over the static table: the
@@ -179,14 +199,22 @@ impl DockerPackageScanner {
             let tor_address = read_tor_address(&app_id).await;
 
             // Extract actual version from container image tag
-            let running_version = image_versions::extract_version_from_image(&container.image);
+            let running_version = if container.id.is_empty() {
+                String::new() // Absence cannot establish the installed image version.
+            } else {
+                image_versions::extract_version_from_image(&container.image)
+            };
 
             // Decoupled from the binary OTA: prefer the remote app catalog,
             // falling back to the image-versions.sh pin when uncovered/offline.
-            let available_update =
-                crate::container::app_catalog::available_update_for_app(&app_id, &container.image);
+            let available_update = if container.id.is_empty() {
+                None
+            } else {
+                crate::container::app_catalog::available_update_for_app(&app_id, &container.image)
+            };
 
             let package = PackageDataEntry {
+                ui_ready: Some(false),
                 state: package_state.clone(),
                 health: container.health.clone(),
                 exit_code: if package_state == PackageState::Exited {
@@ -283,7 +311,212 @@ impl DockerPackageScanner {
             );
         }
 
+        let probes: Vec<_> = packages
+            .iter()
+            .filter_map(|(id, pkg)| {
+                if pkg.state != PackageState::Running {
+                    return None;
+                }
+                let url = pkg
+                    .installed
+                    .as_ref()?
+                    .interface_addresses
+                    .get("main")?
+                    .lan_address
+                    .clone()?;
+                Some((id.clone(), url))
+            })
+            .collect();
+        let mut results = futures_util::stream::iter(
+            probes
+                .into_iter()
+                .map(|(id, url)| async move { (id, launch_http_ready(&url).await) }),
+        )
+        .buffer_unordered(8);
+        while let Some((id, ready)) = results.next().await {
+            if let Some(pkg) = packages.get_mut(&id) {
+                pkg.ui_ready = Some(ready);
+            }
+        }
+        // HTTP on loopback can precede the LAN/Tor listener after install.
+        let port_map = crate::appgate::identity::build_port_map();
+        let gated: Vec<_> = packages
+            .iter()
+            .filter_map(|(id, pkg)| {
+                if pkg.ui_ready != Some(true) {
+                    return None;
+                }
+                let url = pkg
+                    .installed
+                    .as_ref()?
+                    .interface_addresses
+                    .get("main")?
+                    .lan_address
+                    .as_deref()?;
+                let port = launch_url_port(url)?;
+                port_map
+                    .gated(port)
+                    .filter(|gate| gate.declared)
+                    .map(|_| (id.clone(), port))
+            })
+            .collect();
+        if !gated.is_empty() {
+            use crate::appgate::listener::{port_claimed, refresh_now, shared_status};
+            let status = shared_status();
+            let needs_refresh = {
+                let current = status.read().await;
+                gated.iter().any(|(_, port)| !port_claimed(&current, *port))
+            };
+            if needs_refresh {
+                refresh_now().await;
+            }
+            let current = status.read().await;
+            for (id, port) in gated {
+                if !port_claimed(&current, port) {
+                    packages.get_mut(&id).unwrap().ui_ready = Some(false);
+                }
+            }
+        }
         Ok(packages)
+    }
+}
+
+/// Quadlet removes containers during ordinary stops/restarts. Rebuild installed
+/// entries even on the daemon's first scan; a runtime absence is not uninstall.
+fn restore_absent_installed(
+    containers: &mut Vec<ContainerStatus>,
+    installed: &std::collections::HashSet<String>,
+    uninstalled: &std::collections::HashSet<String>,
+) {
+    fn canonical(name: &str) -> &str {
+        let name = name.strip_prefix("archy-").unwrap_or(name);
+        match name {
+            "immich_server" => "immich",
+            _ => name,
+        }
+    }
+    let mut present: std::collections::HashSet<String> = containers
+        .iter()
+        .map(|c| canonical(&c.name).to_owned())
+        .collect();
+    let removed: std::collections::HashSet<_> =
+        uninstalled.iter().map(|id| canonical(id)).collect();
+    for name in installed {
+        let id = canonical(name);
+        if removed.contains(id) || !present.insert(id.to_owned()) {
+            continue;
+        }
+        containers.push(ContainerStatus {
+            id: String::new(),
+            name: id.to_owned(),
+            state: ContainerState::Stopped,
+            health: None,
+            exit_code: None,
+            started_at: None,
+            image: String::new(),
+            created: String::new(),
+            ports: Vec::new(),
+            lan_address: None,
+        });
+    }
+}
+
+/// Probe the actual loopback upstream, not the app gate's login page. A bound
+/// TCP socket alone can still reset requests or serve a startup 503.
+async fn launch_http_ready(candidate: &str) -> bool {
+    let Ok(mut url) = reqwest::Url::parse(candidate) else {
+        return false;
+    };
+    if !matches!(url.scheme(), "http" | "https") {
+        return false;
+    }
+    if url.set_host(Some("127.0.0.1")).is_err() {
+        return false;
+    }
+    static CLIENT: std::sync::OnceLock<reqwest::Client> = std::sync::OnceLock::new();
+    let client = CLIENT.get_or_init(|| {
+        reqwest::Client::builder()
+            .no_proxy()
+            .timeout(std::time::Duration::from_secs(2))
+            .redirect(reqwest::redirect::Policy::none())
+            // Self-signed local app certificates are normal. This client only
+            // contacts loopback and never sends credentials or follows redirects.
+            .danger_accept_invalid_certs(true)
+            .build()
+            .expect("local readiness client")
+    });
+    match client.get(url).send().await {
+        Ok(response) => matches!(response.status().as_u16(), 200..=399 | 401 | 403),
+        Err(_) => false,
+    }
+}
+
+#[cfg(test)]
+mod lifecycle_regression_tests {
+    use super::*;
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+    #[test]
+    fn registry_survives_empty_runtime_and_deduplicates_aliases() {
+        let installed = ["archy-gitea", "gitea", "immich_server", "archy-removed"]
+            .into_iter()
+            .map(str::to_owned)
+            .collect();
+        let removed = ["removed".to_owned()].into_iter().collect();
+        let mut containers = Vec::new();
+        restore_absent_installed(&mut containers, &installed, &removed);
+        assert_eq!(containers.len(), 2);
+        assert!(containers
+            .iter()
+            .all(|c| c.state == ContainerState::Stopped));
+        containers[0].state = ContainerState::Running;
+        restore_absent_installed(&mut containers, &installed, &removed);
+        assert_eq!(containers.len(), 2);
+        assert_eq!(containers[0].state, ContainerState::Running);
+    }
+
+    #[tokio::test]
+    async fn readiness_rejects_startup_errors_and_accepts_auth_and_redirects() {
+        for (status, expected) in [
+            (200, true),
+            (302, true),
+            (401, true),
+            (403, true),
+            (404, false),
+            (500, false),
+            (502, false),
+            (503, false),
+        ] {
+            let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let port = listener.local_addr().unwrap().port();
+            let task = tokio::spawn(async move {
+                let (mut stream, _) = listener.accept().await.unwrap();
+                let mut buf = [0; 2048];
+                let n = stream.read(&mut buf).await.unwrap();
+                assert!(String::from_utf8_lossy(&buf[..n]).starts_with("GET /start HTTP/1.1"));
+                stream.write_all(format!("HTTP/1.1 {status} Test\r\nContent-Length: 0\r\nConnection: close\r\n\r\n").as_bytes()).await.unwrap();
+            });
+            assert_eq!(
+                launch_http_ready(&format!("http://localhost:{port}/start")).await,
+                expected,
+                "status {status}"
+            );
+            task.await.unwrap();
+        }
+    }
+
+    #[tokio::test]
+    async fn readiness_rejects_tcp_accept_without_http() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let task = tokio::spawn(async move {
+            let (stream, _) = listener.accept().await.unwrap();
+            drop(stream);
+        });
+        assert!(!launch_http_ready(&format!("http://localhost:{port}/")).await);
+        task.await.unwrap();
+        assert!(!launch_http_ready(&format!("http://localhost:{port}/")).await);
+        assert!(!launch_http_ready("file:///tmp/test").await);
     }
 }
 

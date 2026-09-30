@@ -3483,11 +3483,9 @@ impl ProdContainerOrchestrator {
     }
 
     async fn cleanup_stale_grafana_port(&self) {
-        let _ = tokio::process::Command::new("pkill")
-            .args(["-f", "pasta.*3001"])
-            .output()
-            .await;
-        tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+        // Port 3001 can belong to Gitea or the daemon's gate. Reap only a
+        // Grafana container proven absent from Podman's inventory.
+        crate::container::ghost_reaper::reap_for_app("grafana").await;
     }
 
     async fn detect_host_facts(&self) -> HostFacts {

@@ -66,3 +66,19 @@ describe('AppSessionFrame warm-up state', () => {
     expect(text).toContain('This app opens in a new tab')
   })
 })
+
+describe('HTTP readiness gate', () => {
+  it('does not show a missing-configuration error during initial installation', () => {
+    const frame = mountFrame({ appUrl: '', uiReadyBlocked: true, blockedReason: 'Waiting for the app to be ready…' })
+    expect(frame.text()).not.toContain('App not configured')
+    expect(frame.find('iframe').exists()).toBe(false)
+  })
+  it('does not mount an iframe before readiness, then opens automatically', async () => {
+    const frame = mountFrame({ iframeBlocked: false, uiReadyBlocked: true, blockedReason: 'Waiting for the app to be ready…', blockedTitle: 'App not ready' })
+    expect(frame.find('iframe').exists()).toBe(false)
+    expect(frame.text()).toContain('opens automatically')
+    expect(frame.text()).not.toContain('Open in new tab')
+    await frame.setProps({ uiReadyBlocked: false, blockedReason: '' })
+    expect(frame.find('iframe').exists()).toBe(true)
+  })
+})

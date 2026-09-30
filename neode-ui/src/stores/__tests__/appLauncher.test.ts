@@ -34,6 +34,7 @@ vi.mock('@/api/rpc-client', () => ({
 vi.stubGlobal('open', mockWindowOpen)
 
 import { useAppLauncherStore, senderMatchesApp } from '../appLauncher'
+import { useAppStore } from '../app'
 
 describe('useAppLauncherStore', () => {
   beforeEach(() => {
@@ -52,6 +53,25 @@ describe('useAppLauncherStore', () => {
       writable: true,
       configurable: true,
     })
+  })
+
+  it('blocks both browser and embedded launch while HTTP is unready', () => {
+    const app = useAppStore()
+    app.data = { 'package-data': { gitea: { state: 'running', 'ui-ready': false, health: 'healthy', manifest: { id: 'gitea', title: 'Gitea' } } } } as never
+    const launcher = useAppLauncherStore()
+    launcher.openSession('gitea')
+    expect(launcher.panelAppId).toBeNull()
+    launcher.open({ url: 'http://192.0.2.10:3001/', title: 'Gitea', openInNewTab: true })
+    expect(mockWindowOpen).not.toHaveBeenCalled()
+    expect(launcher.isOpen).toBe(false)
+  })
+
+  it('also gates a dynamic app resolved through its runtime URL', () => {
+    useAppStore().data = { 'package-data': { custom: { state: 'running', 'ui-ready': false, manifest: { id: 'custom', title: 'Custom' }, installed: { 'interface-addresses': { main: { 'lan-address': 'http://localhost:18993/' } } } } } } as never
+    const launcher = useAppLauncherStore()
+    launcher.open({ url: 'http://192.0.2.10:18993/', title: 'Custom', openInNewTab: true })
+    expect(mockWindowOpen).not.toHaveBeenCalled()
+    expect(launcher.isOpen).toBe(false)
   })
 
   it('starts closed with empty state', () => {

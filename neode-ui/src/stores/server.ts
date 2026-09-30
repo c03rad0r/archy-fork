@@ -25,6 +25,7 @@ import type { InstallPhase } from '../types/api'
 const PHASE_INFO: Record<InstallPhase, { progress: number; message: string; status: InstallProgress['status'] }> = {
   'preparing':          { progress: 5,  message: 'Preparing…',                status: 'downloading' },
   'pulling-image':      { progress: 20, message: 'Downloading image…',        status: 'downloading' },
+  'preparing-app':      { progress: 20, message: 'Downloading, building and starting app…', status: 'downloading' },
   'creating-container': { progress: 70, message: 'Creating container…',       status: 'installing' },
   'starting-container': { progress: 80, message: 'Starting container…',       status: 'starting' },
   'waiting-healthy':    { progress: 88, message: 'Finalizing first start…',   status: 'starting' },
@@ -149,7 +150,7 @@ export const useServerStore = defineStore('server', () => {
         uninstallingApps.value.delete(appId)
       }
     }
-  }, { deep: true })
+  }, { deep: true, immediate: true })
 
   function setInstallProgress(appId: string, progress: Partial<InstallProgress> & { id: string; title: string }) {
     const existing = installingApps.value.get(appId)

@@ -54,6 +54,21 @@ impl StateManager {
         let _ = self.broadcast_tx.send(message);
     }
 
+    /// Apply a small state change while holding the write lock. A lifecycle
+    /// task must not replace the entire model from an earlier snapshot.
+    pub async fn mutate_data<T>(&self, change: impl FnOnce(&mut DataModel) -> T) -> T {
+        let mut data = self.data.write().await;
+        let result = change(&mut data);
+        let mut rev = self.revision.write().await;
+        *rev += 1;
+        let _ = self.broadcast_tx.send(WebSocketMessage {
+            rev: *rev,
+            data: Some(data.clone()),
+            patch: None,
+        });
+        result
+    }
+
     /// Get a WebSocket message with the current state
     pub async fn get_initial_message(&self) -> WebSocketMessage {
         let (data, rev) = self.get_snapshot().await;
@@ -188,5 +203,31 @@ mod tests {
         sm.update_data(DataModel::new()).await;
         let (_, rev) = sm.get_snapshot().await;
         assert_eq!(rev, 1);
+    }
+}
+
+#[cfg(test)]
+mod atomic_mutation_tests {
+    use super::*;
+    #[tokio::test]
+    async fn concurrent_updates_preserve_independent_entries() {
+        let state = Arc::new(StateManager::new());
+        let mut tasks = Vec::new();
+        for i in 0..24 {
+            let state = state.clone();
+            tasks.push(tokio::spawn(async move {
+                state
+                    .mutate_data(|data| {
+                        data.peer_health.insert(format!("peer-{i}"), true);
+                    })
+                    .await;
+            }));
+        }
+        for task in tasks {
+            task.await.unwrap();
+        }
+        let (data, revision) = state.get_snapshot().await;
+        assert_eq!(data.peer_health.len(), 24);
+        assert_eq!(revision, 24);
     }
 }

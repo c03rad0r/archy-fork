@@ -88,6 +88,7 @@ export const PackageState = {
 export type PackageState = typeof PackageState[keyof typeof PackageState]
 
 export interface PackageDataEntry {
+  'ui-ready'?: boolean // HTTP upstream readiness, separate from container health
   state: PackageState
   health?: string | null // "healthy", "unhealthy", "starting", or null
   'exit-code'?: number | null // container exit code: 0 = clean stop, non-zero = crash
@@ -180,6 +181,7 @@ export type ServiceStatus = typeof ServiceStatus[keyof typeof ServiceStatus]
 export type InstallPhase =
   | 'preparing'
   | 'pulling-image'
+  | 'preparing-app'
   | 'creating-container'
   | 'starting-container'
   | 'waiting-healthy'
