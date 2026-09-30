@@ -39,20 +39,21 @@ doc. See [`ROADMAP.md`](ROADMAP.md) for the curated, public-facing direction.
   alone do not establish that the kiosk rendering is fixed. Track for the next
   release; the signed 1.8.21 artifacts remain unchanged.
 
-## Current repair and release tasks — 2026-09-29
+## 1.8.21 repair and release tasks — completed 2026-09-30
 
-Release is blocked until these pass; see [execution record](repair-release-20260929.md).
+See the [execution record](repair-release-20260929.md) for evidence and limits.
 
-- [ ] Fix Cashu paid-file redemption between dev and Shorty; test keyset IDs,
+- [x] Fix Cashu paid-file redemption between dev and Shorty; test keyset IDs,
   mint errors, fees, and refund reporting before live validation.
-- [ ] Complete the remaining Framework incident verification and evidence.
-- [ ] Replace the unavailable tx1138.com explorer default with mempool.space;
+- [x] Record Framework verification and the operator's acceptance of the
+  remaining display check before release.
+- [x] Replace the unavailable tx1138.com explorer default with mempool.space;
   migrate the old default with fresh consent and preserve custom/local explorers.
-- [ ] Offer pruning in the Bitcoin installation version modal, using the same
+- [x] Offer pruning in the Bitcoin installation version modal, using the same
   pruning settings as automatic pruning even on large disks.
-- [ ] Explain Bitcoin warmup without raw RPC errors; gate LND unlock on Bitcoin
+- [x] Explain Bitcoin warmup without raw RPC errors; gate LND unlock on Bitcoin
   RPC readiness and show install/start/sync waiting states with automatic recovery.
-- [ ] Test the completed changes on this development box, then publish a new
+- [x] Test the completed changes on this development box, then publish a new
   signed OTA and raw ISO release. Record any remaining verification gaps.
 
 ## Dev & build process (priority)

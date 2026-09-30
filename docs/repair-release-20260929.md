@@ -356,3 +356,42 @@ Bitcoin and LND IDs/start times remained unchanged, with generated stop settings
 still verified. No temporary graceful-stop overrides remain. Catalog signature
 verifies against the pinned release root; final 1.8.21 artifact validator passes.
 The candidate is ready for the user's local OTA signing ceremony.
+
+### 1.8.21 publication completed — 2026-09-30
+
+The operator signed the OTA manifest and subsequently the ISO checksum JSON.
+Both signatures verified against the pinned release root. The signed OTA was
+published on git/ngit, and the operator confirmed that Framework could see the
+update. Source main and the annotated `v1.8.21-alpha` tag were published.
+
+Raw ISO:
+`archipelago-installer-1.8.21-alpha-unbundled-x86_64_RC1.iso`
+
+- Size: 2,682,419,200 bytes.
+- SHA256: `8667b5522c476a40e29abba19df4180086191527a194a88765aa70ed527f9406`.
+- Build and ISO smoke checks passed. The mounted backend matched the staged
+  OTA backend hash, and the full dashboard/AIUI tree matched the fresh build.
+- An isolated UEFI QEMU guest, with no network or host disks attached, booted to
+  the installer prompt. The VM was stopped and the ISO unmounted afterward.
+  This was an installer boot check, not a full installation onto hardware.
+- Uploaded the raw ISO, plain SHA256 sidecar and signed checksum JSON to the
+  [1.8.21 release](https://source.archipelago-foundation.org/lfg2025/archy/releases/tag/v1.8.21-alpha).
+  The stored server file hashes matched, the public ISO headers and first/last
+  byte samples matched, and both public checksum files matched byte-for-byte.
+- The ngit downloader's full-ISO acquisition exceeded its fixed 30-minute
+  deadline on the available connection. Published Nostr asset records using
+  the already verified hashes, sizes and public URLs with the existing ngit
+  signer; both repository relays acknowledged them. Ngit then accepted those
+  records and final readback resolved all five release assets with the expected
+  hashes and sizes. No new release-root signing was performed by the assistant.
+
+Final publication evidence: `/tmp/archy-1821-finish-events.log`,
+`/tmp/archy-ngit-1821-complete-view.json`, and
+`/tmp/archy-1821-verified-asset-events.log` on the development box.
+
+Subsequent review of PRs #161/#162 found additional delivery and concurrent
+file-save edge cases. Their repaired, tested branches are recorded in
+[the next-release review](pr-review-20260930.md); those changes are not in the
+signed 1.8.21 artifacts. The X250 kiosk selector report is also tracked for the
+next release. No claim of exhaustive hardware or network-failure coverage is
+made for this release.
