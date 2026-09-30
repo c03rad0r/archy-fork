@@ -43,6 +43,25 @@ async fn reclaim_spent_ecash(data_dir: &std::path::Path, token: &str, backend: &
     }
 }
 
+/// Only pass through the peer's bounded, printable explanation; refund status
+/// is always determined locally and must never come from the peer's wording.
+fn seller_error_message(status: reqwest::StatusCode, body: &str) -> String {
+    let reason = serde_json::from_str::<serde_json::Value>(body)
+        .ok()
+        .and_then(|v| v.get("error").and_then(|e| e.as_str()).map(str::to_owned));
+    match reason {
+        Some(reason) if !reason.trim().is_empty() => {
+            let clean: String = reason
+                .chars()
+                .filter(|c| !c.is_control())
+                .take(240)
+                .collect();
+            format!("Seller response ({status}): {clean}")
+        }
+        _ => format!("Peer returned an error ({status})."),
+    }
+}
+
 /// Keep first purchases and cached repeats compatible with both existing clients.
 fn paid_content_response(bytes: &[u8], mime: &str, paid_sats: u64) -> serde_json::Value {
     use base64::Engine;
@@ -54,13 +73,9 @@ fn paid_content_response(bytes: &[u8], mime: &str, paid_sats: u64) -> serde_json
     })
 }
 
-/// FileBrowser owns its files through a rootless UID mapping. Use its authenticated
-/// API rather than writing host paths with the backend's unrelated UID. Its
-/// override=false upload atomically refuses existing names, including races.
+/// File purchases through an atomic no-clobber write in Files' own namespace.
 async fn file_purchase_in_files(
-    client: &reqwest::Client,
-    base_url: &str,
-    token: &str,
+    data_dir: &std::path::Path,
     filename: &str,
     mime: &str,
     bytes: &[u8],
@@ -72,59 +87,24 @@ async fn file_purchase_in_files(
     } else {
         "Documents"
     };
-    let mut folder_url = reqwest::Url::parse(base_url)?;
-    folder_url
-        .path_segments_mut()
-        .map_err(|_| anyhow::anyhow!("Invalid Files URL"))?
-        .extend(["api", "resources", folder, ""]);
-    let response = client
-        .get(folder_url.clone())
-        .header("X-Auth", token)
-        .send()
-        .await?;
-    if response.status() == reqwest::StatusCode::NOT_FOUND {
-        let response = client
-            .post(folder_url.clone())
-            .header("X-Auth", token)
-            .send()
-            .await?;
-        if response.status() != reqwest::StatusCode::CONFLICT {
-            response.error_for_status()?;
-        }
-    } else {
-        response.error_for_status()?;
-    }
-    let base = std::path::Path::new(filename)
+    let root = data_dir.join("filebrowser");
+    anyhow::ensure!(
+        tokio::fs::metadata(&root).await?.is_dir(),
+        "Files storage is unavailable"
+    );
+    let name = std::path::Path::new(filename)
         .file_name()
         .and_then(|n| n.to_str())
         .filter(|n| !n.is_empty())
         .unwrap_or("download");
-    let (stem, extension) = match base.rsplit_once('.') {
-        Some((stem, ext)) if !stem.is_empty() => (stem, format!(".{ext}")),
-        _ => (base, String::new()),
-    };
-    for attempt in 1..=100 {
-        let name = if attempt == 1 {
-            base.to_string()
-        } else {
-            format!("{stem} ({attempt}){extension}")
-        };
-        let mut url = folder_url.clone();
-        url.path_segments_mut().unwrap().pop_if_empty().push(&name);
-        url.query_pairs_mut().append_pair("override", "false");
-        let response = client
-            .post(url)
-            .header("X-Auth", token)
-            .body(bytes.to_vec())
-            .send()
-            .await?;
-        if response.status() == reqwest::StatusCode::CONFLICT {
-            continue;
-        }
-        response.error_for_status()?;
-        return Ok(format!("{folder}/{name}"));
-    }
-    anyhow::bail!("Too many existing copies; purchased file remains in the purchase cache")
+    let path =
+        crate::container::filebrowser::save_new_file(&root.join(folder), name, bytes).await?;
+    Ok(format!(
+        "{folder}/{}",
+        path.file_name()
+            .and_then(|n| n.to_str())
+            .context("Invalid Files name")?
+    ))
 }
 
 impl RpcHandler {
@@ -623,13 +603,14 @@ impl RpcHandler {
 
         let path = format!("/content/{}", content_id);
         // Surface a real reason instead of the generic sanitized error (#30):
-        // the dial already tries FIPS/mesh then falls back to Tor, so a failure
-        // here means the peer is genuinely unreachable on both transports.
+        // A bearer token must not be replayed after an ambiguous delivery.
+        // A transport error can mean the seller received it without replying.
         let (response, transport) =
             match crate::fips::dial::PeerRequest::new(fips_npub.as_deref(), onion, &path)
                 .service(crate::settings::transport::PeerService::PeerFiles)
                 .header("X-Federation-DID", local_did)
                 .header("X-Payment-Token", token_str.clone())
+                .single_delivery()
                 .timeout(std::time::Duration::from_secs(900))
                 .send_get()
                 .await
@@ -642,7 +623,7 @@ impl RpcHandler {
                     let refund =
                         reclaim_spent_ecash(&self.config.data_dir, &token_str, used_backend).await;
                     return Ok(serde_json::json!({
-                        "error": format!("Could not reach the peer over mesh or Tor. {refund}")
+                        "error": format!("The purchase could not be completed. {refund}")
                     }));
                 }
             };
@@ -679,7 +660,7 @@ impl RpcHandler {
             tracing::warn!("paid download: seller {onion} returned {status}: {body}");
             let refund = reclaim_spent_ecash(&self.config.data_dir, &token_str, used_backend).await;
             return Ok(serde_json::json!({
-                "error": format!("Peer returned an error ({status}). {refund}")
+                "error": format!("{} {refund}", seller_error_message(status, &body))
             }));
         }
 
@@ -693,10 +674,17 @@ impl RpcHandler {
             .filter(|s| !s.is_empty())
             .unwrap_or_else(|| "application/octet-stream".to_string());
 
-        let bytes = response
-            .bytes()
-            .await
-            .context("Failed to read response body")?;
+        let bytes = match response.bytes().await {
+            Ok(bytes) => bytes,
+            Err(error) => {
+                tracing::warn!("paid download: response body failed: {error}");
+                let refund =
+                    reclaim_spent_ecash(&self.config.data_dir, &token_str, used_backend).await;
+                return Ok(serde_json::json!({
+                    "error": format!("The file transfer was interrupted after payment was sent. {refund}")
+                }));
+            }
+        };
 
         // Persist the purchase so it "stays unlocked" for this buyer: cache the
         // bytes + metadata keyed by (onion, content_id). The gallery then renders
@@ -728,28 +716,8 @@ impl RpcHandler {
 
         // The durable purchased-content cache above is primary. A Files copy
         // remains optional: a stopped FileBrowser must not undo a paid download.
-        let filed = async {
-            let auth = self.handle_filebrowser_token().await?;
-            let token = auth
-                .get("token")
-                .and_then(|v| v.as_str())
-                .context("FileBrowser omitted its authentication token")?;
-            let client = reqwest::Client::builder()
-                .no_proxy()
-                .redirect(reqwest::redirect::Policy::none())
-                .timeout(std::time::Duration::from_secs(30))
-                .build()?;
-            file_purchase_in_files(
-                &client,
-                "http://127.0.0.1:8083",
-                token,
-                &filename,
-                &mime_type,
-                &bytes,
-            )
-            .await
-        }
-        .await;
+        let filed =
+            file_purchase_in_files(&self.config.data_dir, &filename, &mime_type, &bytes).await;
         match filed {
             Ok(path) => tracing::info!("paid download: filed into Files/{path}"),
             Err(error) => tracing::warn!(

@@ -46,6 +46,25 @@ fn fips_should_fall_back(status: reqwest::StatusCode) -> bool {
     status == reqwest::StatusCode::NOT_FOUND || status.is_server_error()
 }
 
+/// Is this FIPS answer the final one, or should the request go again over
+/// Tor? A single-delivery request already reached the peer, so any answer
+/// is final: a Tor replay would carry the same (possibly spent) payload.
+fn fips_answer_is_final(
+    pref: crate::settings::transport::TransportPref,
+    single_delivery: bool,
+    status: reqwest::StatusCode,
+) -> bool {
+    pref == crate::settings::transport::TransportPref::Fips
+        || single_delivery
+        || !fips_should_fall_back(status)
+}
+
+/// May a failed FIPS attempt be sent again? Only a failed connect proves the
+/// peer never saw it; a timeout can land after the request was delivered.
+fn fips_retryable(single_delivery: bool, e: &reqwest::Error) -> bool {
+    e.is_connect() || (!single_delivery && e.is_timeout())
+}
+
 /// DNS suffix appended to a peer's bech32 npub.
 pub const FIPS_DNS_SUFFIX: &str = "fips";
 
@@ -113,7 +132,21 @@ pub fn client() -> reqwest::Client {
 /// before the Tor fallback ever gets a chance. The generous `connect_timeout`
 /// is preserved so a cold hole-punched path still gets time to establish.
 pub fn client_with_timeout(timeout: Duration) -> reqwest::Client {
+    client_with_delivery_policy(timeout, false)
+}
+
+fn delivery_redirect_policy(single: bool) -> reqwest::redirect::Policy {
+    if single {
+        reqwest::redirect::Policy::none()
+    } else {
+        reqwest::redirect::Policy::default()
+    }
+}
+
+fn client_with_delivery_policy(timeout: Duration, single: bool) -> reqwest::Client {
     reqwest::Client::builder()
+        .no_proxy()
+        .redirect(delivery_redirect_policy(single))
         .timeout(timeout)
         .connect_timeout(Duration::from_secs(8))
         .user_agent("archipelago-fips/1")
@@ -130,10 +163,18 @@ pub fn client_with_timeout(timeout: Duration) -> reqwest::Client {
 /// robust". Only connect/timeout errors are retried (a real HTTP response,
 /// including 4xx/5xx, is returned as-is for the caller to interpret).
 async fn send_with_retry(rb: reqwest::RequestBuilder) -> Result<reqwest::Response, reqwest::Error> {
+    send_with_retry_if(rb, |e| e.is_connect() || e.is_timeout()).await
+}
+
+/// [`send_with_retry`], retrying only on errors `retryable` accepts.
+async fn send_with_retry_if(
+    rb: reqwest::RequestBuilder,
+    retryable: impl Fn(&reqwest::Error) -> bool,
+) -> Result<reqwest::Response, reqwest::Error> {
     let retry = rb.try_clone();
     match rb.send().await {
         Ok(resp) => Ok(resp),
-        Err(e) if (e.is_connect() || e.is_timeout()) && retry.is_some() => {
+        Err(e) if retryable(&e) && retry.is_some() => {
             // Brief pause so the hole-punch packets from the first attempt can
             // traverse before we re-dial onto the warmed path.
             tokio::time::sleep(Duration::from_millis(600)).await;
@@ -350,6 +391,9 @@ pub struct PeerRequest<'a> {
     /// the per-peer FIPS/Tor badge reflects reality. Opt-in because not
     /// every caller has a data dir in scope.
     pub record_data_dir: Option<std::path::PathBuf>,
+    /// The request carries something that must reach the peer at most once
+    /// (a bearer ecash token). See [`PeerRequest::single_delivery`].
+    pub single_delivery: bool,
 }
 
 impl<'a> PeerRequest<'a> {
@@ -363,7 +407,23 @@ impl<'a> PeerRequest<'a> {
             fips_timeout: None,
             service: None,
             record_data_dir: None,
+            single_delivery: false,
         }
+    }
+
+    /// Never send this request twice. A paid download carries a bearer ecash
+    /// token that the seller redeems on first sight; replaying it over Tor
+    /// after FIPS already delivered it hands the seller a spent token, so the
+    /// buyer is charged and gets a 402 instead of the file (2026-09-29: FIPS
+    /// answered 404 after the seller redeemed, the Tor retry got 402).
+    ///
+    /// With this set, whatever FIPS answers is final, the FIPS retry fires
+    /// only when the first attempt never connected, and Tor is used only when
+    /// FIPS could not have delivered the request. An attempt that may have
+    /// been delivered but timed out is an error, not a fallback.
+    pub fn single_delivery(mut self) -> Self {
+        self.single_delivery = true;
+        self
     }
 
     /// Record the transport that serves this request into federation storage
@@ -442,7 +502,7 @@ impl<'a> PeerRequest<'a> {
                     // Use the FIPS reply unless it's one a Tor retry could
                     // fix (404 path-not-served / 5xx) and we're allowed to
                     // fall back. FIPS-only never falls back.
-                    if pref == TransportPref::Fips || !fips_should_fall_back(resp.status()) {
+                    if fips_answer_is_final(pref, self.single_delivery, resp.status()) {
                         telemetry::record_fips_ok();
                         self.spawn_record(crate::transport::TransportKind::Fips);
                         return Ok((resp, crate::transport::TransportKind::Fips));
@@ -481,7 +541,7 @@ impl<'a> PeerRequest<'a> {
         if matches!(pref, TransportPref::Auto | TransportPref::Fips) {
             match self.try_fips_get().await? {
                 Some(resp) => {
-                    if pref == TransportPref::Fips || !fips_should_fall_back(resp.status()) {
+                    if fips_answer_is_final(pref, self.single_delivery, resp.status()) {
                         telemetry::record_fips_ok();
                         self.spawn_record(crate::transport::TransportKind::Fips);
                         return Ok((resp, crate::transport::TransportKind::Fips));
@@ -551,13 +611,21 @@ impl<'a> PeerRequest<'a> {
         } else {
             budget
         };
-        let c = client_with_timeout(per_attempt);
+        let c = client_with_delivery_policy(per_attempt, self.single_delivery);
         let mut rb = c.post(&url).json(body);
         for (k, v) in &self.headers {
             rb = rb.header(*k, v);
         }
-        match tokio::time::timeout(budget, send_with_retry(rb)).await {
+        let single = self.single_delivery;
+        let attempt = send_with_retry_if(rb, |e| fips_retryable(single, e));
+        match tokio::time::timeout(budget, attempt).await {
             Ok(Ok(r)) => Ok(Some(r)),
+            Ok(Err(e)) if single && !e.is_connect() => Err(anyhow::anyhow!(
+                "FIPS POST failed after possible delivery; not replaying: {e}"
+            )),
+            Err(_) if single => Err(anyhow::anyhow!(
+                "FIPS POST exceeded its budget after possible delivery; not replaying"
+            )),
             Ok(Err(e)) => {
                 telemetry::record_fallback(FallbackReason::ConnectFail);
                 tracing::info!(
@@ -612,13 +680,28 @@ impl<'a> PeerRequest<'a> {
         } else {
             budget
         };
-        let c = client_with_timeout(per_attempt);
+        let c = client_with_delivery_policy(per_attempt, self.single_delivery);
         let mut rb = c.get(&url);
         for (k, v) in &self.headers {
             rb = rb.header(*k, v);
         }
-        match tokio::time::timeout(budget, send_with_retry(rb)).await {
+        let single = self.single_delivery;
+        let attempt = send_with_retry_if(rb, |e| fips_retryable(single, e));
+        match tokio::time::timeout(budget, attempt).await {
             Ok(Ok(r)) => Ok(Some(r)),
+            // Anything but a failed connect may have reached the peer.
+            Ok(Err(e)) if single && !e.is_connect() => Err(anyhow::anyhow!(
+                "FIPS GET {} failed after the request may have been delivered \
+                 (not retrying over Tor): {}",
+                self.path,
+                e
+            )),
+            Err(_) if single => Err(anyhow::anyhow!(
+                "FIPS GET {} exceeded its {:?} budget after the request may have \
+                 been delivered (not retrying over Tor)",
+                self.path,
+                budget
+            )),
             Ok(Err(e)) => {
                 telemetry::record_fallback(FallbackReason::ConnectFail);
                 tracing::info!(
@@ -676,6 +759,7 @@ impl<'a> PeerRequest<'a> {
             .context("Invalid Tor SOCKS proxy URL")?;
         reqwest::Client::builder()
             .proxy(proxy)
+            .redirect(delivery_redirect_policy(self.single_delivery))
             .timeout(self.timeout)
             .build()
             .context("Build Tor HTTP client")
@@ -758,5 +842,182 @@ mod tests {
         r[7] = 0; // ANCOUNT=0
         let err = decode_response(0xAABB, &r, "x").unwrap_err();
         assert!(err.to_string().contains("no AAAA"));
+    }
+
+    #[test]
+    fn a_single_delivery_answer_is_final_whatever_its_status() {
+        use crate::settings::transport::TransportPref;
+        use reqwest::StatusCode;
+        // Regression (2026-09-29): the seller redeemed a paid download's
+        // token, answered 404, and the Tor fallback replayed the spent token.
+        for status in [
+            StatusCode::NOT_FOUND,
+            StatusCode::INTERNAL_SERVER_ERROR,
+            StatusCode::SERVICE_UNAVAILABLE,
+            StatusCode::OK,
+        ] {
+            assert!(fips_answer_is_final(TransportPref::Auto, true, status));
+        }
+        // Everything else keeps the existing fallback rules.
+        assert!(!fips_answer_is_final(
+            TransportPref::Auto,
+            false,
+            StatusCode::NOT_FOUND
+        ));
+        assert!(!fips_answer_is_final(
+            TransportPref::Auto,
+            false,
+            StatusCode::BAD_GATEWAY
+        ));
+        assert!(fips_answer_is_final(
+            TransportPref::Auto,
+            false,
+            StatusCode::PAYMENT_REQUIRED
+        ));
+        assert!(fips_answer_is_final(
+            TransportPref::Fips,
+            false,
+            StatusCode::NOT_FOUND
+        ));
+    }
+
+    /// A listener that accepts connections and never answers, counting them.
+    async fn silent_peer() -> (String, std::sync::Arc<std::sync::atomic::AtomicUsize>) {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let seen = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let counter = seen.clone();
+        tokio::spawn(async move {
+            let mut held = Vec::new();
+            while let Ok((stream, _)) = listener.accept().await {
+                counter.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                held.push(stream); // keep it open, never reply
+            }
+        });
+        (format!("http://{addr}/content/x"), seen)
+    }
+
+    #[tokio::test]
+    async fn a_single_delivery_request_is_not_resent_after_a_timeout() {
+        let (url, seen) = silent_peer().await;
+        let c = client_with_timeout(Duration::from_millis(300));
+        let err = send_with_retry_if(c.get(&url), |e| fips_retryable(true, e))
+            .await
+            .expect_err("peer never answers");
+        assert!(err.is_timeout());
+        assert_eq!(seen.load(std::sync::atomic::Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn an_ordinary_request_is_still_retried_once_after_a_timeout() {
+        let (url, seen) = silent_peer().await;
+        let c = client_with_timeout(Duration::from_millis(300));
+        let _ = send_with_retry_if(c.get(&url), |e| fips_retryable(false, e)).await;
+        assert_eq!(seen.load(std::sync::atomic::Ordering::SeqCst), 2);
+    }
+
+    #[tokio::test]
+    async fn a_single_delivery_request_still_retries_a_refused_connect() {
+        // Nothing listening: the peer provably never saw the request.
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        drop(listener);
+        let c = client_with_timeout(Duration::from_millis(500));
+        let err = send_with_retry_if(c.get(format!("http://{addr}/")), |e| {
+            fips_retryable(true, e)
+        })
+        .await
+        .expect_err("nothing listening");
+        assert!(err.is_connect());
+        assert!(fips_retryable(true, &err));
+    }
+}
+
+#[cfg(test)]
+mod delivery_redirect_tests {
+    use super::*;
+    use hyper::{
+        service::{make_service_fn, service_fn},
+        Body, Response, Server,
+    };
+    use std::{
+        convert::Infallible,
+        sync::{
+            atomic::{AtomicUsize, Ordering},
+            Arc,
+        },
+    };
+
+    #[tokio::test]
+    async fn paid_bearer_request_does_not_follow_redirects_but_normal_get_does() {
+        let seen = Arc::new(AtomicUsize::new(0));
+        let counter = seen.clone();
+        let server = Server::bind(&([127, 0, 0, 1], 0).into());
+        let address = server.local_addr();
+        let service = make_service_fn(move |_| {
+            let counter = counter.clone();
+            async move {
+                Ok::<_, Infallible>(service_fn(move |request: hyper::Request<Body>| {
+                    let counter = counter.clone();
+                    async move {
+                        counter.fetch_add(1, Ordering::SeqCst);
+                        let response = if request.uri().path() == "/first" {
+                            Response::builder()
+                                .status(302)
+                                .header("Location", "/replay")
+                                .body(Body::empty())
+                                .unwrap()
+                        } else {
+                            Response::new(Body::from("replayed"))
+                        };
+                        Ok::<_, Infallible>(response)
+                    }
+                }))
+            }
+        });
+        let task = tokio::spawn(server.serve(service));
+        let url = format!("http://{address}/first");
+        let response = client_with_delivery_policy(Duration::from_secs(2), true)
+            .get(&url)
+            .header("X-Payment-Token", "dummy-test-token")
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(response.status(), reqwest::StatusCode::FOUND);
+        assert_eq!(seen.load(Ordering::SeqCst), 1);
+        let response = client_with_delivery_policy(Duration::from_secs(2), false)
+            .get(url)
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(response.status(), reqwest::StatusCode::OK);
+        assert_eq!(seen.load(Ordering::SeqCst), 3);
+        task.abort();
+    }
+
+    #[tokio::test]
+    async fn paid_request_is_not_resent_when_peer_disconnects_after_reading_it() {
+        use tokio::io::AsyncReadExt;
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let seen = Arc::new(AtomicUsize::new(0));
+        let counter = seen.clone();
+        let task = tokio::spawn(async move {
+            while let Ok((mut stream, _)) = listener.accept().await {
+                let mut buf = [0; 4096];
+                let _ = stream.read(&mut buf).await;
+                counter.fetch_add(1, Ordering::SeqCst);
+                drop(stream);
+            }
+        });
+        let c = client_with_delivery_policy(Duration::from_secs(2), true);
+        let error = send_with_retry_if(c.get(format!("http://{address}/")), |e| {
+            fips_retryable(true, e)
+        })
+        .await
+        .unwrap_err();
+        assert!(!error.is_connect());
+        assert_eq!(seen.load(Ordering::SeqCst), 1);
+        task.abort();
     }
 }

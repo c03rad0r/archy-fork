@@ -162,11 +162,33 @@ impl ApiHandler {
                     r#"{"error":"This file is shared with the host's federation peers only. Federate with that node (exchange invites) so it recognizes you, then try again."}"#,
                 ),
             )),
-            Ok(content_server::ServeResult::NotFound) | Err(_) => Ok(build_response(
+            Ok(content_server::ServeResult::Unavailable) => Ok(build_response(
+                StatusCode::SERVICE_UNAVAILABLE,
+                "application/json",
+                hyper::Body::from(
+                    r#"{"error":"The seller's node can't read this file right now. This request did not redeem an ecash payment."}"#,
+                ),
+            )),
+            Ok(content_server::ServeResult::RangeNotSatisfiable(total)) => Ok(Response::builder()
+                .status(StatusCode::RANGE_NOT_SATISFIABLE)
+                .header("Content-Range", format!("bytes */{total}"))
+                .body(hyper::Body::empty())
+                .unwrap()),
+            Ok(content_server::ServeResult::NotFound) => Ok(build_response(
                 StatusCode::NOT_FOUND,
                 "text/plain",
                 hyper::Body::from("Content not found"),
             )),
+            // Not a 404: a paid request may already have been charged by the
+            // time this fails, and "not found" hid the real error entirely.
+            Err(e) => {
+                tracing::error!("Serving content {content_id} failed: {e:#}");
+                Ok(build_response(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "text/plain",
+                    hyper::Body::from("Failed to serve content"),
+                ))
+            }
         }
     }
 
