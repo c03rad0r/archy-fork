@@ -25,13 +25,22 @@
     <div v-if="loading" class="py-6 text-center text-white/60 text-sm">{{ t('common.loading') }}</div>
 
     <div v-else class="space-y-2">
-      <label class="block text-white/60 text-sm">{{ t('appDetails.selectVersion') }}</label>
-      <select
-        v-model="selected"
-        class="w-full rounded-lg bg-white/[0.06] border border-white/10 text-white pl-3 pr-9 py-2 text-sm focus:outline-none focus:border-blue-400/60"
-      >
-        <option v-for="v in versions" :key="v.version" :value="v.version">{{ optionLabel(v) }}</option>
-      </select>
+      <fieldset class="space-y-2">
+        <legend class="text-white/60 text-sm mb-2">{{ t('appDetails.selectVersion') }}</legend>
+        <!-- Inline options avoid native popup rendering in the kiosk WebView.
+             They stay in document flow above the pruning explanation. -->
+        <div class="max-h-40 overflow-y-auto space-y-2 rounded-lg">
+          <label
+            v-for="v in versions"
+            :key="v.version"
+            class="flex items-center gap-3 rounded-lg border px-3 py-2.5 text-sm text-white cursor-pointer"
+            :class="selected === v.version ? 'border-blue-400/60 bg-slate-800' : 'border-white/10 bg-slate-900'"
+          >
+            <input v-model="selected" type="radio" :name="`install-version-${appId}`" :value="v.version" class="shrink-0 accent-blue-400" />
+            <span>{{ optionLabel(v) }}</span>
+          </label>
+        </div>
+      </fieldset>
       <p class="text-white/40 text-xs">{{ t('marketplace.installModalHint') }}</p>
     </div>
 
@@ -113,6 +122,7 @@ async function load() {
   } catch (err) {
     if (import.meta.env.DEV) console.warn('[InstallVersionModal] getPackageVersions failed:', err)
     // Fall back to the floating "latest" so the install can still proceed.
+    versions.value = [{ version: 'latest' } as CatalogVersionInfo]
     selected.value = 'latest'
   } finally {
     loading.value = false
