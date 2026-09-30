@@ -3,14 +3,30 @@
 Working backlog of forward-looking items not yet scoped into a dedicated plan
 doc. See [`ROADMAP.md`](ROADMAP.md) for the curated, public-facing direction.
 
-## Blocking incident — before unrelated work
+## Framework incident — closed with operator acceptance
 
-- **OPEN: Framework LND startup / missing Receive address / false zero balance.**
-  User requires investigation and a verified fix on the actual node before later
-  unrelated work. Startup and native balances were verified on the actual node;
-  final display confirmation is pending. See the incident record for evidence.
+- **CLOSED WITH OPERATOR ACCEPTANCE (2026-09-30): Framework LND startup /
+  missing Receive address / false zero balance.** Startup, native balances,
+  Cashu address and source integration were verified; the operator accepted the
+  remaining display check and authorized release. See the incident record for evidence.
   See [incident evidence and closure criteria](incident-framework-lnd-startup.md)
   and the repository `AGENTS.md` session-start instructions.
+
+## Next release after 1.8.21 — reported 2026-09-30
+
+- [ ] **ThinkPad X250 kiosk: Bitcoin installation version selector is unreadable
+  and appears underneath the pruning information.** Operator reports white
+  styling with invisible text on the actual kiosk; the same flow works in remote
+  Brave. Reproduce on the X250's kiosk engine and record its version, display
+  scale and resolution. Inspect the native `<select>` in
+  `neode-ui/src/components/InstallVersionModal.vue`, its option colors, and the
+  scroll/stacking behavior in `BaseModal.vue`; these are investigation leads,
+  not a confirmed cause. Fix contrast and popup visibility without changing
+  version selection or pruning behavior. Validate Core and Knots, open/closed
+  and scrolled dropdowns, keyboard/touch selection, and pruning on/off on the
+  actual kiosk, with remote Brave and mobile regression checks. Browser mocks
+  alone do not establish that the kiosk rendering is fixed. Track for the next
+  release; the signed 1.8.21 artifacts remain unchanged.
 
 ## Current repair and release tasks — 2026-09-29
 
