@@ -174,3 +174,25 @@ The startup-order optimized build is logged in
 `/tmp/archy-runtime-order-live-check.py` to deploy with rollback, remove the
 candidate manifest override, and verify five normal management startups and
 managed Angor restarts. No new release version/tag, OTA or ISO has been created.
+
+## Mempool and dashboard follow-up
+
+- Deployed the Mempool alias and runtime-promotion-order backend to dev. Real
+  server state contains one healthy `mempool`; the stale `mempool-web` record
+  is gone. Real-data browser checks at 1440/390 pixels found exactly one tile
+  before and after hard refresh. Bitcoin/LND identities/start times unchanged.
+- Removed the candidate manifest override. Normal management startup passed
+  two full cycles with 62 manifests retained through both initial catalog
+  refreshes. The next cycle hit a single readiness assertion; a subsequent
+  read-only check found Angor healthy and the manifest count intact. Remaining
+  repeat coverage should use bounded polling to distinguish transient request
+  failures from loss of app definitions; do not report five cycles passed yet.
+- Bitcoin Core's dashboard was serving HTTP 200 on 8334 while readiness checked
+  RPC 8332. Companion URL selection now takes priority over protocol sockets
+  for Core/Knots and Electrum aliases, with a regression preserving allocated
+  UI ports for other apps. Backend suite: 1,609 passed, four opt-in ignored.
+  Optimized build is `/tmp/archy-dashboard-address-build.log`; deployment and
+  live IBD verification helper: `/tmp/archy-dashboard-address-deploy.py`.
+- Phoenixd has no browser UI. Headless services now omit web-readiness messages;
+  actual browser apps name their web interface rather than waiting for
+  themselves. Focused 23 UI tests and production build passed; deployed to dev.

@@ -167,7 +167,7 @@ describe('appsConfig service filtering', () => {
     pkg.health = null
     expect(isAppReadyForLaunch(pkg)).toBe(false)
     expect(canLaunch(pkg)).toBe(false)
-    expect(launchBlockedReason(pkg.manifest.id, pkg)).toBe('Waiting for GitWorkshop…')
+    expect(launchBlockedReason(pkg.manifest.id, pkg)).toBe('Waiting for GitWorkshop’s web interface…')
     pkg.health = 'healthy'
     expect(canLaunch(pkg)).toBe(true)
   })
@@ -194,6 +194,18 @@ describe('appsConfig service filtering', () => {
   })
 })
 
+describe('headless service readiness messages', () => {
+  it('does not treat an API-only service as waiting for its own nonexistent UI', () => {
+    for (const id of ['phoenixd', 'angor-indexer', 'angor-relay', 'custom-api']) {
+      const pkg = makePkg(id, id, 'other')
+      pkg['ui-ready'] = false
+      pkg.health = 'healthy'
+      expect(canLaunch(pkg)).toBe(false)
+      expect(launchBlockedReason(id, pkg)).toBe('')
+    }
+  })
+})
+
 describe('HTTP readiness independent of container health', () => {
   it('blocks fixed launch URLs while the HTTP upstream is unavailable', () => {
     for (const id of ['gitea', 'filebrowser', 'fedimint', 'lnd']) {
@@ -202,7 +214,7 @@ describe('HTTP readiness independent of container health', () => {
       pkg.health = 'healthy'
       expect(canLaunch(pkg)).toBe(false)
       expect(isAppReadyForLaunch(pkg)).toBe(false)
-      expect(launchBlockedReason(id, pkg)).toBe(`Waiting for ${resolveAppTitle(id, pkg)}…`)
+      expect(launchBlockedReason(id, pkg)).toBe(`Waiting for ${resolveAppTitle(id, pkg)}’s web interface…`)
       pkg['ui-ready'] = true
       expect(isAppReadyForLaunch(pkg)).toBe(true)
     }

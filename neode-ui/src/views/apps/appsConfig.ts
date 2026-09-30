@@ -303,9 +303,12 @@ export function isAppReadyForLaunch(pkg: PackageDataEntry): boolean {
 export function launchBlockedReason(id: string, pkg?: PackageDataEntry | null): string {
   const appId = pkg?.manifest?.id || id
   const title = pkg ? resolveAppTitle(appId, pkg) : id
+  // API-only services have no web interface to wait for. Their health badge
+  // describes service availability; a failed HTML probe is not a dependency.
+  if (pkg && isWebsitePackage(appId, pkg)) return ''
   if (pkg?.['ui-ready'] === false && !isServicePackage(appId, pkg)) {
     if (pkg.state === PackageState.Stopped || pkg.state === PackageState.Exited) return 'App is stopped. Start it to open it.'
-    return `Waiting for ${title}…`
+    return `Waiting for ${title}’s web interface…`
   }
   if (
     (appId === 'fedimint' || appId === 'fedimintd') &&
@@ -314,7 +317,7 @@ export function launchBlockedReason(id: string, pkg?: PackageDataEntry | null): 
     return 'Guardian opens a wait page until Bitcoin finishes initial sync.'
   }
   if (pkg && pkg.state === PackageState.Running && !isAppReadyForLaunch(pkg)) {
-    return `Waiting for ${title}…`
+    return `Waiting for ${title}’s web interface…`
   }
   return ''
 }

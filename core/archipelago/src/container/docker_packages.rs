@@ -172,13 +172,11 @@ impl DockerPackageScanner {
             } else {
                 // Prefer the known web UI port over arbitrary first binding
                 // (for example Gitea exposes SSH on 2222 before web on 3001).
-                let candidate = if uses_allocated_launch_port(&app_id) {
-                    extract_lan_address(&container.ports)
-                        .or_else(|| PodmanClient::lan_address_for(&app_id))
-                } else {
-                    PodmanClient::lan_address_for(&app_id)
-                        .or_else(|| extract_lan_address(&container.ports))
-                };
+                let candidate = package_launch_candidate(
+                    &app_id,
+                    &container.ports,
+                    PodmanClient::lan_address_for(&app_id),
+                );
                 reachable_lan_address(&app_id, candidate).await
             };
 
@@ -1105,6 +1103,23 @@ fn companion_lan_address(app_id: &str) -> Option<String> {
     }
 }
 
+/// Companion dashboards remain usable while their backend is syncing. Never
+/// probe a Bitcoin RPC or Electrum protocol socket as dashboard readiness.
+fn package_launch_candidate(
+    app_id: &str,
+    ports: &[String],
+    known: Option<String>,
+) -> Option<String> {
+    if let Some(companion) = companion_lan_address(app_id) {
+        return Some(companion);
+    }
+    if uses_allocated_launch_port(app_id) {
+        extract_lan_address(ports).or(known)
+    } else {
+        known.or_else(|| extract_lan_address(ports))
+    }
+}
+
 fn uses_allocated_launch_port(app_id: &str) -> bool {
     matches!(
         app_id,
@@ -1189,7 +1204,42 @@ mod tor_service_name_tests {
 
 #[cfg(test)]
 mod extract_lan_address_tests {
-    use super::extract_lan_address;
+    use super::{extract_lan_address, package_launch_candidate};
+
+    #[test]
+    fn companion_dashboard_wins_over_backend_protocol_ports() {
+        for id in ["bitcoin", "bitcoin-core", "bitcoin-knots"] {
+            assert_eq!(
+                package_launch_candidate(
+                    id,
+                    &["127.0.0.1:8332->8332/tcp".into()],
+                    Some("http://localhost:8332".into())
+                )
+                .as_deref(),
+                Some("http://localhost:8334")
+            );
+        }
+        for id in ["electrumx", "electrs", "mempool-electrs"] {
+            assert_eq!(
+                package_launch_candidate(
+                    id,
+                    &["127.0.0.1:50001->50001/tcp".into()],
+                    Some("http://localhost:50001".into())
+                )
+                .as_deref(),
+                Some("http://localhost:50002")
+            );
+        }
+        assert_eq!(
+            package_launch_candidate(
+                "filebrowser",
+                &["127.0.0.1:19080->80/tcp".into()],
+                Some("http://localhost:8080".into())
+            )
+            .as_deref(),
+            Some("http://localhost:19080")
+        );
+    }
 
     #[test]
     fn skips_ssh_port_when_web_port_is_published() {

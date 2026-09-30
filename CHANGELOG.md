@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Checked Bitcoin and Electrum companion dashboards instead of backend protocol ports, preserving dashboard access during initial sync.
+- Removed web-interface waiting messages from headless services such as Phoenixd and clarified which interface is unavailable for launchable apps.
+
 - Finished runtime app-file promotion before manifest loading, preventing startup catalog refresh from forgetting disk-only apps.
 
 - Named the app in compact readiness messages and kept app-card actions aligned at the bottom.
