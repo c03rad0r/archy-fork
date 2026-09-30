@@ -1,0 +1,30 @@
+{
+  "changelog": [
+    "Fixed Bitcoin and other containers being forcibly stopped after ten seconds during managed updates and restarts.",
+    "Existing installations now receive the same graceful shutdown allowance as new containers, without restarting apps just to apply this setting.",
+    "Prevented unnecessary Lightning restarts when Bitcoin has stayed running; dependency restarts now require an observed Bitcoin container change.",
+    "Includes the Cashu payment, optional Bitcoin pruning, Lightning readiness, and explorer improvements from 1.8.20."
+  ],
+  "components": [
+    {
+      "current_version": "1.8.21-alpha",
+      "download_url": "https://source.archipelago-foundation.org/lfg2025/archy/releases/download/v1.8.21-alpha/archipelago",
+      "name": "archipelago",
+      "new_version": "1.8.21-alpha",
+      "sha256": "ff602e85f340aff7e43d9d94f7f84f11f713735c964c0d8ba150e23b065c30eb",
+      "size_bytes": 64748176
+    },
+    {
+      "current_version": "1.8.21-alpha",
+      "download_url": "https://source.archipelago-foundation.org/lfg2025/archy/releases/download/v1.8.21-alpha/archipelago-frontend-1.8.21-alpha.tar.gz",
+      "name": "archipelago-frontend-1.8.21-alpha.tar.gz",
+      "new_version": "1.8.21-alpha",
+      "sha256": "6c0842ec83a440269a353808a4cf154174f5232c9989b4a5448bc6486e1d0620",
+      "size_bytes": 97152546
+    }
+  ],
+  "release_date": "2026-09-30",
+  "signature": "2ba21dde08284a13f511f11f0b925f09a56c1b36e40424558601b9ab6beea17edfa316e0baa51474bf084fd4da25429ec35a77d9a831554b309845c8226d4f0d",
+  "signed_by": "did:key:z6Mkfu5LT8d4DjETtrkATvHh9Dvcbnr7zBCUwfau8Sw7DLWT",
+  "version": "1.8.21-alpha"
+}
