@@ -103,6 +103,15 @@ pub fn companions_for(package_id: &str) -> &'static [CompanionSpec] {
     }
 }
 
+/// Missing companion UIs are provisioned here, never by snapshot recovery.
+/// A stale running-container snapshot must not resurrect an orphaned UI.
+pub fn is_companion_app(app_id: &str) -> bool {
+    ALL_COMPANIONS
+        .iter()
+        .flat_map(|specs| specs.iter())
+        .any(|spec| spec.image_base == app_id)
+}
+
 /// Every companion this build knows how to provision. Kept beside
 /// `companions_for` — a new companion must be added to both, or the reaper
 /// will not recognise it as one of ours and will leave it running forever.

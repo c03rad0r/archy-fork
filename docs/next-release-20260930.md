@@ -334,3 +334,54 @@ repository branch and Compose content from its own network namespace.
 Version preparation is 1.8.22-alpha. No new release tag or fleet-visible update
 manifest is published by the version commit. Optimized candidate deployment,
 artifact inspection, ISO smoke/boot checks and offline signatures follow.
+
+### Release blocker discovered during candidate observation: scheduled doctor
+
+The initial `02b840f2` 1.8.22 candidate is rejected for release. On the X250,
+2026-09-30 21:10–21:11 UTC, the scheduled `archipelago-doctor.service` explicitly
+ran `podman stop --all --time 30`, killed rootless network helpers and ran
+`podman system migrate` after a two-attempt external network probe failed.
+The journal attributes the stop to that unit, not the app health monitor or a
+host reboot. All apps restarted, including Bitcoin, LND and the production site.
+The earlier unchanged-container acceptance applies only to immediate deployment;
+the later observation failed and must not be represented as a stability pass.
+No persistent-data loss has been established. Keep this distinct from the closed
+Framework incident; do not wipe or recreate any wallet as a recovery action.
+
+Containment: stopped doctor timers on both test boxes, installed a safe diagnostic
+script into both the executable and runtime payload, and rejected/stopped the
+old ISO build. Network failure now produces a warning without stopping apps,
+killing network processes, migrating Podman or deleting network state. Repeated
+failures remain warnings, never a successful repair/check. Regression cases cover
+healthy, absent network, non-root invocation, host failure, transient recovery,
+repeated endpoint failure and namespace access failure, with mutation tripwires.
+Live scheduled-cycle observation and final rebuilt-artifact acceptance are pending.
+
+Recovery also exposed retired `git.tx1138.com` nginx base references in six
+companion UI Dockerfiles. They now use the existing primary registry at the same
+pinned version. All six images built successfully against that registry; payload
+validation rejects the retired host before OTA/ISO packaging.
+
+The post-recovery X250 check passes: Bitcoin authenticated RPC responds and IBD
+advances; NPM/Gitea/Portainer APIs respond; Portainer's real namespace fetches
+`demo-portainer` at `3ae171d6b0c728665a860520fe393c0abb772798` and its Compose
+file; Portainer's original persistent mounts match the earlier backup evidence;
+LND wallet/channel databases remain present on their persistent mount. No new
+pre-incident cryptographic wallet-identity baseline was available, so these checks
+must not be described as an exact identity/balance comparison.
+
+The dev all-container observation also caught a separate Cuprate UI orphan loop:
+`companion.rs` removed it because Cuprate was not installed, while generic desired-
+state recovery resurrected it from an old running snapshot, using a unit without
+nginx's required capabilities. Generic desired-state recovery now excludes missing companions
+owned by `companion.rs`; existing companion provisioning/reaping remains the
+single owner. Running UIs still receive the existing security configuration repairs. Regression runs repeated reconciliation against stale companion
+snapshots and checks that no image/container lifecycle operations occur.
+
+Safe-doctor live acceptance: the X250 completed a 12-minute observation with all
+running container IDs, start times and data mounts unchanged. Its journal records
+successful doctor runs at 21:22:06, 21:27:51 and 21:33:10 UTC. Both doctor timers
+are restored with the safe script. Dev's native Bitcoin/LND stayed running;
+all-container dev acceptance remains pending the companion-loop backend fix.
+Final-source UI suite: 1,133 passed. Heavy backend compilation is serialized with
+remaining build steps to reduce memory/IO pressure on the syncing dev node.

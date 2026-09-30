@@ -369,6 +369,9 @@ init()
                   <span class="text-xs text-white/40">September 30, 2026</span>
                 </div>
                 <div class="space-y-3 text-sm text-white/80 pl-3 border-l border-white/10">
+                  <p>Network diagnostic failures no longer stop all apps or rebuild shared container networking.</p>
+                  <p>Prevented orphaned companion dashboards from repeatedly reinstalling themselves after their backend app was removed.</p>
+                  <p>Fixed companion dashboard builds still referencing a retired image registry.</p>
                   <p>Fixed Angor Indexer health checks choosing IPv6 localhost for an IPv4 listener and unnecessarily restarting the working service.</p>
                   <p>Prevented false app restarts by probing each published port at its actual bind address; Nginx Proxy Manager now checks its internal admin API.</p>
                   <p>Added a backed-up migration for the recognized legacy Nginx Proxy Manager tunnel/LND port conflict in both OTA and ISO startup paths.</p>

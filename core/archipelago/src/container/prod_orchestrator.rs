@@ -2071,6 +2071,10 @@ impl ProdContainerOrchestrator {
                 Ok(ReconcileAction::Left(reason))
                     if mode == ReconcileMode::ExistingOnly
                         && reason == "absent"
+                        // companion.rs owns missing UI provisioning/removal.
+                        // Never resurrect an orphan from a stale snapshot.
+                        // Existing UIs still pass through security config repair.
+                        && !super::companion::is_companion_app(&app_id)
                         && (was_running.contains(&compute_container_name(&lm.manifest))
                             // The durable answer, and the one that does not
                             // erode. `was_running` only records what was
@@ -7223,6 +7227,52 @@ app:
         assert!(!calls.iter().any(|c| c.starts_with("pull_image:")));
         assert!(!calls.iter().any(|c| c.starts_with("create_container:")));
         assert!(!calls.iter().any(|c| c.starts_with("start_container:")));
+    }
+
+    #[tokio::test]
+    async fn reconcile_existing_does_not_resurrect_orphaned_companions() {
+        let rt = Arc::new(MockRuntime::default());
+        let mut orch = orch_with(rt.clone()).await;
+        orch.set_disk_gb_for_test(500);
+        let companions = [
+            "bitcoin-ui",
+            "electrs-ui",
+            "lnd-ui",
+            "fedimint-ui",
+            "cuprate-ui",
+        ];
+        let mut names = Vec::new();
+        for id in companions {
+            let manifest = pull_manifest(id, "localhost/companion:local");
+            names.push(compute_container_name(&manifest));
+            orch.insert_manifest_for_test(manifest, PathBuf::from("/tmp/companion"))
+                .await;
+        }
+        let refs: Vec<&str> = names.iter().map(String::as_str).collect();
+        crate::crash_recovery::save_container_snapshot_for_test(&orch.data_dir, &refs).await;
+        // Repeated passes must leave lifecycle ownership with companion.rs.
+        for _ in 0..3 {
+            let report = orch.reconcile_existing().await;
+            assert_eq!(report.actions.len(), companions.len());
+            assert!(report
+                .actions
+                .iter()
+                .all(|(_, action)| *action == ReconcileAction::Left("absent".into())));
+            assert!(report.failures.is_empty());
+        }
+        let calls = rt.calls();
+        for operation in [
+            "pull_image:",
+            "create_container:",
+            "start_container:",
+            "stop_container:",
+            "remove_container:",
+        ] {
+            assert!(
+                !calls.iter().any(|call| call.starts_with(operation)),
+                "{calls:?}"
+            );
+        }
     }
 
     #[tokio::test]

@@ -2,6 +2,10 @@
 
 ## v1.8.22-alpha (2026-09-30)
 
+- Network diagnostic failures no longer stop all apps or rebuild shared container networking.
+- Prevented orphaned companion dashboards from repeatedly reinstalling themselves after their backend app was removed.
+- Fixed companion dashboard builds still referencing a retired image registry.
+
 - Fixed Angor Indexer health checks choosing IPv6 localhost for an IPv4 listener and unnecessarily restarting the working service.
 
 - Prevented false app restarts by probing each published port at its actual bind address; Nginx Proxy Manager now checks its internal admin API.
