@@ -71,6 +71,25 @@ else
     bad "incomplete app build payload"
 fi
 
+# The cached rootfs must never restore the unsafe historical doctor on boot.
+for doctor_file in container-doctor.sh archipelago-doctor.service archipelago-doctor.timer; do
+    if [[ "$doctor_file" == container-doctor.sh ]]; then
+        doctor_source="$REPO/scripts/$doctor_file"
+    else
+        doctor_source="$REPO/image-recipe/configs/$doctor_file"
+    fi
+    if cmp -s "$doctor_source" "$MNT/archipelago/scripts/$doctor_file"; then
+        ok "current doctor payload: $doctor_file"
+    else
+        bad "missing/stale doctor overlay: $doctor_file"
+    fi
+done
+if grep -Fq '# BEGIN DOCTOR OVERLAY' "$MNT/archipelago/auto-install.sh"; then
+    ok "installer replaces cached doctor before first boot"
+else
+    bad "installer lacks cached doctor replacement"
+fi
+
 # ── GRUB must boot the live system ───────────────────────────────────
 if grep -q "boot=live" "$MNT/boot/grub/grub.cfg" 2>/dev/null; then
     ok "grub.cfg has boot=live"

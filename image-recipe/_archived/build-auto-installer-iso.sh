@@ -2607,6 +2607,11 @@ if [ -f "$SCRIPT_DIR/../../scripts/image-versions.sh" ]; then
     echo "   ✅ Bundled image-versions.sh"
 fi
 
+# Always overlay the current doctor, including when rootfs.tar is cached.
+cp "$SCRIPT_DIR/../../scripts/container-doctor.sh" "$ARCH_DIR/scripts/"
+cp "$SCRIPT_DIR/../configs/archipelago-doctor.service" "$ARCH_DIR/scripts/"
+cp "$SCRIPT_DIR/../configs/archipelago-doctor.timer" "$ARCH_DIR/scripts/"
+
 # Build-source apps need their complete contexts even on unbundled ISOs.
 # Keep this identical to the OTA runtime payload; a per-app allowlist silently
 # omitted GitWorkshop, FIPS and Cuprate and made fresh installs fail at 70%.
@@ -3229,6 +3234,18 @@ for test_script in run-e2e-tests.sh run-post-install-tests.sh; do
         chmod +x /mnt/target/opt/archipelago/scripts/$test_script
     fi
 done
+
+# BEGIN DOCTOR OVERLAY
+# Replace both the active and historical script locations before first boot.
+# A cached rootfs can contain the unsafe network recovery implementation.
+mkdir -p /mnt/target/opt/archipelago/scripts /mnt/target/home/archipelago/archy/scripts
+for doctor_dir in /mnt/target/opt/archipelago/scripts /mnt/target/home/archipelago/archy/scripts; do
+    install -m 755 "$BOOT_MEDIA/archipelago/scripts/container-doctor.sh" "$doctor_dir/container-doctor.sh" || exit 1
+done
+for doctor_unit in archipelago-doctor.service archipelago-doctor.timer; do
+    install -m 644 "$BOOT_MEDIA/archipelago/scripts/$doctor_unit" "/mnt/target/etc/systemd/system/$doctor_unit" || exit 1
+done
+# END DOCTOR OVERLAY
 
 # Copy self-update script
 if [ -f "$BOOT_MEDIA/archipelago/scripts/self-update.sh" ]; then

@@ -385,3 +385,16 @@ are restored with the safe script. Dev's native Bitcoin/LND stayed running;
 all-container dev acceptance remains pending the companion-loop backend fix.
 Final-source UI suite: 1,133 passed. Heavy backend compilation is serialized with
 remaining build steps to reduce memory/IO pressure on the syncing dev node.
+
+Final source release gates at `96fb5a4f`: 1,613 backend tests passed, zero failed,
+four explicitly ignored; 1,133 UI tests passed; type-check, production UI build,
+catalog/trust, shell, pruning, LND readiness, NPM migration and doctor regressions
+passed. The isolated companion-loop regression passed independently as well.
+
+ISO cache hardening: the installer now carries the current doctor script and
+service/timer separately from rootfs.tar and overwrites both historical and active
+script locations before first boot. This prevents a cached base image restoring
+the old recovery code. A regression executes the actual installer block against
+stale disposable files twice and confirms a missing safety payload fails closed.
+The mounted-ISO smoke test also compares all three overlay files to source.
+The final ISO build captures the exact newly deployed OTA UI/runtime payload.

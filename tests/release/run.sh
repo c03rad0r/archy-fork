@@ -74,6 +74,7 @@ stage "cargo-fmt"        timeout 240 cargo fmt --manifest-path core/Cargo.toml -
 stage "app-build-contexts" python3 tests/regression/app-build-contexts.py
 stage "manifest-shell"  python3 scripts/check-manifest-shell.py
 stage "npm-tunnel-migration" python3 -m unittest discover -s scripts/tests -p test_repair_npm_tunnel.py
+stage "iso-doctor-overlay" python3 tests/regression/iso-doctor-overlay.py
 stage "doctor-egress" bash tests/regression/container-doctor-egress.sh
 stage "doctor-ports" bash tests/regression/container-doctor-ports.sh
 stage "bitcoin-pruning" python3 tests/regression/bitcoin-prune-entrypoint.py
