@@ -59,7 +59,7 @@ completed. See PR review for the accepted scope and coverage limits.
       git and ngit; independently read back hashes and update discovery.
 - [ ] Provide LAN scp command for the new raw ISO.
 
-Latest backend source verification: 1,606 passed, zero failed, four existing
+Latest backend source verification: 1,609 passed, zero failed, four existing
 ignored tests. This is one layer of evidence, not a substitute for live gates.
 
 ## Angor verification — 2026-09-30
@@ -169,11 +169,11 @@ The latest complete UI suite passed 140 files / 1,132 tests. Release preflight
 passed all static, manifest, catalog, type and UI gates. The requested named
 waiting message, compact card layout and green Angor icon are deployed to dev;
 desktop 1440/1024 and mobile 390 browser checks passed after hard refresh.
-The startup-order optimized build is logged in
-`/tmp/archy-runtime-order-build.log`; once complete, run
-`/tmp/archy-runtime-order-live-check.py` to deploy with rollback, remove the
-candidate manifest override, and verify five normal management startups and
-managed Angor restarts. No new release version/tag, OTA or ISO has been created.
+The startup-order optimized build and normal-path startup checks are complete.
+The later dashboard-address candidate is now deployed with rollback; see the
+final live follow-up below. Do not rerun the earlier deployment helper: its
+temporary override has already been removed. No new release version/tag, OTA
+or ISO has been created.
 
 ## Mempool and dashboard follow-up
 
