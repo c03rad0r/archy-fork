@@ -286,3 +286,24 @@ unlocked at 08:47 UTC. The existing backend-address cascade then performed a
 graceful LND restart at 08:57 UTC after Bitcoin reconciliation completed; LND
 automatically unlocked again and reached chain-sync waiting. No manual wallet
 unlock or restart was used for this recovery.
+
+### False dependency restart exposed during monitoring — 09:08 UTC
+
+The initial 1.8.21 candidate passed all 1,557 isolated backend tests and 1,120
+frontend tests. Monitoring nevertheless found another managed LND restart at
+09:08:32 while Bitcoin's container/start timestamp remained unchanged. Management
+logs explicitly attribute it to the backend-address cascade. This also makes
+the earlier 08:57 cascade suspect; it must not be described as a proven necessary
+restart. These service restarts preceded the isolated test executable, whose
+namespace boundaries remain intact.
+
+The cascade trusted Started/Installed action reports. A failed runtime inspection
+followed by successful systemctl start of an already active unit can produce
+Started without changing Bitcoin. Dependency restarts now require observed
+container-ID, running-state, or start-time changes. Failed observations remain
+unknown, not absence; a known absent backend becoming running still qualifies.
+Actual exec-drift restarts are recognized even when their outer report is NoOp.
+Stopped/lifecycle-in-flight dependents remain excluded, and user stop markers
+are re-read after the potentially slow pass. Added runtime-observation and
+false-action/real-exec-drift regression cases; full isolated rerun pending.
+Stopped the first optimized build and preparing new artifacts from this correction.

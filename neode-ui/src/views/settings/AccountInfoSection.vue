@@ -371,6 +371,7 @@ init()
                 <div class="space-y-3 text-sm text-white/80 pl-3 border-l border-white/10">
                   <p>Fixed Bitcoin and other containers being forcibly stopped after ten seconds during managed updates and restarts.</p>
                   <p>Existing installations now receive the same graceful shutdown allowance as new containers, without restarting apps just to apply this setting.</p>
+                  <p>Prevented unnecessary Lightning restarts when Bitcoin has stayed running; dependency restarts now require an observed Bitcoin container change.</p>
                   <p>Includes the Cashu payment, optional Bitcoin pruning, Lightning readiness, and explorer improvements from 1.8.20.</p>
                 </div>
               </div>

@@ -1174,13 +1174,19 @@ impl ReconcileReport {
 fn cascade_pairs_for_report<'r>(
     report: &'r ReconcileReport,
     user_stopped: &std::collections::HashSet<String>,
+    changed_backends: &HashSet<String>,
 ) -> Vec<(&'r str, &'static str)> {
     let mut pairs = Vec::new();
     for (backend, action) in &report.actions {
         if !matches!(
             action,
-            ReconcileAction::Installed | ReconcileAction::Started
+            ReconcileAction::NoOp | ReconcileAction::Started | ReconcileAction::Installed
         ) {
+            continue;
+        }
+        // A successful systemctl start can be a no-op after a transient
+        // Podman inspect failure. Require a witnessed lifecycle change.
+        if !changed_backends.contains(backend) {
             continue;
         }
         for dep in crate::app_ops::address_caching_dependents(backend) {
@@ -1194,6 +1200,25 @@ fn cascade_pairs_for_report<'r>(
         }
     }
     pairs
+}
+
+/// Only positive runtime evidence permits disrupting an address-caching wallet.
+/// A known absent/stopped backend becoming running, a new container ID, or a
+/// changed start timestamp qualifies. A failed observation never does.
+fn backend_instance_changed(before: Option<&ContainerStatus>, after: &ContainerStatus) -> bool {
+    if after.state != ContainerState::Running || after.id.is_empty() {
+        return false;
+    }
+    let Some(before) = before else {
+        return true;
+    };
+    if before.id.is_empty() {
+        return false;
+    }
+    if before.id != after.id || before.state != ContainerState::Running {
+        return true;
+    }
+    matches!((&before.started_at, &after.started_at), (Some(a), Some(b)) if !a.is_empty() && !b.is_empty() && a != b)
 }
 
 #[derive(Debug, Default)]
@@ -1909,12 +1934,33 @@ impl ProdContainerOrchestrator {
             _ => 2,
         });
         // Live container names (any state), for the same recovery check.
-        let present_containers: std::collections::HashSet<String> = self
-            .runtime
-            .list_containers()
-            .await
-            .map(|cs| cs.into_iter().map(|c| c.name).collect())
+        let listed_containers = self.runtime.list_containers().await.ok();
+        let present_containers: HashSet<String> = listed_containers
+            .as_ref()
+            .map(|cs| cs.iter().map(|c| c.name.clone()).collect())
             .unwrap_or_default();
+        // Keep unknown distinct from confirmed absence. Runtime queries can
+        // fail under load while systemd still has a healthy running backend.
+        let mut backend_before: HashMap<String, Option<ContainerStatus>> = HashMap::new();
+        for lm in &manifests {
+            let id = &lm.manifest.app.id;
+            if crate::app_ops::address_caching_dependents(id).is_empty() {
+                continue;
+            }
+            let name = compute_container_name(&lm.manifest);
+            match self.runtime.get_container_status(&name).await {
+                Ok(status) => {
+                    backend_before.insert(id.clone(), Some(status));
+                }
+                Err(_) if listed_containers.is_some() && !present_containers.contains(&name) => {
+                    backend_before.insert(id.clone(), None);
+                }
+                Err(err) => {
+                    tracing::warn!(backend = %id, error = %err,
+                        "cannot observe backend before reconcile; will not infer a dependency restart from an action report");
+                }
+            }
+        }
         let mut report = ReconcileReport::default();
         let disk_gb = self.disk_gb().await;
         let bitcoin_pruned = disk_gb < ARCHIVAL_BITCOIN_DISK_GB
@@ -2096,7 +2142,20 @@ impl ProdContainerOrchestrator {
         // state recovery, repair recreate, boot InstallMissing) moves the
         // address behind a running dependent's back — §C "restart lnd after
         // ANY bitcoin recreate".
-        for (backend, dep) in cascade_pairs_for_report(&report, &user_stopped) {
+        let mut changed_backends = HashSet::new();
+        for (backend, before) in &backend_before {
+            let Some(name) = container_name_by_app_id.get(backend) else {
+                continue;
+            };
+            if let Ok(after) = self.runtime.get_container_status(name).await {
+                if backend_instance_changed(before.as_ref(), &after) {
+                    changed_backends.insert(backend.clone());
+                }
+            }
+        }
+        // A user stop during a slow reconcile pass still takes precedence.
+        let user_stopped = crate::crash_recovery::load_user_stopped(&self.data_dir).await;
+        for (backend, dep) in cascade_pairs_for_report(&report, &user_stopped, &changed_backends) {
             // Same rule as the RPC cascade: hold the dependent's op lock
             // across the restart; skip when a worker is mid-sequence.
             let lock = crate::app_ops::op_lock(dep);
@@ -6410,6 +6469,67 @@ app:
     }
 
     #[test]
+    fn backend_cascade_requires_observed_instance_change() {
+        let running = ContainerStatus {
+            id: "container-1".into(),
+            name: "bitcoin-core".into(),
+            state: ContainerState::Running,
+            started_at: Some("start-1".into()),
+            health: None,
+            exit_code: None,
+            image: "bitcoin:1".into(),
+            created: "created-1".into(),
+            ports: vec![],
+            lan_address: None,
+        };
+        assert!(!backend_instance_changed(Some(&running), &running));
+        assert!(backend_instance_changed(None, &running));
+        let mut before = running.clone();
+        before.state = ContainerState::Exited;
+        assert!(backend_instance_changed(Some(&before), &running));
+        before = running.clone();
+        before.id = "old-container".into();
+        assert!(backend_instance_changed(Some(&before), &running));
+        before = running.clone();
+        before.started_at = Some("earlier-start".into());
+        assert!(backend_instance_changed(Some(&before), &running));
+        before.started_at = None;
+        assert!(!backend_instance_changed(Some(&before), &running));
+        before.id.clear();
+        assert!(!backend_instance_changed(Some(&before), &running));
+        let mut after = running.clone();
+        after.state = ContainerState::Exited;
+        assert!(!backend_instance_changed(None, &after));
+        after = running.clone();
+        after.id.clear();
+        assert!(!backend_instance_changed(None, &after));
+    }
+
+    #[test]
+    fn cascade_ignores_false_started_report_but_detects_real_exec_drift() {
+        let none = HashSet::new();
+        let mut report = ReconcileReport {
+            actions: vec![
+                ("bitcoin-core".into(), ReconcileAction::Started),
+                ("lnd".into(), ReconcileAction::NoOp),
+            ],
+            failures: vec![],
+        };
+        // systemctl start of an already active unit does not move its address.
+        assert!(cascade_pairs_for_report(&report, &none, &none).is_empty());
+        // A unit exec rewrite can restart Bitcoin while the outer reconcile
+        // action remains NoOp. Runtime evidence still requires LND to reconnect.
+        let changed = ["bitcoin-core".into()].into();
+        report.actions[0].1 = ReconcileAction::NoOp;
+        assert_eq!(
+            cascade_pairs_for_report(&report, &none, &changed),
+            vec![("bitcoin-core", "lnd")]
+        );
+        report.actions[0].1 = ReconcileAction::Left("lifecycle-op-in-flight".into());
+        assert!(cascade_pairs_for_report(&report, &none, &changed).is_empty());
+    }
+
+    #[test]
     fn cascade_pairs_cover_backend_recreate_with_running_dependent() {
         use std::collections::HashSet;
         let report = |actions: Vec<(&str, ReconcileAction)>| ReconcileReport {
@@ -6420,6 +6540,7 @@ app:
             failures: vec![],
         };
         let none = HashSet::new();
+        let changed: HashSet<String> = ["bitcoin-core".into(), "bitcoin-knots".into()].into();
 
         // Backend recreated while lnd sat running (NoOp) → cascade.
         let r = report(vec![
@@ -6427,7 +6548,7 @@ app:
             ("lnd", ReconcileAction::NoOp),
         ]);
         assert_eq!(
-            cascade_pairs_for_report(&r, &none),
+            cascade_pairs_for_report(&r, &none, &changed),
             vec![("bitcoin-knots", "lnd")]
         );
 
@@ -6437,7 +6558,7 @@ app:
             ("lnd", ReconcileAction::NoOp),
         ]);
         assert_eq!(
-            cascade_pairs_for_report(&r, &none),
+            cascade_pairs_for_report(&r, &none, &changed),
             vec![("bitcoin-core", "lnd")]
         );
 
@@ -6446,7 +6567,7 @@ app:
             ("bitcoin-knots", ReconcileAction::NoOp),
             ("lnd", ReconcileAction::NoOp),
         ]);
-        assert!(cascade_pairs_for_report(&r, &none).is_empty());
+        assert!(cascade_pairs_for_report(&r, &none, &none).is_empty());
 
         // Dependent itself (re)started this pass → it already resolved the
         // fresh address; no cascade.
@@ -6454,7 +6575,7 @@ app:
             ("bitcoin-knots", ReconcileAction::Installed),
             ("lnd", ReconcileAction::Started),
         ]);
-        assert!(cascade_pairs_for_report(&r, &none).is_empty());
+        assert!(cascade_pairs_for_report(&r, &none, &changed).is_empty());
 
         // User-stopped dependent is never bounced.
         let r = report(vec![
@@ -6462,14 +6583,14 @@ app:
             ("lnd", ReconcileAction::NoOp),
         ]);
         let stopped: HashSet<String> = ["lnd".to_string()].into();
-        assert!(cascade_pairs_for_report(&r, &stopped).is_empty());
+        assert!(cascade_pairs_for_report(&r, &stopped, &changed).is_empty());
 
         // Non-backend recreates don't cascade anything.
         let r = report(vec![
             ("grafana", ReconcileAction::Installed),
             ("lnd", ReconcileAction::NoOp),
         ]);
-        assert!(cascade_pairs_for_report(&r, &none).is_empty());
+        assert!(cascade_pairs_for_report(&r, &none, &changed).is_empty());
     }
 
     #[tokio::test]
