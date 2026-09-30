@@ -307,3 +307,52 @@ Stopped/lifecycle-in-flight dependents remain excluded, and user stop markers
 are re-read after the potentially slow pass. Added runtime-observation and
 false-action/real-exec-drift regression cases; full isolated rerun pending.
 Stopped the first optimized build and preparing new artifacts from this correction.
+
+### Final 1.8.21 artifacts and live verification — 2026-09-30
+
+Source and frontend/AIUI attribution: c993d9dd. Full isolated backend suite:
+1,559 passed, zero failed, four existing hardware/live tests ignored. Frontend
+suite: 1,120 passed; final production type-check/build passed after the last
+release-note-only edit. Optimized backend built in 13m22s.
+
+Staged unsigned 1.8.21 OTA manifest and artifacts:
+- Backend: 64,748,176 bytes; SHA256
+  ff602e85f340aff7e43d9d94f7f84f11f713735c964c0d8ba150e23b065c30eb.
+- Frontend archive: 97,152,546 bytes; SHA256
+  6c0842ec83a440269a353808a4cf154174f5232c9989b4a5448bc6486e1d0620.
+
+Artifact validator passed. Actual archive has flat paths, readable root index,
+and exact fresh AIUI, doctor and LND UI payload bytes. Exact files deployed to
+dev at 09:32 UTC and Shorty at 09:35 UTC; rollback binaries and dashboards under
+root-only /var/lib/archipelago/support/release-1821 on each node. Only management
+services restarted. Existing Bitcoin/Core-or-Knots and native LND container IDs
+and start times were preserved. Correct generated graceful-stop commands are
+present before forced removal on both nodes; temporary grace overrides removed.
+Dev systemd deadlines are 615 seconds for Bitcoin and 345 seconds for LND.
+
+Desktop/mobile Lightning UI checks passed again: waiting for Bitcoin sync,
+unknown balance, no unavailable native RPC requests. Served dashboard and AIUI
+attribution bytes match the release. Native LND states: dev RPC_ACTIVE while
+Bitcoin syncs; Shorty SERVER_ACTIVE. Dev completed full reconciliation passes
+at 09:34:21 and 09:36:40 with Bitcoin/LND NoOp, and no dependency restart.
+Shorty's first full pass completed 09:36:55 with Knots/LND NoOp.
+
+Final paid-file check on these exact binaries passed: fresh one-sat dev-to-Shorty
+purchase, exact one-sat refund on underpayment, identical response aliases,
+correct Files copy, and zero-charge cached repeat. Removed temporary seller
+entries/files and Files copy; retained purchase audit and owned cache. Total net
+transfer across all three live payment rounds in this repair session: three sats.
+
+Remaining: finish Shorty observation and remove temporary diagnostic logging;
+user-local 1.8.21 OTA signature (existing catalog signature remains valid),
+publish git/ngit, build/boot-test/sign and publish the raw 1.8.21 ISO.
+No 1.8.21 release tag or public OTA yet. Do not publish the quarantined partial
+1.8.20 ISO. The existing 1.8.20 git/ngit release notes now explain the withheld ISO
+and pending hotfix; signed 1.8.20 assets remain immutable.
+
+Shorty's second clean full pass completed at 09:38:06 UTC. Removed temporary
+diagnostic logging on both nodes and restarted only management again; native
+Bitcoin and LND IDs/start times remained unchanged, with generated stop settings
+still verified. No temporary graceful-stop overrides remain. Catalog signature
+verifies against the pinned release root; final 1.8.21 artifact validator passes.
+The candidate is ready for the user's local OTA signing ceremony.
