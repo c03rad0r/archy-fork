@@ -1,34 +1,30 @@
 {
   "changelog": [
-    "Fixed Cashu file payments rejected despite a shared mint, and preserved the payment amount when mint fees reduce change.",
-    "Payment failures now report whether a refund actually succeeded; missing files and unsupported payment methods are rejected before charging.",
-    "Improved saving paid files into Files and reopening purchases without paying again.",
-    "Bitcoin Core and Knots installation offers optional pruning on larger disks, using the same settings as automatic pruning.",
-    "Fixed false missing-port checks that unnecessarily restarted Bitcoin and LND; recovery now respects managed shutdown timeouts.",
-    "LND explains when it is waiting for Bitcoin installation, startup, or sync, without treating normal synchronization as a restart-worthy failure.",
-    "Bitcoin startup messages explain block-index loading without exposing raw RPC errors, and Lightning keeps known balances clearly marked during outages.",
-    "Changed the public transaction-explorer default to mempool.space while preserving local explorers and custom choices."
+    "Fixed Bitcoin and other containers being forcibly stopped after ten seconds during managed updates and restarts.",
+    "Existing installations now receive the same graceful shutdown allowance as new containers, without restarting apps just to apply this setting.",
+    "Prevented unnecessary Lightning restarts when Bitcoin has stayed running; dependency restarts now require an observed Bitcoin container change.",
+    "Includes the Cashu payment, optional Bitcoin pruning, Lightning readiness, and explorer improvements from 1.8.20."
   ],
   "components": [
     {
-      "current_version": "1.8.20-alpha",
-      "download_url": "https://source.archipelago-foundation.org/lfg2025/archy/releases/download/v1.8.20-alpha/archipelago",
+      "current_version": "1.8.21-alpha",
+      "download_url": "https://source.archipelago-foundation.org/lfg2025/archy/releases/download/v1.8.21-alpha/archipelago",
       "name": "archipelago",
-      "new_version": "1.8.20-alpha",
-      "sha256": "16a173129672cbb40c250446ec52ba4a9bd1974cbb3a4988f90c6f3187b7a1f7",
-      "size_bytes": 64716656
+      "new_version": "1.8.21-alpha",
+      "sha256": "ff602e85f340aff7e43d9d94f7f84f11f713735c964c0d8ba150e23b065c30eb",
+      "size_bytes": 64748176
     },
     {
-      "current_version": "1.8.20-alpha",
-      "download_url": "https://source.archipelago-foundation.org/lfg2025/archy/releases/download/v1.8.20-alpha/archipelago-frontend-1.8.20-alpha.tar.gz",
-      "name": "archipelago-frontend-1.8.20-alpha.tar.gz",
-      "new_version": "1.8.20-alpha",
-      "sha256": "658b78fce0dfa20a627c987dd153b24cbac15adbde905cc6518744c637e12802",
-      "size_bytes": 97152297
+      "current_version": "1.8.21-alpha",
+      "download_url": "https://source.archipelago-foundation.org/lfg2025/archy/releases/download/v1.8.21-alpha/archipelago-frontend-1.8.21-alpha.tar.gz",
+      "name": "archipelago-frontend-1.8.21-alpha.tar.gz",
+      "new_version": "1.8.21-alpha",
+      "sha256": "6c0842ec83a440269a353808a4cf154174f5232c9989b4a5448bc6486e1d0620",
+      "size_bytes": 97152546
     }
   ],
-  "release_date": "2026-09-29",
-  "signature": "326cab454902abcb4f8037751af67aaae2860ecf00300177ec377a1f223a6a85b6e92d49297e7bc29a73220d501e6f4c83ee23477e2b688e33e19d093c6d210b",
+  "release_date": "2026-09-30",
+  "signature": "2ba21dde08284a13f511f11f0b925f09a56c1b36e40424558601b9ab6beea17edfa316e0baa51474bf084fd4da25429ec35a77d9a831554b309845c8226d4f0d",
   "signed_by": "did:key:z6Mkfu5LT8d4DjETtrkATvHh9Dvcbnr7zBCUwfau8Sw7DLWT",
-  "version": "1.8.20-alpha"
+  "version": "1.8.21-alpha"
 }
