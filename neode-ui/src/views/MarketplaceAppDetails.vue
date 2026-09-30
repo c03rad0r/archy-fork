@@ -74,7 +74,7 @@
             <button
               v-if="!isInstalled"
               @click="installApp"
-              :disabled="demoNoInstall || installing || (!installBlockedReason && !app.manifestUrl && !app.dockerImage)"
+              :disabled="demoNoInstall || installing || (isBitcoinInstall && !prunePrefsLoaded) || (!installBlockedReason && !app.manifestUrl && !app.dockerImage)"
               :title="demoNoInstall ? 'Not available in the demo' : (installBlockedReason || undefined)"
               class="glass-button glass-button-sm px-6 py-2.5 rounded-lg text-sm font-semibold flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
             >
@@ -89,6 +89,12 @@
             </button>
           </div>
         </div>
+
+        <BitcoinPruningChoice
+          v-if="!isInstalled && isBitcoinInstall && prunePrefsLoaded"
+          v-model="pruneOnInstall"
+          class="hidden md:block"
+        />
 
         <!-- Mobile: Two Column Grid Layout -->
         <div class="md:hidden">
@@ -137,6 +143,7 @@
               {{ $ver(v.version) }}{{ v.default ? ' — latest' : '' }}{{ v.deprecated ? ' (deprecated)' : '' }}
             </option>
           </select>
+          <BitcoinPruningChoice v-if="!isInstalled && isBitcoinInstall && prunePrefsLoaded" v-model="pruneOnInstall" class="mb-4" />
 
           <!-- Bottom: Action Buttons -->
           <div class="grid grid-cols-2 gap-2">
@@ -153,7 +160,7 @@
             <button
               v-else
               @click="installApp"
-              :disabled="demoNoInstall || installing || (!installBlockedReason && !app.manifestUrl && !app.dockerImage)"
+              :disabled="demoNoInstall || installing || (isBitcoinInstall && !prunePrefsLoaded) || (!installBlockedReason && !app.manifestUrl && !app.dockerImage)"
               :title="demoNoInstall ? 'Not available in the demo' : (installBlockedReason || undefined)"
               class="glass-button glass-button-sm px-4 py-2.5 rounded-lg text-sm font-semibold flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed col-span-2"
             >
@@ -374,6 +381,7 @@
 </template>
 
 <script setup lang="ts">
+import BitcoinPruningChoice from '@/components/BitcoinPruningChoice.vue'
 import { ref, computed, onMounted, onBeforeUnmount } from 'vue'
 import { IS_DEMO, isDemoApp } from '@/composables/useDemoIntro'
 import { useRouter, useRoute } from 'vue-router'
@@ -408,6 +416,10 @@ const bitcoinPruned = ref(false)
 // Hidden when an app offers only one version — install stays one-click.
 const installVersions = ref<{ version: string; default: boolean; deprecated: boolean; eol: string | null }[]>([])
 const selectedInstallVersion = ref('')
+const pruneOnInstall = ref(false)
+const pruneSettingKnown = ref(false)
+const prunePrefsLoaded = ref(false)
+const isBitcoinInstall = computed(() => ['bitcoin-core', 'bitcoin-knots'].includes(app.value?.id || ''))
 const backButtonLabel = computed(() => route.query.from === 'home' ? t('marketplaceDetails.backToHome') : t('marketplaceDetails.backToStore'))
 const electrumxArchiveWarning = 'You need a full archival bitcoin node before downloading ElectrumX'
 
@@ -587,10 +599,13 @@ onMounted(() => {
 // cached entry is missing or past its TTL, so a repeat open inside the TTL
 // paints from cache with no new RPC.
 async function loadInstallVersions() {
-  if (versionsResource.data.value === null || versionsResource.isStale.value) {
+  if (isBitcoinInstall.value || versionsResource.data.value === null || versionsResource.isStale.value) {
     await versionsResource.refresh()
   }
   const info = versionsResource.data.value
+  pruneSettingKnown.value = !versionsResource.error.value && typeof info?.bitcoinPrune === 'boolean'
+  pruneOnInstall.value = pruneSettingKnown.value && info?.bitcoinPrune === true
+  prunePrefsLoaded.value = true
   if (!info || !info.supportsVersions || info.versions.length < 2) {
     installVersions.value = []
     return
@@ -701,6 +716,7 @@ async function installApp() {
         id: app.value.id,
         dockerImage: app.value.dockerImage,
         version: chosenVersion,
+          ...(isBitcoinInstall.value && (pruneSettingKnown.value || pruneOnInstall.value) ? { prune: pruneOnInstall.value } : {}),
       }
       if (app.value.containerConfig) installParams.containerConfig = app.value.containerConfig
       await rpcClient.call({
@@ -717,6 +733,7 @@ async function installApp() {
           id: app.value.id,
           url: installUrl,
           version: chosenVersion,
+          ...(isBitcoinInstall.value && (pruneSettingKnown.value || pruneOnInstall.value) ? { prune: pruneOnInstall.value } : {}),
         },
         timeout: 600000,
       })

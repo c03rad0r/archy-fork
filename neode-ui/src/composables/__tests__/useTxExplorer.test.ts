@@ -76,11 +76,49 @@ describe('useTxExplorer.openTx', () => {
     expect(openSession).toHaveBeenCalledWith('mempool', { path: `/tx/${TX}` })
   })
 
+  it('does not open an external explorer while container discovery is pending', async () => {
+    const external = vi.spyOn(window, 'open').mockImplementation(() => null)
+    let finish!: () => void
+    ensureFetched.mockImplementationOnce(() => new Promise<void>(resolve => {
+      finish = () => { fetched = true; resolve() }
+    }))
+    const { openTx, setExplorer } = useTxExplorer()
+    setExplorer(DEFAULT_TX_EXPLORER, true)
+    const opening = openTx(TX)
+    expect(external).not.toHaveBeenCalled()
+    expect(openSession).not.toHaveBeenCalled()
+    finish()
+    await opening
+    expect(openSession).toHaveBeenCalledWith('mempool', { path: `/tx/${TX}` })
+    expect(external).not.toHaveBeenCalled()
+    external.mockRestore()
+  })
+
   it('asks for consent only when Mempool genuinely is not installed', async () => {
     containerState = 'not-installed'
     const { openTx, pendingTx } = useTxExplorer()
     await openTx(TX)
     expect(openSession).not.toHaveBeenCalled()
     expect(pendingTx.value).toBe(TX)
+  })
+})
+
+describe('explorer default migration', () => {
+  beforeEach(() => { localStorage.clear(); vi.resetModules() })
+  it('uses mempool.space with consent for a new browser', async () => {
+    const { useTxExplorer } = await import('../useTxExplorer')
+    expect(useTxExplorer().prefs.value).toEqual({ url: 'https://mempool.space', acknowledged: false })
+  })
+  it.each(['https://tx1138.com', 'https://tx1138.com/', 'http://tx1138.com'])('migrates %s and resets consent', async url => {
+    localStorage.setItem('archipelago.tx-explorer.v1', JSON.stringify({ url, acknowledged: true }))
+    const { useTxExplorer } = await import('../useTxExplorer')
+    expect(useTxExplorer().prefs.value).toEqual({ url: 'https://mempool.space', acknowledged: false })
+    expect(JSON.parse(localStorage.getItem('archipelago.tx-explorer.v1')!)).toEqual(useTxExplorer().prefs.value)
+  })
+  it('preserves a custom explorer and its consent', async () => {
+    const prefs = { url: 'https://my-explorer.example', acknowledged: true }
+    localStorage.setItem('archipelago.tx-explorer.v1', JSON.stringify(prefs))
+    const { useTxExplorer } = await import('../useTxExplorer')
+    expect(useTxExplorer().prefs.value).toEqual(prefs)
   })
 })

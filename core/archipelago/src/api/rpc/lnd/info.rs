@@ -109,7 +109,50 @@ fn checked_balances(
     ))
 }
 
+fn bitcoin_wait_state(
+    installed: bool,
+    running: bool,
+    fresh: bool,
+    ibd: Option<bool>,
+) -> (&'static str, &'static str) {
+    if !installed {
+        ("waiting_install", "Waiting for Bitcoin to be installed")
+    } else if !running {
+        ("waiting_start", "Waiting for Bitcoin to start")
+    } else if !fresh || ibd.is_none() {
+        ("waiting_start", "Waiting for Bitcoin to start")
+    } else if ibd == Some(true) {
+        ("waiting_sync", "Waiting for Bitcoin to sync")
+    } else {
+        ("bitcoin_ready", "Bitcoin is ready")
+    }
+}
+
 impl RpcHandler {
+    pub(crate) async fn handle_lnd_readiness(&self) -> serde_json::Value {
+        let (data, _) = self.state_manager.get_snapshot().await;
+        if !data.server_info.status_info.containers_scanned {
+            return serde_json::json!({"state":"checking", "message":"Checking Bitcoin availability"});
+        }
+        let nodes: Vec<_> = ["bitcoin-core", "bitcoin-knots", "bitcoin"]
+            .iter()
+            .filter_map(|id| data.package_data.get(*id))
+            .collect();
+        let installed = !nodes.is_empty();
+        let running = nodes
+            .iter()
+            .any(|p| p.state == crate::data_model::PackageState::Running);
+        let bitcoin = crate::bitcoin_status::get_bitcoin_status().await;
+        let ibd = bitcoin
+            .blockchain_info
+            .as_ref()
+            .and_then(|v| v.get("initialblockdownload"))
+            .and_then(|v| v.as_bool());
+        let (state, message) =
+            bitcoin_wait_state(installed, running, bitcoin.ok && !bitcoin.stale, ibd);
+        serde_json::json!({"state": state, "message": message})
+    }
+
     pub(in crate::api::rpc) async fn handle_lnd_getinfo(&self) -> Result<serde_json::Value> {
         let macaroon_bytes = read_lnd_admin_macaroon().await?;
         let macaroon_hex = hex::encode(&macaroon_bytes);
@@ -417,5 +460,46 @@ mod tests {
         assert!(!is_valid_identity_pubkey(&"0".repeat(65)));
         assert!(!is_valid_identity_pubkey(&"0".repeat(67)));
         assert!(!is_valid_identity_pubkey(&"g".repeat(66)));
+    }
+}
+
+#[cfg(test)]
+mod dependency_readiness_tests {
+    use super::bitcoin_wait_state;
+    #[test]
+    fn waiting_states_cover_install_start_sync_outage_and_recovery() {
+        assert_eq!(
+            bitcoin_wait_state(false, false, false, None).0,
+            "waiting_install"
+        );
+        assert_eq!(
+            bitcoin_wait_state(true, false, false, None).0,
+            "waiting_start"
+        );
+        assert_eq!(
+            bitcoin_wait_state(true, true, false, None).0,
+            "waiting_start"
+        );
+        assert_eq!(
+            bitcoin_wait_state(true, true, true, Some(true)).0,
+            "waiting_sync"
+        );
+        assert_eq!(
+            bitcoin_wait_state(true, true, true, Some(false)).0,
+            "bitcoin_ready"
+        );
+        // Previously synced cached information must not hide a current outage.
+        assert_eq!(
+            bitcoin_wait_state(true, true, false, Some(false)).0,
+            "waiting_start"
+        );
+        assert_eq!(
+            bitcoin_wait_state(true, true, true, None).0,
+            "waiting_start"
+        );
+        assert_eq!(
+            bitcoin_wait_state(true, true, true, Some(false)).0,
+            "bitcoin_ready"
+        );
     }
 }

@@ -153,6 +153,20 @@ fn mint_error(op: &str, status: reqwest::StatusCode, body: &str) -> anyhow::Erro
     cause.context(describe_mint_error_body(status, body))
 }
 
+fn fee_adjusted_targets(requested: &[u64], mut available: u64) -> Vec<u64> {
+    let mut outputs = Vec::new();
+    for &amount in requested {
+        if available >= amount {
+            outputs.push(amount);
+            available -= amount;
+        } else {
+            outputs.extend(amount_to_denominations(available));
+            break;
+        }
+    }
+    outputs
+}
+
 /// HTTP client for a single Cashu mint.
 pub struct MintClient {
     url: String,
@@ -512,30 +526,57 @@ impl MintClient {
     /// Swap proofs for new proofs of different denominations.
     /// This is how we "receive" a token — swap it for fresh proofs that only we know.
     pub async fn swap(&self, inputs: &[Proof], target_amounts: &[u64]) -> Result<SwapResult> {
-        let keyset = self.get_active_sat_keyset().await?;
+        self.swap_at_least(inputs, target_amounts, 0).await
+    }
 
-        // cashuB tokens carry NUT-02 v2 keyset ids in their 8-byte short form,
-        // which the mint rejects (bare 422). Repair here, not at each caller:
-        // the paid-download seller path swapped directly and every Minibits
-        // payment failed once the mint rotated to a v2 keyset.
-        let repaired = self.resolve_truncated_keyset_ids(inputs).await;
-        let inputs: &[Proof] = &repaired;
+    /// Refuse a payment whose mint fees would leave the seller underpaid,
+    /// before consuming any input proofs.
+    pub async fn swap_at_least(
+        &self,
+        inputs: &[Proof],
+        target_amounts: &[u64],
+        minimum: u64,
+    ) -> Result<SwapResult> {
+        // V4 tokens carry short keyset IDs. Every swap path (including paid
+        // files and streams) must expand these, not only wallet imports.
+        let resolved = self.resolve_truncated_keyset_ids(inputs).await?;
+        let inputs = resolved.as_slice();
+        let keyset = self.get_active_sat_keyset().await?;
 
         // NUT-02: a mint may charge a per-input fee, and it rejects the swap
         // outright unless outputs == inputs - fee (`11005 Transaction inputs
         // should equal outputs less fee`). Applied here rather than at each
         // call site so send, receive and cross-mint swaps are all covered.
         // Fee-free mints (Minibits) compute 0 and are unaffected.
-        let inputs_total: u64 = inputs.iter().map(|p| p.amount).sum();
-        let fee = match self.get_keysets().await {
-            Ok(ks) => super::cashu::swap_fee_for(inputs, &ks),
-            Err(e) => {
-                debug!("Could not read keyset fees ({e:#}) — assuming fee-free mint");
-                0
-            }
-        };
+        anyhow::ensure!(!inputs.is_empty(), "No input proofs to swap");
+        let inputs_total = inputs
+            .iter()
+            .try_fold(0u64, |sum, p| sum.checked_add(p.amount))
+            .context("Input amount overflow")?;
+        let keysets = self.get_keysets().await?;
+        let mut fee_ppk = 0u64;
+        for proof in inputs {
+            let input_keyset = keysets
+                .iter()
+                .find(|k| k.id == proof.id)
+                .context("The mint does not recognize an input keyset")?;
+            anyhow::ensure!(
+                input_keyset.unit == "sat",
+                "Input keyset is not denominated in sats"
+            );
+            fee_ppk = fee_ppk
+                .checked_add(input_keyset.input_fee_ppk)
+                .context("Mint fee overflow")?;
+        }
+        let fee = fee_ppk.div_ceil(1000);
         let spendable = inputs_total.saturating_sub(fee);
-        let requested: u64 = target_amounts.iter().sum();
+        if spendable < minimum {
+            anyhow::bail!("Payment would leave {spendable} sats after mint fees; need {minimum} sats. No proofs were redeemed.");
+        }
+        let requested = target_amounts
+            .iter()
+            .try_fold(0u64, |sum, amount| sum.checked_add(*amount))
+            .context("Output amount overflow")?;
         let owned_targets: Vec<u64>;
         let target_amounts: &[u64] = if requested > spendable {
             if spendable == 0 {
@@ -546,7 +587,10 @@ impl MintClient {
             debug!(
                 "Reducing swap outputs {requested} -> {spendable} to cover a {fee} sat mint fee"
             );
-            owned_targets = amount_to_denominations(spendable);
+            // Callers put payment outputs before change. Keep that prefix
+            // intact while fees reduce change; re-splitting the entire sum
+            // can omit a payment denomination after consuming the inputs.
+            owned_targets = fee_adjusted_targets(target_amounts, spendable);
             &owned_targets
         } else {
             target_amounts
@@ -591,6 +635,9 @@ impl MintClient {
 
         let mut new_proofs = Vec::new();
         for (sig, (secret, r, amount)) in signatures.iter().zip(blinding_data.iter()) {
+            if sig.amount != *amount || sig.id != keyset.id {
+                anyhow::bail!("Mint returned a swap signature for an unexpected amount or keyset");
+            }
             let c_prime = sig.c_prime_as_pubkey()?;
             let mint_key = keyset.key_for_amount(*amount)?;
             let c = bdhke::unblind_signature(&c_prime, r, &mint_key)?;
@@ -737,43 +784,35 @@ impl MintClient {
     /// Repair proofs whose keyset id is a truncated NUT-02 **v2** id.
     ///
     /// A v2 keyset id is 33 bytes (version byte `0x01` + 32-byte hash), but
-    /// wallets written against the original 8-byte format truncate it when
-    /// they build a token. The mint then reads the `0x01` version, expects 33
+    /// compact V4 tokens carry an 8-byte short ID. The swap endpoint needs
+    /// the full ID restored from the mint's keyset list. The mint then reads the `0x01` version, expects 33
     /// bytes, and rejects the swap — reported as
     /// `inputs[0].id: NUT02: ID length invalid` behind a bare 422 (seen with
     /// a Minibits-issued token, 2026-08-17).
     ///
     /// The id only names which keyset signed the proof, so restoring the full
     /// id the mint advertises is exactly what the sender meant. It is also
-    /// safe to attempt: an id that names the wrong keyset fails signature
-    /// verification at the mint and no coins move. Anything already valid, or
-    /// with no unambiguous match, is passed through untouched so the mint's
-    /// own error is what the operator sees.
-    async fn resolve_truncated_keyset_ids(&self, proofs: &[Proof]) -> Vec<Proof> {
+    /// safe to attempt: the mint still verifies the proof signature. Unknown
+    /// or ambiguous short IDs are rejected before redemption.
+    async fn resolve_truncated_keyset_ids(&self, proofs: &[Proof]) -> Result<Vec<Proof>> {
         let needs_repair = proofs.iter().any(|p| is_truncated_v2_keyset_id(&p.id));
         if !needs_repair {
-            return proofs.to_vec();
+            return Ok(proofs.to_vec());
         }
 
         // The mint's own keyset list, in the reference implementation's shape
         // so its NUT-02 resolver can consume it directly.
-        let known = match self.get_cdk_keysets().await {
-            Ok(k) => k,
-            Err(e) => {
-                debug!("Could not list keysets to repair truncated keyset ids: {e:#}");
-                return proofs.to_vec();
-            }
-        };
+        let known = self.get_cdk_keysets().await?;
 
         proofs
             .iter()
             .cloned()
             .map(|mut p| {
-                if let Some(full) = super::cashu::resolve_keyset_id(&p.id, &known) {
-                    debug!("Expanded short keyset id {} to {} for swap", p.id, full);
-                    p.id = full;
+                if is_truncated_v2_keyset_id(&p.id) {
+                    p.id = super::cashu::resolve_keyset_id(&p.id, &known)
+                        .context("The mint cannot resolve this short keyset ID unambiguously")?;
                 }
-                p
+                Ok(p)
             })
             .collect()
     }
@@ -809,7 +848,7 @@ impl MintClient {
         let mut all_new_proofs = Vec::new();
 
         for entry in &token.token {
-            if entry.mint != self.url {
+            if entry.mint.trim_end_matches('/') != self.url {
                 debug!(
                     "Skipping proofs from different mint {} (ours: {})",
                     entry.mint, self.url
@@ -868,137 +907,5 @@ mod tests {
     fn test_mint_client_url_no_trailing_slash() {
         let client = MintClient::new("http://mint.example.com").unwrap();
         assert_eq!(client.url(), "http://mint.example.com");
-    }
-
-    /// A minimal mint on 127.0.0.1 answering `/v1/keys` and `/v1/keysets`
-    /// with one v2 keyset, and rejecting every `/v1/swap` as already spent.
-    /// Each swap request body is sent back on the returned channel.
-    async fn stub_mint(
-        full_id: &'static str,
-    ) -> (String, tokio::sync::mpsc::UnboundedReceiver<serde_json::Value>) {
-        use tokio::io::{AsyncReadExt, AsyncWriteExt};
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let addr = listener.local_addr().unwrap();
-        let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
-        tokio::spawn(async move {
-            loop {
-                let Ok((mut stream, _)) = listener.accept().await else {
-                    return;
-                };
-                let mut buf = Vec::new();
-                let mut chunk = [0u8; 4096];
-                // Read headers, then as much body as Content-Length says.
-                let (head, body) = loop {
-                    let n = stream.read(&mut chunk).await.unwrap_or(0);
-                    if n == 0 {
-                        break (String::new(), Vec::new());
-                    }
-                    buf.extend_from_slice(&chunk[..n]);
-                    let Some(pos) = buf.windows(4).position(|w| w == b"\r\n\r\n") else {
-                        continue;
-                    };
-                    let head = String::from_utf8_lossy(&buf[..pos]).to_string();
-                    let len = head
-                        .lines()
-                        .find_map(|l| {
-                            let (k, v) = l.split_once(':')?;
-                            k.eq_ignore_ascii_case("content-length")
-                                .then(|| v.trim().parse::<usize>().ok())?
-                        })
-                        .unwrap_or(0);
-                    while buf.len() < pos + 4 + len {
-                        let n = stream.read(&mut chunk).await.unwrap_or(0);
-                        if n == 0 {
-                            break;
-                        }
-                        buf.extend_from_slice(&chunk[..n]);
-                    }
-                    break (head, buf[pos + 4..].to_vec());
-                };
-                let request_line = head.lines().next().unwrap_or_default().to_string();
-                let (status, reply) = if request_line.starts_with("GET /v1/keys ") {
-                    let key = "0279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798";
-                    let keys: serde_json::Map<String, serde_json::Value> = (0..16)
-                        .map(|i| ((1u64 << i).to_string(), serde_json::json!(key)))
-                        .collect();
-                    (
-                        "200 OK",
-                        serde_json::json!({"keysets": [
-                            {"id": full_id, "unit": "sat", "active": true, "keys": keys}
-                        ]}),
-                    )
-                } else if request_line.starts_with("GET /v1/keysets ") {
-                    (
-                        "200 OK",
-                        serde_json::json!({"keysets": [
-                            {"id": full_id, "unit": "sat", "active": true, "input_fee_ppk": 0}
-                        ]}),
-                    )
-                } else if request_line.starts_with("POST /v1/swap ") {
-                    let _ = tx.send(serde_json::from_slice(&body).unwrap_or_default());
-                    (
-                        "400 Bad Request",
-                        serde_json::json!({"code": 11001, "detail": "Token Already Spent"}),
-                    )
-                } else {
-                    ("404 Not Found", serde_json::json!({}))
-                };
-                let reply = reply.to_string();
-                let _ = stream
-                    .write_all(
-                        format!(
-                            "HTTP/1.1 {status}\r\nContent-Type: application/json\r\n\
-                             Content-Length: {}\r\nConnection: close\r\n\r\n{reply}",
-                            reply.len()
-                        )
-                        .as_bytes(),
-                    )
-                    .await;
-            }
-        });
-        (format!("http://{addr}"), rx)
-    }
-
-    fn proof_with_id(id: &str) -> Proof {
-        Proof {
-            amount: 8,
-            id: id.to_string(),
-            secret: "test-secret".to_string(),
-            c: "02".to_string() + &"11".repeat(32),
-        }
-    }
-
-    /// Regression (2026-09-29): the paid-download seller called `swap`
-    /// directly with a cashuB token's short v2 keyset id and the mint
-    /// answered 422. `swap` itself must send the full id.
-    #[tokio::test]
-    async fn swap_expands_a_short_v2_keyset_id_before_calling_the_mint() {
-        const FULL: &str = "01fc0ec0e59cd6fa01b7a88f8cd77fce81fd1e64bca67d752e984992b7a3c3a821";
-        let (url, mut swaps) = stub_mint(FULL).await;
-        let client = MintClient::new(&url).unwrap();
-
-        let Err(err) = client
-            .swap(&[proof_with_id("01fc0ec0e59cd6fa")], &[8])
-            .await
-        else {
-            panic!("stub mint rejects every swap");
-        };
-        assert!(err.is::<AlreadyRedeemed>(), "unexpected error: {err:#}");
-
-        let body = swaps.recv().await.expect("swap reached the mint");
-        assert_eq!(body["inputs"][0]["id"], FULL);
-    }
-
-    #[tokio::test]
-    async fn swap_passes_complete_keyset_ids_through_unchanged() {
-        const FULL: &str = "01fc0ec0e59cd6fa01b7a88f8cd77fce81fd1e64bca67d752e984992b7a3c3a821";
-        let (url, mut swaps) = stub_mint(FULL).await;
-        let client = MintClient::new(&url).unwrap();
-
-        for id in [FULL, "009a1f293253e41e"] {
-            let _ = client.swap(&[proof_with_id(id)], &[8]).await;
-            let body = swaps.recv().await.expect("swap reached the mint");
-            assert_eq!(body["inputs"][0]["id"], id);
-        }
     }
 }

@@ -7,7 +7,7 @@ use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use tokio::fs;
-use tracing::{debug, info, warn};
+use tracing::{debug, warn};
 
 const CATALOG_FILE: &str = "content/catalog.json";
 const CONTENT_DIR: &str = "content/files";
@@ -241,6 +241,8 @@ pub enum ServeResult {
     /// The catalog entry and file exist but this node can't read the file.
     /// Returned before any payment is taken.
     Unavailable,
+    /// Requested byte range cannot be served; no payment was taken.
+    RangeNotSatisfiable(u64),
 }
 
 /// Serve a content item by ID with access control and optional range request.
@@ -255,6 +257,39 @@ pub async fn serve_content(
     range: Option<ByteRange>,
     owner_session: bool,
 ) -> Result<ServeResult> {
+    serve_content_with(
+        data_dir,
+        id,
+        payment_token,
+        invoice_hash,
+        peer_did,
+        range,
+        owner_session,
+        |path, range, mime| prepare_content(data_dir, path, range, mime),
+        |token, amount| async move { verify_payment_token(data_dir, &token, amount).await },
+    )
+    .await
+}
+
+// Inject only the read and payment boundaries, so tests can prove ordering
+// without mint access, file-permission assumptions or privileged commands.
+async fn serve_content_with<R, RF, V, VF>(
+    data_dir: &Path,
+    id: &str,
+    payment_token: Option<&str>,
+    invoice_hash: Option<&str>,
+    peer_did: Option<&str>,
+    range: Option<ByteRange>,
+    owner_session: bool,
+    read: R,
+    verify: V,
+) -> Result<ServeResult>
+where
+    R: FnOnce(PathBuf, Option<ByteRange>, String) -> RF,
+    RF: std::future::Future<Output = Result<ServeResult>>,
+    V: FnOnce(String, u64) -> VF,
+    VF: std::future::Future<Output = bool>,
+{
     let catalog = load_catalog(data_dir).await?;
     let item = match catalog.items.iter().find(|i| i.id == id) {
         Some(i) => i,
@@ -317,18 +352,28 @@ pub async fn serve_content(
         return Ok(ServeResult::NotFound);
     }
 
-    // Confirm the file is readable BEFORE the paid gate below redeems the
-    // buyer's token. Reading it only afterwards meant a permission error
-    // surfaced after the sale: the buyer was charged and got an error
-    // instead of the file (2026-09-29, a FileBrowser upload left 0640).
-    if let Err(e) = ensure_readable(&file_path).await {
-        warn!(
-            content_id = %id,
-            path = %file_path.display(),
-            "shared content file is not readable by this node: {e:#}"
-        );
-        return Ok(ServeResult::Unavailable);
+    // Refuse unauthorized viewers before opening or reading any bytes.
+    if !owner_session && matches!(item.access, AccessControl::PeersOnly) && !is_known_peer {
+        return Ok(ServeResult::Forbidden);
     }
+    if !owner_session {
+        if let AccessControl::Paid { price_sats, .. } = &item.access {
+            if payment_token.is_none() && invoice_hash.is_none() {
+                return Ok(ServeResult::PaymentRequired(*price_sats));
+            }
+        }
+    }
+
+    // Finish all file I/O before consuming bearer payment. Merely opening then
+    // reopening after charging still lost payments on read errors or deletion.
+    let prepared = match read(file_path, range, item.mime_type.clone()).await {
+        Ok(result @ (ServeResult::Ok(..) | ServeResult::Partial { .. })) => result,
+        Ok(other) => return Ok(other),
+        Err(error) => {
+            warn!(content_id = %id, "Cannot prepare shared content: {error:#}");
+            return Ok(ServeResult::Unavailable);
+        }
+    };
 
     // Check access control
     if !owner_session {
@@ -341,9 +386,13 @@ pub async fn serve_content(
                 // Each path only counts when the sharer accepts that method.
                 let mut authorized = false;
                 if let Some(token) = payment_token {
-                    if (method_accepted(&item.access, "ecash")
-                        || method_accepted(&item.access, "fedimint"))
-                        && verify_payment_token(data_dir, token, *price_sats).await
+                    let method = if token.trim().starts_with("cashu") {
+                        "ecash"
+                    } else {
+                        "fedimint"
+                    };
+                    if method_accepted(&item.access, method)
+                        && verify(token.to_owned(), *price_sats).await
                     {
                         authorized = true;
                     }
@@ -370,56 +419,127 @@ pub async fn serve_content(
         }
     }
 
+    Ok(prepared)
+}
 
-    let metadata = fs::metadata(&file_path)
+async fn prepare_content(
+    data_dir: &Path,
+    path: PathBuf,
+    range: Option<ByteRange>,
+    mime: String,
+) -> Result<ServeResult> {
+    use tokio::io::{AsyncReadExt, AsyncSeekExt};
+    let mut file = match fs::OpenOptions::new()
+        .read(true)
+        .custom_flags(libc::O_NONBLOCK)
+        .open(&path)
         .await
-        .context("Failed to read file metadata")?;
-    let total_size = metadata.len();
-
-    // Handle range request for streaming
-    if let Some(range) = range {
-        let start = range.start.min(total_size.saturating_sub(1));
-        let end = range
-            .end
-            .map(|e| e.min(total_size - 1))
-            .unwrap_or(total_size - 1);
-
-        if start > end || start >= total_size {
-            return Ok(ServeResult::NotFound);
+    {
+        Ok(file) => file,
+        Err(error) if error.kind() == std::io::ErrorKind::PermissionDenied => {
+            let bytes = read_filebrowser_via_userns(data_dir, &path).await?;
+            return slice_prepared_content(bytes, range, mime);
         }
-
-        let len = (end - start + 1) as usize;
-        use tokio::io::{AsyncReadExt, AsyncSeekExt};
-        let mut file = tokio::fs::File::open(&file_path)
+        Err(error) => return Err(error).context("Opening shared content"),
+    };
+    let metadata = file.metadata().await?;
+    anyhow::ensure!(metadata.is_file(), "Shared content is not a regular file");
+    let total = metadata.len();
+    if let Some(range) = range {
+        let Some((start, end)) = checked_range(&range, total) else {
+            return Ok(ServeResult::RangeNotSatisfiable(total));
+        };
+        file.seek(std::io::SeekFrom::Start(start)).await?;
+        let len = usize::try_from(end - start + 1).context("Content range is too large")?;
+        let mut bytes = vec![0; len];
+        file.read_exact(&mut bytes)
             .await
-            .context("Failed to open content file")?;
-        file.seek(std::io::SeekFrom::Start(start))
-            .await
-            .context("Failed to seek")?;
-        let mut buf = vec![0u8; len];
-        file.read_exact(&mut buf)
-            .await
-            .context("Failed to read range")?;
-
-        debug!(
-            "Serving content '{}' range {}-{}/{} ({} bytes)",
-            id, start, end, total_size, len
-        );
+            .context("Reading shared content range")?;
         return Ok(ServeResult::Partial {
-            bytes: buf,
-            mime_type: item.mime_type.clone(),
+            bytes,
+            mime_type: mime,
             start,
             end,
-            total: total_size,
+            total,
         });
     }
-
-    let bytes = fs::read(&file_path)
+    let mut bytes = Vec::new();
+    file.read_to_end(&mut bytes)
         .await
-        .context("Failed to read content file")?;
+        .context("Reading shared content")?;
+    Ok(ServeResult::Ok(bytes, mime))
+}
 
-    debug!("Serving content '{}' ({} bytes)", id, bytes.len());
-    Ok(ServeResult::Ok(bytes, item.mime_type.clone()))
+fn checked_range(range: &ByteRange, total: u64) -> Option<(u64, u64)> {
+    let last = total.checked_sub(1)?;
+    let end = range.end.unwrap_or(last).min(last);
+    (range.start <= end && range.start < total).then_some((range.start, end))
+}
+
+fn slice_prepared_content(
+    bytes: Vec<u8>,
+    range: Option<ByteRange>,
+    mime: String,
+) -> Result<ServeResult> {
+    let total = bytes.len() as u64;
+    match range {
+        None => Ok(ServeResult::Ok(bytes, mime)),
+        Some(range) => match checked_range(&range, total) {
+            Some((start, end)) => Ok(ServeResult::Partial {
+                bytes: bytes[start as usize..=end as usize].to_vec(),
+                mime_type: mime,
+                start,
+                end,
+                total,
+            }),
+            None => Ok(ServeResult::RangeNotSatisfiable(total)),
+        },
+    }
+}
+
+/// Read only an explicitly shared, regular file within FileBrowser storage.
+/// Do not change its mode or grant world-readable access to paid/private data.
+async fn filebrowser_read_path(data_dir: &Path, path: &Path) -> Result<PathBuf> {
+    let root = fs::canonicalize(data_dir.join("filebrowser")).await?;
+    let target = fs::canonicalize(path).await?;
+    anyhow::ensure!(
+        target.starts_with(&root) && target != root,
+        "Shared file is outside Files storage"
+    );
+    anyhow::ensure!(
+        fs::metadata(&target).await?.is_file(),
+        "Shared content is not a regular file"
+    );
+    Ok(target)
+}
+
+async fn read_filebrowser_via_userns(data_dir: &Path, path: &Path) -> Result<Vec<u8>> {
+    let path = filebrowser_read_path(data_dir, path).await?;
+    // Tests exercise the boundary explicitly; they never launch the host Podman.
+    #[cfg(test)]
+    {
+        let _ = path;
+        anyhow::bail!("Files namespace read disabled in unit tests")
+    }
+    #[cfg(not(test))]
+    {
+        let output = tokio::time::timeout(
+            std::time::Duration::from_secs(900),
+            tokio::process::Command::new("podman")
+                .args(["unshare", "cat", "--"])
+                .arg(path)
+                .kill_on_drop(true)
+                .output(),
+        )
+        .await
+        .context("Files namespace read timed out")??;
+        anyhow::ensure!(
+            output.status.success(),
+            "Files namespace read failed: {}",
+            output.status
+        );
+        Ok(output.stdout)
+    }
 }
 
 /// Result of attempting to serve a preview.
@@ -589,64 +709,8 @@ pub async fn serve_content_preview(data_dir: &Path, id: &str) -> Result<PreviewR
     }
 }
 
-/// Make sure this service can open `path`, granting read access if it can't.
-///
-/// FileBrowser writes uploads as its container user (a rootless subuid such
-/// as 100999), and some arrive 0640 — unreadable by this service, although
-/// most shared files are already 0644. Inside the rootless user namespace
-/// that subuid is ours, so `podman unshare chmod a+r` grants the same read
-/// access the other shared files have, without sudo.
-async fn ensure_readable(path: &Path) -> Result<()> {
-    ensure_readable_with(path, grant_read_access).await
-}
-
-async fn ensure_readable_with<F, Fut>(path: &Path, grant: F) -> Result<()>
-where
-    F: FnOnce(PathBuf) -> Fut,
-    Fut: std::future::Future<Output = Result<()>>,
-{
-    match fs::File::open(path).await {
-        Ok(_) => return Ok(()),
-        Err(e) if e.kind() == std::io::ErrorKind::PermissionDenied => {}
-        Err(e) => return Err(e).context("Failed to open content file"),
-    }
-    grant(path.to_path_buf()).await?;
-    info!("Granted read access to shared content file {}", path.display());
-    fs::File::open(path)
-        .await
-        .context("Content file still unreadable after chmod")?;
-    Ok(())
-}
-
-// Tests must not shell out to podman: whether it exists (and can chmod a
-// file the test user owns) would decide the outcome.
-#[cfg(not(test))]
-use grant_read_via_podman as grant_read_access;
-
-#[cfg(test)]
-async fn grant_read_access(_path: PathBuf) -> Result<()> {
-    anyhow::bail!("granting read access is disabled in tests")
-}
-
-#[cfg_attr(test, allow(dead_code))]
-async fn grant_read_via_podman(path: PathBuf) -> Result<()> {
-    let out = tokio::process::Command::new("podman")
-        .args(["unshare", "chmod", "a+r"])
-        .arg(&path)
-        .output()
-        .await
-        .context("Failed to run podman unshare chmod")?;
-    if !out.status.success() {
-        anyhow::bail!(
-            "podman unshare chmod a+r failed: {}",
-            String::from_utf8_lossy(&out.stderr).trim()
-        );
-    }
-    Ok(())
-}
-
 /// Verify a payment token covers the required amount.
-/// Accepts both cashuA tokens (real Cashu) and legacy cashuSend_ format.
+/// Accepts real Cashu tokens and Fedimint notes.
 /// Swaps proofs at the mint to verify they're unspent before accepting.
 async fn verify_payment_token(data_dir: &Path, token: &str, required_sats: u64) -> bool {
     match crate::wallet::ecash::verify_and_receive_payment(data_dir, token, required_sats).await {
@@ -800,135 +864,299 @@ mod prune_missing_content_tests {
 }
 
 #[cfg(test)]
-mod unreadable_content_tests {
+mod paid_read_order_tests {
     use super::*;
-    use std::os::unix::fs::PermissionsExt;
+    use std::sync::atomic::{AtomicUsize, Ordering};
 
-    /// Writes `bytes` to the FileBrowser area and makes it unreadable, the
-    /// way a 0640 upload owned by a container subuid looks to this service.
-    /// `None` when the test runs as root, where mode bits don't stop reads.
-    fn unreadable_file(data_dir: &Path, name: &str) -> Option<PathBuf> {
-        let dir = data_dir.join("filebrowser").join("Music");
-        std::fs::create_dir_all(&dir).unwrap();
-        let path = dir.join(name);
-        std::fs::write(&path, b"audio").unwrap();
-        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o000)).unwrap();
-        std::fs::File::open(&path).is_err().then_some(path)
-    }
-
-    fn paid_item(filename: &str) -> ContentItem {
-        ContentItem {
-            id: "paid-item".to_string(),
-            filename: filename.to_string(),
-            mime_type: "audio/mpeg".to_string(),
-            size_bytes: 5,
-            description: String::new(),
-            access: AccessControl::Paid {
-                price_sats: 10,
-                accepted: vec!["ecash".to_string()],
-            },
-            availability: Availability::AllPeers,
-            added_at: "2026-01-01T00:00:00Z".to_string(),
-        }
-    }
-
-    /// Regression (2026-09-29): the seller redeemed the buyer's token and
-    /// only then failed to read the file, so the buyer paid for nothing.
-    /// An unreadable file must be refused before the payment gate runs,
-    /// which is why a token that would never verify still gets Unavailable
-    /// rather than PaymentRequired.
-    #[tokio::test]
-    async fn an_unreadable_paid_file_is_refused_before_any_payment_is_taken() {
+    async fn fixture(bytes: &[u8]) -> tempfile::TempDir {
         let dir = tempfile::tempdir().unwrap();
-        let data_dir = dir.path();
-        let Some(_path) = unreadable_file(data_dir, "song.mp3") else {
-            return; // running as root
-        };
+        fs::create_dir_all(dir.path().join("content/files"))
+            .await
+            .unwrap();
+        fs::write(dir.path().join("content/files/test.bin"), bytes)
+            .await
+            .unwrap();
         save_catalog(
-            data_dir,
+            dir.path(),
             &ContentCatalog {
-                items: vec![paid_item("Music/song.mp3")],
+                items: vec![ContentItem {
+                    id: "paid".into(),
+                    filename: "test.bin".into(),
+                    mime_type: "application/octet-stream".into(),
+                    size_bytes: bytes.len() as u64,
+                    description: String::new(),
+                    access: AccessControl::Paid {
+                        price_sats: 10,
+                        accepted: vec!["ecash".into()],
+                    },
+                    availability: Availability::AllPeers,
+                    added_at: "2026-09-30".into(),
+                }],
             },
         )
         .await
         .unwrap();
+        dir
+    }
 
-        let result = serve_content(
-            data_dir,
-            "paid-item",
-            Some("cashuBnot-a-real-token"),
+    #[tokio::test]
+    async fn all_read_failures_precede_redemption_even_as_root() {
+        for kind in [
+            std::io::ErrorKind::PermissionDenied,
+            std::io::ErrorKind::UnexpectedEof,
+            std::io::ErrorKind::NotFound,
+            std::io::ErrorKind::Other,
+        ] {
+            let dir = fixture(b"abc").await;
+            let charged = AtomicUsize::new(0);
+            let result = serve_content_with(
+                dir.path(),
+                "paid",
+                Some("cashuBtest"),
+                None,
+                None,
+                None,
+                false,
+                |_, _, _| async move { Err(std::io::Error::from(kind).into()) },
+                |_, _| async {
+                    charged.fetch_add(1, Ordering::SeqCst);
+                    true
+                },
+            )
+            .await
+            .unwrap();
+            assert!(matches!(result, ServeResult::Unavailable));
+            assert_eq!(charged.load(Ordering::SeqCst), 0);
+            assert_eq!(load_catalog(dir.path()).await.unwrap().items.len(), 1);
+        }
+    }
+
+    #[tokio::test]
+    async fn deletion_during_payment_cannot_lose_prepared_bytes() {
+        let dir = fixture(b"original").await;
+        let result = serve_content_with(
+            dir.path(),
+            "paid",
+            Some("cashuBtest"),
             None,
             None,
             None,
             false,
-        )
-        .await
-        .unwrap();
-        assert!(matches!(result, ServeResult::Unavailable));
-        // An unreadable file is not a missing one: keep the catalog entry.
-        assert_eq!(load_catalog(data_dir).await.unwrap().items.len(), 1);
-    }
-
-    #[tokio::test]
-    async fn a_readable_paid_file_still_demands_payment() {
-        let dir = tempfile::tempdir().unwrap();
-        let data_dir = dir.path();
-        let music = data_dir.join("filebrowser").join("Music");
-        std::fs::create_dir_all(&music).unwrap();
-        std::fs::write(music.join("song.mp3"), b"audio").unwrap();
-        save_catalog(
-            data_dir,
-            &ContentCatalog {
-                items: vec![paid_item("Music/song.mp3")],
+            |path, range, mime| prepare_content(dir.path(), path, range, mime),
+            |_, amount| {
+                assert_eq!(amount, 10);
+                async {
+                    fs::remove_file(dir.path().join("content/files/test.bin"))
+                        .await
+                        .unwrap();
+                    true
+                }
             },
         )
         .await
         .unwrap();
-
-        let result = serve_content(data_dir, "paid-item", None, None, None, None, false)
-            .await
-            .unwrap();
-        assert!(matches!(result, ServeResult::PaymentRequired(10)));
+        assert!(matches!(result, ServeResult::Ok(bytes, _) if bytes == b"original"));
     }
 
     #[tokio::test]
-    async fn ensure_readable_grants_access_once_then_reopens() {
-        let dir = tempfile::tempdir().unwrap();
-        let Some(path) = unreadable_file(dir.path(), "a.mp3") else {
-            return;
-        };
-        let calls = std::sync::atomic::AtomicUsize::new(0);
-        ensure_readable_with(&path, |p| {
-            calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-            async move {
-                std::fs::set_permissions(&p, std::fs::Permissions::from_mode(0o644))?;
-                Ok(())
-            }
-        })
+    async fn empty_out_of_bounds_and_reversed_ranges_never_charge() {
+        for (bytes, start, end) in [
+            (b"".as_slice(), 0, None),
+            (b"abc".as_slice(), 3, None),
+            (b"abc".as_slice(), 2, Some(1)),
+        ] {
+            let dir = fixture(bytes).await;
+            let result = serve_content_with(
+                dir.path(),
+                "paid",
+                Some("cashuBtest"),
+                None,
+                None,
+                Some(ByteRange { start, end }),
+                false,
+                |path, range, mime| prepare_content(dir.path(), path, range, mime),
+                |_, _| async { panic!("invalid range reached payment") },
+            )
+            .await
+            .unwrap();
+            assert!(
+                matches!(result, ServeResult::RangeNotSatisfiable(n) if n == bytes.len() as u64)
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn prepared_range_survives_file_change_while_payment_is_verified() {
+        let dir = fixture(b"abcdef").await;
+        let result = serve_content_with(
+            dir.path(),
+            "paid",
+            Some("cashuBtest"),
+            None,
+            None,
+            Some(ByteRange {
+                start: 2,
+                end: Some(999),
+            }),
+            false,
+            |path, range, mime| prepare_content(dir.path(), path, range, mime),
+            |_, _| async {
+                fs::write(dir.path().join("content/files/test.bin"), b"x")
+                    .await
+                    .unwrap();
+                true
+            },
+        )
         .await
         .unwrap();
-        assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 1);
+        assert!(
+            matches!(result, ServeResult::Partial { bytes, start: 2, end: 5, total: 6, .. } if bytes == b"cdef")
+        );
     }
 
     #[tokio::test]
-    async fn ensure_readable_leaves_a_readable_file_alone() {
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("ok.mp3");
-        std::fs::write(&path, b"x").unwrap();
-        ensure_readable_with(&path, |_| async { anyhow::bail!("must not grant") })
+    async fn payment_denial_never_returns_prepared_content() {
+        let dir = fixture(b"secret").await;
+        let charged = AtomicUsize::new(0);
+        let result = serve_content_with(
+            dir.path(),
+            "paid",
+            Some("cashuBtest"),
+            None,
+            None,
+            None,
+            false,
+            |path, range, mime| prepare_content(dir.path(), path, range, mime),
+            |_, _| async {
+                charged.fetch_add(1, Ordering::SeqCst);
+                false
+            },
+        )
+        .await
+        .unwrap();
+        assert!(matches!(result, ServeResult::PaymentRequired(10)));
+        assert_eq!(charged.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn missing_payment_and_peer_restrictions_precede_file_reads() {
+        let dir = fixture(b"secret").await;
+        let result = serve_content_with(
+            dir.path(),
+            "paid",
+            None,
+            None,
+            None,
+            None,
+            false,
+            |_, _, _| async { panic!("unauthorized file read") },
+            |_, _| async { panic!("unexpected payment") },
+        )
+        .await
+        .unwrap();
+        assert!(matches!(result, ServeResult::PaymentRequired(10)));
+        let mut catalog = load_catalog(dir.path()).await.unwrap();
+        catalog.items[0].access = AccessControl::PeersOnly;
+        save_catalog(dir.path(), &catalog).await.unwrap();
+        let result = serve_content_with(
+            dir.path(),
+            "paid",
+            None,
+            None,
+            None,
+            None,
+            false,
+            |_, _, _| async { panic!("unauthorized file read") },
+            |_, _| async { panic!("unexpected payment") },
+        )
+        .await
+        .unwrap();
+        assert!(matches!(result, ServeResult::Forbidden));
+    }
+
+    #[tokio::test]
+    async fn owner_reads_paid_content_without_redemption() {
+        let dir = fixture(b"own file").await;
+        let result = serve_content_with(
+            dir.path(),
+            "paid",
+            None,
+            None,
+            None,
+            None,
+            true,
+            |path, range, mime| prepare_content(dir.path(), path, range, mime),
+            |_, _| async { panic!("owner charged") },
+        )
+        .await
+        .unwrap();
+        assert!(matches!(result, ServeResult::Ok(bytes, _) if bytes == b"own file"));
+    }
+
+    #[tokio::test]
+    async fn directory_in_place_of_file_does_not_charge() {
+        let dir = fixture(b"abc").await;
+        let path = dir.path().join("content/files/test.bin");
+        fs::remove_file(&path).await.unwrap();
+        fs::create_dir(&path).await.unwrap();
+        let result = serve_content_with(
+            dir.path(),
+            "paid",
+            Some("cashuBtest"),
+            None,
+            None,
+            None,
+            false,
+            |path, range, mime| prepare_content(dir.path(), path, range, mime),
+            |_, _| async { panic!("directory charged") },
+        )
+        .await
+        .unwrap();
+        assert!(matches!(result, ServeResult::Unavailable));
+    }
+
+    #[tokio::test]
+    async fn files_namespace_read_is_scoped_to_regular_files_and_keeps_mode() {
+        use std::os::unix::fs::{symlink, PermissionsExt};
+        let dir = fixture(b"outside").await;
+        let root = dir.path().join("filebrowser");
+        fs::create_dir(&root).await.unwrap();
+        let inside = root.join("song");
+        fs::write(&inside, b"song").await.unwrap();
+        fs::set_permissions(&inside, std::fs::Permissions::from_mode(0o640))
             .await
             .unwrap();
+        assert_eq!(
+            filebrowser_read_path(dir.path(), &inside).await.unwrap(),
+            inside
+        );
+        assert_eq!(
+            fs::metadata(&inside).await.unwrap().permissions().mode() & 0o777,
+            0o640
+        );
+        let outside = dir.path().join("content/files/test.bin");
+        symlink(&outside, root.join("escape")).unwrap();
+        for path in [outside, root.join("escape"), root.clone()] {
+            assert!(filebrowser_read_path(dir.path(), &path).await.is_err());
+        }
     }
 
-    #[tokio::test]
-    async fn ensure_readable_reports_a_failed_grant() {
-        let dir = tempfile::tempdir().unwrap();
-        let Some(path) = unreadable_file(dir.path(), "b.mp3") else {
-            return;
-        };
-        let err = ensure_readable_with(&path, |_| async { anyhow::bail!("no podman") })
-            .await
-            .unwrap_err();
-        assert!(err.to_string().contains("no podman"));
+    #[test]
+    fn user_namespace_bytes_use_the_same_range_rules() {
+        assert!(matches!(
+            slice_prepared_content(
+                vec![],
+                Some(ByteRange {
+                    start: 0,
+                    end: None
+                }),
+                "x".into()
+            )
+            .unwrap(),
+            ServeResult::RangeNotSatisfiable(0)
+        ));
+        assert!(
+            matches!(slice_prepared_content(b"abc".to_vec(), Some(ByteRange { start: 1, end: None }), "x".into()).unwrap(), ServeResult::Partial { bytes, start: 1, end: 2, total: 3, .. } if bytes == b"bc")
+        );
     }
 }

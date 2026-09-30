@@ -89,11 +89,63 @@ bitcoind.estimatemode=ECONOMICAL\n"
     Ok(EnsureOutcome::Written)
 }
 
+/// Bitcoin can accept TCP while returning RPC_IN_WARMUP for many minutes.
+/// Unlocking LND then triggers its short chain-backend timeout and a restart loop.
+/// Leave the wallet intact and locked; the next reconciliation retries readiness.
+async fn bitcoin_rpc_ready() -> bool {
+    let (user, password) = crate::bitcoin_rpc::bitcoin_rpc_credentials().await;
+    let client = match reqwest::Client::builder()
+        .no_proxy()
+        .timeout(std::time::Duration::from_secs(5))
+        .build()
+    {
+        Ok(client) => client,
+        Err(_) => return false,
+    };
+    let response = client.post(crate::constants::BITCOIN_RPC_URL)
+        .basic_auth(user, Some(password))
+        .json(&serde_json::json!({"jsonrpc":"1.0","id":"lnd-readiness","method":"getblockchaininfo","params":[]}))
+        .send().await;
+    match response {
+        Ok(response) if response.status().is_success() => response
+            .json::<serde_json::Value>()
+            .await
+            .is_ok_and(|value| bitcoin_readiness_response(&value)),
+        _ => false,
+    }
+}
+
+fn bitcoin_readiness_response(value: &serde_json::Value) -> bool {
+    value.get("error").is_none_or(|e| e.is_null())
+        && value
+            .pointer("/result/blocks")
+            .and_then(|v| v.as_u64())
+            .is_some()
+        && value
+            .pointer("/result/initialblockdownload")
+            .and_then(|v| v.as_bool())
+            .is_some()
+}
+
 pub async fn ensure_wallet_initialized() -> Result<()> {
     let admin_macaroon = "/var/lib/archipelago/lnd/data/chain/bitcoin/mainnet/admin.macaroon";
     let wallet_db = "/var/lib/archipelago/lnd/data/chain/bitcoin/mainnet/wallet.db";
     if file_exists_as_root(wallet_db).await {
+        // GetInfo can wait for Bitcoin sync even though the wallet is already
+        // unlocked. State RPC stays available during that normal startup phase.
+        let client = reqwest::Client::builder()
+            .no_proxy()
+            .timeout(std::time::Duration::from_secs(5))
+            .danger_accept_invalid_certs(true)
+            .build()?;
+        if wallet_is_unlocked(wallet_state(&client).await.as_deref()) {
+            return Ok(());
+        }
         if file_exists_as_root(admin_macaroon).await && lnd_getinfo_ready(admin_macaroon).await {
+            return Ok(());
+        }
+        if !bitcoin_rpc_ready().await {
+            tracing::debug!("[lnd] waiting for Bitcoin RPC readiness before wallet unlock");
             return Ok(());
         }
         unlock_existing_wallet_no_wipe().await?;
@@ -101,6 +153,10 @@ pub async fn ensure_wallet_initialized() -> Result<()> {
         return Ok(());
     }
 
+    if !bitcoin_rpc_ready().await {
+        tracing::debug!("[lnd] waiting for Bitcoin RPC readiness before wallet initialization");
+        return Ok(());
+    }
     init_wallet_via_rest().await?;
     wait_for_admin_macaroon(admin_macaroon).await
 }
@@ -258,6 +314,9 @@ async fn unlock_existing_wallet_via_rest() -> Result<bool> {
     // exactly the nodes least able to afford it. Waiting longer costs nothing —
     // a wrong password still exits on the first pass via `all_rejected`.
     for _ in 0..UNLOCK_NOT_READY_ATTEMPTS {
+        if wallet_is_unlocked(wallet_state(&client).await.as_deref()) {
+            return Ok(true);
+        }
         let mut all_rejected = true;
         for pw in &candidates {
             match try_unlock_once(&client, pw).await {
@@ -292,6 +351,10 @@ pub(crate) async fn unlock_existing_wallet_no_wipe() -> Result<()> {
              The wallet is intact and still locked; its password is not one this node holds."
         ),
     }
+}
+
+fn wallet_is_unlocked(state: Option<&str>) -> bool {
+    matches!(state, Some("UNLOCKED" | "RPC_ACTIVE" | "SERVER_ACTIVE"))
 }
 
 /// Current LND wallet state via the unauthenticated `/v1/state` endpoint
@@ -1087,5 +1150,46 @@ mod tests {
             &serde_json::json!({ "peers": [] })
         )
         .is_empty());
+    }
+}
+
+#[cfg(test)]
+mod bitcoin_readiness_tests {
+    use super::bitcoin_readiness_response;
+    use serde_json::json;
+    #[test]
+    fn only_usable_bitcoin_rpc_allows_wallet_unlock() {
+        for response in [
+            json!({}),
+            json!({"error":{"code":-28,"message":"Loading block index"},"result":null}),
+            json!({"result":{"blocks":null}}),
+        ] {
+            assert!(!bitcoin_readiness_response(&response));
+        }
+        // Initial sync is supported by LND. Loading the database is not.
+        for ibd in [true, false] {
+            assert!(bitcoin_readiness_response(
+                &json!({"result":{"blocks":100,"initialblockdownload":ibd},"error":null})
+            ));
+        }
+    }
+}
+
+#[cfg(test)]
+mod syncing_wallet_state_tests {
+    #[test]
+    fn an_unlocked_wallet_waiting_for_chain_sync_is_never_unlocked_again() {
+        for state in ["UNLOCKED", "RPC_ACTIVE", "SERVER_ACTIVE"] {
+            assert!(super::wallet_is_unlocked(Some(state)));
+        }
+        for state in [
+            None,
+            Some("LOCKED"),
+            Some("NON_EXISTING"),
+            Some("WAITING_TO_START"),
+            Some("unknown"),
+        ] {
+            assert!(!super::wallet_is_unlocked(state));
+        }
     }
 }

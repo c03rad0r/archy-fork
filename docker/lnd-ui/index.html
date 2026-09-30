@@ -989,7 +989,7 @@
 
         // ── State ───────────────────────────────────────────────────────
         let unit = 'sats';
-        let state = { info: null, channels: [], pending: null, peers: [], payments: [], invoices: [], txns: [], fees: null, graph: null };
+        let state = { readiness: null, info: null, channels: [], pending: null, peers: [], payments: [], invoices: [], txns: [], fees: null, graph: null };
         let peerSort = { col: 'peer', dir: 1 };
         let activityFilter = 'all';
         let logsLoaded = false;
@@ -1142,9 +1142,19 @@
         }
 
         async function refreshAll() {
+            if (state.refreshing) return;
+            state.refreshing = true;
             const icon = document.getElementById('refreshIcon');
             if (icon) icon.classList.add('animate-spin-slow');
             try {
+                state.readiness = await lndSafe('/archy-status', null);
+                if (state.readiness && state.readiness.state.startsWith('waiting_')) {
+                    state.info = null;
+                    state.onchainStale = true;
+                    state.chanbalStale = true;
+                    renderAll();
+                    return;
+                }
                 const [info, channels, pending, peers, fees, graph, payments, invoices, txns] = await Promise.all([
                     lndSafe('/v1/getinfo', null),
                     lndSafe('/v1/channels', { channels: [] }),
@@ -1166,10 +1176,17 @@
                 state.invoices = (invoices && invoices.invoices) || [];
                 state.txns = (txns && txns.transactions) || [];
 
-                // Balances are separate so one failing endpoint can't blank the rest.
-                state.onchain = await lndSafe('/v1/balance/blockchain', null);
-                state.chanbal = await lndSafe('/v1/balance/channels', null);
+                // Preserve known balances on outage; never decode an error as zero.
+                const [onchain, chanbal] = await Promise.all([
+                    lndSafe('/v1/balance/blockchain', null),
+                    lndSafe('/v1/balance/channels', null),
+                ]);
+                state.onchainStale = !validBalance(onchain && (onchain.confirmed_balance ?? onchain.total_balance));
+                state.chanbalStale = !validBalance(chanbal && (chanbal.local_balance?.sat ?? chanbal.balance));
+                if (!state.onchainStale) state.onchain = onchain;
+                if (!state.chanbalStale) state.chanbal = chanbal;
             } finally {
+                state.refreshing = false;
                 if (icon) icon.classList.remove('animate-spin-slow');
             }
             renderAll();
@@ -1192,11 +1209,17 @@
             const pill = document.getElementById('headerStatusPill');
             const dot = document.getElementById('headerStatusDot');
 
-            if (!g) {
-                setText('headerStatusText', 'Unreachable');
-                pill.className = 'pill bad';
-                dot.className = 'status-dot-sm bg-red';
-                document.getElementById('syncCard').style.display = 'none';
+            const waiting = state.readiness && state.readiness.state.startsWith('waiting_');
+            if (!g || waiting) {
+                setText('headerStatusText', waiting ? state.readiness.message : 'Connecting to LND');
+                pill.className = 'pill warn';
+                dot.className = 'status-dot-sm bg-yellow';
+                document.getElementById('syncCard').style.display = '';
+                setText('syncSubtitle', waiting ? state.readiness.message + '. Lightning will become available automatically.' : 'Checking Lightning availability. Retrying automatically.');
+                setText('syncBlockLabel', '');
+                setText('syncPercent', '');
+                document.getElementById('syncProgressBar').style.width = '0%';
+                for (const id of ['syncChain', 'syncGraph', 'syncHeight', 'syncPeers']) setText(id, '—');
                 return;
             }
 
@@ -1237,6 +1260,11 @@
         }
 
         // ── Balances ────────────────────────────────────────────────────
+        function validBalance(value) {
+            return (typeof value === 'number' || (typeof value === 'string' && /^\d+$/.test(value)))
+                && Number.isSafeInteger(Number(value)) && Number(value) >= 0;
+        }
+
         function renderBalances() {
             const onchainConfirmed = num(state.onchain && (state.onchain.confirmed_balance ?? state.onchain.total_balance));
             const onchainUnconfirmed = num(state.onchain && state.onchain.unconfirmed_balance);
@@ -1253,22 +1281,23 @@
             const haveOnchain = !!state.onchain;
             const haveChan = !!cb;
 
-            setBalance('balTotal', haveOnchain || haveChan ? onchainConfirmed + lnLocal : null);
-            setText('balTotalSub', haveOnchain || haveChan ? 'on-chain + lightning' : 'waiting for LND');
+            setBalance('balTotal', haveOnchain && haveChan ? onchainConfirmed + lnLocal : null);
+            setText('balTotalSub', state.onchainStale || state.chanbalStale ? 'balance unavailable · last known values' : haveOnchain && haveChan ? 'on-chain + lightning' : 'waiting for LND');
             setBalance('balLightning', haveChan ? lnLocal : null);
-            setText('balLightningSub', !haveChan ? 'waiting for LND'
+            setText('balLightningSub', !haveChan ? 'waiting for LND' : state.chanbalStale ? 'last known balance'
                 : lnPending > 0 ? fmtAmount(lnPending) + ' pending open' : 'spendable over channels');
             setBalance('balOnchain', haveOnchain ? onchainConfirmed : null);
-            setText('balOnchainSub', !haveOnchain ? 'waiting for LND'
+            setText('balOnchainSub', !haveOnchain ? 'waiting for LND' : state.onchainStale ? 'last known balance'
                 : onchainUnconfirmed > 0 ? fmtAmount(onchainUnconfirmed) + ' unconfirmed' : 'confirmed');
 
-            setText('liqLocal', fmtAmount(lnLocal));
-            setText('liqRemote', fmtAmount(lnRemote));
+            const liquidityReady = haveChan && !state.chanbalStale && !!state.info;
+            setText('liqLocal', liquidityReady ? fmtAmount(lnLocal) : '—');
+            setText('liqRemote', liquidityReady ? fmtAmount(lnRemote) : '—');
             const total = lnLocal + lnRemote;
             const localPct = total > 0 ? (lnLocal / total) * 100 : 50;
-            document.getElementById('liqBarLocal').style.width = localPct + '%';
-            document.getElementById('liqBarRemote').style.width = (100 - localPct) + '%';
-            setText('liqHint', total > 0
+            document.getElementById('liqBarLocal').style.width = (liquidityReady ? localPct : 0) + '%';
+            document.getElementById('liqBarRemote').style.width = (liquidityReady ? 100 - localPct : 0) + '%';
+            setText('liqHint', !liquidityReady ? 'Channel capacity is unavailable while waiting for LND.' : total > 0
                 ? Math.round(localPct) + '% of your channel capacity is outbound (sendable).'
                 : 'Open a channel to start sending and receiving over Lightning.');
         }
@@ -1284,6 +1313,15 @@
 
         function renderSummary() {
             const g = state.info;
+            if (!g) {
+                for (const id of ['statPeers', 'statActiveChannels', 'statCapacity', 'statRoutingMonth', 'healthHeight', 'healthPending', 'chActive', 'chInactive', 'chPending', 'chCapacity']) setText(id, '—');
+                for (const id of ['statChannelsSub', 'channelsLinkSub']) setText(id, 'Waiting for LND');
+                for (const id of ['healthChain', 'healthGraph']) {
+                    const pill = document.getElementById(id);
+                    pill.textContent = '—'; pill.className = 'pill warn';
+                }
+                return;
+            }
             const chans = state.channels;
             const active = chans.filter(c => c.active).length;
             const inactive = chans.length - active;
@@ -1321,6 +1359,10 @@
         function renderChannels() {
             const el = document.getElementById('channelList');
             if (!el) return;
+            if (!state.info) {
+                el.innerHTML = '<div class="empty-state">Waiting for LND. Existing channels will appear when it is ready.</div>';
+                return;
+            }
             const q = (document.getElementById('channelFilter').value || '').toLowerCase();
             let list = state.channels.slice();
             if (q) list = list.filter(c => String(c.remote_pubkey || '').toLowerCase().includes(q) || String(c.chan_id || '').includes(q));

@@ -133,12 +133,36 @@ async fn stream_lnd_transactions(sm: &crate::state::StateManager) -> Result<()> 
 /// RPC-unreachable and locked-wallet states are deliberately NOT handled
 /// here — container-down is crash-recovery's job, and unlocking needs the
 /// operator.
+fn bitcoin_ready_for_lnd_watchdog(status: &crate::bitcoin_status::BitcoinNodeStatus) -> bool {
+    status.ok
+        && !status.stale
+        && status.age_ms < 30_000
+        && status
+            .blockchain_info
+            .as_ref()
+            .and_then(|v| v.get("initialblockdownload"))
+            .and_then(|v| v.as_bool())
+            == Some(false)
+}
+
 pub(crate) fn spawn_lnd_health_watchdog() {
     tokio::spawn(async move {
         let mut bad_minutes: u32 = 0;
         let mut last_restart: Option<tokio::time::Instant> = None;
+        let mut last_height: Option<u64> = None;
         loop {
             tokio::time::sleep(std::time::Duration::from_secs(60)).await;
+            // Initial Bitcoin sync, warmup, and outages are dependencies to
+            // wait for, never evidence that LND is wedged. Do not accumulate
+            // restart pressure during a days-long initial block download.
+            let bitcoin = crate::bitcoin_status::get_bitcoin_status().await;
+            if !bitcoin_ready_for_lnd_watchdog(&bitcoin)
+                || crate::app_ops::lifecycle_op_in_flight("lnd")
+            {
+                bad_minutes = 0;
+                last_height = None;
+                continue;
+            }
             let Ok(bytes) = read_lnd_admin_macaroon().await else {
                 bad_minutes = 0; // no LND on this node (or not set up yet)
                 continue;
@@ -161,6 +185,10 @@ pub(crate) fn spawn_lnd_health_watchdog() {
                 bad_minutes = 0; // down/locked — not the wedge signature
                 continue;
             };
+            if !resp.status().is_success() {
+                bad_minutes = 0;
+                continue;
+            }
             let Ok(info) = resp.json::<serde_json::Value>().await else {
                 bad_minutes = 0;
                 continue;
@@ -182,7 +210,12 @@ pub(crate) fn spawn_lnd_health_watchdog() {
                     .get("num_pending_channels")
                     .and_then(|v| v.as_u64())
                     .unwrap_or(0);
-            let wedged = !synced || (channels > 0 && peers == 0);
+            let height = info.get("block_height").and_then(|v| v.as_u64());
+            let progressing = height
+                .zip(last_height)
+                .is_some_and(|(now, before)| now > before);
+            last_height = height;
+            let wedged = !progressing && (!synced || (channels > 0 && peers == 0));
             if !wedged {
                 bad_minutes = 0;
                 continue;
@@ -237,5 +270,33 @@ impl RpcHandler {
             .build()
             .context("Failed to create HTTP client")?;
         Ok((client, macaroon_hex))
+    }
+}
+
+#[cfg(test)]
+mod watchdog_dependency_tests {
+    use super::bitcoin_ready_for_lnd_watchdog;
+    use crate::bitcoin_status::BitcoinNodeStatus;
+    use serde_json::json;
+    #[test]
+    fn initial_sync_warmup_outage_stale_and_unknown_never_trigger_lnd_restart() {
+        let mut status = BitcoinNodeStatus::default();
+        assert!(!bitcoin_ready_for_lnd_watchdog(&status));
+        status.ok = true;
+        status.blockchain_info = Some(json!({"initialblockdownload":true}));
+        assert!(!bitcoin_ready_for_lnd_watchdog(&status));
+        status.blockchain_info = Some(json!({"initialblockdownload":false}));
+        assert!(bitcoin_ready_for_lnd_watchdog(&status));
+        status.stale = true;
+        assert!(!bitcoin_ready_for_lnd_watchdog(&status));
+        status.stale = false;
+        status.ok = false;
+        assert!(!bitcoin_ready_for_lnd_watchdog(&status));
+        status.ok = true;
+        status.age_ms = 30_000;
+        assert!(!bitcoin_ready_for_lnd_watchdog(&status));
+        status.age_ms = 0;
+        status.blockchain_info = Some(json!({}));
+        assert!(!bitcoin_ready_for_lnd_watchdog(&status));
     }
 }

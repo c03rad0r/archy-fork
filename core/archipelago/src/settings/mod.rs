@@ -7,3 +7,5 @@
 pub mod ai_permissions;
 pub mod session_policy;
 pub mod transport;
+
+pub mod bitcoin_storage;

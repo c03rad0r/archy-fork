@@ -166,9 +166,14 @@ impl ApiHandler {
                 StatusCode::SERVICE_UNAVAILABLE,
                 "application/json",
                 hyper::Body::from(
-                    r#"{"error":"The seller's node can't read this file right now. No payment was taken."}"#,
+                    r#"{"error":"The seller's node can't read this file right now. This request did not redeem an ecash payment."}"#,
                 ),
             )),
+            Ok(content_server::ServeResult::RangeNotSatisfiable(total)) => Ok(Response::builder()
+                .status(StatusCode::RANGE_NOT_SATISFIABLE)
+                .header("Content-Range", format!("bytes */{total}"))
+                .body(hyper::Body::empty())
+                .unwrap()),
             Ok(content_server::ServeResult::NotFound) => Ok(build_response(
                 StatusCode::NOT_FOUND,
                 "text/plain",

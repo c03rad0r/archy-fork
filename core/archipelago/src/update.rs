@@ -1481,6 +1481,21 @@ pub async fn cancel_download(data_dir: &Path) -> Result<()> {
 /// service unit that inherits systemd's default protections (i.e. none
 /// of ours), escaping the namespace.
 pub(crate) async fn host_sudo(args: &[&str]) -> Result<std::process::ExitStatus> {
+    #[cfg(test)]
+    {
+        anyhow::ensure!(
+            std::env::var("ARCHY_TEST_ISOLATED").as_deref() == Ok("1"),
+            "Host-operation tests require scripts/test-backend-isolated.sh"
+        );
+        let (program, args) = args.split_first().context("Missing test command")?;
+        // Run inside the test namespace, never escape through sudo/systemd-run.
+        return tokio::process::Command::new(program)
+            .args(args)
+            .status()
+            .await
+            .context("isolated test command failed");
+    }
+
     let mut full: Vec<&str> = vec![
         "systemd-run",
         "--wait",
@@ -1505,6 +1520,21 @@ pub(crate) async fn host_sudo(args: &[&str]) -> Result<std::process::ExitStatus>
 /// Same mechanism as `host_sudo` but captures stdout — for read-only probes
 /// (e.g. `stat`) where the answer is in the output, not the exit status.
 pub(crate) async fn host_sudo_output(args: &[&str]) -> Result<std::process::Output> {
+    #[cfg(test)]
+    {
+        anyhow::ensure!(
+            std::env::var("ARCHY_TEST_ISOLATED").as_deref() == Ok("1"),
+            "Host-operation tests require scripts/test-backend-isolated.sh"
+        );
+        let (program, args) = args.split_first().context("Missing test command")?;
+        // Run inside the test namespace, never escape through sudo/systemd-run.
+        return tokio::process::Command::new(program)
+            .args(args)
+            .output()
+            .await
+            .context("isolated test command failed");
+    }
+
     let mut full: Vec<&str> = vec![
         "systemd-run",
         "--wait",

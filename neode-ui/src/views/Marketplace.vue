@@ -137,7 +137,7 @@
           :tier-label="getAppTier(app.id)"
           :install-blocked-reason="installBlockedReason(app.id)"
           @view="viewAppDetails"
-          @install="app.source === 'local' ? installApp(app) : installCommunityApp(app)"
+          @install="handleInstall(app)"
           @launch="launchInstalledApp"
         />
       </div>
@@ -153,7 +153,13 @@
       </div>
     </div>
     <!-- End Scrollable Apps Section -->
-
+    <InstallVersionModal
+      :show="showInstallModal"
+      :app-id="installModalApp?.id || ''"
+      :app="installModalApp"
+      @close="showInstallModal = false; installModalApp = null"
+      @confirm="onInstallModalConfirm"
+    />
   </div>
 </template>
 
@@ -175,11 +181,13 @@ import { useCollapsingHeaderTabs } from '@/composables/useCollapsingHeaderTabs'
 import { useContainersScanTimeout } from '@/composables/useContainersScanTimeout'
 import { useCachedResource } from '@/composables/useCachedResource'
 import RefreshIndicator from '@/components/RefreshIndicator.vue'
+import InstallVersionModal from '@/components/InstallVersionModal.vue'
 import { APP_STORE_CATEGORIES, APP_STORE_SECTIONS } from './appStoreCategories'
 import MarketplaceAppCard from './marketplace/MarketplaceAppCard.vue'
 import {
   type MarketplaceApp,
   INSTALLED_ALIASES,
+  MULTI_VERSION_APP_IDS,
   getAppTier,
   categorizeCommunityApp,
   getCuratedAppList,
@@ -206,6 +214,8 @@ const appStoreSections = computed(() => APP_STORE_SECTIONS)
 
 // Installation state — uses global store so it persists across navigation
 const installingApps = server.installingApps
+const showInstallModal = ref(false)
+const installModalApp = ref<MarketplaceApp | null>(null)
 const electrumxArchiveWarning = 'You need a full archival bitcoin node before downloading ElectrumX'
 
 function installToast(app: MarketplaceApp) {
@@ -518,7 +528,34 @@ function failInstall(app: MarketplaceApp, err: unknown) {
   trackTimeout(() => { server.clearInstallProgress(app.id) }, 5000)
 }
 
-async function installApp(app: MarketplaceApp) {
+function handleInstall(app: MarketplaceApp) {
+  if (installingApps.has(app.id) || isInstalled(app.id)) return
+  const blocked = installBlockedReason(app.id)
+  if (blocked) {
+    toast.error(blocked)
+    return
+  }
+  if (MULTI_VERSION_APP_IDS.has(app.id)) {
+    installModalApp.value = app
+    showInstallModal.value = true
+    return
+  }
+  startInstall(app)
+}
+
+function startInstall(app: MarketplaceApp, version?: string, prune?: boolean) {
+  if (app.source === 'local') void installApp(app, version, prune)
+  else void installCommunityApp(app, version, prune)
+}
+
+function onInstallModalConfirm(version: string, prune?: boolean) {
+  const app = installModalApp.value
+  showInstallModal.value = false
+  installModalApp.value = null
+  if (app) startInstall(app, version, prune)
+}
+
+async function installApp(app: MarketplaceApp, versionOverride?: string, prune?: boolean) {
   if (installingApps.has(app.id) || isInstalled(app.id)) return
   const blocked = installBlockedReason(app.id)
   if (blocked) {
@@ -536,7 +573,7 @@ async function installApp(app: MarketplaceApp) {
     const installUrl = app.url || app.manifestUrl || app.s9pkUrl
     await rpcClient.call({
       method: 'package.install',
-      params: { id: app.id, url: installUrl, version: app.version },
+      params: { id: app.id, url: installUrl, version: versionOverride || app.version, ...(prune === undefined ? {} : { prune }) },
       timeout: 600000,
     })
   } catch (err) {
@@ -545,7 +582,7 @@ async function installApp(app: MarketplaceApp) {
   }
 }
 
-async function installCommunityApp(app: MarketplaceApp) {
+async function installCommunityApp(app: MarketplaceApp, versionOverride?: string, prune?: boolean) {
   if (installingApps.has(app.id) || isInstalled(app.id) || !app.dockerImage) return
   const blocked = installBlockedReason(app.id)
   if (blocked) {
@@ -558,7 +595,7 @@ async function installCommunityApp(app: MarketplaceApp) {
   installToast(app)
 
   try {
-    const installParams: Record<string, unknown> = { id: app.id, dockerImage: app.dockerImage, version: app.version }
+    const installParams: Record<string, unknown> = { id: app.id, dockerImage: app.dockerImage, version: versionOverride || app.version, ...(prune === undefined ? {} : { prune }) }
     if (app.containerConfig) installParams.containerConfig = app.containerConfig
     await rpcClient.call({
       method: 'package.install',
