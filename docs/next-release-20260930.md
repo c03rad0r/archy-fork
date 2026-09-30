@@ -164,3 +164,13 @@ returns the same status and body. Full-sync fee availability remains unverified;
 ready-backend API and failure/recovery behavior passed the isolated live fixture.
 The temporary `/run/archy-candidate-manifests` snapshot override must be removed
 when deploying the startup-order fix, then normal startup/reload must be checked.
+
+The latest complete UI suite passed 140 files / 1,132 tests. Release preflight
+passed all static, manifest, catalog, type and UI gates. The requested named
+waiting message, compact card layout and green Angor icon are deployed to dev;
+desktop 1440/1024 and mobile 390 browser checks passed after hard refresh.
+The startup-order optimized build is logged in
+`/tmp/archy-runtime-order-build.log`; once complete, run
+`/tmp/archy-runtime-order-live-check.py` to deploy with rollback, remove the
+candidate manifest override, and verify five normal management startups and
+managed Angor restarts. No new release version/tag, OTA or ISO has been created.
