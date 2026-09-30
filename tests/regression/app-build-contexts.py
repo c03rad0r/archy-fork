@@ -40,6 +40,12 @@ class BuildPayloadTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'out-of-payload'):
             contexts.check(self.root)
 
+    def test_retired_registry_rejected(self):
+        target = self.root / 'docker/lnd-ui/Dockerfile'
+        target.write_text('FROM git.tx1138.com/lfg2025/nginx:1.27.4-alpine\n')
+        with self.assertRaisesRegex(ValueError, 'lnd-ui.*retired registry'):
+            contexts.check(self.root)
+
     def test_empty_payload_rejected(self):
         shutil.rmtree(self.root / 'apps')
         with self.assertRaisesRegex(ValueError, 'No app manifests'):

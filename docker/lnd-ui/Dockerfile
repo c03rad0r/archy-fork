@@ -1,4 +1,4 @@
-FROM git.tx1138.com/lfg2025/nginx:1.27.4-alpine
+FROM source.archipelago-foundation.org/lfg2025/nginx:1.27.4-alpine
 
 # Copy the HTML file
 COPY index.html /usr/share/nginx/html/

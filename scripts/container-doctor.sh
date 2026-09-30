@@ -32,6 +32,8 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 
 FIXES_APPLIED=0
 CHECKS_PASSED=0
+CHECKS_WARNED=0
+WARNING_NAMES=()
 FIX_NAMES=()
 
 log() { echo "[$(date +%H:%M:%S)] DOCTOR: $*"; }
@@ -83,7 +85,13 @@ run_fix() {
         FIXES_APPLIED=$((FIXES_APPLIED + 1))
         FIX_NAMES+=("$name")
     else
-        CHECKS_PASSED=$((CHECKS_PASSED + 1))
+        local status=$?
+        if [ "$status" = 1 ]; then
+            CHECKS_PASSED=$((CHECKS_PASSED + 1))
+        else
+            CHECKS_WARNED=$((CHECKS_WARNED + 1))
+            WARNING_NAMES+=("$name")
+        fi
     fi
 }
 
@@ -446,114 +454,33 @@ print(' '.join(['\"' + a + '\"' if ' ' in a else a for a in args[2:]]))
     [ ${#fixed_names[@]} -gt 0 ] && return 0 || return 1
 }
 
-# ── Fix 8: Rootless netns egress lost ────────────────────────
-# Rootless podman uses pasta to give containers internet egress. If pasta's
-# tap vanishes (host link flap, mount churn, pasta dying during a boot-time
-# restart storm), the rootless-netns keeps inter-container traffic working
-# but silently loses outbound. Bitcoin IBD stalls at 0 peers; package pulls
-# fail. The repair must rebuild the netns from scratch: merely cycling the
-# containers reuses the existing (broken) netns because its holders
-# (aardvark-dns, podman's pause process) survive — observed on a test node
-# 2026-07-10, where the old stop/start-only cycle bounced all 35 containers
-# every timer run for ~an hour without ever restoring egress. So: stop the
-# containers, kill the netns holders, `podman system migrate`, clear the
-# stale netns state, then start everything back up.
-#
-# Destructive-action latch: cycling the whole fleet is a last resort. After
-# NETNS_CYCLE_MAX consecutive failed repairs we stop cycling (and log loudly)
-# until a run observes egress healthy again, which resets the counter.
-NETNS_CYCLE_STATE="/var/lib/archipelago/doctor-netns-cycle-failures"
-NETNS_CYCLE_MAX=3
-fix_rootless_netns_egress() {
-    # Needs root for nsenter. When doctor runs as the rootless container owner,
-    # a failed nsenter probe is a permissions artifact, not evidence of broken
-    # egress; do not cycle the fleet from that context.
+# ── Check 8: Rootless network egress (diagnostic only) ──────
+# A single external endpoint or nsenter failure cannot establish that the
+# containers have lost connectivity. In particular, entering only the network
+# namespace can fail for rootless user namespaces. Never stop apps, kill network
+# helpers, migrate Podman, or remove network state in response to this probe.
+# Return 1 for healthy/not applicable and 2 for an inconclusive warning.
+check_rootless_netns_egress() {
     [ "$(id -u)" = "0" ] || return 1
-
-    local archi_uid
+    local archi_uid aardvark_pid
     archi_uid=$(id -u archipelago 2>/dev/null) || return 1
-
-    # Locate the rootless-netns via aardvark-dns (it lives inside it).
-    local aardvark_pid
     aardvark_pid=$(pgrep -U "$archi_uid" -f '^/usr/lib/podman/aardvark-dns' 2>/dev/null | head -1)
-    [ -z "$aardvark_pid" ] && return 1   # no rootless network active
+    [ -n "$aardvark_pid" ] || return 1
 
-    # Host precheck: if the host itself can't reach the internet, no point
-    # cycling containers — this is an upstream problem.
     if ! timeout 3 bash -c '</dev/tcp/1.1.1.1/443' 2>/dev/null; then
-        return 1
+        log "WARNING: host connectivity probe failed; external endpoint may be unavailable. Apps left running."
+        return 2
     fi
-
-    # Probe egress from inside the rootless-netns. One probe is noisy;
-    # require two consecutive failures 10s apart to rule out transients.
     if timeout 3 nsenter -t "$aardvark_pid" -n bash -c '</dev/tcp/1.1.1.1/443' 2>/dev/null; then
-        rm -f "$NETNS_CYCLE_STATE"   # healthy again — re-arm the latch
-        return 1   # first probe succeeded
+        return 1
     fi
     sleep 10
     aardvark_pid=$(pgrep -U "$archi_uid" -f '^/usr/lib/podman/aardvark-dns' 2>/dev/null | head -1)
-    [ -z "$aardvark_pid" ] && return 1
-    if timeout 3 nsenter -t "$aardvark_pid" -n bash -c '</dev/tcp/1.1.1.1/443' 2>/dev/null; then
-        rm -f "$NETNS_CYCLE_STATE"
-        return 1   # recovered on its own
-    fi
-
-    # Latch: don't keep bouncing the fleet when the rebuild demonstrably
-    # isn't fixing it.
-    local failures
-    failures=$(cat "$NETNS_CYCLE_STATE" 2>/dev/null || echo 0)
-    case "$failures" in *[!0-9]*|"") failures=0;; esac
-    if [ "$failures" -ge "$NETNS_CYCLE_MAX" ]; then
-        log "Rootless-netns egress still broken but $failures rebuilds already failed — NOT cycling again (manual intervention needed; rm $NETNS_CYCLE_STATE to re-arm)"
-        return 1
-    fi
-
-    log "Rootless-netns egress is broken (host online, container netns unreachable) — rebuilding netns"
-
-    local PODMANCMD="sudo -u archipelago XDG_RUNTIME_DIR=/run/user/$archi_uid podman"
-    local running
-    running=$($PODMANCMD ps --format '{{.Names}}' 2>/dev/null)
-    if [ -z "$running" ]; then
-        log "  No running containers to cycle — skipping"
-        return 1
-    fi
-
-    local count
-    count=$(echo "$running" | wc -l)
-    log "  Stopping $count running containers (graceful, 30s)..."
-    $PODMANCMD stop --all --time 30 >/dev/null 2>&1
-    sleep 5
-
-    # Tear the broken netns down for real: kill its holders and drop the
-    # stale state so the first container start rebuilds pasta + aardvark-dns
-    # from scratch. Without this, podman re-enters the old netns and the
-    # missing pasta tap never comes back.
-    log "  Rebuilding rootless netns (killing holders, clearing state)..."
-    pkill -U "$archi_uid" -x aardvark-dns 2>/dev/null
-    pkill -U "$archi_uid" -x pasta 2>/dev/null
-    pkill -U "$archi_uid" -x pasta.avx2 2>/dev/null
-    pkill -U "$archi_uid" -x slirp4netns 2>/dev/null
-    sleep 2
-    $PODMANCMD system migrate >/dev/null 2>&1
-    rm -rf "/run/user/$archi_uid/containers/networks"
-
-    log "  Starting containers back up..."
-    for c in $running; do
-        $PODMANCMD start "$c" >/dev/null 2>&1 &
-    done
-    wait
-    sleep 5
-
-    aardvark_pid=$(pgrep -U "$archi_uid" -f '^/usr/lib/podman/aardvark-dns' 2>/dev/null | head -1)
     if [ -n "$aardvark_pid" ] && timeout 3 nsenter -t "$aardvark_pid" -n bash -c '</dev/tcp/1.1.1.1/443' 2>/dev/null; then
-        log "  Rootless-netns egress restored ($count containers cycled)"
-        rm -f "$NETNS_CYCLE_STATE"
-    else
-        failures=$((failures + 1))
-        echo "$failures" > "$NETNS_CYCLE_STATE"
-        log "  WARN: egress still broken after rebuild (failure $failures/$NETNS_CYCLE_MAX) — may need manual intervention"
+        return 1
     fi
-    return 0
+    log "WARNING: rootless network probe inconclusive (endpoint, connectivity, or namespace access). Inspect affected apps before repair. Apps left running."
+    return 2
 }
 
 # ── Fix 9: Restart stopped core containers ──────────────────
@@ -731,7 +658,7 @@ run_fix "tor-permissions"  fix_tor_permissions
 run_fix "searxng"         fix_searxng
 run_fix "bitcoin-txindex" fix_bitcoin_txindex
 run_fix "exit-127"        fix_exit_127
-run_fix "netns-egress"    fix_rootless_netns_egress
+run_fix "netns-egress"    check_rootless_netns_egress
 run_fix "stopped-core"    fix_stopped_core_containers
 run_fix "rootless-ports" fix_missing_rootless_ports
 run_fix "npm-public-hosts" fix_npm_public_hosts
@@ -740,7 +667,9 @@ run_fix "catatonit"       fix_missing_catatonit
 run_fix "dialout"         fix_archipelago_dialout
 
 echo ""
-if [ $FIXES_APPLIED -gt 0 ]; then
+if [ "$CHECKS_WARNED" -gt 0 ]; then
+    log "Done: $CHECKS_WARNED unresolved warnings (${WARNING_NAMES[*]}), $FIXES_APPLIED fixes applied, $CHECKS_PASSED checks passed"
+elif [ $FIXES_APPLIED -gt 0 ]; then
     log "Done: $FIXES_APPLIED fixes applied (${FIX_NAMES[*]}), $CHECKS_PASSED checks passed"
 else
     log "Done: all $CHECKS_PASSED checks passed — no fixes needed"

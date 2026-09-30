@@ -27,6 +27,8 @@ def check(root: Path) -> int:
         dockerfile = (context / build.get('dockerfile', 'Dockerfile')).resolve()
         if not dockerfile.is_relative_to(context) or not dockerfile.is_file():
             raise ValueError(f'{app["id"]}: missing or out-of-context Dockerfile: {dockerfile}')
+        if 'git.tx1138.com/' in dockerfile.read_text():
+            raise ValueError(f'{app["id"]}: Dockerfile references retired registry git.tx1138.com')
         count += 1
     return count
 

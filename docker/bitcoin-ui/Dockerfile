@@ -1,4 +1,4 @@
-FROM git.tx1138.com/lfg2025/nginx:1.27.4-alpine
+FROM source.archipelago-foundation.org/lfg2025/nginx:1.27.4-alpine
 # Static site content.
 COPY index.html /usr/share/nginx/html/
 COPY tailwind.css /usr/share/nginx/html/
