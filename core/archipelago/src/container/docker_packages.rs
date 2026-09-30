@@ -978,14 +978,20 @@ fn extract_lan_address(ports: &[String]) -> Option<String> {
     let mut first_candidate = None;
     for port_str in ports {
         // Parse port strings like "0.0.0.0:18443->18443/tcp" or "0.0.0.0:18443-18444->18443-18444/tcp"
-        let Some(public_part) = port_str.split("->").next() else {
+        let Some((public_part, _)) = port_str.split_once("->") else {
             continue;
         };
-        let Some(port_part) = public_part.split(':').nth(1) else {
+        let Some((_, port_part)) = public_part.rsplit_once(':') else {
             continue;
         };
         // Extract just the first port if it's a range (e.g., "18443-18444" -> "18443")
         let host_port = port_part.split('-').next().unwrap_or(port_part);
+        let Ok(host_port) = host_port.parse::<u16>() else {
+            continue;
+        };
+        if host_port == 0 {
+            continue;
+        }
         let candidate = format!("http://localhost:{}", host_port);
         if first_candidate.is_none() {
             first_candidate = Some(candidate.clone());
@@ -1113,6 +1119,29 @@ fn package_launch_candidate(
     if let Some(companion) = companion_lan_address(app_id) {
         return Some(companion);
     }
+    if app_id == "nginx-proxy-manager" {
+        // 80/443 serve users' proxy hosts; only container port 81 serves the
+        // admin UI. Podman's binding order is unstable across recreation.
+        // Resolve its actual host allocation rather than guessing the first
+        // HTTP port or hardcoding the default host port 8081.
+        let admin_ports: Vec<String> = ports
+            .iter()
+            .filter(|port| {
+                port.split_once("->")
+                    .is_some_and(|(_, target)| target == "81/tcp")
+            })
+            .cloned()
+            .collect();
+        // With published bindings, a missing admin mapping is not evidence
+        // that some unrelated service on the default host port is this UI.
+        return extract_lan_address(&admin_ports).or_else(|| {
+            if ports.is_empty() {
+                known
+            } else {
+                None
+            }
+        });
+    }
     if uses_allocated_launch_port(app_id) {
         extract_lan_address(ports).or(known)
     } else {
@@ -1239,6 +1268,98 @@ mod extract_lan_address_tests {
             .as_deref(),
             Some("http://localhost:19080")
         );
+    }
+
+    #[test]
+    fn npm_admin_launch_is_independent_of_proxy_binding_order() {
+        let mappings = [
+            "10.77.0.2:18081->80/tcp",
+            "10.77.0.2:18443->443/tcp",
+            "127.0.0.1:8081->81/tcp",
+        ];
+        for order in [
+            [0, 1, 2],
+            [0, 2, 1],
+            [1, 0, 2],
+            [1, 2, 0],
+            [2, 0, 1],
+            [2, 1, 0],
+        ] {
+            let ports: Vec<String> = order.iter().map(|&i| mappings[i].into()).collect();
+            assert_eq!(
+                package_launch_candidate(
+                    "nginx-proxy-manager",
+                    &ports,
+                    Some("http://localhost:8081/".into())
+                )
+                .as_deref(),
+                Some("http://localhost:8081")
+            );
+        }
+    }
+
+    #[test]
+    fn npm_admin_launch_respects_host_allocation_and_ipv6_bindings() {
+        for binding in ["127.0.0.1", "0.0.0.0", "[::1]", "[::]"] {
+            let ports = vec![
+                "10.77.0.2:18081->80/tcp".into(),
+                format!("{binding}:28081->81/tcp"),
+            ];
+            assert_eq!(
+                package_launch_candidate(
+                    "nginx-proxy-manager",
+                    &ports,
+                    Some("http://localhost:8081/".into())
+                )
+                .as_deref(),
+                Some("http://localhost:28081")
+            );
+        }
+        let proxies = vec![
+            "10.77.0.2:18081->80/tcp".into(),
+            "10.77.0.2:18443->443/tcp".into(),
+        ];
+        assert_eq!(
+            package_launch_candidate("nginx-proxy-manager", &proxies, None),
+            None
+        );
+        assert_eq!(
+            package_launch_candidate(
+                "nginx-proxy-manager",
+                &proxies,
+                Some("http://localhost:8081/".into())
+            ),
+            None
+        );
+    }
+
+    #[test]
+    fn npm_without_port_information_uses_declared_admin_url() {
+        assert_eq!(
+            package_launch_candidate(
+                "nginx-proxy-manager",
+                &[],
+                Some("http://localhost:8081/".into())
+            )
+            .as_deref(),
+            Some("http://localhost:8081/")
+        );
+    }
+
+    #[test]
+    fn malformed_published_ports_do_not_become_launch_urls() {
+        for port in [
+            "81/tcp",
+            "127.0.0.1:bad->81/tcp",
+            "[::1]:0->81/tcp",
+            "[::]:65536->81/tcp",
+            "127.0.0.1:8081->81/udp",
+        ] {
+            assert_eq!(
+                package_launch_candidate("nginx-proxy-manager", &[port.into()], None),
+                None
+            );
+        }
     }
 
     #[test]

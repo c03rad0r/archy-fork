@@ -398,3 +398,35 @@ the old recovery code. A regression executes the actual installer block against
 stale disposable files twice and confirms a missing safety payload fails closed.
 The mounted-ISO smoke test also compares all three overlay files to source.
 The final ISO build captures the exact newly deployed OTA UI/runtime payload.
+
+### Final kiosk acceptance found nondeterministic NPM launch selection
+
+Do not publish the staged `d1bc1273` candidate. NPM itself remains healthy and its
+API, Portainer integration, site, and native services passed stability checks.
+However, final kiosk acceptance found its card stuck at "Web UI not ready".
+The runtime reported bindings in proxy-HTTP, proxy-HTTPS, admin order. The scanner
+chose the first non-database/SSH binding, then rejected its tunnel-only host port
+as unreachable on loopback, leaving the launch address empty. Earlier tests had
+passed with admin first. This is a confirmed order-dependent scanner defect.
+
+The candidate fix explicitly resolves NPM container port 81 to its actual host
+allocation. Proxy ports never become the admin URL. Missing/malformed admin
+bindings do not fall back to another service when published bindings are present.
+Port parsing handles IPv6 authorities and rejects invalid ports. Regressions
+cover all six three-port permutations, allocated admin ports, IPv4/IPv6 binding
+strings, missing admin mappings, missing runtime port information, and malformed
+or UDP bindings. Full backend regression execution is pending for this change.
+The ISO build is frozen at installer-environment creation; no release was signed
+or published. Rebuild/revalidate the OTA and ISO with this correction.
+
+The companion orphan fix worked live: Cuprate UI was automatically removed and
+all installed app container IDs remained unchanged. One observation helper raced
+that expected removal between `podman ps` and `inspect`; it now excludes that
+known orphan before inspection and repeats the stability check. This was a test
+snapshot race, not another installed-app restart.
+
+NPM selector final backend gate passed: 1,617 tests, zero failures, four explicitly
+ignored, through the isolated runner. This includes all new port-selection cases
+and the existing companion security/configuration and lifecycle regressions.
+Rebuild the release binary and UI metadata, deploy those exact OTA bytes to both
+boxes, and require actual kiosk hard-refresh/Launch acceptance before ISO assembly.

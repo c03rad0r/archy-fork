@@ -2,6 +2,8 @@
 
 ## v1.8.22-alpha (2026-09-30)
 
+- Fixed Nginx Proxy Manager launch readiness choosing a proxy listener instead of its admin port after container recreation.
+
 - Network diagnostic failures no longer stop all apps or rebuild shared container networking.
 - Prevented orphaned companion dashboards from repeatedly reinstalling themselves after their backend app was removed.
 - Fixed companion dashboard builds still referencing a retired image registry.
