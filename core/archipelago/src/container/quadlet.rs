@@ -184,6 +184,7 @@ pub struct QuadletUnit {
     pub no_new_privileges: bool,
     pub cpu_quota: Option<u32>,
     pub restart_policy: RestartPolicy,
+    pub stop_grace_secs: Option<u64>,
 }
 
 impl QuadletUnit {
@@ -216,6 +217,10 @@ impl QuadletUnit {
         let _ = writeln!(s, "[Container]");
         let _ = writeln!(s, "ContainerName={}", self.name);
         let _ = writeln!(s, "Image={}", self.image);
+        let grace = self
+            .stop_grace_secs
+            .unwrap_or_else(|| archipelago_container::runtime::stop_grace_secs_for(&self.name));
+        let _ = writeln!(s, "StopTimeout={grace}");
         // Pull=never: companions are pre-pulled or built. A missing image
         // must surface as a unit start failure, not a silent retry storm.
         let _ = writeln!(s, "Pull=never");
@@ -350,6 +355,15 @@ impl QuadletUnit {
         // the unit stuck in deactivating. Health/status remains app-level state,
         // not a systemd start gate.
         let _ = writeln!(s, "TimeoutStartSec=0");
+        let _ = writeln!(s, "TimeoutStopSec={}", grace.saturating_add(15));
+        // Stop explicitly before Quadlet's generated `podman rm -f`. The
+        // existing container may still carry Podman's old 10-second default;
+        // StopTimeout alone only protects containers created after migration.
+        let _ = writeln!(s, "ExecStop=");
+        let _ = writeln!(
+            s,
+            "ExecStop=/usr/bin/podman stop --ignore --time={grace} --cidfile=%t/%N.cid"
+        );
         // Restart policy + 10s backoff. RestartSec keeps a crash-loop
         // from saturating the journal. Companions: Always. Backends:
         // OnFailure (clean stops stay stopped).
@@ -525,6 +539,9 @@ impl QuadletUnit {
             // Always, not OnFailure: with quadlet's `--rm`, OnFailure left a
             // cleanly-exited app deleted and unrestarted. See RestartPolicy.
             restart_policy: RestartPolicy::Always,
+            stop_grace_secs: Some(super::prod_orchestrator::resolve_stop_grace_secs(
+                manifest, name,
+            )),
         }
     }
 }
@@ -792,7 +809,11 @@ pub async fn stop_service(service: &str) -> Result<()> {
 /// corruption — so the orchestrator passes the per-app grace here. Never waits
 /// less than `QUADLET_STOP_TIMEOUT`.
 pub async fn stop_service_with_timeout(service: &str, timeout: Duration) -> Result<()> {
-    let timeout = timeout.max(QUADLET_STOP_TIMEOUT);
+    let name = service.strip_suffix(".service").unwrap_or(service);
+    let body = fs::read_to_string(unit_dir().await?.join(format!("{name}.container")))
+        .await
+        .unwrap_or_default();
+    let timeout = timeout.max(stop_wait_timeout(name, &body));
     match systemctl_user_status(&["stop", service], timeout).await {
         Ok(status) if status.success() => Ok(()),
         Ok(status) => Err(anyhow!("systemctl --user stop {service} exited {status}")),
@@ -811,6 +832,20 @@ pub async fn stop_service_with_timeout(service: &str, timeout: Duration) -> Resu
             Ok(())
         }
     }
+}
+
+/// The command waiter must outlive both the container grace and systemd's
+/// stop deadline. Restart/repair callers must not kill Bitcoin at 45 seconds.
+fn stop_wait_timeout(name: &str, unit_body: &str) -> Duration {
+    Duration::from_secs(stop_grace_from_unit(name, unit_body).saturating_add(30))
+        .max(QUADLET_STOP_TIMEOUT)
+}
+
+fn stop_grace_from_unit(name: &str, unit_body: &str) -> u64 {
+    directive_values(unit_body, "StopTimeout=")
+        .last()
+        .and_then(|value| value.parse::<u64>().ok())
+        .unwrap_or_else(|| archipelago_container::runtime::stop_grace_secs_for(name))
 }
 
 async fn systemctl_user_status(
@@ -939,6 +974,10 @@ fn directive_values(unit_body: &str, prefix: &str) -> Vec<String> {
 /// that systemd no longer knows about.
 pub async fn disable_remove(unit_name: &str, dir: &Path) -> Result<()> {
     let svc = format!("{unit_name}.service");
+    let path = dir.join(format!("{unit_name}.container"));
+    let body = fs::read_to_string(&path).await.unwrap_or_default();
+    let timeout = stop_wait_timeout(unit_name, &body);
+    let grace = stop_grace_from_unit(unit_name, &body).to_string();
     // Stop first; ignore failure (unit may already be down). BOUNDED — on
     // rootless podman a generated unit can wedge in "deactivating" while
     // `podman rm -f` hangs underneath it, and an unbounded `systemctl stop`
@@ -946,13 +985,12 @@ pub async fn disable_remove(unit_name: &str, dir: &Path) -> Result<()> {
     // the package entry is stranded in `Removing` (a ghost in My Apps that also
     // blocks reinstall). If the graceful stop times out, escalate to
     // SIGKILL + reset-failed so teardown always proceeds.
-    if systemctl_user_status(&["stop", &svc], QUADLET_STOP_TIMEOUT)
+    if systemctl_user_status(&["stop", &svc], timeout)
         .await
         .is_err()
     {
         let _ = kill_and_reset_service(&svc).await;
     }
-    let path = dir.join(format!("{unit_name}.container"));
     if fs::try_exists(&path).await.unwrap_or(false) {
         match fs::remove_file(&path).await {
             Ok(()) => {}
@@ -965,9 +1003,9 @@ pub async fn disable_remove(unit_name: &str, dir: &Path) -> Result<()> {
     // Bounded so a hung podman store can't re-introduce the stall this function
     // exists to avoid.
     let _ = tokio::time::timeout(
-        QUADLET_STOP_TIMEOUT,
+        timeout,
         Command::new("podman")
-            .args(["rm", "-f", unit_name])
+            .args(["rm", "-f", "--ignore", "--time", &grace, unit_name])
             .status(),
     )
     .await;
@@ -991,6 +1029,118 @@ pub async fn is_active(service: &str) -> bool {
 mod tests {
     use super::*;
     use tempfile::tempdir;
+
+    #[test]
+    fn shutdown_grace_covers_container_systemd_and_caller() {
+        for (name, grace) in [
+            ("bitcoin-core", 600),
+            ("bitcoin-knots", 600),
+            ("lnd", 330),
+            ("electrumx", 300),
+            ("other", 30),
+        ] {
+            let unit = QuadletUnit {
+                name: name.into(),
+                ..Default::default()
+            };
+            let body = unit.render();
+            assert!(body.contains(&format!("StopTimeout={grace}\n")));
+            assert!(body.contains(&format!("TimeoutStopSec={}\n", grace + 15)));
+            assert!(body.contains(&format!("podman stop --ignore --time={grace} --cidfile=")));
+            assert_eq!(
+                stop_wait_timeout(name, &body),
+                Duration::from_secs(grace + 30)
+            );
+            // Legacy units have no StopTimeout directive yet.
+            assert_eq!(stop_wait_timeout(name, ""), Duration::from_secs(grace + 30));
+        }
+    }
+
+    #[test]
+    fn custom_stop_grace_survives_render_and_restart_budget() {
+        let manifest: AppManifest = serde_yaml::from_str(
+            r#"
+app:
+  id: custom-db
+  name: Custom database
+  version: 1.0.0
+  stop_grace_secs: 900
+  container:
+    image: example/db:1
+"#,
+        )
+        .unwrap();
+        let unit = QuadletUnit::from_manifest(&manifest, "custom-db");
+        assert_eq!(unit.stop_grace_secs, Some(900));
+        assert_eq!(
+            stop_wait_timeout("custom-db", &unit.render()),
+            Duration::from_secs(930)
+        );
+        assert_eq!(
+            stop_wait_timeout("lnd", "StopTimeout=invalid"),
+            Duration::from_secs(360)
+        );
+    }
+
+    #[test]
+    fn stop_grace_migration_does_not_request_an_execution_restart() {
+        let unit = sample_unit();
+        let new = unit.render();
+        let old = new
+            .lines()
+            .filter(|line| {
+                !line.starts_with("StopTimeout=")
+                    && !line.starts_with("TimeoutStopSec=")
+                    && !line.starts_with("ExecStop=")
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(!exec_changed(&old, &new));
+        assert!(!publish_ports_changed(&old, &new));
+        assert!(!network_aliases_changed(&old, &new));
+        assert!(!health_cmd_changed(&old, &new));
+    }
+
+    #[test]
+    fn actual_quadlet_generator_stops_before_forced_removal() {
+        let generator = Path::new("/usr/lib/systemd/system-generators/podman-system-generator");
+        if !generator.exists() {
+            eprintln!(
+                "Quadlet generator unavailable; run this regression on the Linux release host"
+            );
+            return;
+        }
+        let dir = tempdir().unwrap();
+        let unit = QuadletUnit {
+            name: "grace-test".into(),
+            image: "localhost/test:latest".into(),
+            stop_grace_secs: Some(600),
+            ..Default::default()
+        };
+        std::fs::write(dir.path().join("grace-test.container"), unit.render()).unwrap();
+        let output = std::process::Command::new(generator)
+            .args(["--user", "--dryrun"])
+            .env("QUADLET_UNIT_DIRS", dir.path())
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let generated = String::from_utf8_lossy(&output.stdout).to_string()
+            + &String::from_utf8_lossy(&output.stderr);
+        let stop = generated
+            .find("ExecStop=/usr/bin/podman stop --ignore --time=600")
+            .unwrap();
+        let remove = generated.find("ExecStop=/usr/bin/podman rm ").unwrap();
+        assert!(
+            stop < remove,
+            "Legacy container must stop gracefully before removal"
+        );
+        assert!(generated.contains("--stop-timeout 600"));
+        assert!(generated.contains("TimeoutStopSec=615"));
+    }
 
     #[test]
     fn render_emits_secret_env_by_reference_never_value() {

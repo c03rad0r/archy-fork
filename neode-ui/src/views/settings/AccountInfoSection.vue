@@ -362,6 +362,18 @@ init()
               </button>
             </div>
             <div class="overflow-y-auto flex-1 min-h-0 space-y-6 pr-1">
+              <!-- v1.8.21-alpha -->
+              <div>
+                <div class="flex items-center gap-2 mb-3">
+                  <span class="text-xs font-mono px-2 py-0.5 rounded bg-orange-500/20 text-orange-300">v1.8.21-alpha</span>
+                  <span class="text-xs text-white/40">September 30, 2026</span>
+                </div>
+                <div class="space-y-3 text-sm text-white/80 pl-3 border-l border-white/10">
+                  <p>Fixed Bitcoin and other containers being forcibly stopped after ten seconds during managed updates and restarts.</p>
+                  <p>Existing installations now receive the same graceful shutdown allowance as new containers, without restarting apps just to apply this setting.</p>
+                  <p>Includes the Cashu payment, optional Bitcoin pruning, Lightning readiness, and explorer improvements from 1.8.20.</p>
+                </div>
+              </div>
               <!-- v1.8.20-alpha -->
               <div>
                 <div class="flex items-center gap-2 mb-3">

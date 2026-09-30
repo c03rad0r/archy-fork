@@ -257,3 +257,32 @@ Both catalog and OTA signatures verify against the pinned release root. Staged
 artifact hash/size checks and catalog drift/trust checks pass. User accepted the
 remaining Framework display check and explicitly authorized release. Publication
 and ISO build may proceed; do not regenerate the signed manifest or artifacts.
+
+### Published OTA; ISO withheld after live shutdown defect — 2026-09-30
+
+Signed 1.8.20 OTA/catalog published to git and ngit, with public asset hashes
+verified. Catalog rollout triggered a Bitcoin command update at 08:34 UTC.
+Although the orchestrator allowed a long stop, Quadlet's generated Podman removal
+still used its ten-second default and killed Bitcoin. Core replayed its block
+index; LND later lost its connection to the previous Bitcoin container IP.
+
+Stopped the ISO build and queued boot check; any partial 1.8.20 ISO is invalid
+and must not be published. Preparing 1.8.21 to supersede the immutable signed OTA.
+Installed explicit graceful-stop systemd overrides on dev and Shorty without
+restarting native services. Candidate Quadlet fix adds per-app container, systemd,
+and command-wait budgets, including existing containers and uninstall fallback.
+Focused 43 tests pass, including actual Quadlet generator stop-before-remove order.
+Full tests, disposable slow-stop verification, build and deployment remain pending.
+
+Disposable live regression passed: started an Alpine container with its legacy
+ten-second stop setting, rewrote and reloaded its Quadlet with explicit twenty-
+second graceful stop, verified the same container ID and old internal timeout
+remained running, then stopped it. Its twelve-second shutdown handler completed
+in 12.6 seconds, emitted the completion marker, and exited without SIGKILL/137.
+Fixture had no network or wallet mounts and was removed afterward.
+
+Core finished index loading and resumed unpruned initial sync. LND automatically
+unlocked at 08:47 UTC. The existing backend-address cascade then performed a
+graceful LND restart at 08:57 UTC after Bitcoin reconciliation completed; LND
+automatically unlocked again and reached chain-sync waiting. No manual wallet
+unlock or restart was used for this recovery.

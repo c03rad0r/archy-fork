@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+## v1.8.21-alpha (2026-09-30)
+
+- Fixed Bitcoin and other containers being forcibly stopped after ten seconds during managed updates and restarts.
+- Existing installations now receive the same graceful shutdown allowance as new containers, without restarting apps just to apply this setting.
+- Includes the Cashu payment, optional Bitcoin pruning, Lightning readiness, and explorer improvements from 1.8.20.
+
 ## v1.8.20-alpha (2026-09-29)
 
 - Fixed Cashu file payments rejected despite a shared mint, and preserved the payment amount when mint fees reduce change.
