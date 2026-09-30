@@ -1,6 +1,6 @@
 # Framework: LND startup, missing Receive address, false zero balance
 
-**Status: OPEN — Framework startup, native balances, Cashu address and source integration verified; final rendered dashboard confirmation remains.**
+**Status: CLOSED WITH OPERATOR ACCEPTANCE — startup, native balances, Cashu address and source integration verified; user accepted the remaining display check and authorized release on 2026-09-30.**
 
 Reported: 2026-09-15. Source inspected: main at `3b9b74da` (v1.8.17-alpha publication).
 The Framework's installed version and exact incident time have not been verified.
@@ -391,3 +391,15 @@ was installed against existing block data: Core made steady replay progress,
 while LND exited on its short “bitcoind start timeout”. Candidate work defers
 unlock until authenticated Bitcoin RPC answers, with dependency waiting states
 in the LND UI. This is not evidence of a new failure on Framework.
+
+### Operator acceptance and release authorization — 2026-09-30
+
+After being told that final rendered balance/Receive confirmation remained and
+SSH access was unavailable, the user replied: “that's fine I believe it'd fixed,
+please release”. This explicitly accepts proceeding past the remaining human
+display check. Close this incident with operator acceptance based on the earlier
+controlled reboot, preserved identity/channels/native balances, working Receive
+address/payment, source integration, and the user's report of no further issues.
+No new direct Framework inspection or on-screen verification is claimed today.
+Reopen investigation if the original startup, Receive, or false-zero symptom
+recurs; preserve the wallet and channels.

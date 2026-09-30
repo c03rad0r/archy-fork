@@ -50,7 +50,7 @@ next OTA and raw ISO. Passing unit tests alone does not establish live correctne
 - [x] Candidate deployed with rollback to dev and Shorty; hashes verified.
 - [x] Live paid-file purchase succeeds; failed purchase/refund behavior verified.
 - [x] Live waiting/UI verified on dev; recovery covered by deterministic tests.
-- [ ] Framework final confirmation recorded.
+- [x] Framework operator acceptance and authorization to release recorded.
 - [x] Release version/changelog, catalog/image implications, signing prepared.
 - [ ] Signed OTA built, tested, published to git and ngit.
 - [ ] Raw ISO built, boot-tested, signed and published; download command supplied.
@@ -250,3 +250,10 @@ and publication. No v1.8.20 public release or tag exists yet. Four pre-existing
 hardware/live tests remain ignored. Bitcoin sync-to-ready recovery is covered
 by deterministic tests; the live node remains in initial sync. Do not describe
 these checks as proof against every possible network/payment failure.
+
+### Signing and release authorization — 2026-09-30
+
+Both catalog and OTA signatures verify against the pinned release root. Staged
+artifact hash/size checks and catalog drift/trust checks pass. User accepted the
+remaining Framework display check and explicitly authorized release. Publication
+and ISO build may proceed; do not regenerate the signed manifest or artifacts.
