@@ -5,7 +5,7 @@
 //! starting the container with `--config /data/.filebrowser.json`.
 
 use anyhow::{Context, Result};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use tokio::fs;
 
 use crate::update::host_sudo;
@@ -117,6 +117,197 @@ fn shell_quote(s: &str) -> String {
     s.replace('\'', "'\\''")
 }
 
+/// Save a complete purchase without overwriting any existing directory entry.
+/// Both host and rootless-namespace paths publish with a no-clobber hard link.
+pub async fn save_new_file(dir: &Path, name: &str, bytes: &[u8]) -> Result<PathBuf> {
+    save_new_file_with(dir, name, bytes, write_via_userns).await
+}
+
+fn validate_filename(name: &str) -> Result<()> {
+    anyhow::ensure!(
+        !name.is_empty()
+            && name != "."
+            && name != ".."
+            && !name.contains(['/', '\\', '\0'])
+            && name.len() <= 255,
+        "Invalid purchased filename"
+    );
+    Ok(())
+}
+
+async fn save_new_file_with<F, Fut>(
+    dir: &Path,
+    name: &str,
+    bytes: &[u8],
+    fallback: F,
+) -> Result<PathBuf>
+where
+    F: FnOnce(PathBuf, String, Vec<u8>) -> Fut,
+    Fut: std::future::Future<Output = Result<PathBuf>>,
+{
+    validate_filename(name)?;
+    // Never follow a user-created destination directory symlink.
+    match fs::symlink_metadata(dir).await {
+        Ok(meta) => anyhow::ensure!(meta.is_dir(), "Files destination is not a directory"),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(error) => return Err(error.into()),
+    }
+    save_after_direct_result(
+        write_direct(dir, name, bytes).await,
+        dir,
+        name,
+        bytes,
+        fallback,
+    )
+    .await
+}
+
+async fn save_after_direct_result<F, Fut>(
+    result: std::io::Result<PathBuf>,
+    dir: &Path,
+    name: &str,
+    bytes: &[u8],
+    fallback: F,
+) -> Result<PathBuf>
+where
+    F: FnOnce(PathBuf, String, Vec<u8>) -> Fut,
+    Fut: std::future::Future<Output = Result<PathBuf>>,
+{
+    match result {
+        Ok(path) => Ok(path),
+        Err(error) if error.kind() == std::io::ErrorKind::PermissionDenied => {
+            fallback(dir.to_owned(), name.to_owned(), bytes.to_vec())
+                .await
+                .context("Saving purchase in Files user namespace")
+        }
+        Err(error) => Err(error).context("Saving purchase in Files"),
+    }
+}
+
+fn numbered_name(name: &str, attempt: usize) -> String {
+    if attempt == 1 {
+        return name.to_owned();
+    }
+    match name.rsplit_once('.') {
+        Some((stem, extension)) if !stem.is_empty() => format!("{stem} ({attempt}).{extension}"),
+        _ => format!("{name} ({attempt})"),
+    }
+}
+
+struct PendingFile(PathBuf);
+impl Drop for PendingFile {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_file(&self.0);
+    }
+}
+
+async fn write_direct(dir: &Path, name: &str, bytes: &[u8]) -> std::io::Result<PathBuf> {
+    use std::os::unix::fs::PermissionsExt;
+    use tokio::io::AsyncWriteExt;
+    fs::create_dir_all(dir).await?;
+    let temp_path = dir.join(format!(".archy-saving-{}", uuid::Uuid::new_v4()));
+    let mut file = fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .mode(0o600)
+        .open(&temp_path)
+        .await?;
+    let temp = PendingFile(temp_path);
+    file.write_all(bytes).await?;
+    file.set_permissions(std::fs::Permissions::from_mode(0o644))
+        .await?;
+    file.sync_all().await?;
+    for attempt in 1..=100 {
+        let target = dir.join(numbered_name(name, attempt));
+        match fs::hard_link(&temp.0, &target).await {
+            Ok(()) => return Ok(target),
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(error) => return Err(error),
+        }
+    }
+    Err(std::io::Error::new(
+        std::io::ErrorKind::AlreadyExists,
+        "Too many existing copies; purchase cache retained",
+    ))
+}
+
+// Positional arguments carry all user-controlled text. mktemp prevents temp-name
+// collisions; ln -T refuses files, symlinks and directories, including races.
+const WRITE_VIA_USERNS: &str = r#"set -eu
+dir=$1
+name=$2
+expected=$3
+[ ! -L "$dir" ] || exit 1
+if [ ! -d "$dir" ]; then
+    mkdir -p -- "$dir"
+    chown --reference="$(dirname -- "$dir")" -- "$dir"
+fi
+tmp=$(mktemp "$dir/.archy-saving.XXXXXXXXXX")
+trap 'rm -f -- "$tmp"' EXIT HUP INT TERM
+cat > "$tmp"
+[ "$(wc -c < "$tmp")" -eq "$expected" ] || exit 1
+chown --reference="$dir" -- "$tmp"
+chmod 0644 -- "$tmp"
+sync -f -- "$tmp"
+stem=$name
+ext=
+case "$name" in
+    *.*) prefix=${name%.*}; if [ -n "$prefix" ]; then stem=$prefix; ext=.${name##*.}; fi ;;
+esac
+n=1
+while [ "$n" -le 100 ]; do
+    candidate=$name
+    if [ "$n" -gt 1 ]; then candidate="$stem ($n)$ext"; fi
+    dst="$dir/$candidate"
+    if ln -T -- "$tmp" "$dst" 2>/dev/null; then
+        printf '%s' "$candidate"
+        exit 0
+    fi
+    # A conflict may be a dangling symlink; never follow it or overwrite it.
+    if [ ! -e "$dst" ] && [ ! -L "$dst" ]; then exit 1; fi
+    n=$((n + 1))
+done
+exit 1
+"#;
+
+async fn write_via_userns(dir: PathBuf, name: String, bytes: Vec<u8>) -> Result<PathBuf> {
+    use tokio::io::AsyncWriteExt;
+    let mut child = tokio::process::Command::new("podman")
+        .args(["unshare", "sh", "-c", WRITE_VIA_USERNS, "sh"])
+        .arg(&dir)
+        .arg(&name)
+        .arg(bytes.len().to_string())
+        .kill_on_drop(true)
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .context("Starting Files namespace writer")?;
+    let mut stdin = child.stdin.take().context("Files writer stdin missing")?;
+    let operation = async {
+        let fed = stdin.write_all(&bytes).await;
+        drop(stdin);
+        let output = child.wait_with_output().await?;
+        anyhow::ensure!(
+            output.status.success(),
+            "Files namespace writer failed: {}",
+            output.status
+        );
+        fed.context("Sending purchase bytes to Files")?;
+        let chosen =
+            String::from_utf8(output.stdout).context("Files writer returned an invalid name")?;
+        validate_filename(&chosen)?;
+        anyhow::ensure!(
+            (1..=100).any(|n| numbered_name(&name, n) == chosen),
+            "Files writer returned an unexpected name"
+        );
+        Ok(dir.join(chosen))
+    };
+    tokio::time::timeout(std::time::Duration::from_secs(120), operation)
+        .await
+        .context("Files namespace writer timed out")?
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -150,5 +341,233 @@ mod tests {
         assert_eq!(first, EnsureOutcome::Written);
         let second = ensure_config(&paths).await.unwrap();
         assert_eq!(second, EnsureOutcome::Unchanged);
+    }
+}
+
+#[cfg(test)]
+mod purchase_write_tests {
+    use super::*;
+    use std::{
+        collections::HashSet,
+        os::unix::fs::{symlink, PermissionsExt},
+    };
+
+    fn no_temps(dir: &Path) {
+        assert!(std::fs::read_dir(dir).unwrap().all(|e| !e
+            .unwrap()
+            .file_name()
+            .to_string_lossy()
+            .starts_with(".archy-saving")));
+    }
+
+    #[tokio::test]
+    async fn direct_write_uses_complete_bytes_and_preserves_originals() {
+        let dir = tempfile::tempdir().unwrap();
+        fs::write(dir.path().join("song.mp3"), b"original")
+            .await
+            .unwrap();
+        let target = save_new_file(dir.path(), "song.mp3", b"new").await.unwrap();
+        assert_eq!(target.file_name().unwrap(), "song (2).mp3");
+        assert_eq!(fs::read(target).await.unwrap(), b"new");
+        assert_eq!(
+            fs::read(dir.path().join("song.mp3")).await.unwrap(),
+            b"original"
+        );
+        no_temps(dir.path());
+    }
+
+    #[tokio::test]
+    async fn simultaneous_saves_publish_unique_complete_files() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut tasks = Vec::new();
+        for n in 0..24u8 {
+            let dir = dir.path().to_owned();
+            tasks.push(tokio::spawn(async move {
+                let bytes = vec![n; 32768];
+                let path = save_new_file(&dir, "same.bin", &bytes).await.unwrap();
+                assert_eq!(fs::read(&path).await.unwrap(), bytes);
+                path
+            }));
+        }
+        let mut paths = HashSet::new();
+        for task in tasks {
+            assert!(paths.insert(task.await.unwrap()));
+        }
+        assert_eq!(paths.len(), 24);
+        no_temps(dir.path());
+    }
+
+    #[tokio::test]
+    async fn existing_directories_and_dangling_symlinks_are_conflicts() {
+        let dir = tempfile::tempdir().unwrap();
+        fs::create_dir(dir.path().join("name")).await.unwrap();
+        symlink("missing", dir.path().join("name (2)")).unwrap();
+        let path = save_new_file(dir.path(), "name", b"new").await.unwrap();
+        assert_eq!(path.file_name().unwrap(), "name (3)");
+        assert!(dir.path().join("name").is_dir());
+        assert!(fs::symlink_metadata(dir.path().join("name (2)"))
+            .await
+            .unwrap()
+            .is_symlink());
+        no_temps(dir.path());
+    }
+
+    #[tokio::test]
+    async fn invalid_names_and_symlink_destination_are_refused() {
+        let dir = tempfile::tempdir().unwrap();
+        for name in [
+            "",
+            ".",
+            "..",
+            "../escape",
+            "/absolute",
+            "a/b",
+            "a\\b",
+            "a\0b",
+        ] {
+            assert!(save_new_file(dir.path(), name, b"bytes").await.is_err());
+        }
+        let outside = tempfile::tempdir().unwrap();
+        symlink(outside.path(), dir.path().join("Music")).unwrap();
+        assert!(save_new_file(&dir.path().join("Music"), "song", b"bytes")
+            .await
+            .is_err());
+        assert_eq!(std::fs::read_dir(outside.path()).unwrap().count(), 0);
+    }
+
+    #[tokio::test]
+    async fn collision_limit_preserves_all_files_and_cleans_temporary_data() {
+        let dir = tempfile::tempdir().unwrap();
+        for n in 1..=100 {
+            fs::write(dir.path().join(numbered_name("a.txt", n)), b"keep")
+                .await
+                .unwrap();
+        }
+        assert!(save_new_file(dir.path(), "a.txt", b"new").await.is_err());
+        for n in 1..=100 {
+            assert_eq!(
+                fs::read(dir.path().join(numbered_name("a.txt", n)))
+                    .await
+                    .unwrap(),
+                b"keep"
+            );
+        }
+        no_temps(dir.path());
+    }
+
+    #[tokio::test]
+    async fn permission_fallback_is_exercised_without_skipping_as_root() {
+        let dir = tempfile::tempdir().unwrap();
+        let result = save_after_direct_result(
+            Err(std::io::ErrorKind::PermissionDenied.into()),
+            dir.path(),
+            "a",
+            b"abc",
+            |dir, name, bytes| async move {
+                assert_eq!(bytes, b"abc");
+                Ok(dir.join(name))
+            },
+        )
+        .await
+        .unwrap();
+        assert_eq!(result, dir.path().join("a"));
+        assert!(save_after_direct_result(
+            Err(std::io::ErrorKind::PermissionDenied.into()),
+            dir.path(),
+            "a",
+            b"abc",
+            |_, _, _| async { anyhow::bail!("namespace unavailable") }
+        )
+        .await
+        .unwrap_err()
+        .to_string()
+        .contains("namespace"));
+        assert!(save_after_direct_result(
+            Err(std::io::ErrorKind::StorageFull.into()),
+            dir.path(),
+            "a",
+            b"abc",
+            |_, _, _| async { panic!("disk full must not trigger permission fallback") }
+        )
+        .await
+        .is_err());
+    }
+
+    async fn run_script(
+        dir: &Path,
+        name: &str,
+        bytes: &[u8],
+        expected: usize,
+    ) -> std::process::Output {
+        use tokio::io::AsyncWriteExt;
+        let mut child = tokio::process::Command::new("sh")
+            .args(["-c", WRITE_VIA_USERNS, "sh"])
+            .arg(dir)
+            .arg(name)
+            .arg(expected.to_string())
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .spawn()
+            .unwrap();
+        let mut input = child.stdin.take().unwrap();
+        input.write_all(bytes).await.unwrap();
+        drop(input);
+        child.wait_with_output().await.unwrap()
+    }
+
+    #[tokio::test]
+    async fn namespace_script_preserves_names_bytes_modes_and_existing_entries() {
+        let dir = tempfile::tempdir().unwrap();
+        let folder = dir.path().join("Music");
+        let name = "song ' $() ; #.mp3";
+        for n in 1..=2 {
+            let output = run_script(&folder, name, b"abc", 3).await;
+            assert!(
+                output.status.success(),
+                "{}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+            let chosen = String::from_utf8(output.stdout).unwrap();
+            assert_eq!(chosen, numbered_name(name, n));
+            let path = folder.join(chosen);
+            assert_eq!(fs::read(&path).await.unwrap(), b"abc");
+            assert_eq!(
+                fs::metadata(path).await.unwrap().permissions().mode() & 0o777,
+                0o644
+            );
+        }
+        no_temps(&folder);
+    }
+
+    #[tokio::test]
+    async fn namespace_script_refuses_truncated_input_and_cleans_up() {
+        let dir = tempfile::tempdir().unwrap();
+        let output = run_script(dir.path(), "never.bin", b"partial", 100).await;
+        assert!(!output.status.success());
+        assert!(!dir.path().join("never.bin").exists());
+        no_temps(dir.path());
+    }
+
+    #[tokio::test]
+    async fn namespace_script_does_not_link_inside_existing_directory() {
+        let dir = tempfile::tempdir().unwrap();
+        fs::create_dir(dir.path().join("name")).await.unwrap();
+        symlink("missing", dir.path().join("name (2)")).unwrap();
+        let output = run_script(dir.path(), "name", b"abc", 3).await;
+        assert!(output.status.success());
+        assert_eq!(output.stdout, b"name (3)");
+        assert_eq!(
+            std::fs::read_dir(dir.path().join("name")).unwrap().count(),
+            0
+        );
+        no_temps(dir.path());
+    }
+
+    #[test]
+    fn names_keep_extensions_and_dotfiles() {
+        assert_eq!(numbered_name("a.tar.gz", 2), "a.tar (2).gz");
+        assert_eq!(numbered_name(".hidden", 2), ".hidden (2)");
+        assert_eq!(numbered_name("README", 2), "README (2)");
     }
 }
