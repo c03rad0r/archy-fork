@@ -138,6 +138,24 @@ const NGINX_FEDIMINT_NEW: &str = "        sub_filter_types text/css application/
 const NGINX_FEDIMINT_SNIPPET_ANCHOR: &str = "proxy_pass http://127.0.0.1:8175/;";
 const NGINX_FEDIMINT_SNIPPET_INSERT: &str = "proxy_pass http://127.0.0.1:8175/;\n    proxy_set_header Accept-Encoding \"\";\n    sub_filter_types text/css application/javascript application/json;\n    sub_filter_once off;\n    sub_filter 'href=\"/' 'href=\"/app/fedimint/';\n    sub_filter 'src=\"/' 'src=\"/app/fedimint/';\n    sub_filter \"href='/\" \"href='/app/fedimint/\";\n    sub_filter \"src='/\" \"src='/app/fedimint/\";\n    sub_filter 'url(\"/' 'url(\"/app/fedimint/';\n    sub_filter \"url('/\" \"url('/app/fedimint/\";\n    sub_filter '</head>' '<script src=\"/nostr-provider.js\"></script></head>';";
 
+/// Finish manifest promotion before constructing the orchestrator or starting
+/// catalog refresh/reconciliation. Replacing the app tree in the background
+/// could let a reload observe its temporary empty state and forget disk-only apps.
+pub async fn ensure_runtime_assets_ready() {
+    match run_runtime_assets().await {
+        Ok(changed) if changed => info!("Runtime assets synchronized from OTA payload"),
+        Ok(_) => debug!("No OTA runtime payload to synchronize"),
+        Err(e) => warn!("Runtime asset bootstrap failed (non-fatal): {:#}", e),
+    }
+    match run_apps_dir_repair().await {
+        Ok(true) => {
+            info!("Populated /opt/archipelago/apps from installer copy at /etc/archipelago/apps")
+        }
+        Ok(false) => debug!("/opt/archipelago/apps already populated (or no installer copy)"),
+        Err(e) => warn!("Apps dir repair failed (non-fatal): {:#}", e),
+    }
+}
+
 /// Entry point called from main startup. Never returns an error to the caller —
 /// failing to bootstrap host artifacts must not prevent the backend from serving.
 pub async fn ensure_doctor_installed() {
@@ -145,11 +163,6 @@ pub async fn ensure_doctor_installed() {
         Ok(true) => info!("Removed stale Archipelago dev-mode service override"),
         Ok(false) => debug!("No stale Archipelago dev-mode service override found"),
         Err(e) => warn!("Service override repair failed (non-fatal): {:#}", e),
-    }
-    match run_runtime_assets().await {
-        Ok(changed) if changed => info!("Runtime assets synchronized from OTA payload"),
-        Ok(_) => debug!("No OTA runtime payload to synchronize"),
-        Err(e) => warn!("Runtime asset bootstrap failed (non-fatal): {:#}", e),
     }
     match run().await {
         Ok(changed) if changed => info!("Doctor artifacts synchronized with binary"),
@@ -167,13 +180,6 @@ pub async fn ensure_doctor_installed() {
         }
         Ok(false) => debug!("No stale bitcoin.conf found"),
         Err(e) => warn!("Bitcoin RPC repair failed (non-fatal): {:#}", e),
-    }
-    match run_apps_dir_repair().await {
-        Ok(true) => {
-            info!("Populated /opt/archipelago/apps from installer copy at /etc/archipelago/apps")
-        }
-        Ok(false) => debug!("/opt/archipelago/apps already populated (or no installer copy)"),
-        Err(e) => warn!("Apps dir repair failed (non-fatal): {:#}", e),
     }
     match run_tor_helper_sync().await {
         Ok(true) => info!("tor-helper.sh synchronized with binary"),

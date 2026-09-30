@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Finished runtime app-file promotion before manifest loading, preventing startup catalog refresh from forgetting disk-only apps.
+
 - Named the app in compact readiness messages and kept app-card actions aligned at the bottom.
 - Removed duplicate Mempool cards caused by frontend container aliases in restored inventory.
 

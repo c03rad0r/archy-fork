@@ -142,3 +142,25 @@ across reboot; it does not substitute for final new-runtime delivery checks.
   prerequisite refusal, management restart and cleanup all passed. Both temporary
   fixtures and their network were removed. Actual dev API verification remains
   pending after removing an incomplete legacy-created adapter.
+
+## Startup manifest reload race
+
+Live Angor acceptance exposed a separate startup race: runtime asset bootstrap
+cleared and copied `/opt/archipelago/apps` in the background while the startup
+catalog refresh reloaded it. The daemon logged 62 loaded manifests followed by
+54 and then rejected the new disk-only app as unknown. A stable manifest snapshot
+confirmed the diagnosis: supported uninstall/reinstall produced the correct
+rootless Quadlet service with its declared port and network.
+
+Runtime promotion and the legacy installer-directory repair now finish before
+orchestrator construction. The background doctor no longer changes that tree.
+The final source backend suite passed 1,608 tests (four existing opt-in tests
+ignored). Optimized build and normal-path live restart verification remain pending.
+
+Actual dev Angor acceptance passed managed service identity, no capabilities,
+UID 101:101, archy-net, public block height, CORS and both fee URL forms. During
+Bitcoin initial sync, the real Mempool fee API returns 503; the adapter faithfully
+returns the same status and body. Full-sync fee availability remains unverified;
+ready-backend API and failure/recovery behavior passed the isolated live fixture.
+The temporary `/run/archy-candidate-manifests` snapshot override must be removed
+when deploying the startup-order fix, then normal startup/reload must be checked.

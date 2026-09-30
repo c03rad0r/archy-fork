@@ -256,6 +256,10 @@ async fn main() -> Result<()> {
             boot_report.recovered, boot_report.total, boot_report.failed
         );
     }
+    // Disk manifests must be stable before the initial load and all later
+    // catalog reloads. Do not move this into the background doctor bootstrap.
+    bootstrap::ensure_runtime_assets_ready().await;
+
     // Construct the container orchestrator once. In prod mode we load the
     // on-disk app manifests, do an initial adoption pass, and spawn the
     // BootReconciler loop (Step 5/6 of the rust-orchestrator migration).
