@@ -1,0 +1,68 @@
+app:
+  id: angor-indexer
+  name: Angor Indexer
+  version: 1.0.1
+  description: Headless Bitcoin indexer endpoint for Angor. Reuses this node’s Mempool
+    and Electrum index; requires a synced, unpruned Bitcoin node. Add this service’s
+    address as the custom indexer in Angor settings. A relay is optional and installed
+    separately.
+  category: money
+  install_prerequisites:
+  - mempool-api
+  upstream:
+    kind: github
+    repo: block-core/angor
+  container:
+    image: source.archipelago-foundation.org/chaum/angor-indexer:1.0.1
+    pull_policy: if-not-present
+    network: archy-net
+  dependencies:
+  - app_id: mempool-api
+    version: '>=3.0.0'
+  - bitcoin:archival
+  resources:
+    cpu_limit: 1
+    memory_limit: 128Mi
+    disk_limit: 128Mi
+  security:
+    capabilities: []
+    readonly_root: true
+    no_new_privileges: true
+    user: 101
+    network_policy: isolated
+  ports:
+  - host: 8998
+    container: 8080
+    protocol: tcp
+    bind: 127.0.0.1
+    auth: open
+    auth_rationale: Public Bitcoin chain-data API and validated transaction broadcast for Angor clients; no wallet keys or node RPC credentials are exposed. Browser cookie login would break machine clients.
+  interfaces:
+    main:
+      name: Angor Indexer API
+      description: Use this origin as Angor’s custom mainnet indexer URL. HTTPS is
+        required for browser clients.
+      type: api
+      port: 8998
+      protocol: http
+      path: /
+  health_check:
+    type: http
+    endpoint: http://localhost:8080
+    path: /health
+    interval: 30s
+    timeout: 8s
+    retries: 3
+  bitcoin_integration:
+    rpc_access: none
+    sync_required: true
+    pruning_support: false
+  metadata:
+    icon: /assets/img/app-icons/angor.svg
+    tier: optional
+    repo: https://github.com/block-core/angor
+    features:
+    - Angor mainnet API
+    - Reuses existing Mempool indexing
+    - No separate blockchain database
+    - Optional independent relay

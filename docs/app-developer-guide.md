@@ -765,3 +765,13 @@ Every supported app must satisfy the lifecycle contract:
 For apps with special dependencies, launch must explain dependency wait states instead of showing a dead iframe. Examples include Bitcoin sync/IBD, Lightning wallet readiness, Nostr signer bridge injection, Tailscale login/auth, and app-specific setup screens.
 
 Runtime changes should be validated with focused tests first, then the release lifecycle harness on the validation host when host access is intentionally resumed.
+
+### Adapters for shared services
+
+A service that reuses an installed stack can declare `install_prerequisites`
+with the required component app ids and keep the runtime relationship in
+`dependencies`. This refuses an incomplete installation before creating the
+adapter instead of reporting a successful installation with no usable backend.
+For example, Angor Indexer requires `mempool-api` (shown to users as its owning
+Mempool app), shares that index and declares only an `api` interface. API-only
+interfaces belong in Services and do not generate browser launch buttons.

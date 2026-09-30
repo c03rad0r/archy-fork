@@ -72,6 +72,10 @@ def manifest_launch_port(app: dict[str, Any]) -> int | None:
                 return port
             if isinstance(port, str) and port.isdigit():
                 return int(port)
+        # An explicitly headless API/metrics declaration must not gain a
+        # browser launch button just because it has an HTTP health check.
+        if interfaces:
+            return None
 
     health_check = app.get("health_check")
     if not isinstance(health_check, dict) or str(health_check.get("type", "")).lower() != "http":
@@ -93,6 +97,20 @@ def manifest_launch_port(app: dict[str, Any]) -> int | None:
     if isinstance(port, str) and port.isdigit():
         return int(port)
     return None
+
+
+def manifest_service_ports(app: dict[str, Any]) -> list[int]:
+    """Declared API endpoints served by the gate also need mesh reachability."""
+    interfaces = app.get("interfaces") or {}
+    declared = {
+        int(i["port"]) for i in interfaces.values()
+        if isinstance(i, dict) and i.get("type") in ("api", "metrics")
+        and str(i.get("port", "")).isdigit()
+    }
+    return [int(p["host"]) for p in app.get("ports", [])
+            if str(p.get("host", "")).isdigit() and int(p["host"]) in declared
+            and p.get("auth") in ("open", "gated", "session")
+            and p.get("protocol", "tcp") == "tcp"]
 
 
 def manifest_opens_in_new_tab(app: dict[str, Any]) -> bool:
@@ -274,7 +292,8 @@ def main() -> int:
             if (port := manifest_launch_port(app))
         }
         rust_path = Path(args.rust_app_ports)
-        rust_content = render_rust_ports(ports, RUST_EXTRA_PORTS)
+        service_ports = [p for app in manifests.values() for p in manifest_service_ports(app)]
+        rust_content = render_rust_ports(ports, RUST_EXTRA_PORTS + service_ports)
         rust_old = rust_path.read_text(encoding="utf-8") if rust_path.exists() else ""
         if rust_old != rust_content:
             rust_path.write_text(rust_content, encoding="utf-8")

@@ -25,6 +25,15 @@ function makePkg(id: string, title: string, category: string): PackageDataEntry 
 }
 
 describe('appsConfig service filtering', () => {
+  it('keeps standalone Angor APIs in Services without a launch button', () => {
+    for (const id of ['angor-indexer', 'angor-relay']) {
+      const pkg = makePkg(id, id, 'money')
+      expect(filterEntriesForTab([[id, pkg]], 'services', 'all')).toHaveLength(1)
+      expect(filterEntriesForTab([[id, pkg]], 'apps', 'all')).toHaveLength(0)
+      expect(canLaunch(pkg)).toBe(false)
+    }
+  })
+
   it('treats bitcoin stack UI sidecars as services', () => {
     expect(isServiceContainer('bitcoin-ui')).toBe(true)
     expect(isServiceContainer('lnd-ui')).toBe(true)

@@ -573,6 +573,9 @@ impl RpcHandler {
                             "message": format!("Package {} installed and started", package_id)
                         }));
                     }
+                    Err(e) if e.downcast_ref::<crate::container::prod_orchestrator::InstallPrerequisiteError>().is_some() => {
+                        return Err(super::dependencies::DependencyGateError(e.to_string()).into());
+                    }
                     Err(e) if is_unknown_app_id_error(&e) => {
                         info!(
                             "Install {}: orchestrator has no manifest mapping yet, falling back to legacy installer",

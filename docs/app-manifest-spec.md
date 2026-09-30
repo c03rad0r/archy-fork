@@ -310,3 +310,15 @@ requiring `runtime-migration-backup-v1`. New runtimes select only variants whose
 complete requirement list they support. Supply `BASE_CATALOG` when generating
 against a different reviewed pre-migration catalog. This keeps catalog refresh
 from applying a migration before the matching OTA code is installed.
+
+### Existing shared-service prerequisites
+
+`app.install_prerequisites` is an optional list of existing app ids, for example
+`[mempool-api]` for a headless indexer adapter. The runtime checks their manifest
+container names before recording installation or changing any dependency. If one
+is missing, installation refuses with its owning app's title and removes the
+optimistic install tile. Runtime observation errors fail closed. This does not
+automatically install dependencies, alter Bitcoin pruning, or require a synced
+backend merely to recognize an already-installed service. Declare ongoing
+relationships separately in `dependencies`; use the app health check for actual
+API readiness. Self-dependencies and malformed ids are invalid.

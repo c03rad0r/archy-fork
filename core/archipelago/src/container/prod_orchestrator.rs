@@ -36,6 +36,11 @@ use std::sync::Arc;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::sync::{Mutex, RwLock};
 
+/// Refusal before installation has created state or changed any dependency.
+#[derive(Debug, thiserror::Error)]
+#[error("{0}")]
+pub struct InstallPrerequisiteError(pub String);
+
 use crate::config::{Config, ContainerRuntime as ConfigContainerRuntime};
 use crate::container::bitcoin_ui;
 use crate::container::quadlet;
@@ -3904,7 +3909,7 @@ impl ProdContainerOrchestrator {
             let exists = tokio::process::Command::new("podman")
                 .args(["container", "exists", name]).status().await?;
             if exists.code() != Some(1) {
-                anyhow::bail!("cannot verify existing container before network migration backup");
+                anyhow::bail!("cannot verify existing container before runtime migration backup");
             }
             false
         };
@@ -3922,7 +3927,7 @@ impl ProdContainerOrchestrator {
         }
         match crate::container::migration_backup::snapshot(manifest, &self.data_dir, previous_unit.as_deref()).await {
             Ok(archive) => {
-                tracing::info!(container = %name, backup = %archive.display(), "Persistent state saved before network migration");
+                tracing::info!(container = %name, backup = %archive.display(), "Persistent state saved before runtime migration");
                 Ok(())
             }
             Err(error) => {
@@ -4551,6 +4556,28 @@ impl ContainerOrchestrator for ProdContainerOrchestrator {
     }
 
     async fn install(&self, app_id: &str) -> Result<String> {
+        let lm = self.loaded(app_id).await?;
+        // Optional shared-service preconditions are checked before recording
+        // installation or creating anything. A headless adapter must not claim
+        // successful installation against a missing indexing stack.
+        if let Some(required) = lm.manifest.app.extensions.get("install_prerequisites")
+            .and_then(|value| value.as_sequence()) {
+            let present = self.runtime.list_containers().await
+                .context("check installed prerequisite services")?;
+            for id in required.iter().filter_map(|value| value.as_str()) {
+                let dependency = self.loaded(id).await.map_err(|_| InstallPrerequisiteError(
+                    format!("Required app {id} is unavailable. Refresh the app catalog before installing {}.",
+                        lm.manifest.app.name)))?;
+                let name = compute_container_name(&dependency.manifest);
+                if !present.iter().any(|container| container.name.trim_start_matches('/') == name) {
+                    let owner = crate::app_ops::owning_package(id);
+                    let title = self.loaded(owner).await.map(|app| app.manifest.app.name)
+                        .unwrap_or(dependency.manifest.app.name);
+                    return Err(InstallPrerequisiteError(format!(
+                        "Install {title} first, then install {}.", lm.manifest.app.name)).into());
+                }
+            }
+        }
         {
             let mut state = self.state.write().await;
             state.disabled.remove(app_id);
@@ -4577,7 +4604,6 @@ impl ContainerOrchestrator for ProdContainerOrchestrator {
         // health verification (the .228 "running but unreachable" failure
         // mode). Routing every install through here means the orchestrator
         // is the one source of truth for what "installed" means.
-        let lm = self.loaded(app_id).await?;
         let name = compute_container_name(&lm.manifest);
         // ensure_running takes the per-app lock itself; release the install
         // path lock first if we hold one (we don't — install is the entry
@@ -5744,6 +5770,26 @@ app:
         orch.set_bitcoin_ui_paths(test_bitcoin_ui_paths());
         orch.set_filebrowser_paths(test_filebrowser_paths());
         orch
+    }
+
+    #[tokio::test]
+    async fn missing_install_prerequisite_refuses_without_inventory_or_container_mutation() {
+        let rt = Arc::new(MockRuntime::default());
+        let orch = orch_with(rt.clone()).await;
+        let mut app = pull_manifest("indexer-adapter", "docker.io/library/alpine:3.20");
+        app.app.extensions.insert("install_prerequisites".into(),
+            serde_yaml::to_value(vec!["shared-index"]).unwrap());
+        orch.insert_manifest_for_test(app, PathBuf::from("/tmp")).await;
+        orch.insert_manifest_for_test(pull_manifest("shared-index", "index:1"), PathBuf::from("/tmp")).await;
+        let error = orch.install("indexer-adapter").await.unwrap_err();
+        assert!(error.downcast_ref::<InstallPrerequisiteError>().is_some());
+        assert!(!crate::crash_recovery::load_installed_apps(&orch.data_dir).await.contains("indexer-adapter"));
+        assert_eq!(rt.calls(), vec!["list_containers"]);
+        // An installed prerequisite satisfies the guard; it is never recreated
+        // or reconfigured as part of installing this adapter.
+        rt.set_state("shared-index", ContainerState::Running);
+        orch.install("indexer-adapter").await.unwrap();
+        assert!(!rt.calls().iter().any(|c| c.starts_with("create_container:shared-index")));
     }
 
     fn pull_manifest_with_dynamic_env(id: &str, image: &str) -> AppManifest {

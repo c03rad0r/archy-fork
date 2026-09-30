@@ -644,6 +644,35 @@
           "/var/lib/archipelago/vaultwarden:/data"
         ]
       }
+    },
+    {
+      "id": "angor-indexer",
+      "title": "Angor Indexer",
+      "version": "1.0.1",
+      "description": "Headless Bitcoin indexer endpoint for Angor. Reuses this node’s Mempool and Electrum index; requires a synced, unpruned Bitcoin node. Add this service’s address as the custom indexer in Angor settings. A relay is optional and installed separately.",
+      "dockerImage": "source.archipelago-foundation.org/chaum/angor-indexer:1.0.1",
+      "author": "Angor / Archipelago",
+      "requires": [
+        "Mempool API",
+        "Unpruned Bitcoin"
+      ],
+      "category": "money",
+      "tier": "optional",
+      "icon": "/assets/img/app-icons/angor.svg",
+      "repoUrl": "https://github.com/block-core/angor"
+    },
+    {
+      "id": "angor-relay",
+      "title": "Angor Relay",
+      "version": "1.1.2",
+      "description": "Optional dedicated Nostr relay for Angor project metadata. Separate storage and access settings keep the node’s internal relay private. Add this service’s address to Angor’s relay settings; use WSS for browser clients.",
+      "dockerImage": "source.archipelago-foundation.org/chaum/angor-relay:1.1.2",
+      "author": "Angor / Archipelago",
+      "requires": [],
+      "category": "nostr",
+      "tier": "optional",
+      "icon": "/assets/img/app-icons/angor.svg",
+      "repoUrl": "https://github.com/hoytech/strfry"
     }
   ]
 }

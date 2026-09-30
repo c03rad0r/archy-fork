@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from 'vitest'
-import { __setSignedCatalogForTests, portAuth, portIsGateFronted, type SignedAppCatalog } from '../curatedApps'
+import { __setSignedCatalogForTests, signedCatalogToApps, portAuth, portIsGateFronted, type SignedAppCatalog } from '../curatedApps'
 
 /** Catalog fragments mirroring the live signed catalog's port declarations
  *  (releases/app-catalog.json, 2026-09-01). */
@@ -75,5 +75,14 @@ describe('portAuth', () => {
 
   it('returns null without a warmed catalog (cache miss, not a guess)', () => {
     expect(portAuth('mempool-web', 4080)).toBeNull()
+  })
+})
+
+describe('standalone headless services', () => {
+  it('lists Angor services while keeping shared Mempool and node relay internals hidden', () => {
+    const apps = signedCatalogToApps(catalog(Object.fromEntries(
+      ['angor-indexer', 'angor-relay', 'mempool-api', 'strfry'].map(id => [id, { version: '1' }]),
+    )))
+    expect(apps.map(app => app.id)).toEqual(['angor-indexer', 'angor-relay'])
   })
 })

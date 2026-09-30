@@ -989,6 +989,18 @@ impl AppManifest {
         validate_security(&self.app.security)?;
         validate_ports(&self.app.ports)?;
         validate_interfaces(&self.app.interfaces)?;
+        if let Some(value) = self.app.extensions.get("install_prerequisites") {
+            let items = value.as_sequence().ok_or_else(|| ManifestError::Invalid(
+                "install_prerequisites must be a list of app ids".into()))?;
+            for item in items {
+                let id = item.as_str().unwrap_or_default();
+                if id.is_empty() || id == self.app.id || !id.bytes().all(|b|
+                    b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-') {
+                    return Err(ManifestError::Invalid(
+                        "install_prerequisites must contain valid other app ids".into()));
+                }
+            }
+        }
         validate_environment(&self.app.environment)?;
         validate_devices(&self.app.devices)?;
 
@@ -1805,9 +1817,14 @@ app:
         // nginx-proxy-manager 8081 (NPM admin accounts), tailscale 8240
         // (tailnet login on the web console). Both enforce their own login,
         // and an operator can re-gate either from Settings → Access control.
+        // Angor's indexer exposes public chain data/transaction broadcast;
+        // its optional standalone relay accepts signed public Nostr events.
+        // Neither mounts credentials or the node's internal relay database.
         assert_eq!(
             open,
             vec![
+                ("angor-indexer".to_string(), 8998u16),
+                ("angor-relay".to_string(), 8091u16),
                 ("btcpay-server".to_string(), 23000u16),
                 ("cuprate".to_string(), 18090u16),
                 ("gitea".to_string(), 3001u16),
@@ -1816,6 +1833,14 @@ app:
             ],
             "gate-open port set changed — review login or intentional public protocol purpose"
         );
+    }
+
+    #[test]
+    fn invalid_install_prerequisites_are_rejected() {
+        for value in ["not-a-list", "[demo]", "['../other']", "[false]", "['']"] {
+            let yaml = format!("app:\n  id: demo\n  name: Demo\n  version: 1.0.0\n  container:\n    image: docker.io/library/alpine:3.20\n  install_prerequisites: {value}\n");
+            assert!(AppManifest::parse(&yaml).unwrap_err().to_string().contains("install_prerequisites"));
+        }
     }
 
     #[test]

@@ -22,6 +22,14 @@ const ARCHIVAL_BITCOIN_DEPENDENCY: &str = "bitcoin:archival";
 /// hardcoded id list below — a new app just declares the dependency instead
 /// of needing a code change here.
 fn manifest_declares_archival_bitcoin(package_id: &str) -> bool {
+    // Registry-only apps need the same guard as OTA-bundled manifests. Honor
+    // the verified catalog's effective manifest before the disk fallback.
+    if let Some((_, value)) = crate::container::app_catalog::catalog_manifest_values()
+        .into_iter().find(|(id, _)| id == package_id) {
+        if let Some(manifest) = crate::container::app_catalog::catalog_manifest_overlay(package_id, value) {
+            return dependency_list_declares_archival_bitcoin(&manifest.app.dependencies);
+        }
+    }
     for apps_dir in manifest_apps_dirs() {
         let path = apps_dir.join(package_id).join("manifest.yml");
         let Ok(contents) = std::fs::read_to_string(&path) else {
@@ -1055,6 +1063,9 @@ mod tests {
         // edit to `requires_unpruned_bitcoin`.
         assert!(manifest_declares_archival_bitcoin("electrumx"));
         assert!(manifest_declares_archival_bitcoin("mempool"));
+        let angor = archipelago_container::AppManifest::parse(include_str!(concat!(env!("CARGO_MANIFEST_DIR"),
+            "/../../apps/angor-indexer/manifest.yml"))).unwrap();
+        assert!(dependency_list_declares_archival_bitcoin(&angor.app.dependencies));
         // An app whose manifest exists but never declares the marker.
         assert!(!manifest_declares_archival_bitcoin("bitcoin-knots"));
         // An id with no manifest on disk at all.

@@ -42,6 +42,8 @@ export const GENERATED_APP_PORTS: Record<string, number> = {
 export const GENERATED_APP_TITLES: Record<string, string> = {
   "aiui": "AI Assistant",
   "alby-hub": "Alby Hub",
+  "angor-indexer": "Angor Indexer",
+  "angor-relay": "Angor Relay",
   "archipelago-source": "GitWorkshop",
   "archy-btcpay-db": "BTCPay Postgres",
   "archy-mempool-db": "Mempool MariaDB",
