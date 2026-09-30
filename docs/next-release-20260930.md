@@ -1,6 +1,10 @@
 # Next OTA and raw ISO after 1.8.21
 
-**Status: implementation and acceptance in progress; NOT ready to release.**
+**Status: implementation and final OTA/raw ISO acceptance passed; draft upload verification and offline signing/publication remain.**
+
+Current acceptance evidence: [1.8.22 release acceptance](release-1.8.22-acceptance.md).
+The chronological notes below retain earlier failures and superseded candidates;
+the final tested source is `6d5f3ffb`.
 
 This is the consolidated execution checklist for the operator's chat requests.
 A targeted node repair is not completion of the release. Finish the remaining
@@ -45,16 +49,18 @@ completed. See PR review for the accepted scope and coverage limits.
 
 ## Final release checklist
 
-- [ ] Finish all new-scope implementation and specific acceptance above.
+- [x] Finish new-scope implementation and release acceptance; full-chain Angor
+      indexing still depends on the dev node finishing initial sync.
 - [x] Remove disposable fixtures and temporary test overrides; verify native
       Bitcoin/LND identity and start-state baselines remain protected.
 - [x] Commit and push completed source changes to git and ngit.
-- [ ] Run final backend/UI/regression/release gates on the final source; inspect
+- [x] Run final backend/UI/regression/release gates on the final source; inspect
       skipped tests and report actual hardware/runtime coverage.
 - [ ] Prepare compatible signed app catalog; old runtimes must not apply a
       migration before they have backup/recovery support.
 - [ ] Version/changelog and OTA payload prepared, validated and signed by user.
-- [ ] Raw ISO built; payload hashes/content verified; installer boot tested.
+- [x] Raw ISO built; payload hashes/content verified; full installation and
+      installed-system boot tested in QEMU/KVM without network.
 - [ ] User signs ISO checksums; publish OTA and ISO plus verification files on
       git and ngit; independently read back hashes and update discovery.
 - [ ] Provide LAN scp command for the new raw ISO.
@@ -430,3 +436,24 @@ ignored, through the isolated runner. This includes all new port-selection cases
 and the existing companion security/configuration and lifecycle regressions.
 Rebuild the release binary and UI metadata, deploy those exact OTA bytes to both
 boxes, and require actual kiosk hard-refresh/Launch acceptance before ISO assembly.
+
+
+## Final accepted artifacts — 1.8.22-alpha
+
+Source `6d5f3ffb` passed 1,617 backend tests (four explicit opt-in exclusions),
+1,133 frontend tests and final release gates. Exact OTA bytes were deployed to
+both boxes. Actual X250 kiosk NPM Launch, version/pruning, desktop/mobile
+readiness/AIUI, production Portainer Git/Compose and 12-minute stability checks
+on both boxes passed. No installed app was restarted by the safe diagnostics,
+and the Cuprate orphan stayed absent. Native Bitcoin/LND and the production site
+were preserved during final management deployment.
+
+The raw ISO passed mounted payload checks and matches all 653 OTA frontend/runtime
+files plus the backend. Full offline installation and installed UEFI boot to the
+visible setup screen passed in a disposable QEMU/KVM VM. Both installed doctor
+paths and the installed backend have the expected hashes. No VM wallet was set up.
+
+See `release-1.8.22-acceptance.md` for exact artifact hashes, hardware/runtime
+coverage and limits. Draft upload verification, offline signatures, publication
+and public readback remain; the fleet still advertises 1.8.21 until those gates
+finish. Do not confuse a draft asset or source push with completed publication.
