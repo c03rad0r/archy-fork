@@ -1,80 +1,155 @@
-//! Seller-side pending entitlements for Lightning-invoice peer-file sales (#46).
-//!
-//! When a buyer asks to pay for a paid catalog item with an external wallet (as
-//! opposed to the local-ecash fast path), the *selling* node mints a Lightning
-//! invoice on its own LND and records a pending entitlement here, keyed by the
-//! invoice's payment hash. The buyer pays the invoice from any wallet and polls
-//! for settlement; once the seller's LND confirms the invoice is settled we mark
-//! the entitlement paid, and the content gate (`content_server::serve_content`)
-//! then releases the file to anyone presenting that payment hash.
-//!
-//! State is in-memory and bounded by a TTL. If the seller restarts before the
-//! buyer pays, the buyer simply requests a fresh invoice — no value is lost
-//! because an unpaid invoice represents no money.
+//! Durable seller-side entitlements for peer-file invoices and on-chain sales.
+//! Payment records must outlive browser polling, process restarts and invoice
+//! expiry: an invoice can settle while the buyer is disconnected.
 
-use std::collections::HashMap;
-use std::sync::LazyLock;
-use std::time::{Duration, Instant};
-use tokio::sync::Mutex;
+use anyhow::{Context, Result};
+use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
+use std::path::{Path, PathBuf};
+use tokio::{fs, io::AsyncWriteExt, sync::Mutex};
 
-/// How long a pending/paid entitlement is retained. Generous enough for a human
-/// to pay an invoice and download, short enough to keep the map small.
-const ENTITLEMENT_TTL: Duration = Duration::from_secs(3600); // 1 hour
+static WRITES: Mutex<()> = Mutex::const_new(());
 
-#[derive(Clone)]
+#[derive(Clone, Serialize, Deserialize)]
 struct Entitlement {
     content_id: String,
     price_sats: u64,
     paid: bool,
-    created_at: Instant,
 }
 
-static ENTITLEMENTS: LazyLock<Mutex<HashMap<String, Entitlement>>> =
-    LazyLock::new(|| Mutex::new(HashMap::new()));
-
-/// Drop expired entries. Caller must hold the lock.
-fn prune(map: &mut HashMap<String, Entitlement>) {
-    map.retain(|_, e| e.created_at.elapsed() < ENTITLEMENT_TTL);
+fn path(data_dir: &Path, token: &str) -> PathBuf {
+    data_dir.join("content-entitlements").join(format!(
+        "{}.json",
+        hex::encode(Sha256::digest(token.as_bytes()))
+    ))
 }
 
-/// Record a freshly-minted invoice as a pending (unpaid) entitlement.
-pub async fn record_pending(payment_hash: &str, content_id: &str, price_sats: u64) {
-    let mut map = ENTITLEMENTS.lock().await;
-    prune(&mut map);
-    map.insert(
-        payment_hash.to_string(),
-        Entitlement {
-            content_id: content_id.to_string(),
-            price_sats,
-            paid: false,
-            created_at: Instant::now(),
-        },
-    );
-}
-
-/// Mark the entitlement for `payment_hash` paid. No-op if unknown/expired.
-pub async fn mark_paid(payment_hash: &str) {
-    let mut map = ENTITLEMENTS.lock().await;
-    prune(&mut map);
-    if let Some(e) = map.get_mut(payment_hash) {
-        e.paid = true;
+async fn read(data_dir: &Path, token: &str) -> Result<Option<Entitlement>> {
+    match fs::read(path(data_dir, token)).await {
+        Ok(bytes) => Ok(Some(
+            serde_json::from_slice(&bytes).context("Invalid payment entitlement")?,
+        )),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(e) => Err(e).context("Reading payment entitlement"),
     }
 }
 
-/// The content_id + price an entitlement was issued for, if still live.
-pub async fn lookup(payment_hash: &str) -> Option<(String, u64)> {
-    let mut map = ENTITLEMENTS.lock().await;
-    prune(&mut map);
-    map.get(payment_hash)
-        .map(|e| (e.content_id.clone(), e.price_sats))
+async fn write(data_dir: &Path, token: &str, entry: &Entitlement) -> Result<()> {
+    let target = path(data_dir, token);
+    let dir = target.parent().unwrap();
+    fs::create_dir_all(dir).await?;
+    let tmp = target.with_extension("tmp");
+    let mut file = fs::OpenOptions::new()
+        .write(true)
+        .create(true)
+        .truncate(true)
+        .mode(0o600)
+        .open(&tmp)
+        .await?;
+    file.write_all(&serde_json::to_vec(entry)?).await?;
+    file.sync_all().await?;
+    drop(file);
+    fs::rename(&tmp, &target).await?;
+    fs::File::open(dir).await?.sync_all().await?;
+    Ok(())
 }
 
-/// True if `payment_hash` is a paid entitlement for exactly `content_id`.
-/// This is the gate the content server consults to release a file.
-pub async fn is_paid_for(payment_hash: &str, content_id: &str) -> bool {
-    let mut map = ENTITLEMENTS.lock().await;
-    prune(&mut map);
-    map.get(payment_hash)
+/// Save before exposing an invoice/address to the buyer. Never overwrite an
+/// existing payment or silently rebind its token to another item or price.
+pub async fn record_pending(
+    data_dir: &Path,
+    token: &str,
+    content_id: &str,
+    price_sats: u64,
+) -> Result<()> {
+    let _lock = WRITES.lock().await;
+    if let Some(existing) = read(data_dir, token).await? {
+        anyhow::ensure!(
+            existing.content_id == content_id && existing.price_sats == price_sats,
+            "Payment entitlement mismatch"
+        );
+        return Ok(());
+    }
+    write(
+        data_dir,
+        token,
+        &Entitlement {
+            content_id: content_id.into(),
+            price_sats,
+            paid: false,
+        },
+    )
+    .await
+}
+
+pub async fn mark_paid(data_dir: &Path, token: &str) -> Result<()> {
+    let _lock = WRITES.lock().await;
+    let mut entry = read(data_dir, token)
+        .await?
+        .context("Unknown payment entitlement")?;
+    entry.paid = true;
+    write(data_dir, token, &entry).await
+}
+
+pub async fn lookup(data_dir: &Path, token: &str) -> Result<Option<(String, u64)>> {
+    Ok(read(data_dir, token)
+        .await?
+        .map(|e| (e.content_id, e.price_sats)))
+}
+
+pub async fn is_paid_for(data_dir: &Path, token: &str, content_id: &str) -> bool {
+    read(data_dir, token)
+        .await
+        .ok()
+        .flatten()
         .map(|e| e.paid && e.content_id == content_id)
         .unwrap_or(false)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[tokio::test]
+    async fn paid_entitlement_survives_reload_and_cannot_be_rebound() {
+        let dir = tempfile::tempdir().unwrap();
+        record_pending(dir.path(), "hash", "file", 12)
+            .await
+            .unwrap();
+        assert!(!is_paid_for(dir.path(), "hash", "file").await);
+        mark_paid(dir.path(), "hash").await.unwrap();
+        // All reads reopen disk; no process-local entitlement map exists.
+        assert!(is_paid_for(dir.path(), "hash", "file").await);
+        assert!(!is_paid_for(dir.path(), "hash", "other").await);
+        record_pending(dir.path(), "hash", "file", 12)
+            .await
+            .unwrap();
+        assert!(is_paid_for(dir.path(), "hash", "file").await);
+        assert!(record_pending(dir.path(), "hash", "other", 12)
+            .await
+            .is_err());
+        assert!(record_pending(dir.path(), "hash", "file", 13)
+            .await
+            .is_err());
+        let other = tempfile::tempdir().unwrap();
+        assert!(!is_paid_for(other.path(), "hash", "file").await);
+        assert!(mark_paid(dir.path(), "unknown").await.is_err());
+    }
+    #[tokio::test]
+    async fn corrupt_or_unwritable_records_fail_closed() {
+        let dir = tempfile::tempdir().unwrap();
+        record_pending(dir.path(), "../../token", "file", 1)
+            .await
+            .unwrap();
+        fs::write(path(dir.path(), "../../token"), b"broken")
+            .await
+            .unwrap();
+        assert!(lookup(dir.path(), "../../token").await.is_err());
+        assert!(!is_paid_for(dir.path(), "../../token", "file").await);
+        assert!(record_pending(dir.path(), "../../token", "file", 1)
+            .await
+            .is_err());
+        let file = dir.path().join("not-directory");
+        fs::write(&file, b"x").await.unwrap();
+        assert!(record_pending(&file, "hash", "file", 1).await.is_err());
+    }
 }

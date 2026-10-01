@@ -20,7 +20,9 @@ use crate::data_model::{
 /// stopped-app restoration path in agreement with live-container discovery.
 fn canonical_package_id(name: &str) -> &str {
     match name.strip_prefix("archy-").unwrap_or(name) {
-        "immich_server" => "immich",
+        "immich_server" | "immich-server" => "immich",
+        "immich-postgres" => "immich_postgres",
+        "immich-redis" => "immich_redis",
         "mempool-web" | "mempool-frontend" => "mempool",
         name => name,
     }
@@ -442,6 +444,19 @@ async fn launch_http_ready(candidate: &str) -> bool {
 mod lifecycle_regression_tests {
     use super::*;
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+    #[test]
+    fn immich_dependency_aliases_share_the_hidden_component_ids() {
+        for id in [
+            "immich-postgres",
+            "immich_postgres",
+            "archy-immich-postgres",
+        ] {
+            assert_eq!(canonical_package_id(id), "immich_postgres");
+        }
+        assert_eq!(canonical_package_id("immich-redis"), "immich_redis");
+        assert_eq!(canonical_package_id("immich-server"), "immich");
+    }
 
     #[test]
     fn registry_survives_empty_runtime_and_deduplicates_aliases() {

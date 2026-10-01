@@ -9,11 +9,11 @@
         <!-- Transparent glass, not a black slab (operator, 2026-08-09): the
              backdrop blur alone keeps the pinned tabs legible over scrolling
              rows without painting an opaque container onto the modal. -->
-        <div v-if="transactions.length > 0" class="sticky top-0 z-10 -mx-2 px-2 pb-2 mb-1 flex gap-1.5 flex-wrap bg-white/5 backdrop-blur-md">
+        <div v-if="transactions.length > 0" class="sticky top-0 z-10 -mx-2 px-2 pb-2 mb-1 flex gap-1.5 flex-nowrap overflow-x-auto bg-transparent backdrop-blur-md">
           <button
             v-for="f in filters"
             :key="f.key"
-            class="px-2.5 py-1 rounded-full text-xs transition-colors"
+            class="shrink-0 whitespace-nowrap px-2.5 py-1 rounded-full text-xs transition-colors"
             :class="activeFilter === f.key
               ? 'bg-orange-500/25 text-orange-200 border border-orange-400/40'
               : 'bg-white/5 text-white/50 border border-white/10 hover:text-white/80'"

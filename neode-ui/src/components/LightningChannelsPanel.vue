@@ -353,15 +353,57 @@
 
     <!-- Close Confirmation Modal -->
     <Teleport to="body">
-    <div v-if="closeTarget" class="fixed inset-0 z-[3100] flex items-center justify-center bg-black/60 backdrop-blur-md" @click.self="closeTarget = null">
+    <div v-if="closeTarget" class="fixed inset-0 z-[3100] flex items-center justify-center bg-black/60 backdrop-blur-md" @click.self="!closingChannel && (closeTarget = null)">
       <div class="glass-card p-6 w-full max-w-sm mx-4">
         <h2 class="text-lg font-bold text-white mb-2">Close Channel?</h2>
         <p class="text-white/60 text-sm mb-4">This will cooperatively close the channel with peer {{ closeTarget.remote_pubkey.slice(0, 16) }}...</p>
+          <!-- Fee selection -->
+          <div class="mb-4">
+            <label class="text-white/60 text-sm block mb-1">Fee</label>
+            <div class="flex gap-1 p-1 bg-white/5 rounded-lg">
+              <button
+                v-for="preset in feePresets"
+                :key="preset.key"
+                @click="closeForm.feePreset = preset.key"
+                class="flex-1 px-2 py-1.5 rounded text-xs font-medium transition-colors"
+                :class="closeForm.feePreset === preset.key ? 'bg-white/15 text-white' : 'text-white/50 hover:text-white/80'"
+              >{{ preset.label }}</button>
+            </div>
+            <p v-if="closeForm.feePreset !== 'custom'" class="text-white/40 text-xs mt-1">
+              {{ feePresets.find(p => p.key === closeForm.feePreset)?.hint }}
+            </p>
+            <div v-else class="grid grid-cols-2 gap-3 mt-2">
+              <div>
+                <label class="text-white/60 text-xs block mb-1">Target confirmations</label>
+                <input
+                  v-model.number="closeForm.customConfTarget"
+                  type="number"
+                  min="1"
+                  max="1008"
+                  placeholder="6"
+                  class="w-full input-glass"
+                />
+              </div>
+              <div>
+                <label class="text-white/60 text-xs block mb-1">Sats per vByte</label>
+                <input
+                  v-model.number="closeForm.customSatPerVbyte"
+                  type="number"
+                  min="1"
+                  max="5000"
+                  placeholder="—"
+                  class="w-full input-glass"
+                />
+              </div>
+              <p class="text-white/40 text-xs col-span-2">Set one — sats per vByte takes precedence when both are set</p>
+            </div>
+          </div>
+
         <div v-if="closeError" class="mb-3 alert-error">
           <p class="text-xs">{{ closeError }}</p>
         </div>
         <div class="flex gap-3">
-          <button @click="closeTarget = null" class="flex-1 glass-button px-4 py-2 rounded-lg text-sm">Cancel</button>
+          <button @click="closeTarget = null" :disabled="closingChannel" class="flex-1 glass-button px-4 py-2 rounded-lg text-sm">Cancel</button>
           <button
             @click="closeChannel"
             :disabled="closingChannel"
@@ -457,8 +499,8 @@ function closeTypeLabel(ch: ClosedChannel): string {
 type FeePreset = 'standard' | 'medium' | 'fast' | 'custom'
 
 const feePresets: { key: FeePreset; label: string; hint?: string; confTarget?: number }[] = [
-  { key: 'standard', label: 'Standard', hint: 'Confirms within ~6 blocks (about an hour)', confTarget: 6 },
-  { key: 'medium', label: 'Medium', hint: 'Confirms within ~3 blocks (about 30 minutes)', confTarget: 3 },
+  { key: 'standard', label: 'Standard', hint: 'Targets ~6 blocks (about an hour)', confTarget: 6 },
+  { key: 'medium', label: 'Medium', hint: 'Targets ~3 blocks (about 30 minutes)', confTarget: 3 },
   { key: 'fast', label: 'Fast', hint: 'Targets the next block', confTarget: 1 },
   { key: 'custom', label: 'Custom' },
 ]
@@ -577,22 +619,24 @@ function loadChannels(): Promise<void> {
   return main
 }
 
-function feeParams(): { target_conf?: number; sat_per_vbyte?: number } | null {
-  const form = openForm.value
+function feeParams(
+  form: { feePreset: FeePreset; customSatPerVbyte: number | null; customConfTarget: number | null } = openForm.value,
+  setError: (message: string) => void = message => { openError.value = message },
+): { target_conf?: number; sat_per_vbyte?: number } | null {
   if (form.feePreset !== 'custom') {
     return { target_conf: feePresets.find(p => p.key === form.feePreset)?.confTarget ?? 6 }
   }
   const rate = form.customSatPerVbyte
   const conf = form.customConfTarget
   if (rate != null && rate !== 0) {
-    if (rate < 1 || rate > 5000) { openError.value = 'Sats per vByte must be between 1 and 5000'; return null }
+    if (!Number.isInteger(rate) || rate < 1 || rate > 5000) { setError('Sats per vByte must be a whole number between 1 and 5000'); return null }
     return { sat_per_vbyte: Math.floor(rate) }
   }
   if (conf != null && conf !== 0) {
-    if (conf < 1 || conf > 1008) { openError.value = 'Target confirmations must be between 1 and 1008'; return null }
+    if (!Number.isInteger(conf) || conf < 1 || conf > 1008) { setError('Target confirmations must be a whole number between 1 and 1008'); return null }
     return { target_conf: Math.floor(conf) }
   }
-  openError.value = 'Custom fee requires target confirmations or sats per vByte'
+  setError('Custom fee requires target confirmations or sats per vByte')
   return null
 }
 
@@ -629,7 +673,12 @@ async function openChannel() {
   }
 }
 
+const defaultCloseForm = () => ({ feePreset: 'standard' as FeePreset, customConfTarget: null as number | null, customSatPerVbyte: null as number | null })
+const closeForm = ref(defaultCloseForm())
+
 function confirmClose(ch: Channel) {
+  if (closingChannel.value) return
+  closeForm.value = defaultCloseForm()
   closeTarget.value = ch
   closeError.value = null
 }
@@ -637,12 +686,15 @@ function confirmClose(ch: Channel) {
 async function closeChannel() {
   if (closingChannel.value || !closeTarget.value) return
   closeError.value = null
+  const fee = feeParams(closeForm.value, message => { closeError.value = message })
+  if (!fee) return
   closingChannel.value = true
   try {
     await rpcClient.call({
       method: 'lnd.closechannel',
-      params: { channel_point: closeTarget.value.channel_point },
-      timeout: 30000,
+      params: { channel_point: closeTarget.value.channel_point, ...fee },
+      timeout: 45000,
+      maxRetries: 1,
     })
     closeTarget.value = null
     await loadChannels()

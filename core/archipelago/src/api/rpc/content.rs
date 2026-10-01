@@ -73,6 +73,17 @@ fn paid_content_response(bytes: &[u8], mime: &str, paid_sats: u64) -> serde_json
     })
 }
 
+// Updated clients open the persisted file through the Range-capable HTTP
+// endpoint. Avoid putting two base64 copies of a large video in a JSON reply.
+// Keep older clients compatible until both sides have upgraded.
+fn invoice_download_response(bytes: &[u8], mime: &str, cache_only: bool) -> serde_json::Value {
+    if cache_only {
+        serde_json::json!({ "owned": true, "mime_type": mime, "size_bytes": bytes.len() })
+    } else {
+        paid_content_response(bytes, mime, 0)
+    }
+}
+
 /// File purchases through an atomic no-clobber write in Files' own namespace.
 async fn file_purchase_in_files(
     data_dir: &std::path::Path,
@@ -870,9 +881,28 @@ impl RpcHandler {
         if !is_valid_v3_onion(onion) {
             return Err(anyhow::anyhow!("Invalid v3 onion address"));
         }
-        if payment_hash.is_empty() || !payment_hash.chars().all(|c| c.is_ascii_hexdigit()) {
+        if payment_hash.len() != 64 || !payment_hash.chars().all(|c| c.is_ascii_hexdigit()) {
             return Err(anyhow::anyhow!("Invalid payment_hash"));
         }
+
+        let cache_only = params
+            .get("cache_only")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
+        if let Some((mime, bytes)) =
+            crate::content_owned::read_owned(&self.config.data_dir, onion, content_id).await
+        {
+            return Ok(invoice_download_response(&bytes, &mime, cache_only));
+        }
+        // Older sellers only mark settlement during status polling. Always
+        // perform that handshake before requesting bytes; retries never pay.
+        // The download gate remains authoritative: a file may have become
+        // free, and newer sellers verify directly if status polling fails.
+        let _ = self
+            .handle_content_invoice_status(Some(serde_json::json!({
+                "onion": onion, "content_id": content_id, "payment_hash": payment_hash,
+            })))
+            .await;
 
         let (data, _) = self.state_manager.get_snapshot().await;
         let local_did = crate::identity::did_key_from_pubkey_hex(&data.server_info.pubkey)?;
@@ -912,7 +942,7 @@ impl RpcHandler {
 
         if response.status() == reqwest::StatusCode::PAYMENT_REQUIRED {
             return Ok(serde_json::json!({
-                "error": "Seller has not registered this payment yet — wait for settlement and retry."
+                "error": "The seller has not confirmed access yet. Retry the download without paying again."
             }));
         }
         if !response.status().is_success() {
@@ -921,16 +951,45 @@ impl RpcHandler {
             }));
         }
 
+        let mime = response
+            .headers()
+            .get(reqwest::header::CONTENT_TYPE)
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or("application/octet-stream")
+            .split(';')
+            .next()
+            .unwrap_or("application/octet-stream")
+            .to_string();
         let bytes = response
             .bytes()
             .await
-            .context("Failed to read response body")?;
-        use base64::Engine;
-        let encoded = base64::engine::general_purpose::STANDARD.encode(&bytes);
-        Ok(serde_json::json!({
-            "data": encoded,
-            "size": bytes.len(),
-        }))
+            .context("Paid file transfer interrupted; retry the download without paying again")?;
+        let filename = params
+            .get("filename")
+            .and_then(|v| v.as_str())
+            .unwrap_or(content_id);
+        crate::content_owned::record_purchase(
+            &self.config.data_dir,
+            onion,
+            content_id,
+            filename,
+            &mime,
+            &bytes,
+            params
+                .get("price_sats")
+                .and_then(|v| v.as_u64())
+                .unwrap_or(0),
+            "lightning",
+            &chrono::Utc::now().to_rfc3339(),
+        )
+        .await
+        .context("Paid file could not be saved; retry the download without paying again")?;
+        if let Err(error) =
+            file_purchase_in_files(&self.config.data_dir, filename, &mime, &bytes).await
+        {
+            tracing::warn!("Lightning purchase cached; optional Files copy failed: {error:#}");
+        }
+        Ok(invoice_download_response(&bytes, &mime, cache_only))
     }
 
     /// Buyer side (#46): ask the seller for a fresh on-chain address to pay.
@@ -1405,3 +1464,19 @@ impl RpcHandler {
 #[cfg(test)]
 #[path = "content_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+mod invoice_delivery_response_tests {
+    use super::*;
+    #[test]
+    fn cached_delivery_avoids_base64_but_keeps_old_clients_compatible() {
+        let cached = invoice_download_response(b"paid bytes", "video/mp4", true);
+        assert_eq!(cached["owned"], true);
+        assert_eq!(cached["size_bytes"], 10);
+        assert!(cached.get("data").is_none());
+        assert!(cached.get("data_base64").is_none());
+        let legacy = invoice_download_response(b"paid bytes", "video/mp4", false);
+        assert_eq!(legacy["data"], "cGFpZCBieXRlcw==");
+        assert_eq!(legacy["data"], legacy["data_base64"]);
+    }
+}

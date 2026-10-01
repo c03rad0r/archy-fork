@@ -664,6 +664,10 @@ pub async fn start_stopped_stack_containers(data_dir: &Path) -> RecoveryReport {
     start_stopped_app_stacks(data_dir).await
 }
 
+fn stack_member_needs_recovery(state: Option<&str>, user_stopped: bool) -> bool {
+    !user_stopped && matches!(state, Some("exited" | "stopped" | "created" | "configured"))
+}
+
 async fn start_stopped_app_stacks(data_dir: &Path) -> RecoveryReport {
     let user_stopped = load_user_stopped(data_dir).await;
     let mut report = RecoveryReport {
@@ -677,24 +681,27 @@ async fn start_stopped_app_stacks(data_dir: &Path) -> RecoveryReport {
             continue;
         }
 
-        info!(
-            "Recovering stopped {} stack containers after boot",
-            stack.name
-        );
+        // Healthy members must never acquire a restarting overlay merely
+        // because the periodic recovery scan ran. Queue existing stopped
+        // members only; recheck each immediately before starting below.
+        let mut pending = Vec::new();
+        for container in stack.containers {
+            let state = container_state(container).await;
+            if stack_member_needs_recovery(state.as_deref(), user_stopped.contains(*container)) {
+                pending.push((*container).to_string());
+            }
+        }
+        if pending.is_empty() {
+            continue;
+        }
+        info!("Recovering stopped {} stack containers", stack.name);
         repair_stack_network_aliases(stack).await;
-
-        // Register the whole stack up front: the per-member dependency waits
-        // below can take minutes, and the UI should say "Restarting", not
-        // "Stopped", for members still queued behind them.
-        pending_boot_starts_add(
-            stack
-                .containers
-                .iter()
-                .filter(|c| !user_stopped.contains(**c))
-                .map(|c| (*c).to_string()),
-        );
+        pending_boot_starts_add(pending.iter().cloned());
 
         for container in stack.containers {
+            if !pending.iter().any(|name| name.as_str() == *container) {
+                continue;
+            }
             if user_stopped.contains(*container) {
                 info!("Skipping user-stopped container: {}", container);
                 continue;
@@ -706,8 +713,8 @@ async fn start_stopped_app_stacks(data_dir: &Path) -> RecoveryReport {
                     pending_boot_start_done(container);
                     continue;
                 }
-                Some(_) => {}
-                None => {
+                Some(state) if stack_member_needs_recovery(Some(&state), false) => {}
+                _ => {
                     pending_boot_start_done(container);
                     continue;
                 }
@@ -1532,5 +1539,26 @@ mod installed_concurrency_tests {
         clear_installed(dir.path(), "app-3").await;
         assert_eq!(load_installed_apps(dir.path()).await.len(), 23);
         assert!(!dir.path().join("installed-apps.json.tmp").exists());
+    }
+}
+
+#[cfg(test)]
+mod stack_recovery_overlay_tests {
+    use super::stack_member_needs_recovery;
+    #[test]
+    fn only_existing_stopped_members_receive_recovery_overlay() {
+        for state in [
+            None,
+            Some("running"),
+            Some("paused"),
+            Some("restarting"),
+            Some("removing"),
+        ] {
+            assert!(!stack_member_needs_recovery(state, false));
+        }
+        for state in ["exited", "stopped", "created", "configured"] {
+            assert!(stack_member_needs_recovery(Some(state), false));
+            assert!(!stack_member_needs_recovery(Some(state), true));
+        }
     }
 }

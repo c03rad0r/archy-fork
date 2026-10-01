@@ -29,3 +29,14 @@ unrestricted `cargo test` on a node with installed apps: older mocked-runtime
 tests still reached real service commands. The runner isolates wallet data,
 service buses, container storage, networking, and process IDs. Compilation with
 `cargo test --no-run` is safe. Keep separately authorized live checks explicit.
+
+## Active release regression checklist
+
+Before resuming release work, read
+`docs/post-1.8.22-regressions-20261001.md` and retain its unfinished tasks.
+The operator requested that every reported issue be tracked, fixed and tested
+before another OTA/ISO. Keep source/unit-test results separate from actual-node
+acceptance. In particular, paid-file recovery must not send another payment,
+and app cleanup must preserve wallets, persistent data and uninstall decisions.
+Do not mark the new paid-file incident resolved merely because the earlier
+Framework LND startup incident was closed.

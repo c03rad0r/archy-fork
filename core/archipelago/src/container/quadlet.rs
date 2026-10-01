@@ -713,29 +713,76 @@ pub async fn unit_dir() -> Result<PathBuf> {
     Ok(dir)
 }
 
-/// Atomically write `unit` into `dir/<name>.container` if the bytes
-/// differ from what's already there. Returns true if the file changed.
+/// The early same-node Portainer repair used a managed Quadlet drop-in. Once
+/// the manifest supplies slirp, the two Network= entries are additive and
+/// Podman rejects startup. Retire only that exact redundant managed override;
+/// arbitrary operator settings must survive reconciliation.
+pub async fn redundant_managed_network_override(
+    unit: &QuadletUnit,
+    dir: &Path,
+) -> Result<Option<PathBuf>> {
+    if unit.name != "portainer" || !matches!(unit.network, NetworkMode::Slirp4netns) {
+        return Ok(None);
+    }
+    let path = dir.join("portainer.container.d/archy-same-node-network.conf");
+    let body = match fs::read_to_string(&path).await {
+        Ok(body) => body,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(error).context("read managed Portainer network override"),
+    };
+    let lines: Vec<&str> = body
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty() && !line.starts_with(['#', ';']))
+        .collect();
+    Ok((lines == ["[Container]", "Network=slirp4netns"]).then_some(path))
+}
+
+async fn retire_managed_network_override(path: &Path) -> Result<()> {
+    let backup = path.with_extension("conf.retired");
+    match fs::hard_link(path, &backup).await {
+        Ok(()) => {}
+        Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
+            anyhow::ensure!(
+                fs::read(path).await? == fs::read(&backup).await?,
+                "Existing Portainer override backup differs; preserve both for operator review"
+            );
+        }
+        Err(error) => return Err(error).context("back up managed Portainer network override"),
+    }
+    fs::remove_file(path)
+        .await
+        .context("retire redundant Portainer network override")?;
+    tracing::info!("Retired redundant managed Portainer network override; backup retained");
+    Ok(())
+}
+
+/// Atomically write the manifest unit and retire known redundant managed
+/// overrides. Returns true whenever systemd needs a daemon-reload.
 pub async fn write_if_changed(unit: &QuadletUnit, dir: &Path) -> Result<bool> {
     let path = dir.join(unit.unit_filename());
     let new_bytes = unit.render();
-
-    if let Ok(old) = fs::read_to_string(&path).await {
-        if old == new_bytes {
-            return Ok(false);
-        }
+    let redundant = redundant_managed_network_override(unit, dir).await?;
+    let changed = fs::read_to_string(&path)
+        .await
+        .map(|old| old != new_bytes)
+        .unwrap_or(true);
+    if changed {
+        fs::create_dir_all(dir)
+            .await
+            .with_context(|| format!("create_dir_all {}", dir.display()))?;
+        let tmp = path.with_extension("container.tmp");
+        fs::write(&tmp, new_bytes.as_bytes())
+            .await
+            .with_context(|| format!("write tmp {}", tmp.display()))?;
+        fs::rename(&tmp, &path)
+            .await
+            .with_context(|| format!("rename {} -> {}", tmp.display(), path.display()))?;
     }
-
-    fs::create_dir_all(dir)
-        .await
-        .with_context(|| format!("create_dir_all {}", dir.display()))?;
-    let tmp = path.with_extension("container.tmp");
-    fs::write(&tmp, new_bytes.as_bytes())
-        .await
-        .with_context(|| format!("write tmp {}", tmp.display()))?;
-    fs::rename(&tmp, &path)
-        .await
-        .with_context(|| format!("rename {} -> {}", tmp.display(), path.display()))?;
-    Ok(true)
+    if let Some(override_path) = &redundant {
+        retire_managed_network_override(override_path).await?;
+    }
+    Ok(changed || redundant.is_some())
 }
 
 /// Reload the user systemd manager. Required after any quadlet write
@@ -1989,6 +2036,80 @@ app:
         let new = "[Container]\nNetwork=archy-net\nNetworkAlias=bitcoin-knots\n";
         assert!(network_aliases_changed(old, new));
         assert!(!network_aliases_changed(new, new));
+    }
+
+    #[tokio::test]
+    async fn redundant_portainer_override_is_backed_up_and_retired_even_when_base_matches() {
+        let dir = tempfile::tempdir().unwrap();
+        let manifest =
+            AppManifest::parse(include_str!("../../../../apps/portainer/manifest.yml")).unwrap();
+        let unit = QuadletUnit::from_manifest(&manifest, "portainer");
+        assert!(write_if_changed(&unit, dir.path()).await.unwrap());
+        let path = dir
+            .path()
+            .join("portainer.container.d/archy-same-node-network.conf");
+        fs::create_dir_all(path.parent().unwrap()).await.unwrap();
+        let old = "[Container]\nNetwork=slirp4netns\n";
+        fs::write(&path, old).await.unwrap();
+        assert!(redundant_managed_network_override(&unit, dir.path())
+            .await
+            .unwrap()
+            .is_some());
+        assert!(write_if_changed(&unit, dir.path()).await.unwrap());
+        assert!(!path.exists());
+        assert_eq!(
+            fs::read_to_string(path.with_extension("conf.retired"))
+                .await
+                .unwrap(),
+            old
+        );
+        assert!(!write_if_changed(&unit, dir.path()).await.unwrap());
+        assert_eq!(
+            fs::read_to_string(dir.path().join("portainer.container"))
+                .await
+                .unwrap()
+                .matches("Network=slirp4netns")
+                .count(),
+            1
+        );
+    }
+
+    #[tokio::test]
+    async fn network_override_migration_preserves_operator_customizations_and_failed_backups() {
+        let dir = tempfile::tempdir().unwrap();
+        let manifest =
+            AppManifest::parse(include_str!("../../../../apps/portainer/manifest.yml")).unwrap();
+        let mut unit = QuadletUnit::from_manifest(&manifest, "portainer");
+        let path = dir
+            .path()
+            .join("portainer.container.d/archy-same-node-network.conf");
+        fs::create_dir_all(path.parent().unwrap()).await.unwrap();
+        for custom in [
+            "[Container]\nNetwork=custom-net\n",
+            "[Container]\nNetwork=slirp4netns\nEnvironment=OPERATOR_SETTING=1\n",
+        ] {
+            fs::write(&path, custom).await.unwrap();
+            assert!(redundant_managed_network_override(&unit, dir.path())
+                .await
+                .unwrap()
+                .is_none());
+            write_if_changed(&unit, dir.path()).await.unwrap();
+            assert_eq!(fs::read_to_string(&path).await.unwrap(), custom);
+        }
+        fs::write(&path, "[Container]\nNetwork=slirp4netns\n")
+            .await
+            .unwrap();
+        unit.network = NetworkMode::Pasta;
+        assert!(redundant_managed_network_override(&unit, dir.path())
+            .await
+            .unwrap()
+            .is_none());
+        unit.network = NetworkMode::Slirp4netns;
+        fs::write(path.with_extension("conf.retired"), "different backup")
+            .await
+            .unwrap();
+        assert!(write_if_changed(&unit, dir.path()).await.is_err());
+        assert!(path.exists(), "failure must preserve the active override");
     }
 
     #[tokio::test]

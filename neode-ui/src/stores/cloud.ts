@@ -8,6 +8,41 @@ export const useCloudStore = defineStore('cloud', () => {
   const loading = ref(false)
   const error = ref<string | null>(null)
   const authenticated = ref(false)
+  const upload = ref<{ active: boolean; filename: string; destination: string; sent: number; total: number; completed: number; count: number; error: string | null; cancelled: boolean } | null>(null)
+  let uploadController: AbortController | null = null
+  function cancelUpload() { uploadController?.abort() }
+  function dismissUpload() { if (!upload.value?.active) upload.value = null }
+  async function uploadFiles(files: File[]) {
+    if (!files.length || upload.value?.active) return
+    const destination = currentPath.value
+    const controller = new AbortController()
+    uploadController = controller
+    const task = { active: true, filename: files[0]!.name, destination, sent: 0, total: files.reduce((n, f) => n + f.size, 0), completed: 0, count: files.length, error: null as string | null, cancelled: false }
+    upload.value = task
+    let completedBytes = 0
+    try {
+      for (const file of files) {
+        if (controller.signal.aborted) throw new DOMException('Upload cancelled', 'AbortError')
+        upload.value.filename = file.name
+        await fileBrowserClient.upload(destination, file, { signal: controller.signal, onProgress: (sent) => {
+          if (upload.value?.active) upload.value.sent = completedBytes + sent
+        } })
+        completedBytes += file.size
+        upload.value.sent = completedBytes
+        upload.value.completed++
+      }
+    } catch (error) {
+      upload.value.cancelled = controller.signal.aborted
+      if (!upload.value.cancelled) upload.value.error = error instanceof Error ? error.message : 'Upload failed'
+    } finally {
+      upload.value.active = false
+      uploadController = null
+      // Navigation must never redirect subsequent files into the new folder.
+      pathCache.delete(destination)
+      if (currentPath.value === destination) await refresh()
+    }
+  }
+
   // Per-path listing cache: re-entering a folder paints the last listing
   // immediately (no spinner) while the fresh listing loads behind it.
   const pathCache = new Map<string, FileBrowserItem[]>()
@@ -131,6 +166,7 @@ export const useCloudStore = defineStore('cloud', () => {
   }
 
   return {
+    upload, uploadFiles, cancelUpload, dismissUpload,
     currentPath,
     items,
     loading,

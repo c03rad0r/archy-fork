@@ -39,6 +39,8 @@
       </div>
     </div>
 
+    <UploadProgress />
+
     <!-- App Not Installed -->
     <div v-if="!appRunning" class="glass-card p-12 text-center flex-1 flex flex-col items-center justify-center">
       <svg class="w-20 h-20 text-white/15 mb-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -75,19 +77,11 @@
           <p class="text-sm text-white/50">Files will be added to the current folder</p>
         </div>
       </div>
-      <!-- Upload progress -->
-      <div v-if="uploading" class="glass-card p-3 mb-3 flex items-center gap-3">
-        <div class="w-5 h-5 border-2 border-white/20 border-t-white/80 rounded-full animate-spin"></div>
-        <span class="text-sm text-white/70">Uploading...</span>
-      </div>
-      <div v-if="uploadError" class="glass-card p-3 mb-3 flex items-center gap-3 border border-red-500/30">
-        <span class="text-sm text-red-400">{{ uploadError }}</span>
-        <button class="text-xs text-white/50 hover:text-white ml-auto" @click="uploadError = null">Dismiss</button>
-      </div>
 
       <CloudToolbar
         :breadcrumbs="cloudStore.breadcrumbs"
         :view-mode="viewMode"
+        :uploading="!!cloudStore.upload?.active"
         @navigate="navigateCloudPath"
         @refresh="cloudStore.refresh()"
         @upload="handleUpload"
@@ -105,6 +99,7 @@
           :items="cloudStore.sortedItems"
           :loading="cloudStore.loading"
           :view-mode="viewMode"
+        :uploading="!!cloudStore.upload?.active"
           @navigate="navigateCloudPath"
           @delete="handleDelete"
           @play="handlePlay"
@@ -159,6 +154,7 @@
 </template>
 
 <script setup lang="ts">
+import UploadProgress from '@/components/cloud/UploadProgress.vue'
 import { ref, computed, watch } from 'vue'
 import { useRouter, useRoute, RouterLink } from 'vue-router'
 import { useAppStore } from '../stores/app'
@@ -193,7 +189,6 @@ watch(() => cloudStore.currentPath, (path) => {
 })
 
 const iframeLoaded = ref(false)
-const uploading = ref(false)
 const folderId = computed(() => route.params.folderId as string)
 const routeFolderPath = computed(() => normalizeCloudPath(route.query.path, section.value?.initialPath || '/'))
 
@@ -348,7 +343,6 @@ function handleShare(path: string, name: string, isDir: boolean) {
   shareTarget.value = { path, name, isDir }
 }
 
-const uploadError = ref<string | null>(null)
 const draggingOver = ref(false)
 let dragLeaveTimer: ReturnType<typeof setTimeout> | null = null
 
@@ -372,17 +366,7 @@ function onDrop(e: DragEvent) {
 }
 
 async function handleUpload(files: File[]) {
-  uploading.value = true
-  uploadError.value = null
-  try {
-    for (const file of files) {
-      await cloudStore.uploadFile(file)
-    }
-  } catch (e) {
-    uploadError.value = e instanceof Error ? e.message : 'Upload failed'
-  } finally {
-    uploading.value = false
-  }
+  await cloudStore.uploadFiles(files)
 }
 
 async function handleDelete(path: string) {

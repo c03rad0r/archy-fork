@@ -246,3 +246,9 @@ it('does not display a stale Mempool frontend alias beside its live package', ()
   expect(shown.map(([id]) => id)).toEqual(['mempool'])
   expect(filterEntriesForTab([['mempool-web', alias]], 'apps', 'all').map(([id]) => id)).toEqual(['mempool-web'])
 })
+
+it('shows Immich as one app without internal database/cache cards in either tab', () => {
+  const entries: [string, PackageDataEntry][] = ['immich', 'immich-postgres', 'immich-redis', 'immich_postgres', 'immich_redis'].map(id => [id, makePkg(id, id, 'media')])
+  expect(filterEntriesForTab(entries, 'apps', 'all').map(([id]) => id)).toEqual(['immich'])
+  expect(filterEntriesForTab(entries, 'services', 'all')).toEqual([])
+})

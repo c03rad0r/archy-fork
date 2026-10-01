@@ -336,3 +336,45 @@ describe('sanitizePath', () => {
     expect(sanitizePath('/photos//image.jpg')).toBe('/photos/image.jpg')
   })
 })
+
+describe('upload transport progress and cancellation', () => {
+  class UploadXHR {
+    static instances: UploadXHR[] = []
+    upload = { onprogress: null as ((e: { loaded: number }) => void) | null }
+    onload: (() => void) | null = null
+    onabort: (() => void) | null = null
+    onerror: (() => void) | null = null
+    status = 200
+    withCredentials = false
+    contentType = 'application/json'
+    open = vi.fn(); setRequestHeader = vi.fn(); send = vi.fn()
+    abort = vi.fn(() => this.onabort?.())
+    getResponseHeader() { return this.contentType }
+    constructor() { UploadXHR.instances.push(this) }
+  }
+  beforeEach(() => { setAuthenticated(); UploadXHR.instances = []; vi.stubGlobal('XMLHttpRequest', UploadXHR) })
+  it('sends the file bytes, escapes folder names, and waits for server acceptance after 100%', async () => {
+    const controller = new AbortController(); const onProgress = vi.fn()
+    const file = new File(['data'], 'a #.txt')
+    let complete = false
+    const job = fileBrowserClient.upload('/folder #1', file, { signal: controller.signal, onProgress }).then(() => { complete = true })
+    await Promise.resolve(); await Promise.resolve()
+    const xhr = UploadXHR.instances[0]!
+    expect(xhr.open).toHaveBeenCalledWith('POST', expect.stringMatching(/\/app\/filebrowser\/api\/resources\/folder%20%231\/a%20%23.txt\?override=true$/))
+    expect(xhr.send).toHaveBeenCalledWith(file)
+    xhr.upload.onprogress?.({ loaded: 4 }); expect(onProgress).toHaveBeenCalledWith(4)
+    expect(complete).toBe(false)
+    xhr.onload?.(); await job; expect(complete).toBe(true)
+  })
+  it('cancels the actual request and refuses HTML masquerading as upload success', async () => {
+    const controller = new AbortController()
+    const job = fileBrowserClient.upload('/', new File(['x'], 'f'), { signal: controller.signal, onProgress: vi.fn() })
+    await Promise.resolve(); await Promise.resolve()
+    controller.abort(); await expect(job).rejects.toMatchObject({ name: 'AbortError' })
+    expect(UploadXHR.instances[0]!.abort).toHaveBeenCalled()
+    const next = fileBrowserClient.upload('/', new File(['x'], 'f'), { signal: new AbortController().signal, onProgress: vi.fn() })
+    await Promise.resolve(); await Promise.resolve()
+    const xhr = UploadXHR.instances[1]!; xhr.contentType = 'text/html'; xhr.onload?.()
+    await expect(next).rejects.toThrow('login page')
+  })
+})

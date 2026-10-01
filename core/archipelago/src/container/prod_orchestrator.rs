@@ -3153,7 +3153,12 @@ impl ProdContainerOrchestrator {
         let restart_for_exec_change = quadlet::exec_changed(&old_body, &new_body);
         let restart_for_health_change = quadlet::health_cmd_changed(&old_body, &new_body);
         let restart_for_security_change = quadlet::security_changed(&old_body, &new_body);
+        let restart_for_managed_override =
+            quadlet::redundant_managed_network_override(&unit, &unit_dir)
+                .await?
+                .is_some();
         let needs_restart = restart_required
+            || restart_for_managed_override
             || restart_for_port_change
             || restart_for_network_alias_change
             || restart_for_exec_change
@@ -4881,6 +4886,26 @@ impl ContainerOrchestrator for ProdContainerOrchestrator {
     /// here (production volumes live under `/var/lib/archipelago` — removal is a
     /// separate operation owned by the data layer, not this orchestrator).
     async fn remove(&self, app_id: &str, _preserve_data: bool) -> Result<()> {
+        // A removed catalog entry must remain uninstallable. The RPC caller
+        // still removes legacy containers and persists uninstall intent after
+        // confirming they are gone; do not block it on a missing manifest.
+        if !self.state.read().await.manifests.contains_key(app_id) {
+            anyhow::ensure!(
+                !app_id.is_empty()
+                    && app_id.len() <= 128
+                    && app_id
+                        .bytes()
+                        .all(|c| c.is_ascii_alphanumeric() || matches!(c, b'-' | b'_')),
+                "Invalid app id"
+            );
+            let lock = self.app_lock(app_id).await;
+            let _guard = lock.lock().await;
+            for name in [app_id.to_string(), format!("archy-{app_id}")] {
+                self.remove_quadlet_unit_if_present(&name).await?;
+            }
+            self.state.write().await.disabled.insert(app_id.to_string());
+            return Ok(());
+        }
         let lm = self.loaded(app_id).await?;
         let lock = self.app_lock(app_id).await;
         let _guard = lock.lock().await;
@@ -7433,6 +7458,19 @@ app:
                 "start_container:bitcoin-knots",
             ]
         );
+    }
+
+    #[tokio::test]
+    async fn removed_catalog_entry_does_not_block_legacy_uninstall() {
+        let rt = Arc::new(MockRuntime::default());
+        let orch = orch_with(rt.clone()).await;
+        orch.remove("cryptpad", true).await.unwrap();
+        assert!(orch.state.read().await.disabled.contains("cryptpad"));
+        assert!(
+            rt.calls().is_empty(),
+            "legacy RPC teardown owns the actual containers"
+        );
+        assert!(orch.remove("../other", true).await.is_err());
     }
 
     #[tokio::test]

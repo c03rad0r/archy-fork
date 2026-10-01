@@ -74,7 +74,7 @@ impl ApiHandler {
         let invoice_hash = headers
             .get("x-invoice-hash")
             .and_then(|v| v.to_str().ok())
-            .map(|s| s.to_string())
+            .map(|s| s.to_ascii_lowercase())
             .or_else(|| {
                 headers
                     .get("x-onchain-address")
@@ -97,6 +97,46 @@ impl ApiHandler {
             Some(token) => self.session_store.validate(&token).await,
             None => false,
         };
+
+        // Payment settlement is verified on the seller even when no status
+        // poll preceded this download (e.g. direct payment from another node).
+        let requires_payment = if !owner_session && headers.contains_key("x-invoice-hash") {
+            content_server::load_catalog(&config.data_dir)
+                .await?
+                .items
+                .iter()
+                .any(|item| {
+                    item.id == content_id
+                        && matches!(item.access, content_server::AccessControl::Paid { .. })
+                })
+        } else {
+            false
+        };
+        if requires_payment {
+            if let Some(hash) = headers.get("x-invoice-hash").and_then(|v| v.to_str().ok()) {
+                if hash.len() != 64 || !hash.bytes().all(|c| c.is_ascii_hexdigit()) {
+                    return Ok(build_response(
+                        StatusCode::BAD_REQUEST,
+                        "text/plain",
+                        hyper::Body::from("Invalid payment hash"),
+                    ));
+                }
+                if let Err(error) = self
+                    .rpc_handler
+                    .settle_content_invoice(hash, content_id)
+                    .await
+                {
+                    tracing::warn!("Cannot verify peer-file invoice settlement: {error:#}");
+                    return Ok(build_response(
+                        StatusCode::SERVICE_UNAVAILABLE,
+                        "application/json",
+                        hyper::Body::from(
+                            r#"{"error":"Payment verification is temporarily unavailable. Retry the download without paying again."}"#,
+                        ),
+                    ));
+                }
+            }
+        }
 
         // Parse Range header for streaming support
         let range = headers
@@ -249,7 +289,13 @@ impl ApiHandler {
             .await
         {
             Ok((bolt11, payment_hash)) if !payment_hash.is_empty() => {
-                crate::content_invoice::record_pending(&payment_hash, content_id, price_sats).await;
+                crate::content_invoice::record_pending(
+                    &self.config.data_dir,
+                    &payment_hash,
+                    content_id,
+                    price_sats,
+                )
+                .await?;
                 let body = serde_json::json!({
                     "bolt11": bolt11,
                     "payment_hash": payment_hash,
@@ -309,26 +355,10 @@ impl ApiHandler {
             ));
         }
 
-        // The hash must be one we issued for exactly this content item.
-        match crate::content_invoice::lookup(payment_hash).await {
-            Some((cid, _)) if cid == content_id => {}
-            _ => {
-                return Ok(build_response(
-                    StatusCode::NOT_FOUND,
-                    "application/json",
-                    hyper::Body::from(r#"{"error":"Unknown invoice"}"#),
-                ))
-            }
-        }
-
-        // Already paid? Otherwise ask our LND and persist the result.
-        let mut paid = crate::content_invoice::is_paid_for(payment_hash, content_id).await;
-        if !paid {
-            if let Ok(true) = self.rpc_handler.invoice_is_settled(payment_hash).await {
-                crate::content_invoice::mark_paid(payment_hash).await;
-                paid = true;
-            }
-        }
+        let paid = self
+            .rpc_handler
+            .settle_content_invoice(payment_hash, content_id)
+            .await?;
 
         let body = serde_json::json!({ "paid": paid });
         Ok(build_response(
@@ -389,7 +419,13 @@ impl ApiHandler {
 
         match self.rpc_handler.new_onchain_address().await {
             Ok(address) if !address.is_empty() => {
-                crate::content_invoice::record_pending(&address, content_id, price_sats).await;
+                crate::content_invoice::record_pending(
+                    &self.config.data_dir,
+                    &address,
+                    content_id,
+                    price_sats,
+                )
+                .await?;
                 let body = serde_json::json!({
                     "address": address,
                     "amount_sats": price_sats,
@@ -439,7 +475,7 @@ impl ApiHandler {
             ));
         }
         // The address must be one we issued for exactly this content item.
-        let price = match crate::content_invoice::lookup(address).await {
+        let price = match crate::content_invoice::lookup(&self.config.data_dir, address).await? {
             Some((cid, price)) if cid == content_id => price,
             _ => {
                 return Ok(build_response(
@@ -450,10 +486,11 @@ impl ApiHandler {
             }
         };
 
-        let mut paid = crate::content_invoice::is_paid_for(address, content_id).await;
+        let mut paid =
+            crate::content_invoice::is_paid_for(&self.config.data_dir, address, content_id).await;
         if !paid {
             if let Ok(true) = self.rpc_handler.onchain_received(address, price).await {
-                crate::content_invoice::mark_paid(address).await;
+                crate::content_invoice::mark_paid(&self.config.data_dir, address).await?;
                 paid = true;
             }
         }

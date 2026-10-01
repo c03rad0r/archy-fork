@@ -453,6 +453,56 @@ impl RpcHandler {
         Ok(settled)
     }
 
+    /// Verify against LND at download time, rather than relying on a browser
+    /// having polled first. The memo/amount also recover pre-upgrade in-memory
+    /// entitlements after restart; unrelated invoices never unlock a file.
+    pub(crate) async fn settle_content_invoice(
+        &self,
+        hash: &str,
+        content_id: &str,
+    ) -> Result<bool> {
+        anyhow::ensure!(
+            hash.len() == 64 && hash.bytes().all(|c| c.is_ascii_hexdigit()),
+            "Invalid payment hash"
+        );
+        let hash = hash.to_ascii_lowercase();
+        let existing = crate::content_invoice::lookup(&self.config.data_dir, &hash).await?;
+        if let Some((id, _)) = &existing {
+            if id != content_id {
+                return Ok(false);
+            }
+        }
+        if crate::content_invoice::is_paid_for(&self.config.data_dir, &hash, content_id).await {
+            return Ok(true);
+        }
+        let (client, macaroon_hex) = self.lnd_client().await?;
+        let response = client
+            .get(format!("{LND_REST_BASE_URL}/v1/invoice/{hash}"))
+            .header("Grpc-Metadata-macaroon", &macaroon_hex)
+            .send()
+            .await?;
+        if response.status() == reqwest::StatusCode::NOT_FOUND {
+            return Ok(false);
+        }
+        let body: serde_json::Value = response.error_for_status()?.json().await?;
+        let Some(price) = content_invoice_amount(&body, content_id) else {
+            return Ok(false);
+        };
+        if existing
+            .as_ref()
+            .is_some_and(|(_, expected)| *expected != price)
+        {
+            return Ok(false);
+        }
+        crate::content_invoice::record_pending(&self.config.data_dir, &hash, content_id, price)
+            .await?;
+        let settled = content_invoice_fully_settled(&body, price);
+        if settled {
+            crate::content_invoice::mark_paid(&self.config.data_dir, &hash).await?;
+        }
+        Ok(settled)
+    }
+
     /// Generate a fresh on-chain receive address (seller side, #46).
     pub(crate) async fn new_onchain_address(&self) -> Result<String> {
         let (client, macaroon_hex) = self.lnd_client().await?;
@@ -1442,5 +1492,83 @@ mod tests {
         let s = format!("{err}");
         assert!(s.starts_with("Bitcoin address"), "got: {s}");
         assert!(s.contains("[LND_REST_UNREACHABLE]"), "got: {s}");
+    }
+}
+
+// LND REST uses decimal strings for int64 fields. Match the complete seller
+// memo, not a substring supplied by a buyer or an arbitrary settled invoice.
+fn json_u64(value: &serde_json::Value) -> Option<u64> {
+    value.as_u64().or_else(|| value.as_str()?.parse().ok())
+}
+fn content_invoice_fully_settled(body: &serde_json::Value, price: u64) -> bool {
+    let settled = match body.get("state").and_then(|v| v.as_str()) {
+        Some(state) => state == "SETTLED",
+        None => body.get("settled").and_then(|v| v.as_bool()) == Some(true),
+    };
+    settled
+        && price > 0
+        && body
+            .get("amt_paid_sat")
+            .and_then(json_u64)
+            .is_some_and(|paid| paid >= price)
+}
+fn content_invoice_amount(body: &serde_json::Value, content_id: &str) -> Option<u64> {
+    if body.get("memo")?.as_str()? != format!("Archipelago peer file {content_id}") {
+        return None;
+    }
+    body.get("value").and_then(json_u64).filter(|v| *v > 0)
+}
+
+#[cfg(test)]
+mod peer_file_invoice_tests {
+    use super::*;
+    #[test]
+    fn settlement_requires_terminal_state_and_full_amount() {
+        for state in ["OPEN", "ACCEPTED", "CANCELED", "unknown"] {
+            assert!(!content_invoice_fully_settled(
+                &serde_json::json!({"state":state,"settled":true,"amt_paid_sat":"100"}),
+                7
+            ));
+        }
+        for amount in [
+            serde_json::json!(6),
+            serde_json::json!("-1"),
+            serde_json::json!(null),
+            serde_json::json!("bad"),
+        ] {
+            assert!(!content_invoice_fully_settled(
+                &serde_json::json!({"state":"SETTLED","amt_paid_sat":amount}),
+                7
+            ));
+        }
+        for amount in [serde_json::json!(7), serde_json::json!("8")] {
+            assert!(content_invoice_fully_settled(
+                &serde_json::json!({"state":"SETTLED","amt_paid_sat":amount}),
+                7
+            ));
+        }
+        assert!(content_invoice_fully_settled(
+            &serde_json::json!({"settled":true,"amt_paid_sat":"7"}),
+            7
+        ));
+        assert!(!content_invoice_fully_settled(
+            &serde_json::json!({"state":"SETTLED","amt_paid_sat":"7"}),
+            0
+        ));
+    }
+    #[test]
+    fn legacy_recovery_requires_exact_file_memo_and_positive_amount() {
+        let invoice = serde_json::json!({"memo":"Archipelago peer file file-1", "value":"7"});
+        assert_eq!(content_invoice_amount(&invoice, "file-1"), Some(7));
+        assert_eq!(content_invoice_amount(&invoice, "file-2"), None);
+        for value in [
+            serde_json::json!("-1"),
+            serde_json::json!(0),
+            serde_json::json!("bad"),
+        ] {
+            let mut invalid = invoice.clone();
+            invalid["value"] = value;
+            assert_eq!(content_invoice_amount(&invalid, "file-1"), None);
+        }
     }
 }

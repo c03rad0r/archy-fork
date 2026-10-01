@@ -49,14 +49,7 @@
             {{ section.name }}
           </button>
         </div>
-        <input
-          v-model="searchQuery"
-          type="text"
-          placeholder="Search apps..."
-          aria-label="Search apps"
-          data-controller-no-submit
-          class="app-header-search text-white placeholder-white/50 focus:outline-none transition-colors"
-        />
+        <AppSearchField v-model="searchQuery" placeholder="Search apps..." label="Search apps" />
         <RefreshIndicator :state="catalogResource.entry.loadState" label="Refreshing app store catalog" />
       </div>
 
@@ -82,14 +75,7 @@
             type="button"
           >{{ section.name }}</button>
         </div>
-        <input
-          v-model="searchQuery"
-          type="text"
-          placeholder="Search apps..."
-          aria-label="Search apps"
-          data-controller-no-submit
-          class="app-header-search w-full text-white placeholder-white/50 focus:outline-none transition-colors"
-        />
+        <AppSearchField v-model="searchQuery" placeholder="Search apps..." label="Search apps" />
       </div>
     </div>
 
@@ -345,6 +331,7 @@ let discoverAnimationDone = false
 </script>
 
 <script setup lang="ts">
+import AppSearchField from '@/components/AppSearchField.vue'
 import { ref, computed, onBeforeUnmount, onMounted } from 'vue'
 import { useRouter, RouterLink } from 'vue-router'
 import { useAppStore } from '@/stores/app'

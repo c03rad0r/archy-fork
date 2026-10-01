@@ -56,14 +56,7 @@
           </button>
         </div>
         <div class="app-header-search-wrap flex items-center gap-2">
-          <input
-            v-model="searchQuery"
-            type="text"
-            :placeholder="t('apps.searchPlaceholder')"
-            :aria-label="t('apps.searchLabel')"
-            data-controller-no-submit
-            class="app-header-search min-w-0 flex-1 text-white placeholder-white/50 focus:outline-none transition-colors"
-          />
+          <AppSearchField v-model="searchQuery" :placeholder="t('apps.searchPlaceholder')" :label="t('apps.searchLabel')" />
           <button
             type="button"
             class="sideload-icon-btn"
@@ -106,14 +99,7 @@
           >{{ category.name }}</button>
         </div>
         <div class="flex items-center gap-2">
-          <input
-            v-model="searchQuery"
-            type="text"
-            :placeholder="t('apps.searchPlaceholder')"
-            :aria-label="t('apps.searchLabel')"
-            data-controller-no-submit
-            class="app-header-search min-w-0 flex-1 text-white placeholder-white/50 focus:outline-none transition-colors"
-          />
+          <AppSearchField v-model="searchQuery" :placeholder="t('apps.searchPlaceholder')" :label="t('apps.searchLabel')" />
           <button
             type="button"
             class="sideload-icon-btn sideload-icon-btn-mobile"
@@ -374,6 +360,7 @@ let appsAnimationDone = false
 </script>
 
 <script setup lang="ts">
+import AppSearchField from '@/components/AppSearchField.vue'
 import { computed, ref, watch, onActivated, onBeforeUnmount, onDeactivated, onMounted } from 'vue'
 import { useRouter, useRoute, RouterLink } from 'vue-router'
 import { useI18n } from 'vue-i18n'

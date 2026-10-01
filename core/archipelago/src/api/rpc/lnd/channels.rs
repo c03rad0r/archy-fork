@@ -473,6 +473,7 @@ impl RpcHandler {
             ));
         }
 
+        let fee_query = close_channel_fee_query(&params)?;
         let force = params
             .get("force")
             .and_then(|v| v.as_bool())
@@ -498,13 +499,11 @@ impl RpcHandler {
             .build()
             .context("Failed to create streaming HTTP client")?;
 
-        let url = format!(
-            "{LND_REST_BASE_URL}/v1/channels/{}/{}?force={}",
-            parts[0], parts[1], force
-        );
+        let url = format!("{LND_REST_BASE_URL}/v1/channels/{}/{}", parts[0], parts[1]);
 
         let mut resp = client
             .delete(&url)
+            .query(&fee_query)
             .header("Grpc-Metadata-macaroon", &macaroon_hex)
             .send()
             .await
@@ -569,6 +568,104 @@ impl RpcHandler {
             // negotiating with the peer — report initiated, the channel list
             // will show it under Closing.
             Err(_) => Ok(serde_json::json!({ "success": true, "closing_txid": "" })),
+        }
+    }
+}
+
+/// LND's CloseChannel REST endpoint takes fee selection as query parameters.
+/// With neither parameter LND uses a lax target; keep legacy clients on our
+/// explicit Standard target rather than silently accepting that default.
+fn close_channel_fee_query(params: &serde_json::Value) -> Result<Vec<(&'static str, String)>> {
+    let force = match params.get("force") {
+        None | Some(serde_json::Value::Null) => false,
+        Some(value) => value
+            .as_bool()
+            .ok_or_else(|| anyhow::anyhow!("force must be a boolean"))?,
+    };
+    let integer = |key: &str, max: u64| -> Result<Option<u64>> {
+        match params.get(key) {
+            None | Some(serde_json::Value::Null) => Ok(None),
+            Some(value) => {
+                let n = value
+                    .as_u64()
+                    .ok_or_else(|| anyhow::anyhow!("{key} must be a positive whole number"))?;
+                anyhow::ensure!((1..=max).contains(&n), "{key} must be between 1 and {max}");
+                Ok(Some(n))
+            }
+        }
+    };
+    let target = integer("target_conf", 1008)?;
+    let rate = integer("sat_per_vbyte", 5000)?;
+    anyhow::ensure!(
+        target.is_none() || rate.is_none(),
+        "Specify either target_conf or sat_per_vbyte, not both"
+    );
+    anyhow::ensure!(
+        !force || (target.is_none() && rate.is_none()),
+        "Closing fee selection requires a cooperative close"
+    );
+    let mut query = vec![("force", force.to_string())];
+    if !force {
+        if let Some(rate) = rate {
+            query.push(("sat_per_vbyte", rate.to_string()));
+        } else {
+            query.push(("target_conf", target.unwrap_or(6).to_string()));
+        }
+    }
+    Ok(query)
+}
+
+#[cfg(test)]
+mod close_fee_tests {
+    use super::*;
+    #[test]
+    fn close_fee_query_forwards_presets_custom_and_legacy_default() {
+        for target in [1, 3, 6, 1008] {
+            assert_eq!(
+                close_channel_fee_query(&serde_json::json!({"target_conf":target})).unwrap(),
+                vec![
+                    ("force", "false".into()),
+                    ("target_conf", target.to_string())
+                ]
+            );
+        }
+        for rate in [1, 25, 5000] {
+            let query =
+                close_channel_fee_query(&serde_json::json!({"sat_per_vbyte":rate})).unwrap();
+            let request = reqwest::Client::new()
+                .delete("http://localhost/v1/channels/test/0")
+                .query(&query)
+                .build()
+                .unwrap();
+            assert_eq!(request.method(), reqwest::Method::DELETE);
+            assert_eq!(
+                request.url().query(),
+                Some(format!("force=false&sat_per_vbyte={rate}").as_str())
+            );
+        }
+        assert_eq!(
+            close_channel_fee_query(&serde_json::json!({})).unwrap(),
+            vec![("force", "false".into()), ("target_conf", "6".into())]
+        );
+        assert_eq!(
+            close_channel_fee_query(&serde_json::json!({"force":true})).unwrap(),
+            vec![("force", "true".into())]
+        );
+    }
+    #[test]
+    fn malformed_or_conflicting_close_fees_fail_before_wallet_access() {
+        for params in [
+            serde_json::json!({"target_conf":1,"sat_per_vbyte":2}),
+            serde_json::json!({"force":true,"target_conf":1}),
+            serde_json::json!({"force":"false"}),
+            serde_json::json!({"target_conf":0}),
+            serde_json::json!({"target_conf":1009}),
+            serde_json::json!({"sat_per_vbyte":5001}),
+            serde_json::json!({"sat_per_vbyte":-1}),
+            serde_json::json!({"sat_per_vbyte":1.5}),
+            serde_json::json!({"sat_per_vbyte":"25"}),
+        ] {
+            assert!(close_channel_fee_query(&params).is_err(), "{params}");
         }
     }
 }

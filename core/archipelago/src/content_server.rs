@@ -400,7 +400,7 @@ where
                 if !authorized {
                     if let Some(hash) = invoice_hash {
                         if method_accepted(&item.access, "lightning")
-                            && crate::content_invoice::is_paid_for(hash, id).await
+                            && crate::content_invoice::is_paid_for(data_dir, hash, id).await
                         {
                             authorized = true;
                         }

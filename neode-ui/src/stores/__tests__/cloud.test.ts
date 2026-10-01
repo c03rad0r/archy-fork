@@ -231,3 +231,50 @@ describe('useCloudStore', () => {
     expect(store.error).toBeNull()
   })
 })
+
+describe('persistent upload batch', () => {
+  beforeEach(() => { setActivePinia(createPinia()); vi.clearAllMocks() })
+  it('retains the destination and byte progress across folder navigation', async () => {
+    const store = useCloudStore(); store.authenticated = true; store.currentPath = '/original'
+    let release!: () => void
+    mockedClient.upload.mockImplementationOnce(async (_path, _file, options) => {
+      options!.onProgress(2)
+      await new Promise<void>(resolve => { release = resolve })
+    }).mockResolvedValueOnce(undefined)
+    mockedClient.listDirectory.mockResolvedValue([])
+    const job = store.uploadFiles([new File(['abcd'], 'one'), new File(['ef'], 'two')])
+    expect(store.upload?.sent).toBe(2)
+    expect(store.upload?.total).toBe(6)
+    await store.navigate('/elsewhere')
+    expect(useCloudStore().upload?.active).toBe(true)
+    release(); await job
+    expect(mockedClient.upload.mock.calls.map(call => call[0])).toEqual(['/original', '/original'])
+    expect(store.currentPath).toBe('/elsewhere')
+    expect(store.upload).toMatchObject({ active: false, sent: 6, completed: 2, error: null })
+  })
+  it('aborts the active request, stops the queue and preserves completed files', async () => {
+    const store = useCloudStore(); store.authenticated = true
+    mockedClient.listDirectory.mockResolvedValue([])
+    mockedClient.upload.mockResolvedValueOnce(undefined).mockImplementationOnce((_path, _file, options) => new Promise((_resolve, reject) => {
+      options!.signal.addEventListener('abort', () => reject(new DOMException('Cancelled', 'AbortError')))
+    }))
+    const files = ['one', 'two', 'three'].map(name => new File(['abc'], name))
+    const job = store.uploadFiles(files)
+    await Promise.resolve(); await Promise.resolve()
+    store.cancelUpload(); await job
+    expect(mockedClient.upload).toHaveBeenCalledTimes(2)
+    expect(store.upload).toMatchObject({ active: false, completed: 1, cancelled: true, error: null })
+    store.dismissUpload(); expect(store.upload).toBeNull()
+  })
+  it('keeps failures visible and does not start a second overlapping batch', async () => {
+    const store = useCloudStore(); store.authenticated = true
+    mockedClient.listDirectory.mockResolvedValue([])
+    let fail!: (error: Error) => void
+    mockedClient.upload.mockImplementationOnce(() => new Promise((_resolve, reject) => { fail = reject }))
+    const file = new File(['x'], 'one')
+    const job = store.uploadFiles([file]); await store.uploadFiles([file])
+    expect(mockedClient.upload).toHaveBeenCalledTimes(1)
+    fail(new Error('No space')); await job
+    expect(store.upload).toMatchObject({ active: false, error: 'No space', completed: 0 })
+  })
+})

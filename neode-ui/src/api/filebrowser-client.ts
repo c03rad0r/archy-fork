@@ -201,7 +201,43 @@ class FileBrowserClient {
     URL.revokeObjectURL(blobUrl)
   }
 
-  async upload(dirPath: string, file: File): Promise<void> {
+  async upload(dirPath: string, file: File, options?: { signal: AbortSignal; onProgress: (sent: number) => void }): Promise<void> {
+    if (options) {
+      await this.ensureAuth()
+      if (options.signal.aborted) throw new DOMException('Upload cancelled', 'AbortError')
+      const folder = sanitizePath(dirPath).split('/').map(encodeURIComponent).join('/').replace(/\/$/, '')
+      const url = `${this.baseUrl}/api/resources${folder}/${encodeURIComponent(file.name)}?override=true`
+      const send = () => new Promise<number>((resolve, reject) => {
+        const xhr = new XMLHttpRequest()
+        const cleanup = () => options.signal.removeEventListener('abort', abort)
+        const abort = () => { xhr.abort(); cleanup(); reject(new DOMException('Upload cancelled', 'AbortError')) }
+        xhr.open('POST', url)
+        xhr.withCredentials = true
+        for (const [key, value] of Object.entries(this.headers())) xhr.setRequestHeader(key, value)
+        xhr.upload.onprogress = (event) => options.onProgress(Math.min(file.size, event.loaded))
+        xhr.onerror = () => { cleanup(); reject(new Error('Upload connection lost. Keep the companion open and check the server connection.')) }
+        xhr.onabort = () => { cleanup(); reject(new DOMException('Upload cancelled', 'AbortError')) }
+        xhr.onload = () => {
+          cleanup()
+          if (xhr.status === 401) { resolve(401); return }
+          if (xhr.status < 200 || xhr.status >= 300) { reject(new Error(`Upload failed (HTTP ${xhr.status})`)); return }
+          if ((xhr.getResponseHeader('Content-Type') || '').includes('text/html')) {
+            reject(new Error('File Browser returned a login page instead of accepting the upload.')); return
+          }
+          resolve(xhr.status)
+        }
+        options.signal.addEventListener('abort', abort, { once: true })
+        if (options.signal.aborted) { abort(); return }
+        xhr.send(file)
+      })
+      if (await send() === 401) {
+        this._authenticated = false
+        await this.ensureAuth()
+        if (options.signal.aborted) throw new DOMException('Upload cancelled', 'AbortError')
+        if (await send() === 401) throw new Error('Upload authentication expired. Sign in again.')
+      }
+      return
+    }
     const sanitized = sanitizePath(dirPath)
     const safePath = sanitized.endsWith('/') ? sanitized : `${sanitized}/`
     const encodedName = encodeURIComponent(file.name)

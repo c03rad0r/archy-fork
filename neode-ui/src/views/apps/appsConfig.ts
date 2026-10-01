@@ -29,6 +29,9 @@ export const isServiceContainer = sharedIsServiceContainer
 
 const INTERNAL_TOOLING_NAMES = new Set([
   'buildx_buildkit_default',
+  // Stack internals belong to their parent app, including cached inventories
+  // from nodes predating backend alias normalization.
+  'immich-postgres', 'immich-redis', 'immich_postgres', 'immich_redis',
   // Cuprate's dashboard is bundled as a companion of the primary cuprate
   // package; showing the generated container as a second Services entry
   // defeats the one-app presentation.
