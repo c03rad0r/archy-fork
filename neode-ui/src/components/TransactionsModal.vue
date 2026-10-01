@@ -5,11 +5,9 @@
         <!-- Rail filter: instant ecash micro-payments pile up fast and bury
              on-chain/Lightning rows; chips keep the standard txs reachable.
              Sticky inside the modal's scroll region so the tabs stay pinned
-             while rows blur past underneath. -->
-        <!-- Transparent glass, not a black slab (operator, 2026-08-09): the
-             backdrop blur alone keeps the pinned tabs legible over scrolling
-             rows without painting an opaque container onto the modal. -->
-        <div v-if="transactions.length > 0" class="sticky top-0 z-10 -mx-2 px-2 pb-2 mb-1 flex gap-1.5 flex-nowrap overflow-x-auto bg-transparent backdrop-blur-md">
+             while the transactions scroll. Only the buttons have a visual
+             surface; the rail has no fill, blur, border or shadow. -->
+        <div v-if="transactions.length > 0" class="sticky top-0 z-10 -mx-2 px-2 pb-2 mb-1 flex gap-1.5 flex-nowrap overflow-x-auto bg-transparent">
           <button
             v-for="f in filters"
             :key="f.key"
