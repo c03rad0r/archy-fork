@@ -256,3 +256,18 @@ Backend SHA-256:
 
 Physical companion upload diagnosis and remaining release acceptance stay OPEN.
 This is a candidate deployment, not a newly signed OTA or ISO.
+
+## Release authorization — 2026-10-01
+
+The operator authorized preparing the next OTA and raw ISO after completing all
+checks available here. Keep the missing original file/buyer confirmation,
+physical companion upload and full-chain Angor indexing as explicit follow-ups;
+this authorization does not establish that those scenarios passed. Complete
+the known invoice-status HTTP error fix and available automated release gates
+before requesting the offline signatures. Angor Indexer and the optional relay
+are already present in the current signed catalog and remain included.
+
+Shorty's Mempool report was inspected read-only: frontend/API had been running
+for over two weeks, systemd reported zero restarts, and the API was processing
+current blocks. The operator said it looked normal after applying the latest
+update. No Mempool repair or native-service restart was performed in this check.

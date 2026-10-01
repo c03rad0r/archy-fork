@@ -362,6 +362,24 @@ init()
               </button>
             </div>
             <div class="overflow-y-auto flex-1 min-h-0 space-y-6 pr-1">
+              <!-- v1.8.23-alpha -->
+              <div>
+                <div class="flex items-center gap-2 mb-3">
+                  <span class="text-xs font-mono px-2 py-0.5 rounded bg-orange-500/20 text-orange-300">v1.8.23-alpha</span>
+                  <span class="text-xs text-white/40">October 1, 2026</span>
+                </div>
+                <div class="space-y-3 text-sm text-white/80 pl-3 border-l border-white/10">
+                  <p>Preserve paid-file Lightning entitlements across restarts and recover settled invoices from LND. Retry delivery without paying again and retain purchased files in the owned cache.</p>
+                  <p>Return explicit payment-status errors with safe retry guidance when verification is unavailable.</p>
+                  <p>Show compact upload progress across screens, retain the original destination, and cancel active and queued uploads.</p>
+                  <p>Make transaction filters transparent and horizontally scrollable on mobile.</p>
+                  <p>Keep Immich internal services out of My Apps, avoid false recovery states for healthy stacks, and allow removal of retired catalog apps.</p>
+                  <p>Repair the redundant managed Portainer network override that can prevent startup, preserving custom overrides and persistent state.</p>
+                  <p>Offer Standard, Medium, Fast and custom fees when cooperatively closing Lightning channels.</p>
+                  <p>Add a clear-search icon to My Apps, Services and the App Store on desktop and mobile.</p>
+                  <p>Keep Angor Indexer and the optional Angor Relay in the signed app catalog. Full indexing requires a synced, unpruned Bitcoin node and its indexing dependencies.</p>
+                </div>
+              </div>
               <!-- v1.8.22-alpha -->
               <div>
                 <div class="flex items-center gap-2 mb-3">

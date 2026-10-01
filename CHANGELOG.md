@@ -1,5 +1,17 @@
 # Changelog
 
+## v1.8.23-alpha (2026-10-01)
+
+- Preserve paid-file Lightning entitlements across restarts and recover settled invoices from LND. Retry delivery without paying again and retain purchased files in the owned cache.
+- Return explicit payment-status errors with safe retry guidance when verification is unavailable.
+- Show compact upload progress across screens, retain the original destination, and cancel active and queued uploads.
+- Make transaction filters transparent and horizontally scrollable on mobile.
+- Keep Immich internal services out of My Apps, avoid false recovery states for healthy stacks, and allow removal of retired catalog apps.
+- Repair the redundant managed Portainer network override that can prevent startup, preserving custom overrides and persistent state.
+- Offer Standard, Medium, Fast and custom fees when cooperatively closing Lightning channels.
+- Add a clear-search icon to My Apps, Services and the App Store on desktop and mobile.
+- Keep Angor Indexer and the optional Angor Relay in the signed app catalog. Full indexing requires a synced, unpruned Bitcoin node and its indexing dependencies.
+
 ## v1.8.22-alpha (2026-09-30)
 
 - Fixed Nginx Proxy Manager launch readiness choosing a proxy listener instead of its admin port after container recreation.

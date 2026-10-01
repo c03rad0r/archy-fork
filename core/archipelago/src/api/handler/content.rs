@@ -336,36 +336,10 @@ impl ApiHandler {
         &self,
         path: &str,
     ) -> Result<Response<hyper::Body>> {
-        let rest = path.strip_prefix("/content/").unwrap_or("");
-        let (content_id, payment_hash) = match rest.split_once("/invoice-status/") {
-            Some((id, hash)) => (id, hash),
-            None => {
-                return Ok(build_response(
-                    StatusCode::BAD_REQUEST,
-                    "text/plain",
-                    hyper::Body::from("Invalid request"),
-                ))
-            }
-        };
-        if content_id.is_empty() || !is_valid_app_id(content_id) || payment_hash.is_empty() {
-            return Ok(build_response(
-                StatusCode::BAD_REQUEST,
-                "text/plain",
-                hyper::Body::from("Invalid request"),
-            ));
-        }
-
-        let paid = self
-            .rpc_handler
-            .settle_content_invoice(payment_hash, content_id)
-            .await?;
-
-        let body = serde_json::json!({ "paid": paid });
-        Ok(build_response(
-            StatusCode::OK,
-            "application/json",
-            hyper::Body::from(serde_json::to_vec(&body).unwrap_or_default()),
-        ))
+        Ok(invoice_status_response(path, |hash, id| async move {
+            self.rpc_handler.settle_content_invoice(&hash, &id).await
+        })
+        .await)
     }
 
     /// Seller side (#46): issue a fresh on-chain address for a paid catalog item
@@ -566,5 +540,111 @@ impl ApiHandler {
                 hyper::Body::from("Preview not available"),
             )),
         }
+    }
+}
+
+/// Keep invalid input and an unavailable wallet inside the HTTP protocol so
+/// buyers can retry delivery without treating a dropped socket as lost payment.
+async fn invoice_status_response<F, Fut>(path: &str, settle: F) -> Response<hyper::Body>
+where
+    F: FnOnce(String, String) -> Fut,
+    Fut: std::future::Future<Output = Result<bool>>,
+{
+    let parsed = path
+        .strip_prefix("/content/")
+        .and_then(|rest| rest.split_once("/invoice-status/"))
+        .filter(|(id, hash)| {
+            !id.is_empty()
+                && is_valid_app_id(id)
+                && hash.len() == 64
+                && hash.bytes().all(|c| c.is_ascii_hexdigit())
+        });
+    let Some((id, hash)) = parsed else {
+        return build_response(
+            StatusCode::BAD_REQUEST,
+            "application/json",
+            hyper::Body::from(r#"{"error":"Invalid content ID or payment hash"}"#),
+        );
+    };
+    match settle(hash.to_ascii_lowercase(), id.to_owned()).await {
+        Ok(paid) => build_response(
+            StatusCode::OK,
+            "application/json",
+            hyper::Body::from(serde_json::json!({"paid": paid}).to_string()),
+        ),
+        Err(_) => {
+            tracing::warn!("Peer-file payment status verification is temporarily unavailable");
+            let mut response = build_response(
+                StatusCode::SERVICE_UNAVAILABLE,
+                "application/json",
+                hyper::Body::from(
+                    r#"{"error":"Payment verification is temporarily unavailable. Retry without paying again."}"#,
+                ),
+            );
+            response.headers_mut().insert(
+                hyper::header::RETRY_AFTER,
+                hyper::header::HeaderValue::from_static("5"),
+            );
+            response
+        }
+    }
+}
+
+#[cfg(test)]
+mod invoice_status_tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn malformed_requests_do_not_query_the_wallet() {
+        for path in [
+            "/bad",
+            "/content//invoice-status/aa",
+            "/content/file/invoice-status/aa",
+            "/content/file/invoice-status/",
+            "/content/file/invoice-status/not-a-hash",
+        ] {
+            let response = invoice_status_response(path, |_, _| async {
+                panic!("Invalid request reached wallet");
+                #[allow(unreachable_code)]
+                Ok(false)
+            })
+            .await;
+            assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+            assert_eq!(response.headers()["content-type"], "application/json");
+            let body = hyper::body::to_bytes(response.into_body()).await.unwrap();
+            assert!(
+                serde_json::from_slice::<serde_json::Value>(&body).unwrap()["error"].is_string()
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn settlement_results_and_failures_have_explicit_http_responses() {
+        let hash = "AB".repeat(32);
+        let path = format!("/content/file/invoice-status/{hash}");
+        for paid in [false, true] {
+            let response = invoice_status_response(&path, |hash, id| async move {
+                assert_eq!(hash, "ab".repeat(32));
+                assert_eq!(id, "file");
+                Ok(paid)
+            })
+            .await;
+            assert_eq!(response.status(), StatusCode::OK);
+            let body = hyper::body::to_bytes(response.into_body()).await.unwrap();
+            assert_eq!(
+                serde_json::from_slice::<serde_json::Value>(&body).unwrap()["paid"],
+                paid
+            );
+        }
+        let response = invoice_status_response(&path, |_, _| async {
+            anyhow::bail!("private wallet details must not escape")
+        })
+        .await;
+        assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+        assert_eq!(response.headers()["retry-after"], "5");
+        let body = hyper::body::to_bytes(response.into_body()).await.unwrap();
+        let text = String::from_utf8(body.to_vec()).unwrap();
+        assert!(text.contains("without paying again"));
+        assert!(!text.contains("private wallet"));
     }
 }

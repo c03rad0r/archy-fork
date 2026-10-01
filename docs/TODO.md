@@ -3,6 +3,17 @@
 Working backlog of forward-looking items not yet scoped into a dedicated plan
 doc. See [`ROADMAP.md`](ROADMAP.md) for the curated, public-facing direction.
 
+## NPM certificate release blocker — reported 2026-10-01
+
+- [ ] **NPM first certificate and renewal must work without manual repair.**
+  Shorty's HTTP-01 404 exposed inconsistent active data/ACME paths between the
+  manifest, legacy creation paths and host nginx bridge. Independent reviewer
+  acknowledged the handoff; separate release owner must acknowledge receipt,
+  implement data-safe migration and complete fresh-install, legacy-upgrade,
+  issuance/renewal, restart/reboot and OTA/ISO acceptance. See
+  [repair evidence and required release tests](npm-certificate-handoff-20261001.md).
+  Do not equate the live challenge-route repair with a tested release fix.
+
 ## Framework incident — closed with operator acceptance
 
 - **CLOSED WITH OPERATOR ACCEPTANCE (2026-09-30): Framework LND startup /
