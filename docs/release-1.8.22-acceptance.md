@@ -85,5 +85,17 @@ raw ISO passed public size/range checks and both checksum sidecars read back
 exactly. Only after these checks were the signed OTA manifest and compatible
 app catalog promoted. The release tag identifies the tested source above.
 
-Git/ngit publication and final update-discovery readback are recorded in the
-release tracker after their completion.
+Git and ngit publication completed on 2026-10-01. Both repository relays
+acknowledged the ngit release; independent `release view` resolved all five
+assets with exact hashes and sizes and no unresolved asset IDs. Main and the
+release tag were pushed to both remotes.
+
+Public main-branch OTA manifests and the app catalog read back byte-for-byte
+and verified cryptographically. Live `update.check` on the accepted dev node
+reported 1.8.22-alpha with no further update, as expected for the installed
+release. Discovery on an older production node was not repeated during this
+publication step.
+
+- [Release and verification files](https://source.archipelago-foundation.org/lfg2025/archy/releases/tag/v1.8.22-alpha)
+- [Raw ISO](https://source.archipelago-foundation.org/lfg2025/archy/releases/download/v1.8.22-alpha/archipelago-installer-1.8.22-alpha-unbundled-x86_64_RC1.iso)
+

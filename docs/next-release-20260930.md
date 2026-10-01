@@ -1,15 +1,15 @@
 # Next OTA and raw ISO after 1.8.21
 
-**Status: final OTA/raw ISO acceptance, signatures and Gitea public artifact verification passed; fleet promotion and ngit publication are being completed.**
+**Status: COMPLETE — 1.8.22-alpha OTA, compatible signed app catalog and raw ISO published on Git and ngit on 2026-10-01; artifact signatures, public downloads and fleet feed verified. Angor full-chain indexing still awaits dev Bitcoin synchronization.**
 
 Current acceptance evidence: [1.8.22 release acceptance](release-1.8.22-acceptance.md).
 The chronological notes below retain earlier failures and superseded candidates;
 the final tested source is `6d5f3ffb`.
 
 This is the consolidated execution checklist for the operator's chat requests.
-A targeted node repair is not completion of the release. Finish the remaining
-acceptance gates, preserve live wallets and app data, and publish both artifacts
-through git and ngit. No universal absence of future failures is claimed.
+Release acceptance and publication are complete, with live wallet and app data
+preservation checks documented below. No universal absence of future failures
+is claimed.
 
 ## Changes already shipped in 1.8.21 or earlier
 
@@ -61,9 +61,9 @@ completed. See PR review for the accepted scope and coverage limits.
 - [x] Version/changelog and OTA payload prepared, validated and signed by user.
 - [x] Raw ISO built; payload hashes/content verified; full installation and
       installed-system boot tested in QEMU/KVM without network.
-- [ ] User signs ISO checksums; publish OTA and ISO plus verification files on
+- [x] User signs ISO checksums; publish OTA and ISO plus verification files on
       git and ngit; independently read back hashes and update discovery.
-- [ ] Provide LAN scp command for the new raw ISO.
+- [x] Provide LAN scp command for the new raw ISO.
 
 Latest backend source verification: 1,617 passed, zero failed, four existing
 ignored tests. This is one layer of evidence, not a substitute for live gates.
