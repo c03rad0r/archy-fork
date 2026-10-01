@@ -19,6 +19,13 @@ class ServiceMetadata(unittest.TestCase):
             self.assertEqual(app['ports'][0]['bind'], '127.0.0.1')
             self.assertEqual(app['security']['capabilities'], [])
 
+    def test_indexer_reuses_both_existing_mempool_components(self):
+        app = yaml.safe_load((ROOT / 'apps/angor-indexer/manifest.yml').read_text())['app']
+        self.assertEqual(set(app['install_prerequisites']), {'mempool', 'mempool-api'})
+        self.assertTrue({'mempool', 'mempool-api'} <= {
+            dep['app_id'] for dep in app['dependencies'] if 'app_id' in dep})
+        self.assertEqual(app.get('volumes', []), [])
+
     def test_indexer_health_targets_ipv4_listener(self):
         app = yaml.safe_load((ROOT / 'apps/angor-indexer/manifest.yml').read_text())['app']
         self.assertEqual(app['health_check']['endpoint'], 'http://127.0.0.1:8080')

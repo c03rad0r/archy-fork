@@ -1,0 +1,286 @@
+{
+  "status": "INCOMPLETE: 34 original announcements not recovered from queried relays",
+  "source_inventory": "https://indexer.angor.io/api/v1/query/Angor/projects?limit=50",
+  "projects": [
+    {
+      "project": "angor1qryhse38vcyqnp0j6976q9f00a9jpj2ary03nlc",
+      "txid": "72d14227b78a260c9410a65585cb49e81e35eaa95b1b23ec702eb0512ca016a7",
+      "event_id": "adbf94d6152097f3d503cd68cc00dee34c1e1007914c00cfc3d6698d1ee01834",
+      "confirmed": true,
+      "commitment_matches": true,
+      "original_announcement_recovered": true
+    },
+    {
+      "project": "angor1q3eh4xg7t2hge7ctqk4yhmj7q23t6mdqa0ahg28",
+      "txid": "f5ff2e1a6b7340ddb9944c2ae6477c6b0b12993c9919f6e9b7b9e7a5e9a68f6d",
+      "event_id": "f4417e39c9b47afafd84cdda2017207e0929df2852badbf8d909bf6f647f4f2d",
+      "confirmed": true,
+      "commitment_matches": true,
+      "original_announcement_recovered": false
+    },
+    {
+      "project": "angor1qde7y830vtajref5vwag5x459m9w5y75gd49v4t",
+      "txid": "205ce39688572ef0168c1c1231c25ec632abb2c2b64c52fccb4f53eb0a49e300",
+      "event_id": "ca76084c2bc3301f8fe00dd8a93c6d6c0ad015e50676cdd3e44c8bd765f157d5",
+      "confirmed": true,
+      "commitment_matches": true,
+      "original_announcement_recovered": false
+    },
+    {
+      "project": "angor1q9k9976ytwkkmswlq24e89l2fxuxl57gfp8yxgr",
+      "txid": "00a0120818698ef3d72d360e29e9e4e7d0a35c180967186d1e715aef797c26a8",
+      "event_id": "a04d1eed8c1261cb5fca6a6faf16a5f87a9672cf40d1117b25f2da60e6e8f84c",
+      "confirmed": true,
+      "commitment_matches": true,
+      "original_announcement_recovered": false
+    },
+    {
+      "project": "angor1q67h8cktwy8yv32t0uk0c8zrtpmtwgtd56sylzx",
+      "txid": "1bfa726353a40d5fce1a76ad86dc7915bee214573d30d5751cd6312c94519089",
+      "event_id": "b3189f84b490da422e17b6b857d393b13781bb82e1c8813328769e3d2840098a",
+      "confirmed": true,
+      "commitment_matches": true,
+      "original_announcement_recovered": false
+    },
+    {
+      "project": "angor1qm999ekmrdjl4sq3qywl889w74qetxe3ghdxthl",
+      "txid": "ae9d471dd6e58b318120fbdf72929c621cf23d9c6f047df3c57923a8a915d01c",
+      "event_id": "89ae5e612e857f89dbbdc662198b894f1f7b70564769bedf08ec37f5e7b5efe0",
+      "confirmed": true,
+      "commitment_matches": true,
+      "original_announcement_recovered": false
+    },
+    {
+      "project": "angor1qtunna00uqyx52rr0nvqa059z2gknhrmn7urd6z",
+      "txid": "c2cb77ebf6b9ded802b677c600c3869b81fc76f31a3e4742b6a9cb16e0ac3dee",
+      "event_id": "f5e66707f8fa0fc601bef403020e64d9a164d6cf201599ec0c3ddb0acf58491e",
+      "confirmed": true,
+      "commitment_matches": true,
+      "original_announcement_recovered": false
+    },
+    {
+      "project": "angor1qu8h0ezv596z35uggg0r0ppkma93tnreyjg5du7",
+      "txid": "fb6bc0b721810957ae8910d5dd6e7ebc45d804a3e1f636d153df50f036e90645",
+      "event_id": "ce61a11b79aa258238db63f67472341169944bce02600045bf7278992aeb796c",
+      "confirmed": true,
+      "commitment_matches": true,
+      "original_announcement_recovered": false
+    },
+    {
+      "project": "angor1q8u9c2h2l0eqjn3qeyvdps89dkkvwteg5q3m708",
+      "txid": "04ed05297e146206c104c7b5d8a51fc3453f1829950675b4694f91a7ea609be1",
+      "event_id": "f31c6ef3a66e74ebfc26f5b2905e6d4641f73bdb407aa92022a2202b9be54716",
+      "confirmed": true,
+      "commitment_matches": true,
+      "original_announcement_recovered": false
+    },
+    {
+      "project": "angor1qqnxefpr4f59r5f4u34c7crzst2ya83wavh8407",
+      "txid": "bae879110e78ad44624980ea4a47de21b03d3994139714bb09e910187027583d",
+      "event_id": "cbd23077098059c5092bb7ea8df14dd73f21d47d1b690ff1e6fa789ad118864b",
+      "confirmed": true,
+      "commitment_matches": true,
+      "original_announcement_recovered": false
+    },
+    {
+      "project": "angor1qfydf802v2efvxufevrfg0mvtlrxln63rkzmdxw",
+      "txid": "4bbb04fed973c968e76faaca880197092be288d9897072ab5e6dfb719c19eb69",
+      "event_id": "e9761e1303de7eca0ade33936489d2b4b7d51f4b52e8ecbc1acfc394df48b95d",
+      "confirmed": true,
+      "commitment_matches": true,
+      "original_announcement_recovered": false
+    },
+    {
+      "project": "angor1qpt96uj5jg77q5566pmcdggyuztt26xn3xymwhn",
+      "txid": "bc46fea91acf4714f5b7949e9bb937f39e425468242c2459b581a14914e641b4",
+      "event_id": "f683c12dbc3d574797bd2251d7e9d96e1d33d6263f75a1538d2ce5fd0c86e064",
+      "confirmed": true,
+      "commitment_matches": true,
+      "original_announcement_recovered": false
+    },
+    {
+      "project": "angor1q3nleprspa3h6thy9c25wzu4q7ywajhcdg3j9au",
+      "txid": "7b76a8297f16ad5ff3d69fc85e37405ad4f77a71dfc8f70206a5a9c1827698ba",
+      "event_id": "893e5b7f09a12368f208120deb9c02b3692aee15240a914fb428e7e4f86b1123",
+      "confirmed": true,
+      "commitment_matches": true,
+      "original_announcement_recovered": false
+    },
+    {
+      "project": "angor1qc8jlugwgp90vzkhf336d8exldhwd8z5u4ssaen",
+      "txid": "5e06eb3684bf0d3402d20d643d6fe1b5a295680a29db440e070a89f80e52a241",
+      "event_id": "375eafd0e03c50d683de4f465501e919a8816ae618ca2b5c14e8d3f56daa90c0",
+      "confirmed": true,
+      "commitment_matches": true,
+      "original_announcement_recovered": false
+    },
+    {
+      "project": "angor1qdhwn7s0p8wcr9kw2932m448y6hd8ywl005fdwu",
+      "txid": "7cc5bff45f0b5e9ae81cadaf787dd4d4680387ab9fddedf8438eae8f87ef34ec",
+      "event_id": "6c7767eaf6ee0ae4ffe4b23c8477f2293216279e5908dd979abd4abdf1557578",
+      "confirmed": true,
+      "commitment_matches": true,
+      "original_announcement_recovered": false
+    },
+    {
+      "project": "angor1q8qzylut0gv7urycxukdfumzw6znghrk4g928k2",
+      "txid": "2c7eed8d9b8eef530a4a8f39339f7dfaa82d5ec09261305203d1a367a624be1b",
+      "event_id": "24323aae4bca910ddb48544b788860119c3cc13ac19b24694221f1ba2521cd6b",
+      "confirmed": true,
+      "commitment_matches": true,
+      "original_announcement_recovered": false
+    },
+    {
+      "project": "angor1qzwrm6hf5l0tgen99anr9hj7ylk38v6zhmnq7w0",
+      "txid": "934c45244c283ff24834bab7d01a0964192433cd2bc11143fc5e590b2b954deb",
+      "event_id": "6cfae243c276a602ce2da33842ad930019d75e80ffe81b4cd84b1b187830bba7",
+      "confirmed": true,
+      "commitment_matches": true,
+      "original_announcement_recovered": false
+    },
+    {
+      "project": "angor1qpdp5d2ahknhtr7kawsl62m7y4hktsfn4uwg6r3",
+      "txid": "dc85d36b324ff829a4d49a606573e136fbc29498bc707d95f5bd0d9ef49956d0",
+      "event_id": "c6d22deef6d1babc99716746f50509e5413b97445d991a0869f0567b7301fc97",
+      "confirmed": true,
+      "commitment_matches": true,
+      "original_announcement_recovered": false
+    },
+    {
+      "project": "angor1q9v88fe2q2efr4z57wed4gklmkh7trmx6usac0d",
+      "txid": "b98b23e49630f92ac0dedb7e0a8ac5ad2c51f813039f2d9dd708c9a0861b2ca2",
+      "event_id": "e8f518eaed658e9331b3a3feba49f36eda5eb7fe68c81c7b3f71057844729bcb",
+      "confirmed": true,
+      "commitment_matches": true,
+      "original_announcement_recovered": false
+    },
+    {
+      "project": "angor1q0gtztyk24ea2028ewfn026838k3ll322qrvrhu",
+      "txid": "31b38cf48cf18936b7c370ee72e8bda6e9ee40f24ec676a85b9b8b1abefebdd4",
+      "event_id": "fe34db328e51cc10f9c4d035b0f0aab7f9137a4cdee3a2afc4c6610404e79fe4",
+      "confirmed": true,
+      "commitment_matches": true,
+      "original_announcement_recovered": false
+    },
+    {
+      "project": "angor1q65fuwpyvek3fxk5p757zyknjd9k9sava3fd98j",
+      "txid": "0b7bf7b9119157edc778bcdc7088b70a439fa5dc8c46e839b95fd2f0a8fbf046",
+      "event_id": "991d0f7d1c261e4d79507238e3d5e4b3d3adce267cf40107ee2ade32485f5cf6",
+      "confirmed": true,
+      "commitment_matches": true,
+      "original_announcement_recovered": false
+    },
+    {
+      "project": "angor1qjqfp23ac4s4llgcgs3qnenjhpasgrmvt373usp",
+      "txid": "8b4887aba04b12729e609658b0fdbb1e6f1b172ba10360c7a5261c3e9bd590f9",
+      "event_id": "254910567be531d7862afcbcc80b490ee92a5f9ed801424f3d56108d9a114b80",
+      "confirmed": true,
+      "commitment_matches": true,
+      "original_announcement_recovered": false
+    },
+    {
+      "project": "angor1qfyzk83tqznc3aqg5ly0cewn7ytsrwl474v4dyn",
+      "txid": "3e2ea870b17eab2023a04dca267c45d2c53a41abb3f20b206e095fcbba6c5f02",
+      "event_id": "1e27aa63f276048ba78ef73f69dc5045441feafaa090aff9b995341883f22fb4",
+      "confirmed": true,
+      "commitment_matches": true,
+      "original_announcement_recovered": false
+    },
+    {
+      "project": "angor1qw7m67a5r6vpmtw2jqpsp4xtxvtu6mmnkgj6gxw",
+      "txid": "f3d3549b2a30c78e7c3b51bc9122e0ae8a7ecb378f9b3564ebf931769637df49",
+      "event_id": "fc4289a4888bfe157588e507204d93723a8c07074cde37bb98cf866793f81c98",
+      "confirmed": true,
+      "commitment_matches": true,
+      "original_announcement_recovered": false
+    },
+    {
+      "project": "angor1qgdc07hkk0l4kntg2k5fczk7tcx0qeqqx2saru0",
+      "txid": "c1332c51da2c5706f6fc74e3275856438304a7761ced4dcd2e738a7e3c62bd2f",
+      "event_id": "ae1d1f7f883907dea36902fc2dc78c8ad81d22bd59bd7293ba1725c6cc959846",
+      "confirmed": true,
+      "commitment_matches": true,
+      "original_announcement_recovered": false
+    },
+    {
+      "project": "angor1qhklyl9mw5zwzwynxv6ekaz5f9h5zv3wnd8dn2c",
+      "txid": "be637cd8a23c80f49195345eca5d4c29bf4a9fa0600e0625af702444e300d218",
+      "event_id": "78a1443b14cb252b2510925263889e8c8f40b12fd911d137d63b1dbc2b841a3a",
+      "confirmed": true,
+      "commitment_matches": true,
+      "original_announcement_recovered": false
+    },
+    {
+      "project": "angor1q4heck5tf6svq7x8jp5twak329xtv9805xppvq5",
+      "txid": "509db524eba0b90e8607396e9eb42ed379a270f3aa602a0bc16eec050c959823",
+      "event_id": "dec392d7d962e7dfd2c9eaa2b05dfc03c909d87982c4d73b9f321dc13487622f",
+      "confirmed": true,
+      "commitment_matches": true,
+      "original_announcement_recovered": false
+    },
+    {
+      "project": "angor1qc6gykcw82hu3pa4pn94gfxwgpp8dewlsh45rwc",
+      "txid": "087390128a78270cd1465656e3ab63b9b47982dca1a910b7a5664f67f8ab9970",
+      "event_id": "cf634987daa4ee17bb2d160ddb04ce56a0d73e664b9822e5e9a8edf870630a9c",
+      "confirmed": true,
+      "commitment_matches": true,
+      "original_announcement_recovered": false
+    },
+    {
+      "project": "angor1qfzxd8n94r592gt3mrmgwe7knk6dhajmutpuhkx",
+      "txid": "29cb361fe78b6f199f169b7b4a7d9663b7e7f46607f382ddcf8cb2224a6023f1",
+      "event_id": "ca7a6e0bb27beb46fb8e709378908feb5357e7edd43a9262318cadf72da5f141",
+      "confirmed": true,
+      "commitment_matches": true,
+      "original_announcement_recovered": false
+    },
+    {
+      "project": "angor1q0whhl3qgq28g443h9mj6dl8n2ssshm6hkd3xse",
+      "txid": "4d70fba03ec51d87df7df16498a95a907b9cff00035455e3ab8242935f260030",
+      "event_id": "3a19b34d76ec7b99eb98ed299737c06cd3710268febf7d2acf6ce1fece9ba459",
+      "confirmed": true,
+      "commitment_matches": true,
+      "original_announcement_recovered": false
+    },
+    {
+      "project": "angor1q2a5m2zcwpmkh49z05pg6gd9cxm4dhx3ywfclem",
+      "txid": "5da06a119db273bbb7c64e2cc103a8edb48a9934ab9b5b972ae55f697023ce07",
+      "event_id": "8c3a8dcaf9c55e7797cf4ff9a25b0e7cd7dcbe78c8ed248d53a49c70f9ea4a6b",
+      "confirmed": true,
+      "commitment_matches": true,
+      "original_announcement_recovered": false
+    },
+    {
+      "project": "angor1qq9ngpm2w8xss5sf0amt63z076y2x885wh0jfv7",
+      "txid": "7f42da75e4b3dd92f9870aefa177c2fb3783f189996abf193b3b353ee21e805e",
+      "event_id": "2f0c6e3b29a74be45033062742b3fbac4a4c7b7be4eeecc7021df4a8b1b195cf",
+      "confirmed": true,
+      "commitment_matches": true,
+      "original_announcement_recovered": false
+    },
+    {
+      "project": "angor1qwdgxjuzhjykgpn5q8p3l2q9vyrgqdlrkfp5sjr",
+      "txid": "c15d07fd14d58e7204889ba24fe47a9b86aa7bea9992d30f4be36864e7634725",
+      "event_id": "733b28b35f771839bc719125af94916a5400675185d4a75edb09645c8eb4cc24",
+      "confirmed": true,
+      "commitment_matches": true,
+      "original_announcement_recovered": false
+    },
+    {
+      "project": "angor1qyuj8z532tnhy7srutwecu3j789z22peu2t8c7v",
+      "txid": "821193743f7ca7b0b178a78379d79f5783d874a182a8bf36b70a0a2a6cb12d24",
+      "event_id": "56fce837c628728953138ca57895c7ef9533640a989934c432d1040808781b9f",
+      "confirmed": true,
+      "commitment_matches": true,
+      "original_announcement_recovered": false
+    },
+    {
+      "project": "angor1qznva9wmw3anr7qdhhs4v0xptd0pz07gdr2fuwz",
+      "txid": "187e39a0ba9714ae3543bbe775dd9fff9c7a4ac946ce0a850480c3871de287fe",
+      "event_id": "baff907b6f1fb97893e63e1bef6919f819c1b6e37560ed2d4255b77cc26d08cd",
+      "confirmed": true,
+      "commitment_matches": true,
+      "original_announcement_recovered": false
+    }
+  ]
+}
