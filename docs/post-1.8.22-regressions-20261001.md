@@ -149,8 +149,10 @@ Validation so far (additional acceptance still pending):
 - Real FileBrowser uploads at 1440px and 390px: exact bytes and original folder
   verified after navigation, 44px bar, cancellation and queue stop passed.
 - Mobile viewport acceptance is not physical Android companion acceptance.
-- Release backend compiled successfully. Candidate has not yet been deployed
-  or included in another OTA/ISO. Published 1.8.22 artifacts remain unchanged.
+- An earlier candidate release backend compiled successfully. The final build,
+  including serialized buyer ownership writes, is still in progress. Candidate
+  deployment and another OTA/ISO remain pending. Published 1.8.22 artifacts
+  remain unchanged.
 
 Release gates still include actual-node payment recovery/delivery, durable
 CryptPad removal through normal controls, Immich inventory after refresh/restart,
@@ -204,3 +206,14 @@ Additional browser acceptance:
   Original persistent mounts were unchanged. The old integration test containers
   are absent from dev, Framework and X250. One leftover upload-test folder was
   removed after checking it contained only this task's test files.
+
+## Build resource observation
+
+The final optimized compile coincided with heavy memory/disk pressure and local
+Bitcoin/LND RPC timeouts on the development node. After pausing the compiler,
+both authenticated RPCs responded again; Bitcoin reported height 506400 and
+19.6% verification progress, with LND waiting for chain sync. No native service
+was restarted. Compilation resumed in a separate user scope limited to one CPU,
+with nice 19 and idle I/O priority. This is evidence of resource contention,
+not proof of a new wallet or startup defect. Verify native RPC health again
+before candidate deployment.
