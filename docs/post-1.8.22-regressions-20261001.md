@@ -33,7 +33,7 @@ acceptance; this is a new paid-file incident.
       explicit default target, strict backend validation and forwarding, error
       handling, mobile layout and no real channel closure during tests.
 
-- [ ] Apps search clear control: My Apps, Services and App Store, desktop/mobile,
+- [x] Apps search clear control: My Apps, Services and App Store, desktop/mobile,
       existing design tokens, right-aligned icon, no size change, keyboard focus.
 
 ## Retained release work (previous acceptance is not new-regression acceptance)
@@ -86,8 +86,10 @@ acceptance; this is a new paid-file incident.
 `PeerFiles.vue::payWithLightning` immediately downloaded after buyer payment,
 while only seller `handle_content_invoice_status` marked a pending invoice paid.
 Seller download checked only that cached flag. This matches the reported error
-and was confirmed against the live seller: LND retained a settled invoice while
-the seller invoice-status endpoint returned HTTP 404 after management restart.
+and is supported by source inspection. An earlier diagnostic's HTTP 404 is not
+valid confirmation: it incorrectly base64-decoded lncli's already-hex payment
+hash. The corrected live diagnostic recognizes the settled invoice on the
+candidate; do not cite the earlier 404 as proof of the original failure sequence.
 `content_invoice.rs` stored all entitlements only in process memory with a
 one-hour TTL, losing both pending and paid access on restart/expiry.
 Lightning download returned transient base64 without the Cashu ownership cache.
@@ -108,8 +110,8 @@ requires the operator's second factor; normal uninstall acceptance remains pendi
 
 Confirmed live evidence:
 
-- A 10,000-sat peer-file invoice settled at 12:19:29 UTC. After the management
-  service restarted at 12:50, invoice-status returned unknown invoice. Buyer
+- A 10,000-sat peer-file invoice settled at 12:19:29 UTC. The original status
+  diagnostic used an incorrectly decoded hash; see the correction above. Buyer
   identity and confirmation that this is the reported sale remain pending.
 - The matching item currently allows free access; preserve that operator setting.
 - CryptPad has no container but remains in installed-apps metadata. Uninstall
@@ -149,10 +151,9 @@ Validation so far (additional acceptance still pending):
 - Real FileBrowser uploads at 1440px and 390px: exact bytes and original folder
   verified after navigation, 44px bar, cancellation and queue stop passed.
 - Mobile viewport acceptance is not physical Android companion acceptance.
-- An earlier candidate release backend compiled successfully. The final build,
-  including serialized buyer ownership writes, is still in progress. Candidate
-  deployment and another OTA/ISO remain pending. Published 1.8.22 artifacts
-  remain unchanged.
+- Final release backend build passed. Candidate backend and dashboard are now
+  deployed on dev and Framework. Another OTA/ISO remains pending; published
+  1.8.22 artifacts remain unchanged.
 
 Release gates still include actual-node payment recovery/delivery, durable
 CryptPad removal through normal controls, Immich inventory after refresh/restart,
@@ -175,7 +176,8 @@ identities/start times remained unchanged. The source migration now detects
 this exact managed override before preparing the persistent restart obligation,
 backs up app state, retires the redundant file with a retained copy, and reloads
 and restarts through normal reconciliation. Custom overrides are preserved.
-Automated migration coverage passed; final candidate deployment remains pending.
+Automated migration coverage passed; candidate is now deployed on dev and
+Framework. The X250 retains its verified live repair pending the next OTA.
 
 ## Channel-close fee selection
 
@@ -217,3 +219,40 @@ was restarted. Compilation resumed in a separate user scope limited to one CPU,
 with nice 19 and idle I/O priority. This is evidence of resource contention,
 not proof of a new wallet or startup defect. Verify native RPC health again
 before candidate deployment.
+
+## Candidate deployment and live acceptance — 2026-10-01
+
+Source: `f4d34554` (later commits update this checklist only).
+Backend SHA-256:
+`8fb6249d1869bb8c9aea26d0f846de5b3eec328113a5c7f573628306e26e652e`.
+
+- Backed up backend, dashboard and app metadata on both nodes under the root-only
+  support directory `post1822-regressions-20261001`. Deployed assets before
+  promoting the dashboard entry point; manager health passed first.
+- Only the Archipelago manager restarted. Bitcoin/LND IDs and start times stayed
+  unchanged; Framework's three Immich containers also stayed unchanged.
+- Dev authenticated Bitcoin/LND RPCs responded after deployment. Bitcoin IBD
+  continued above height 513000; LND correctly reported not yet chain-synced.
+- Both nodes serve dashboard entry bytes identical to the production build.
+  All six search-clear cases passed against the live dev dashboard (three
+  screens, desktop/mobile), including focus, Escape and unchanged field size.
+- Framework's stale CryptPad installed claim was removed while the manager was
+  stopped; both legacy IDs were recorded as user-uninstalled. Data was preserved.
+  Removal remained after another management restart. Dashboard uninstall-flow
+  acceptance still awaits authentication; this repair was performed over SSH.
+- Corrected invoice diagnostic recovered the settled seller entitlement, returned
+  HTTP 200 with `paid: true`, and saved a mode-0600 record. A different item was
+  rejected. Paid status survived another manager restart without native restarts
+  or a second payment.
+- Delivery acceptance remains OPEN: the catalog's file is absent from both its
+  dedicated content path and FileBrowser path; a privileged filename search of
+  those trees found no copy. Its free-access setting was preserved. Buyer and
+  reported-purchase identity still need confirmation; do not claim the actual
+  buyer received the file.
+- The malformed-hash diagnostic also exposed that invoice-status currently
+  propagates validation errors as a closed connection. Before release, return a
+  structured 400 for malformed hashes and an explicit retryable response for
+  settlement-service errors, with endpoint coverage.
+
+Physical companion upload diagnosis and remaining release acceptance stay OPEN.
+This is a candidate deployment, not a newly signed OTA or ISO.
