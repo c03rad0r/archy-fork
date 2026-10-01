@@ -76,8 +76,14 @@ cold boot above is the successful acceptance run.
 The dev native Bitcoin/LND identity/start-time baseline also remained unchanged
 after the ISO build and VM acceptance.
 
-## Publication pending
+## Publication verification
 
-Artifacts are staged in a draft release. Upload/readback verification and the
-operator's offline signatures must complete before promoting the fleet manifest
-and signed app catalog or publishing the Git/ngit releases.
+All three operator signatures verify against the pinned release root. The five
+Gitea assets match independent server-side SHA-256 checks. Both OTA components
+also passed complete public HTTPS downloads with exact hashes and sizes; the
+raw ISO passed public size/range checks and both checksum sidecars read back
+exactly. Only after these checks were the signed OTA manifest and compatible
+app catalog promoted. The release tag identifies the tested source above.
+
+Git/ngit publication and final update-discovery readback are recorded in the
+release tracker after their completion.

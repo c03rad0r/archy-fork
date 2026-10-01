@@ -141,6 +141,198 @@
       },
       "version": "1.23.0"
     },
+    "angor-indexer": {
+      "manifest": {
+        "app": {
+          "bitcoin_integration": {
+            "pruning_support": false,
+            "rpc_access": "none",
+            "sync_required": true
+          },
+          "category": "money",
+          "container": {
+            "image": "source.archipelago-foundation.org/chaum/angor-indexer:1.0.1",
+            "network": "archy-net",
+            "pull_policy": "if-not-present"
+          },
+          "dependencies": [
+            {
+              "app_id": "mempool-api",
+              "version": ">=3.0.0"
+            },
+            "bitcoin:archival"
+          ],
+          "description": "Headless Bitcoin indexer endpoint for Angor. Reuses this node’s Mempool and Electrum index; requires a synced, unpruned Bitcoin node. Add this service’s address as the custom indexer in Angor settings. A relay is optional and installed separately.",
+          "health_check": {
+            "endpoint": "http://127.0.0.1:8080",
+            "interval": "30s",
+            "path": "/health",
+            "retries": 3,
+            "timeout": "8s",
+            "type": "http"
+          },
+          "id": "angor-indexer",
+          "install_prerequisites": [
+            "mempool-api"
+          ],
+          "interfaces": {
+            "main": {
+              "description": "Use this origin as Angor’s custom mainnet indexer URL. HTTPS is required for browser clients.",
+              "name": "Angor Indexer API",
+              "path": "/",
+              "port": 8998,
+              "protocol": "http",
+              "type": "api"
+            }
+          },
+          "metadata": {
+            "features": [
+              "Angor mainnet API",
+              "Reuses existing Mempool indexing",
+              "No separate blockchain database",
+              "Optional independent relay"
+            ],
+            "icon": "/assets/img/app-icons/angor-green.png",
+            "repo": "https://github.com/block-core/angor",
+            "tier": "optional"
+          },
+          "name": "Angor Indexer",
+          "ports": [
+            {
+              "auth": "open",
+              "auth_rationale": "Public Bitcoin chain-data API and validated transaction broadcast for Angor clients; no wallet keys or node RPC credentials are exposed. Browser cookie login would break machine clients.",
+              "bind": "127.0.0.1",
+              "container": 8080,
+              "host": 8998,
+              "protocol": "tcp"
+            }
+          ],
+          "resources": {
+            "cpu_limit": 1,
+            "disk_limit": "128Mi",
+            "memory_limit": "128Mi"
+          },
+          "security": {
+            "capabilities": [],
+            "network_policy": "isolated",
+            "no_new_privileges": true,
+            "readonly_root": true,
+            "user": 101
+          },
+          "upstream": {
+            "kind": "github",
+            "repo": "block-core/angor"
+          },
+          "version": "1.0.1"
+        }
+      },
+      "version": "1.0.1"
+    },
+    "angor-relay": {
+      "manifest": {
+        "app": {
+          "category": "nostr",
+          "container": {
+            "image": "source.archipelago-foundation.org/chaum/angor-relay:1.1.2",
+            "pull_policy": "if-not-present"
+          },
+          "dependencies": [
+            {
+              "storage": "5Gi"
+            }
+          ],
+          "description": "Optional dedicated Nostr relay for Angor project metadata. Separate storage and access settings keep the node’s internal relay private. Add this service’s address to Angor’s relay settings; use WSS for browser clients.",
+          "files": [
+            {
+              "content": "##\n## Default strfry config\n##\n\n# Directory that contains the strfry LMDB database (restart required)\ndb = \"./strfry-db/\"\n\ndbParams {\n    # Maximum number of threads/processes that can simultaneously have LMDB transactions open (restart required)\n    maxreaders = 256\n\n    # Size of mmap() to use when loading LMDB (default is 10TB, does *not* correspond to disk-space used) (restart required)\n    mapsize = 10995116277760\n\n    # Disables read-ahead when accessing the LMDB mapping. Reduces IO activity when DB size is larger than RAM. (restart required)\n    noReadAhead = false\n}\n\nevents {\n    # Maximum size of normalised JSON, in bytes\n    maxEventSize = 65536\n\n    # Events newer than this will be rejected\n    rejectEventsNewerThanSeconds = 900\n\n    # Events older than this will be rejected\n    rejectEventsOlderThanSeconds = 94608000\n\n    # Ephemeral events older than this will be rejected\n    rejectEphemeralEventsOlderThanSeconds = 60\n\n    # Ephemeral events will be deleted from the DB when older than this\n    ephemeralEventsLifetimeSeconds = 300\n\n    # Maximum number of tags allowed\n    maxNumTags = 2000\n\n    # Maximum size for tag values, in bytes\n    maxTagValSize = 1024\n}\n\nrelay {\n    # Interface to listen on. Use 0.0.0.0 to listen on all interfaces (restart required)\n    bind = \"0.0.0.0\"\n\n    # Port to open for the nostr websocket protocol (restart required)\n    port = 7777\n\n    # Set OS-limit on maximum number of open files/sockets (if 0, don't attempt to set) (restart required)\n    nofiles = 0\n\n    # HTTP header that contains the client's real IP, before reverse proxying (ie x-real-ip) (MUST be all lower-case)\n    realIpHeader = \"\"\n\n    info {\n        # NIP-11: Name of this server. Short/descriptive (< 30 characters)\n        name = \"Angor Relay\"\n\n        # NIP-11: Detailed information about relay, free-form\n        description = \"Dedicated public relay for Angor project metadata.\"\n\n        # NIP-11: Administrative nostr pubkey, for contact purposes\n        pubkey = \"\"\n\n        # NIP-11: Alternative administrative contact (email, website, etc)\n        contact = \"\"\n\n        # NIP-11: URL pointing to an image to be used as an icon for the relay\n        icon = \"\"\n\n        # List of supported lists as JSON array, or empty string to use default. Example: \"[1,2]\"\n        nips = \"\"\n    }\n\n    # Maximum accepted incoming websocket frame size (should be larger than max event) (restart required)\n    maxWebsocketPayloadSize = 131072\n\n    # Maximum number of filters allowed in a REQ\n    maxReqFilterSize = 200\n\n    # Websocket-level PING message frequency (should be less than any reverse proxy idle timeouts) (restart required)\n    autoPingSeconds = 55\n\n    # If TCP keep-alive should be enabled (detect dropped connections to upstream reverse proxy)\n    enableTcpKeepalive = false\n\n    # How much uninterrupted CPU time a REQ query should get during its DB scan\n    queryTimesliceBudgetMicroseconds = 10000\n\n    # Maximum records that can be returned per filter\n    maxFilterLimit = 500\n\n    # Maximum number of subscriptions (concurrent REQs) a connection can have open at any time\n    maxSubsPerConnection = 20\n\n    writePolicy {\n        # If non-empty, path to an executable script that implements the writePolicy plugin logic\n        plugin = \"\"\n    }\n\n    compression {\n        # Use permessage-deflate compression if supported by client. Reduces bandwidth, but slight increase in CPU (restart required)\n        enabled = true\n\n        # Maintain a sliding window buffer for each connection. Improves compression, but uses more memory (restart required)\n        slidingWindow = true\n    }\n\n    logging {\n        # Dump all incoming messages\n        dumpInAll = false\n\n        # Dump all incoming EVENT messages\n        dumpInEvents = false\n\n        # Dump all incoming REQ/CLOSE messages\n        dumpInReqs = false\n\n        # Log performance metrics for initial REQ database scans\n        dbScanPerf = false\n\n        # Log reason for invalid event rejection? Can be disabled to silence excessive logging\n        invalidEvents = true\n    }\n\n    numThreads {\n        # Ingester threads: route incoming requests, validate events/sigs (restart required)\n        ingester = 3\n\n        # reqWorker threads: Handle initial DB scan for events (restart required)\n        reqWorker = 3\n\n        # reqMonitor threads: Handle filtering of new events (restart required)\n        reqMonitor = 3\n\n        # negentropy threads: Handle negentropy protocol messages (restart required)\n        negentropy = 2\n    }\n\n    negentropy {\n        # Support negentropy protocol messages\n        enabled = true\n\n        # Maximum records that sync will process before returning an error\n        maxSyncEvents = 1000000\n    }\n}\n",
+              "overwrite": false,
+              "path": "/var/lib/archipelago/angor-relay-config/angor-relay.conf"
+            }
+          ],
+          "health_check": {
+            "endpoint": "http://127.0.0.1:7777",
+            "interval": "30s",
+            "path": "/health",
+            "retries": 3,
+            "timeout": "5s",
+            "type": "http"
+          },
+          "id": "angor-relay",
+          "interfaces": {
+            "main": {
+              "description": "Nostr WebSocket endpoint; use ws:// for LAN or wss:// through your HTTPS domain.",
+              "name": "Angor Relay",
+              "path": "/",
+              "port": 8091,
+              "protocol": "http",
+              "type": "api"
+            }
+          },
+          "metadata": {
+            "features": [
+              "Angor project metadata",
+              "Separate from the node relay",
+              "Persistent Nostr event storage"
+            ],
+            "icon": "/assets/img/app-icons/angor-green.png",
+            "repo": "https://github.com/hoytech/strfry",
+            "tier": "optional"
+          },
+          "name": "Angor Relay",
+          "nostr_integration": {
+            "monetization_enabled": false,
+            "relay_type": "public"
+          },
+          "ports": [
+            {
+              "auth": "open",
+              "auth_rationale": "Dedicated public Nostr relay for Angor project metadata; strfry verifies event signatures. It has separate storage from the private node relay and no wallet or node credentials.",
+              "bind": "127.0.0.1",
+              "container": 7777,
+              "host": 8091,
+              "protocol": "tcp"
+            }
+          ],
+          "resources": {
+            "cpu_limit": 1,
+            "disk_limit": "5Gi",
+            "memory_limit": "512Mi"
+          },
+          "security": {
+            "apparmor_profile": "nostr-relay",
+            "capabilities": [],
+            "network_policy": "isolated",
+            "no_new_privileges": true,
+            "readonly_root": true,
+            "seccomp_profile": "default"
+          },
+          "upstream": {
+            "kind": "github",
+            "repo": "hoytech/strfry"
+          },
+          "version": "1.1.2",
+          "volumes": [
+            {
+              "options": [
+                "rw"
+              ],
+              "source": "/var/lib/archipelago/angor-relay",
+              "target": "/app/strfry-db",
+              "type": "bind"
+            },
+            {
+              "options": [
+                "ro"
+              ],
+              "source": "/var/lib/archipelago/angor-relay-config/angor-relay.conf",
+              "target": "/etc/strfry.conf",
+              "type": "bind"
+            }
+          ]
+        }
+      },
+      "version": "1.1.2"
+    },
     "archipelago-source": {
       "manifest": {
         "app": {
@@ -2195,6 +2387,142 @@
           ]
         }
       },
+      "manifest_variants": [
+        {
+          "manifest": {
+            "app": {
+              "backup_before_runtime_change": true,
+              "category": "development",
+              "container": {
+                "image": "source.archipelago-foundation.org/lfg2025/gitea:1.27.3",
+                "pull_policy": "if-not-present"
+              },
+              "dependencies": [
+                {
+                  "storage": "50Gi"
+                }
+              ],
+              "description": "Self-hosted Git service with built-in container registry, CI/CD, and package hosting.",
+              "environment": [
+                "GITEA__database__DB_TYPE=sqlite3",
+                "GITEA__server__SSH_PORT=2222",
+                "GITEA__server__SSH_LISTEN_PORT=22",
+                "GITEA__server__LFS_START_SERVER=true",
+                "GITEA__packages__ENABLED=true",
+                "GITEA__packages__LIMIT_TOTAL_OWNER_SIZE=-1",
+                "GITEA__packages__LIMIT_SIZE_CONTAINER=-1",
+                "GITEA__repository_0x2Erelease__FILE_MAX_SIZE=10240",
+                "GITEA__repository_0x2Erelease__MAX_FILES=20",
+                "GITEA__repository__ENABLE_PUSH_CREATE_USER=true",
+                "GITEA__repository__ENABLE_PUSH_CREATE_ORG=true"
+              ],
+              "files": [
+                {
+                  "content": "[server]\nDOMAIN = {{HOST_IP}}\nSSH_DOMAIN = {{HOST_IP}}\nROOT_URL = http://{{HOST_IP}}:3001/\n",
+                  "overwrite": false,
+                  "path": "/var/lib/archipelago/gitea/data/gitea/conf/app.ini"
+                }
+              ],
+              "health_check": {
+                "endpoint": "http://localhost:3000",
+                "interval": "120s",
+                "path": "/",
+                "retries": 5,
+                "timeout": "30s",
+                "type": "http"
+              },
+              "id": "gitea",
+              "interfaces": {
+                "main": {
+                  "description": "Gitea web interface",
+                  "name": "Web UI",
+                  "path": "/",
+                  "port": 3001,
+                  "protocol": "http",
+                  "type": "ui"
+                }
+              },
+              "metadata": {
+                "features": [
+                  "Git repositories with web UI",
+                  "Built-in container/package registry",
+                  "Issue tracking and pull requests",
+                  "CI/CD via Gitea Actions",
+                  "Lightweight SQLite deployment"
+                ],
+                "icon": "/assets/img/app-icons/gitea.svg",
+                "launch": {
+                  "open_in_new_tab": true
+                },
+                "repo": "https://gitea.com",
+                "tier": "optional"
+              },
+              "name": "Gitea",
+              "ports": [
+                {
+                  "auth": "open",
+                  "auth_rationale": "Gitea enforces its own account login on every page and API route; git clients authenticate with basic-auth/tokens and cannot complete a browser login challenge.",
+                  "bind": "127.0.0.1",
+                  "container": 3000,
+                  "host": 3001,
+                  "protocol": "tcp"
+                },
+                {
+                  "auth": "none",
+                  "auth_rationale": "Git over SSH, authenticated by the user's own SSH keypair. Not HTTP, so the gate cannot serve a login page here.",
+                  "container": 22,
+                  "host": 2222,
+                  "protocol": "tcp"
+                }
+              ],
+              "resources": {
+                "disk_limit": "50Gi",
+                "memory_limit": "256Mi"
+              },
+              "security": {
+                "capabilities": [
+                  "CHOWN",
+                  "FOWNER",
+                  "SETUID",
+                  "SETGID",
+                  "DAC_OVERRIDE",
+                  "NET_BIND_SERVICE",
+                  "SYS_CHROOT"
+                ],
+                "network_policy": "bridge",
+                "no_new_privileges": false,
+                "readonly_root": false
+              },
+              "upstream": {
+                "kind": "github",
+                "repo": "go-gitea/gitea"
+              },
+              "version": "1.27.3",
+              "volumes": [
+                {
+                  "options": [
+                    "rw"
+                  ],
+                  "source": "/var/lib/archipelago/gitea/data",
+                  "target": "/data",
+                  "type": "bind"
+                },
+                {
+                  "options": [
+                    "rw"
+                  ],
+                  "source": "/var/lib/archipelago/gitea/config",
+                  "target": "/etc/gitea",
+                  "type": "bind"
+                }
+              ]
+            }
+          },
+          "requires": [
+            "runtime-migration-backup-v1"
+          ]
+        }
+      ],
       "version": "1.27.3"
     },
     "grafana": {
@@ -4091,11 +4419,11 @@
           "description": "Reverse proxy with SSL. Beautiful web interface for managing proxies. On a node, this manages its admin UI and upstream configuration — the proxy's own :80/:443 listeners are not published (the node's web server owns those ports).",
           "environment": [],
           "health_check": {
-            "endpoint": "localhost:81",
+            "endpoint": "http://127.0.0.1:81/api/",
             "interval": "30s",
             "retries": 3,
             "timeout": "5s",
-            "type": "tcp"
+            "type": "http"
           },
           "id": "nginx-proxy-manager",
           "interfaces": {
@@ -4996,6 +5324,111 @@
           ]
         }
       },
+      "manifest_variants": [
+        {
+          "manifest": {
+            "app": {
+              "backup_before_runtime_change": true,
+              "category": "development",
+              "container": {
+                "data_uid": "1000:1000",
+                "image": "source.archipelago-foundation.org/lfg2025/portainer:2.45.0",
+                "network": "slirp4netns",
+                "pull_policy": "if-not-present"
+              },
+              "dependencies": [
+                {
+                  "storage": "1Gi"
+                }
+              ],
+              "description": "Container management web UI for the local Podman socket.",
+              "environment": [],
+              "id": "portainer",
+              "interfaces": {
+                "main": {
+                  "description": "Portainer web interface",
+                  "name": "Web UI",
+                  "path": "/",
+                  "port": 9000,
+                  "protocol": "http",
+                  "type": "ui"
+                }
+              },
+              "metadata": {
+                "features": [
+                  "Container management dashboard",
+                  "Local Podman socket access",
+                  "Compose stack storage"
+                ],
+                "icon": "/assets/img/app-icons/portainer.webp",
+                "launch": {
+                  "open_in_new_tab": true
+                },
+                "tier": "optional"
+              },
+              "name": "Portainer",
+              "ports": [
+                {
+                  "auth": "gated",
+                  "bind": "127.0.0.1",
+                  "container": 9000,
+                  "host": 9000,
+                  "protocol": "tcp"
+                }
+              ],
+              "resources": {
+                "disk_limit": "1Gi",
+                "memory_limit": "256Mi"
+              },
+              "security": {
+                "capabilities": [
+                  "CHOWN",
+                  "SETUID",
+                  "SETGID",
+                  "DAC_OVERRIDE"
+                ],
+                "network_policy": "isolated",
+                "no_new_privileges": true,
+                "readonly_root": false
+              },
+              "upstream": {
+                "kind": "github",
+                "repo": "portainer/portainer"
+              },
+              "version": "2.45.0",
+              "volumes": [
+                {
+                  "options": [
+                    "rw"
+                  ],
+                  "source": "/var/lib/archipelago/portainer",
+                  "target": "/data",
+                  "type": "bind"
+                },
+                {
+                  "options": [
+                    "rw"
+                  ],
+                  "source": "/var/lib/archipelago/portainer/compose",
+                  "target": "/data/compose",
+                  "type": "bind"
+                },
+                {
+                  "options": [
+                    "rw"
+                  ],
+                  "source": "/run/user/1000/podman/podman.sock",
+                  "target": "/var/run/docker.sock",
+                  "type": "bind"
+                }
+              ]
+            }
+          },
+          "requires": [
+            "runtime-migration-backup-v1"
+          ]
+        }
+      ],
       "version": "2.45.0"
     },
     "router": {
@@ -5525,7 +5958,7 @@
     "tag": "NOSTR IDENTITY // YOUR NODE"
   },
   "schema": 1,
-  "signature": "bbcc938b855c1cb5d803e4510e1aac3259fbf3eabf6f36294c7773634047a3d5edb5b37a17d01d62d1407e5701c62853e15e20e15cc7f486b8975b22eeb94c07",
+  "signature": "66b78a5bc60992222b01ae901c5f4a40802667332a5ae47bdad7f34e149669261012ff6fd543478a4f318e850b0339be497af71a50266d829395a872ad386704",
   "signed_by": "did:key:z6Mkfu5LT8d4DjETtrkATvHh9Dvcbnr7zBCUwfau8Sw7DLWT",
   "storefront": {
     "popular": [
@@ -5551,5 +5984,5 @@
       }
     ]
   },
-  "updated": "2026-09-29"
+  "updated": "2026-09-30"
 }

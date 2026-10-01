@@ -1,6 +1,6 @@
 # Next OTA and raw ISO after 1.8.21
 
-**Status: implementation and final OTA/raw ISO acceptance passed; draft upload verification and offline signing/publication remain.**
+**Status: final OTA/raw ISO acceptance, signatures and Gitea public artifact verification passed; fleet promotion and ngit publication are being completed.**
 
 Current acceptance evidence: [1.8.22 release acceptance](release-1.8.22-acceptance.md).
 The chronological notes below retain earlier failures and superseded candidates;
@@ -35,12 +35,12 @@ See the Framework incident and 1.8.21 execution records for evidence/limits.
 
 | Task | Implemented/verified | Remaining before release |
 | --- | --- | --- |
-| X250 Bitcoin picker | Inline choices; actual Chromium kiosk selection, readability and pruning layout passed | Include in final UI/build checks |
-| App disappearance/readiness | Durable inventory and safe lifecycle repair; delayed HTTP and desktop/mobile hard-refresh checks passed | Final lifecycle/reboot gate on candidate |
-| X250 GitWorkshop/Nginx | Missing build contexts restored, dependency/build checks and live UI passed; Nginx slow pull diagnosed; truthful progress label | Verify both artifact payloads contain all build contexts |
-| PRs 161/162 | Reviewed, repaired, merged/closed normally; combined regression suite passed | Funded Tor-only candidate purchase, retained change, refund, Files bytes and cached repeat passed; include in signed artifacts |
-| Gitea/Portainer | Root cause confirmed; source network/backup/retry/catalog changes; real X250 routing repair and restart verified; private Git, SSH, LFS, registry and browser fixture checks passed | Automatic migration, scratch restore, failed-start recovery and reverse installation order passed. Operator confirms production site works through Portainer; production host reboot also preserved network/Git/Compose access; final candidate delivery and release checks remain |
-| Angor headless store service | Implemented standard Mempool adapter and separate optional relay, official logo, headless store entries and declarative dependency guard. API security/outage/DNS tests and five relay lifecycle cycles passed | Final candidate prerequisite/install acceptance, management restart/reboot checks and signed catalog delivery; real indexing on dev waits for Bitcoin sync |
+| X250 Bitcoin picker | Inline choices; actual Chromium kiosk selection, readability and pruning layout passed | Final UI/build checks passed |
+| App disappearance/readiness | Durable inventory and safe lifecycle repair; delayed HTTP and desktop/mobile hard-refresh checks passed | Final candidate lifecycle, hard-refresh and stability checks passed |
+| X250 GitWorkshop/Nginx | Missing build contexts restored, dependency/build checks and live UI passed; Nginx slow pull diagnosed; truthful progress label | OTA and ISO build-context/content checks passed |
+| PRs 161/162 | Reviewed, repaired, merged/closed normally; combined regression suite passed | Funded Tor-only candidate purchase, retained change, refund, Files bytes and cached repeat passed; included in signed artifacts |
+| Gitea/Portainer | Root cause confirmed; source network/backup/retry/catalog changes; real X250 routing repair and restart verified; private Git, SSH, LFS, registry and browser fixture checks passed | Automatic migration, scratch restore, failed-start recovery and reverse installation order passed. Operator confirms production site works through Portainer; production host reboot also preserved network/Git/Compose access; final candidate delivery and integration checks passed |
+| Angor headless store service | Implemented standard Mempool adapter and separate optional relay, official logo, headless store entries and declarative dependency guard. API security/outage/DNS tests and five relay lifecycle cycles passed | Final candidate prerequisite/API, lifecycle and catalog checks passed; real indexing on dev waits for Bitcoin sync |
 
 Durable payment receipts after a lost seller response remain a separately
 recorded design follow-up. Preserve the truthful unconfirmed-refund warning and
@@ -56,16 +56,16 @@ completed. See PR review for the accepted scope and coverage limits.
 - [x] Commit and push completed source changes to git and ngit.
 - [x] Run final backend/UI/regression/release gates on the final source; inspect
       skipped tests and report actual hardware/runtime coverage.
-- [ ] Prepare compatible signed app catalog; old runtimes must not apply a
+- [x] Prepare compatible signed app catalog; old runtimes must not apply a
       migration before they have backup/recovery support.
-- [ ] Version/changelog and OTA payload prepared, validated and signed by user.
+- [x] Version/changelog and OTA payload prepared, validated and signed by user.
 - [x] Raw ISO built; payload hashes/content verified; full installation and
       installed-system boot tested in QEMU/KVM without network.
 - [ ] User signs ISO checksums; publish OTA and ISO plus verification files on
       git and ngit; independently read back hashes and update discovery.
 - [ ] Provide LAN scp command for the new raw ISO.
 
-Latest backend source verification: 1,609 passed, zero failed, four existing
+Latest backend source verification: 1,617 passed, zero failed, four existing
 ignored tests. This is one layer of evidence, not a substitute for live gates.
 
 ## Angor verification — 2026-09-30
