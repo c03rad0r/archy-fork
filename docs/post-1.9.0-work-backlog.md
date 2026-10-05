@@ -261,3 +261,22 @@ ahead of that work or as an untested addition to the current release.
 - This may become a real app later; preserve an explicit tested promotion path
   from node-only demo to proper public app release without duplicate app IDs,
   conflicting state, lost configuration or automatic exposure before approval.
+
+## 14. FIPS media transport requirement
+
+- Operator explicitly requires FIPS for streaming peer files and distributed
+  IndeeHub media. Verify the actual node-to-node media-byte path uses FIPS, not
+  merely discovery, metrics, payment negotiation or a connection-status label.
+- Reconcile the earlier multi-transport/swarm design with this requirement.
+  Preserve normal authenticated browser/companion playback interfaces while
+  carrying the inter-node stream over authenticated, authorized FIPS connections.
+- Cover progressive/range requests, HLS segments as applicable, seek, pause/resume,
+  reconnect, producer/cache-peer outage, backpressure, bandwidth and resource use.
+  Preserve encrypted-content and timed-entitlement/payment enforcement end-to-end.
+- Define and expose behavior when no usable FIPS route exists. Do not silently
+  call another media transport FIPS or mark this requirement complete while the
+  actual stream continues over an unrelated fallback. Any fallback policy must
+  be explicit and reconciled with the operator's all-streaming requirement.
+- Instrument transport selection and verify it in headless multi-node integration
+  tests and actual mobile/desktop playback. Keep technical diagnostics available
+  without burdening normal playback with implementation details.
