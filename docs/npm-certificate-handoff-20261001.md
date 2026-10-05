@@ -256,3 +256,39 @@ IDs/start times are unchanged. Restored shop/www/indexer/relay HTTPS returns200.
 Shorty's old backend remains active under containment. Rebuild and requalify the
 migration, external security and restart persistence before closing this gate.
 The signed catalog contents are unchanged and need no further operator signature.
+
+### NPM multi-domain TLS regression found by public acceptance
+
+After the private-listener migration, local first requests passed, but public
+Angor health intermittently returned502. Host nginx recorded upstream certificate
+hostname mismatches when different public domains used the same NPM TLS listener.
+The generated bridge inherited upstream TLS session reuse. This matches nginx's
+[documented cross-SNI session-cache behaviour](https://trac.nginx.org/nginx/ticket/1340).
+
+The bridge now explicitly sets `proxy_ssl_session_reuse off` while retaining
+SNI, hostname/chain verification and the existing trusted certificates. A real
+NPM fixture with two distinct certificates reproduces failure with the old
+configuration on the second hostname; the fixed fixture passes40 alternating
+trusted TLS requests plus ACLs, WSS, certificate replacement, restart, failed-bind
+rollback and disable/delete propagation.24 Python NPM regressions pass.
+`/tmp/archy-190-npm-multicert-before.log` is the expected failing reproduction;
+`/tmp/archy-190-npm-multicert-integration.log` is the fixed flat-layout pass.
+Nested-layout issuance/renewal qualification is running separately.
+
+The exact helper correction is temporarily installed on Shorty and transactional
+sync succeeds.40 mixed local TLS requests across four hostnames pass. Public
+read-only Angor browser acceptance now passes TLS, WSS, funding/event commitment,
+Explore discovery of the known fixture and full project details/statistics:
+`/tmp/archy-190-shorty-migrated-angor-browser-2.log`. This remains one known fixture,
+not all35-project recovery.32 external IPv4 management-denial checks and tailnet
+access pass;10 HTTP/HTTPS ACME routes return the exact probe written in NPM's data
+mount. Six NPM database tables and42 certificate/renewal files exactly match the
+pre-migration backup (`/tmp/archy-190-shorty-state-preservation.log`).
+
+The previously running optimized build was stopped because it predates this
+embedded-helper correction. A complete new build/deployment remains mandatory.
+Shorty currently has the prior A5 candidate backend plus protected runtime nginx
+and this qualified helper; an A5 restart can reinstall its older helper. Do not
+claim final persistence until the new binary is deployed and restart is retested.
+No certificate verification was disabled for a public application or upstream.
+Raw-IP/unknown-SNI negative routing probes alone bypass hostname matching.

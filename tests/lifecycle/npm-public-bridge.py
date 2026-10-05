@@ -25,6 +25,14 @@ NPM_IMAGE = yaml.safe_load((ROOT / 'apps/nginx-proxy-manager/manifest.yml').read
 spec = importlib.util.spec_from_file_location('bridge', ROOT / 'scripts/npm-public-bridge.py')
 bridge = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(bridge)
+# Opt-in reproduction of the previous generated configuration. Normal acceptance
+# never enables this; a legacy run must fail the alternating-certificate check.
+if os.environ.get('ARCHY_NPM_TEST_LEGACY_TLS_REUSE') == '1':
+    fixed_render = bridge.render
+    def legacy_render(*args, **kwargs):
+        config, trust, fingerprints = fixed_render(*args, **kwargs)
+        return config.replace(b'proxy_ssl_session_reuse off;', b'proxy_ssl_session_reuse on;'), trust, fingerprints
+    bridge.render = legacy_render
 
 
 def run(*args):
@@ -210,17 +218,17 @@ server {{ listen 127.0.0.1:{http_port} default_server;
             acme.verify(api, sync, public, payload, tls_port, root/'access.log')
         certificate = api('/nginx/certificates', {'provider': 'other', 'nice_name': 'Disposable TLS fixture'}, 'POST')
         cert_path, key_path = root / 'leaf.pem', root / 'key.pem'
-        def upload_certificate():
+        def upload_certificate(record=certificate, leaf=cert_path, key=key_path, names=('fixture.example', 'second.example')):
             run('openssl', 'req', '-x509', '-newkey', 'rsa:2048', '-nodes', '-days', '2',
-                '-subj', '/CN=fixture.example', '-addext', 'subjectAltName=DNS:fixture.example,DNS:second.example',
-                '-keyout', str(key_path), '-out', str(cert_path))
+                '-subj', '/CN=' + names[0], '-addext', 'subjectAltName=' + ','.join('DNS:' + domain for domain in names),
+                '-keyout', str(key), '-out', str(leaf))
             boundary = 'archy-' + uuid.uuid4().hex
             parts = []
-            for field, path in [('certificate', cert_path), ('certificate_key', key_path)]:
+            for field, path in [('certificate', leaf), ('certificate_key', key)]:
                 parts.append((f'--{boundary}\r\nContent-Disposition: form-data; name="{field}"; filename="{path.name}"\r\n'
                               'Content-Type: application/octet-stream\r\n\r\n').encode() + path.read_bytes() + b'\r\n')
             body = b''.join(parts) + f'--{boundary}--\r\n'.encode()
-            status, _, _ = request(admin + '/api/nginx/certificates/' + str(certificate['id']) + '/upload',
+            status, _, _ = request(admin + '/api/nginx/certificates/' + str(record['id']) + '/upload',
                                     body, 'POST', {'Authorization': 'Bearer ' + token,
                                                   'Content-Type': 'multipart/form-data; boundary=' + boundary})
             assert status == 200, f'Fixture certificate upload failed ({status})'
@@ -228,18 +236,30 @@ server {{ listen 127.0.0.1:{http_port} default_server;
         secure_payload = {**payload, 'certificate_id': certificate['id'], 'ssl_forced': True}
         api('/nginx/proxy-hosts/' + str(host['id']), secure_payload, 'PUT')
         assert sync(); time.sleep(.3)
-        def secure(headers=None):
-            context = ssl.create_default_context(cafile=str(cert_path))
+        def secure(headers=None, hostname='fixture.example', cafile=cert_path):
+            context = ssl.create_default_context(cafile=str(cafile))
             stream = context.wrap_socket(socket.create_connection(('127.0.0.1', tls_port), timeout=15),
-                                         server_hostname='fixture.example')
-            connection = http.client.HTTPConnection('fixture.example', tls_port, timeout=15)
+                                         server_hostname=hostname)
+            connection = http.client.HTTPConnection(hostname, tls_port, timeout=15)
             connection.sock = stream
             try:
-                connection.request('GET', '/', headers={'Host': 'fixture.example', **(headers or {})})
+                connection.request('GET', '/', headers={'Host': hostname, **(headers or {})})
                 response = connection.getresponse()
                 return response.status, response.read()
             finally:
                 connection.close()
+        # Distinct certificate on the SAME upstream listener. Sharing a TLS
+        # session across SNI names causes intermittent certificate mismatch502s.
+        other_certificate = api('/nginx/certificates', {'provider': 'other', 'nice_name': 'Different SNI certificate'}, 'POST')
+        other_leaf, other_key = root / 'other-leaf.pem', root / 'other-key.pem'
+        upload_certificate(other_certificate, other_leaf, other_key, ('other.example',))
+        other_host = api('/nginx/proxy-hosts', {**payload, 'domain_names': ['other.example'],
+            'certificate_id': other_certificate['id'], 'ssl_forced': True}, 'POST')
+        assert sync(); time.sleep(.3)
+        for _ in range(20):
+            assert secure()[0] == 200, 'First hostname inherited another TLS session'
+            assert secure(hostname='other.example', cafile=other_leaf)[0] == 200, 'Second hostname inherited another TLS session'
+        print('PASS alternating40 trusted TLS requests across distinct SNI certificates on one NPM listener', flush=True)
         assert public()[0] == 301, 'NPM forced HTTPS was not preserved'
         assert secure()[0] == 200, 'Verified TLS bridge failed or redirected in a loop'
         run('podman', 'exec', name, 'sh', '-c',

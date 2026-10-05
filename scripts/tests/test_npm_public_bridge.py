@@ -291,6 +291,23 @@ class RoutingTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'Duplicate'):
             bridge.render(rows + rows, {}, '127.0.0.1:8088', '127.0.0.1:8444', '/acme', '/trust.pem')
 
+    def test_distinct_sni_certificates_do_not_share_upstream_tls_sessions(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            rows = []
+            for number, name in [(1, 'first.example'), (2, 'second.example')]:
+                directory = root / 'custom_ssl' / f'npm-{number}'
+                directory.mkdir(parents=True)
+                (directory / 'fullchain.pem').write_text('fixture certificate ' + name)
+                (directory / 'privkey.pem').write_text('fixture key ' + name)
+                rows.append({'id': number, 'domain_names': json.dumps([name]),
+                             'certificate_id': number, 'certificate_deleted': 0, 'provider': 'other'})
+            config, _, _ = bridge.render(rows, {'data': str(root)}, '127.0.0.1:8088',
+                                         '127.0.0.1:8444', '/acme', '/trust.pem')
+            self.assertEqual(config.count(b'proxy_ssl_session_reuse off;'), 2)
+            self.assertEqual(config.count(b'proxy_ssl_name $host;'), 2)
+            self.assertEqual(config.count(b'proxy_ssl_verify on;'), 2)
+
 
 class TransactionTests(unittest.TestCase):
     def test_idempotent_sync_and_certificate_renewal_reload(self):

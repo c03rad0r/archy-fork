@@ -279,6 +279,9 @@ def render(rows, paths, http_address, https_address, acme_root, trust_file):
             tls = '' if scheme == 'http' else f'''
         proxy_ssl_server_name on;
         proxy_ssl_name $host;
+        # One NPM listener serves different certificates. A shared upstream
+        # session cache can resume another hostname's session and fail SNI.
+        proxy_ssl_session_reuse off;
         proxy_ssl_verify on;
         proxy_ssl_verify_depth 5;
         proxy_ssl_trusted_certificate {quote(trust_file)};'''
