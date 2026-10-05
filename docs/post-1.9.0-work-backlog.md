@@ -195,3 +195,26 @@ acceptance is claimed by this backlog.
 - Test spoofed/unauthorized peers, expired trust, disconnect/reconnect, partial
   metrics, stale/out-of-order/duplicate messages, mixed transport capability and
   fallback recovery. Do not claim FIPS is faster until timings demonstrate it.
+
+## Required qualification before user acceptance testing
+
+Operator explicitly requires extensive headless testing using the authorized
+nodes before deploying the next features for UAT. For each task, qualify source
+regressions, actual browser behavior, integration between appropriate nodes,
+permissions and failure/recovery paths first. Use existing access and useful
+read-only checks on real nodes; use isolated fixtures for destructive scenarios.
+Headless browser success does not substitute for actual companion/WebView checks
+where lifecycle, native signing, media or navigation behavior is involved.
+
+Record exact revisions/artifacts, nodes, environments, before/after measurements,
+executed scenarios, failures and untested boundaries. Retest fixes and relevant
+regressions; do not mark gaps passed or claim perfection. UAT handoff must contain
+short node-specific steps with expected outcomes, deployment scope and rollback.
+Preserve wallets, files, identities and operator app choices throughout.
+
+If IndeeHub changes are needed, include its app update explicitly: build and test
+the versioned image, preserve app data and configuration, qualify fresh install,
+upgrade/restart and rollback, publish through the signed app catalog, and verify
+existing nodes discover and apply the intended version. Distinguish an app-only
+release from any backend/OTA dependency; use the documented decoupled app-update
+path where supported. Do not silently require a full OTA for an app-only change.
