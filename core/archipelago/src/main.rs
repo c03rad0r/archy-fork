@@ -70,6 +70,8 @@ mod node_message;
 mod nostr_discovery;
 mod nostr_handshake;
 mod nostr_relays;
+#[cfg(test)]
+mod nostr_security_tests;
 mod peers;
 mod port_allocator;
 mod rate_limit;
