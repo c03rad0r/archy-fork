@@ -178,3 +178,20 @@ acceptance is claimed by this backlog.
 - Record before/after latency distributions and agree measurable budgets after
   establishing a baseline. Faster feedback alone is not evidence that the
   underlying connection/synchronization delay has been fixed.
+
+## 12. Missing Fleet card metrics and secure FIPS transport
+
+- Reproduce missing metrics on multiple Fleet **Nodes** cards; trace collection,
+  authorization, transport delivery, identity matching, subscriptions/cache and
+  rendering separately. Verify each metric is real, current and associated with
+  the correct node; show unavailable/stale explicitly rather than invented zeros.
+- Evaluate and use existing FIPS transport wherever supported and measurably
+  beneficial across Fleet, discovery, peering and synchronization. Preserve peer
+  authentication, access controls, confidentiality and existing trust boundaries;
+  transport reachability must never grant permission to read metrics or act.
+- Prefer fresh authenticated updates without duplicate polling or excessive
+  subscriptions. Measure propagation latency and resource use, including large
+  fleets, while retaining safe fallback for unavailable/incompatible FIPS peers.
+- Test spoofed/unauthorized peers, expired trust, disconnect/reconnect, partial
+  metrics, stale/out-of-order/duplicate messages, mixed transport capability and
+  fallback recovery. Do not claim FIPS is faster until timings demonstrate it.
