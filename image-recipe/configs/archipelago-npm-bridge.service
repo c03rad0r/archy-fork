@@ -1,0 +1,15 @@
+[Unit]
+Description=Synchronize NPM public domains and certificate renewal
+After=nginx.service archipelago.service
+ConditionPathExists=/etc/nginx/sites-available/archipelago
+
+[Service]
+Type=oneshot
+User=root
+ExecStartPre=/usr/bin/python3 /opt/archipelago/scripts/dashboard-public-guard.py
+ExecStart=/usr/bin/python3 /opt/archipelago/scripts/npm-public-bridge.py
+TimeoutStartSec=120
+UMask=0077
+Nice=10
+StandardOutput=journal
+StandardError=journal

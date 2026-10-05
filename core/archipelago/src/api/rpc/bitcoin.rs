@@ -136,7 +136,7 @@ impl RpcHandler {
     /// ~30% of UI calls error out even though the node is perfectly healthy.
     /// With retry + backoff, the UI sees a uniform slow-but-successful
     /// response instead of intermittent failures.
-    async fn bitcoin_rpc_call<T: serde::de::DeserializeOwned>(
+    pub(in crate::api::rpc) async fn bitcoin_rpc_call<T: serde::de::DeserializeOwned>(
         &self,
         client: &reqwest::Client,
         method: &str,

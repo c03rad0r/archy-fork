@@ -50,12 +50,10 @@
             {{ section.name }}
           </button>
         </div>
-        <input
+        <AppSearchField
           v-model="searchQuery"
-          type="text"
           :placeholder="t('marketplace.searchPlaceholder')"
-          :aria-label="t('marketplace.searchApps')"
-          class="app-header-search px-4 py-2 bg-white/10 border border-white/20 rounded-lg text-white placeholder-white/50 focus:outline-none focus:border-white/40 transition-colors"
+          :label="t('marketplace.searchApps')"
         />
         <RefreshIndicator :state="catalogResource.entry.loadState" label="Refreshing app store catalog" />
       </div>
@@ -82,12 +80,10 @@
             type="button"
           >{{ section.name }}</button>
         </div>
-        <input
+        <AppSearchField
           v-model="searchQuery"
-          type="text"
           :placeholder="t('marketplace.searchPlaceholder')"
-          :aria-label="t('marketplace.searchApps')"
-          class="w-full px-4 py-3 md:py-2 bg-white/10 border border-white/20 rounded-lg text-white placeholder-white/50 focus:outline-none focus:border-white/40 transition-colors"
+          :label="t('marketplace.searchApps')"
         />
       </div>
     </div>
@@ -168,6 +164,7 @@ let marketplaceAnimationDone = false
 </script>
 
 <script setup lang="ts">
+import { normalizeStoreApps } from './apps/serviceNames'
 import { ref, computed, onMounted, onBeforeUnmount, watch } from 'vue'
 import { useRouter, useRoute, RouterLink } from 'vue-router'
 import { useI18n } from 'vue-i18n'
@@ -181,6 +178,7 @@ import { useCollapsingHeaderTabs } from '@/composables/useCollapsingHeaderTabs'
 import { useContainersScanTimeout } from '@/composables/useContainersScanTimeout'
 import { useCachedResource } from '@/composables/useCachedResource'
 import RefreshIndicator from '@/components/RefreshIndicator.vue'
+import AppSearchField from '@/components/AppSearchField.vue'
 import InstallVersionModal from '@/components/InstallVersionModal.vue'
 import { APP_STORE_CATEGORIES, APP_STORE_SECTIONS } from './appStoreCategories'
 import MarketplaceAppCard from './marketplace/MarketplaceAppCard.vue'
@@ -275,7 +273,7 @@ const catalogResource = useCachedResource<MarketplaceApp[]>({
   ttlMs: 300_000,
   persist: true,
 })
-const communityApps = computed(() => catalogResource.data.value ?? [])
+const communityApps = computed(() => normalizeStoreApps(catalogResource.data.value ?? []))
 const loadingCommunity = computed(() => catalogResource.entry.loadState === 'loading')
 // Keep-last-value error banner (D-07): a failed background refresh never
 // raises a toast, it only surfaces here — content stays on screen either way.
@@ -383,10 +381,10 @@ const allApps = computed(() => {
         const category = app.category || categorizeCommunityApp(app)
         return { ...app, category, source: 'nostr' }
       })
-    return [...base, ...nostrMerged]
+    return normalizeStoreApps([...base, ...nostrMerged])
   }
 
-  return base
+  return normalizeStoreApps(base)
 })
 
 const filteredApps = computed(() => {

@@ -162,22 +162,36 @@ ISO="$(find_iso)"
 # ── Stage 4: mount-level smoke test ──────────────────────────────────
 stage "iso-smoke" bash scripts/iso-smoke-test.sh "$ISO" "$VERSION"
 
-# ── Stage 5: QEMU boot test (best-effort) ────────────────────────────
+# ── Stage 5: QEMU boot test ─────────────────────────────────────────
 # The ISO's kernel cmdline has no serial console, so the serial-log
-# sanity grep can miss a perfectly healthy boot. Run it, report it,
-# but don't fail an otherwise-green build on it.
+# sanity grep can miss a healthy boot. That requires separate evidence;
+# inconclusive results must never be counted as passing release gates.
 if [ "$NO_QEMU" = "0" ] && command -v qemu-system-x86_64 >/dev/null 2>&1; then
     echo
-    echo "═══ [qemu-boot] (best-effort) test-iso-qemu.sh $ISO 180"
-    if bash image-recipe/_archived/test-iso-qemu.sh "$ISO" 180; then
+    echo "═══ [qemu-boot] test-iso-qemu.sh $ISO 180"
+    qemu_work=$(mktemp -d -t archipelago-iso-boot.XXXXXX)
+    echo "  Disposable boot disk/logs: $qemu_work"
+    read -r qemu_ssh qemu_http < <(python3 - <<'PY'
+import socket
+with socket.socket() as ssh, socket.socket() as http:
+    ssh.bind(('127.0.0.1', 0)); http.bind(('127.0.0.1', 0))
+    print(ssh.getsockname()[1], http.getsockname()[1])
+PY
+)
+    if TMPDIR="$qemu_work" QEMU_SSH_PORT="$qemu_ssh" QEMU_HTTP_PORT="$qemu_http" bash image-recipe/_archived/test-iso-qemu.sh "$ISO" 180; then
         echo "═══ [qemu-boot] PASS"
         PASS+=("qemu-boot")
     else
-        echo "═══ [qemu-boot] INCONCLUSIVE (not gating — verify on real hardware)"
-        PASS+=("qemu-boot(inconclusive)")
+        echo "═══ [qemu-boot] NOT VERIFIED — inspect boot evidence before publication"
+        FAIL+=("qemu-boot")
+        summary 1
     fi
-else
+elif [ "$NO_QEMU" = "1" ]; then
     echo; echo "═══ [qemu-boot] SKIPPED"
+else
+    echo "═══ [qemu-boot] NOT VERIFIED — qemu-system-x86_64 is missing"
+    FAIL+=("qemu-boot")
+    summary 1
 fi
 
 # ── Done ─────────────────────────────────────────────────────────────

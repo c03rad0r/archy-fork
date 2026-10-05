@@ -1,3 +1,5 @@
+import { resumableUpload, type ResumableUploadOptions } from './resumable-upload'
+
 export interface FileBrowserItem {
   name: string
   path: string
@@ -35,8 +37,11 @@ export function sanitizePath(path: string): string {
   return '/' + resolved.join('/')
 }
 
+const encodeFilePath = (path: string) => path.split('/').map(encodeURIComponent).join('/')
+
 class FileBrowserClient {
   private _authenticated = false
+  private _loginPromise: Promise<{ authenticated: boolean; retryable: boolean }> | null = null
   private baseUrl: string
 
   constructor() {
@@ -53,6 +58,20 @@ class FileBrowserClient {
   }
 
   async login(): Promise<boolean> {
+    return (await this.authenticate()).authenticated
+  }
+
+  private authenticate(): Promise<{ authenticated: boolean; retryable: boolean }> {
+    // Folder polling and uploads can refresh together after returning online.
+    // Share one request and keep its failure classification in its result;
+    // another refresh must not turn a disconnected request into an auth denial.
+    if (!this._loginPromise) {
+      this._loginPromise = this.performLogin().finally(() => { this._loginPromise = null })
+    }
+    return this._loginPromise
+  }
+
+  private async performLogin(): Promise<{ authenticated: boolean; retryable: boolean }> {
     try {
       // Get a filebrowser JWT via the authenticated backend (no credentials exposed to browser)
       // Use credentials: 'include' and CSRF token for proper auth
@@ -67,18 +86,21 @@ class FileBrowserClient {
         body: JSON.stringify({ method: 'app.filebrowser-token' }),
         credentials: 'include',
       })
-      if (!rpcRes.ok) return false
+      if (!rpcRes.ok) {
+        return { authenticated: false, retryable: rpcRes.status >= 500 || rpcRes.status === 408 || rpcRes.status === 429 }
+      }
       const rpcData = await rpcRes.json()
       const token = rpcData?.result?.token
-      if (!token) return false
+      if (!token) return { authenticated: false, retryable: false }
 
       const expires = new Date(Date.now() + 24 * 60 * 60 * 1000).toUTCString()
       const secure = window.location.protocol === 'https:' ? '; Secure' : ''
       document.cookie = `auth=${token}; path=/; SameSite=Lax${secure}; expires=${expires}`
       this._authenticated = true
-      return true
+      this._lastLoginFailure = 0
+      return { authenticated: true, retryable: false }
     } catch {
-      return false
+      return { authenticated: false, retryable: true }
     }
   }
 
@@ -101,8 +123,11 @@ class FileBrowserClient {
     if (Date.now() - this._lastLoginFailure < FileBrowserClient.LOGIN_RETRY_COOLDOWN_MS) {
       throw new Error('FileBrowser authentication failed — please open Cloud to log in')
     }
-    const ok = await this.login()
-    if (!ok) {
+    const outcome = await this.authenticate()
+    if (!outcome.authenticated) {
+      // An interrupted token refresh is a transport failure, not a rejected
+      // credential. Resumable uploads must be able to retry it on reconnect.
+      if (outcome.retryable) throw new TypeError('Cloud login connection interrupted')
       this._lastLoginFailure = Date.now()
       throw new Error('FileBrowser authentication failed — please open Cloud to log in')
     }
@@ -125,7 +150,7 @@ class FileBrowserClient {
 
   async listDirectory(path: string): Promise<FileBrowserItem[]> {
     const safePath = sanitizePath(path)
-    const res = await this.authedFetch(`${this.baseUrl}/api/resources${safePath}`)
+    const res = await this.authedFetch(`${this.baseUrl}/api/resources${encodeFilePath(safePath)}`)
     if (!res.ok) throw new Error(`File Browser is not available (HTTP ${res.status})`)
     // When File Browser isn't installed, nginx falls through to the SPA and
     // returns index.html (200, text/html); when it's down it returns 502.
@@ -148,7 +173,7 @@ class FileBrowserClient {
    */
   downloadUrl(path: string): string {
     const safePath = sanitizePath(path)
-    return `${this.baseUrl}/api/raw${safePath}`
+    return `${this.baseUrl}/api/raw${encodeFilePath(safePath)}`
   }
 
   /**
@@ -158,7 +183,7 @@ class FileBrowserClient {
    */
   async fetchBlobUrl(path: string): Promise<string> {
     const safePath = sanitizePath(path)
-    const res = await this.authedFetch(`${this.baseUrl}/api/raw${safePath}`)
+    const res = await this.authedFetch(`${this.baseUrl}/api/raw${encodeFilePath(safePath)}`)
     if (!res.ok) throw new Error(`Failed to fetch file: ${res.status}`)
     const blob = await res.blob()
     return URL.createObjectURL(blob)
@@ -183,7 +208,7 @@ class FileBrowserClient {
   async streamUrl(path: string): Promise<string> {
     await this.ensureAuth()
     const safePath = sanitizePath(path)
-    return `${this.baseUrl}/api/raw${safePath}`
+    return `${this.baseUrl}/api/raw${encodeFilePath(safePath)}`
   }
 
   /**
@@ -201,7 +226,11 @@ class FileBrowserClient {
     URL.revokeObjectURL(blobUrl)
   }
 
-  async upload(dirPath: string, file: File, options?: { signal: AbortSignal; onProgress: (sent: number) => void }): Promise<void> {
+  async upload(dirPath: string, file: File, options?: ResumableUploadOptions & { resumable?: boolean }): Promise<void> {
+    if (options?.resumable) {
+      await this.ensureAuth()
+      return resumableUpload(this.baseUrl, sanitizePath(dirPath), file, (url, init) => this.authedFetch(url, init), options)
+    }
     if (options) {
       await this.ensureAuth()
       if (options.signal.aborted) throw new DOMException('Upload cancelled', 'AbortError')
@@ -242,7 +271,7 @@ class FileBrowserClient {
     const safePath = sanitized.endsWith('/') ? sanitized : `${sanitized}/`
     const encodedName = encodeURIComponent(file.name)
     const res = await this.authedFetch(
-      `${this.baseUrl}/api/resources${safePath}${encodedName}?override=true`,
+      `${this.baseUrl}/api/resources${encodeFilePath(safePath)}${encodedName}?override=true`,
       { method: 'POST', body: file },
     )
     if (!res.ok) {
@@ -255,7 +284,7 @@ class FileBrowserClient {
     const sanitized = sanitizePath(parentPath)
     const safePath = sanitized.endsWith('/') ? sanitized : `${sanitized}/`
     const sanitizedName = name.replace(/\.\./g, '').replace(/\//g, '')
-    const res = await this.authedFetch(`${this.baseUrl}/api/resources${safePath}${sanitizedName}/`, {
+    const res = await this.authedFetch(`${this.baseUrl}/api/resources${encodeFilePath(safePath)}${encodeURIComponent(sanitizedName)}/`, {
       method: 'POST',
     })
     if (!res.ok) throw new Error(`Create folder failed: ${res.status}`)
@@ -263,7 +292,7 @@ class FileBrowserClient {
 
   async deleteItem(path: string): Promise<void> {
     const safePath = sanitizePath(path)
-    const res = await this.authedFetch(`${this.baseUrl}/api/resources${safePath}`, {
+    const res = await this.authedFetch(`${this.baseUrl}/api/resources${encodeFilePath(safePath)}`, {
       method: 'DELETE',
     })
     if (!res.ok) throw new Error(`Delete failed: ${res.status}`)
@@ -304,7 +333,7 @@ class FileBrowserClient {
       throw new Error(`Cannot read binary file: ${path}`)
     }
     const safePath = sanitizePath(path)
-    const res = await this.authedFetch(`${this.baseUrl}/api/raw${safePath}`)
+    const res = await this.authedFetch(`${this.baseUrl}/api/raw${encodeFilePath(safePath)}`)
     if (!res.ok) throw new Error(`Failed to read file: ${res.status}`)
     const blob = await res.blob()
     const size = blob.size
@@ -318,7 +347,7 @@ class FileBrowserClient {
     const safePath = sanitizePath(oldPath)
     const dir = safePath.substring(0, safePath.lastIndexOf('/') + 1)
     const sanitizedName = newName.replace(/\.\./g, '').replace(/\//g, '')
-    const res = await this.authedFetch(`${this.baseUrl}/api/resources${safePath}`, {
+    const res = await this.authedFetch(`${this.baseUrl}/api/resources${encodeFilePath(safePath)}`, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ destination: `${dir}${sanitizedName}` }),

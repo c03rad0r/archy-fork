@@ -1475,6 +1475,48 @@ pub fn is_peer_allowed_path(path: &str) -> bool {
         || path.starts_with("/dwn/")
 }
 
+/// The ordinary API listener is a management surface even when contacted
+/// directly, without host nginx. Peer traffic has its own path-restricted
+/// listener and retains its existing cryptographic authentication.
+fn management_peer_is_private(address: std::net::IpAddr) -> bool {
+    match address {
+        std::net::IpAddr::V4(ip) => {
+            ip.is_loopback()
+                || ip.is_private()
+                || ip.is_link_local()
+                || (ip.octets()[0] == 100 && (64..=127).contains(&ip.octets()[1]))
+        }
+        std::net::IpAddr::V6(ip) => {
+            if let Some(mapped) = ip.to_ipv4_mapped() {
+                management_peer_is_private(std::net::IpAddr::V4(mapped))
+            } else {
+                ip.is_loopback() || ip.is_unique_local() || ip.is_unicast_link_local()
+            }
+        }
+    }
+}
+
+fn request_surface_allowed(
+    peer_only: bool,
+    peer: std::net::IpAddr,
+    request: &hyper::Request<hyper::Body>,
+) -> bool {
+    if peer_only {
+        return is_peer_allowed_path(request.uri().path());
+    }
+    // Keep purpose-built content/peer HTTP endpoints reachable with their
+    // existing handler-level checks. The general RPC dispatcher is a management
+    // surface here; only the dedicated peer listener retains public peer RPC.
+    if request.uri().path() != "/rpc/v1" && is_peer_allowed_path(request.uri().path()) {
+        return true;
+    }
+    management_peer_is_private(peer)
+        && !request
+            .headers()
+            .get("x-archipelago-public-ingress")
+            .is_some_and(|value| !value.as_bytes().is_empty())
+}
+
 async fn accept_loop(
     handler: Arc<ApiHandler>,
     listener: TcpListener,
@@ -1552,7 +1594,7 @@ async fn accept_loop(
                             // forwarded headers on loopback (nginx) connections.
                             req.extensions_mut()
                                 .insert(crate::api::rpc::PeerAddr(peer_addr));
-                            if peer_only && !is_peer_allowed_path(req.uri().path()) {
+                            if !request_surface_allowed(peer_only, peer_addr.ip(), &req) {
                                 let resp = hyper::Response::builder()
                                     .status(hyper::StatusCode::NOT_FOUND)
                                     .body(hyper::Body::empty())
@@ -2518,5 +2560,99 @@ mod merge_tests {
             absent_transitional_replacement(&PackageState::Installing),
             None
         );
+    }
+}
+
+#[cfg(test)]
+mod management_surface_tests {
+    use super::*;
+
+    #[test]
+    fn public_api_listener_rejects_management_despite_forged_headers() {
+        for peer in [
+            "198.18.0.2",
+            "2001:db8::2",
+            "::ffff:198.18.0.2",
+            "100.63.255.255",
+            "100.128.0.1",
+        ] {
+            for path in ["/", "/login", "/assets/index.js", "/rpc/v1", "/ws"] {
+                for method in ["GET", "POST"] {
+                    let request = hyper::Request::builder()
+                        .uri(path)
+                        .method(method)
+                        .header("host", "127.0.0.1")
+                        .header("x-forwarded-for", "127.0.0.1")
+                        .header("x-real-ip", "192.168.1.10")
+                        .body(hyper::Body::empty())
+                        .unwrap();
+                    assert!(
+                        !request_surface_allowed(false, peer.parse().unwrap(), &request),
+                        "{peer} {method} {path}"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn private_management_and_restricted_peer_transport_remain_available() {
+        let mut request = hyper::Request::builder()
+            .uri("/rpc/v1")
+            .body(hyper::Body::empty())
+            .unwrap();
+        for peer in [
+            "127.0.0.1",
+            "10.0.0.2",
+            "172.16.0.2",
+            "192.168.1.2",
+            "169.254.1.2",
+            "100.64.0.1",
+            "100.127.255.254",
+            "::1",
+            "fd00::1",
+            "fe80::1",
+            "::ffff:192.168.1.2",
+        ] {
+            assert!(request_surface_allowed(
+                false,
+                peer.parse().unwrap(),
+                &request
+            ));
+        }
+        request
+            .headers_mut()
+            .insert("x-archipelago-public-ingress", "1".parse().unwrap());
+        assert!(!request_surface_allowed(
+            false,
+            "127.0.0.1".parse().unwrap(),
+            &request
+        ));
+        // The dedicated peer listener retains its existing signed RPC contract.
+        assert!(request_surface_allowed(
+            true,
+            "198.18.0.2".parse().unwrap(),
+            &request
+        ));
+        for path in [
+            "/content",
+            "/content/fixture/invoice",
+            "/blob/fixture",
+            "/dwn/health",
+            "/archipelago/node-message",
+        ] {
+            *request.uri_mut() = path.parse().unwrap();
+            assert!(request_surface_allowed(
+                false,
+                "198.18.0.2".parse().unwrap(),
+                &request
+            ));
+        }
+        *request.uri_mut() = "/login".parse().unwrap();
+        assert!(!request_surface_allowed(
+            true,
+            "198.18.0.2".parse().unwrap(),
+            &request
+        ));
     }
 }

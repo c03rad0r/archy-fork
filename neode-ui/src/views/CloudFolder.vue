@@ -366,7 +366,7 @@ function onDrop(e: DragEvent) {
 }
 
 async function handleUpload(files: File[]) {
-  await cloudStore.uploadFiles(files)
+  await cloudStore.uploadFiles(files, route.fullPath)
 }
 
 async function handleDelete(path: string) {

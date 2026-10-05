@@ -1,20 +1,23 @@
 app:
   id: nginx-proxy-manager
   name: Nginx Proxy Manager
-  version: 2.12.1
+  version: 2.14.0
   upstream:
     kind: github
     repo: NginxProxyManager/nginx-proxy-manager
   description: >-
     Reverse proxy with SSL. Beautiful web interface for managing proxies.
-    On a node, this manages its admin UI and upstream configuration — the
-    proxy's own :80/:443 listeners are not published (the node's web server
-    owns those ports).
+    The node's public web server forwards configured domains through this
+    service, preserving its access lists, certificates and custom routes.
+  backup_before_runtime_change: true
 
   container:
-    image: source.archipelago-foundation.org/lfg2025/nginx-proxy-manager:latest
+    image: source.archipelago-foundation.org/lfg2025/nginx-proxy-manager@sha256:8b91afcca90f5f2a7b2b8937999824f623c8a8748ae8013a1c9bf94f62177f08
     pull_policy: if-not-present
-    network: pasta
+    # Rootless pasta copies the LAN IP, preventing requests back to this node.
+    # Retain the old pasta host gateway used by saved NPM upstreams, plus
+    # host.containers.internal. This subnet stays inside the private rootless namespace.
+    network: slirp4netns:allow_host_loopback=true,cidr=169.254.1.0/24
 
   dependencies:
     - storage: 1Gi
@@ -48,6 +51,17 @@ app:
       auth_rationale: >-
         Nginx Proxy Manager enforces its own admin account on every page;
         the initial setup wizard also has to answer before any account exists.
+
+    - host: 8088
+      container: 80
+      protocol: tcp
+      bind: 127.0.0.1
+      auth: local
+    - host: 8444
+      container: 443
+      protocol: tcp
+      bind: 127.0.0.1
+      auth: local
 
   volumes:
     - type: bind

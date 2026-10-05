@@ -221,6 +221,10 @@ impl RpcHandler {
         params: Option<serde_json::Value>,
     ) -> Result<serde_json::Value> {
         let params = params.ok_or_else(|| anyhow::anyhow!("Missing params"))?;
+        if let Some(job) = self.flash_job.read().await.as_ref() {
+            anyhow::ensure!(job.snapshot().await.done,
+                "A firmware flash is in progress; wait before reconnecting or changing radio settings");
+        }
 
         let mut config = mesh::load_config(&self.config.data_dir).await?;
 
@@ -325,7 +329,16 @@ impl RpcHandler {
         {
             let service_arc = Arc::clone(&self.mesh_service);
             let config_for_apply = config.clone();
+            let flash_jobs = Arc::clone(&self.flash_job);
             tokio::spawn(async move {
+                // Serialize against flash registration. If a flash started
+                // after this RPC saved settings, its completion applies them.
+                let flash_guard = flash_jobs.read().await;
+                if let Some(job) = flash_guard.as_ref() {
+                    if !job.snapshot().await.done {
+                        return;
+                    }
+                }
                 let mut service = service_arc.write().await;
                 if let Some(svc) = service.as_mut() {
                     if let Err(e) = svc.configure(config_for_apply).await {

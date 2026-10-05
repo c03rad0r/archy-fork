@@ -64,3 +64,21 @@ packaged binary (same dest hash). The signed-identity announce (`ARCHY:2:{ed}:{x
 the Rust side (`reticulum.rs`) already passes the node's real keys through. Packaging is
 done and verified standalone. What's left is entirely hardware-dependent: the live LoRa
 message path (Phase-0 gates #2/#3) needs a real RNode-flashed board.
+
+
+### ESP32 flashing tool
+
+`build-esptool.sh` builds `dist/archy-esptool` from Espressif esptool 4.8.1.
+`build.sh` includes this step. The executable bundles its Python dependencies
+and ESP32-S3 stub, so radio flashing does not depend on a system esptool package,
+a first-use package download, or a build-machine virtual environment.
+
+The OTA runtime and ISO require this artifact. Build and installed-tool checks
+run `archy-esptool --archy-self-test`, which loads the actual ESP32-S3 stub using
+the upstream loader without opening a serial port. Source updater and bootstrap
+install it to `/usr/local/bin/archy-esptool`; firmware writes still require the
+operator's explicit board model and confirmation.
+
+Official upstream: https://github.com/espressif/esptool/tree/v4.8.1
+The binary includes upstream GPL-2.0-or-later software; retain upstream license
+metadata and source availability with distribution.

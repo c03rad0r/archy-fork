@@ -71,3 +71,68 @@ fn seller_errors_are_bounded_printable_and_identified_as_peer_text() {
         );
     }
 }
+
+#[tokio::test]
+async fn known_purchase_never_becomes_a_new_spend_when_cache_or_index_is_unavailable() {
+    let dir = tempfile::tempdir().unwrap();
+    assert!(
+        existing_paid_content(dir.path(), "seller.onion", "id", None)
+            .await
+            .unwrap()
+            .is_none()
+    );
+    crate::content_owned::record_purchase(
+        dir.path(),
+        "seller.onion",
+        "id",
+        "file.txt",
+        "text/plain",
+        b"paid",
+        1,
+        "cashu",
+        "now",
+    )
+    .await
+    .unwrap();
+    for (id, filename) in [("id", None), ("duplicate-id", Some("/file.txt"))] {
+        let cached = existing_paid_content(dir.path(), "seller.onion", id, filename)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(cached["paid_sats"], 0);
+        assert_eq!(cached["already_owned"], true);
+        assert_eq!(cached["data"], "cGFpZA==");
+    }
+    assert!(
+        existing_paid_content(dir.path(), "different.onion", "id", None)
+            .await
+            .unwrap()
+            .is_none()
+    );
+    tokio::fs::remove_file(dir.path().join("purchased-content/seller.onion/id"))
+        .await
+        .unwrap();
+    assert!(
+        existing_paid_content(dir.path(), "seller.onion", "id", None)
+            .await
+            .unwrap_err()
+            .to_string()
+            .contains("No new payment")
+    );
+    tokio::fs::write(dir.path().join("purchased-content/owned.json"), b"damaged")
+        .await
+        .unwrap();
+    assert!(
+        existing_paid_content(dir.path(), "seller.onion", "other-id", None)
+            .await
+            .unwrap_err()
+            .to_string()
+            .contains("no new payment")
+    );
+    assert_eq!(
+        tokio::fs::read(dir.path().join("purchased-content/owned.json"))
+            .await
+            .unwrap(),
+        b"damaged"
+    );
+}

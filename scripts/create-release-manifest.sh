@@ -109,7 +109,8 @@ if [ -z "$FRONTEND_ARCHIVE" ]; then
         # it, and silently installs nothing. There is no error to notice.
         mkdir -p "$RUNTIME_DIR/image-recipe/configs"
         for unit in archipelago-doctor.service archipelago-doctor.timer \
-                    archipelago-host-secrets-audit.service; do
+                    archipelago-host-secrets-audit.service \
+                    archipelago-npm-bridge.service archipelago-npm-bridge.timer; do
             if [ -f "$PROJECT_ROOT/image-recipe/configs/$unit" ]; then
                 echo "  Including runtime unit $unit"
                 cp "$PROJECT_ROOT/image-recipe/configs/$unit" "$RUNTIME_DIR/image-recipe/configs/$unit"
@@ -127,7 +128,7 @@ if [ -z "$FRONTEND_ARCHIVE" ]; then
         # flag → mesh dead) and no archy-rnodeconf at all (Flash LoRa fails
         # with "No such file or directory"). bootstrap.rs promotes these to
         # /usr/local/bin on first startup after the update.
-        for tool in archy-reticulum-daemon archy-rnodeconf; do
+        for tool in archy-reticulum-daemon archy-rnodeconf archy-esptool; do
             if [ -f "$PROJECT_ROOT/reticulum-daemon/dist/$tool" ]; then
                 mkdir -p "$RUNTIME_DIR/radio-tools"
                 echo "  Including radio tool $tool"

@@ -432,11 +432,15 @@ class RPCClient {
     total_amount_sats: number
     fee_rate_sat_per_vbyte: number
   }> {
+    if (params.feeRateSatPerVbyte !== undefined &&
+        (!Number.isInteger(params.feeRateSatPerVbyte) || params.feeRateSatPerVbyte < 1 || params.feeRateSatPerVbyte > 5000)) {
+      throw new Error('Fee rate must be a whole number from 1 to 5000 sat/vB')
+    }
     return this.call({
       method: 'lnd.create-psbt',
       params: {
         outputs: params.outputs,
-        fee_rate_sat_per_vbyte: params.feeRateSatPerVbyte ?? 10,
+        ...(params.feeRateSatPerVbyte === undefined ? {} : { fee_rate_sat_per_vbyte: params.feeRateSatPerVbyte }),
       },
     })
   }

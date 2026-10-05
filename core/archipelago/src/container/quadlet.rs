@@ -68,6 +68,10 @@ pub enum NetworkMode {
     /// Rootless slirp4netns networking. Podman rejects network aliases with
     /// this mode, so render only Network=slirp4netns.
     Slirp4netns,
+    /// Permit explicit host aliases as well as LAN upstreams for NPM.
+    Slirp4netnsHostLoopback,
+    /// Preserve existing NPM upstreams using pasta's former host gateway.
+    Slirp4netnsLegacyGateway,
     /// Rootless pasta networking. This is more reliable than slirp4netns for
     /// host port forwarding on long-running web apps.
     Pasta,
@@ -229,6 +233,15 @@ impl QuadletUnit {
             NetworkMode::Host => {
                 let _ = writeln!(s, "Network=host");
             }
+            NetworkMode::Slirp4netnsHostLoopback => {
+                let _ = writeln!(s, "Network=slirp4netns:allow_host_loopback=true");
+            }
+            NetworkMode::Slirp4netnsLegacyGateway => {
+                let _ = writeln!(
+                    s,
+                    "Network=slirp4netns:allow_host_loopback=true,cidr=169.254.1.0/24"
+                );
+            }
             NetworkMode::Slirp4netns => {
                 let _ = writeln!(s, "Network=slirp4netns");
             }
@@ -348,6 +361,26 @@ impl QuadletUnit {
         }
         let _ = writeln!(s);
         let _ = writeln!(s, "[Service]");
+        if self.name == "filebrowser" {
+            // Runs while the managed server is stopped, before it can expose
+            // a default account. The helper verifies real login and root access.
+            let mut argv = vec![
+                "/usr/bin/python3".to_string(),
+                "/opt/archipelago/scripts/filebrowser-credentials.py".to_string(),
+                "--image".to_string(),
+                self.image.clone(),
+            ];
+            for (target, flag) in [("/data", "--data-dir"), ("/srv", "--srv-root")] {
+                if let Some(mount) = self
+                    .bind_mounts
+                    .iter()
+                    .find(|m| m.container == Path::new(target))
+                {
+                    argv.extend([flag.to_string(), mount.host.display().to_string()]);
+                }
+            }
+            let _ = writeln!(s, "ExecStartPre={}", shell_join(&argv));
+        }
         // Dependency-gated apps may legitimately keep their container entrypoint
         // in a wait loop before the actual daemon binds ports. Fedimint waits
         // for Bitcoin IBD to finish before execing fedimintd; systemd's default
@@ -447,6 +480,12 @@ impl QuadletUnit {
             other if !other.is_empty() && other != "isolated" => NetworkMode::Bridge(other.into()),
             _ => match app.container.network.as_deref() {
                 Some("slirp4netns") => NetworkMode::Slirp4netns,
+                Some("slirp4netns:allow_host_loopback=true") => {
+                    NetworkMode::Slirp4netnsHostLoopback
+                }
+                Some("slirp4netns:allow_host_loopback=true,cidr=169.254.1.0/24") => {
+                    NetworkMode::Slirp4netnsLegacyGateway
+                }
                 Some("pasta") => NetworkMode::Pasta,
                 Some(n) if !n.is_empty() && n != "host" => NetworkMode::Bridge(n.into()),
                 _ => NetworkMode::Default,
@@ -1071,7 +1110,8 @@ pub fn exec_changed(old_body: &str, new_body: &str) -> bool {
     // Entrypoint= and Exec= together define what the container runs, so a drift
     // in either must recreate the container (e.g. when this renderer first
     // splits a folded `Exec=sh -lc ...` into `Entrypoint=sh` + `Exec=-lc ...`).
-    directive_values(old_body, "Exec=") != directive_values(new_body, "Exec=")
+    directive_values(old_body, "ExecStartPre=") != directive_values(new_body, "ExecStartPre=")
+        || directive_values(old_body, "Exec=") != directive_values(new_body, "Exec=")
         || directive_values(old_body, "Entrypoint=") != directive_values(new_body, "Entrypoint=")
 }
 
@@ -1142,6 +1182,28 @@ pub async fn is_active(service: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn filebrowser_prestart_credentials_are_a_required_runtime_change() {
+        let unit = super::QuadletUnit {
+            name: "filebrowser".into(),
+            image: "registry.example/filebrowser:v2.63.23".into(),
+            ..Default::default()
+        };
+        let rendered = unit.render();
+        assert!(rendered.contains("ExecStartPre=/usr/bin/python3 /opt/archipelago/scripts/filebrowser-credentials.py --image registry.example/filebrowser:v2.63.23"));
+        let old = rendered
+            .lines()
+            .filter(|line| !line.starts_with("ExecStartPre="))
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(super::exec_changed(&old, &rendered));
+        assert!(!super::exec_changed(&rendered, &rendered));
+        let other = super::QuadletUnit {
+            name: "other-app".into(),
+            ..unit
+        };
+        assert!(!other.render().contains("filebrowser-credentials.py"));
+    }
     use super::*;
     use tempfile::tempdir;
 
@@ -1707,6 +1769,24 @@ app:
         assert!(s.contains("Network=slirp4netns"));
         assert!(!s.contains("NetworkAlias="));
         assert!(!s.contains("--network-alias"));
+    }
+
+    #[test]
+    fn npm_network_preserves_same_node_upstreams_without_aliases() {
+        let m = AppManifest::parse(include_str!(
+            "../../../../apps/nginx-proxy-manager/manifest.yml"
+        ))
+        .unwrap();
+        let rendered = QuadletUnit::from_manifest(&m, "nginx-proxy-manager").render();
+        assert_eq!(
+            rendered
+                .lines()
+                .filter(|line| line.starts_with("Network="))
+                .collect::<Vec<_>>(),
+            vec!["Network=slirp4netns:allow_host_loopback=true,cidr=169.254.1.0/24"]
+        );
+        assert!(!rendered.contains("NetworkAlias="));
+        assert!(!rendered.contains("--network-alias"));
     }
 
     #[test]

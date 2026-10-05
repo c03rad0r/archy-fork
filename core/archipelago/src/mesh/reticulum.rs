@@ -277,6 +277,19 @@ fn terminate_group(child: &Child) {
     }
 }
 
+/// Own the daemon during its asynchronous handshake too. Cancellation drops
+/// the future without executing an error branch; a bare Child would survive
+/// and keep the serial port open even though the listener had stopped.
+struct StartingDaemon(Option<Child>);
+
+impl Drop for StartingDaemon {
+    fn drop(&mut self) {
+        if let Some(child) = self.0.as_ref() {
+            terminate_group(child);
+        }
+    }
+}
+
 /// One peer learned via an RNS announce (LXMF delivery destination).
 #[derive(Clone)]
 struct ReticulumPeer {
@@ -517,10 +530,10 @@ impl ReticulumLink {
         let child = cmd
             .spawn()
             .context("Failed to spawn reticulum-daemon — is it installed/packaged?")?;
+        let mut starting = StartingDaemon(Some(child));
 
         // Wait for the socket to appear, then for the daemon's "ready" event.
-        // Runs as a block so every failure path tears the just-spawned daemon
-        // group down via `terminate_group` (the child has no `kill_on_drop`).
+        // StartingDaemon tears the group down on errors AND cancellation.
         let init = async {
             let deadline = tokio::time::Instant::now() + Duration::from_secs(15);
             let stream = loop {
@@ -560,20 +573,17 @@ impl ReticulumLink {
                 dest_hash = %dest_hash_hex,
                 "Reticulum daemon ready"
             );
-            Ok((write_half, reader, dest_hash, display_name))
+            Ok::<_, anyhow::Error>((write_half, reader, dest_hash, display_name))
         };
-        let (write_half, reader, dest_hash, display_name) = match init.await {
-            Ok(parts) => parts,
-            Err(e) => {
-                terminate_group(&child);
-                return Err(e);
-            }
-        };
+        let (write_half, reader, dest_hash, display_name) = init.await?;
 
         let mut link = Self {
             device_path: label,
             socket_path,
-            child,
+            child: starting
+                .0
+                .take()
+                .expect("starting daemon is owned until ready"),
             writer: write_half,
             reader,
             dest_hash,
@@ -1556,6 +1566,33 @@ impl Drop for ReticulumLink {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn cancelled_daemon_handshake_terminates_child() {
+        let (started, ready) = tokio::sync::oneshot::channel();
+        let task = tokio::spawn(async move {
+            let child = Command::new("sleep")
+                .arg("60")
+                .process_group(0)
+                .spawn()
+                .unwrap();
+            let pid = child.id().unwrap();
+            let _starting = StartingDaemon(Some(child));
+            started.send(pid).unwrap();
+            std::future::pending::<()>().await;
+        });
+        let pid = ready.await.unwrap();
+        assert_eq!(unsafe { libc::kill(pid as i32, 0) }, 0);
+        task.abort();
+        assert!(task.await.unwrap_err().is_cancelled());
+        tokio::time::timeout(Duration::from_secs(3), async {
+            while unsafe { libc::kill(pid as i32, 0) } == 0 {
+                tokio::time::sleep(Duration::from_millis(20)).await;
+            }
+        })
+        .await
+        .expect("cancelled handshake left its child alive");
+    }
 
     #[test]
     fn announced_name_precedence() {

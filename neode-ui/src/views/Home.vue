@@ -288,7 +288,7 @@
     <WalletScanModal :show="showScanModal" @close="showScanModal = false" @sent="loadWeb5Status()" />
     <SendBitcoinModal :show="showSendModal" @close="showSendModal = false" @sent="loadWeb5Status()" @scan="showSendModal = false; showScanModal = true" />
     <ReceiveBitcoinModal :show="showReceiveModal" @close="showReceiveModal = false" @received="loadWeb5Status()" @scan="showReceiveModal = false; showScanModal = true" />
-    <TransactionsModal :show="showTransactionsModal" :transactions="walletTransactions" @close="showTransactionsModal = false" />
+    <TransactionsModal :show="showTransactionsModal" :transactions="walletTransactions" @updated="loadWeb5Status" @close="showTransactionsModal = false" />
     <WalletSettingsModal :show="showWalletSettingsModal" @close="showWalletSettingsModal = false" @changed="loadWeb5Status()" />
   </div>
 </template>

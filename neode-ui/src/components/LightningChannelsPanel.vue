@@ -553,7 +553,7 @@ const defaultOpenForm = () => ({
   peerUri: '',
   amount: 100000,
   private: false,
-  feePreset: 'standard' as FeePreset,
+  feePreset: 'fast' as FeePreset,
   customConfTarget: null as number | null,
   customSatPerVbyte: null as number | null,
 })
@@ -624,7 +624,7 @@ function feeParams(
   setError: (message: string) => void = message => { openError.value = message },
 ): { target_conf?: number; sat_per_vbyte?: number } | null {
   if (form.feePreset !== 'custom') {
-    return { target_conf: feePresets.find(p => p.key === form.feePreset)?.confTarget ?? 6 }
+    return { target_conf: feePresets.find(p => p.key === form.feePreset)?.confTarget ?? 1 }
   }
   const rate = form.customSatPerVbyte
   const conf = form.customConfTarget
@@ -673,7 +673,7 @@ async function openChannel() {
   }
 }
 
-const defaultCloseForm = () => ({ feePreset: 'standard' as FeePreset, customConfTarget: null as number | null, customSatPerVbyte: null as number | null })
+const defaultCloseForm = () => ({ feePreset: 'fast' as FeePreset, customConfTarget: null as number | null, customSatPerVbyte: null as number | null })
 const closeForm = ref(defaultCloseForm())
 
 function confirmClose(ch: Channel) {

@@ -1,10 +1,23 @@
 # Changelog
 
-## v1.8.23-alpha (2026-10-01)
+## v1.9.0-alpha (2026-10-05)
 
+Unpublished release candidate; qualification is still in progress.
+
+- Keep Cuprate and NetBird supporting components out of app listings and consolidate BTCPay Server under Commerce.
+- Default on-chain sends, channel opens and cooperative closes to a dynamic next-block fee target, preserving explicit slower and custom choices.
+- Add reviewed fee-bump quotes, explicit budgets and durable operation tracking for supported wallet transactions.
+- Preserve Nginx Proxy Manager storage, same-node upstream connectivity, certificates and access controls through managed migrations.
+- Restrict public management access while retaining configured public apps and ACME certificate validation.
+- Serve the Mempool explorer on the Angor indexer origin alongside its API.
+- Include the self-contained LoRa flashing tool and explicit board selection in update and installer payloads.
 - Preserve paid-file Lightning entitlements across restarts and recover settled invoices from LND. Retry delivery without paying again and retain purchased files in the owned cache.
 - Return explicit payment-status errors with safe retry guidance when verification is unavailable.
-- Show compact upload progress across screens, retain the original destination, and cancel active and queued uploads.
+- Keep upload progress on its original screen, show completion there or notify on other screens, and cancel active and queued uploads.
+- Resume interrupted uploads while the app remains open, preserve the original destination, and verify saved file contents before reporting completion.
+- Provision a unique private File Browser login on each node while keeping Cloud sign-in automatic and preserving existing accounts and files.
+- Update Nostr dependencies to reject forged relay events and oversized encrypted messages; preserve native signing and encryption compatibility.
+- Allow apps to opt in to a validated public-key list of user identities without granting signing access.
 - Make transaction filters transparent and horizontally scrollable on mobile.
 - Keep Immich internal services out of My Apps, avoid false recovery states for healthy stacks, and allow removal of retired catalog apps.
 - Repair the redundant managed Portainer network override that can prevent startup, preserving custom overrides and persistent state.

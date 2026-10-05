@@ -1,0 +1,11 @@
+[Unit]
+Description=Watch NPM domain configuration and renewed certificates
+
+[Timer]
+OnBootSec=30s
+OnUnitInactiveSec=15s
+AccuracySec=1s
+Unit=archipelago-npm-bridge.service
+
+[Install]
+WantedBy=timers.target

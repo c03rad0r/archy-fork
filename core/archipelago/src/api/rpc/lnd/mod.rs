@@ -1,4 +1,6 @@
 mod channels;
+mod fee_bump;
+mod fee_policy;
 mod info;
 mod macaroons;
 mod payments;

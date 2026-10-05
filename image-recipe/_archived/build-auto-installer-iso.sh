@@ -1343,6 +1343,15 @@ else
     echo "   ⚠️  archy-rnodeconf not found at $RNODECONF — ISO nodes can't flash RNode firmware until it's sideloaded"
 fi
 
+# Mandatory offline flasher: cached rootfs images may lack system esptool.
+ESPTOOL_BUNDLE="${ARCHY_ESPTOOL:-$SCRIPT_DIR/../../reticulum-daemon/dist/archy-esptool}"
+if [ ! -x "$ESPTOOL_BUNDLE" ]; then
+    echo "ERROR: packaged archy-esptool missing; build reticulum-daemon/build-esptool.sh" >&2
+    exit 1
+fi
+"$ESPTOOL_BUNDLE" --archy-self-test || exit 1
+install -m 755 "$ESPTOOL_BUNDLE" "$ARCH_DIR/bin/archy-esptool"
+
 if [ "$BACKEND_CAPTURED" = "0" ]; then
     if [ "$BUILD_FROM_SOURCE" != "1" ]; then
         echo "   ⚠️  Could not capture from live server, building from source..."
@@ -2449,42 +2458,24 @@ runuser -u archipelago -- bash -c 'export XDG_RUNTIME_DIR=/run/user/1000 && syst
 # Ensure podman socket is active for archipelago user
 runuser -u archipelago -- bash -c 'export XDG_RUNTIME_DIR=/run/user/1000 && systemctl --user enable --now podman.socket' 2>>"$LOG" || true
 
-# Create FileBrowser container as archipelago user (rootless podman)
-# Generate random FileBrowser password and store for auto-login
-FB_PASS_DIR="/var/lib/archipelago/secrets/filebrowser"
-mkdir -p "$FB_PASS_DIR"
-if [ ! -f "$FB_PASS_DIR/password" ]; then
-    head -c 24 /dev/urandom | base64 | tr -d '/+=' | head -c 24 > "$FB_PASS_DIR/password"
-    chmod 600 "$FB_PASS_DIR/password"
-    chown 1000:1000 "$FB_PASS_DIR/password"
-fi
-
-if ! runuser -u archipelago -- bash -c 'export XDG_RUNTIME_DIR=/run/user/1000 && podman ps -a --format "{{.Names}}"' 2>/dev/null | grep -q filebrowser; then
-    echo "[$(date)] Creating FileBrowser container ($FILEBROWSER_IMAGE)..." >> "$LOG"
-    runuser -u archipelago -- bash -c "export XDG_RUNTIME_DIR=/run/user/1000 && podman run -d --name filebrowser --restart unless-stopped \
-        --cap-drop=ALL \
-        --cap-add=DAC_OVERRIDE \
-        --cap-add=NET_BIND_SERVICE \
+# Provision the same unique verified Cloud login used by app installation/OTA.
+if ! runuser -u archipelago -- env XDG_RUNTIME_DIR=/run/user/1000 podman container exists filebrowser; then
+    install -d -o 100000 -g 100000 /var/lib/archipelago/filebrowser /var/lib/archipelago/filebrowser-data
+    install -d -o archipelago -g archipelago -m 700 /var/lib/archipelago/secrets/filebrowser
+    runuser -u archipelago -- env XDG_RUNTIME_DIR=/run/user/1000 \
+        python3 /opt/archipelago/scripts/filebrowser-credentials.py --image "$FILEBROWSER_IMAGE" >>"$LOG" 2>&1 || exit 1
+    runuser -u archipelago -- env XDG_RUNTIME_DIR=/run/user/1000 podman run -d \
+        --name filebrowser --restart unless-stopped \
+        --cap-drop=ALL --cap-add=DAC_OVERRIDE --cap-add=NET_BIND_SERVICE \
         --security-opt=no-new-privileges:true \
-        --read-only \
         --tmpfs=/tmp:rw,noexec,nosuid,size=64m \
-        --health-cmd='curl -sf http://localhost:80/ || exit 1' \
+        --health-cmd='wget -q --spider http://localhost:80/health || exit 1' \
         --health-interval=30s --health-timeout=5s --health-retries=3 \
-        --memory=256m \
-        -p 8083:80 \
+        --memory=256m -p 127.0.0.1:8083:80 \
         -v /var/lib/archipelago/filebrowser:/srv \
         -v /var/lib/archipelago/filebrowser-data:/data \
         -v /var/lib/archipelago/data/cloud:/srv/cloud \
-        $FILEBROWSER_IMAGE \
-        --database=/data/database.db --root=/srv --address=0.0.0.0 --port=80" 2>>"$LOG" && \
-        echo "[$(date)] FileBrowser created successfully" >> "$LOG" || \
-        echo "[$(date)] WARNING: FileBrowser creation failed" >> "$LOG"
-    # Set FileBrowser password to match the stored random password
-    sleep 5
-    FB_PASS=$(cat "$FB_PASS_DIR/password" 2>/dev/null || echo "admin")
-    runuser -u archipelago -- bash -c "export XDG_RUNTIME_DIR=/run/user/1000 && podman exec filebrowser filebrowser users update admin --password '$FB_PASS' --database /data/database.db" 2>>"$LOG" && \
-        echo "[$(date)] FileBrowser admin password set" >> "$LOG" || \
-        echo "[$(date)] WARNING: Could not set FileBrowser password" >> "$LOG"
+        "$FILEBROWSER_IMAGE" --config /data/.filebrowser.json >>"$LOG" 2>&1 || exit 1
 fi
 echo "[$(date)] Minimal first-boot complete" >> "$LOG"
 FBUNBUNDLED
@@ -2611,6 +2602,12 @@ fi
 cp "$SCRIPT_DIR/../../scripts/container-doctor.sh" "$ARCH_DIR/scripts/"
 cp "$SCRIPT_DIR/../configs/archipelago-doctor.service" "$ARCH_DIR/scripts/"
 cp "$SCRIPT_DIR/../configs/archipelago-doctor.timer" "$ARCH_DIR/scripts/"
+for npm_file in dashboard-public-guard.py npm-public-bridge.py sync-npm-public-hosts.sh filebrowser-credentials.py; do
+    cp "$SCRIPT_DIR/../../scripts/$npm_file" "$ARCH_DIR/scripts/"
+done
+for npm_unit in archipelago-npm-bridge.service archipelago-npm-bridge.timer; do
+    cp "$SCRIPT_DIR/../configs/$npm_unit" "$ARCH_DIR/scripts/"
+done
 
 # Build-source apps need their complete contexts even on unbundled ISOs.
 # Keep this identical to the OTA runtime payload; a per-app allowlist silently
@@ -3142,6 +3139,10 @@ if [ -d "$BOOT_MEDIA/archipelago/bin" ]; then
     chmod +x /mnt/target/usr/local/bin/* 2>/dev/null || true
 fi
 
+# Required even when the cached rootfs never had esptool installed.
+install -m 755 "$BOOT_MEDIA/archipelago/bin/archy-esptool" /mnt/target/usr/local/bin/archy-esptool || exit 1
+chroot /mnt/target /usr/local/bin/archy-esptool --archy-self-test || exit 1
+
 if [ -d "$BOOT_MEDIA/archipelago/web-ui" ]; then
     cp -r "$BOOT_MEDIA/archipelago/web-ui" /mnt/target/opt/archipelago/
 fi
@@ -3245,6 +3246,13 @@ done
 for doctor_unit in archipelago-doctor.service archipelago-doctor.timer; do
     install -m 644 "$BOOT_MEDIA/archipelago/scripts/$doctor_unit" "/mnt/target/etc/systemd/system/$doctor_unit" || exit 1
 done
+for npm_file in dashboard-public-guard.py npm-public-bridge.py sync-npm-public-hosts.sh filebrowser-credentials.py; do
+    install -m 755 "$BOOT_MEDIA/archipelago/scripts/$npm_file" "/mnt/target/opt/archipelago/scripts/$npm_file" || exit 1
+done
+for npm_unit in archipelago-npm-bridge.service archipelago-npm-bridge.timer; do
+    install -m 644 "$BOOT_MEDIA/archipelago/scripts/$npm_unit" "/mnt/target/etc/systemd/system/$npm_unit" || exit 1
+done
+systemctl --root=/mnt/target enable archipelago-npm-bridge.timer || exit 1
 # END DOCTOR OVERLAY
 
 # Copy self-update script

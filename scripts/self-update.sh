@@ -107,42 +107,8 @@ if ! command -v ping >/dev/null 2>&1; then
     fi
 fi
 
-if ! command -v esptool >/dev/null 2>&1; then
-    log "Installing esptool for LoRa radio firmware flashing..."
-    if sudo apt-get update -qq 2>>"$LOG_FILE" && sudo apt-get install -y -qq esptool 2>>"$LOG_FILE"; then
-        ok "esptool installed"
-    else
-        warn "Unable to install esptool automatically; radio firmware flashing will be unavailable"
-    fi
-fi
-
-# Debian's esptool package (4.7.0+dfsg-0.1) ships without the precompiled
-# esp32s3 "stub flasher" blob (stripped for DFSG compliance — no
-# buildable-from-source path Debian could verify). Without it, esptool's
-# normal stub-loader mode fails outright (FileNotFoundError), and the ROM
-# bootloader fallback (--no-stub) doesn't implement a full-chip erase at
-# all — confirmed live 2026-07-23 flashing a real Heltec V4, both ways.
-# Fetching the exact same file from the matching upstream esptool release
-# tag restores full (and correct) flashing behavior — it's the same
-# open-source codebase, just the one blob Debian's packaging couldn't
-# include.
-if command -v esptool >/dev/null 2>&1; then
-    STUB_DIR="/usr/lib/python3/dist-packages/esptool/targets/stub_flasher"
-    STUB_FILE="$STUB_DIR/stub_flasher_32s3.json"
-    if [ ! -f "$STUB_FILE" ]; then
-        log "Fetching esptool's esp32s3 stub flasher (missing from the Debian package)..."
-        ESPTOOL_VERSION=$(esptool version 2>/dev/null | tail -1 | tr -d ' \t')
-        if [ -n "$ESPTOOL_VERSION" ] && sudo curl -fsSL -o "$STUB_FILE" \
-            "https://raw.githubusercontent.com/espressif/esptool/v${ESPTOOL_VERSION}/esptool/targets/stub_flasher/stub_flasher_32s3.json" \
-            2>>"$LOG_FILE"; then
-            sudo chmod 644 "$STUB_FILE"
-            ok "esp32s3 stub flasher installed"
-        else
-            sudo rm -f "$STUB_FILE" 2>/dev/null
-            warn "Unable to fetch esp32s3 stub flasher; LoRa firmware flashing will be unavailable"
-        fi
-    fi
-fi
+# ESP32 flashing is provided by the self-contained archy-esptool built below.
+# Do not depend on a first-use apt install or a separately fetched stub blob.
 
 # Build-time prerequisites for reticulum-daemon/build.sh's PyInstaller step
 # below (discovered the hard way: ensurepip needs python3-venv, and
@@ -246,7 +212,7 @@ ok "Backend installed"
 if [ -f "$REPO_DIR/reticulum-daemon/build.sh" ]; then
     log "Building reticulum-daemon tools (archy-reticulum-daemon, archy-rnodeconf)..."
     if (cd "$REPO_DIR/reticulum-daemon" && ./build.sh) 2>>"$LOG_FILE"; then
-        for tool in archy-reticulum-daemon archy-rnodeconf; do
+        for tool in archy-reticulum-daemon archy-rnodeconf archy-esptool; do
             if [ -f "$REPO_DIR/reticulum-daemon/dist/$tool" ]; then
                 sudo cp "$REPO_DIR/reticulum-daemon/dist/$tool" /usr/local/bin/
                 sudo chmod +x "/usr/local/bin/$tool"
@@ -300,7 +266,7 @@ fi
 # for backward compatibility with older binaries that still look there.
 SCRIPTS_DEST="/opt/archipelago/scripts"
 sudo mkdir -p "$SCRIPTS_DEST"
-for script in image-versions.sh reconcile-containers.sh container-specs.sh container-doctor.sh sync-npm-public-hosts.sh app-surface-smoke-test.sh bitcoin-stack-lifecycle-test.sh; do
+for script in image-versions.sh reconcile-containers.sh container-specs.sh container-doctor.sh dashboard-public-guard.py npm-public-bridge.py sync-npm-public-hosts.sh app-surface-smoke-test.sh bitcoin-stack-lifecycle-test.sh; do
     src="$REPO_DIR/scripts/$script"
     if [ -f "$src" ]; then
         sudo install -m 755 "$src" "$SCRIPTS_DEST/$script"

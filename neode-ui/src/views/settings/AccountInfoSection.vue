@@ -362,16 +362,27 @@ init()
               </button>
             </div>
             <div class="overflow-y-auto flex-1 min-h-0 space-y-6 pr-1">
-              <!-- v1.8.23-alpha -->
+              <!-- v1.9.0-alpha -->
               <div>
                 <div class="flex items-center gap-2 mb-3">
-                  <span class="text-xs font-mono px-2 py-0.5 rounded bg-orange-500/20 text-orange-300">v1.8.23-alpha</span>
-                  <span class="text-xs text-white/40">October 1, 2026</span>
+                  <span class="text-xs font-mono px-2 py-0.5 rounded bg-orange-500/20 text-orange-300">v1.9.0-alpha</span>
+                  <span class="text-xs text-white/40">October 5, 2026</span>
                 </div>
                 <div class="space-y-3 text-sm text-white/80 pl-3 border-l border-white/10">
+                  <p>Keep Cuprate and NetBird supporting components out of app listings and consolidate BTCPay Server under Commerce.</p>
+                  <p>Default on-chain sends, channel opens and cooperative closes to a dynamic next-block fee target, preserving explicit slower and custom choices.</p>
+                  <p>Add reviewed fee-bump quotes, explicit budgets and durable operation tracking for supported wallet transactions.</p>
+                  <p>Preserve Nginx Proxy Manager storage, same-node upstream connectivity, certificates and access controls through managed migrations.</p>
+                  <p>Restrict public management access while retaining configured public apps and ACME certificate validation.</p>
+                  <p>Serve the Mempool explorer on the Angor indexer origin alongside its API.</p>
+                  <p>Include the self-contained LoRa flashing tool and explicit board selection in update and installer payloads.</p>
                   <p>Preserve paid-file Lightning entitlements across restarts and recover settled invoices from LND. Retry delivery without paying again and retain purchased files in the owned cache.</p>
                   <p>Return explicit payment-status errors with safe retry guidance when verification is unavailable.</p>
-                  <p>Show compact upload progress across screens, retain the original destination, and cancel active and queued uploads.</p>
+                  <p>Keep upload progress on its original screen, show completion there or notify on other screens, and cancel active and queued uploads.</p>
+                  <p>Resume interrupted uploads while the app remains open, preserve the original destination, and verify saved file contents before reporting completion.</p>
+                  <p>Provision a unique private File Browser login on each node while keeping Cloud sign-in automatic and preserving existing accounts and files.</p>
+                  <p>Update Nostr dependencies to reject forged relay events and oversized encrypted messages; preserve native signing and encryption compatibility.</p>
+                  <p>Allow apps to opt in to a validated public-key list of user identities without granting signing access.</p>
                   <p>Make transaction filters transparent and horizontally scrollable on mobile.</p>
                   <p>Keep Immich internal services out of My Apps, avoid false recovery states for healthy stacks, and allow removal of retired catalog apps.</p>
                   <p>Repair the redundant managed Portainer network override that can prevent startup, preserving custom overrides and persistent state.</p>

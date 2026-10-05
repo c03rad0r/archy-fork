@@ -35,7 +35,7 @@ const INTERNAL_TOOLING_NAMES = new Set([
   // Cuprate's dashboard is bundled as a companion of the primary cuprate
   // package; showing the generated container as a second Services entry
   // defeats the one-app presentation.
-  'archy-cuprate-ui',
+  'archy-cuprate-ui', 'cuprate-ui', 'netbird-dashboard', 'netbird-server',
 ])
 
 export function isInternalToolingPackage(id: string, pkg?: PackageDataEntry): boolean {
@@ -54,7 +54,7 @@ export function isServicePackage(id: string, pkg?: PackageDataEntry): boolean {
 // Known app -> category mappings (matches App Store categorisation)
 export const APP_CATEGORY_MAP: Record<string, string> = {
   'bitcoin-core': 'money', 'bitcoin-knots': 'money', 'bitcoin-ui': 'money', 'cuprate': 'money', 'cuprate-ui': 'money', 'electrumx': 'money', 'electrs': 'money',
-  'lnd': 'money', 'mempool': 'money', 'mempool-web': 'money', 'btcpay-server': 'commerce',
+  'lnd': 'money', 'mempool': 'money', 'mempool-web': 'money', 'btcpay-server': 'commerce', 'btcpay': 'commerce', 'btcpayserver': 'commerce',
   'fedimint': 'money', 'fedimint-gateway': 'money',
   'indeedhub': 'media', 'jellyfin': 'media', 'photoprism': 'media', 'immich': 'media',
   'nextcloud': 'data', 'vaultwarden': 'data', 'filebrowser': 'data', 'cryptpad': 'data',
@@ -115,11 +115,13 @@ export function filterEntriesForTab(
   selectedCategory: string,
 ): Array<[string, PackageDataEntry]> {
   const hasMempool = entries.some(([id]) => id === 'mempool')
+  const hasBtcpay = entries.some(([id]) => id === 'btcpay-server')
   return entries.filter(([id, pkg]) => {
     // Older daemons can retain the frontend manifest alias during a restart.
     // Keep one tile while the updated scanner converges; a legacy-only node
     // must still be able to see and operate its sole Mempool entry.
     if (hasMempool && ['mempool-web', 'mempool-frontend', 'archy-mempool-web'].includes(id)) return false
+    if (hasBtcpay && ['btcpay', 'btcpayserver'].includes(id)) return false
     if (isInternalToolingPackage(id, pkg)) return false
     const wantsWebsites = activeTab === 'websites' || activeTab === 'services'
     const isWebsite = isWebsitePackage(id, pkg)

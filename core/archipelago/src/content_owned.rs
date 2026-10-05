@@ -162,6 +162,11 @@ pub async fn record_purchase(
     save_index(data_dir, &index).await
 }
 
+/// Payment decisions must not interpret an unreadable index as no purchases.
+pub async fn list_owned_checked(data_dir: &Path) -> Result<Vec<OwnedItem>> {
+    Ok(load_index_checked(data_dir).await?.items)
+}
+
 /// Every item this node owns.
 pub async fn list_owned(data_dir: &Path) -> Vec<OwnedItem> {
     load_index(data_dir).await.items

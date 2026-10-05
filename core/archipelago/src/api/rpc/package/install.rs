@@ -693,7 +693,11 @@ impl RpcHandler {
             // These standalone web UIs have repeatedly lost host listeners
             // under Podman's rootless pasta backend while staying healthy internally.
             // Use slirp4netns/rootlessport for this standalone web UI.
-            run_args.push("--network=slirp4netns:allow_host_loopback=true");
+            run_args.push(if package_id == "nginx-proxy-manager" {
+                "--network=slirp4netns:allow_host_loopback=true,cidr=169.254.1.0/24"
+            } else {
+                "--network=slirp4netns:allow_host_loopback=true"
+            });
         } else if needs_archy_net(package_id) {
             // Create archy-net if it doesn't exist (idempotent — "already exists" is fine)
             match tokio::process::Command::new("podman")
@@ -1568,88 +1572,8 @@ autopilot.active=false\n",
                 super::pine_ha::restart_home_assistant_if_running().await;
             }
         }
-        if package_id == "filebrowser" {
-            // Generate a random password (32 bytes, hex-encoded)
-            let mut buf = [0u8; 32];
-            rand::RngCore::fill_bytes(&mut rand::rngs::OsRng, &mut buf);
-            let password = hex::encode(buf);
-
-            let client = match reqwest::Client::builder()
-                .timeout(std::time::Duration::from_secs(10))
-                .build()
-            {
-                Ok(c) => c,
-                Err(e) => {
-                    tracing::warn!("Failed to create HTTP client for FileBrowser hook: {}", e);
-                    return;
-                }
-            };
-
-            // Retry loop: FileBrowser may take time to initialize its SQLite database
-            let mut password_changed = false;
-            for attempt in 0..6u32 {
-                let delay = if attempt == 0 { 5 } else { 10 };
-                tokio::time::sleep(std::time::Duration::from_secs(delay)).await;
-
-                // Try to log in with default credentials
-                let login_res = client
-                    .post("http://127.0.0.1:8083/api/login")
-                    .json(&serde_json::json!({"username": "admin", "password": "admin"}))
-                    .send()
-                    .await;
-
-                let token = match login_res {
-                    Ok(resp) if resp.status().is_success() => match resp.text().await {
-                        Ok(t) => t.trim_matches('"').to_string(),
-                        Err(_) => continue,
-                    },
-                    _ => {
-                        debug!("FileBrowser not ready (attempt {}/6)", attempt + 1);
-                        continue;
-                    }
-                };
-
-                // Change admin password
-                let change_res = client
-                    .put("http://127.0.0.1:8083/api/users/1")
-                    .header("X-Auth", &token)
-                    .json(&serde_json::json!({"password": password}))
-                    .send()
-                    .await;
-
-                match change_res {
-                    Ok(resp) if resp.status().is_success() => {
-                        let secret_dir = "/var/lib/archipelago/secrets/filebrowser";
-                        if let Err(e) = tokio::fs::create_dir_all(secret_dir).await {
-                            tracing::warn!("Failed to create filebrowser secrets dir: {}", e);
-                        }
-                        let pw_path = format!("{}/password", secret_dir);
-                        if let Err(e) = tokio::fs::write(&pw_path, &password).await {
-                            tracing::warn!("Failed to write filebrowser password: {}", e);
-                        }
-                        // Set restrictive permissions on the password file
-                        #[cfg(unix)]
-                        {
-                            use std::os::unix::fs::PermissionsExt;
-                            let _ = std::fs::set_permissions(
-                                &pw_path,
-                                std::fs::Permissions::from_mode(0o600),
-                            );
-                        }
-                        info!("FileBrowser admin password secured (default credentials replaced)");
-                        password_changed = true;
-                        break;
-                    }
-                    _ => continue,
-                }
-            }
-            if !password_changed {
-                tracing::warn!(
-                    "FileBrowser password could not be changed after 6 attempts — \
-                     default credentials (admin/admin) remain active"
-                );
-            }
-        }
+        // File Browser credentials are provisioned and verified before the
+        // server starts. Never attempt a default-password change after launch.
 
         // Auto-configure Tor hidden service for protocol services (LND, ElectrumX, Bitcoin)
         {
@@ -1912,10 +1836,10 @@ autopilot.active=false\n",
     }
 
     pub(in crate::api::rpc) async fn handle_filebrowser_token(&self) -> Result<serde_json::Value> {
-        let secret_path = "/var/lib/archipelago/secrets/filebrowser/password";
-        let password = tokio::fs::read_to_string(secret_path)
-            .await
-            .unwrap_or_else(|_| "admin".to_string());
+        let credentials = crate::container::filebrowser::cloud_credentials(std::path::Path::new(
+            "/var/lib/archipelago/secrets/filebrowser",
+        ))
+        .await?;
 
         let client = reqwest::Client::builder()
             .timeout(std::time::Duration::from_secs(10))
@@ -1924,7 +1848,7 @@ autopilot.active=false\n",
 
         let resp = client
             .post("http://127.0.0.1:8083/api/login")
-            .json(&serde_json::json!({"username": "admin", "password": password}))
+            .json(&serde_json::json!({"username": credentials.username, "password": credentials.password}))
             .send()
             .await
             .context("Failed to connect to FileBrowser")?;
@@ -1954,17 +1878,16 @@ autopilot.active=false\n",
         super::validation::validate_app_id(app_id)?;
 
         if app_id == "filebrowser" {
-            let password =
-                tokio::fs::read_to_string("/var/lib/archipelago/secrets/filebrowser/password")
-                    .await
-                    .map(|p| p.trim().to_string())
-                    .unwrap_or_else(|_| "admin".to_string());
+            let credentials = crate::container::filebrowser::cloud_credentials(
+                std::path::Path::new("/var/lib/archipelago/secrets/filebrowser"),
+            )
+            .await?;
             return Ok(serde_json::json!({
                 "title": "File Browser credentials",
                 "description": "Use these credentials when File Browser asks you to sign in.",
                 "credentials": [
-                    { "label": "Username", "value": "admin" },
-                    { "label": "Password", "value": password, "sensitive": true }
+                    { "label": "Username", "value": credentials.username },
+                    { "label": "Password", "value": credentials.password, "sensitive": true }
                 ]
             }));
         }

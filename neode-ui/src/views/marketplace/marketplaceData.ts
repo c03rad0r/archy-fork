@@ -72,6 +72,7 @@ export const INSTALLED_ALIASES: Record<string, string[]> = {
   mempool: ['mempool-web', 'mempool-api', 'archy-mempool-web', 'archy-mempool-db'],
   bitcoin: ['bitcoin-knots'],
   btcpay: ['btcpay-server', 'archy-btcpay-db', 'archy-nbxplorer'],
+  'btcpay-server': ['btcpay-server', 'btcpay', 'btcpayserver'],
   immich: ['immich-server', 'immich-app', 'immich_server', 'immich_postgres', 'immich_redis'],
   nextcloud: ['nextcloud-aio', 'nextcloud-server'],
   fedimint: ['fedimint-gateway'],

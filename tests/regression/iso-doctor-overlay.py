@@ -20,7 +20,13 @@ class DoctorOverlayTests(unittest.TestCase):
                 (dest / 'container-doctor.sh').write_text('UNSAFE OLD SCRIPT')
             files = [ROOT / 'scripts/container-doctor.sh',
                      ROOT / 'image-recipe/configs/archipelago-doctor.service',
-                     ROOT / 'image-recipe/configs/archipelago-doctor.timer']
+                     ROOT / 'image-recipe/configs/archipelago-doctor.timer',
+                     ROOT / 'image-recipe/configs/archipelago-npm-bridge.service',
+                     ROOT / 'image-recipe/configs/archipelago-npm-bridge.timer']
+            helpers = [ROOT / 'scripts' / name for name in
+                       ['dashboard-public-guard.py', 'npm-public-bridge.py', 'sync-npm-public-hosts.sh', 'filebrowser-credentials.py']]
+            for path in helpers:
+                shutil.copyfile(path, payload / path.name)
             for path in files:
                 shutil.copyfile(path, payload / path.name)
             script = block.replace('/mnt/target', str(target))
@@ -32,6 +38,15 @@ class DoctorOverlayTests(unittest.TestCase):
                     self.assertEqual(dest.stat().st_mode & 0o777, 0o755)
                 for path in files[1:]:
                     self.assertEqual((units / path.name).read_bytes(), path.read_bytes())
+            for path in helpers:
+                installed = target / 'opt/archipelago/scripts' / path.name
+                self.assertEqual(installed.read_bytes(), path.read_bytes())
+                self.assertEqual(installed.stat().st_mode & 0o777, 0o755)
+            self.assertTrue((units / 'timers.target.wants/archipelago-npm-bridge.timer').is_symlink())
+            (payload / 'filebrowser-credentials.py').unlink()
+            failed = subprocess.run(['bash', '-c', script], env={'BOOT_MEDIA': str(media), 'PATH': '/usr/bin:/bin'}, capture_output=True)
+            self.assertNotEqual(failed.returncode, 0, 'Missing credential provisioner must fail installation')
+            shutil.copyfile(ROOT / 'scripts/filebrowser-credentials.py', payload / 'filebrowser-credentials.py')
             (payload / 'container-doctor.sh').unlink()
             failed = subprocess.run(['bash', '-c', script], env={'BOOT_MEDIA': str(media), 'PATH': '/usr/bin:/bin'}, capture_output=True)
             self.assertNotEqual(failed.returncode, 0, 'Missing safety overlay must fail installation')

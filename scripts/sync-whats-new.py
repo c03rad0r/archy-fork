@@ -87,7 +87,7 @@ def version_key(version):
     return tuple(map(int, match.groups()))
 
 
-def sort_modal_blocks(entries):
+def sort_modal_blocks(entries, *, check=False):
     """Re-render current release-note blocks newest-first and remove old history."""
     lines = MODAL.read_text().splitlines(keepends=True)
     # Include the old hand-written `alpha.*` blocks in the replace range so
@@ -137,7 +137,7 @@ def sort_modal_blocks(entries):
         output.extend(segment)
     output.extend(lines[blocks[-1][1]:])
     changed = output != lines
-    if changed:
+    if changed and not check:
         MODAL.write_text("".join(output))
     return changed
 
@@ -195,7 +195,11 @@ def main():
     too_old.extend(legacy_blocks())
 
     if not missing and not out_of_order and not too_old:
-        changed = False if check else sort_modal_blocks(entries)
+        changed = sort_modal_blocks(entries, check=check)
+        if changed and check:
+            print("FAIL: What's New dates or descriptions differ from CHANGELOG.md. "
+                  "Run: python3 scripts/sync-whats-new.py", file=sys.stderr)
+            return 1
         if changed:
             print("Re-rendered What's New blocks from the curated changelog.")
         else:

@@ -142,10 +142,39 @@ const NGINX_FEDIMINT_SNIPPET_INSERT: &str = "proxy_pass http://127.0.0.1:8175/;\
 /// catalog refresh/reconciliation. Replacing the app tree in the background
 /// could let a reload observe its temporary empty state and forget disk-only apps.
 pub async fn ensure_runtime_assets_ready() {
+    // Install the guard before any startup path can reload an older dashboard
+    // vhost. The canonical OTA/ISO config contains the same guard inline.
+    if Path::new(NGINX_CONF_PATH).exists() || Path::new(NGINX_ENABLED_CONF_PATH).exists() {
+        match host_sudo(&[
+            "python3",
+            "-c",
+            include_str!("../../../scripts/dashboard-public-guard.py"),
+        ])
+        .await
+        {
+            Ok(status) if status.success() => debug!("Dashboard public source guard verified"),
+            Ok(status) => warn!("Dashboard public source guard needs attention: {status}"),
+            Err(error) => warn!("Dashboard public source guard could not run: {error}"),
+        }
+    }
     match run_runtime_assets().await {
         Ok(changed) if changed => info!("Runtime assets synchronized from OTA payload"),
         Ok(_) => debug!("No OTA runtime payload to synchronize"),
         Err(e) => warn!("Runtime asset bootstrap failed (non-fatal): {:#}", e),
+    }
+    // A binary-only qualification or OTA rollback can precede the matching
+    // script payload. Install the exact embedded helper before Quadlet
+    // reconciliation can introduce its required ExecStartPre command.
+    if let Err(error) = write_root_if_needed(
+        "/opt/archipelago/scripts/filebrowser-credentials.py",
+        include_str!("../../../scripts/filebrowser-credentials.py"),
+    )
+    .await
+    {
+        warn!("File Browser credential helper installation failed: {error:#}");
+    }
+    if let Err(error) = run_npm_bridge_bootstrap().await {
+        warn!("NPM public routing bootstrap needs attention: {error:#}");
     }
     // Repair the narrowly recognized legacy NPM tunnel override before app
     // reconciliation. The embedded script ships in both OTA and ISO binaries.
@@ -174,6 +203,52 @@ pub async fn ensure_runtime_assets_ready() {
         Ok(false) => debug!("/opt/archipelago/apps already populated (or no installer copy)"),
         Err(e) => warn!("Apps dir repair failed (non-fatal): {:#}", e),
     }
+}
+
+async fn run_npm_bridge_bootstrap() -> Result<()> {
+    if !Path::new("/opt/archipelago/scripts").is_dir() {
+        return Ok(());
+    }
+    let mut units_changed = false;
+    for (path, content) in [
+        (
+            "/opt/archipelago/scripts/npm-public-bridge.py",
+            include_str!("../../../scripts/npm-public-bridge.py"),
+        ),
+        (
+            "/opt/archipelago/scripts/dashboard-public-guard.py",
+            include_str!("../../../scripts/dashboard-public-guard.py"),
+        ),
+        (
+            "/etc/systemd/system/archipelago-npm-bridge.service",
+            include_str!("../../../image-recipe/configs/archipelago-npm-bridge.service"),
+        ),
+        (
+            "/etc/systemd/system/archipelago-npm-bridge.timer",
+            include_str!("../../../image-recipe/configs/archipelago-npm-bridge.timer"),
+        ),
+    ] {
+        let changed = write_root_if_needed(path, content).await?;
+        units_changed |= changed && (path.ends_with(".service") || path.ends_with(".timer"));
+    }
+    if units_changed {
+        anyhow::ensure!(
+            host_sudo(&["systemctl", "daemon-reload"]).await?.success(),
+            "NPM bridge daemon reload failed"
+        );
+    }
+    anyhow::ensure!(
+        host_sudo(&[
+            "systemctl",
+            "enable",
+            "--now",
+            "archipelago-npm-bridge.timer"
+        ])
+        .await?
+        .success(),
+        "NPM bridge timer could not start"
+    );
+    Ok(())
 }
 
 /// Entry point called from main startup. Never returns an error to the caller —
@@ -432,6 +507,17 @@ async fn run_runtime_assets() -> Result<bool> {
         if !status.success() {
             anyhow::bail!("install nginx-archipelago.conf exited with {}", status);
         }
+        let acme_status = host_sudo(&[
+            "python3",
+            "-c",
+            include_str!("../../../scripts/npm-public-bridge.py"),
+            "--acme-only",
+        ])
+        .await?;
+        anyhow::ensure!(
+            acme_status.success(),
+            "active NPM ACME root migration failed"
+        );
         changed = true;
     }
 
@@ -448,6 +534,8 @@ async fn run_runtime_assets() -> Result<bool> {
         "archipelago-doctor.service",
         "archipelago-doctor.timer",
         "archipelago-host-secrets-audit.service",
+        "archipelago-npm-bridge.service",
+        "archipelago-npm-bridge.timer",
     ] {
         let src = configs.join(unit);
         if src.exists() {
@@ -475,7 +563,7 @@ async fn run_runtime_assets() -> Result<bool> {
     // or directory"). Skipped when byte-identical; a running daemon is
     // unaffected (install replaces the inode) and picks the new binary up
     // on its next spawn.
-    for tool in ["archy-reticulum-daemon", "archy-rnodeconf"] {
+    for tool in ["archy-reticulum-daemon", "archy-rnodeconf", "archy-esptool"] {
         let src = runtime_dir.join("radio-tools").join(tool);
         if !src.exists() {
             continue;

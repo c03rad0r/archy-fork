@@ -92,16 +92,71 @@ fn is_restart_sensitive_app(app_id: &str) -> bool {
 fn is_builtin_network_mode(network: &str) -> bool {
     matches!(
         network,
-        "host" | "bridge" | "none" | "slirp4netns" | "pasta"
+        "host"
+            | "bridge"
+            | "none"
+            | "slirp4netns"
+            | "slirp4netns:allow_host_loopback=true"
+            | "slirp4netns:allow_host_loopback=true,cidr=169.254.1.0/24"
+            | "pasta"
     )
 }
 
 // Only an explicitly selected rootless mode establishes drift. An omitted
 // network delegates to Podman and must not recreate unrelated installed apps.
 fn rootless_network_mode_drifted(expected: Option<&str>, actual: &str) -> bool {
-    matches!(expected, Some("slirp4netns" | "pasta"))
-        && !actual.trim().is_empty()
-        && actual.trim().split(':').next() != expected
+    let actual = actual.trim();
+    if actual.is_empty() {
+        return false;
+    }
+    match expected {
+        Some(
+            expected @ ("slirp4netns:allow_host_loopback=true"
+            | "slirp4netns:allow_host_loopback=true,cidr=169.254.1.0/24"),
+        ) => {
+            let (mode, options) = actual.split_once(':').unwrap_or((actual, ""));
+            let required = expected.split_once(':').unwrap().1;
+            mode != "slirp4netns"
+                || required.split(',').any(|wanted| {
+                    let key = wanted.split_once('=').unwrap().0;
+                    !options.split(',').any(|option| option == wanted)
+                        || options.split(',').any(|option| {
+                            option.split_once('=').is_some_and(|(name, _)| name == key)
+                                && option != wanted
+                        })
+                })
+        }
+        Some(mode @ ("slirp4netns" | "pasta")) => actual.split(':').next() != Some(mode),
+        _ => false,
+    }
+}
+
+// API-created containers may omit rootless options from HostConfig.NetworkMode.
+// generate spec retains them; inspect alone would cause an endless repair loop.
+fn rootless_network_from_spec(bytes: &[u8]) -> Option<String> {
+    let spec: serde_json::Value = serde_json::from_slice(bytes).ok()?;
+    let mode = spec.get("netns")?.get("nsmode")?.as_str()?;
+    if !matches!(mode, "slirp4netns" | "pasta") {
+        return None;
+    }
+    let options = spec
+        .get("network_options")
+        .and_then(|options| options.get(mode));
+    match options {
+        None => Some(mode.to_string()),
+        Some(options) => {
+            let options = options
+                .as_array()?
+                .iter()
+                .map(|value| value.as_str())
+                .collect::<Option<Vec<_>>>()?;
+            if options.is_empty() {
+                Some(mode.to_string())
+            } else {
+                Some(format!("{mode}:{}", options.join(",")))
+            }
+        }
+    }
 }
 
 fn missing_declared_capability(expected: &[String], actual: &[String]) -> bool {
@@ -175,6 +230,11 @@ fn manifest_dependency_app_ids(manifest: &AppManifest) -> Vec<String> {
 }
 
 fn host_port_wait_timeout_secs(manifest: &AppManifest) -> u64 {
+    // First NPM initialization generates keys and migrates its database before
+    // exposing nginx. Its readiness budget must not depend on the network driver.
+    if manifest.app.id == "nginx-proxy-manager" {
+        return 180;
+    }
     if manifest.app.id == "uptime-kuma" {
         return 420;
     }
@@ -2425,6 +2485,49 @@ impl ProdContainerOrchestrator {
                 }
                 match status.state {
                     ContainerState::Running => {
+                        // Legacy runtime path: migrate credentials once without
+                        // recreating accounts or changing operator passwords.
+                        // Quadlet installations receive the same helper through
+                        // the required ExecStartPre drift/restart above.
+                        if app_id == "filebrowser" && !self.use_quadlet_backends && !cfg!(test) {
+                            let secrets = self.secrets_dir.join("filebrowser");
+                            let managed = filebrowser::cloud_credentials(&secrets)
+                                .await
+                                .map(|value| value.schema == 1)
+                                .unwrap_or(false);
+                            if !managed {
+                                if !self.should_attempt_repair(&name).await {
+                                    return Ok(ReconcileAction::Left(
+                                        "filebrowser-credential-repair-budget-exhausted".into(),
+                                    ));
+                                }
+                                let unit_managed = self.runtime.cli_name() == "podman"
+                                    && quadlet::unit_exists(&name).await;
+                                let service = format!("{name}.service");
+                                if unit_managed {
+                                    quadlet::stop_service(&service).await?;
+                                } else {
+                                    self.runtime.stop_container(&name).await?;
+                                }
+                                let prepared = filebrowser::prepare_credentials(
+                                    &self.filebrowser_paths,
+                                    &secrets,
+                                    &status.image,
+                                    self.runtime.cli_name(),
+                                )
+                                .await;
+                                // Restore service availability even when setup
+                                // rolled back. Preserve the setup failure itself.
+                                let started = if unit_managed {
+                                    quadlet::restart_service(&service).await
+                                } else {
+                                    self.runtime.start_container(&name).await
+                                };
+                                prepared?;
+                                started?;
+                                return Ok(ReconcileAction::Started);
+                            }
+                        }
                         // Zombie guard: podman can report a container "running"
                         // after its process has died (conmon SIGKILLed in a
                         // cgroup cascade on archipelago restart, etc.). Such a
@@ -2971,6 +3074,18 @@ impl ProdContainerOrchestrator {
         self.ensure_manifest_files(manifest).await?;
         self.apply_data_uid(manifest).await?;
         self.run_post_data_uid_hooks(&manifest.app.id).await?;
+        if manifest.app.id == "filebrowser" && !self.use_quadlet_backends && !cfg!(test) {
+            let image = manifest.app.container.image.as_deref().ok_or_else(|| {
+                anyhow::anyhow!("File Browser needs a pinned image for credential setup")
+            })?;
+            filebrowser::prepare_credentials(
+                &self.filebrowser_paths,
+                &self.secrets_dir.join("filebrowser"),
+                image,
+                self.runtime.cli_name(),
+            )
+            .await?;
+        }
         Ok(())
     }
 
@@ -3068,6 +3183,11 @@ impl ProdContainerOrchestrator {
             container = %name,
             "Phase 3.3 migration: replacing pre-Quadlet container with systemd-managed unit"
         );
+        // Resolve active persistent mounts before the old inspect record is
+        // removed. NPM may use a legacy or operator-selected data directory.
+        let mut resolved = lm.manifest.clone();
+        self.resolve_dynamic_env(&mut resolved).await?;
+        self.backup_runtime_change(name, &resolved).await?;
         // Stop+remove the old container record. Volumes survive (host
         // bind mounts are not touched by podman rm).
         self.runtime
@@ -3077,8 +3197,6 @@ impl ProdContainerOrchestrator {
 
         // Re-render the manifest with dynamic env baked in, then go
         // through the same install path a fresh install would.
-        let mut resolved = lm.manifest.clone();
-        self.resolve_dynamic_env(&mut resolved).await?;
         self.install_via_quadlet(&resolved, name)
             .await
             .with_context(|| format!("Phase 3.3: re-install {name} via Quadlet"))?;
@@ -3797,6 +3915,11 @@ impl ProdContainerOrchestrator {
     }
 
     async fn resolve_dynamic_env(&self, manifest: &mut AppManifest) -> Result<()> {
+        if manifest.app.id == "nginx-proxy-manager" {
+            crate::container::npm::resolve_storage()
+                .await?
+                .apply(manifest)?;
+        }
         // Idempotency guard: partitioning already ran on this instance.
         // Re-running would re-taint against an environment that no longer
         // contains the composite entries and silently drop them. Callers
@@ -4068,7 +4191,12 @@ impl ProdContainerOrchestrator {
         if unmanaged
             && matches!(
                 manifest.app.container.network.as_deref(),
-                Some("slirp4netns" | "pasta")
+                Some(
+                    "slirp4netns"
+                        | "slirp4netns:allow_host_loopback=true"
+                        | "slirp4netns:allow_host_loopback=true,cidr=169.254.1.0/24"
+                        | "pasta"
+                )
             )
         {
             if let Ok(output) = tokio::process::Command::new("podman")
@@ -4076,13 +4204,36 @@ impl ProdContainerOrchestrator {
                 .output()
                 .await
             {
-                if output.status.success()
-                    && rootless_network_mode_drifted(
+                if output.status.success() {
+                    let mut actual = String::from_utf8_lossy(&output.stdout).trim().to_string();
+                    if matches!(
                         manifest.app.container.network.as_deref(),
-                        &String::from_utf8_lossy(&output.stdout),
-                    )
-                {
-                    return true;
+                        Some(
+                            "slirp4netns:allow_host_loopback=true"
+                                | "slirp4netns:allow_host_loopback=true,cidr=169.254.1.0/24"
+                        )
+                    ) && actual == "slirp4netns"
+                    {
+                        let spec = tokio::process::Command::new("podman")
+                            .args(["generate", "spec", name])
+                            .output()
+                            .await;
+                        actual = match spec {
+                            Ok(spec) if spec.status.success() => {
+                                rootless_network_from_spec(&spec.stdout).unwrap_or_default()
+                            }
+                            _ => String::new(),
+                        };
+                        if actual.is_empty() {
+                            tracing::warn!(app = %name, "Could not verify rootless network options; retaining the existing container");
+                        }
+                    }
+                    if rootless_network_mode_drifted(
+                        manifest.app.container.network.as_deref(),
+                        &actual,
+                    ) {
+                        return true;
+                    }
                 }
             }
         }
@@ -5243,7 +5394,67 @@ mod tests {
     }
 
     #[test]
+    fn npm_legacy_gateway_converges_and_rejects_conflicting_network_options() {
+        let expected = Some("slirp4netns:allow_host_loopback=true,cidr=169.254.1.0/24");
+        assert!(is_builtin_network_mode(expected.unwrap()));
+        for actual in [
+            "pasta",
+            "slirp4netns:allow_host_loopback=true",
+            "slirp4netns:allow_host_loopback=true,cidr=10.0.2.0/24",
+            "slirp4netns:allow_host_loopback=true,cidr=169.254.1.0/24,cidr=10.0.2.0/24",
+        ] {
+            assert!(rootless_network_mode_drifted(expected, actual), "{actual}");
+        }
+        let actual = "slirp4netns:cidr=169.254.1.0/24,allow_host_loopback=true,mtu=65520";
+        assert!(!rootless_network_mode_drifted(expected, actual));
+        let spec = br#"{"netns":{"nsmode":"slirp4netns"},"network_options":{"slirp4netns":["cidr=169.254.1.0/24","allow_host_loopback=true"]}}"#;
+        assert!(!rootless_network_mode_drifted(
+            expected,
+            &rootless_network_from_spec(spec).unwrap()
+        ));
+    }
+
+    #[test]
+    fn npm_initialization_budget_survives_network_migration() {
+        let mut manifest = AppManifest::parse(include_str!(
+            "../../../../apps/nginx-proxy-manager/manifest.yml"
+        ))
+        .unwrap();
+        for network in ["pasta", "slirp4netns:allow_host_loopback=true"] {
+            manifest.app.container.network = Some(network.to_string());
+            assert_eq!(host_port_wait_timeout_secs(&manifest), 180);
+        }
+    }
+
+    #[test]
+    fn api_created_rootless_options_do_not_cause_repeated_recreation() {
+        let expected = Some("slirp4netns:allow_host_loopback=true");
+        let spec = br#"{"netns":{"nsmode":"slirp4netns"},"network_options":{"slirp4netns":["allow_host_loopback=true"]}}"#;
+        let actual = rootless_network_from_spec(spec).unwrap();
+        assert!(!rootless_network_mode_drifted(expected, &actual));
+        let plain = rootless_network_from_spec(br#"{"netns":{"nsmode":"slirp4netns"}}"#).unwrap();
+        assert!(rootless_network_mode_drifted(expected, &plain));
+        assert!(rootless_network_from_spec(b"invalid").is_none());
+    }
+
+    #[test]
     fn explicit_rootless_network_change_converges_without_guessing_defaults() {
+        let npm = Some("slirp4netns:allow_host_loopback=true");
+        assert!(is_builtin_network_mode(npm.unwrap()));
+        for actual in [
+            "pasta",
+            "bridge",
+            "slirp4netns",
+            "slirp4netns:allow_host_loopback=false",
+        ] {
+            assert!(rootless_network_mode_drifted(npm, actual), "{actual}");
+        }
+        for actual in [
+            "slirp4netns:allow_host_loopback=true",
+            "slirp4netns:mtu=65520,allow_host_loopback=true",
+        ] {
+            assert!(!rootless_network_mode_drifted(npm, actual), "{actual}");
+        }
         assert!(rootless_network_mode_drifted(Some("slirp4netns"), "pasta"));
         assert!(rootless_network_mode_drifted(Some("slirp4netns"), "bridge"));
         assert!(!rootless_network_mode_drifted(

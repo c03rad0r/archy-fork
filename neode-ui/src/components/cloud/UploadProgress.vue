@@ -1,5 +1,5 @@
 <template>
-  <div v-if="task" :class="floating ? 'fixed z-50 top-20 left-4 right-4 md:left-auto md:w-96' : 'mb-3 shrink-0'">
+  <div v-if="task && route.fullPath === task.originRoute" class="mb-3 shrink-0">
     <div class="glass-card relative overflow-hidden h-11 px-3 flex items-center gap-2" role="status" aria-live="polite">
       <div v-if="task.active" class="absolute inset-y-0 left-0 bg-emerald-400/10 transition-[width] duration-200 pointer-events-none" :style="{ width: `${percent}%` }" />
       <div v-if="task.active" class="absolute bottom-0 left-0 h-0.5 bg-emerald-400 transition-[width] duration-200" :style="{ width: `${percent}%` }" role="progressbar" :aria-valuenow="percent" aria-valuemin="0" aria-valuemax="100" :aria-label="`Uploading ${task.filename}`" />
@@ -13,8 +13,9 @@
 </template>
 <script setup lang="ts">
 import { computed } from 'vue'
+import { useRoute } from 'vue-router'
 import { useCloudStore } from '@/stores/cloud'
-defineProps<{ floating?: boolean }>()
+const route = useRoute()
 const store = useCloudStore()
 const task = computed(() => store.upload)
 const percent = computed(() => !task.value ? 0 : task.value.total ? Math.min(100, Math.floor(task.value.sent * 100 / task.value.total)) : task.value.active ? 0 : 100)
@@ -23,7 +24,8 @@ const label = computed(() => {
   if (!t) return ''
   if (t.error) return t.error
   if (t.cancelled) return `Upload stopped · ${t.completed}/${t.count} saved`
-  if (!t.active) return `${t.count === 1 ? t.filename : `${t.count} files`} uploaded`
+  if (!t.active) return `Complete · ${t.count === 1 ? t.filename : `${t.count} files`}`
+  if (t.paused) return `Connection interrupted · resuming ${t.filename}`
   return `${percent.value === 100 ? 'Saving' : 'Uploading'} ${t.filename}${t.count > 1 ? ` · ${t.completed + 1}/${t.count}` : ''}`
 })
 </script>

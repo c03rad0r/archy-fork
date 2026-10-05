@@ -985,28 +985,26 @@ pub(super) async fn get_app_config(
             )
         }
         "nginx-proxy-manager" => {
+            let storage = crate::container::npm::resolve_storage().await?;
             let admin_port = allocator
                 .allocate_or_get(app_id, 8081, 81)
                 .await
                 .unwrap_or(8081);
             let http_port = allocator
-                .allocate_or_get("nginx-proxy-manager-http", 8084, 80)
+                .allocate_or_get("nginx-proxy-manager-http", 8088, 80)
                 .await
-                .unwrap_or(8084);
+                .unwrap_or(8088);
             let https_port = allocator
                 .allocate_or_get("nginx-proxy-manager-https", 8444, 443)
                 .await
                 .unwrap_or(8444);
             (
                 vec![
-                    format!("{}:81", admin_port),
-                    format!("{}:80", http_port),
-                    format!("{}:443", https_port),
+                    format!("127.0.0.1:{}:81", admin_port),
+                    format!("127.0.0.1:{}:80", http_port),
+                    format!("127.0.0.1:{}:443", https_port),
                 ],
-                vec![
-                    "/var/lib/archipelago/nginx-proxy-manager/data:/data".to_string(),
-                    "/var/lib/archipelago/nginx-proxy-manager/letsencrypt:/etc/letsencrypt".to_string(),
-                ],
+                storage.bind_mounts(),
                 vec![],
                 None,
                 None,

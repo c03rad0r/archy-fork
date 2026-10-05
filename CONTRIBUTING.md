@@ -95,7 +95,7 @@ python3 scripts/check-git-mirrors.py --local
 Before publishing release artifacts, also check the actual release tag:
 
 ```bash
-python3 scripts/check-git-mirrors.py --local --ref refs/tags/v1.9.0
+python3 scripts/check-git-mirrors.py --local --ref refs/tags/v1.9.0-alpha
 ```
 
 Use the release's actual tag name. Missing refs, inaccessible mirrors or differing

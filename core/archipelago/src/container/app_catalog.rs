@@ -118,10 +118,12 @@ fn selected_manifest(entry: AppCatalogEntry) -> Option<serde_json::Value> {
     // Never let an unknown future requirement become an unsafe partial match.
     for variant in entry.manifest_variants.into_iter().rev() {
         if !variant.requires.is_empty()
-            && variant
-                .requires
-                .iter()
-                .all(|capability| capability == "runtime-migration-backup-v1")
+            && variant.requires.iter().all(|capability| {
+                matches!(
+                    capability.as_str(),
+                    "runtime-migration-backup-v1" | "npm-legacy-host-gateway-v1"
+                )
+            })
         {
             return Some(variant.manifest);
         }
@@ -468,6 +470,12 @@ pub struct CatalogRefresh {
 /// changed. Best-effort: a fetch failure leaves the existing cache untouched
 /// (origin-always-wins; updates simply aren't refreshed this cycle).
 pub async fn refresh_catalog(data_dir: &Path) -> anyhow::Result<CatalogRefresh> {
+    // Explicit operator-only qualification of a signed candidate on selected
+    // nodes. Never change fleet mirrors or fall back to an older public catalog
+    // while a candidate is selected. Normal signature enforcement still applies.
+    if let Some(path) = std::env::var_os("ARCHY_APP_CATALOG_CANDIDATE") {
+        return refresh_candidate_catalog(data_dir, Path::new(&path)).await;
+    }
     let mirrors = crate::update::load_mirrors(data_dir)
         .await
         .unwrap_or_default();
@@ -512,6 +520,49 @@ pub async fn refresh_catalog(data_dir: &Path) -> anyhow::Result<CatalogRefresh> 
         }
     }
     Err(last_err.unwrap_or_else(|| anyhow::anyhow!("no catalog mirrors reachable")))
+}
+
+async fn refresh_candidate_catalog(data_dir: &Path, path: &Path) -> anyhow::Result<CatalogRefresh> {
+    anyhow::ensure!(
+        path.is_absolute(),
+        "candidate catalog path must be absolute"
+    );
+    let metadata = tokio::fs::metadata(path)
+        .await
+        .context("inspect candidate catalog")?;
+    anyhow::ensure!(
+        metadata.is_file() && metadata.len() <= 4 * 1024 * 1024,
+        "candidate catalog must be a file no larger than 4 MiB"
+    );
+    let body = tokio::fs::read_to_string(path)
+        .await
+        .context("read candidate catalog")?;
+    anyhow::ensure!(
+        body.len() <= 4 * 1024 * 1024,
+        "candidate catalog exceeds 4 MiB"
+    );
+    let raw: serde_json::Value = serde_json::from_str(&body)?;
+    anyhow::ensure!(
+        matches!(
+            crate::trust::verify_detached(&raw)?,
+            crate::trust::SignatureStatus::Verified { anchored: true, .. }
+        ),
+        "candidate catalog requires a signature anchored to the release root"
+    );
+    let catalog: AppCatalog = serde_json::from_value(raw)?;
+    let changed = write_cache(data_dir, &body)?;
+    if changed {
+        *CACHE.lock().unwrap() = None;
+    }
+    info!(
+        apps = catalog.apps.len(),
+        changed,
+        "app-catalog: using explicitly selected signed candidate; public catalog refresh paused"
+    );
+    Ok(CatalogRefresh {
+        apps: catalog.apps.len(),
+        changed,
+    })
 }
 
 async fn fetch_one(client: &reqwest::Client, url: &str) -> anyhow::Result<(AppCatalog, String)> {
@@ -582,6 +633,77 @@ fn write_cache(data_dir: &Path, body: &str) -> anyhow::Result<bool> {
 mod tests {
     use super::*;
 
+    fn signed_candidate(key_byte: u8) -> serde_json::Value {
+        // Same test anchor as trust::signed_doc tests; never a production key.
+        let anchor = ed25519_dalek::SigningKey::from_bytes(&[7u8; 32]);
+        std::env::set_var(
+            "ARCHY_RELEASE_ROOT_PUBKEY",
+            hex::encode(anchor.verifying_key().to_bytes()),
+        );
+        let key = ed25519_dalek::SigningKey::from_bytes(&[key_byte; 32]);
+        let mut value = serde_json::json!({"schema":1,"apps":{"demo":{"version":"2"}},"future_field":{"retain":true}});
+        let (sig, did) = crate::trust::signed_doc::sign_detached(&key, &value).unwrap();
+        value["signature"] = sig.into();
+        value["signed_by"] = did.into();
+        value
+    }
+
+    #[tokio::test]
+    async fn candidate_catalog_preserves_signed_bytes_and_is_idempotent() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("candidate.json");
+        let body = serde_json::to_string_pretty(&signed_candidate(7)).unwrap();
+        std::fs::write(&path, &body).unwrap();
+        let first = refresh_candidate_catalog(dir.path(), &path).await.unwrap();
+        assert!(first.changed);
+        assert_eq!(first.apps, 1);
+        assert_eq!(
+            std::fs::read_to_string(dir.path().join(APP_CATALOG_FILE)).unwrap(),
+            body
+        );
+        assert!(
+            !refresh_candidate_catalog(dir.path(), &path)
+                .await
+                .unwrap()
+                .changed
+        );
+    }
+
+    #[tokio::test]
+    async fn rejected_candidate_never_replaces_previous_catalog() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("candidate.json");
+        let previous = "previous cached bytes";
+        write_cache(dir.path(), previous).unwrap();
+        let mut tampered = signed_candidate(7);
+        tampered["apps"]["demo"]["version"] = "tampered".into();
+        for body in [
+            "malformed".into(),
+            r#"{"schema":1,"apps":{}}"#.into(),
+            signed_candidate(11).to_string(),
+            tampered.to_string(),
+            " ".repeat(4 * 1024 * 1024 + 1),
+        ] {
+            std::fs::write(&path, body).unwrap();
+            assert!(refresh_candidate_catalog(dir.path(), &path).await.is_err());
+            assert_eq!(
+                std::fs::read_to_string(dir.path().join(APP_CATALOG_FILE)).unwrap(),
+                previous
+            );
+        }
+        std::fs::remove_file(&path).unwrap();
+        assert!(refresh_candidate_catalog(dir.path(), &path).await.is_err());
+        assert!(
+            refresh_candidate_catalog(dir.path(), Path::new("relative.json"))
+                .await
+                .is_err()
+        );
+        assert_eq!(
+            std::fs::read_to_string(dir.path().join(APP_CATALOG_FILE)).unwrap(),
+            previous
+        );
+    }
+
     #[test]
     fn catalog_migration_variant_is_compatible_with_old_and_future_daemons() {
         let raw = serde_json::json!({
@@ -606,6 +728,25 @@ mod tests {
             .push(serde_json::json!("unknown-next-capability"));
         let chosen = selected_manifest(serde_json::from_value(future).unwrap()).unwrap();
         assert!(chosen["app"]["container"].get("network").is_none());
+    }
+
+    #[test]
+    fn npm_gateway_variant_requires_explicit_runtime_support() {
+        let mut raw = serde_json::json!({
+            "version": "2.12.1", "manifest": {"network":"pasta"},
+            "manifest_variants": [{"requires":["runtime-migration-backup-v1", "npm-legacy-host-gateway-v1"],
+                "manifest":{"network":"slirp4netns:allow_host_loopback=true,cidr=169.254.1.0/24"}}]
+        });
+        assert_eq!(
+            selected_manifest(serde_json::from_value(raw.clone()).unwrap()).unwrap()["network"],
+            "slirp4netns:allow_host_loopback=true,cidr=169.254.1.0/24"
+        );
+        // A runtime missing any required capability must retain the base.
+        raw["manifest_variants"][0]["requires"][1] = serde_json::json!("unknown-gateway-v2");
+        assert_eq!(
+            selected_manifest(serde_json::from_value(raw).unwrap()).unwrap()["network"],
+            "pasta"
+        );
     }
 
     #[test]

@@ -59,7 +59,7 @@ export interface MeshDeviceProbe {
 
 export type FlashFirmwareFamily = 'meshcore' | 'meshtastic' | 'reticulum'
 export type FlashBoard = 'heltec-v3' | 'heltec-v4'
-export type FlashStage = 'downloading' | 'erasing' | 'writing' | 'autoinstalling' | 'done' | 'failed'
+export type FlashStage = 'downloading' | 'preparing' | 'erasing' | 'writing' | 'autoinstalling' | 'done' | 'failed'
 
 /** Live progress for the one flash job that can run at a time. */
 export interface FlashJobStatus {

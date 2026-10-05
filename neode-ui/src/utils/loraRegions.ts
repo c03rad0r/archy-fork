@@ -120,7 +120,9 @@ export interface MeshcoreRfPreset {
  * and operator-attested deployment plans.
  */
 export const MESHCORE_RF_PRESETS: MeshcoreRfPreset[] = [
-  { id: 'eu_868', label: 'Europe / UK — 869.525 MHz, 250 kHz, SF11, CR4/5', freqMhz: 869.525, bwKhz: 250, sf: 11, cr: 5 },
+  // MeshCore app maintainer's presets: MeshCore discussion #1650 (2026-02-15).
+  { id: 'eu_uk_narrow', label: 'Europe / UK (Narrow) — 869.618 MHz, 62.5 kHz, SF8, CR4/8', freqMhz: 869.618, bwKhz: 62.5, sf: 8, cr: 8 },
+  { id: 'eu_868', label: 'Europe / UK (Long Range) — 869.525 MHz, 250 kHz, SF11, CR4/5', freqMhz: 869.525, bwKhz: 250, sf: 11, cr: 5 },
   { id: 'pt', label: 'Portugal — 869.618 MHz, 62.5 kHz, SF8, CR4/8', freqMhz: 869.618, bwKhz: 62.5, sf: 8, cr: 8 },
   { id: 'fw_default', label: 'MeshCore firmware default — 869.618 MHz, 62.5 kHz, SF8, CR4/5', freqMhz: 869.618, bwKhz: 62.5, sf: 8, cr: 5 },
   { id: 'us_anz_915', label: 'US / Canada / ANZ — 915.0 MHz, 250 kHz, SF10, CR4/5', freqMhz: 915.0, bwKhz: 250, sf: 10, cr: 5 },

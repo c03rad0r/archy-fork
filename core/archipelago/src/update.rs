@@ -2654,6 +2654,8 @@ mod tests {
 
     #[test]
     fn test_is_newer() {
+        assert!(is_newer("1.9.0-alpha", "1.8.22-alpha"));
+        assert!(!is_newer("1.9.0-alpha", "1.9.0-alpha"));
         assert!(is_newer("1.7.19-alpha", "1.7.18-alpha"));
         assert!(is_newer("1.8.0-alpha", "1.7.99-alpha"));
         assert!(is_newer("1.7.10-alpha", "1.7.9-alpha")); // numeric, not lexical

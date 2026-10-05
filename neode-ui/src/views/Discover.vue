@@ -331,6 +331,7 @@ let discoverAnimationDone = false
 </script>
 
 <script setup lang="ts">
+import { normalizeStoreApps } from './apps/serviceNames'
 import AppSearchField from '@/components/AppSearchField.vue'
 import { ref, computed, onBeforeUnmount, onMounted } from 'vue'
 import { useRouter, RouterLink } from 'vue-router'
@@ -407,7 +408,7 @@ const catalogStorefront = useCachedResource<CatalogStorefront | null>({
   ttlMs: 300_000,
   persist: true,
 }).data
-const communityApps = computed(() => catalogResource.data.value ?? [])
+const communityApps = computed(() => normalizeStoreApps(catalogResource.data.value ?? []))
 const loadingCommunity = computed(() => catalogResource.entry.loadState === 'loading')
 // Keep-last-value error banner (D-07): a failed background refresh never
 // raises a toast, it only surfaces here — content stays on screen either way.
@@ -535,9 +536,9 @@ const allApps = computed(() => {
     const nostrMerged = nostrApps.value
       .filter(app => !existingIds.has(app.id))
       .map(app => ({ ...app, category: app.category || categorizeCommunityApp(app), source: 'nostr' }))
-    return [...base, ...nostrMerged]
+    return normalizeStoreApps([...base, ...nostrMerged])
   }
-  return base
+  return normalizeStoreApps(base)
 })
 
 const filteredApps = computed(() => {

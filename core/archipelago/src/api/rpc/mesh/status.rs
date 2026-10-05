@@ -110,7 +110,8 @@ impl RpcHandler {
         // `mesh.probe-device` call (e.g. the hot-swap modal's own re-probe)
         // from opening the identical port at the same time and corrupting
         // both operations' handshakes.
-        if let Some(job) = self.flash_job.read().await.as_ref() {
+        let flash_guard = self.flash_job.read().await;
+        if let Some(job) = flash_guard.as_ref() {
             anyhow::ensure!(
                 job.snapshot().await.done,
                 "A firmware flash is in progress — refusing to probe the serial port until it finishes"
@@ -131,6 +132,7 @@ impl RpcHandler {
             }
         }
         let probe = mesh::listener::probe_device(&path).await?;
+        drop(flash_guard);
         Ok(serde_json::to_value(probe)?)
     }
 

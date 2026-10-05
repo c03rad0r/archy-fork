@@ -320,7 +320,17 @@ describe('RPCClient convenience methods', () => {
     mockSuccess({ psbt_base64: 'psbt', change_output_index: 0, total_amount_sats: 1000, fee_rate_sat_per_vbyte: 10 })
     await rpcClient.createPsbt({ outputs: [{ address: 'bc1q...', amount_sats: 1000 }] })
     expect(getLastMethod()).toBe('lnd.create-psbt')
-    expect(getLastParams().fee_rate_sat_per_vbyte).toBe(10)
+    expect(getLastParams()).not.toHaveProperty('fee_rate_sat_per_vbyte')
+  })
+
+  it('preserves the explicit hardware-wallet fee rate', async () => {
+    mockSuccess({ psbt_base64: 'psbt', fee_rate_sat_per_vbyte: 17 })
+    await rpcClient.createPsbt({ outputs: [{ address: 'bc1q...', amount_sats: 1000 }], feeRateSatPerVbyte: 17 })
+    expect(getLastParams().fee_rate_sat_per_vbyte).toBe(17)
+  })
+
+  it.each([NaN, Infinity, 0, -1, 0.5, 5001])('rejects invalid PSBT rate %s rather than silently selecting a default', async rate => {
+    await expect(rpcClient.createPsbt({ outputs: [{ address: 'bc1q...', amount_sats: 1000 }], feeRateSatPerVbyte: rate })).rejects.toThrow('whole number')
   })
 
   it('finalizePsbt calls lnd.finalize-psbt', async () => {

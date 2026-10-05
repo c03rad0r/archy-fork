@@ -124,28 +124,8 @@ impl RpcHandler {
             return Err(anyhow::anyhow!("Invalid Bitcoin address format"));
         }
 
-        // Fee control: either a confirmation target or an explicit fee rate
-        let target_conf = params.get("target_conf").and_then(|v| v.as_i64());
-        let sat_per_vbyte = params.get("sat_per_vbyte").and_then(|v| v.as_i64());
-        if target_conf.is_some() && sat_per_vbyte.is_some() {
-            return Err(anyhow::anyhow!(
-                "Invalid fee parameters: specify either target_conf or sat_per_vbyte, not both"
-            ));
-        }
-        if let Some(tc) = target_conf {
-            if !(1..=1008).contains(&tc) {
-                return Err(anyhow::anyhow!(
-                    "Invalid target_conf: must be between 1 and 1008 blocks"
-                ));
-            }
-        }
-        if let Some(rate) = sat_per_vbyte {
-            if !(1..=5000).contains(&rate) {
-                return Err(anyhow::anyhow!(
-                    "Invalid sat_per_vbyte: must be between 1 and 5000"
-                ));
-            }
-        }
+        // Omitted fees target the next block; explicit slower/custom choices win.
+        let (target_conf, sat_per_vbyte) = super::fee_policy::fee_options(&params)?;
 
         info!(
             addr = addr,
@@ -238,15 +218,12 @@ impl RpcHandler {
         if !(546..=21_000_000 * 100_000_000).contains(&amount) {
             return Err(anyhow::anyhow!("Invalid amount"));
         }
-        let target_conf = params
-            .get("target_conf")
-            .and_then(|v| v.as_i64())
-            .unwrap_or(6);
-        if !(1..=1008).contains(&target_conf) {
-            return Err(anyhow::anyhow!(
-                "Invalid target_conf: must be between 1 and 1008 blocks"
-            ));
-        }
+        let (target_conf, custom_rate) = super::fee_policy::fee_options(&params)?;
+        anyhow::ensure!(
+            custom_rate.is_none(),
+            "Fee estimation requires a confirmation target"
+        );
+        let target_conf = target_conf.unwrap_or(super::fee_policy::DEFAULT_TARGET);
 
         let (client, macaroon_hex) = self.lnd_client().await?;
 
@@ -782,18 +759,30 @@ impl RpcHandler {
             total_amount += amount;
         }
 
-        let sat_per_vbyte = params
-            .get("fee_rate_sat_per_vbyte")
-            .and_then(|v| v.as_u64())
-            .unwrap_or(10);
+        let (_, explicit_rate) = super::fee_policy::fee_options(&serde_json::json!({
+            "sat_per_vbyte": params.get("fee_rate_sat_per_vbyte")
+        }))?;
+        let (client, macaroon_hex) = self.lnd_client().await?;
+        let sat_per_vbyte = if let Some(rate) = explicit_rate {
+            rate as u64
+        } else {
+            let response = client
+                .get(format!("{LND_REST_BASE_URL}/v2/wallet/estimatefee/1"))
+                .header("Grpc-Metadata-macaroon", &macaroon_hex)
+                .send()
+                .await
+                .context("Cannot estimate the next-block fee")?
+                .error_for_status()
+                .context("Next-block fee estimate rejected")?;
+            let estimate: serde_json::Value = response.json().await?;
+            super::fee_policy::estimated_sat_per_vbyte(&estimate)?
+        };
 
         info!(
             total_amount = total_amount,
             fee_rate = sat_per_vbyte,
             "Creating PSBT for hardware wallet signing"
         );
-
-        let (client, macaroon_hex) = self.lnd_client().await?;
 
         let fund_body = serde_json::json!({
             "raw": {

@@ -378,6 +378,19 @@ fn decode_mesh_name(bytes: &[u8], fallback: &str) -> String {
 /// Parse RESP_DEVICE_INFO (0x0D) response.
 /// Returns firmware version string and device capabilities.
 pub fn parse_device_info(data: &[u8]) -> Result<(String, u16)> {
+    // Official companion v3+ binary layout: protocol, half-capacity,
+    // channels, PIN (4), build date (12), model (40), version (20).
+    // Verified against companion-v1.17.1 MyMesh.cpp and Heltec V3 readback.
+    if data
+        .first()
+        .is_some_and(|version| (3..=31).contains(version))
+    {
+        anyhow::ensure!(data.len() >= 79, "Truncated MeshCore device info");
+        return Ok((
+            decode_mesh_name(&data[59..79], "unknown"),
+            u16::from(data[1]) * 2,
+        ));
+    }
     // Device info format varies by firmware version.
     // Minimum: firmware version string (null-terminated) + max_contacts (u16 LE)
     if data.is_empty() {
@@ -404,6 +417,15 @@ pub fn parse_self_info(data: &[u8]) -> Result<(u32, String)> {
         anyhow::bail!("Self info response too short: {} bytes", data.len());
     }
 
+    // Current companions send type/power/max-power, public key (32),
+    // position (8), four preference bytes, RF parameters (10), then name.
+    if data.len() >= 57 {
+        let node_id = u32::from_le_bytes(data[3..7].try_into().unwrap());
+        return Ok((
+            node_id,
+            decode_mesh_name(&data[57..], &format!("node-{node_id:08x}")),
+        ));
+    }
     let node_id = u32::from_le_bytes([data[0], data[1], data[2], data[3]]);
 
     // Name follows after fixed fields. A firmware whose fixed-field layout
@@ -965,5 +987,25 @@ mod tests {
     #[test]
     fn test_parse_self_info_too_short() {
         assert!(parse_self_info(&[0x01, 0x02]).is_err());
+    }
+
+    #[test]
+    fn current_companion_binary_metadata_is_not_a_name_or_version() {
+        let mut info = vec![0u8; 81];
+        info[0] = 13;
+        info[1] = 150;
+        info[19..28].copy_from_slice(b"Heltec V3");
+        info[59..74].copy_from_slice(b"v1.17.1-d929643");
+        assert_eq!(
+            parse_device_info(&info).unwrap(),
+            ("v1.17.1-d929643".into(), 300)
+        );
+        assert!(parse_device_info(&info[..78]).is_err());
+        let mut own = vec![0u8; 57];
+        own[0..3].copy_from_slice(&[1, 22, 22]);
+        own[3..7].copy_from_slice(&42u32.to_le_bytes());
+        own[47..51].copy_from_slice(&869618u32.to_le_bytes());
+        own.extend_from_slice(b"My radio");
+        assert_eq!(parse_self_info(&own).unwrap(), (42, "My radio".into()));
     }
 }

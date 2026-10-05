@@ -1092,6 +1092,14 @@ impl MeshService {
         let (new_tx, new_rx) = tokio::sync::mpsc::channel(32);
         *self.state.cmd_tx.write().await = new_tx;
         self.cmd_rx = Some(new_rx);
+        {
+            let mut status = self.state.status.write().await;
+            status.device_connected = false;
+            status.device_path = None;
+            status.firmware_version = None;
+            status.self_node_id = None;
+            status.peer_count = 0;
+        }
         info!("Mesh service stopped");
     }
 
@@ -2321,7 +2329,10 @@ impl MeshService {
             }
         }
 
-        let was_enabled = self.config.enabled;
+        let listener_running = self
+            .listener_handle
+            .as_ref()
+            .is_some_and(|handle| !handle.is_finished());
         let needs_session_restart = session_config_changed(&self.config, &config);
         self.config = config.clone();
 
@@ -2335,10 +2346,13 @@ impl MeshService {
                 .unwrap_or_else(|| "archipelago".to_string());
         }
 
-        // If enabled state changed, start/stop the listener
-        if config.enabled && !was_enabled {
+        // Reconcile desired state with the actual task, not the old enabled
+        // flag. A failed flash can stop the task while keeping enabled=true;
+        // explicitly reconnecting with the same settings must restart it.
+        if config.enabled && !listener_running {
+            self.stop().await;
             self.start()?;
-        } else if !config.enabled && was_enabled {
+        } else if !config.enabled {
             self.stop().await;
             // Clear connected state
             let mut status = self.state.status.write().await;
@@ -2347,7 +2361,7 @@ impl MeshService {
             status.firmware_version = None;
             status.self_node_id = None;
             status.peer_count = 0;
-        } else if config.enabled && was_enabled && needs_session_restart {
+        } else if needs_session_restart {
             info!("Mesh session config changed — restarting listener to apply");
             self.stop().await;
             self.start()?;
@@ -2536,6 +2550,41 @@ mod tests {
         assert!(!uses_typed_path(42, false, DeviceType::Meshcore));
     }
     use super::*;
+
+    #[tokio::test]
+    async fn reconnect_with_unchanged_enabled_config_restarts_stopped_listener() {
+        let dir = tempfile::tempdir().unwrap();
+        let key = SigningKey::from_bytes(&[7; 32]);
+        let public = hex::encode(key.verifying_key().to_bytes());
+        let did = crate::identity::did_key_from_pubkey_hex(&public).unwrap();
+        let config = MeshConfig {
+            enabled: true,
+            ..Default::default()
+        };
+        save_config(dir.path(), &config).await.unwrap();
+        let mut service = MeshService::new(dir.path(), &key, &did, &public)
+            .await
+            .unwrap();
+        assert!(service.listener_handle.is_none());
+        service.configure(config.clone()).await.unwrap();
+        assert!(service.listener_handle.is_some());
+        service.stop().await;
+        assert!(service.config.enabled);
+        service.configure(config.clone()).await.unwrap();
+        assert!(service.listener_handle.is_some());
+        service.stop().await;
+        service.listener_handle = Some(tokio::spawn(async {}));
+        tokio::task::yield_now().await;
+        service.configure(config).await.unwrap();
+        assert!(!service.listener_handle.as_ref().unwrap().is_finished());
+        service.stop().await;
+        let disabled = MeshConfig {
+            enabled: false,
+            ..Default::default()
+        };
+        service.configure(disabled).await.unwrap();
+        assert!(service.listener_handle.is_none());
+    }
 
     #[test]
     fn session_config_change_detection() {

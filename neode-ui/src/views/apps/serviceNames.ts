@@ -29,6 +29,7 @@ export const SERVICE_NAMES = new Set([
   'mysql-mempool', 'mempool-api', 'archy-mempool-web',
   'archy-bitcoin-ui', 'archy-lnd-ui', 'archy-electrs-ui',
   'bitcoin-ui', 'lnd-ui', 'electrs-ui',
+  'cuprate-ui', 'netbird-dashboard', 'netbird-server',
   'indeedhub-postgres', 'indeedhub-redis', 'indeedhub-minio',
   'indeedhub-api', 'indeedhub-ffmpeg',
   'indeedhub-relay', 'indeedhub-build_api_1', 'indeedhub-build_ffmpeg-worker_1',
@@ -63,4 +64,16 @@ export function isServiceContainer(id: string): boolean {
 /** Should this app id appear in the App Store listing at all? */
 export function isStoreListedApp(id: string): boolean {
   return !isServiceContainer(id) && !NODE_INTERNAL_IDS.has(id)
+}
+
+/** Normalize every catalog source, including persisted caches from older UIs. */
+export function normalizeStoreApps<T extends { id: string }>(apps: readonly T[]): T[] {
+  const result = new Map<string, T>()
+  for (const app of apps) {
+    if (!isStoreListedApp(app.id)) continue
+    const id = ['btcpay', 'btcpayserver'].includes(app.id) ? 'btcpay-server' : app.id
+    // Prefer the real app's metadata to a legacy image-pin-only alias.
+    if (!result.has(id) || app.id === id) result.set(id, { ...app, id })
+  }
+  return [...result.values()]
 }

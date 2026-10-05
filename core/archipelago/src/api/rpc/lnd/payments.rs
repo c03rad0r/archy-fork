@@ -402,6 +402,9 @@ impl RpcHandler {
             }));
         }
 
+        self.group_fee_bump_history(raw_txs, &mut transactions, &client)
+            .await;
+
         // Sort by timestamp descending (most recent first)
         transactions.sort_by(|a, b| {
             let ta = a.get("time_stamp").and_then(|v| v.as_i64()).unwrap_or(0);

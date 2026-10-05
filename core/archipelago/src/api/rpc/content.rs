@@ -73,6 +73,34 @@ fn paid_content_response(bytes: &[u8], mime: &str, paid_sats: u64) -> serde_json
     })
 }
 
+// Resolve known purchases BEFORE any mint/spend. Missing bytes or an unreadable
+// index require recovery; neither is authorization to charge the buyer again.
+async fn existing_paid_content(
+    data_dir: &std::path::Path,
+    onion: &str,
+    content_id: &str,
+    filename: Option<&str>,
+) -> Result<Option<serde_json::Value>> {
+    let owned = crate::content_owned::list_owned_checked(data_dir)
+        .await
+        .context("Could not verify previous purchases; no new payment was sent")?;
+    let Some(item) = owned.iter().find(|o| {
+        o.onion == onion
+            && (o.content_id == content_id
+                || filename.is_some_and(|f| {
+                    !f.is_empty() && o.filename.trim_start_matches('/') == f.trim_start_matches('/')
+                }))
+    }) else {
+        return Ok(None);
+    };
+    let (mime, bytes) = crate::content_owned::read_owned(data_dir, &item.onion, &item.content_id)
+        .await.context("This purchase is recorded, but its cached file is unavailable. No new payment was sent. Restore the cached file or contact the seller.")?;
+    let mut response = paid_content_response(&bytes, &mime, 0);
+    response["already_owned"] = serde_json::json!(true);
+    response["filename"] = serde_json::json!(item.filename);
+    Ok(Some(response))
+}
+
 // Updated clients open the persisted file through the Range-capable HTTP
 // endpoint. Avoid putting two base64 copies of a large video in a JSON reply.
 // Keep older clients compatible until both sides have upgraded.
@@ -517,36 +545,15 @@ impl RpcHandler {
         // by exact (onion, content_id) and by (onion, filename) — the latter
         // catches duplicate ids pointing at the same file on the same
         // seller. The owned copy is served from the local cache instead.
+        if let Some(cached) = existing_paid_content(
+            &self.config.data_dir,
+            onion,
+            content_id,
+            params.get("filename").and_then(|v| v.as_str()),
+        )
+        .await?
         {
-            let filename = params.get("filename").and_then(|v| v.as_str());
-            let owned = crate::content_owned::list_owned(&self.config.data_dir).await;
-            let already = owned.iter().find(|o| {
-                o.onion == onion
-                    && (o.content_id == content_id
-                        || filename.is_some_and(|f| {
-                            !f.is_empty()
-                                && o.filename.trim_start_matches('/') == f.trim_start_matches('/')
-                        }))
-            });
-            if let Some(o) = already {
-                tracing::info!(
-                    onion,
-                    content_id,
-                    owned_as = %o.content_id,
-                    "paid download: already owned — serving cached copy, NOT paying again"
-                );
-                if let Some((mime, bytes)) =
-                    crate::content_owned::read_owned(&self.config.data_dir, &o.onion, &o.content_id)
-                        .await
-                {
-                    let mut result = paid_content_response(&bytes, &mime, 0);
-                    result["already_owned"] = serde_json::json!(true);
-                    result["filename"] = serde_json::json!(o.filename);
-                    return Ok(result);
-                }
-                // Cache record exists but bytes are gone — fall through and
-                // repurchase rather than stranding the user.
-            }
+            return Ok(cached);
         }
 
         // `method` pins the backend the user confirmed in the UI ("cashu" |

@@ -64,7 +64,16 @@ async fn relay_cannot_substitute_forged_fields_for_a_known_event_id() {
         let relay = tokio::spawn(async move {
             let (socket, _) = listener.accept().await.unwrap();
             let mut socket = accept_async(socket).await.unwrap();
-            while let Some(Ok(Message::Text(text))) = socket.next().await {
+            while let Some(message) = socket.next().await {
+                let text = match message.unwrap() {
+                    Message::Text(text) => text,
+                    Message::Ping(payload) => {
+                        socket.send(Message::Pong(payload)).await.unwrap();
+                        continue;
+                    }
+                    Message::Close(_) => break,
+                    _ => continue,
+                };
                 let message: serde_json::Value = serde_json::from_str(&text).unwrap();
                 if message[0] != "REQ" {
                     continue;

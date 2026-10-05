@@ -272,28 +272,8 @@ impl RpcHandler {
             .and_then(|v| v.as_bool())
             .unwrap_or(false);
 
-        // Fee control: either a confirmation target or an explicit fee rate
-        let target_conf = params.get("target_conf").and_then(|v| v.as_i64());
-        let sat_per_vbyte = params.get("sat_per_vbyte").and_then(|v| v.as_i64());
-        if target_conf.is_some() && sat_per_vbyte.is_some() {
-            return Err(anyhow::anyhow!(
-                "Invalid fee parameters: specify either target_conf or sat_per_vbyte, not both"
-            ));
-        }
-        if let Some(tc) = target_conf {
-            if !(1..=1008).contains(&tc) {
-                return Err(anyhow::anyhow!(
-                    "Invalid target_conf: must be between 1 and 1008 blocks"
-                ));
-            }
-        }
-        if let Some(rate) = sat_per_vbyte {
-            if !(1..=5000).contains(&rate) {
-                return Err(anyhow::anyhow!(
-                    "Invalid sat_per_vbyte: must be between 1 and 5000"
-                ));
-            }
-        }
+        // Omitted fees target the next block; explicit slower/custom choices win.
+        let (target_conf, sat_per_vbyte) = super::fee_policy::fee_options(&params)?;
 
         info!(
             peer = pubkey,
@@ -574,7 +554,7 @@ impl RpcHandler {
 
 /// LND's CloseChannel REST endpoint takes fee selection as query parameters.
 /// With neither parameter LND uses a lax target; keep legacy clients on our
-/// explicit Standard target rather than silently accepting that default.
+/// explicit next-block target rather than silently accepting that default.
 fn close_channel_fee_query(params: &serde_json::Value) -> Result<Vec<(&'static str, String)>> {
     let force = match params.get("force") {
         None | Some(serde_json::Value::Null) => false,
@@ -609,7 +589,12 @@ fn close_channel_fee_query(params: &serde_json::Value) -> Result<Vec<(&'static s
         if let Some(rate) = rate {
             query.push(("sat_per_vbyte", rate.to_string()));
         } else {
-            query.push(("target_conf", target.unwrap_or(6).to_string()));
+            query.push((
+                "target_conf",
+                target
+                    .unwrap_or(super::fee_policy::DEFAULT_TARGET as u64)
+                    .to_string(),
+            ));
         }
     }
     Ok(query)
@@ -645,7 +630,7 @@ mod close_fee_tests {
         }
         assert_eq!(
             close_channel_fee_query(&serde_json::json!({})).unwrap(),
-            vec![("force", "false".into()), ("target_conf", "6".into())]
+            vec![("force", "false".into()), ("target_conf", "1".into())]
         );
         assert_eq!(
             close_channel_fee_query(&serde_json::json!({"force":true})).unwrap(),

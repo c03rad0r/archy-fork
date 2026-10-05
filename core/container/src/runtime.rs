@@ -40,6 +40,11 @@ pub fn stop_grace_secs_for(container_name: &str) -> u64 {
 
 #[async_trait]
 pub trait ContainerRuntime: Send + Sync {
+    /// CLI used for offline app provisioning in this runtime's storage scope.
+    fn cli_name(&self) -> &'static str {
+        "podman"
+    }
+
     async fn pull_image(&self, image: &str, signature: Option<&str>) -> Result<()>;
     async fn create_container(
         &self,
@@ -628,7 +633,13 @@ fn docker_network_and_ports(manifest: &AppManifest, offset: u16) -> Result<Vec<S
         .as_deref()
         .filter(|v| !v.is_empty())
         .unwrap_or(&manifest.app.security.network_policy);
-    if matches!(network, "slirp4netns" | "pasta") {
+    if matches!(
+        network,
+        "slirp4netns"
+            | "slirp4netns:allow_host_loopback=true"
+            | "slirp4netns:allow_host_loopback=true,cidr=169.254.1.0/24"
+            | "pasta"
+    ) {
         anyhow::bail!("this app requires rootless Podman networking ({network})");
     }
     let mut args = Vec::new();
@@ -660,6 +671,10 @@ fn docker_network_and_ports(manifest: &AppManifest, offset: u16) -> Result<Vec<S
 
 #[async_trait]
 impl ContainerRuntime for DockerRuntime {
+    fn cli_name(&self) -> &'static str {
+        "docker"
+    }
+
     async fn pull_image(&self, image: &str, signature: Option<&str>) -> Result<()> {
         // Same signature gate as the podman path — the docker fallback is
         // dev-only, but a declared signature must never be skippable by
@@ -991,6 +1006,10 @@ impl AutoRuntime {
 
 #[async_trait]
 impl ContainerRuntime for AutoRuntime {
+    fn cli_name(&self) -> &'static str {
+        self.runtime.cli_name()
+    }
+
     async fn pull_image(&self, image: &str, signature: Option<&str>) -> Result<()> {
         self.runtime.pull_image(image, signature).await
     }

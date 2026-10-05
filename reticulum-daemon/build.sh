@@ -63,3 +63,6 @@ if [ -n "$RNODECONF_SRC" ] && [ -f "$RNODECONF_SRC" ]; then
 else
     echo "WARNING: rnodeconf.py not found at $RNODECONF_SRC (RNS version mismatch?) — skipping archy-rnodeconf build" >&2
 fi
+
+# Bundle the ESP32 flasher and its stub; OTA nodes must not depend on apt/pip.
+bash build-esptool.sh

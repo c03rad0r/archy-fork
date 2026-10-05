@@ -192,8 +192,11 @@ if os.environ.get("EMBED_MANIFESTS") and apps_dir:
             if not baseline or baseline.get("app", {}).get("backup_before_runtime_change"):
                 raise SystemExit(f"{app_id}: a pre-migration BASE_CATALOG manifest is required for old-node compatibility")
             entry["manifest"] = baseline
+            requires = ["runtime-migration-backup-v1"]
+            if app_id == "nginx-proxy-manager":
+                requires.append("npm-legacy-host-gateway-v1")
             entry["manifest_variants"] = [{
-                "requires": ["runtime-migration-backup-v1"], "manifest": rendered,
+                "requires": requires, "manifest": rendered,
             }]
         else:
             entry["manifest"] = rendered

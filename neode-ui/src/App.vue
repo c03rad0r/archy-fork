@@ -19,8 +19,6 @@
     <AppLauncherOverlay />
     <AppCredentialInterstitial />
 
-    <UploadProgress v-if="route.name !== 'cloud-folder'" floating />
-
     <!-- Global toast notifications -->
     <ToastStack />
 
@@ -98,7 +96,7 @@
 </template>
 
 <script setup lang="ts">
-import UploadProgress from '@/components/cloud/UploadProgress.vue'
+import { useUploadNotifications } from '@/composables/useUploadNotifications'
 import { computed, ref, onMounted, onBeforeUnmount, watch } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import SplashScreen from './components/SplashScreen.vue'
@@ -248,6 +246,7 @@ function onKeyDown(e: KeyboardEvent) {
 }
 
 const route = useRoute()
+useUploadNotifications()
 const isSignerBroker = computed(() => route.meta.signerBroker === true)
 // Start with splash hidden — onMounted decides whether to show it
 const showSplash = ref(false)

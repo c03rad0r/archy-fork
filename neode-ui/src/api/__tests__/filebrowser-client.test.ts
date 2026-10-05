@@ -46,7 +46,43 @@ describe('FileBrowserClient', () => {
   beforeEach(() => {
     mockFetch.mockReset()
     ;(fileBrowserClient as any)._authenticated = false
+    ;(fileBrowserClient as any)._lastLoginFailure = 0
     document.cookie = 'auth=; expires=Thu, 01 Jan 1970 00:00:00 GMT'
+  })
+
+  it('allows a failed network login to recover immediately instead of caching an auth rejection', async () => {
+    ;(fileBrowserClient as any)._lastLoginFailure = 0
+    mockFetch.mockRejectedValueOnce(new TypeError('Network disconnected'))
+    await expect(fileBrowserClient.listDirectory('/')).rejects.toBeInstanceOf(TypeError)
+    mockFetch.mockResolvedValueOnce(jsonResponse({ result: { token: 'reconnected-token' } }))
+    mockFetch.mockResolvedValueOnce(jsonResponse({ items: [] }))
+    await expect(fileBrowserClient.listDirectory('/')).resolves.toEqual([])
+  })
+
+  it('keeps an interrupted refresh retryable when another screen requests login concurrently', async () => {
+    let disconnect!: (error: Error) => void
+    mockFetch.mockImplementationOnce(() => new Promise((_resolve, reject) => { disconnect = reject }))
+    const listing = fileBrowserClient.listDirectory('/')
+    const assertion = expect(listing).rejects.toBeInstanceOf(TypeError)
+    disconnect(new TypeError('Connection reset'))
+    let second!: Promise<boolean>
+    mockFetch.mockResolvedValue(jsonResponse({ result: { token: 'reconnected-token' } }))
+    queueMicrotask(() => { second = fileBrowserClient.login() })
+    await assertion
+    await second
+  })
+
+  it('encodes literal filename punctuation for listing, reading and deleting', async () => {
+    setAuthenticated()
+    mockFetch.mockResolvedValue(jsonResponse({ items: [] }))
+    const path = '/a + 100% ? # ü.txt'
+    const encoded = '/a%20%2B%20100%25%20%3F%20%23%20%C3%BC.txt'
+    await fileBrowserClient.listDirectory(path)
+    expect(mockFetch.mock.calls[0]![0]).toContain('/app/filebrowser/api/resources' + encoded)
+    await fileBrowserClient.deleteItem(path)
+    expect(mockFetch.mock.calls[1]![0]).toContain('/app/filebrowser/api/resources' + encoded)
+    expect(fileBrowserClient.downloadUrl(path)).toContain('/app/filebrowser/api/raw' + encoded)
+    expect(await fileBrowserClient.streamUrl(path)).toContain('/app/filebrowser/api/raw' + encoded)
   })
 
   describe('login', () => {

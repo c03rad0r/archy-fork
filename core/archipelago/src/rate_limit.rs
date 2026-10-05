@@ -83,6 +83,8 @@ impl EndpointRateLimiter {
         limits.insert("wallet.send".to_string(), (5usize, 300u64));
         limits.insert("wallet.ecash-send".to_string(), (10, 300));
         limits.insert("lnd.sendcoins".to_string(), (5, 300));
+        limits.insert("lnd.bump-submit".to_string(), (5, 300));
+        limits.insert("lnd.bump-quote".to_string(), (30, 60));
         limits.insert("lnd.payinvoice".to_string(), (10, 300));
         limits.insert("lnd.openchannel".to_string(), (3, 300));
         limits.insert("lnd.closechannel".to_string(), (3, 300));

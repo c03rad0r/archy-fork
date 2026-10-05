@@ -1,7 +1,7 @@
 {
   "name": "neode-ui",
   "private": true,
-  "version": "1.8.22-alpha",
+  "version": "1.9.0-alpha",
   "type": "module",
   "scripts": {
     "start": "./start-dev.sh",
@@ -10,7 +10,7 @@
     "test:watch": "vitest",
     "test:mock-parity": "node scripts/mock-rpc-parity.mjs",
     "dev": "vite",
-    "dev:mock": "concurrently --raw \"node mock-backend.js\" \"VITE_AIUI_URL=http://localhost:5173 vite\" \"cd ../../AIUI && perl -MPOSIX -e 'POSIX::setsid(); exec @ARGV' -- pnpm dev 2>/dev/null || echo '[AIUI] Not found at ../../AIUI — chat will show placeholder'\"",
+    "dev:mock": "concurrently --raw \"node mock-backend.js\" \"VITE_AIUI_URL=http://localhost:5173 vite\" \"cd ../../AIUI && perl -MPOSIX -e 'POSIX::setsid(); exec @ARGV' -- pnpm dev 2>/dev/null || echo '[AIUI] Not found at ../../AIUI \u2014 chat will show placeholder'\"",
     "dev:boot": "VITE_DEV_MODE=boot concurrently --raw \"VITE_DEV_MODE=boot node mock-backend.js\" \"VITE_DEV_MODE=boot vite\"",
     "dev:real": "echo 'Start backend: cd ../core && cargo run --release' && vite",
     "backend:mock": "node mock-backend.js",

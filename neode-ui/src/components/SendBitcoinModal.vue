@@ -337,7 +337,7 @@ watch(() => props.show, (shown) => {
   successInfo.value = null
   sendAll.value = false
   onchainBalance.value = null
-  feePreset.value = 'standard'
+  feePreset.value = 'fast'
   customConfTarget.value = null
   customSatPerVbyte.value = null
   resolvedFeeParams.value = {}
@@ -359,7 +359,7 @@ const onchainFeePresets: { key: OnchainFeePreset; label: string; hint?: string; 
   { key: 'custom', label: 'Custom' },
 ]
 
-const feePreset = ref<OnchainFeePreset>('standard')
+const feePreset = ref<OnchainFeePreset>('fast')
 const customConfTarget = ref<number | null>(null)
 const customSatPerVbyte = ref<number | null>(null)
 // Resolved at review time so confirm + send use the same params.
@@ -367,16 +367,16 @@ const resolvedFeeParams = ref<{ target_conf?: number; sat_per_vbyte?: number }>(
 
 function onchainFeeParams(): { target_conf?: number; sat_per_vbyte?: number } | null {
   if (feePreset.value !== 'custom') {
-    return { target_conf: onchainFeePresets.find(p => p.key === feePreset.value)?.confTarget ?? 6 }
+    return { target_conf: onchainFeePresets.find(p => p.key === feePreset.value)?.confTarget ?? 1 }
   }
   const rate = customSatPerVbyte.value
   const conf = customConfTarget.value
   if (rate != null && rate !== 0) {
-    if (rate < 1 || rate > 5000) { error.value = 'Sats per vByte must be between 1 and 5000'; return null }
+    if (!Number.isInteger(rate) || rate < 1 || rate > 5000) { error.value = 'Sats per vByte must be a whole number between 1 and 5000'; return null }
     return { sat_per_vbyte: Math.floor(rate) }
   }
   if (conf != null && conf !== 0) {
-    if (conf < 1 || conf > 1008) { error.value = 'Target blocks must be between 1 and 1008'; return null }
+    if (!Number.isInteger(conf) || conf < 1 || conf > 1008) { error.value = 'Target blocks must be a whole number between 1 and 1008'; return null }
     return { target_conf: Math.floor(conf) }
   }
   error.value = 'Custom fee requires target blocks or sats per vByte'
@@ -409,7 +409,7 @@ async function loadFeeEstimate() {
   try {
     const res = await rpcClient.call<{ fee_sat: number; sat_per_vbyte: number }>({
       method: 'lnd.estimatefee',
-      params: { addr, amount: amt, target_conf: resolvedFeeParams.value.target_conf ?? 6 },
+      params: { addr, amount: amt, target_conf: resolvedFeeParams.value.target_conf ?? 1 },
       timeout: 10000,
     })
     if (res.fee_sat > 0) feeEstimate.value = res
@@ -569,6 +569,11 @@ function sendAnother() {
   dest.value = ''
   amount.value = 0
   sendAll.value = false
+  feePreset.value = 'fast'
+  customConfTarget.value = null
+  customSatPerVbyte.value = null
+  resolvedFeeParams.value = {}
+  feeEstimate.value = null
   error.value = ''
 }
 

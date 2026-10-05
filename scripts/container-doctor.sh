@@ -558,7 +558,6 @@ fix_npm_public_hosts() {
     local script="/opt/archipelago/scripts/sync-npm-public-hosts.sh"
     [ -x "$script" ] || script="$SCRIPT_DIR/sync-npm-public-hosts.sh"
     [ -x "$script" ] || return 1
-    [ -f /var/lib/archipelago/nginx-proxy-manager/data/database.sqlite ] || return 1
 
     if "$script" >/dev/null 2>&1; then
         log "Synced Nginx Proxy Manager public hosts into host nginx"

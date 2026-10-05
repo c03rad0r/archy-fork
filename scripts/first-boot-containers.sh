@@ -48,6 +48,13 @@ SCRIPT_DIR_FBC="$(cd "$(dirname "$0")" && pwd)"
 # as root (rootful podman), the backend can't see them at all.
 DOCKER="runuser -u archipelago -- env XDG_RUNTIME_DIR=/run/user/$(id -u archipelago) podman"
 
+prepare_filebrowser_credentials() {
+  install -d -o archipelago -g archipelago -m 700 /var/lib/archipelago/secrets/filebrowser
+  chown 100000:100000 /var/lib/archipelago/filebrowser /var/lib/archipelago/filebrowser-data
+  runuser -u archipelago -- env XDG_RUNTIME_DIR="/run/user/$(id -u archipelago)" \
+    python3 "$SCRIPT_DIR_FBC/filebrowser-credentials.py" --image "$FILEBROWSER_IMAGE"
+}
+
 PORT_ALLOC_FILE="/var/lib/archipelago/port-allocations.env"
 mkdir -p /var/lib/archipelago 2>/dev/null || true
 [ -f "$PORT_ALLOC_FILE" ] && . "$PORT_ALLOC_FILE"
@@ -142,19 +149,14 @@ if [ -f "$UNBUNDLED_MARKER" ]; then
         return 1
     }
 
-    # Create FileBrowser (noauth — behind Archipelago login)
-    if ! $DOCKER ps -a --format '{{.Names}}' 2>/dev/null | grep -q filebrowser; then
-        log "Creating FileBrowser (noauth)..."
+    # Create FileBrowser (unique private Cloud credentials)
+    if ! $DOCKER container exists filebrowser; then
+        log "Creating FileBrowser (secure Cloud login)..."
         mkdir -p /var/lib/archipelago/filebrowser /var/lib/archipelago/filebrowser-data
-        mkdir -p /var/lib/archipelago/filebrowser/{Documents,Photos,Music,Videos,Downloads}
-        chown -R 100000:100000 /var/lib/archipelago/filebrowser
-        chown -R 100000:100000 /var/lib/archipelago/filebrowser-data
-        # Write config with database on persistent volume
-        cat > /var/lib/archipelago/filebrowser-data/.filebrowser.json <<'FBEOF'
-{"port":80,"baseURL":"","address":"0.0.0.0","database":"/data/filebrowser.db","root":"/srv","log":"stdout"}
-FBEOF
-        chown 100000:100000 /var/lib/archipelago/filebrowser-data/.filebrowser.json
-        pull_with_fallback "${FILEBROWSER_IMAGE}"
+        chown 100000:100000 /var/lib/archipelago/filebrowser
+        chown 100000:100000 /var/lib/archipelago/filebrowser-data
+        pull_with_fallback "${FILEBROWSER_IMAGE}" || exit 1
+        prepare_filebrowser_credentials || { log "ERROR: secure File Browser setup failed"; exit 1; }
         $DOCKER run -d --name filebrowser --restart unless-stopped \
             --network archy-net \
             --cap-drop=ALL --cap-add=DAC_OVERRIDE --cap-add=NET_BIND_SERVICE \
@@ -162,21 +164,13 @@ FBEOF
             --health-cmd='wget -q --spider http://localhost:80/health || exit 1' \
             --health-interval=30s --health-timeout=5s --health-retries=3 \
             --memory=256m \
-            -p 8083:80 \
+            -p 127.0.0.1:8083:80 \
             -v /var/lib/archipelago/filebrowser:/srv \
             -v /var/lib/archipelago/filebrowser-data:/data \
             ${FILEBROWSER_IMAGE} \
             --config /data/.filebrowser.json 2>>"$LOG" && \
             log "  FileBrowser created" || log "  WARNING: FileBrowser creation failed"
-        # Set noauth after first start
-        sleep 3
-        $DOCKER exec filebrowser /filebrowser config set --auth.method=noauth --database /data/filebrowser.db 2>>"$LOG" || true
-        $DOCKER exec filebrowser /filebrowser users add admin admin --perm.admin --database /data/filebrowser.db 2>>"$LOG" || true
-        $DOCKER restart filebrowser 2>>"$LOG" || true
-        # Create filebrowser password for backend token flow
-        mkdir -p /var/lib/archipelago/secrets/filebrowser
-        echo -n "admin" > /var/lib/archipelago/secrets/filebrowser/password
-        chown -R 1000:1000 /var/lib/archipelago/secrets
+
     fi
 
     # Create Fedimint Client (fmcd) alongside FileBrowser so ecash / networking
@@ -537,7 +531,7 @@ for dir in lnd electrumx btcpay nbxplorer jellyfin vaultwarden \
 done
 # Nginx Proxy Manager runs as root in the rootless user namespace, which maps to
 # the archipelago user on host bind mounts. Keep certbot's webroot writable.
-[ -d /var/lib/archipelago/nginx-proxy-manager ] && chown -R 1000:1000 /var/lib/archipelago/nginx-proxy-manager 2>/dev/null
+# Existing NPM ownership is preserved; new storage is initialized below.
 # Bitcoin Knots: container UID 101 → host UID 100101
 [ -d /var/lib/archipelago/bitcoin ] && chown -R 100101:100101 /var/lib/archipelago/bitcoin 2>/dev/null
 # Postgres: container UID 70 → host UID 100070
@@ -1249,48 +1243,55 @@ fi
 track_container "searxng"
 # OnlyOffice removed — incompatible with rootless Podman (internal postgres/rabbitmq)
 # CryptPad is the replacement (single Node.js process, e2e encrypted)
-if ! $DOCKER ps --format '{{.Names}}' 2>/dev/null | grep -q filebrowser; then
-  log "Creating File Browser (noauth — behind Archipelago login)..."
+if ! $DOCKER container exists filebrowser; then
+  log "Creating File Browser (secure Cloud login)..."
   mkdir -p /var/lib/archipelago/filebrowser /var/lib/archipelago/filebrowser-data
-  mkdir -p /var/lib/archipelago/filebrowser/{Documents,Photos,Music,Downloads,Builds}
-  # Config with noauth + database on persistent volume (survives container recreation)
-  cat > /var/lib/archipelago/filebrowser-data/.filebrowser.json << 'FBEOF'
-{"port":80,"baseURL":"","address":"0.0.0.0","database":"/data/filebrowser.db","root":"/srv","log":"stdout"}
-FBEOF
+  $DOCKER image exists "$FILEBROWSER_IMAGE" || $DOCKER pull "$FILEBROWSER_IMAGE" || exit 1
+  prepare_filebrowser_credentials || { log "ERROR: secure File Browser setup failed"; exit 1; }
   $DOCKER run -d --name filebrowser --restart unless-stopped \
     --health-cmd="wget -q --spider http://localhost:80/health || exit 1" --health-interval=120s --health-timeout=5s --health-retries=3 \
     --memory=$(mem_limit filebrowser) \
-    --cap-drop ALL --security-opt no-new-privileges:true \
+    --cap-drop ALL --cap-add=DAC_OVERRIDE --cap-add=NET_BIND_SERVICE --security-opt no-new-privileges:true \
     --tmpfs=/tmp:rw,noexec,nosuid,size=256m --tmpfs=/run:rw,noexec,nosuid,size=64m \
-    -p 8083:80 \
+    -p 127.0.0.1:8083:80 \
     -v /var/lib/archipelago/filebrowser:/srv \
     -v /var/lib/archipelago/filebrowser-data:/data \
     "$FILEBROWSER_IMAGE" \
     --config /data/.filebrowser.json 2>>"$LOG" || true
-  # Set noauth after first start (initializes database on volume)
-  sleep 3
-  $DOCKER exec filebrowser /filebrowser config set --auth.method=noauth --database /data/filebrowser.db 2>>"$LOG" || true
-  $DOCKER exec filebrowser /filebrowser users add admin admin --perm.admin --database /data/filebrowser.db 2>>"$LOG" || true
-  $DOCKER restart filebrowser 2>>"$LOG" || true
+
 fi
 track_container "filebrowser"
-if ! $DOCKER ps --format '{{.Names}}' 2>/dev/null | grep -q nginx-proxy-manager; then
-  log "Creating Nginx Proxy Manager..."
-  mkdir -p /var/lib/archipelago/nginx-proxy-manager/data /var/lib/archipelago/nginx-proxy-manager/letsencrypt
-  mkdir -p /var/lib/archipelago/nginx-proxy-manager/data/letsencrypt-acme-challenge/.well-known/acme-challenge
-  chown -R 1000:1000 /var/lib/archipelago/nginx-proxy-manager 2>/dev/null || true
-  NPM_ADMIN_PORT=$(alloc_port nginx-proxy-manager 8081)
-  NPM_HTTP_PORT=$(alloc_port nginx-proxy-manager-http 8084)
-  NPM_HTTPS_PORT=$(alloc_port nginx-proxy-manager-https 8444)
-  $DOCKER run -d --name nginx-proxy-manager --restart unless-stopped \
-    --health-cmd="curl -sf http://localhost:81/ || exit 1" --health-interval=120s --health-timeout=5s --health-retries=3 \
-    --memory=$(mem_limit nginx-proxy-manager) \
-    --cap-drop ALL --cap-add CHOWN --cap-add FOWNER --cap-add SETUID --cap-add SETGID --cap-add DAC_OVERRIDE --cap-add NET_BIND_SERVICE \
-    --security-opt no-new-privileges:true \
-    -p ${NPM_ADMIN_PORT}:81 -p ${NPM_HTTP_PORT}:80 -p ${NPM_HTTPS_PORT}:443 \
-    -v /var/lib/archipelago/nginx-proxy-manager/data:/data \
-    -v /var/lib/archipelago/nginx-proxy-manager/letsencrypt:/etc/letsencrypt \
-    "${NPM_IMAGE}" 2>>"$LOG" || true
+# Resolve existing storage before creating anything; never revive a stopped
+# container through a duplicate run or recursively rewrite its ownership.
+if ! $DOCKER container exists nginx-proxy-manager; then
+  if NPM_LAYOUT=$(python3 "$SCRIPT_DIR_FBC/npm-public-bridge.py" --resolve); then
+    NPM_DATA_DIR=$(python3 -c 'import json,sys; print(json.load(sys.stdin)["data"])' <<<"$NPM_LAYOUT")
+    NPM_CERT_DIR=$(python3 -c 'import json,sys; print(json.load(sys.stdin)["certificates"])' <<<"$NPM_LAYOUT")
+    if [ -n "$NPM_DATA_DIR" ] && [ -n "$NPM_CERT_DIR" ]; then
+      for npm_dir in "$NPM_DATA_DIR" "$NPM_CERT_DIR" "$NPM_DATA_DIR/letsencrypt-acme-challenge/.well-known/acme-challenge"; do
+        if [ ! -d "$npm_dir" ]; then
+          install -d -o archipelago -g archipelago "$npm_dir" || exit 1
+        fi
+      done
+      NPM_ADMIN_PORT=$(alloc_port nginx-proxy-manager 8081)
+      python3 "$SCRIPT_DIR_FBC/npm-public-bridge.py" --resolve --prepare-realip >/dev/null || exit 1
+      NPM_HTTP_PORT=$(alloc_port nginx-proxy-manager-http 8088)
+      NPM_HTTPS_PORT=$(alloc_port nginx-proxy-manager-https 8444)
+      if ! $DOCKER run -d --name nginx-proxy-manager --restart unless-stopped \
+        --network slirp4netns:allow_host_loopback=true,cidr=169.254.1.0/24 \
+        --health-cmd="curl -sf http://127.0.0.1:81/api/ || exit 1" --health-interval=120s --health-timeout=5s --health-retries=3 \
+        --memory=$(mem_limit nginx-proxy-manager) \
+        --cap-drop ALL --cap-add CHOWN --cap-add FOWNER --cap-add SETUID --cap-add SETGID --cap-add DAC_OVERRIDE --cap-add NET_BIND_SERVICE \
+        --security-opt no-new-privileges:true \
+        -p "127.0.0.1:${NPM_ADMIN_PORT}:81" -p "127.0.0.1:${NPM_HTTP_PORT}:80" -p "127.0.0.1:${NPM_HTTPS_PORT}:443" \
+        -v "$NPM_DATA_DIR:/data" -v "$NPM_CERT_DIR:/etc/letsencrypt" \
+        "${NPM_IMAGE}" 2>>"$LOG"; then
+        log "ERROR: NPM creation failed; existing persistent state preserved"
+      fi
+    fi
+  else
+    log "ERROR: NPM storage resolution failed; no directories or containers changed"
+  fi
 fi
 track_container "nginx-proxy-manager"
 if ! $DOCKER ps --format '{{.Names}}' 2>/dev/null | grep -q portainer; then

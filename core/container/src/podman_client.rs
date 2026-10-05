@@ -450,6 +450,17 @@ impl PodmanClient {
                 "nsmode": net_mode
             },
         });
+        if matches!(
+            manifest.app.container.network.as_deref(),
+            Some(
+                "slirp4netns:allow_host_loopback=true"
+                    | "slirp4netns:allow_host_loopback=true,cidr=169.254.1.0/24"
+            )
+        ) {
+            body["network_options"] = serde_json::json!({
+                "slirp4netns": manifest.app.container.network.as_deref().unwrap().split_once(':').unwrap().1.split(',').collect::<Vec<_>>()
+            });
+        }
         if let Some(network) = custom_network {
             // The container always answers to its own name; manifest
             // network_aliases add extra short hostnames peers may bake in
@@ -727,7 +738,11 @@ fn podman_network_settings(
         Some("host") => ("host", None),
         Some("bridge") => ("bridge", None),
         Some("none") => ("none", None),
-        Some("slirp4netns") => ("slirp4netns", None),
+        Some(
+            "slirp4netns"
+            | "slirp4netns:allow_host_loopback=true"
+            | "slirp4netns:allow_host_loopback=true,cidr=169.254.1.0/24",
+        ) => ("slirp4netns", None),
         Some("pasta") => ("pasta", None),
         Some("private") => ("private", None),
         Some(custom) => ("bridge", Some(custom.to_string())),
@@ -1075,6 +1090,14 @@ mod tests {
         assert!(!image_uses_insecure_registry(
             "evil.example:80/source.archipelago-foundation.org/lfg2025/x:latest"
         ));
+    }
+
+    #[test]
+    fn npm_rootless_options_are_not_a_named_bridge() {
+        assert_eq!(
+            podman_network_settings(Some("slirp4netns:allow_host_loopback=true"), "isolated"),
+            ("slirp4netns", None)
+        );
     }
 
     #[test]

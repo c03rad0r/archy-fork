@@ -17,6 +17,84 @@ pub const DEFAULT_CONFIG_PATH: &str = "/var/lib/archipelago/filebrowser-data/.fi
 const DEFAULT_CONFIG_JSON: &str =
     "{\"port\":80,\"baseURL\":\"\",\"address\":\"0.0.0.0\",\"database\":\"/data/filebrowser.db\",\"root\":\"/srv\",\"log\":\"stdout\"}\n";
 
+/// One atomically published record shared by setup, Cloud and credentials UI.
+/// Deliberately has no Debug implementation: the password must never be logged.
+#[derive(serde::Deserialize)]
+pub struct CloudCredentials {
+    pub schema: u32,
+    pub username: String,
+    pub password: String,
+}
+
+pub async fn cloud_credentials(directory: &Path) -> Result<CloudCredentials> {
+    let path = directory.join("credentials.json");
+    match fs::read(&path).await {
+        Ok(bytes) => {
+            let value: CloudCredentials = serde_json::from_slice(&bytes)
+                .context("Invalid private File Browser credential record")?;
+            let suffix = value.username.strip_prefix("archy-").unwrap_or("");
+            anyhow::ensure!(
+                value.schema == 1
+                    && suffix.len() == 32
+                    && suffix.bytes().all(|c| c.is_ascii_hexdigit())
+                    && value.password.len() == 64
+                    && value.password.bytes().all(|c| c.is_ascii_hexdigit()),
+                "Invalid managed File Browser credentials"
+            );
+            Ok(value)
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            // Compatibility during staged upgrades only. Never invent admin/admin
+            // when a secret is missing; the pre-start provisioner repairs legacy DBs.
+            let password = fs::read_to_string(directory.join("password"))
+                .await
+                .context("File Browser secure Cloud login has not been provisioned")?;
+            let password = password.trim().to_owned();
+            anyhow::ensure!(
+                !password.is_empty() && password != "admin",
+                "File Browser default credentials must be migrated before Cloud login"
+            );
+            Ok(CloudCredentials {
+                schema: 0,
+                username: "admin".into(),
+                password,
+            })
+        }
+        Err(error) => Err(error).context("Cannot read private File Browser credentials"),
+    }
+}
+
+/// Prepare a stopped server using the same helper used by Quadlet and the ISO.
+pub async fn prepare_credentials(
+    paths: &EnsurePaths,
+    secret_dir: &Path,
+    image: &str,
+    runtime: &str,
+) -> Result<()> {
+    let output = tokio::process::Command::new("python3")
+        .args([
+            "-c",
+            include_str!("../../../../scripts/filebrowser-credentials.py"),
+            "--image",
+            image,
+            "--runtime",
+            runtime,
+            "--data-dir",
+            &paths.data_dir.to_string_lossy(),
+            "--srv-root",
+            &paths.srv_root.to_string_lossy(),
+            "--secrets-dir",
+            &secret_dir.to_string_lossy(),
+        ])
+        .kill_on_drop(true)
+        .output()
+        .await
+        .context("Running File Browser credential setup")?;
+    anyhow::ensure!(output.status.success(),
+        "File Browser secure login setup failed; existing state and private rollback backup retained");
+    Ok(())
+}
+
 #[derive(Debug, Clone)]
 pub struct EnsurePaths {
     pub srv_root: PathBuf,
@@ -82,7 +160,18 @@ async fn create_dir_all_or_sudo(path: &std::path::Path) -> Result<()> {
 
 async fn write_config_atomically(paths: &EnsurePaths) -> Result<()> {
     let tmp = paths.config_path.with_extension("tmp");
-    match fs::write(&tmp, DEFAULT_CONFIG_JSON).await {
+    let legacy = paths.data_dir.join("database.db").exists();
+    let canonical = paths.data_dir.join("filebrowser.db").exists();
+    anyhow::ensure!(
+        !(legacy && canonical),
+        "Multiple File Browser databases need explicit config selection"
+    );
+    let config = if legacy {
+        DEFAULT_CONFIG_JSON.replace("/data/filebrowser.db", "/data/database.db")
+    } else {
+        DEFAULT_CONFIG_JSON.to_string()
+    };
+    match fs::write(&tmp, &config).await {
         Ok(()) => {
             fs::rename(&tmp, &paths.config_path)
                 .await
@@ -99,7 +188,7 @@ async fn write_config_atomically(paths: &EnsurePaths) -> Result<()> {
             let script = format!(
                 "set -eu\ncat > '{}' <<'FILEBROWSERCONF'\n{}FILEBROWSERCONF\n",
                 shell_quote(&paths.config_path.to_string_lossy()),
-                DEFAULT_CONFIG_JSON
+                config
             );
             let status = host_sudo(&["sh", "-lc", &script])
                 .await
@@ -311,6 +400,62 @@ async fn write_via_userns(dir: PathBuf, name: String, bytes: Vec<u8>) -> Result<
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn cloud_credentials_use_unique_record_and_never_default_password() {
+        let dir = tempfile::tempdir().unwrap();
+        assert!(cloud_credentials(dir.path()).await.is_err());
+        fs::write(dir.path().join("password"), "admin")
+            .await
+            .unwrap();
+        assert!(cloud_credentials(dir.path()).await.is_err());
+        fs::write(dir.path().join("password"), "legacy-unique-password")
+            .await
+            .unwrap();
+        assert_eq!(cloud_credentials(dir.path()).await.unwrap().schema, 0);
+        let value = serde_json::json!({"schema":1,"username":format!("archy-{}", "a".repeat(32)),"password":"b".repeat(64)});
+        fs::write(dir.path().join("credentials.json"), value.to_string())
+            .await
+            .unwrap();
+        let loaded = cloud_credentials(dir.path()).await.unwrap();
+        assert_eq!(loaded.username, value["username"].as_str().unwrap());
+        assert_eq!(loaded.password, value["password"].as_str().unwrap());
+        fs::write(dir.path().join("credentials.json"), "{}")
+            .await
+            .unwrap();
+        assert!(
+            cloud_credentials(dir.path()).await.is_err(),
+            "damaged managed record must not fall back to old credentials"
+        );
+    }
+
+    #[tokio::test]
+    async fn missing_config_preserves_legacy_database_and_refuses_ambiguity() {
+        let tmp = tempfile::tempdir().unwrap();
+        let paths = EnsurePaths {
+            srv_root: tmp.path().join("srv"),
+            data_dir: tmp.path().join("data"),
+            config_path: tmp.path().join("data/.filebrowser.json"),
+        };
+        fs::create_dir_all(&paths.data_dir).await.unwrap();
+        fs::write(paths.data_dir.join("database.db"), b"legacy fixture")
+            .await
+            .unwrap();
+        ensure_config(&paths).await.unwrap();
+        let config: serde_json::Value =
+            serde_json::from_slice(&fs::read(&paths.config_path).await.unwrap()).unwrap();
+        assert_eq!(config["database"], "/data/database.db");
+        fs::remove_file(&paths.config_path).await.unwrap();
+        fs::write(paths.data_dir.join("filebrowser.db"), b"other fixture")
+            .await
+            .unwrap();
+        assert!(ensure_config(&paths).await.is_err());
+        assert!(!paths.config_path.exists());
+        assert_eq!(
+            fs::read(paths.data_dir.join("database.db")).await.unwrap(),
+            b"legacy fixture"
+        );
+    }
 
     #[tokio::test]
     async fn ensure_config_creates_dirs_and_file() {

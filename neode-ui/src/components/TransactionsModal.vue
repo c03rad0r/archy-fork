@@ -61,9 +61,9 @@
                 </svg>
               </div>
               <div class="min-w-0 flex-1">
-                <div class="flex items-center gap-2">
+                <div class="flex flex-wrap items-center gap-2">
                   <span
-                    class="text-sm font-medium"
+                    class="text-sm font-medium whitespace-nowrap"
                     :class="tx.direction === 'incoming' ? 'text-green-400' : 'text-red-400'"
                   >
                     {{ tx.direction === 'incoming' ? '+' : '-' }}{{ displayAmount(tx).toLocaleString() }} sats
@@ -92,10 +92,22 @@
                   <span v-if="feeFor(tx)" class="text-[10px] text-white/35 shrink-0">fee {{ feeFor(tx).toLocaleString() }} sats</span>
                   <span v-if="tx.label" class="text-[10px] text-white/30 shrink-0">{{ tx.label }}</span>
                 </div>
+                <details v-if="tx.fee_bump_history?.length" class="mt-1 text-[11px] text-white/50" @click.stop>
+                  <summary class="cursor-pointer">Fee history</summary>
+                  <p>Original fee {{ tx.total_fees.toLocaleString() }} sats</p>
+                  <button v-for="bump in tx.fee_bump_history" :key="bump.tx_hash" type="button"
+                    class="block max-w-full truncate text-left hover:text-white/80"
+                    @click.stop="txExplorer.openTx(bump.tx_hash)">
+                    {{ bump.status === 'replaced' ? 'Replaced bump' : 'Fee bump' }} · {{ bump.fee_sats.toLocaleString() }} sats · {{ bump.status }} · {{ bump.tx_hash }}
+                  </button>
+                </details>
               </div>
             </div>
             <div class="flex items-center gap-2 shrink-0">
-              <span class="text-[11px] text-white/40">{{ formatTxTime(tx.time_stamp) }}</span>
+              <button v-if="isOnchain(tx) && tx.direction === 'outgoing' && (tx.num_confirmations === 0 || (tx.fee_bump_txid && tx.fee_bump_confirmations === 0))" type="button"
+                class="px-2 py-1 rounded-md border border-orange-400/25 text-orange-200 text-[11px] hover:bg-orange-500/15"
+                :aria-label="`Bump transaction ${tx.tx_hash}`" @click.stop="bumpTxid = tx.fee_bump_txid || tx.tx_hash">Bump</button>
+              <span class="hidden sm:inline text-[11px] text-white/40">{{ formatTxTime(tx.time_stamp) }}</span>
               <svg v-if="isOnchain(tx)" class="w-3.5 h-3.5 text-white/30" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
               </svg>
@@ -103,12 +115,14 @@
           </div>
         </div>
   </BaseModal>
+  <BumpFeeModal :show="show && !!bumpTxid" :txid="bumpTxid" @close="bumpTxid = ''" @updated="emit('updated')" />
 </template>
 
 <script setup lang="ts">
 import { ref, computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 import BaseModal from '@/components/BaseModal.vue'
+import BumpFeeModal from '@/components/BumpFeeModal.vue'
 import { useTxExplorer } from '@/composables/useTxExplorer'
 
 interface WalletTransaction {
@@ -118,6 +132,10 @@ interface WalletTransaction {
   num_confirmations: number
   time_stamp: number
   total_fees: number
+  bump_fee_sats?: number
+  fee_bump_txid?: string
+  fee_bump_confirmations?: number
+  fee_bump_history?: Array<{ tx_hash: string; fee_sats: number; status: string }>
   dest_addresses: string[]
   label: string
   block_height: number
@@ -130,7 +148,8 @@ const props = defineProps<{
   transactions: WalletTransaction[]
 }>()
 
-const emit = defineEmits<{ close: [] }>()
+const emit = defineEmits<{ close: []; updated: [] }>()
+const bumpTxid = ref('')
 const { t } = useI18n()
 
 type FilterKey = 'all' | 'onchain' | 'lightning' | 'ecash' | 'ark'
@@ -160,6 +179,7 @@ function countFor(f: FilterKey): number {
 }
 
 function close() {
+  bumpTxid.value = ''
   emit('close')
 }
 
@@ -169,14 +189,14 @@ function isOnchain(tx: WalletTransaction): boolean {
 }
 
 function feeFor(tx: WalletTransaction): number {
-  return tx.direction === 'outgoing' ? (tx.total_fees || 0) : 0
+  return tx.direction === 'outgoing' ? (tx.total_fees || 0) + (tx.bump_fee_sats || 0) : 0
 }
 
 /** Outgoing rows show the amount the RECIPIENT got (gross minus fee); the fee
  *  itself is broken out on its own tag. Incoming rows are untouched. */
 function displayAmount(tx: WalletTransaction): number {
   const gross = Math.abs(tx.amount_sats)
-  const fee = feeFor(tx)
+  const fee = tx.direction === 'outgoing' ? (tx.total_fees || 0) : 0
   return fee > 0 && gross > fee ? gross - fee : gross
 }
 

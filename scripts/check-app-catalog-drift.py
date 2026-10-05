@@ -83,7 +83,7 @@ def load_catalog(path: Path) -> dict[str, dict[str, Any]]:
             manifest = entry.get("manifest")
             for variant in reversed(entry.get("manifest_variants", [])):
                 requires = variant.get("requires", [])
-                if requires and all(cap == "runtime-migration-backup-v1" for cap in requires):
+                if requires and all(cap in {"runtime-migration-backup-v1", "npm-legacy-host-gateway-v1"} for cap in requires):
                     manifest = variant.get("manifest")
                     break
             if isinstance(manifest, dict) and isinstance(manifest.get("app"), dict):

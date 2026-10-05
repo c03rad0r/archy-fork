@@ -436,13 +436,13 @@
     {
       "id": "nginx-proxy-manager",
       "title": "Nginx Proxy Manager",
-      "version": "2.12.1",
-      "description": "Reverse proxy with SSL. Beautiful web interface for managing proxies. On a node, this manages its admin UI and upstream configuration — the proxy's own :80/:443 listeners are not published (the node's web server owns those ports).",
+      "version": "2.14.0",
+      "description": "Reverse proxy with SSL. Beautiful web interface for managing proxies. The node's public web server forwards configured domains through this service, preserving its access lists, certificates and custom routes.",
       "icon": "/assets/img/app-icons/nginx.svg",
       "author": "Nginx Proxy Manager",
       "category": "networking",
       "tier": "optional",
-      "dockerImage": "source.archipelago-foundation.org/lfg2025/nginx-proxy-manager:latest",
+      "dockerImage": "source.archipelago-foundation.org/lfg2025/nginx-proxy-manager@sha256:8b91afcca90f5f2a7b2b8937999824f623c8a8748ae8013a1c9bf94f62177f08",
       "repoUrl": "https://github.com/NginxProxyManager/nginx-proxy-manager"
     },
     {
@@ -648,9 +648,9 @@
     {
       "id": "angor-indexer",
       "title": "Angor Indexer",
-      "version": "1.0.1",
-      "description": "Headless Bitcoin indexer endpoint for Angor. Reuses this node’s Mempool and Electrum index; requires a synced, unpruned Bitcoin node. Add this service’s address as the custom indexer in Angor settings. A relay is optional and installed separately.",
-      "dockerImage": "source.archipelago-foundation.org/chaum/angor-indexer:1.0.1",
+      "version": "1.0.2",
+      "description": "Bitcoin indexer endpoint for Angor with the existing Mempool explorer. Reuses this node’s Mempool and Electrum index; requires a synced, unpruned Bitcoin node. Add this service’s address as the custom indexer in Angor settings. A relay is optional and installed separately.",
+      "dockerImage": "source.archipelago-foundation.org/chaum/angor-indexer:1.0.2",
       "author": "Angor / Archipelago",
       "requires": [
         "Mempool API",

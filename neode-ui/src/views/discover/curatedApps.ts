@@ -1,5 +1,5 @@
 import type { MarketplaceApp } from './types'
-import { isStoreListedApp } from '../apps/serviceNames'
+import { isStoreListedApp, normalizeStoreApps } from '../apps/serviceNames'
 
 const R = 'source.archipelago-foundation.org/lfg2025'
 
@@ -98,7 +98,7 @@ export function signedCatalogToApps(catalog: SignedAppCatalog): MarketplaceApp[]
       source: 'signed-catalog',
     })
   }
-  return out
+  return normalizeStoreApps(out)
 }
 
 /** The daemon-verified signed catalog, kept for synchronous port-auth lookups
@@ -192,7 +192,7 @@ const CATALOG_URLS = [
  *  Caches for 1 hour. Returns null only if ALL sources fail. */
 export async function fetchAppCatalog(): Promise<AppCatalog | null> {
   // Return cache if fresh
-  if (cachedCatalog && Date.now() - catalogFetchedAt < CATALOG_TTL) return cachedCatalog
+  if (cachedCatalog && Date.now() - catalogFetchedAt < CATALOG_TTL) return { ...cachedCatalog, apps: normalizeStoreApps(cachedCatalog.apps) }
 
   // The daemon-verified signed catalog first (release-root signature checked
   // server-side): it is what makes a newly published app appear without a
@@ -239,16 +239,16 @@ export async function fetchAppCatalog(): Promise<AppCatalog | null> {
     // apps); signed entries fill version/image gaps and append brand-new apps.
     const byId = new Map<string, MarketplaceApp>()
     for (const app of signedApps) byId.set(app.id, app)
-    for (const app of community?.apps ?? []) {
+    for (const app of normalizeStoreApps(community?.apps ?? [])) {
       const existing = byId.get(app.id)
-      byId.set(app.id, existing ? { ...app, version: app.version || existing.version, dockerImage: app.dockerImage || existing.dockerImage } : app)
+      byId.set(app.id, existing ? { ...app, version: existing.version || app.version, dockerImage: existing.dockerImage || app.dockerImage } : app)
     }
     const merged: AppCatalog = {
       version: community?.version ?? 1,
       registry: community?.registry ?? R,
       featured: signedFeatured ?? community?.featured,
       storefront: signedStorefront ?? community?.storefront,
-      apps: [...byId.values()],
+      apps: normalizeStoreApps([...byId.values()]),
     }
     cachedCatalog = merged
     catalogFetchedAt = Date.now()
@@ -261,6 +261,7 @@ export async function fetchAppCatalog(): Promise<AppCatalog | null> {
     const stored = localStorage.getItem('archy_catalog')
     if (stored) {
       cachedCatalog = JSON.parse(stored) as AppCatalog
+      cachedCatalog.apps = normalizeStoreApps(cachedCatalog.apps)
       catalogFetchedAt = Date.now() - CATALOG_TTL + 5 * 60 * 1000 // re-check in 5 min
       return cachedCatalog
     }
@@ -314,6 +315,7 @@ export const INSTALLED_ALIASES: Record<string, string[]> = {
   mempool: ['mempool', 'mempool-web', 'archy-mempool-web'],
   bitcoin: ['bitcoin-knots'],
   btcpay: ['btcpay-server'],
+  'btcpay-server': ['btcpay-server', 'btcpay', 'btcpayserver'],
   immich: ['immich-server', 'immich-app', 'immich_server'],
   nextcloud: ['nextcloud-aio', 'nextcloud-server'],
   fedimint: ['fedimint-gateway'],

@@ -89,9 +89,23 @@ describe('appsConfig service filtering', () => {
     const entries: Array<[string, PackageDataEntry]> = [
       ['cuprate', makePkg('cuprate', 'Cuprate', 'money')],
       ['archy-cuprate-ui', makePkg('archy-cuprate-ui', 'Cuprate UI companion', 'money')],
+      ['cuprate-ui', makePkg('cuprate-ui', 'Cuprate UI', 'money')],
     ]
     expect(filterEntriesForTab(entries, 'apps', 'all').map(([id]) => id)).toEqual(['cuprate'])
     expect(filterEntriesForTab(entries, 'services', 'all').map(([id]) => id)).toEqual([])
+  })
+
+  it('groups NetBird parts and BTCPay aliases without hiding a legacy-only installation', () => {
+    const entries: Array<[string, PackageDataEntry]> = [
+      ['netbird', makePkg('netbird', 'NetBird', 'networking')],
+      ['netbird-dashboard', makePkg('netbird-dashboard', 'NetBird Dashboard', 'networking')],
+      ['netbird-server', makePkg('netbird-server', 'NetBird Server', 'networking')],
+      ['btcpay', makePkg('btcpay', 'BTCPay', 'money')],
+      ['btcpay-server', makePkg('btcpay-server', 'BTCPay Server', 'commerce')],
+    ]
+    expect(filterEntriesForTab(entries, 'apps', 'all').map(([id]) => id)).toEqual(['netbird', 'btcpay-server'])
+    expect(filterEntriesForTab(entries, 'services', 'all')).toEqual([])
+    expect(filterEntriesForTab([entries[3]!], 'apps', 'all').map(([id]) => id)).toEqual(['btcpay'])
   })
 
   it('falls back to packaged app icon when static icon token is not a path', () => {

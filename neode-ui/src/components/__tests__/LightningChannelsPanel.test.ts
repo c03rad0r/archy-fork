@@ -17,6 +17,20 @@ function open() {
 }
 beforeEach(() => { vi.clearAllMocks(); vi.mocked(rpcClient.call).mockResolvedValue({ success: true } as never) })
 describe('channel closing fee choice', () => {
+  it('defaults to next block, preserves explicit choices, and resets a new close to Fast', async () => {
+    const { wrapper, vm } = open()
+    expect(vm.closeForm.feePreset).toBe('fast')
+    await vm.closeChannel()
+    expect(rpcClient.call).toHaveBeenCalledWith(expect.objectContaining({ params: { channel_point: channel.channel_point, target_conf: 1 } }))
+    vm.confirmClose(channel)
+    vm.closeForm.feePreset = 'standard'
+    await vm.closeChannel()
+    expect(rpcClient.call).toHaveBeenLastCalledWith(expect.objectContaining({ params: { channel_point: channel.channel_point, target_conf: 6 } }))
+    vm.confirmClose(channel)
+    expect(vm.closeForm.feePreset).toBe('fast')
+    expect(vm.openForm.feePreset).toBe('fast')
+    wrapper.unmount()
+  })
   it.each([['standard', 6], ['medium', 3], ['fast', 1]])('forwards %s target and never automatically retries the mutation', async (preset, target) => {
     const { wrapper, vm } = open(); vm.closeForm.feePreset = preset
     await vm.closeChannel()

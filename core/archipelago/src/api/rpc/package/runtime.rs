@@ -1576,41 +1576,110 @@ async fn repair_netbird_network() {
 }
 
 async fn repair_nginx_proxy_manager_container() {
-    repair_nginx_proxy_manager_dirs().await;
+    // Quadlet owns managed containers; its backed-up reconciliation applies
+    // port and mount changes. Never remove a systemd-owned container here.
+    if crate::container::quadlet::unit_exists("nginx-proxy-manager").await {
+        return;
+    }
+    // Serialize repair so a second caller cannot overlap a replacement.
+    static REPAIR: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+    let _repair = REPAIR.lock().await;
     if !nginx_proxy_manager_has_legacy_admin_port().await {
         return;
     }
-
-    install_log(
-        "START REPAIR: nginx-proxy-manager - recreating stale container using host port 8081",
-    )
-    .await;
-    let _ = podman_control(&["rm", "-f", "nginx-proxy-manager"]).await;
-    crate::container::ghost_reaper::reap_for_app("nginx-proxy-manager").await;
-    if let Err(err) = recreate_nginx_proxy_manager_container().await {
-        tracing::warn!(error = %err, "failed to recreate stale nginx-proxy-manager container");
+    if let Err(error) = repair_legacy_nginx_proxy_manager().await {
+        tracing::warn!(error = %error, "NPM legacy repair failed; persistent state preserved");
     }
 }
 
-async fn repair_nginx_proxy_manager_dirs() {
-    let _ = tokio::process::Command::new("sudo")
-        .args([
-            "mkdir",
-            "-p",
-            "/var/lib/archipelago/nginx-proxy-manager/data/letsencrypt-acme-challenge/.well-known/acme-challenge",
-            "/var/lib/archipelago/nginx-proxy-manager/letsencrypt",
-        ])
-        .output()
-        .await;
-    let _ = tokio::process::Command::new("sudo")
-        .args([
-            "chown",
-            "-R",
-            "1000:1000",
-            "/var/lib/archipelago/nginx-proxy-manager",
-        ])
-        .output()
-        .await;
+const NPM_PREVIOUS_CONTAINER: &str = "archy-npm-upgrade-previous";
+
+async fn restore_failed_npm_repair() -> Result<()> {
+    let removed = podman_control(&["rm", "-f", "--ignore", "nginx-proxy-manager"]).await?;
+    anyhow::ensure!(
+        removed.status.success(),
+        "cannot remove failed NPM replacement; previous container retained"
+    );
+    let renamed =
+        podman_control(&["rename", NPM_PREVIOUS_CONTAINER, "nginx-proxy-manager"]).await?;
+    anyhow::ensure!(
+        renamed.status.success(),
+        "cannot restore previous NPM container name"
+    );
+    let started = podman_control(&["start", "nginx-proxy-manager"]).await?;
+    anyhow::ensure!(
+        started.status.success(),
+        "previous NPM container restored but failed to start"
+    );
+    Ok(())
+}
+
+async fn repair_legacy_nginx_proxy_manager() -> Result<()> {
+    let previous = podman_control(&["container", "exists", NPM_PREVIOUS_CONTAINER]).await?;
+    anyhow::ensure!(previous.status.code() == Some(1),
+        "NPM previous-container slot is occupied or cannot be inspected; preserve it and review interrupted repair before proceeding");
+    let inspection = podman_control(&[
+        "inspect",
+        "nginx-proxy-manager",
+        "--format",
+        "{{json .Config.Env}}",
+    ])
+    .await?;
+    anyhow::ensure!(
+        inspection.status.success(),
+        "cannot preserve NPM environment before repair"
+    );
+    let environment: Vec<String> =
+        serde_json::from_slice(&inspection.stdout).context("invalid original NPM environment")?;
+    let environment = npm_repair_environment(&environment)?;
+    let storage = crate::container::npm::resolve_storage().await?;
+    let mut manifest: archipelago_container::AppManifest = serde_yaml::from_str(include_str!(
+        "../../../../../../apps/nginx-proxy-manager/manifest.yml"
+    ))?;
+    storage.apply(&mut manifest)?;
+    let stopped = podman_control(&["stop", "--time", "30", "nginx-proxy-manager"]).await?;
+    anyhow::ensure!(
+        stopped.status.success(),
+        "could not stop NPM for a consistent backup"
+    );
+    if let Err(error) = crate::container::migration_backup::snapshot(
+        &manifest,
+        std::path::Path::new("/var/lib/archipelago"),
+        None,
+    )
+    .await
+    {
+        let _ = podman_control(&["start", "nginx-proxy-manager"]).await;
+        return Err(error);
+    }
+    // Keep the original runtime definition for rollback, including its operator
+    // options. Never delete it before the replacement has become ready.
+    let renamed = podman_control(&["rename", "nginx-proxy-manager", NPM_PREVIOUS_CONTAINER]).await;
+    if !renamed.as_ref().is_ok_and(|out| out.status.success()) {
+        let _ = podman_control(&["start", "nginx-proxy-manager"]).await;
+        anyhow::bail!("could not retain legacy NPM runtime; state backup preserved, inspect both container names before retrying");
+    }
+    let replacement = async {
+        recreate_nginx_proxy_manager_container(&storage, &environment).await?;
+        anyhow::ensure!(
+            wait_for_runtime_host_port("nginx-proxy-manager", 8081, 180).await,
+            "replacement NPM admin listener did not become ready"
+        );
+        Ok::<_, anyhow::Error>(())
+    }
+    .await;
+    if let Err(error) = replacement {
+        restore_failed_npm_repair()
+            .await
+            .context("restoring previous NPM after replacement failure")?;
+        return Err(error);
+    }
+    let removed = podman_control(&["rm", NPM_PREVIOUS_CONTAINER]).await?;
+    anyhow::ensure!(
+        removed.status.success(),
+        "replacement ready but previous NPM cleanup failed; rollback container retained"
+    );
+    Ok(())
 }
 
 async fn nginx_proxy_manager_has_legacy_admin_port() -> bool {
@@ -1645,36 +1714,75 @@ async fn nginx_proxy_manager_has_legacy_admin_port() -> bool {
     ports.contains(":81->81/tcp") || ports.contains(":8443->443/tcp")
 }
 
-async fn recreate_nginx_proxy_manager_container() -> Result<()> {
-    tokio::process::Command::new("sudo")
-        .args([
-            "mkdir",
-            "-p",
-            "/var/lib/archipelago/nginx-proxy-manager/data/letsencrypt-acme-challenge/.well-known/acme-challenge",
-            "/var/lib/archipelago/nginx-proxy-manager/letsencrypt",
-        ])
-        .output()
-        .await
-        .context("failed to create nginx-proxy-manager data directories")?;
-    let _ = tokio::process::Command::new("sudo")
-        .args([
-            "chown",
-            "-R",
-            "1000:1000",
-            "/var/lib/archipelago/nginx-proxy-manager",
-        ])
-        .output()
-        .await;
+fn npm_repair_environment(values: &[String]) -> Result<Vec<(String, String)>> {
+    values.iter().map(|value| {
+        let (key, value) = value.split_once('=').context("invalid NPM environment entry")?;
+        anyhow::ensure!(!key.is_empty() && key.chars().all(|c| c.is_ascii_alphanumeric() || c == '_'),
+            "unsupported NPM environment name; original container preserved");
+        anyhow::ensure!(!value.contains(['\n', '\r', '\0']),
+            "NPM environment requires explicit migration of a multiline value; original container preserved");
+        Ok((key.to_owned(), value.to_owned()))
+    }).collect()
+}
 
-    let image = crate::container::image_versions::pinned_image_for_app("nginx-proxy-manager")
-        .unwrap_or_else(|| "docker.io/jc21/nginx-proxy-manager:latest".to_string());
+struct NpmRepairEnvironmentFile(std::path::PathBuf);
+
+impl NpmRepairEnvironmentFile {
+    fn create(environment: &[(String, String)]) -> Result<Self> {
+        use std::io::Write;
+        use std::os::unix::fs::OpenOptionsExt;
+        let path = std::env::temp_dir().join(format!(".archy-npm-env-{}", uuid::Uuid::new_v4()));
+        let mut file = std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .mode(0o600)
+            .open(&path)?;
+        let guard = Self(path);
+        for (key, value) in environment {
+            writeln!(file, "{key}={value}")?;
+        }
+        file.sync_all()?;
+        Ok(guard)
+    }
+}
+
+impl Drop for NpmRepairEnvironmentFile {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_file(&self.0);
+    }
+}
+
+async fn recreate_nginx_proxy_manager_container(
+    storage: &crate::container::npm::Storage,
+    environment: &[(String, String)],
+) -> Result<()> {
+    // Existing directories and ownership came from the active runtime. Never
+    // create a second database tree or recursively rewrite data permissions.
+    for directory in [&storage.data, &storage.certificates] {
+        anyhow::ensure!(
+            std::path::Path::new(directory).is_dir(),
+            "NPM persistent directory is missing"
+        );
+    }
+
+    // This repair changes connectivity, not NPM's application version. Keep
+    // the exact old image so rollback never starts an older binary against a
+    // database that an incidental mutable-tag update may have migrated.
+    let image_output =
+        podman_control(&["inspect", NPM_PREVIOUS_CONTAINER, "--format", "{{.Image}}"]).await?;
+    anyhow::ensure!(
+        image_output.status.success(),
+        "cannot resolve original NPM image for repair"
+    );
+    let image = String::from_utf8(image_output.stdout)?.trim().to_string();
+    anyhow::ensure!(!image.is_empty(), "original NPM image is missing");
     let mut args = vec![
         "run".to_string(),
         "-d".to_string(),
         "--name".to_string(),
         "nginx-proxy-manager".to_string(),
         "--restart=unless-stopped".to_string(),
-        "--network=slirp4netns:allow_host_loopback=true".to_string(),
+        "--network=slirp4netns:allow_host_loopback=true,cidr=169.254.1.0/24".to_string(),
         "--cap-drop=ALL".to_string(),
         "--security-opt=no-new-privileges:true".to_string(),
         "--pids-limit=4096".to_string(),
@@ -1682,24 +1790,32 @@ async fn recreate_nginx_proxy_manager_container() -> Result<()> {
     args.extend(get_app_capabilities("nginx-proxy-manager"));
     args.extend([
         "-p".to_string(),
-        "8081:81".to_string(),
+        "127.0.0.1:8081:81".to_string(),
         "-p".to_string(),
-        "8084:80".to_string(),
+        "127.0.0.1:8088:80".to_string(),
         "-p".to_string(),
-        "8444:443".to_string(),
+        "127.0.0.1:8444:443".to_string(),
         "-v".to_string(),
-        "/var/lib/archipelago/nginx-proxy-manager/data:/data".to_string(),
+        format!("{}:/data", storage.data),
         "-v".to_string(),
-        "/var/lib/archipelago/nginx-proxy-manager/letsencrypt:/etc/letsencrypt".to_string(),
+        format!("{}:/etc/letsencrypt", storage.certificates),
         "--memory".to_string(),
         get_memory_limit("nginx-proxy-manager").to_string(),
         "--cpus=2".to_string(),
     ]);
     args.extend(get_health_check_args("nginx-proxy-manager", ""));
+    // Keep values out of argv/logs AND out of Podman's host environment
+    // (a container's PATH or LD_PRELOAD must never alter the host command).
+    let env_file = NpmRepairEnvironmentFile::create(environment)?;
+    args.extend([
+        "--env-file".to_string(),
+        env_file.0.to_string_lossy().into_owned(),
+    ]);
     args.push(image);
 
-    let refs = args.iter().map(String::as_str).collect::<Vec<_>>();
-    let output = podman_control(&refs).await?;
+    let mut command = tokio::process::Command::new("podman");
+    command.args(&args);
+    let output = command_with_timeout(command, Duration::from_secs(120), "NPM replacement").await?;
     if !output.status.success() {
         anyhow::bail!(
             "podman run nginx-proxy-manager failed: {}",
@@ -1767,7 +1883,7 @@ fn runtime_host_ports(container_name: &str) -> Vec<u16> {
         "vaultwarden" => vec![8082],
         "gitea" => vec![3001, 2222, 3000],
         "nextcloud" => vec![8085],
-        "nginx-proxy-manager" => vec![8081, 8084, 8444],
+        "nginx-proxy-manager" => vec![8081, 8088, 8444],
         _ => Vec::new(),
     };
     ports
@@ -1778,7 +1894,7 @@ fn with_legacy_extra_ports(container_name: &str, mut ports: Vec<u16>) -> Vec<u16
         ports.push(3000);
     }
     if container_name == "nginx-proxy-manager" {
-        for port in [8084, 8444] {
+        for port in [8088, 8444] {
             if !ports.contains(&port) {
                 ports.push(port);
             }
@@ -1843,6 +1959,7 @@ async fn wait_for_runtime_host_port(container_name: &str, port: u16, timeout_sec
     loop {
         let ready = match container_name {
             "uptime-kuma" => http_host_port_ready(port, "/").await,
+            "nginx-proxy-manager" => http_host_port_ready(port, "/api/").await,
             _ => tokio::net::TcpStream::connect(("127.0.0.1", port))
                 .await
                 .is_ok(),
@@ -2151,6 +2268,38 @@ pub(super) fn orchestrator_uninstall_app_ids(package_id: &str) -> Vec<String> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn npm_environment_backup_is_private_exact_and_removed_on_drop() {
+        use std::os::unix::fs::PermissionsExt;
+        let values = vec![
+            "DB_PASSWORD=fixture=a b".to_string(),
+            "PATH=/container/only".to_string(),
+        ];
+        let parsed = super::npm_repair_environment(&values).unwrap();
+        let host_path = std::env::var_os("PATH");
+        let path = {
+            let file = super::NpmRepairEnvironmentFile::create(&parsed).unwrap();
+            assert_eq!(
+                std::fs::metadata(&file.0).unwrap().permissions().mode() & 0o777,
+                0o600
+            );
+            assert_eq!(
+                std::fs::read_to_string(&file.0).unwrap(),
+                "DB_PASSWORD=fixture=a b\nPATH=/container/only\n"
+            );
+            assert_eq!(std::env::var_os("PATH"), host_path);
+            file.0.clone()
+        };
+        assert!(!path.exists());
+        for value in [
+            "INVALID",
+            "=empty key",
+            "KEY=value\nINJECTED=true",
+            "--env=value",
+        ] {
+            assert!(super::npm_repair_environment(&[value.to_string()]).is_err());
+        }
+    }
     use super::*;
 
     #[tokio::test]

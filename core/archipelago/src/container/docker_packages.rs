@@ -24,6 +24,7 @@ fn canonical_package_id(name: &str) -> &str {
         "immich-postgres" => "immich_postgres",
         "immich-redis" => "immich_redis",
         "mempool-web" | "mempool-frontend" => "mempool",
+        "btcpay" | "btcpayserver" => "btcpay-server",
         name => name,
     }
 }
@@ -444,6 +445,15 @@ async fn launch_http_ready(candidate: &str) -> bool {
 mod lifecycle_regression_tests {
     use super::*;
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+    #[test]
+    fn btcpay_aliases_share_one_package_without_promoting_dependencies() {
+        for name in ["btcpay", "btcpayserver", "btcpay-server", "archy-btcpay"] {
+            assert_eq!(canonical_package_id(name), "btcpay-server");
+        }
+        assert_eq!(canonical_package_id("archy-btcpay-db"), "btcpay-db");
+        assert_eq!(canonical_package_id("archy-nbxplorer"), "nbxplorer");
+    }
 
     #[test]
     fn immich_dependency_aliases_share_the_hidden_component_ids() {

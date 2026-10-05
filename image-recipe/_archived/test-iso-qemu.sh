@@ -15,6 +15,8 @@
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 QEMU_TMPDIR="${TMPDIR:-/tmp}"
+SSH_FORWARD_PORT="${QEMU_SSH_PORT:-2222}"
+HTTP_FORWARD_PORT="${QEMU_HTTP_PORT:-8100}"
 SERIAL_LOG="$QEMU_TMPDIR/archipelago-qemu-serial.log"
 FORCE_BIOS=false
 NOGRAPHIC=false
@@ -67,6 +69,10 @@ echo "  CPU:    2 cores"
 echo "  Serial: $SERIAL_LOG"
 echo ""
 
+# Never accept boot markers left by an earlier VM.
+mkdir -p "$QEMU_TMPDIR"
+: > "$SERIAL_LOG"
+
 # Create test disk if it doesn't exist
 DISK="$QEMU_TMPDIR/archipelago-test-disk.qcow2"
 if [ ! -f "$DISK" ]; then
@@ -81,8 +87,9 @@ QEMU_ARGS=(
     -boot d
     -cdrom "$ISO"
     -drive if=virtio,format=qcow2,file="$DISK"
-    -net nic,model=virtio -net user,hostfwd=tcp::2222-:22,hostfwd=tcp::8100-:80
+    -net nic,model=virtio -net "user,hostfwd=tcp:127.0.0.1:${SSH_FORWARD_PORT}-:22,hostfwd=tcp:127.0.0.1:${HTTP_FORWARD_PORT}-:80"
     -serial file:"$SERIAL_LOG"
+    -qmp "unix:$QEMU_TMPDIR/archipelago-qmp.sock,server=on,wait=off"
 )
 
 # Display mode
@@ -99,28 +106,37 @@ echo ""
 
 # Detect UEFI firmware
 OVMF=""
+OVMF_VARS=""
 if [ "$FORCE_BIOS" = false ]; then
     if [ -f "/opt/homebrew/share/qemu/edk2-x86_64-code.fd" ]; then
         OVMF="/opt/homebrew/share/qemu/edk2-x86_64-code.fd"
     elif [ -f "/usr/share/OVMF/OVMF_CODE.fd" ]; then
         OVMF="/usr/share/OVMF/OVMF_CODE.fd"
+        OVMF_VARS="/usr/share/OVMF/OVMF_VARS.fd"
+    elif [ -f "/usr/share/OVMF/OVMF_CODE_4M.fd" ]; then
+        OVMF="/usr/share/OVMF/OVMF_CODE_4M.fd"
+        OVMF_VARS="/usr/share/OVMF/OVMF_VARS_4M.fd"
     fi
 fi
 
-run_qemu() {
-    if [ -n "$OVMF" ]; then
-        echo "  Boot: UEFI ($OVMF)"
-        qemu-system-x86_64 \
-            -machine q35 \
-            -drive if=pflash,format=raw,readonly=on,file="$OVMF" \
-            "${QEMU_ARGS[@]}"
-    else
-        echo "  Boot: Legacy BIOS"
-        qemu-system-x86_64 \
-            -machine pc \
-            "${QEMU_ARGS[@]}"
+QEMU_COMMAND=(qemu-system-x86_64)
+if [ -r /dev/kvm ] && [ -w /dev/kvm ]; then
+    QEMU_COMMAND+=(-enable-kvm)
+fi
+if [ -n "$OVMF" ]; then
+    echo "  Boot: UEFI ($OVMF)"
+    QEMU_COMMAND+=(-machine q35 -drive "if=pflash,format=raw,readonly=on,file=$OVMF")
+    if [ -f "$OVMF_VARS" ]; then
+        if [ ! -f "$QEMU_TMPDIR/archipelago-uefi-vars.fd" ]; then
+            cp "$OVMF_VARS" "$QEMU_TMPDIR/archipelago-uefi-vars.fd" || exit 1
+        fi
+        QEMU_COMMAND+=(-drive "if=pflash,format=raw,file=$QEMU_TMPDIR/archipelago-uefi-vars.fd")
     fi
-}
+else
+    echo "  Boot: Legacy BIOS"
+    QEMU_COMMAND+=(-machine pc)
+fi
+QEMU_COMMAND+=("${QEMU_ARGS[@]}")
 
 # Wrap the QEMU invocation in `timeout` when a CI caller passed one so
 # the script always returns instead of hanging on a VM that never exits
@@ -129,14 +145,16 @@ run_qemu() {
 # the serial log shows a kernel reaching userspace — we inspect that
 # after the QEMU process ends.
 if [ "$TIMEOUT" -gt 0 ] 2>/dev/null; then
-    timeout --foreground --preserve-status "${TIMEOUT}s" bash -c "$(declare -f run_qemu); run_qemu"
+    # A new bash -c loses the unexportable argument array and firmware path.
+    # Invoke the complete command directly and keep timeout's distinct status.
+    timeout --foreground --kill-after=10 "${TIMEOUT}s" "${QEMU_COMMAND[@]}"
     rc=$?
-    if [ $rc -eq 124 ] || [ $rc -eq 137 ]; then
+    if [ $rc -eq 124 ]; then
         echo "(QEMU terminated after ${TIMEOUT}s boot-test window)"
         rc=0
     fi
 else
-    run_qemu
+    "${QEMU_COMMAND[@]}"
     rc=$?
 fi
 
@@ -150,12 +168,15 @@ tail -20 "$SERIAL_LOG" 2>/dev/null
 # by live-boot/systemd early in the sequence. If the marker never
 # appeared, surface the real failure; otherwise treat "timeout reached
 # with a live kernel" as a pass.
+if [ "${rc:-0}" -ne 0 ]; then
+    exit "$rc"
+fi
 if [ "$TIMEOUT" -gt 0 ] 2>/dev/null && [ -f "$SERIAL_LOG" ]; then
-    if grep -qE "Welcome to Debian|Reached target|systemd\[1\]:" "$SERIAL_LOG"; then
-        echo "  Boot sanity: OK (systemd reached in serial log)"
+    if grep -qE 'Welcome to Debian|Reached target|systemd\[1\]:|Debian GNU/Linux [0-9]+ archipelago-installer ttyS0' "$SERIAL_LOG"; then
+        echo "  Boot sanity: OK (userspace reached in serial log; installation not yet tested)"
         exit 0
     fi
-    echo "  Boot sanity: FAIL — no systemd markers in serial log within ${TIMEOUT}s"
+    echo "  Boot sanity: FAIL — no userspace markers in serial log within ${TIMEOUT}s"
     exit 1
 fi
 exit "${rc:-0}"

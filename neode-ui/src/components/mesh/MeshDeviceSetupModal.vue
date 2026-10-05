@@ -149,9 +149,8 @@
               <option value="heltec-v3">Heltec LoRa 32 V3</option>
               <option value="heltec-v4">Heltec LoRa 32 V4</option>
             </select>
-            <p v-if="!boardAutoDetected" class="text-[11px] text-amber-400/80 mt-1">
-              Couldn't confirm the board automatically — double check before flashing.
-              Flashing the wrong board's image can brick it.
+            <p class="text-[11px] text-amber-400/80 mt-1">
+              Select the model printed on your board. USB adapters are shared across models.
             </p>
           </div>
         </div>
@@ -300,7 +299,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, watch } from 'vue'
+import { ref, computed, watch, onBeforeUnmount } from 'vue'
 import { useRouter } from 'vue-router'
 import BaseModal from '@/components/BaseModal.vue'
 import { useMeshStore, type MeshDeviceProbe, type MeshConfigureParams, type FlashFirmwareFamily, type FlashBoard, type FlashJobStatus } from '@/stores/mesh'
@@ -536,31 +535,11 @@ const starting = ref(false)
 const flashJob = ref<FlashJobStatus | null>(null)
 let flashPollTimer: ReturnType<typeof setInterval> | null = null
 
-const detectedInfo = computed(() =>
-  mesh.status?.detected_device_info?.find(d => d.path === devicePath.value)
-)
-
-// Mirrors mesh::flash::resolve_flash_board (core/archipelago/src/mesh/flash.rs)
-// exactly — matching on the display label was wrong: a Heltec V3's CP2102
-// bridge chip reports "CP2102 USB to UART Bridge Controller" in its USB
-// strings, not "Heltec", so meshDeviceImages.ts falls back to a generic
-// "LoRa radio (CP2102 serial)" label that never matched /v3/i, showing the
-// "couldn't confirm automatically" warning even though the backend CAN
-// safely auto-detect V3 via vid:pid. Heltec V4 deliberately has no entry
-// here, same reasoning as the backend: its vid:pid (303a:1001) is the
-// ESP32-S3's generic native-USB descriptor, not V4-specific, so it can't be
-// safely auto-matched and always requires manual selection.
-const resolvedFlashBoard = computed<FlashBoard | ''>(() => {
-  const info = detectedInfo.value
-  if (info?.vid?.toLowerCase() === '10c4' && info?.pid?.toLowerCase() === 'ea60') return 'heltec-v3'
-  return ''
-})
-
-const boardAutoDetected = computed(() => !!resolvedFlashBoard.value)
 
 const flashStageLabel = computed(() => {
   switch (flashJob.value?.stage) {
     case 'downloading': return 'Downloading firmware…'
+    case 'preparing': return 'Preparing radio…'
     case 'erasing': return 'Erasing chip…'
     case 'writing': return 'Writing firmware…'
     case 'autoinstalling': return 'Installing (rnodeconf)…'
@@ -572,7 +551,7 @@ const flashStageLabel = computed(() => {
 
 function openFlashStep() {
   flashFamily.value = (probe.value?.kind as FlashFirmwareFamily) ?? ''
-  flashBoard.value = resolvedFlashBoard.value
+  flashBoard.value = ''
   flashConfirmed.value = false
   flashJob.value = null
   error.value = ''
@@ -634,6 +613,11 @@ async function cancelFlash() {
     error.value = e instanceof Error ? e.message : 'Failed to cancel'
   }
 }
+
+onBeforeUnmount(() => {
+  stopFlashPoll()
+  stopProbeProgress()
+})
 
 function closeFlashStep() {
   stopFlashPoll()

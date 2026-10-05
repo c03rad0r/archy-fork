@@ -70,10 +70,17 @@ summary() {
 
 # ── Stage 1: static ──────────────────────────────────────────────────
 stage "git-diff-check"   git diff --check
+stage "mirror-gate-regression" python3 scripts/tests/test_git_mirrors.py
+stage "iso-boot-runner-regression" python3 scripts/tests/test_iso_qemu_runner.py
 stage "cargo-fmt"        timeout 240 cargo fmt --manifest-path core/Cargo.toml --all --check
 stage "app-build-contexts" python3 tests/regression/app-build-contexts.py
 stage "manifest-shell"  python3 scripts/check-manifest-shell.py
 stage "npm-tunnel-migration" python3 -m unittest discover -s scripts/tests -p test_repair_npm_tunnel.py
+stage "npm-public-bridge" python3 -m unittest discover -s scripts/tests -p test_npm_public_bridge.py
+stage "filebrowser-credentials" python3 -m unittest discover -s scripts/tests -p test_filebrowser_credentials.py
+stage "dashboard-source-guard" python3 -m unittest discover -s scripts/tests -p test_dashboard_public_guard.py
+stage "catalog-capabilities" python3 -m unittest discover -s scripts/tests -p test_catalog_capabilities.py
+stage "dashboard-network-isolated" bash scripts/test-dashboard-guard-isolated.sh
 stage "iso-doctor-overlay" python3 tests/regression/iso-doctor-overlay.py
 stage "doctor-egress" bash tests/regression/container-doctor-egress.sh
 stage "doctor-ports" bash tests/regression/container-doctor-ports.sh

@@ -8,23 +8,23 @@ export const useCloudStore = defineStore('cloud', () => {
   const loading = ref(false)
   const error = ref<string | null>(null)
   const authenticated = ref(false)
-  const upload = ref<{ active: boolean; filename: string; destination: string; sent: number; total: number; completed: number; count: number; error: string | null; cancelled: boolean } | null>(null)
+  const upload = ref<{ active: boolean; paused: boolean; filename: string; destination: string; originRoute: string; sent: number; total: number; completed: number; count: number; error: string | null; cancelled: boolean } | null>(null)
   let uploadController: AbortController | null = null
   function cancelUpload() { uploadController?.abort() }
   function dismissUpload() { if (!upload.value?.active) upload.value = null }
-  async function uploadFiles(files: File[]) {
+  async function uploadFiles(files: File[], originRoute = '') {
     if (!files.length || upload.value?.active) return
     const destination = currentPath.value
     const controller = new AbortController()
     uploadController = controller
-    const task = { active: true, filename: files[0]!.name, destination, sent: 0, total: files.reduce((n, f) => n + f.size, 0), completed: 0, count: files.length, error: null as string | null, cancelled: false }
+    const task = { active: true, paused: false, filename: files[0]!.name, destination, originRoute, sent: 0, total: files.reduce((n, f) => n + f.size, 0), completed: 0, count: files.length, error: null as string | null, cancelled: false }
     upload.value = task
     let completedBytes = 0
     try {
       for (const file of files) {
         if (controller.signal.aborted) throw new DOMException('Upload cancelled', 'AbortError')
         upload.value.filename = file.name
-        await fileBrowserClient.upload(destination, file, { signal: controller.signal, onProgress: (sent) => {
+        await fileBrowserClient.upload(destination, file, { resumable: true, signal: controller.signal, onPaused: (paused) => { if (upload.value?.active) upload.value.paused = paused }, onProgress: (sent) => {
           if (upload.value?.active) upload.value.sent = completedBytes + sent
         } })
         completedBytes += file.size

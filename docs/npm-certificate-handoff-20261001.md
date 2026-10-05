@@ -167,3 +167,46 @@ and observed its explicit acknowledgement. The owner then recorded receipt in
 `/tmp/npm-release-handoff-ack.txt` and in the acknowledgement section above.
 Publication remains held for the NPM release gate. Unavailable external acceptance
 must be stated explicitly and cannot be silently treated as passed.
+
+## Urgent public dashboard exposure gate — 2026-10-01
+
+Investigator reports the Angor relay hostname reached the default Archipelago
+login because its certificate existed without a corresponding host-nginx route.
+The investigator owns the immediate Shorty nginx repair; the release session
+will not modify that configuration concurrently. Exact final evidence is pending.
+
+- [ ] Unknown public HTTP Host / TLS SNI and direct public-IP requests cannot
+      expose the dashboard, login assets or RPC, including IPv6 and any trusted
+      reverse-proxy/tunnel path. Test spoofed forwarding headers explicitly.
+- [ ] LAN/private/tailnet dashboard access remains available as intended.
+- [ ] Public HTTP ACME challenge access survives those restrictions.
+- [ ] NPM host creation/edits automatically propagate HTTP/TLS routing.
+- [ ] Relay hostname serves the intended relay and WebSocket upgrade using its
+      correct certificate; certificate existence is not route acceptance.
+- [ ] These protections survive manager/nginx restart, renewal and OTA/ISO.
+
+## Live security containment and project discovery follow-up
+
+2026-10-01: relay certificate existed but named public route was absent; default
+HTTP/HTTPS vhosts exposed the dashboard to public clients, including direct WAN
+IP access. Investigator added live `angor-relay-npm.conf` forwarding TLS cert11
+to loopback8091 with WebSocket upgrade; added `00-dashboard-source-guard.conf`
+private-source geo/map guard to both management default vhosts, preserving public
+ACME challenge paths. Backup: `/etc/nginx/sites-available/archipelago.before-public-guard-1790879144`.
+Nginx syntax validation/reload passed. External tests: public IP root and RPC
+404 over HTTP and HTTPS (IP HTTPS certificate validation bypassed only for this
+negative routing probe); spoofed private Host, X-Forwarded-For and X-Real-IP and
+unknown Host POST RPC all404. Tailnet dashboard200; indexer health200 height969475;
+relay trusted TLS NIP11 metadata200, WebSocket101, read-only Nostr REQ returned EOSE.
+These are live containment results, not fleet/IPv6/reboot/security-audit completion.
+Release owner acknowledged security scope in `/tmp/npm-release-handoff-ack.txt`.
+
+User then reported no Angor projects after changing BOTH indexer and relays.
+Read-only kind3030 subscription limit5: new relay returned zero events + EOSE;
+`wss://relay.angor.io/` returned five events + EOSE. Advised retaining original
+Angor relays alongside own relay; a newly hosted relay does not automatically
+contain global project metadata. Full app project discovery acceptance remains
+required. Also observed own `/api/v1/query/Angor/projects?limit=10` returns404;
+reference MempoolIndexerAngorApi.GetProjectsAsync uses this older specialized
+route, whereas current deployment docs recommend stock Mempool. Verify actual
+client version/discovery path rather than claiming fees/health prove compatibility.

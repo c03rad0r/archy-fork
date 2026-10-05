@@ -146,12 +146,16 @@ impl MeshcoreDevice {
             }
         }
 
-        let info = DeviceInfo {
-            firmware_version: name.clone(),
+        let mut info = DeviceInfo {
+            firmware_version: "unknown".to_string(),
             node_id,
             max_contacts: 100,
             device_type: super::types::DeviceType::Meshcore,
         };
+        if let Some((version, capacity)) = self.query_device_info().await {
+            info.firmware_version = version;
+            info.max_contacts = capacity;
+        }
         self.device_info = Some(info.clone());
 
         info!("Meshcore initialization complete on {}", self.device_path);
