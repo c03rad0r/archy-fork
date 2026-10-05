@@ -1,5 +1,7 @@
 # Archipelago
 
+> **Alpha testing:** Archipelago is experimental software. Any funds you put on it are at your own risk.
+
 > Self-sovereign Bitcoin node OS and manifest-driven app platform.
 
 Archipelago is a bootable personal server OS for Bitcoin infrastructure,
