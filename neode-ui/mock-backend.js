@@ -19,6 +19,7 @@ import { fileURLToPath } from 'url'
 import Docker from 'dockerode'
 import { AsyncLocalStorage } from 'node:async_hooks'
 import crypto from 'crypto'
+import { installDemoUploads } from './demo-uploads.js'
 
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = path.dirname(__filename)
@@ -209,7 +210,8 @@ const corsOptions = {
 app.use(cors(corsOptions))
 // Skip JSON body parsing for filebrowser upload routes (binary file bodies)
 app.use((req, res, next) => {
-  if (req.path.startsWith('/app/filebrowser/api/resources') && req.method === 'POST') {
+  if ((req.path.startsWith('/app/filebrowser/api/resources') && req.method === 'POST') ||
+      (req.path.startsWith('/app/filebrowser/api/tus') && req.method === 'PATCH')) {
     return next()
   }
   express.json({ limit: '50mb' })(req, res, next)
@@ -3246,6 +3248,19 @@ app.post('/rpc/v1', (req, res) => {
       // =====================================================================
       // Mesh Networking (LoRa radio via Meshcore)
       // =====================================================================
+      case 'mesh.rnode-config': {
+        return res.json({ result: {
+          settings: { enabled: true, port: null, frequency: 869525000,
+            bandwidth: 125000, spreading_factor: 8, coding_rate: 5, txpower: 17,
+            airtime_limit_short: null, airtime_limit_long: null },
+          live: null, live_error: 'Radio hardware is unavailable in this demo.',
+        } })
+      }
+      case 'mesh.rnode-config-apply': {
+        // Never make a hardware claim or execute a radio command in the demo.
+        return res.json({ result: { applied: false, confirmed: false, live: null,
+          message: 'Radio settings cannot be applied in this demo. Connect to your own node to configure its radio.' } })
+      }
       case 'mesh.status': {
         globalThis.__meshHeaders ||= { announce_block_headers: false, receive_block_headers: true }
         // Stateful enable/disable so the dev UI can demo the global
@@ -5242,7 +5257,8 @@ const FB_QUOTA_BYTES = Number(process.env.DEMO_FILE_QUOTA_BYTES) || 50 * 1024 * 
 
 function fbNormalize(raw) {
   // → leading slash, no trailing slash (root stays '/')
-  const p = '/' + decodeURIComponent(raw || '').split('/').filter(Boolean).join('/')
+  // Express already decodes path parameters. Preserve literal %, + and ? names.
+  const p = '/' + (raw || '').split('/').filter(Boolean).join('/')
   return p === '/' ? '/' : p.replace(/\/+$/, '')
 }
 function fbParent(p) {
@@ -5275,11 +5291,18 @@ function fbListResponse(res, items) {
   })
 }
 
+installDemoUploads(app, { currentStore, quota: FB_QUOTA_BYTES, normalize: fbNormalize, parent: fbParent, base: fbBase, type: fbType })
+
 // FileBrowser list resources (root: /api/resources or /api/resources/)
 app.get(['/app/filebrowser/api/resources', '/app/filebrowser/api/resources/*'], (req, res) => {
   const dir = fbNormalize(req.params[0] || '')
-  const items = currentStore().files.tree[dir] || []
-  fbListResponse(res, items)
+  const { tree, contents } = currentStore().files
+  if (tree[dir]) return fbListResponse(res, tree[dir])
+  const entry = (tree[fbParent(dir)] || []).find(e => e.path === dir)
+  if (!entry) return res.sendStatus(404)
+  const checksums = req.query.checksum === 'sha256' && contents[dir] !== undefined
+    ? { sha256: crypto.createHash('sha256').update(contents[dir]).digest('hex') } : undefined
+  res.json({ ...entry, checksums })
 })
 
 // FileBrowser POST = upload a file OR create a folder (trailing slash ⇒ folder)
@@ -5301,33 +5324,38 @@ app.post('/app/filebrowser/api/resources/*', (req, res) => {
     return res.sendStatus(200)
   }
 
-  // File upload — collect body with a quota guard.
+  // Reserve incoming bytes immediately, including concurrent legacy/TUS writes.
   const chunks = []
   let size = 0
   let aborted = false
+  const release = () => { store.files.reserved -= size; size = 0 }
   req.on('data', (c) => {
-    size += c.length
-    if (store.files.bytes + size > FB_QUOTA_BYTES) {
+    if (aborted) return
+    if (store.files.bytes + store.files.reserved + c.length > FB_QUOTA_BYTES) {
       aborted = true
-      req.destroy()
+      release()
+      res.status(507).send('Demo storage quota exceeded')
       return
     }
+    size += c.length
+    store.files.reserved += c.length
     chunks.push(c)
   })
   req.on('end', () => {
-    if (aborted) return res.status(507).send('Demo storage quota exceeded (50 MB)')
+    if (aborted) return
     const buf = Buffer.concat(chunks)
-    // Replace existing entry of the same name (override=true).
-    const existing = tree[parent].find(e => e.name === name && !e.isDir)
-    if (existing) store.files.bytes -= existing.size
-    tree[parent] = tree[parent].filter(e => !(e.name === name && !e.isDir))
-    const type = fbType(name)
-    tree[parent].push({ name, path: full, size: buf.length, modified: new Date().toISOString(), isDir: false, type })
-    contents[full] = type === 'text' ? buf.toString('utf-8') : buf
+    release()
+    if (!tree[parent] || store.files.uploads.has(full) || tree[parent].some(e => e.name === name && e.isDir)) return res.sendStatus(409)
+    if (store.files.uploaded.has(full)) store.files.bytes -= Buffer.byteLength(contents[full])
+    tree[parent] = tree[parent].filter(e => e.name !== name)
+    tree[parent].push({ name, path: full, size: buf.length, modified: new Date().toISOString(), isDir: false, type: fbType(name) })
+    contents[full] = buf
     store.files.bytes += buf.length
+    store.files.uploaded.add(full)
     res.sendStatus(200)
   })
-  req.on('error', () => { if (!res.headersSent) res.sendStatus(400) })
+  req.on('aborted', () => { aborted = true; release() })
+  req.on('error', () => { aborted = true; release(); if (!res.headersSent) res.sendStatus(400) })
 })
 
 // FileBrowser delete (file or folder + its subtree)
@@ -5337,9 +5365,15 @@ app.delete('/app/filebrowser/api/resources/*', (req, res) => {
   const full = fbNormalize(req.params[0] || '')
   const parent = fbParent(full)
   if (tree[parent]) {
-    const entry = tree[parent].find(e => e.path === full)
-    if (entry && !entry.isDir) store.files.bytes -= entry.size || 0
+    if (store.files.uploaded.delete(full)) store.files.bytes -= Buffer.byteLength(contents[full])
     tree[parent] = tree[parent].filter(e => e.path !== full)
+  }
+  // Cancel unfinished sessions in the deleted subtree too.
+  for (const [name, upload] of store.files.uploads) {
+    if (name === full || name.startsWith(full + '/')) {
+      store.files.reserved -= upload.length
+      store.files.uploads.delete(name)
+    }
   }
   // Recursively drop a directory's children.
   if (tree[full]) {
@@ -5348,7 +5382,10 @@ app.delete('/app/filebrowser/api/resources/*', (req, res) => {
       const d = stack.pop()
       for (const e of tree[d] || []) {
         if (e.isDir) stack.push(e.path)
-        else { store.files.bytes -= e.size || 0; delete contents[e.path] }
+        else {
+          if (store.files.uploaded.delete(e.path)) store.files.bytes -= Buffer.byteLength(contents[e.path])
+          delete contents[e.path]
+        }
       }
       delete tree[d]
     }
@@ -5362,11 +5399,29 @@ app.patch('/app/filebrowser/api/resources/*', (req, res) => {
   const store = currentStore()
   const { tree, contents } = store.files
   const full = fbNormalize(req.params[0] || '')
-  const dest = fbNormalize((req.body && req.body.destination) || '')
+  let destination = req.body?.destination || ''
+  if (req.query.action === 'rename') {
+    try { destination = decodeURIComponent(String(req.query.destination || '')) }
+    catch { return res.sendStatus(400) }
+  }
+  const dest = fbNormalize(destination)
   if (!dest || dest === '/') return res.sendStatus(400)
   const parent = fbParent(full)
   const entry = (tree[parent] || []).find(e => e.path === full)
   if (!entry) return res.sendStatus(404)
+  const newParent = fbParent(dest)
+  if (!tree[newParent]) return res.sendStatus(404)
+  if (dest === full) return res.sendStatus(200)
+  const replaced = tree[newParent].find(e => e.path === dest)
+  if (replaced && (replaced.isDir || req.query.override !== 'true')) return res.sendStatus(409)
+  if (store.files.uploaded.has(dest)) {
+    store.files.bytes -= Buffer.byteLength(contents[dest])
+    store.files.uploaded.delete(dest)
+  }
+  tree[parent] = tree[parent].filter(e => e !== entry)
+  tree[newParent] = tree[newParent].filter(e => e.path !== dest)
+  tree[newParent].push(entry)
+  if (store.files.uploaded.delete(full)) store.files.uploaded.add(dest)
   const newName = fbBase(dest)
   entry.name = newName
   entry.path = dest
@@ -6071,7 +6126,7 @@ function makeSessionStore() {
     userState: seedUserState(),
     mockState: seedMockState(),
     bitcoinRelayMockState: structuredClone(SEED_BTCRELAY),
-    files: { tree: structuredClone(SEED_FILES), contents: structuredClone(SEED_FILE_CONTENTS), bytes: 0 },
+    files: { tree: structuredClone(SEED_FILES), contents: structuredClone(SEED_FILE_CONTENTS), bytes: 0, reserved: 0, uploads: new Map(), uploaded: new Set() },
     // Mesh chat mutable state: messages sent this session + attachment bytes
     // (cid → {mime, filename, b64, thumb_b64}). Per-session so one demo
     // visitor's uploads are never visible to another.
@@ -6348,7 +6403,7 @@ async function hydrateRealTestnetTxids() {
   } catch { /* offline — keep mock hashes */ }
 }
 
-server.listen(PORT, '0.0.0.0', async () => {
+server.listen(PORT, process.env.MOCK_BACKEND_HOST || '0.0.0.0', async () => {
   const runtime = await isContainerRuntimeAvailable()
 
   // Initialize package data from Docker

@@ -559,3 +559,29 @@ existing-signer verification. Dev serving is verified byte-for-byte with SHA256
 The operator reports “works, we can proceed” after the phone save/open/cancel
 check. This physical companion download gate is **accepted (2026-10-05)**. The APK is staged for fleet OTA/ISO and official/demo downloads;
 only the dev-box test download is updated now. No fleet/public release is claimed.
+
+### Demo upload compatibility — 2026-10-05
+
+The prior demo backend lacked TUS, returned folder metadata for completed files,
+and only accepted JSON-body renames. Added the actual Cloud upload protocol with
+per-visitor sessions, reserved-byte quota, committed offsets, checksum metadata,
+query-based rename and partial cancellation. Literal encoded filenames survive
+unchanged. Deleting seeded files cannot subtract uncharged bytes from the quota;
+deleting a folder releases its pending upload reservations.
+
+Four real HTTP scenarios run the production `resumableUpload` client against an
+isolated demo process and pass: lost chunk/save responses with exact5MiB+123bytes,
+visitor isolation, zero-byte/replacement/cancellation, simultaneous quota, stale
+offsets/oversized chunks and a real interrupted TCP request. The first run's10s
+cold-start limit failed before startup; the bounded60s run passes. Evidence:
+`/tmp/archy-190-demo-upload-final-2.log`.
+
+The existing mesh/federation parity harness initially discarded demo cookies,
+creating a new visitor on every request. It now retains its session and always
+runs demo-only on loopback, never against the live container runtime. It also
+found two newly missing radio configuration handlers. Demo now explicitly reports
+hardware unavailable and refuses to claim an applied radio configuration. The
+full parity run passes, including those assertions:
+`/tmp/archy-190-demo-rpc-parity-final-2.log`. Both checks are release harness stages.
+These changes are locally qualified; the public demo remains unchanged pending
+final release, fresh AIUI packaging and deployed browser acceptance.

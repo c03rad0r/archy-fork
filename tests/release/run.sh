@@ -72,6 +72,9 @@ summary() {
 stage "git-diff-check"   git diff --check
 stage "mirror-gate-regression" python3 scripts/tests/test_git_mirrors.py
 stage "iso-boot-runner-regression" python3 scripts/tests/test_iso_qemu_runner.py
+stage "demo-rpc-parity" timeout 120 node neode-ui/scripts/mock-rpc-parity.mjs
+stage "demo-resumable-uploads" timeout 120 node --test neode-ui/scripts/demo-upload-test.mjs
+stage "companion-signature-regression" python3 scripts/tests/test_companion_apk_verification.py
 stage "cargo-fmt"        timeout 240 cargo fmt --manifest-path core/Cargo.toml --all --check
 stage "app-build-contexts" python3 tests/regression/app-build-contexts.py
 stage "manifest-shell"  python3 scripts/check-manifest-shell.py

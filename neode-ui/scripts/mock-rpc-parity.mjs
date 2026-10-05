@@ -96,7 +96,8 @@ console.log(`LIVE: booting mock-backend.js on :${port}`)
 
 const child = spawn(process.execPath, [MOCK], {
   cwd: UI_ROOT,
-  env: { ...process.env, MOCK_BACKEND_PORT: String(port) },
+  // Never permit this regression harness to contact the live container runtime.
+  env: { ...process.env, DEMO: '1', MOCK_BACKEND_HOST: '127.0.0.1', MOCK_BACKEND_PORT: String(port) },
   stdio: ['ignore', 'pipe', 'pipe'],
 })
 child.stdout.resume()
@@ -108,12 +109,15 @@ child.on('exit', () => {
 })
 
 const base = `http://127.0.0.1:${port}`
+let cookie = ''
 const rpc = async (method, params) => {
   const resp = await fetch(`${base}/rpc/v1`, {
     method: 'POST',
-    headers: { 'content-type': 'application/json' },
+    headers: { 'content-type': 'application/json', Cookie: cookie },
     body: JSON.stringify({ jsonrpc: '2.0', id: 1, method, params }),
   })
+  const session = resp.headers.getSetCookie().find(value => value.startsWith('demo_sid='))
+  if (session) cookie = session.split(';')[0]
   if (!resp.ok) throw new Error(`${method} → HTTP ${resp.status}`)
   const body = await resp.json()
   if (body.error) throw new Error(`${method} → RPC error ${body.error.code}: ${body.error.message}`)
@@ -122,18 +126,25 @@ const rpc = async (method, params) => {
 
 try {
   // Poll until the server answers (bounded).
-  const deadline = Date.now() + 10000
+  const deadline = Date.now() + 60000
   for (;;) {
     if (childExited) throw new Error('mock-backend exited before becoming ready')
     try {
       await rpc('server.echo', { message: 'parity-probe' })
       break
     } catch {
-      if (Date.now() > deadline) throw new Error('mock-backend did not become ready within 10s')
+      if (Date.now() > deadline) throw new Error('mock-backend did not become ready within 60s')
       await new Promise((r) => setTimeout(r, 200))
     }
   }
   pass('mock-backend answered on the ephemeral port')
+
+  const radio = await rpc('mesh.rnode-config')
+  if (radio.live === null && radio.live_error.includes('demo')) pass('radio settings report unavailable demo hardware')
+  else fail('demo radio status implies real hardware')
+  const applied = await rpc('mesh.rnode-config-apply', { settings: radio.settings })
+  if (applied.applied === false && applied.confirmed === false && applied.message.includes('demo')) pass('demo never claims a radio configuration was applied')
+  else fail('demo radio apply claims hardware success')
 
   // 1. Peer aliasing round-trip (the FED-04 headline: renaming a peer sticks).
   const peers = await rpc('mesh.contacts-list')
