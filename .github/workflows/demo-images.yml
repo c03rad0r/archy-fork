@@ -74,5 +74,6 @@ jobs:
             ${{ vars.DEMO_REGISTRY }}/archy-demo-web:${{ github.sha }}
 
       - name: Trigger Portainer redeploy
-        if: ${{ success() && secrets.PORTAINER_WEBHOOK != '' }}
+        # Source pushes prepare images; public deployment is an explicit post-release action.
+        if: ${{ success() && github.event_name == 'workflow_dispatch' && secrets.PORTAINER_WEBHOOK != '' }}
         run: curl -fsS -X POST "${{ secrets.PORTAINER_WEBHOOK }}"

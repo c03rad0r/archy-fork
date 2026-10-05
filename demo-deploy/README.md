@@ -22,7 +22,9 @@ To pick up a new build, redeploy the stack (or wire the CI Portainer webhook).
 The images are built from the Archipelago monorepo by
 `.github/workflows/demo-images.yml` on every change to `neode-ui/`, tagged `:demo`
 and `:<git-sha>`, and pushed to `REGISTRY`. Editing the real UI → CI rebuilds →
-redeploy here. No source lives in this repo.
+redeploy here. The optional Portainer webhook runs only on an explicit workflow
+dispatch after release qualification; a source push alone does not invoke it.
+No source lives in this repo.
 
 ## What's mocked
 
