@@ -3534,6 +3534,7 @@ impl ProdContainerOrchestrator {
                 host_mdns: "test.local".to_string(),
                 disk_gb: self.test_disk_gb.unwrap_or(1000),
                 bitcoin_host: "bitcoin-knots".to_string(),
+                node_identity_pubkeys: String::new(),
             };
         }
         #[allow(unreachable_code)]
@@ -3551,8 +3552,51 @@ impl ProdContainerOrchestrator {
                 // demand (it costs a podman call) only for manifests that use
                 // {{BITCOIN_HOST}}, rather than every app on every reconcile.
                 bitcoin_host: "bitcoin-knots".to_string(),
+                // Likewise filled on demand, only for manifests that use
+                // {{NODE_IDENTITY_PUBKEYS}}.
+                node_identity_pubkeys: String::new(),
             }
         }
+    }
+
+    /// Nostr public keys of the identities the app identity picker offers, for
+    /// the `{{NODE_IDENTITY_PUBKEYS}}` derived-env placeholder. The node
+    /// identity is recognised the way `identity.list` marks `is_node`: by the
+    /// node's ed25519 public key, read here from `identity/node_key.pub`
+    /// (the file `server_info.pubkey` is derived from at startup). The record
+    /// mirrored from the node key has a `node-` id, so the picker's prefix rule
+    /// hides it either way. The key is only read, never created: a missing or
+    /// malformed file is an error. An empty set is an error too, so an app is
+    /// never handed an empty owner list.
+    async fn node_identity_pubkeys(&self) -> Result<String> {
+        let node_pubkey_hex = self.node_pubkey_hex().await?;
+        let pubkeys = crate::identity_manager::IdentityManager::new(&self.data_dir)
+            .await?
+            .app_signable_nostr_pubkeys(&node_pubkey_hex)
+            .await?;
+        anyhow::ensure!(
+            !pubkeys.is_empty(),
+            "no user identity with a Nostr key is available for apps to sign with; \
+             create one under Web5 \u{2192} Identities"
+        );
+        Ok(pubkeys)
+    }
+
+    /// The node's ed25519 public key as lowercase hex, read from
+    /// `identity/node_key.pub` (raw 32 bytes, as `NodeIdentity` writes it)
+    /// without the logging or key creation of `NodeIdentity::load_or_create`.
+    async fn node_pubkey_hex(&self) -> Result<String> {
+        let path = self.data_dir.join("identity").join("node_key.pub");
+        let bytes = tokio::fs::read(&path)
+            .await
+            .with_context(|| format!("reading the node public key {}", path.display()))?;
+        anyhow::ensure!(
+            bytes.len() == 32,
+            "node public key {} is {} bytes, expected 32",
+            path.display(),
+            bytes.len()
+        );
+        Ok(hex::encode(bytes))
     }
 
     /// Container name of the running Bitcoin node (`bitcoin-knots` or
@@ -3821,6 +3865,22 @@ impl ProdContainerOrchestrator {
             .any(|e| e.template.contains("{{BITCOIN_HOST}}"))
         {
             facts.bitcoin_host = self.bitcoin_host().await;
+        }
+        // The identities' keys are read only for manifests that template them.
+        if manifest
+            .app
+            .container
+            .derived_env
+            .iter()
+            .any(|e| e.template.contains("{{NODE_IDENTITY_PUBKEYS}}"))
+        {
+            facts.node_identity_pubkeys =
+                self.node_identity_pubkeys().await.with_context(|| {
+                    format!(
+                        "resolving {{{{NODE_IDENTITY_PUBKEYS}}}} for {}",
+                        manifest.app.id
+                    )
+                })?;
         }
         let mut env = manifest.app.environment.clone();
         env.extend(manifest.app.container.resolve_derived_env(&facts));
@@ -6149,6 +6209,143 @@ app:
                 manifest.app.environment
             );
         }
+    }
+
+    const NODE_IDENTITY_PUBKEYS_YAML: &str = "app:\n  id: wildbloom-node\n  name: wildbloom-node\n  version: 1.0.0\n  container:\n    image: x:1\n    derived_env:\n      - key: WILDBLOOM_ALLOW_PUBKEYS\n        template: \"{{NODE_IDENTITY_PUBKEYS}}\"\n";
+
+    /// Writes `pubkey_hex` as the node public key, in `NodeIdentity`'s format.
+    async fn write_node_pubkey(orch: &ProdContainerOrchestrator, pubkey_hex: &str) {
+        let dir = orch.data_dir().join("identity");
+        tokio::fs::create_dir_all(&dir).await.unwrap();
+        tokio::fs::write(dir.join("node_key.pub"), hex::decode(pubkey_hex).unwrap())
+            .await
+            .unwrap();
+    }
+
+    #[tokio::test]
+    async fn node_identity_pubkeys_placeholder_renders_the_signable_identities() {
+        // The owners must be exactly the identities the app signer offers:
+        // the user identities, never the node's own identity.
+        let rt = Arc::new(MockRuntime::default());
+        let orch = orch_with(rt).await;
+        let mgr = crate::identity_manager::IdentityManager::new(orch.data_dir())
+            .await
+            .unwrap();
+        let mut expected = Vec::new();
+        for name in ["Personal", "Business"] {
+            let r = mgr
+                .create(
+                    name.to_string(),
+                    crate::identity_manager::IdentityPurpose::Personal,
+                )
+                .await
+                .unwrap();
+            expected.push(r.nostr_pubkey.unwrap().to_ascii_lowercase());
+        }
+        expected.sort();
+        // The node key is held by an identity with a uuid id and an ordinary
+        // name, so only the `is_node` match, through the key read from
+        // node_key.pub, can keep it out.
+        let laptop = mgr
+            .create(
+                "Laptop".to_string(),
+                crate::identity_manager::IdentityPurpose::Personal,
+            )
+            .await
+            .unwrap();
+        assert!(!laptop.id.starts_with("node-"));
+        let laptop_nostr = laptop.nostr_pubkey.clone().unwrap();
+        write_node_pubkey(&orch, &laptop.pubkey_hex).await;
+
+        let mut manifest = AppManifest::parse(NODE_IDENTITY_PUBKEYS_YAML).unwrap();
+        orch.resolve_dynamic_env(&mut manifest).await.unwrap();
+
+        let env = &manifest.app.environment;
+        let want = format!("WILDBLOOM_ALLOW_PUBKEYS={}", expected.join(","));
+        assert!(env.iter().any(|e| e == &want), "env was {env:?}");
+        assert!(
+            !env.iter().any(|e| e.contains(&laptop_nostr)),
+            "node identity leaked into {env:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn node_identity_pubkeys_placeholder_refuses_an_empty_set() {
+        let rt = Arc::new(MockRuntime::default());
+        let orch = orch_with(rt).await;
+        // A node key with only the node's own identity: nothing is signable.
+        let node = crate::identity::NodeIdentity::load_or_create(&orch.data_dir().join("identity"))
+            .await
+            .unwrap();
+        crate::identity_manager::IdentityManager::new(orch.data_dir())
+            .await
+            .unwrap()
+            .create_from_signing_key(
+                "Node".to_string(),
+                crate::identity_manager::IdentityPurpose::Personal,
+                node.signing_key().clone(),
+            )
+            .await
+            .unwrap();
+        let mut manifest = AppManifest::parse(NODE_IDENTITY_PUBKEYS_YAML).unwrap();
+        let err = orch.resolve_dynamic_env(&mut manifest).await.unwrap_err();
+        let msg = format!("{err:#}");
+        assert!(
+            msg.contains("NODE_IDENTITY_PUBKEYS"),
+            "unexpected error: {msg}"
+        );
+        assert!(msg.contains("no user identity"), "unexpected error: {msg}");
+        assert!(
+            !manifest
+                .app
+                .environment
+                .iter()
+                .any(|e| e.starts_with("WILDBLOOM_ALLOW_PUBKEYS=")),
+            "an empty owner list must never render"
+        );
+    }
+
+    #[tokio::test]
+    async fn node_identity_pubkeys_placeholder_needs_the_node_key_and_never_creates_it() {
+        let rt = Arc::new(MockRuntime::default());
+        let orch = orch_with(rt).await;
+        crate::identity_manager::IdentityManager::new(orch.data_dir())
+            .await
+            .unwrap()
+            .create(
+                "Personal".to_string(),
+                crate::identity_manager::IdentityPurpose::Personal,
+            )
+            .await
+            .unwrap();
+        let identity_dir = orch.data_dir().join("identity");
+        let mut manifest = AppManifest::parse(NODE_IDENTITY_PUBKEYS_YAML).unwrap();
+        let err = orch.resolve_dynamic_env(&mut manifest).await.unwrap_err();
+        assert!(
+            format!("{err:#}").contains("node public key"),
+            "unexpected error: {err:#}"
+        );
+        assert!(
+            !identity_dir.join("node_key").exists(),
+            "a node key was created"
+        );
+        assert!(!identity_dir.join("node_key.pub").exists());
+
+        // A malformed key file is refused, not reinterpreted.
+        tokio::fs::create_dir_all(&identity_dir).await.unwrap();
+        tokio::fs::write(identity_dir.join("node_key.pub"), "ab".repeat(32))
+            .await
+            .unwrap();
+        let err = orch.resolve_dynamic_env(&mut manifest).await.unwrap_err();
+        assert!(
+            format!("{err:#}").contains("expected 32"),
+            "unexpected error: {err:#}"
+        );
+        assert!(!manifest
+            .app
+            .environment
+            .iter()
+            .any(|e| e.starts_with("WILDBLOOM_ALLOW_PUBKEYS=")));
     }
 
     /// A fedimint-gateway manifest shaped like the real one: a bcrypt

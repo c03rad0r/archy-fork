@@ -1,6 +1,8 @@
 use super::*;
 use crate::api::rpc::RpcHandler;
-use crate::identity_manager::{IdentityManager, IdentityProfile, IdentityPurpose};
+use crate::identity_manager::{
+    is_node_identity, IdentityManager, IdentityProfile, IdentityPurpose,
+};
 use crate::network::did_dht;
 use anyhow::{Context, Result};
 use nostr_sdk::ToBech32;
@@ -38,7 +40,7 @@ impl RpcHandler {
             .into_iter()
             .map(|id| {
                 let is_default = default_id.as_deref() == Some(&id.id);
-                let is_node = !node_pubkey_hex.is_empty() && id.pubkey_hex == node_pubkey_hex;
+                let is_node = is_node_identity(&id, &node_pubkey_hex);
                 let (nostr_pubkey, nostr_npub) = if is_node {
                     (
                         node_nostr_hex.clone().or(id.nostr_pubkey),

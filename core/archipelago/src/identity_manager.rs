@@ -115,6 +115,23 @@ fn relay_url_matches(a: &str, b: &str) -> bool {
     norm(a) == norm(b)
 }
 
+/// True when `record` is the node's own identity: the one whose ed25519 key
+/// is the node key (`server_info.pubkey`). `identity.list` reports this as
+/// `is_node`, and clients must never offer it as an app signer.
+pub fn is_node_identity(record: &IdentityRecord, node_pubkey_hex: &str) -> bool {
+    !node_pubkey_hex.is_empty() && record.pubkey_hex == node_pubkey_hex
+}
+
+/// True when the app identity picker hides `record`, mirroring
+/// `NostrIdentityPicker.vue`'s filter exactly: the node identity
+/// (`is_node`), any `node-*` id and any identity named "Node".
+pub(crate) fn is_hidden_from_app_signer(record: &IdentityRecord, node_pubkey_hex: &str) -> bool {
+    // Rust's `str::trim` keeps U+FEFF, which JS `trim()` strips.
+    is_node_identity(record, node_pubkey_hex)
+        || record.id.trim().to_lowercase().starts_with("node-")
+        || record.name.trim().to_lowercase() == "node"
+}
+
 impl IdentityManager {
     pub async fn new(data_dir: &Path) -> Result<Self> {
         let identities_dir = data_dir.join(IDENTITIES_DIR);
@@ -148,6 +165,25 @@ impl IdentityManager {
 
         identities.sort_by(|a, b| a.created_at.cmp(&b.created_at));
         Ok((identities, default_id))
+    }
+
+    /// Nostr public keys of the identities an app may sign with through the
+    /// NIP-07 bridge, as sorted, de-duplicated, comma-joined lowercase hex.
+    ///
+    /// Leaves out what the identity picker hides (`is_hidden_from_app_signer`)
+    /// and identities without a Nostr key (they cannot sign). Empty when no
+    /// identity qualifies.
+    pub async fn app_signable_nostr_pubkeys(&self, node_pubkey_hex: &str) -> Result<String> {
+        let (identities, _) = self.list().await?;
+        let mut pubkeys: Vec<String> = identities
+            .iter()
+            .filter(|r| !is_hidden_from_app_signer(r, node_pubkey_hex))
+            .filter_map(|r| r.nostr_pubkey.as_deref())
+            .map(str::to_ascii_lowercase)
+            .collect();
+        pubkeys.sort();
+        pubkeys.dedup();
+        Ok(pubkeys.join(","))
     }
 
     /// Create a new identity.
@@ -964,6 +1000,142 @@ mod tests {
         let (_, default_id) = mgr.list().await.unwrap();
         assert_eq!(default_id, Some(r2.id.clone()));
         assert_ne!(default_id, Some(r1.id));
+    }
+
+    fn record(id: &str, name: &str, pubkey_hex: &str) -> IdentityRecord {
+        IdentityRecord {
+            id: id.to_string(),
+            name: name.to_string(),
+            purpose: IdentityPurpose::Personal,
+            pubkey_hex: pubkey_hex.to_string(),
+            did: String::new(),
+            dht_did: None,
+            created_at: String::new(),
+            nostr_pubkey: None,
+            nostr_npub: None,
+            profile: None,
+        }
+    }
+
+    #[test]
+    fn is_node_identity_matches_only_the_node_pubkey() {
+        let node = "ab".repeat(32);
+        let other = "cd".repeat(32);
+        assert!(is_node_identity(&record("uuid-1", "Laptop", &node), &node));
+        assert!(!is_node_identity(
+            &record("uuid-1", "Laptop", &other),
+            &node
+        ));
+        // An unknown node key matches nothing, not the records without a key.
+        assert!(!is_node_identity(&record("uuid-1", "Laptop", ""), ""));
+        // The id and name rules belong to the picker filter, not to `is_node`.
+        assert!(!is_node_identity(
+            &record("node-abc", "Node", &other),
+            &node
+        ));
+    }
+
+    #[test]
+    fn is_hidden_from_app_signer_mirrors_the_picker_rules() {
+        let node = "ab".repeat(32);
+        let other = "cd".repeat(32);
+        let hidden = |id: &str, name: &str, pk: &str| {
+            is_hidden_from_app_signer(&record(id, name, pk), &node)
+        };
+        // is_node: matched by key alone, whatever the id and name.
+        assert!(hidden("uuid-1", "Laptop", &node));
+        // node-* id, any case, surrounding whitespace ignored.
+        assert!(hidden("node-0123456789abcdef", "Laptop", &other));
+        assert!(hidden("  NODE-x ", "Laptop", &other));
+        assert!(hidden("Node-x", "Laptop", &other));
+        // The name "Node", any case, surrounding whitespace ignored.
+        assert!(hidden("uuid-1", "Node", &other));
+        assert!(hidden("uuid-1", " nODe\t", &other));
+        // Near misses stay visible.
+        assert!(!hidden("uuid-1", "Laptop", &other));
+        assert!(!hidden("my-node-1", "Node 2", &other));
+        assert!(!hidden("nodes", "Nodes", &other));
+    }
+
+    #[tokio::test]
+    async fn app_signable_nostr_pubkeys_mirror_the_identity_picker() {
+        let dir = tempdir().unwrap();
+        let mgr = IdentityManager::new(dir.path()).await.unwrap();
+        let personal = mgr
+            .create("Personal".to_string(), IdentityPurpose::Personal)
+            .await
+            .unwrap();
+        let business = mgr
+            .create("Business".to_string(), IdentityPurpose::Business)
+            .await
+            .unwrap();
+        // The node identity as mirrored at startup: a `node-` id named
+        // "Node", given a Nostr key so only the id and name rules hide it.
+        let mirrored_key = SigningKey::generate(&mut OsRng);
+        let mirrored = mgr
+            .create_from_signing_key("Node".to_string(), IdentityPurpose::Personal, mirrored_key)
+            .await
+            .unwrap();
+        assert!(mirrored.id.starts_with("node-"));
+        mgr.create_nostr_key(&mirrored.id).await.unwrap();
+        // A user-created identity named "Node" is hidden by the picker too.
+        let named_node = mgr
+            .create(" node ".to_string(), IdentityPurpose::Anonymous)
+            .await
+            .unwrap();
+        // The node key belongs to an identity with a uuid id and an ordinary
+        // name, so only the `is_node` match can hide it.
+        let laptop = mgr
+            .create("Laptop".to_string(), IdentityPurpose::Personal)
+            .await
+            .unwrap();
+        assert!(!laptop.id.starts_with("node-"));
+
+        let (all, _) = mgr.list().await.unwrap();
+        assert!(all
+            .iter()
+            .any(|r| r.id == mirrored.id && r.nostr_pubkey.is_some()));
+        assert!(all.iter().any(|r| r.id == named_node.id));
+        assert!(all
+            .iter()
+            .any(|r| r.id == laptop.id && r.nostr_pubkey.is_some()));
+
+        let mut expected = vec![
+            personal.nostr_pubkey.unwrap().to_ascii_lowercase(),
+            business.nostr_pubkey.unwrap().to_ascii_lowercase(),
+        ];
+        expected.sort();
+        assert_eq!(
+            mgr.app_signable_nostr_pubkeys(&laptop.pubkey_hex)
+                .await
+                .unwrap(),
+            expected.join(",")
+        );
+        // Without the node key, the same identity is offered like any other.
+        let mut with_laptop = expected.clone();
+        with_laptop.push(laptop.nostr_pubkey.unwrap().to_ascii_lowercase());
+        with_laptop.sort();
+        assert_eq!(
+            mgr.app_signable_nostr_pubkeys("").await.unwrap(),
+            with_laptop.join(",")
+        );
+    }
+
+    #[tokio::test]
+    async fn app_signable_nostr_pubkeys_is_empty_with_only_the_node_identity() {
+        let dir = tempdir().unwrap();
+        let mgr = IdentityManager::new(dir.path()).await.unwrap();
+        let node_key = SigningKey::generate(&mut OsRng);
+        let node_pubkey_hex = hex::encode(node_key.verifying_key().as_bytes());
+        mgr.create_from_signing_key("Node".to_string(), IdentityPurpose::Personal, node_key)
+            .await
+            .unwrap();
+        assert_eq!(
+            mgr.app_signable_nostr_pubkeys(&node_pubkey_hex)
+                .await
+                .unwrap(),
+            ""
+        );
     }
 
     #[tokio::test]

@@ -263,7 +263,8 @@ pub struct ContainerConfig {
 
 /// Derived-env entry. The template is rendered against `HostFacts` at
 /// apply time; exactly one `{{PLACEHOLDER}}` occurrence per supported
-/// fact name is allowed (host_ip, host_mdns, disk_gb).
+/// fact name is allowed (host_ip, host_mdns, disk_gb, bitcoin_host,
+/// node_identity_pubkeys).
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct DerivedEnv {
     pub key: String,
@@ -1428,6 +1429,13 @@ pub struct HostFacts {
     /// right host. Both are reachable on archy-net by their container name;
     /// only the name differs. Falls back to `bitcoin-knots` when undetected.
     pub bitcoin_host: String,
+    /// Nostr public keys of the node's identities that the app identity
+    /// picker offers for signing (the node's own appliance key excluded),
+    /// as comma-joined, sorted, lowercase 64-char hex. Lets an app grant
+    /// the node's users owner rights (e.g. a Blossom server's allowed
+    /// uploaders). Empty unless a manifest templates it; the orchestrator
+    /// resolves it on demand and refuses to render an empty set.
+    pub node_identity_pubkeys: String,
 }
 
 impl HostFacts {
@@ -1439,13 +1447,20 @@ impl HostFacts {
             host_mdns: "test-node.local".to_string(),
             disk_gb: 2000,
             bitcoin_host: "bitcoin-knots".to_string(),
+            node_identity_pubkeys: "1111111111111111111111111111111111111111111111111111111111111111,2222222222222222222222222222222222222222222222222222222222222222".to_string(),
         }
     }
 }
 
 /// Supported placeholder names in `DerivedEnv::template`. Keep in sync
 /// with `HostFacts`. Centralized so validation and rendering agree.
-const DERIVED_PLACEHOLDERS: &[&str] = &["HOST_IP", "HOST_MDNS", "DISK_GB", "BITCOIN_HOST"];
+const DERIVED_PLACEHOLDERS: &[&str] = &[
+    "HOST_IP",
+    "HOST_MDNS",
+    "DISK_GB",
+    "BITCOIN_HOST",
+    "NODE_IDENTITY_PUBKEYS",
+];
 
 fn validate_derived_template(key: &str, template: &str) -> Result<(), ManifestError> {
     // Walk `{{NAME}}` occurrences and ensure each NAME is recognized.
@@ -1529,7 +1544,8 @@ impl ContainerConfig {
                     .replace("{{HOST_IP}}", &facts.host_ip)
                     .replace("{{HOST_MDNS}}", &facts.host_mdns)
                     .replace("{{DISK_GB}}", &facts.disk_gb.to_string())
-                    .replace("{{BITCOIN_HOST}}", &facts.bitcoin_host);
+                    .replace("{{BITCOIN_HOST}}", &facts.bitcoin_host)
+                    .replace("{{NODE_IDENTITY_PUBKEYS}}", &facts.node_identity_pubkeys);
                 format!("{}={}", e.key, value)
             })
             .collect()
@@ -2397,6 +2413,46 @@ app:
     }
 
     #[test]
+    fn node_identity_pubkeys_placeholder_is_accepted() {
+        let yaml = r#"
+app:
+  id: wildbloom-node
+  name: Wildbloom Node
+  version: 0.2.2
+  container:
+    image: ghcr.io/forgesworn/wildbloom-node:0.2.2
+    derived_env:
+      - key: WILDBLOOM_ALLOW_PUBKEYS
+        template: "{{NODE_IDENTITY_PUBKEYS}}"
+"#;
+        AppManifest::parse(yaml).expect("NODE_IDENTITY_PUBKEYS is a supported placeholder");
+    }
+
+    #[test]
+    fn resolve_derived_env_renders_node_identity_pubkeys() {
+        let yaml = r#"
+app:
+  id: wildbloom-node
+  name: Wildbloom Node
+  version: 0.2.2
+  container:
+    image: ghcr.io/forgesworn/wildbloom-node:0.2.2
+    derived_env:
+      - key: WILDBLOOM_ALLOW_PUBKEYS
+        template: "{{NODE_IDENTITY_PUBKEYS}}"
+"#;
+        let manifest = AppManifest::parse(yaml).unwrap();
+        let facts = HostFacts::sample();
+        assert_eq!(
+            manifest.app.container.resolve_derived_env(&facts),
+            vec![format!(
+                "WILDBLOOM_ALLOW_PUBKEYS={}",
+                facts.node_identity_pubkeys
+            )]
+        );
+    }
+
+    #[test]
     fn path_traversal_secret_file_is_rejected() {
         let yaml = r#"
 app:
@@ -2451,6 +2507,7 @@ app:
             host_mdns: "test-node.local".to_string(),
             disk_gb: 2000,
             bitcoin_host: "bitcoin-core".to_string(),
+            node_identity_pubkeys: String::new(),
         };
 
         let out = c.resolve_derived_env(&facts);
