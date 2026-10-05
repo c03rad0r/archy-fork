@@ -64,11 +64,48 @@ App submissions must:
 
 ## Pull requests
 
-1. Open one focused PR per behavior or documentation change.
+Contributions, PRs and reviews live on **ngit**. Clone the canonical repository:
+
+```text
+nostr://npub1w3sqdkrhn0gyuvsex32effzgnfpyde6qrrc4u467flg5e9txh4wsfn5vjg/relay.ngit.dev/archy
+```
+
+Gitea is a conventional Git mirror of accepted `main` commits and release tags.
+You do not need to open a duplicate Gitea PR. Existing Gitea contributions will
+be reviewed and linked to their ngit replacement or accepted result before
+closure.
+
+1. Open one focused ngit PR per behavior or documentation change.
 2. Explain what changed, why it changed, and how it was verified.
 3. Include screenshots for UI changes.
 4. Link relevant issues or docs.
 5. Keep generated catalog changes in sync with manifest changes.
+
+### Maintainer publication gate
+
+Merge once through the ngit contribution workflow, then push the exact same
+accepted commits to Gitea. Do not independently merge or squash on each mirror.
+Publish identical release tag objects, including annotations and signatures.
+After pushing main, verify:
+
+```bash
+python3 scripts/check-git-mirrors.py --local
+```
+
+Before publishing release artifacts, also check the actual release tag:
+
+```bash
+python3 scripts/check-git-mirrors.py --local --ref refs/tags/v1.9.0
+```
+
+Use the release's actual tag name. Missing refs, inaccessible mirrors or differing
+object IDs block publication. Record the ngit PR disposition and resulting merge
+commit in the release acceptance ledger. Resolve drift deliberately; do not
+force-push or delete published history without explicit approval.
+
+The checker is read-only. `--all` audits every advertised branch and tag; ngit
+proposal branches may intentionally differ from Gitea. A main-only pass proves
+only main parity, and no Git ref check verifies PR discussions or review state.
 
 Suggested commit format:
 
