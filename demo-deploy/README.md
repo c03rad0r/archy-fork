@@ -31,3 +31,18 @@ redeploy here. No source lives in this repo.
 - **Wallet/Bitcoin** — signet-flavored; use the in-UI faucet for test sats.
 - **Files** — real per-session upload/rename/delete, 50 MB quota, wiped on reap.
 - **Intro** — replays once per calendar day per browser.
+
+## Building a reviewed demo revision
+
+The web image builds both the dashboard and AIUI from the checked-out source;
+it does not use the historical `demo/aiui` bundle. CI supplies the full commit
+as `SOURCE_REVISION`. For a local source build, run:
+
+```sh
+SOURCE_REVISION=$(git rev-parse HEAD) docker compose -f docker-compose.demo.yml build
+```
+
+AIUI uses its frozen dependency lockfile, type checking and the canonical
+`/aiui/` build verifier. Its `BUILD-INFO` identifies that exact source revision.
+Prepare and test the images before changing the public demo stack; retain the
+previous image IDs for rollback.

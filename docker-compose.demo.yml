@@ -44,6 +44,7 @@ services:
       dockerfile: neode-ui/Dockerfile.web
       args:
         VITE_DEMO: "1"
+        SOURCE_REVISION: ${SOURCE_REVISION:?Set SOURCE_REVISION to git rev-parse HEAD}
     container_name: archy-demo-web
     ports:
       - "2100:80"

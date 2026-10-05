@@ -4,7 +4,13 @@
 # Allow neode-ui (frontend + mock backend + docker configs)
 !neode-ui/
 
-# Allow demo assets (AIUI pre-built dist)
+!aiui/
+aiui/**/node_modules
+aiui/**/dist
+aiui/**/.turbo
+aiui/**/.build-aiui-last-*
+
+# Allow curated demo assets
 !demo/
 
 # Allow the Bitcoin UI + ElectrumX UI mock shells (served from /docker/*)

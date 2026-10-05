@@ -696,3 +696,24 @@ and this qualified helper; an A5 restart can reinstall its older helper. Do not
 claim final persistence until the new binary is deployed and restart is retested.
 No certificate verification was disabled for a public application or upstream.
 Raw-IP/unknown-SNI negative routing probes alone bypass hostname matching.
+
+### NPM final source qualification and demo packaging
+
+Backend source e0b2181a: all1,681 isolated tests pass (zero failures, four
+explicit ignores). Corrected nested-layout NPM integration also passes real
+local ACME issuance/renewal,40 cross-certificate TLS requests, WSS, ACLs,
+restart, failed-bind rollback and host enable/delete propagation. Real public
+Let’s Encrypt staging issuance plus forced renewal pass on migrated Shorty;
+production certificate files and NPM container identity/start time are unchanged.
+Evidence: `/tmp/archy-190-npm-guard-final-backend-tests.log`,
+`/tmp/archy-190-npm-multicert-nested-acme.log`,
+`/tmp/archy-190-shorty-migrated-staging-acme.log`.
+Optimized build and final deployment/restart acceptance are still pending.
+
+Demo image preparation found the web Dockerfile copied historical prebuilt AIUI.
+It now builds the current source with the canonical script and frozen lockfile,
+with explicit source revision for archive/container builds. Both CI workflows
+track AIUI changes and pass the checkout revision. Actual image qualification
+and public demo deployment remain pending. The demo/release VPS currently has
+under1GiB free disk; capacity must be resolved before image/artifact publication.
+No running container, volume, release or repository was deleted.

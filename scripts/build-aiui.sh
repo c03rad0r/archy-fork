@@ -45,6 +45,18 @@ AIUI_APP_DIR="$AIUI_ROOT/packages/app"
 AIUI_DIST="$AIUI_APP_DIR/dist"
 AIUI_MOUNT_PATH="/aiui/"
 
+# Source archives/container contexts omit .git. Require their caller to supply
+# the exact checkout revision; normal node builds always use the real checkout.
+if git -C "$PROJECT_DIR" rev-parse --verify HEAD >/dev/null 2>&1; then
+    SOURCE_REVISION="$(git -C "$PROJECT_DIR" rev-parse HEAD)"
+else
+    SOURCE_REVISION="${ARCHY_SOURCE_REVISION:-}"
+fi
+if [[ ! "$SOURCE_REVISION" =~ ^[0-9a-f]{40}$ ]]; then
+    echo "FATAL: a full source commit is required (ARCHY_SOURCE_REVISION for archives)." >&2
+    exit 1
+fi
+
 timestamp() { echo "[$(date +%H:%M:%S)]"; }
 
 # ── require_base_path ──────────────────────────────────────────────────
@@ -113,7 +125,7 @@ verify_dist() {
     # Attribute this build to THIS repo's own current commit (D-19: no
     # second-repo pin file — this repo's own commit IS the answer now).
     local commit_sha
-    commit_sha="$(git -C "$PROJECT_DIR" rev-parse HEAD)"
+    commit_sha="$SOURCE_REVISION"
     {
         echo "commit=$commit_sha"
         echo "built_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
@@ -178,4 +190,4 @@ echo "$(timestamp) Building AIUI (vue-tsc --noEmit && vite build)..."
 echo "$(timestamp) Verifying dist..."
 verify_dist
 
-echo "$(timestamp) AIUI build OK — $AIUI_DIST attributable to $(git -C "$PROJECT_DIR" rev-parse --short HEAD)"
+echo "$(timestamp) AIUI build OK — $AIUI_DIST attributable to ${SOURCE_REVISION:0:8}"

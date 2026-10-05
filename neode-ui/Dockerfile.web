@@ -1,3 +1,14 @@
+FROM node:22-alpine AS aiui-builder
+RUN apk add --no-cache bash git coreutils findutils && corepack enable
+WORKDIR /source
+COPY aiui/ ./aiui/
+COPY scripts/build-aiui.sh ./scripts/build-aiui.sh
+ARG SOURCE_REVISION
+ARG VITE_DEMO=1
+RUN test -n "$SOURCE_REVISION" && \
+    if [ "$VITE_DEMO" = "1" ] || [ "$VITE_DEMO" = "true" ]; then export VITE_DEMO_CONTENT=true; fi && \
+    ARCHY_SOURCE_REVISION="$SOURCE_REVISION" bash scripts/build-aiui.sh
+
 FROM node:22-alpine AS builder
 
 WORKDIR /app
@@ -49,8 +60,8 @@ FROM nginx:alpine
 # Copy built files to nginx
 COPY --from=builder /app/dist /usr/share/nginx/html
 
-# Copy AIUI pre-built dist
-COPY demo/aiui/ /usr/share/nginx/html/aiui/
+# Build AIUI from the same source revision as the dashboard.
+COPY --from=aiui-builder /source/aiui/packages/app/dist/ /usr/share/nginx/html/aiui/
 
 # Copy nginx config template and entrypoint
 COPY neode-ui/docker/nginx-demo.conf /etc/nginx/nginx.conf.template

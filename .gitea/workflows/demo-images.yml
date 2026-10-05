@@ -17,6 +17,9 @@ on:
     branches: [main]
     paths:
       - 'neode-ui/**'
+      - 'aiui/**'
+      - 'scripts/build-aiui.sh'
+      - '.dockerignore'
       - 'docker-compose.demo.yml'
       - '.gitea/workflows/demo-images.yml'
   workflow_dispatch:
@@ -65,6 +68,7 @@ jobs:
           push: true
           build-args: |
             VITE_DEMO=1
+            SOURCE_REVISION=${{ github.sha }}
           tags: |
             ${{ vars.DEMO_REGISTRY }}/archy-demo-web:demo
             ${{ vars.DEMO_REGISTRY }}/archy-demo-web:${{ github.sha }}
