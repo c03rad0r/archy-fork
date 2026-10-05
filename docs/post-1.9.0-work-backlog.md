@@ -218,3 +218,46 @@ upgrade/restart and rollback, publish through the signed app catalog, and verify
 existing nodes discover and apply the intended version. Distinguish an app-only
 release from any backend/OTA dependency; use the documented decoupled app-update
 path where supported. Do not silently require a full OTA for an app-only change.
+
+Sequencing clarification: finish1.9.0-alpha first. Publish any required IndeeHub
+app update at the end of the follow-up implementation and qualification, not
+ahead of that work or as an untested addition to the current release.
+
+## 13. V4V Portainer demo as a Yaya node app
+
+- After the current release, deploy/package the existing V4V Portainer deployment
+  as a demo app on Yaya, showcasing how an ordinary third-party app works on a
+  node **without native Nostr signer integration**, as explicitly requested.
+- Inspect the actual existing Portainer source, branch/image revision, Compose
+  stack, access/authentication and data before changes; retain the working V4V
+  site, stack and persistent state. Do not confuse this with the public Archipelago
+  software demo at demo.archipelago-foundation.org.
+- Follow the current app-development guide and supported app packaging/gate/
+  lifecycle conventions. Define the app card/icon/category, launch URL/readiness,
+  network/auth boundaries, health, configuration and persistent mounts properly.
+  Do not expose the native signer or implicitly grant signing permissions.
+- Qualify fresh installation in isolation, then Yaya deployment, desktop/mobile/
+  companion launch, normal app functionality, restart, update/rollback and safe
+  removal behavior. Verify the deployed app actually runs the intended V4V source
+  revision, not a stale build or unrelated image.
+- Record a short reproducible demo flow and operator UAT checklist. Preserve
+  existing Gitea/Portainer connectivity and unrelated apps; no new payment or
+  public sharing of private test content is implied by the demo packaging.
+
+### V4V node-only catalog and Sovereign Music promotion
+
+- Source is on the existing Gitea on the146 server; locate the actual V4V repo,
+  branch and deployment revision there rather than guessing a replacement source.
+- Add a **Sovereign Music** banner for V4V on Yaya, following the existing
+  Sovereign Streaming banner treatment and using the app's own login background.
+  Retrieve and inspect the real asset; do not invent a replacement illustration.
+- Both demo app availability and its promotion must be confined to Yaya. Evaluate
+  a signed per-node/DID-scoped demo catalog or existing supported node-specific
+  candidate mechanism. Do not publish the demo to the global catalog or let
+  unrelated nodes install it implicitly through a shared catalog cache.
+- Test matching/nonmatching identities, copying URLs/catalogs between nodes,
+  missing identity, refresh/restart/update and promotion visibility. Catalog
+  selection or visibility must not bypass normal artifact-signature enforcement.
+- This may become a real app later; preserve an explicit tested promotion path
+  from node-only demo to proper public app release without duplicate app IDs,
+  conflicting state, lost configuration or automatic exposure before approval.

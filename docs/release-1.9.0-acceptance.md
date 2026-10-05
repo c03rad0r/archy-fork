@@ -868,3 +868,71 @@ OTA apply/rollback test necessarily follows signing. Mirror/tag parity, public
 artifact downloads, catalog promotion, fleet discovery and demo deployment
 remain required. The Angor historical limitation is explicitly accepted and
 documented in [known limitations](release-1.9.0-known-limitations.md).
+
+### Signed OTA qualification — 2026-10-05
+
+Operator signed final OTA manifest and raw-ISO checksum document; both verify
+against the pinned release root. Existing signed catalog also verifies. On the
+disposable installed VM, the actual published1.8.22 backend and frontend were
+verified against their published hashes, installed as the baseline, and used to
+discover/download/apply the final signed1.9.0 artifacts through normal authenticated
+RPC. Component verification, automatic manager restart, post-OTA verification,
+exact backend/UI hashes, Cloud access and persistent credential/file checks pass.
+
+A deliberately missing new frontend plus the real pending-verification marker
+triggered automatic rollback: exact1.8.22 binary/UI restored, file and credentials
+preserved.32 public-source IPv4/IPv6 management-denial requests still pass with
+the restored old binary/template. Reapplying the signed1.9.0 OTA succeeds with the
+same post-update assertions. Final whole-VM reboot qualification is running.
+Logs: `/tmp/archy-190-vm-ota-cycle-2.log`,
+`/tmp/archy-190-vm-ota-rollback.log`,
+`/tmp/archy-190-vm-ota-rollback-security.log`,
+`/tmp/archy-190-vm-ota-reapply.log`. Fixture setup corrections (missing systemd
+drop-in directory and underscore in update_state.json) preceded the passing run;
+no failed fixture run is counted as acceptance.
+
+Publication storage required temporary upload headroom beyond the previous
+cleanup. Under the operator's existing old-ISO retention authorization, removed
+only1.8.18 ISO attachment235 after verifying its retained local copy against the
+public signed checksum. All other assets unchanged;1.8.19/21/22 server ISOs remain.
+Server free space is7.2GB before upload. Use an SSH-tunneled direct Gitea upload
+so the public reverse proxy does not buffer an additional multi-GB copy.
+
+Historical mirror audit identified three missing ngit tags1.8.16/17/18; their
+local annotated tag objects exactly matched Gitea and were copied to ngit without
+rewriting history. Unrelated proposal-only branch differences are inventoried
+in `/tmp/archy-190-historical-mirror-audit.log`; full branch parity is not claimed.
+Final main/tag parity remains a separate publication gate.
+
+### Final reboot caught a stale OTA runtime script — corrected package
+
+The whole-VM reboot itself reached healthy1.9.0, but the first-boot retry check
+failed: the OTA runtime overlay still shipped the old first-boot script and
+bootstrap installed it over the ISO's corrected version. Retry logged missing
+`log` and changed running container IDs/start times. This is a real package
+regression, not a passed check. The original signed frontend archive3047a19f is
+obsolete and MUST NOT be published.
+
+Repacked only `archipelago-runtime/scripts/first-boot-containers.sh` with the
+already qualified source repair. Full archive comparison proves every other
+entry, content and mode unchanged. Corrected frontend SHA256 is
+`6d5135fa8e79b1bc84c8ed972770ebf99fe6611d819e5c1453f38f1593c26e66`.
+ISO/backend/dashboard/AIUI/APK/catalog bytes are unchanged; ISO and catalog
+signatures remain valid. Only the corrected OTA manifest needs renewed signing.
+
+Added a release-manifest payload gate that rejects stale, absent or duplicate
+first-boot scripts. Four archive fixture cases and existing executable first-boot
+retry regression pass; the stale real archive fails, corrected real archive
+passes. Actual backend bootstrap successfully promotes the corrected member on
+the disposable node. Post-promotion retry/Cloud checks are in progress.
+Logs: `/tmp/archy-190-stale-ota-reproduced.log`,
+`/tmp/archy-190-repackage-runtime-2.log`,
+`/tmp/archy-190-corrected-manifest-integrity.log`,
+`/tmp/archy-190-vm-corrected-runtime.log`,
+`/tmp/archy-190-vm-corrected-retry.log`. Renewed signature and exact signed apply
+remain required. Keep earlier rollback evidence for the unchanged backend, but
+do not claim the obsolete frontend is the final accepted artifact.
+
+Corrected runtime post-promotion retry now PASS: container IDs/start times and
+credentials preserved, Cloud token/listing work, default/anonymous access denied.
+Corrected OTA pre-sign receipt is ready; existing ISO/catalog signatures retained.

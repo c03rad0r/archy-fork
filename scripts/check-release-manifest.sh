@@ -114,6 +114,10 @@ for i in $(seq 0 $((COMPONENT_COUNT - 1))); do
     if [ "$ACTUAL_SIZE" != "$DECLARED_SIZE" ]; then
         fail "component '$NAME' size mismatch (declared=$DECLARED_SIZE actual=$ACTUAL_SIZE)"
     fi
+    if [[ "$NAME" == *frontend*.tar.gz ]]; then
+        python3 "$REPO_ROOT/scripts/check-ota-runtime.py" "$FILE" \
+            || fail "frontend runtime payload is stale or incomplete"
+    fi
     ok "component '$NAME': sha256 + size match on-disk artifact"
 done
 

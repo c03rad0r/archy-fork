@@ -79,6 +79,7 @@ stage "demo-resumable-uploads" timeout 120 node --test neode-ui/scripts/demo-upl
 stage "companion-signature-regression" python3 scripts/tests/test_companion_apk_verification.py
 stage "cargo-fmt"        timeout 240 cargo fmt --manifest-path core/Cargo.toml --all --check
 stage "app-build-contexts" python3 tests/regression/app-build-contexts.py
+stage "ota-runtime-firstboot" python3 tests/regression/ota-runtime-firstboot.py
 stage "manifest-shell"  python3 scripts/check-manifest-shell.py
 stage "npm-tunnel-migration" python3 -m unittest discover -s scripts/tests -p test_repair_npm_tunnel.py
 stage "npm-public-bridge" python3 -m unittest discover -s scripts/tests -p test_npm_public_bridge.py
