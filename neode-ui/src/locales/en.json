@@ -392,7 +392,7 @@
     "manageDomains": "Manage Domains",
     "relaysConnected": "{count} connected",
     "peersKnown": "{count} peer(s) known",
-    "findNodes": "Find Nodes",
+    "findNodes": "Connect with Nodes",
     "sendMessage": "Send Message",
     "sendMessageTitle": "Send Message (over Tor)",
     "to": "To",

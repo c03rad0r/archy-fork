@@ -34,13 +34,13 @@ function mountFederation() {
 }
 
 describe('Web5Federation', () => {
-  it('surfaces Find Nodes and Fleet routes', () => {
+  it('surfaces Connect with Nodes and Fleet routes', () => {
     const wrapper = mountFederation()
 
     const links = wrapper.findAll('a').map(link => link.attributes('href'))
     expect(links).toContain('/dashboard/server/federation')
     expect(links).toContain('/dashboard/fleet')
-    expect(wrapper.text()).toContain('Find Nodes')
+    expect(wrapper.text()).toContain('Connect with Nodes')
     expect(wrapper.text()).toContain('Fleet')
   })
 

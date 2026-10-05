@@ -12,8 +12,6 @@
       :dhtDid="dhtDid"
       :dhtDidCopied="dhtDidCopied"
       :publishingDht="publishingDht"
-      :walletConnected="walletConnected"
-      :connectingWallet="connectingWallet"
       :nostrRelayStats="nostrRelaysRef?.nostrRelayStats ?? null"
       :connectedNodesCount="connectedNodesRef?.peers?.length ?? 0"
       :detectedHwWallets="detectedHwWallets"
@@ -23,7 +21,6 @@
       @copyDhtDid="copyDhtDid"
       @refreshDhtDid="refreshDhtDid"
       @publishDhtDid="publishDhtDid"
-      @connectWallet="connectWallet"
       @manageRelays="nostrRelaysRef?.openRelaysModal()"
     />
 
@@ -90,7 +87,7 @@ let web5AnimationDone = false
 </script>
 
 <script setup lang="ts">
-import { ref, computed, onActivated, onDeactivated, onMounted, onUnmounted } from 'vue'
+import { ref, computed, onActivated, onMounted } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { rpcClient } from '@/api/rpc-client'
 import { useCachedResource } from '@/composables/useCachedResource'
@@ -288,40 +285,8 @@ async function copyDidDocument() {
   setTimeout(() => { didDocCopied.value = false }, 2000)
 }
 
-// --- Wallet / LND Balances ---
-// Cached: balances/transactions paint instantly on revisit and revalidate
-// behind the cached value; errors keep the last-known data.
-const lndInfoRes = useCachedResource<{
-  balance_sats: number
-  channel_balance_sats: number
-  synced_to_chain: boolean
-}>({
-  key: 'web5.lnd-info',
-  fetcher: (signal) => rpcClient.call({ method: 'lnd.getinfo', signal, dedup: true, maxRetries: 1 }),
-  persist: false, // wallet balance — must never land in sessionStorage (T-02-01)
-})
-// connectWallet() can still "disconnect" the (hidden) wallet card UI-side.
-const walletManuallyDisconnected = ref(false)
-const walletConnected = computed(() =>
-  !walletManuallyDisconnected.value && lndInfoRes.data.value !== null && !lndInfoRes.error.value)
-const connectingWallet = ref(false)
-// Ecash/transaction/balance display lives in the hidden wallet card — when it
-// returns, add cached resources for wallet.ecash-balance / lnd.gettransactions
-// here rather than reviving the old eager loaders.
-
 // Hardware wallets
 const detectedHwWallets = ref<HwWalletDevice[]>([])
-
-async function connectWallet() {
-  if (walletConnected.value) {
-    walletManuallyDisconnected.value = true
-  } else {
-    connectingWallet.value = true
-    walletManuallyDisconnected.value = false
-    await lndInfoRes.refresh()
-    connectingWallet.value = false
-  }
-}
 
 async function detectHardwareWallets() {
   try {
@@ -331,10 +296,6 @@ async function detectHardwareWallets() {
     detectedHwWallets.value = []
   }
 }
-
-// Auto-refresh wallet data every 30s while mounted (B5 will move this to
-// WS-push invalidation; the store dedups overlapping refreshes).
-let walletRefreshInterval: ReturnType<typeof setInterval> | null = null
 
 // Every-entry: none of these child components use useCachedResource
 // internally (confirmed by reading Web5ConnectedNodes.vue/Web5Identities.vue/
@@ -353,20 +314,12 @@ function armWeb5Live() {
   // credentialsRef.value?.loadCredentials()  // hidden for now
   // sharedContentRef.value?.loadContentItems()  // hidden for now
 
-  // Wallet/profits resources fetch themselves on first use (and skip the
+  // Profits resources fetch themselves on first use (and skip the
   // fetch entirely when the cached value is still fresh).
   detectHardwareWallets()
 
   // Shared content loaded by the component itself via expose
   // The SharedContent component manages its own loadContentItems
-
-  // Only-while-visible: the 30s force-refresh interval bypasses
-  // useCachedResource's own TTL gate for lndInfoRes, so it must not keep
-  // running while Web5 is off screen.
-  if (walletRefreshInterval) clearInterval(walletRefreshInterval)
-  walletRefreshInterval = setInterval(() => {
-    void lndInfoRes.refresh()
-  }, 30000)
 }
 // Vue fires onActivated immediately after onMounted on a KeepAlive-wrapped
 // component's first mount, which would otherwise double every load in
@@ -400,17 +353,4 @@ onMounted(() => {
   armWeb5Live()
 })
 
-onDeactivated(() => {
-  if (walletRefreshInterval) {
-    clearInterval(walletRefreshInterval)
-    walletRefreshInterval = null
-  }
-})
-
-onUnmounted(() => {
-  if (walletRefreshInterval) {
-    clearInterval(walletRefreshInterval)
-    walletRefreshInterval = null
-  }
-})
 </script>
