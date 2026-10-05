@@ -126,10 +126,17 @@ pub fn is_node_identity(record: &IdentityRecord, node_pubkey_hex: &str) -> bool 
 /// `NostrIdentityPicker.vue`'s filter exactly: the node identity
 /// (`is_node`), any `node-*` id and any identity named "Node".
 pub(crate) fn is_hidden_from_app_signer(record: &IdentityRecord, node_pubkey_hex: &str) -> bool {
-    // Rust's `str::trim` keeps U+FEFF, which JS `trim()` strips.
+    // Match ECMAScript trim exactly: Rust includes U+0085 and excludes U+FEFF.
+    let trim_js = |value: &str| value.trim_matches(is_js_whitespace).to_lowercase();
     is_node_identity(record, node_pubkey_hex)
-        || record.id.trim().to_lowercase().starts_with("node-")
-        || record.name.trim().to_lowercase() == "node"
+        || trim_js(&record.id).starts_with("node-")
+        || trim_js(&record.name) == "node"
+}
+
+fn is_js_whitespace(c: char) -> bool {
+    matches!(c, '\u{0009}'..='\u{000D}' | '\u{0020}' | '\u{00A0}' | '\u{1680}'
+        | '\u{2000}'..='\u{200A}' | '\u{2028}' | '\u{2029}' | '\u{202F}'
+        | '\u{205F}' | '\u{3000}' | '\u{FEFF}')
 }
 
 impl IdentityManager {
@@ -179,8 +186,13 @@ impl IdentityManager {
             .iter()
             .filter(|r| !is_hidden_from_app_signer(r, node_pubkey_hex))
             .filter_map(|r| r.nostr_pubkey.as_deref())
-            .map(str::to_ascii_lowercase)
-            .collect();
+            .map(|key| {
+                anyhow::ensure!(key.len() == 64, "invalid app owner Nostr public key");
+                nostr_sdk::PublicKey::from_hex(key)
+                    .map(|key| key.to_hex())
+                    .context("invalid app owner Nostr public key")
+            })
+            .collect::<Result<Vec<_>>>()?;
         pubkeys.sort();
         pubkeys.dedup();
         Ok(pubkeys.join(","))
@@ -1051,6 +1063,11 @@ mod tests {
         // The name "Node", any case, surrounding whitespace ignored.
         assert!(hidden("uuid-1", "Node", &other));
         assert!(hidden("uuid-1", " nODe\t", &other));
+        assert!(hidden("\u{FEFF}NODE-x\u{FEFF}", "Laptop", &other));
+        assert!(hidden("uuid-1", "\u{FEFF}Node\u{FEFF}", &other));
+        // ECMAScript keeps U+0085; do not add owners that the picker hides,
+        // or hide identities that it offers.
+        assert!(!hidden("uuid-1", "\u{0085}Node\u{0085}", &other));
         // Near misses stay visible.
         assert!(!hidden("uuid-1", "Laptop", &other));
         assert!(!hidden("my-node-1", "Node 2", &other));
@@ -1119,6 +1136,26 @@ mod tests {
             mgr.app_signable_nostr_pubkeys("").await.unwrap(),
             with_laptop.join(",")
         );
+    }
+
+    #[tokio::test]
+    async fn app_owner_pubkeys_reject_malformed_key_material() {
+        let dir = tempdir().unwrap();
+        let mgr = IdentityManager::new(dir.path()).await.unwrap();
+        let identity = mgr
+            .create("Owner".into(), IdentityPurpose::Personal)
+            .await
+            .unwrap();
+        let path = mgr.identities_dir.join(format!("{}.json", identity.id));
+        let original = fs::read(&path).await.unwrap();
+        for invalid in ["", "not-a-key", "owner,another-owner", "\nINJECTED=true"] {
+            let mut data: serde_json::Value = serde_json::from_slice(&original).unwrap();
+            data["nostr_pubkey_hex"] = serde_json::json!(invalid);
+            fs::write(&path, serde_json::to_vec(&data).unwrap())
+                .await
+                .unwrap();
+            assert!(mgr.app_signable_nostr_pubkeys("").await.is_err());
+        }
     }
 
     #[tokio::test]

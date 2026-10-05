@@ -322,3 +322,14 @@ automatically install dependencies, alter Bitcoin pruning, or require a synced
 backend merely to recognize an already-installed service. Declare ongoing
 relationships separately in `dependencies`; use the app health check for actual
 API readiness. Self-dependencies and malformed ids are invalid.
+
+### App owner identity placeholder
+
+`{{NODE_IDENTITY_PUBKEYS}}` is opt-in per manifest. It gives the application the
+comma-separated public keys of all user identities offered by the app signer,
+excluding the appliance identity. It grants no signing capability or private
+keys. Describe any resulting owner/upload privileges in the app documentation: a
+shared list also links those identities to the same installation. An absent node
+key, malformed owner key or empty owner set fails setup rather than rendering an
+empty allow-list. Do not use this as an anonymous or per-profile authorization
+mechanism. Existing manifests that omit it keep their existing configuration.
