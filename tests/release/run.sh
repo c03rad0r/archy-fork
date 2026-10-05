@@ -72,6 +72,7 @@ summary() {
 stage "git-diff-check"   git diff --check
 stage "mirror-gate-regression" python3 scripts/tests/test_git_mirrors.py
 stage "iso-boot-runner-regression" python3 scripts/tests/test_iso_qemu_runner.py
+stage "iso-qualified-web-ui" python3 tests/regression/iso-qualified-web-ui.py
 stage "demo-rpc-parity" timeout 120 node neode-ui/scripts/mock-rpc-parity.mjs
 stage "demo-resumable-uploads" timeout 120 node --test neode-ui/scripts/demo-upload-test.mjs
 stage "companion-signature-regression" python3 scripts/tests/test_companion_apk_verification.py

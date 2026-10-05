@@ -1448,7 +1448,19 @@ mkdir -p "$ARCH_DIR/web-ui"
 
 # Try to get from live server first (unless BUILD_FROM_SOURCE=1)
 WEBUI_CAPTURED=0
-if [ "$BUILD_FROM_SOURCE" != "1" ]; then
+if [ -n "${ARCHIPELAGO_WEB_UI:-}" ]; then
+    # Release builds supply the qualified payload explicitly. Never substitute
+    # a running node's cached runtime files or an older installed dashboard.
+    if [ ! -f "$ARCHIPELAGO_WEB_UI/index.html" ] || \
+       [ ! -f "$ARCHIPELAGO_WEB_UI/aiui/index.html" ] || \
+       [ ! -f "$ARCHIPELAGO_WEB_UI/aiui/BUILD-INFO" ]; then
+        echo "ERROR: ARCHIPELAGO_WEB_UI must contain the qualified dashboard and AIUI"
+        exit 1
+    fi
+    cp -r "$ARCHIPELAGO_WEB_UI/." "$ARCH_DIR/web-ui/"
+    WEBUI_CAPTURED=1
+fi
+if [ "$WEBUI_CAPTURED" = "0" ] && [ "$BUILD_FROM_SOURCE" != "1" ]; then
     # Direct copy from local filesystem (when running on target with sudo)
     if [ -d "/opt/archipelago/web-ui" ] && [ "$(ls -A /opt/archipelago/web-ui 2>/dev/null)" ]; then
         cp -r /opt/archipelago/web-ui/* "$ARCH_DIR/web-ui/"
@@ -1504,6 +1516,9 @@ AIUI_INCLUDED=0
 # or yesterday's hashed assets linger next to today's forever.
 AIUI_SRC=""
 AIUI_NEWEST=0
+if [ -n "${ARCHIPELAGO_WEB_UI:-}" ]; then
+    AIUI_SRC="$ARCHIPELAGO_WEB_UI/aiui"
+else
 for AIUI_DIR in \
     "$SCRIPT_DIR/../../aiui/packages/app/dist" \
     "$SCRIPT_DIR/../../AIUI/packages/app/dist" \
@@ -1520,6 +1535,7 @@ for AIUI_DIR in \
         fi
     fi
 done
+fi
 if [ -n "$AIUI_SRC" ]; then
     echo "   Including AIUI from $AIUI_SRC (newest of the candidates)..."
     mkdir -p "$ARCH_DIR/web-ui/aiui"

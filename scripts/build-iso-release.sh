@@ -147,6 +147,7 @@ build_iso() {
         BUILD_FROM_SOURCE=0
         DEV_SERVER=localhost
         ARCHIPELAGO_BIN="$REPO/core/target/release/archipelago"
+        ARCHIPELAGO_WEB_UI="$REPO/web/dist/neode-ui"
     )
     [ -n "$RC_OVERRIDE" ] && env_args+=(RC="$RC_OVERRIDE")
     sudo -E env "${env_args[@]}" nice -n 5 bash image-recipe/build-debian-iso.sh

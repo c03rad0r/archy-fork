@@ -717,3 +717,45 @@ track AIUI changes and pass the checkout revision. Actual image qualification
 and public demo deployment remain pending. The demo/release VPS currently has
 under1GiB free disk; capacity must be resolved before image/artifact publication.
 No running container, volume, release or repository was deleted.
+
+### Authorized release-storage cleanup — 2026-10-05
+
+Operator approved removing only the old v1.8.13-alpha and v1.8.15-alpha ISO
+attachments, then clarified that broader retention changes should be dropped if
+that suffices. Both local ISO archives were independently hashed against their
+published checksum files before removal. Gitea API deletion removed attachment
+IDs219 and226 only; all other assets in both releases were verified unchanged.
+Public server free space increased from887MiB to5.9GiB. Remaining historical
+releases, OTA files, registry packages and application data were preserved.
+Gitea's prior read-only storage doctor found no orphaned archives, attachments or
+package blobs. No storage-doctor fix or package garbage collection was run.
+Further removals are not planned; check exact final upload/image sizes first.
+
+### Corrected binary deployed and restart verified
+
+Final security backend SHA256
+`560aa6006cd9ef8be95b1f7831cf3b53854e911622b50022bb4402ce0f8b010a`
+built from e0b2181a after the complete1,681-test isolated pass. Deployed dev,
+yaya and Shorty: health200, both embedded helper files match reviewed source,
+active HTTP/HTTPS defaults are guarded, and all existing container IDs/start
+times are unchanged. Backup per node: `support/190-guard-560aa6006cd9`.
+The first dev check incorrectly inspected sites-available rather than the actual
+regular sites-enabled file; automatic backend rollback ran. Corrected check
+uses the helper's active-dashboard resolution, and the second deployment passes.
+This was a qualification-script path error; retain the first failed log.
+
+Shorty's final backend manager restart passed302 continuous public HTTP/HTTPS
+RPC denial probes, followed by healthy management. Existing public32-case and
+read-only Angor acceptance are rerunning against this exact deployed binary.
+Logs: `/tmp/archy-190-guard-dev-deploy-2.log`,
+`/tmp/archy-190-guard-yaya-deploy.log`, `/tmp/archy-190-guard-shorty-deploy.log`,
+`/tmp/archy-190-final-shorty-restart-security.log`.
+
+ISO release packaging now explicitly selects the qualified dashboard/AIUI
+payload rather than capturing a live node's cached runtime files or choosing
+AIUI by timestamp. Three executable builder-branch fixtures pass qualified,
+missing and partial payloads; missing inputs fail without a live-node fallback.
+The release wrapper sets this path and the release harness includes the test.
+Accepted companion54 APK/metadata replace the stale copies in the packaging
+staging directory; exact SHA remains ceb58a7d…fab1a1. Final ISO and OTA package
+acceptance/signatures remain pending.
