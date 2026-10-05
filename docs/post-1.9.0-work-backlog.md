@@ -92,3 +92,45 @@ acceptance is claimed by this backlog.
   cover first connection and repeat use, touch/keyboard access, empty/error
   states, and the current Yaya/dev approval bug. Keep diagnostic implementation
   details out of normal user-facing steps.
+
+## 7. Companion app launch latency
+
+- Reproduce intermittent long app-opening delays on the actual companion and
+  compare desktop/mobile browser timing for the same node/app. Measure discovery,
+  readiness polling, authentication/signing, route/proxy connection, WebView
+  creation and first useful rendered content separately.
+- Remove avoidable waits, duplicated checks and retry loops without launching
+  before an app can accept connections. Cover cold/warm launches, switching apps,
+  background/resume, flaky connectivity, expired authentication and app restarts.
+- Keep feedback clear and immediate, with bounded cancellation/retry and preserved
+  navigation. Record before/after measurements and test actual Android devices.
+
+## 8. Fleet comprehensive acceptance
+
+- Inventory every current Fleet capability and turn it into a test matrix rather
+  than assuming a working overview proves all functions work.
+- Cover discovery, identity/deduplication, authorization, adding/removing nodes,
+  status/metrics freshness, selections/filters, remote actions, update discovery
+  and progress/results, reconnect/offline/restart recovery and error handling.
+- Include mixed software versions, slow/unreachable nodes, partial success,
+  duplicate/late replies, permission rejection and desktop/mobile behavior.
+- Use disposable fixtures for destructive/restart/update scenarios; preserve real
+  node wallets, application data and user choices. No new spending is authorized.
+
+## 9. AIUI first-use/provider/funding experience
+
+- When AIUI opens without a usable AI connection, guide the user to setup rather
+  than presenting only a failed model response. Distinguish missing configuration,
+  invalid credentials, insufficient Routstr funds and temporary provider outage.
+- Offer concise choices to add a Claude credential, configure the supported
+  OpenAI/Codex connection, or fund Routstr. Verify the actual provider/runtime
+  authentication methods before labeling a credential field or promising support.
+- Chat may present action buttons; use a private credential form/modal for keys,
+  not an ordinary chat message. Keep credentials out of model prompts, history,
+  logs and screenshots; use existing secure storage and permission boundaries.
+- Open Routstr funding as a coherent modal where supported, show balance/payment
+  state and update availability after funding. Preserve any unsent prompt and
+  let the user continue when setup succeeds. No surprise automatic charges.
+- Match the existing design system and support small screens, keyboard access,
+  cancellation, invalid/expired keys, funding delay, reload/background/resume and
+  successful first response. Test actual companion and desktop flows.
