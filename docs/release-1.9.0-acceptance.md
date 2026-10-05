@@ -936,3 +936,30 @@ do not claim the obsolete frontend is the final accepted artifact.
 Corrected runtime post-promotion retry now PASS: container IDs/start times and
 credentials preserved, Cloud token/listing work, default/anonymous access denied.
 Corrected OTA pre-sign receipt is ready; existing ISO/catalog signatures retained.
+
+### Corrected signed OTA final reboot — PASS
+
+The renewed OTA signature verifies. Published1.8.22 baseline discovered, downloaded
+and applied corrected frontend6d5135fa plus backend560aa600 through normal RPC.
+Exact payload hashes, automatic restart/verification, saved file/credentials and
+Cloud login pass. A full VM reboot (boot time2026-10-05T22:52:47Z) then passed
+healthy startup, actual first-boot retry with unchanged container IDs/start times
+and credentials, managed Cloud access, default/anonymous login denial and32
+IPv4/IPv6 management-denial requests. Logs:
+`/tmp/archy-190-vm-corrected-signed-ota.log`,
+`/tmp/archy-190-vm-corrected-signed-reboot.log`.
+
+Installed and cached runtime first-boot scripts on dev, yaya and Shorty now match
+the qualified source, with private backups and no app/service operation:
+`/tmp/archy-190-firstboot-final-node-deploy.log`. Existing ISO/catalog signatures
+remain valid. The obsolete frontend must remain archived only.
+
+Source/tag parity, asset publication/public hashes, public catalog selection,
+fleet discovery and demo deployment are the remaining release operations.
+Retain coverage boundaries: virtual BIOS/SATA and UEFI/SATA tested, no physical
+legacy-BIOS/NVMe claim; IPv6 guard tested in isolation, no actual WAN IPv6 route;
+Framework authenticated read-only fee quote and a new live seller-outage exercise
+were not independently completed (funded regtest, prior operator purchase/free
+reopen and persisted ownership/file evidence remain separate). Dev Bitcoin is
+still in IBD; live full-chain Angor evidence is from Shorty. Historical discovery
+limitation was explicitly accepted, not relabeled a passing recovery test.
