@@ -91,6 +91,84 @@ class GuardTests(unittest.TestCase):
             self.assertFalse(guard.apply(path, command, Path(tmp) / 'nginx.lock'))
             self.assertEqual(len(calls), 2)
 
+    def test_legacy_runtime_install_is_guarded_before_any_validation_or_reload(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / 'active'
+            source = Path(tmp) / 'legacy-runtime'
+            path.write_text(guard.guarded(SOURCE))
+            source.write_text(SOURCE + '# legacy runtime revision\n')
+            calls = []
+            def command(args, **kwargs):
+                # Even the first nginx -t must see a complete guarded candidate.
+                current = path.read_text()
+                self.assertEqual(current.count(guard.CHECK), 2)
+                self.assertEqual(guard.guarded(current), current)
+                self.assertIn('# legacy runtime revision', current)
+                calls.append(args)
+                return subprocess.CompletedProcess(args, 0)
+            self.assertTrue(guard.apply(path, command, Path(tmp) / 'lock', source))
+            self.assertFalse(guard.apply(path, command, Path(tmp) / 'lock', source))
+            self.assertEqual(len(calls), 2)
+            self.assertEqual(source.read_text(), SOURCE + '# legacy runtime revision\n')
+
+    def test_invalid_runtime_never_replaces_protected_site(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / 'active'
+            source = Path(tmp) / 'legacy-runtime'
+            previous = guard.guarded(SOURCE)
+            path.write_text(previous)
+            source.write_text('server { listen 80 default_server; server_name _; }')
+            def command(*args, **kwargs):
+                self.fail('invalid candidate must be rejected before any command')
+            with self.assertRaises(ValueError):
+                guard.apply(path, command, Path(tmp) / 'lock', source)
+            self.assertEqual(path.read_text(), previous)
+
+    def test_runtime_validation_or_reload_failure_preserves_previous_guard(self):
+        for failure in ['nginx', 'systemctl']:
+            with self.subTest(failure=failure), tempfile.TemporaryDirectory() as tmp:
+                path = Path(tmp) / 'active'
+                source = Path(tmp) / 'legacy-runtime'
+                previous = guard.guarded(SOURCE)
+                path.write_text(previous)
+                source.write_text(SOURCE + '# incoming revision\n')
+                calls = []
+                def command(args, **kwargs):
+                    self.assertEqual(path.read_text().count(guard.CHECK), 2)
+                    calls.append(args)
+                    fail = args[0] == failure and sum(x[0] == failure for x in calls) == 1
+                    return subprocess.CompletedProcess(args, int(fail))
+                with self.assertRaises(RuntimeError):
+                    guard.apply(path, command, Path(tmp) / 'lock', source)
+                self.assertEqual(path.read_text(), previous)
+
+    def test_runtime_bootstrap_uses_guarded_installer_instead_of_raw_copy(self):
+        # Wiring matters: a safe helper does not help if bootstrap bypasses it.
+        source = (Path(__file__).parents[2] / 'core/archipelago/src/bootstrap.rs').read_text()
+        block = source.split('let nginx_src = configs.join("nginx-archipelago.conf");', 1)[1].split('// archipelago-host-secrets-audit', 1)[0]
+        self.assertIn('scripts/dashboard-public-guard.py', block)
+        self.assertIn('"--install"', block)
+        self.assertNotIn('"install",', block)
+
+    def test_rollback_payload_is_protected_idempotently_before_old_binary_can_copy_it(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            template = Path(tmp) / 'legacy.conf'
+            template.write_text(SOURCE)
+            template.chmod(0o640)
+            self.assertTrue(guard.protect_template(template))
+            self.assertEqual(template.read_text(), guard.guarded(SOURCE))
+            self.assertEqual(template.stat().st_mode & 0o777, 0o640)
+            self.assertFalse(guard.protect_template(template))
+            invalid = 'server { listen 80 default_server; }'
+            template.write_text(invalid)
+            with self.assertRaises(ValueError):
+                guard.protect_template(template)
+            self.assertEqual(template.read_text(), invalid)
+        source = (Path(__file__).parents[2] / 'core/archipelago/src/update.rs').read_text()
+        rollback = source.split('pub async fn rollback_update', 1)[1]
+        self.assertLess(rollback.index('"--protect-template"'), rollback.index('host_sudo(&["cp"'))
+        self.assertIn('protected.success()', rollback)
+
 
 if __name__ == '__main__':
     unittest.main()

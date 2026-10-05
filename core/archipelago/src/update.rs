@@ -2059,6 +2059,25 @@ pub async fn rollback_update(data_dir: &Path) -> Result<()> {
 
     let backup_binary = backup_dir.join("archipelago");
     if backup_binary.exists() {
+        // The restored frontend can contain a pre-guard runtime template. An
+        // older binary copies that template verbatim on startup, undoing live
+        // containment. Protect it before permitting the binary downgrade.
+        let template = "/opt/archipelago/web-ui/archipelago-runtime/image-recipe/configs/nginx-archipelago.conf";
+        if Path::new(template).exists() {
+            let protected = host_sudo(&[
+                "python3",
+                "-c",
+                include_str!("../../../scripts/dashboard-public-guard.py"),
+                "--protect-template",
+                template,
+            ])
+            .await
+            .context("protect nginx runtime template before rollback")?;
+            anyhow::ensure!(
+                protected.success(),
+                "unsafe nginx rollback template; previous binary not restored"
+            );
+        }
         // Same two namespace gotchas as apply_update()'s binary swap:
         // `cp` straight onto the running binary is O_TRUNC and fails
         // ETXTBSY (exit 1 — exactly what broke the .116 rollback), and

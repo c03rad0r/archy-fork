@@ -596,3 +596,67 @@ and start times are unchanged; the qualified catalog and AIUI are preserved.
 Private rollback backup: `/var/lib/archipelago/support/190-mobile-20261005`.
 Evidence: `/tmp/archy-190-yaya-mobile-deploy.log`. Phone acceptance was on the dev
 APK; this byte-identity deployment check is not another physical-phone test.
+
+Source review proposal: [ngit5957be8c](https://gitworkshop.dev/nevent1qqs9j4a73jyu6xfrpzrqcx2tqkldnuc8wzfas2zdkq6s2qlvftdaakqpz3mhxue69uhhyetvv9ujumn8d96zuer9wcq8s3xt),
+covering daac47ca,5aa74d05,b8266c28,ba8b1f29. Proposal publication succeeded;
+remote main refs and release tags have not been advanced. Do not call it merged
+or the mirrors synchronized from proposal upload alone.
+
+Private final NPM catalog candidate is ready for the operator's signature.
+Compared with the previously signed candidate, only NPM's variant version2.14.0,
+immutable image digest and the catalog timestamp changed.64 apps/63 manifests,
+zero drift, registry trust and the pinned-image integration pass. This signature
+is for migration qualification, not full-release acceptance or publication.
+The operator was separately asked to resolve Angor's outstanding discovery scope.
+
+Yaya post-deployment browser checks pass at390/1440px for grouping, icons, hard
+refresh and BTCPay Commerce-only placement. The first harness session had an
+expired login cookie and used catalog fallback; after normal login, the signed
+catalog endpoint returns200/64apps and the complete rerun passes without401.
+Evidence: `/tmp/archy-190-yaya-final-ui-smoke-authenticated.log`.
+
+## Shorty live qualification: cached-runtime guard regression — 2026-10-05
+
+The operator signed the final NPM candidate. Release-root verification and exact
+reviewed payload comparison pass; signed SHA256
+`479f6193835a16dd4ab167e5c22306a878ac39b77c2e2793971e807874fbc0cb`.
+This signature authorizes private qualification; it is not release publication.
+
+Shorty baseline public shop/www/indexer/relay trusted HTTPS passes. Its prior
+NPM image bytes match the pinned2.14.0 image. Consistent stopped-NPM state,
+backend, unit, nginx, helpers and app metadata were backed up under
+`/var/lib/archipelago/support/190-npm-20261005`. Migration reached the new private
+network/listeners but failed the guard acceptance check and was rolled back.
+The test initially expected the emergency guard's legacy variable; further
+inspection found a real source defect, not merely that assertion mismatch.
+
+Confirmed cause: `ensure_runtime_assets_ready` applies the management guard,
+then `run_runtime_assets` installs the cached OTA's nginx template verbatim.
+Shorty's cached template predates the guard. It overwrote protection before a
+subsequent nginx reload; restoring the older backend repeated that path. A live
+public IPv4 root probe returned200. Immediate containment applied the tested
+source guard; HTTP/HTTPS root and HTTP RPC again return404. The cached legacy
+runtime template is now also guarded, with its original saved privately, so
+that old startup installer cannot remove protection on restart. Both emergency
+and current guards are present in the active configuration. Do not claim this
+attempt passed or that the broader migration is complete.
+
+Source fix: runtime installation now renders/validates the guarded candidate
+before atomic replacement under the nginx transaction lock; syntax/reload
+failure restores the previous protected bytes. Rollback protects the restored
+runtime template before permitting an older binary to start.11 focused tests
+pass; real isolated nginx verifies the actual legacy install, old-binary copy,
+invalid-template rollback, public IPv4/IPv6 denial, ACME/private access and the
+existing120-case Host/SNI/forwarded-header/UI/assets/RPC/WS matrix.
+The first backend suite passed1,681/0failed/4ignored before the final rollback
+addition; final rerun and optimized build are required. Logs:
+`/tmp/archy-190-guard-runtime-final-unit.log`,
+`/tmp/archy-190-guard-runtime-final-network.log`,
+`/tmp/archy-190-shorty-activation.log` (failed attempt),
+`/tmp/archy-190-shorty-prepare.log`.
+
+Only NPM's container restarted; Bitcoin, LND, ElectrumX, Angor indexer and relay
+IDs/start times are unchanged. Restored shop/www/indexer/relay HTTPS returns200.
+Shorty's old backend remains active under containment. Rebuild and requalify the
+migration, external security and restart persistence before closing this gate.
+The signed catalog contents are unchanged and need no further operator signature.

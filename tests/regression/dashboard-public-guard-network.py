@@ -60,12 +60,15 @@ http {{
  }}
 }}
 '''
-    # The reusable guard is an http-context include; apply to the inner block.
+    # Use the same http-context site include as a real appliance, so the
+    # guarded runtime installer is exercised against actual nginx reloads.
     start = source.index('http {') + len('http {')
-    source = source[:start] + '\n' + guard.guarded(source[start:])
-    source = bridge.dashboard_acme_root(source, tmp)
+    legacy = tmp / 'legacy-runtime.conf'
+    legacy.write_text(bridge.dashboard_acme_root(source[start:source.rfind('}')], tmp))
+    site = tmp / 'site.conf'
+    site.write_text(guard.guarded(legacy.read_text()))
     config = tmp / 'nginx.conf'
-    config.write_text(source)
+    config.write_text(source[:start] + f'\ninclude {site};\n}}\n')
     command = ['nginx', '-p', str(tmp), '-c', str(config)]
     subprocess.run(command + ['-t'], check=True, capture_output=True)
     subprocess.run(command, check=True, capture_output=True)
@@ -125,6 +128,38 @@ http {{
         subprocess.run(command + ['-s', 'reload'], check=True, capture_output=True)
         assert request('198.18.0.2')[0] == 404
         assert request('fd00:1::2', tls=True)[0] == 200
+        def fixture_command(args, **kwargs):
+            assert site.read_text().count(guard.CHECK) == 2
+            actual = command + (['-t'] if args[0] == 'nginx' else ['-s', 'reload'])
+            return subprocess.run(actual, **kwargs)
+        assert guard.apply(site, fixture_command, tmp / 'lock', legacy) is False
+        legacy.write_text(legacy.read_text() + '# old OTA payload with no guard\n')
+        assert guard.apply(site, fixture_command, tmp / 'lock', legacy)
+        for src in ['198.18.0.2', '2001:db8:1::2']:
+            for tls in [False, True]:
+                for endpoint in ['/', '/assets/main.js', '/rpc/v1', '/ws']:
+                    assert request(src, endpoint, tls, extra='X-Forwarded-For: 127.0.0.1\r\nX-Real-IP: 192.168.1.2\r\n')[0] == 404
+                assert request(src, '/.well-known/acme-challenge/test-token', tls)[0] == 200
+        assert request('fd00:1::2', tls=True)[0] == 200
+        # Emulate the actual legacy rollback: its old binary copies the runtime
+        # template verbatim. Protect the payload before that old code can run.
+        assert guard.protect_template(legacy)
+        site.write_bytes(legacy.read_bytes())
+        subprocess.run(command + ['-t'], check=True, capture_output=True)
+        subprocess.run(command + ['-s', 'reload'], check=True, capture_output=True)
+        assert request('198.18.0.2', '/rpc/v1')[0] == 404
+        assert request('2001:db8:1::2', '/rpc/v1', tls=True)[0] == 404
+        previous = site.read_bytes()
+        legacy.write_text(legacy.read_text() + 'invalid_nginx_directive;\n')
+        try:
+            guard.apply(site, fixture_command, tmp / 'lock', legacy)
+            raise AssertionError('Invalid runtime configuration was accepted')
+        except RuntimeError:
+            pass
+        assert site.read_bytes() == previous
+        assert request('198.18.0.2')[0] == 404
+        assert request('fd00:1::2', tls=True)[0] == 200
+        print('PASS real legacy runtime installation and invalid-template rollback: guarded before reload, public IPv4/IPv6 blocked, ACME/private access preserved')
         print(f'PASS {count} public HTTP/TLS negative cases: IPv4/IPv6, unknown/raw/forged Host/SNI, forwarded headers, UI/assets/RPC/WS; ACME/private access and reload')
     finally:
         subprocess.run(command + ['-s', 'quit'], check=True, capture_output=True)

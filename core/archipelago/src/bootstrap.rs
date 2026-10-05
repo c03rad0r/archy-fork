@@ -496,14 +496,14 @@ async fn run_runtime_assets() -> Result<bool> {
     if nginx_src.exists() {
         let src_s = nginx_src.to_string_lossy().to_string();
         let status = host_sudo(&[
-            "install",
-            "-m",
-            "644",
+            "python3",
+            "-c",
+            include_str!("../../../scripts/dashboard-public-guard.py"),
+            "--install",
             &src_s,
-            "/etc/nginx/sites-available/archipelago",
         ])
         .await
-        .context("install nginx-archipelago.conf")?;
+        .context("install guarded nginx-archipelago.conf")?;
         if !status.success() {
             anyhow::bail!("install nginx-archipelago.conf exited with {}", status);
         }

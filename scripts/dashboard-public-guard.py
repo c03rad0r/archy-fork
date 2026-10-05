@@ -168,16 +168,20 @@ def active_dashboard(nginx_root=Path('/etc/nginx')):
     return selected.resolve(strict=True)
 
 
-def apply(path, command=subprocess.run, lock_path=Path('/run/lock/archy-nginx-config.lock')):
+def apply(path, command=subprocess.run, lock_path=Path('/run/lock/archy-nginx-config.lock'), source=None):
     # The NPM bridge uses this same lock for nginx configuration transactions.
     with lock_path.open('a+b') as lock:
         fcntl.flock(lock, fcntl.LOCK_EX)
-        return apply_locked(path.resolve(strict=True), command)
+        return apply_locked(path.resolve(strict=True), command, source)
 
 
-def apply_locked(path, command):
+def apply_locked(path, command, source=None):
     old = path.read_bytes()
-    new = guarded(old.decode()).encode()
+    # A cached legacy OTA can predate the guard. Never install its unguarded
+    # bytes and repair them afterwards: another startup task can reload nginx
+    # in that gap. Validate/render before the atomic replacement, under the
+    # same lock as the public-host bridge.
+    new = guarded(source.read_text() if source is not None else old.decode()).encode()
     if new == old:
         return False
     backup_dir = (Path('/var/lib/archipelago/nginx-management-guard')
@@ -209,16 +213,39 @@ def apply_locked(path, command):
     return True
 
 
+def protect_template(path):
+    """Keep rollback to an older binary from reinstalling an unguarded template.
+
+    This updates an inactive runtime payload, without reloading nginx. The old
+    binary will copy these already-guarded bytes using its legacy installer.
+    """
+    path = path.resolve(strict=True)
+    old = path.read_bytes()
+    new = guarded(old.decode()).encode()
+    if new == old:
+        return False
+    atomic(path, new, path.stat().st_mode & 0o777)
+    return True
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--render', action='store_true')
+    parser.add_argument('--install', type=Path, metavar='SOURCE')
+    parser.add_argument('--protect-template', type=Path, metavar='PATH')
     parser.add_argument('path', nargs='?')
     args = parser.parse_args()
+    if sum(bool(value) for value in [args.render, args.install, args.protect_template]) > 1:
+        parser.error('--render, --install and --protect-template cannot be combined')
+    if args.protect_template:
+        protect_template(args.protect_template)
+        print('Rollback runtime template protected')
+        return
     path = Path(args.path) if args.path else active_dashboard()
     if args.render:
         print(guarded(path.read_text()), end='')
     else:
-        print('Dashboard public source guard installed' if apply(path) else 'Dashboard source guard unchanged')
+        print('Dashboard public source guard installed' if apply(path, source=args.install) else 'Dashboard source guard unchanged')
 
 
 if __name__ == '__main__':
