@@ -134,3 +134,47 @@ acceptance is claimed by this backlog.
 - Match the existing design system and support small screens, keyboard access,
   cancellation, invalid/expired keys, funding delay, reload/background/resume and
   successful first response. Test actual companion and desktop flows.
+
+## 10. Node availability, offline duration and network map
+
+- Make availability easy to scan in Fleet and Connected Nodes using explicit
+  status text as well as existing visual indicators. Show last successful contact
+  and an elapsed duration, such as "Last seen 2 hours ago"; only say "Offline for"
+  when an observed offline transition supports that claim. Never equate an old
+  relay advertisement, failed monitoring query or unknown status with proof that
+  a node has been continuously offline.
+- Place confirmed offline nodes after online nodes by default, with stable order
+  within each group. Specify how connecting and unknown/stale nodes are ordered;
+  preserve user-selected sorting, filters, selection and scroll position.
+- Show offline and unknown/stale nodes distinctly on the network map, with text
+  or accessible detail including last contact. Do not present retained historical
+  links as live connections or silently drop long-offline nodes from the map.
+- Retain useful last-contact history across refresh/restart; reconcile timestamps
+  across discovery, peering and monitoring. Handle clock skew, never-seen nodes,
+  stale cached data, long outages and reconnects without false precision.
+- Test short/long outages, stale relay events, monitor-only failures, network
+  partitions, app background/resume and status recovery on desktop and companion.
+  Use the existing design system and avoid color-only status communication.
+
+## 11. Web5 connection/sync speed and responsive navigation
+
+- Profile and improve connection establishment, discovery, peer synchronization
+  and Web5 data loading. Measure each stage and reduce avoidable serial waits,
+  duplicate requests, excessive timeouts and retry storms. Preserve identity,
+  trust verification and accurate readiness/status reporting.
+- Reproduce delayed taps/navigation for Web5 and Cloud, especially in the Android
+  companion, and the Find Nodes / nodes entry into **Federation & Peers**. Record
+  tap-to-feedback, route-render and useful-data timings separately on cold/warm
+  loads and with realistic slow/offline nodes and larger peer/file lists.
+- Every navigation tap must give immediate feedback using existing components;
+  render the destination shell promptly and load independent data incrementally.
+  One slow node/request must not block the whole screen or tab navigation.
+- Keep cached content visibly identified when stale; use bounded loading states
+  and useful retry/error feedback. Preserve back navigation, scroll, selection
+  and in-progress work; cancel or ignore superseded requests safely.
+- Cover all tabs, not just these reported routes. Test rapid tab switching,
+  repeated taps, background/resume, expired sessions, unavailable peers, partial
+  responses and recovery on actual companion hardware and desktop/mobile browsers.
+- Record before/after latency distributions and agree measurable budgets after
+  establishing a baseline. Faster feedback alone is not evidence that the
+  underlying connection/synchronization delay has been fixed.
