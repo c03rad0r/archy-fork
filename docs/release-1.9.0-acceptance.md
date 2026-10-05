@@ -14,8 +14,9 @@ whenever human acceptance is needed.
 
 - Alpha backend: isolated suite **1,681 passed**, zero failed, four explicit
   ignores; separate container runtime suite **82 passed**. Optimized binary
-  SHA256 `a5a6cfc7dcab011963a6f18dc570446b6fa624180d206a108fab27504f4fd41d`
-  is deployed on dev, yaya and Framework with private rollback backups.
+  SHA256 `560aa6006cd9ef8be95b1f7831cf3b53854e911622b50022bb4402ce0f8b010a`
+  is deployed on dev, yaya and Shorty with private rollback backups. Framework
+  retains the preceding A5 candidate; its earlier acceptance remains recorded.
 - Frontend: **1,222 passed across 150 files**; production build and real mobile/
   desktop media/menu checks pass. Dev serves index SHA256
   `c18b24024a78789fe65c74c5ce27efe2125ae869016ab65e33c5a2680b543f17`.
@@ -45,9 +46,10 @@ whenever human acceptance is needed.
       acceptance; retain the completed
       fresh/nested disposable, public staging issuance/forced renewal and actual
       yaya state-preservation checks.
-- [ ] **Shorty NPM:** shop certificate12/Force SSL are operator accepted and
-      independently verified; qualify and apply the manual-route migration. Preserve live
-      management containment and current public app routing.
+- [ ] **Shorty NPM:** shop certificate12/Force SSL and manual-route migration pass. Final
+      corrected backend restart, 302 continuous denial probes and the external
+      32-case security matrix pass. Remaining: packaged boot/OTA acceptance.
+      Preserve management containment and current public app routing.
 - [ ] **Security:** verify final deployed/booted artifacts against public raw IP,
       unknown Host/SNI, forged forwarding headers, IPv4/IPv6, assets/RPC/WS;
       preserve private access, ACME issuance/renewal and public app TLS/WSS.
@@ -759,3 +761,26 @@ The release wrapper sets this path and the release harness includes the test.
 Accepted companion54 APK/metadata replace the stale copies in the packaging
 staging directory; exact SHA remains ceb58a7d…fab1a1. Final ISO and OTA package
 acceptance/signatures remain pending.
+
+### Final demo images and exact-node follow-up
+
+Shorty final backend restart follow-up passes the external32-case management
+denial matrix and trusted public TLS/WSS/official Angor browser fixture. Evidence:
+`/tmp/archy-190-final-shorty-public-security-after-restart.log` and
+`/tmp/archy-190-final-shorty-angor-browser.log`. This is the known recovered
+project, not all35-project discovery. Signed catalog479f6193 is privately active
+on dev, yaya and Shorty; no public catalog publication has occurred.
+
+Built demo images pass isolated real-image qualification: optional upstream DNS
+failure returns502 for that service while the main demo remains200; fresh AIUI
+provenance, backend healthcheck, four upload protocol/recovery cases, and normal
+mobile intro/login/dashboard pass. The test uses a temporary container-only DNS
+file; host DNS and the live public demo are untouched. Test:
+`tests/lifecycle/demo-images.py`; evidence:
+`/tmp/archy-190-demo-images-acceptance-final-2.log`. Earlier failure in the added
+DNS test was an incorrect assumption about Podman's generated resolver, repaired
+by explicitly mounting the disposable resolver fixture.
+
+Qualified web image169e59da is built from157c9ec0; backend2722fa29 frome6e46a14.
+Public demo deployment remains scheduled after release with rollback. RC2 raw
+ISO assembly is running; no boot/install or final OTA pass is claimed yet.
