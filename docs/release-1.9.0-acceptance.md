@@ -19,7 +19,8 @@ whenever human acceptance is needed.
 - Frontend: **1,222 passed across 150 files**; production build and real mobile/
   desktop media/menu checks pass. Dev serves index SHA256
   `c18b24024a78789fe65c74c5ce27efe2125ae869016ab65e33c5a2680b543f17`.
-  Yaya/Framework still have the preceding qualified upload UI `67de835a…`.
+  Yaya now serves the same index and companion package; Framework retains the
+  preceding qualified upload UI `67de835a…`.
 - Companion **0.5.34/build54**: 12 native tests, clean build, v1/v2/v3 signatures
   and unchanged signer pass. Viewer and phone download are operator accepted.
   Dev APK SHA256 `ceb58a7dc5f1398fe84f30255ec9ed79834f5db5f8fbc03eac52e14186fab1a1`.
@@ -585,3 +586,13 @@ full parity run passes, including those assertions:
 `/tmp/archy-190-demo-rpc-parity-final-2.log`. Both checks are release harness stages.
 These changes are locally qualified; the public demo remains unchanged pending
 final release, fresh AIUI packaging and deployed browser acceptance.
+
+### Yaya accepted mobile candidate deployment
+
+The same dev UI index `c18b2402…` and signed companion0.5.34/build54 APK
+`ceb58a7d…` are now served on Yaya. All75 changed files match their reviewed
+source hashes, including HTTP-served index/APK/metadata. Container identities
+and start times are unchanged; the qualified catalog and AIUI are preserved.
+Private rollback backup: `/var/lib/archipelago/support/190-mobile-20261005`.
+Evidence: `/tmp/archy-190-yaya-mobile-deploy.log`. Phone acceptance was on the dev
+APK; this byte-identity deployment check is not another physical-phone test.
