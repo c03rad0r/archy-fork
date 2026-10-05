@@ -75,7 +75,8 @@ whenever human acceptance is needed.
       the existing field. `/tmp/archy-190-final-search-live.log`. Earlier grouping
       and transaction-rail results are retained.
 - [ ] **Angor:** dev full-chain acceptance after unpruned Bitcoin sync; retain
-      all-project discovery requirement and 34 unrecovered original announcements.
+      the operator-accepted historical discovery limitation (34 unrecovered announcements);
+      recovery is follow-up work, not a publication blocker.
       Publish tested explorer/API app update and optional relay in signed catalog.
 - [ ] **Post-release demo deployment:** operator requests updating the existing
       public software demo at https://demo.archipelago-foundation.org/ through its
@@ -815,3 +816,55 @@ Demo archive33ec4111…6fae8 matches after private server transfer; both tested 
 IDs loaded successfully without changing running demo containers. Clearing only
 unused build cache recovered1.743GB; no additional historical ISO, image, volume
 or application data was deleted. Final publication capacity must be rechecked.
+
+### Operator accepts Angor discovery limitation — 2026-10-05
+
+The operator explicitly accepted releasing with incomplete historical project
+discovery documented as a known limitation ("that's fine for now"). Funding
+commitments for all35 reference projects were verified;34 original signed
+announcements remain unrecovered from the sources checked. This releases the
+all-project-discovery publication hold, not a claim that recovery passed. Track
+recovery separately and retain the limitation in release notes. Other artifact,
+upgrade, security and publication checks remain required.
+
+### Work explicitly queued after this release
+
+The operator requested returning to distributed IndeeHub, signer/companion login,
+node peering, Framework Monitoring and external-app Cloud integration after
+1.9.0-alpha. All details are retained in
+[the post-release backlog](post-1.9.0-work-backlog.md). These additions do not
+expand or delay the current release's artifact scope.
+
+### Final RC3 installed-artifact qualification — 2026-10-05
+
+Final raw ISO `archipelago-installer-1.9.0-alpha-unbundled-x86_64.iso` is byte-for-byte
+the tested RC3 (SHA256 `aad5f0350428976969043079a63b0e7a8264dcee2574526bd34719c798c750af`).
+Actual installation completed to a disposable80GiB disk with encrypted data.
+Installed legacy BIOS/SATA and UEFI/SATA boot, mounted encrypted data, healthy
+backend1.9.0-alpha with completed startup recovery, and private dashboard pass.
+The initial SeaBIOS/NVMe boot could not find the disk; the same installed disk
+boots with SATA. Installer logs show both GRUB installations succeeded. This
+is not a claim of physical legacy-BIOS/NVMe support.
+
+The final installed script retries without changing container IDs/start times
+or managed File Browser credentials. Normal dashboard setup/login, Cloud token
+and authenticated listing pass; anonymous and admin/admin access are rejected.
+Initial test omitted CSRF and correctly received403; corrected normal-cookie/
+CSRF flow passes. Onboarding also replaces the initial SSH password as expected.
+The fixture was corrected to retain its own generated password privately; no
+production credentials or access controls were changed.
+
+After UEFI boot the installed nginx passes32 IPv4/IPv6 public-source rejection
+cases including unknown Host/SNI, forged forwarding headers, assets, RPC and
+WebSocket upgrade requests. Early health showed startup recovery still running;
+subsequent explicit status/recovery assertions pass after61seconds.
+Evidence: `/tmp/archy-190-rc3-installed-test-2.log`,
+`/tmp/archy-190-rc3-uefi-acceptance-2.log`,
+`/tmp/archy-190-rc3-uefi-healthy.log`. Unsupported virtual EDAC remains separate
+from the supported service checks.
+
+Artifacts are ready for operator signing, not publication. The final signed
+OTA apply/rollback test necessarily follows signing. Mirror/tag parity, public
+artifact downloads, catalog promotion, fleet discovery and demo deployment
+remain required. The Angor historical limitation is explicitly accepted and
+documented in [known limitations](release-1.9.0-known-limitations.md).

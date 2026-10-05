@@ -1542,3 +1542,13 @@ physical save/open acceptance and the existing release gates.
 (save/open/cancel) accepted: “works, we can proceed”. Viewer and physical upload
 acceptance retained. Close this manual gate; other release/security/Angor gates
 remain open. No fleet OTA, ISO or public demo publication inferred.
+
+### Operator accepts Angor discovery limitation — 2026-10-05
+
+The operator explicitly accepted releasing with incomplete historical project
+discovery documented as a known limitation ("that's fine for now"). Funding
+commitments for all35 reference projects were verified;34 original signed
+announcements remain unrecovered from the sources checked. This releases the
+all-project-discovery publication hold, not a claim that recovery passed. Track
+recovery separately and retain the limitation in release notes. Other artifact,
+upgrade, security and publication checks remain required.
