@@ -1279,7 +1279,7 @@ impl RpcHandler {
             &identity_dir,
             &req.from_nostr_pubkey,
             &invite_code,
-            &self.config.nostr_relays,
+            &self.handshake_relays().await,
             self.config.nostr_tor_proxy.as_deref(),
         )
         .await?;
@@ -1329,7 +1329,7 @@ impl RpcHandler {
                 &identity_dir,
                 &req.from_nostr_pubkey,
                 reason,
-                &self.config.nostr_relays,
+                &self.handshake_relays().await,
                 self.config.nostr_tor_proxy.as_deref(),
             )
             .await;
@@ -1380,7 +1380,7 @@ impl RpcHandler {
                 &identity_dir,
                 &req.from_nostr_pubkey,
                 reason,
-                &self.config.nostr_relays,
+                &self.handshake_relays().await,
                 self.config.nostr_tor_proxy.as_deref(),
             )
             .await
