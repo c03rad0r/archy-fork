@@ -784,3 +784,34 @@ by explicitly mounting the disposable resolver fixture.
 Qualified web image169e59da is built from157c9ec0; backend2722fa29 frome6e46a14.
 Public demo deployment remains scheduled after release with rollback. RC2 raw
 ISO assembly is running; no boot/install or final OTA pass is claimed yet.
+
+### RC2 actual installation and first-boot retry correction
+
+RC2 passed mounted payload checks and completed a full UEFI installation to an
+80GiB disposable NVMe disk with encrypted data. Installed backend560, both
+security helpers, dashboardc18, AIUI415 and APK54 match qualified bytes. After
+boot from the installed disk, SSH, dashboard200 and backend health/version pass.
+Actual installed nginx passes32 IPv4/IPv6 public-source denial requests including
+unknown Host/SNI and forged forwarding headers (`/tmp/archy-190-vm-guard-test.log`).
+The VM's EDAC hardware initialization service reports unsupported virtual
+hardware; this is not claimed as physical ECC/EDAC acceptance.
+
+Actual first boot exposed `log: command not found` in the unbundled setup: the
+logger was declared below that path's early exit. Moving it before first use
+restores diagnostics. Retry testing also demonstrated that unconditional
+`podman system migrate` stops existing apps and races manager reconciliation.
+The unbundled path changes no ID mappings and no longer migrates; bundled setup
+only migrates when it actually adds mappings. Podman documents this stop behavior
+in its [migration reference](https://docs.podman.io/en/latest/markdown/podman-system-migrate.1.html).
+
+Corrected actual-VM retry preserves container IDs/start times and produces clean
+logs: `/tmp/archy-190-vm-firstboot-logging-fix-2.log`. Executable isolated retry
+regression passes twice with stored-secret preservation and fails against the
+prior script. Added to release harness. RC2 must not be published: rebuild the
+ISO with this script and qualify its boot/install path before signing. The OTA
+backend/frontend payloads are unchanged by this installer-only correction.
+
+Demo archive33ec4111…6fae8 matches after private server transfer; both tested image
+IDs loaded successfully without changing running demo containers. Clearing only
+unused build cache recovered1.743GB; no additional historical ISO, image, volume
+or application data was deleted. Final publication capacity must be rechecked.

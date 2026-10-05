@@ -16,6 +16,8 @@
 # DO NOT split until tested on the build server — this is critical infrastructure.
 #
 LOG="/var/log/archipelago-first-boot.log"
+# The unbundled path exits early; diagnostics must exist before either path.
+log() { echo "$(date '+%Y-%m-%d %H:%M:%S') $*" | tee -a "$LOG"; }
 
 # Source pinned image versions (single source of truth)
 # ISO copies to scripts/ subdir; also check the direct path for manual installs
@@ -111,7 +113,8 @@ if [ -f "$UNBUNDLED_MARKER" ]; then
     # Podman prerequisites
     loginctl enable-linger archipelago 2>/dev/null || true
     DOCKER="runuser -u archipelago -- env XDG_RUNTIME_DIR=/run/user/$(id -u archipelago) podman"
-    $DOCKER system migrate 2>/dev/null || true
+    # No ID mappings changed here. system migrate would stop existing apps
+    # on a retry and race the backend's reconciliation.
 
     # Ensure archy-net exists
     $DOCKER network create archy-net 2>/dev/null || true
@@ -244,8 +247,6 @@ fi
 # internet, not the gateway to the host — which broke every container
 # trying to reach bitcoin-core's RPC on the host (LND, ElectrumX, etc).
 ADD_HOST_FLAG="--add-host=host.containers.internal:host-gateway"
-
-log() { echo "$(date '+%Y-%m-%d %H:%M:%S') $*" | tee -a "$LOG"; }
 
 # Ensure Tor is running for hidden services (LND connect, Electrumx, etc.)
 if ! systemctl is-active tor >/dev/null 2>&1; then
@@ -491,9 +492,9 @@ grep -q "^archipelago:" /etc/subuid 2>/dev/null || {
     echo "archipelago:100000:65536" >> /etc/subuid
     echo "archipelago:100000:65536" >> /etc/subgid
     log "  subuid/subgid configured"
+    # Only refresh the namespace when mappings actually changed.
+    $DOCKER system migrate 2>/dev/null || true
 }
-# Apply podman migrations after subuid/subgid changes (per official tutorial)
-$DOCKER system migrate 2>/dev/null || true
 # Ensure /etc/hosts is readable (rootless podman needs it)
 chmod 644 /etc/hosts 2>/dev/null
 
