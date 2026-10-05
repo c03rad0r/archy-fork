@@ -1,0 +1,49 @@
+{
+  "changelog": [
+    "Keep Cuprate and NetBird supporting components out of app listings and consolidate BTCPay Server under Commerce.",
+    "Default on-chain sends, channel opens and cooperative closes to a dynamic next-block fee target, preserving explicit slower and custom choices.",
+    "Add reviewed fee-bump quotes, explicit budgets and durable operation tracking for supported wallet transactions.",
+    "Preserve Nginx Proxy Manager storage, same-node upstream connectivity, certificates and access controls through managed migrations.",
+    "Restrict public management access while retaining configured public apps and ACME certificate validation.",
+    "Serve the Mempool explorer on the Angor indexer origin alongside its API.",
+    "Include the self-contained LoRa flashing tool and explicit board selection in update and installer payloads.",
+    "Preserve paid-file Lightning entitlements across restarts and recover settled invoices from LND. Retry delivery without paying again and retain purchased files in the owned cache.",
+    "Return explicit payment-status errors with safe retry guidance when verification is unavailable.",
+    "Keep upload progress on its original screen, show completion there or notify on other screens, and cancel active and queued uploads.",
+    "Resume interrupted uploads while the app remains open, preserve the original destination, and verify saved file contents before reporting completion.",
+    "Provision a unique private File Browser login on each node while keeping Cloud sign-in automatic and preserving existing accounts and files.",
+    "Update Nostr dependencies to reject forged relay events and oversized encrypted messages; preserve native signing and encryption compatibility.",
+    "Allow apps to opt in to a validated public-key list of user identities without granting signing access.",
+    "Make transaction filters transparent and horizontally scrollable on mobile.",
+    "Keep Immich internal services out of My Apps, avoid false recovery states for healthy stacks, and allow removal of retired catalog apps.",
+    "Repair the redundant managed Portainer network override that can prevent startup, preserving custom overrides and persistent state.",
+    "Offer Standard, Medium, Fast and custom fees when cooperatively closing Lightning channels.",
+    "Add a clear-search icon to My Apps, Services and the App Store on desktop and mobile.",
+    "Keep Angor Indexer and the optional Angor Relay in the signed app catalog. Full indexing requires a synced, unpruned Bitcoin node and its indexing dependencies.",
+    "Improve the mobile photo/video viewer with persistent action menus, fullscreen controls and companion download support.",
+    "Publish companion 0.5.34/build54 with the existing signing identity and verified phone save/open behavior.",
+    "Known limitation: Angor historical project discovery is incomplete. Funding data for 35 reference projects was verified, but 34 original project announcements remain unavailable from the relays checked; recovery is tracked separately."
+  ],
+  "components": [
+    {
+      "current_version": "1.9.0-alpha",
+      "download_url": "https://source.archipelago-foundation.org/lfg2025/archy/releases/download/v1.9.0-alpha/archipelago",
+      "name": "archipelago",
+      "new_version": "1.9.0-alpha",
+      "sha256": "560aa6006cd9ef8be95b1f7831cf3b53854e911622b50022bb4402ce0f8b010a",
+      "size_bytes": 66475120
+    },
+    {
+      "current_version": "1.9.0-alpha",
+      "download_url": "https://source.archipelago-foundation.org/lfg2025/archy/releases/download/v1.9.0-alpha/archipelago-frontend-1.9.0-alpha.tar.gz",
+      "name": "archipelago-frontend-1.9.0-alpha.tar.gz",
+      "new_version": "1.9.0-alpha",
+      "sha256": "6d5135fa8e79b1bc84c8ed972770ebf99fe6611d819e5c1453f38f1593c26e66",
+      "size_bytes": 106942370
+    }
+  ],
+  "release_date": "2026-10-05",
+  "signature": "695fe223a525bec266ec20da497883c80cad05a2779003618229cd97cec4477c9054d564ad4aef938d0c7872b42ae112d8b04406413bced43dd007eaf865e707",
+  "signed_by": "did:key:z6Mkfu5LT8d4DjETtrkATvHh9Dvcbnr7zBCUwfau8Sw7DLWT",
+  "version": "1.9.0-alpha"
+}
