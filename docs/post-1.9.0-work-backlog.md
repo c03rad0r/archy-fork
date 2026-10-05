@@ -262,6 +262,28 @@ ahead of that work or as an untested addition to the current release.
   from node-only demo to proper public app release without duplicate app IDs,
   conflicting state, lost configuration or automatic exposure before approval.
 
+### V4V persistent playback and existing demo music catalog
+
+- Use the demo song catalog from the existing V4V Portainer demo in the Gitea
+  repository identified above. Inspect its actual catalog configuration and media
+  sources; preserve artist attribution and payment destinations. Do not substitute
+  an invented catalog or copy credentials into public app configuration.
+- Integrate V4V with the local player bar: leaving or closing the app view must
+  retain playback, expose track information and playback controls, and offer a
+  button to reopen V4V at the same track and position without restarting playback.
+  Explicit stop remains available. This concerns closing the app view; operating
+  system termination/background restrictions require separate qualification.
+- Inspect supported app/player integration before choosing an implementation.
+  Maintain one playback session, prevent duplicate audio on reopen, authenticate
+  app-to-shell messages, and preserve the requirement of no native Nostr signer.
+- Test navigation, repeated close/reopen, pause/resume/seek, track changes,
+  disconnect/recovery and unavailable media on desktop and the actual companion.
+  Check track, queue and position continuity, accessible compact controls and
+  mobile background behavior. Record platform limitations rather than promising
+  playback after an operating system terminates the app.
+- Keep catalog and player integration within the Yaya-only demo scope until
+  separately approved for general release.
+
 ## 14. FIPS media transport requirement
 
 - Operator explicitly requires FIPS for streaming peer files and distributed

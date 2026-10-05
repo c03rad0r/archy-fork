@@ -151,18 +151,22 @@
           },
           "category": "money",
           "container": {
-            "image": "source.archipelago-foundation.org/chaum/angor-indexer:1.0.1",
+            "image": "source.archipelago-foundation.org/chaum/angor-indexer:1.0.2",
             "network": "archy-net",
             "pull_policy": "if-not-present"
           },
           "dependencies": [
+            {
+              "app_id": "mempool",
+              "version": ">=3.0.0"
+            },
             {
               "app_id": "mempool-api",
               "version": ">=3.0.0"
             },
             "bitcoin:archival"
           ],
-          "description": "Headless Bitcoin indexer endpoint for Angor. Reuses this node’s Mempool and Electrum index; requires a synced, unpruned Bitcoin node. Add this service’s address as the custom indexer in Angor settings. A relay is optional and installed separately.",
+          "description": "Bitcoin indexer endpoint for Angor with the existing Mempool explorer. Reuses this node’s Mempool and Electrum index; requires a synced, unpruned Bitcoin node. Add this service’s address as the custom indexer in Angor settings. A relay is optional and installed separately.",
           "health_check": {
             "endpoint": "http://127.0.0.1:8080",
             "interval": "30s",
@@ -173,11 +177,12 @@
           },
           "id": "angor-indexer",
           "install_prerequisites": [
+            "mempool",
             "mempool-api"
           ],
           "interfaces": {
             "main": {
-              "description": "Use this origin as Angor’s custom mainnet indexer URL. HTTPS is required for browser clients.",
+              "description": "Use this origin as Angor’s custom mainnet indexer URL, or open it to view the existing Mempool explorer. HTTPS is required for browser clients.",
               "name": "Angor Indexer API",
               "path": "/",
               "port": 8998,
@@ -188,6 +193,7 @@
           "metadata": {
             "features": [
               "Angor mainnet API",
+              "Mempool explorer on the same origin",
               "Reuses existing Mempool indexing",
               "No separate blockchain database",
               "Optional independent relay"
@@ -223,10 +229,10 @@
             "kind": "github",
             "repo": "block-core/angor"
           },
-          "version": "1.0.1"
+          "version": "1.0.2"
         }
       },
-      "version": "1.0.1"
+      "version": "1.0.2"
     },
     "angor-relay": {
       "manifest": {
@@ -4495,6 +4501,120 @@
           ]
         }
       },
+      "manifest_variants": [
+        {
+          "manifest": {
+            "app": {
+              "backup_before_runtime_change": true,
+              "container": {
+                "image": "source.archipelago-foundation.org/lfg2025/nginx-proxy-manager@sha256:8b91afcca90f5f2a7b2b8937999824f623c8a8748ae8013a1c9bf94f62177f08",
+                "network": "slirp4netns:allow_host_loopback=true,cidr=169.254.1.0/24",
+                "pull_policy": "if-not-present"
+              },
+              "dependencies": [
+                {
+                  "storage": "1Gi"
+                }
+              ],
+              "description": "Reverse proxy with SSL. Beautiful web interface for managing proxies. The node's public web server forwards configured domains through this service, preserving its access lists, certificates and custom routes.",
+              "environment": [],
+              "health_check": {
+                "endpoint": "http://127.0.0.1:81/api/",
+                "interval": "30s",
+                "retries": 3,
+                "timeout": "5s",
+                "type": "http"
+              },
+              "id": "nginx-proxy-manager",
+              "interfaces": {
+                "main": {
+                  "description": "Nginx Proxy Manager admin interface",
+                  "name": "Admin UI",
+                  "path": "/",
+                  "port": 8081,
+                  "protocol": "http",
+                  "type": "ui"
+                }
+              },
+              "metadata": {
+                "author": "Nginx Proxy Manager",
+                "category": "networking",
+                "icon": "/assets/img/app-icons/nginx.svg",
+                "repo": "https://github.com/NginxProxyManager/nginx-proxy-manager",
+                "tier": "optional"
+              },
+              "name": "Nginx Proxy Manager",
+              "ports": [
+                {
+                  "auth": "open",
+                  "auth_rationale": "Nginx Proxy Manager enforces its own admin account on every page; the initial setup wizard also has to answer before any account exists.",
+                  "bind": "127.0.0.1",
+                  "container": 81,
+                  "host": 8081,
+                  "protocol": "tcp"
+                },
+                {
+                  "auth": "local",
+                  "bind": "127.0.0.1",
+                  "container": 80,
+                  "host": 8088,
+                  "protocol": "tcp"
+                },
+                {
+                  "auth": "local",
+                  "bind": "127.0.0.1",
+                  "container": 443,
+                  "host": 8444,
+                  "protocol": "tcp"
+                }
+              ],
+              "resources": {
+                "disk_limit": "1Gi",
+                "memory_limit": "512Mi"
+              },
+              "security": {
+                "capabilities": [
+                  "CHOWN",
+                  "SETUID",
+                  "SETGID",
+                  "DAC_OVERRIDE",
+                  "NET_BIND_SERVICE"
+                ],
+                "network_policy": "isolated",
+                "no_new_privileges": true,
+                "readonly_root": false
+              },
+              "upstream": {
+                "kind": "github",
+                "repo": "NginxProxyManager/nginx-proxy-manager"
+              },
+              "version": "2.14.0",
+              "volumes": [
+                {
+                  "options": [
+                    "rw"
+                  ],
+                  "source": "/var/lib/archipelago/nginx-proxy-manager",
+                  "target": "/data",
+                  "type": "bind"
+                },
+                {
+                  "options": [
+                    "rw"
+                  ],
+                  "source": "/var/lib/archipelago/nginx-proxy-manager/letsencrypt",
+                  "target": "/etc/letsencrypt",
+                  "type": "bind"
+                }
+              ]
+            }
+          },
+          "requires": [
+            "runtime-migration-backup-v1",
+            "npm-legacy-host-gateway-v1"
+          ]
+        }
+      ],
       "version": "latest"
     },
     "nostr-rs-relay": {
@@ -5958,7 +6078,7 @@
     "tag": "NOSTR IDENTITY // YOUR NODE"
   },
   "schema": 1,
-  "signature": "66b78a5bc60992222b01ae901c5f4a40802667332a5ae47bdad7f34e149669261012ff6fd543478a4f318e850b0339be497af71a50266d829395a872ad386704",
+  "signature": "1befe88b57e8b73728ceab79ff1989091372a149ce47ff9c9a8555e7a8cd7f537971a11b78b7fc56fd6b3d88fab1aadea13cc66577f4e10aa782e1dab620da06",
   "signed_by": "did:key:z6Mkfu5LT8d4DjETtrkATvHh9Dvcbnr7zBCUwfau8Sw7DLWT",
   "storefront": {
     "popular": [
@@ -5984,5 +6104,5 @@
       }
     ]
   },
-  "updated": "2026-09-30"
+  "updated": "2026-10-05"
 }

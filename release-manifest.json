@@ -1,46 +1,49 @@
 {
   "changelog": [
-    "Fixed Nginx Proxy Manager launch readiness choosing a proxy listener instead of its admin port after container recreation.",
-    "Network diagnostic failures no longer stop all apps or rebuild shared container networking.",
-    "Prevented orphaned companion dashboards from repeatedly reinstalling themselves after their backend app was removed.",
-    "Fixed companion dashboard builds still referencing a retired image registry.",
-    "Fixed Angor Indexer health checks choosing IPv6 localhost for an IPv4 listener and unnecessarily restarting the working service.",
-    "Prevented false app restarts by probing each published port at its actual bind address; Nginx Proxy Manager now checks its internal admin API.",
-    "Added a backed-up migration for the recognized legacy Nginx Proxy Manager tunnel/LND port conflict in both OTA and ISO startup paths.",
-    "Checked Bitcoin and Electrum companion dashboards instead of backend protocol ports, preserving dashboard access during initial sync.",
-    "Removed web-interface waiting messages from headless services such as Phoenixd and clarified which interface is unavailable for launchable apps.",
-    "Finished runtime app-file promotion before manifest loading, preventing startup catalog refresh from forgetting disk-only apps.",
-    "Named the app in compact readiness messages and kept app-card actions aligned at the bottom.",
-    "Removed duplicate Mempool cards caused by frontend container aliases in restored inventory.",
-    "Kept installed apps visible through restarts and hard refreshes, and delayed app launches until their web interface is ready.",
-    "Made Bitcoin version selection readable and usable in the ThinkPad kiosk, above the pruning settings.",
-    "Restored GitWorkshop build files in installation/update payloads and made slow image-pull progress clearer.",
-    "Fixed same-node Gitea access from Portainer, with persistent runtime migration, state backups and recovery after failed restarts.",
-    "Preserved Gitea configuration and SSH operation during fresh setup and upgrades.",
-    "Improved paid-file delivery, saved-file permissions and repeat-download compatibility; verified Tor-only payment with change, rejection refunds and free repeat downloads.",
-    "Added a headless Angor Indexer service using the existing Mempool/ElectrumX stack, and an optional separate Angor relay.",
-    "Prevented manifest command arguments containing apostrophes from being corrupted in generated services."
+    "Keep Cuprate and NetBird supporting components out of app listings and consolidate BTCPay Server under Commerce.",
+    "Default on-chain sends, channel opens and cooperative closes to a dynamic next-block fee target, preserving explicit slower and custom choices.",
+    "Add reviewed fee-bump quotes, explicit budgets and durable operation tracking for supported wallet transactions.",
+    "Preserve Nginx Proxy Manager storage, same-node upstream connectivity, certificates and access controls through managed migrations.",
+    "Restrict public management access while retaining configured public apps and ACME certificate validation.",
+    "Serve the Mempool explorer on the Angor indexer origin alongside its API.",
+    "Include the self-contained LoRa flashing tool and explicit board selection in update and installer payloads.",
+    "Preserve paid-file Lightning entitlements across restarts and recover settled invoices from LND. Retry delivery without paying again and retain purchased files in the owned cache.",
+    "Return explicit payment-status errors with safe retry guidance when verification is unavailable.",
+    "Keep upload progress on its original screen, show completion there or notify on other screens, and cancel active and queued uploads.",
+    "Resume interrupted uploads while the app remains open, preserve the original destination, and verify saved file contents before reporting completion.",
+    "Provision a unique private File Browser login on each node while keeping Cloud sign-in automatic and preserving existing accounts and files.",
+    "Update Nostr dependencies to reject forged relay events and oversized encrypted messages; preserve native signing and encryption compatibility.",
+    "Allow apps to opt in to a validated public-key list of user identities without granting signing access.",
+    "Make transaction filters transparent and horizontally scrollable on mobile.",
+    "Keep Immich internal services out of My Apps, avoid false recovery states for healthy stacks, and allow removal of retired catalog apps.",
+    "Repair the redundant managed Portainer network override that can prevent startup, preserving custom overrides and persistent state.",
+    "Offer Standard, Medium, Fast and custom fees when cooperatively closing Lightning channels.",
+    "Add a clear-search icon to My Apps, Services and the App Store on desktop and mobile.",
+    "Keep Angor Indexer and the optional Angor Relay in the signed app catalog. Full indexing requires a synced, unpruned Bitcoin node and its indexing dependencies.",
+    "Improve the mobile photo/video viewer with persistent action menus, fullscreen controls and companion download support.",
+    "Publish companion 0.5.34/build54 with the existing signing identity and verified phone save/open behavior.",
+    "Known limitation: Angor historical project discovery is incomplete. Funding data for 35 reference projects was verified, but 34 original project announcements remain unavailable from the relays checked; recovery is tracked separately."
   ],
   "components": [
     {
-      "current_version": "1.8.22-alpha",
-      "download_url": "https://source.archipelago-foundation.org/lfg2025/archy/releases/download/v1.8.22-alpha/archipelago",
+      "current_version": "1.9.0-alpha",
+      "download_url": "https://source.archipelago-foundation.org/lfg2025/archy/releases/download/v1.9.0-alpha/archipelago",
       "name": "archipelago",
-      "new_version": "1.8.22-alpha",
-      "sha256": "e108b78bbbd21cb7d5d47c8d0b7b9b19b63fb0c44678773603202440ec7d6f5b",
-      "size_bytes": 65627704
+      "new_version": "1.9.0-alpha",
+      "sha256": "560aa6006cd9ef8be95b1f7831cf3b53854e911622b50022bb4402ce0f8b010a",
+      "size_bytes": 66475120
     },
     {
-      "current_version": "1.8.22-alpha",
-      "download_url": "https://source.archipelago-foundation.org/lfg2025/archy/releases/download/v1.8.22-alpha/archipelago-frontend-1.8.22-alpha.tar.gz",
-      "name": "archipelago-frontend-1.8.22-alpha.tar.gz",
-      "new_version": "1.8.22-alpha",
-      "sha256": "2da485a2da75ff2fbe4aba52d6f217150e303be43a031723480c9c4ff9d43f41",
-      "size_bytes": 98131119
+      "current_version": "1.9.0-alpha",
+      "download_url": "https://source.archipelago-foundation.org/lfg2025/archy/releases/download/v1.9.0-alpha/archipelago-frontend-1.9.0-alpha.tar.gz",
+      "name": "archipelago-frontend-1.9.0-alpha.tar.gz",
+      "new_version": "1.9.0-alpha",
+      "sha256": "6d5135fa8e79b1bc84c8ed972770ebf99fe6611d819e5c1453f38f1593c26e66",
+      "size_bytes": 106942370
     }
   ],
-  "release_date": "2026-09-30",
-  "signature": "34e9e3902d5960c977b528c4edbb4366ad862f761076755632296840604c8a84ae1bbb503d8d26b2fe7622ca1eccfaa15cb8d23935bcec6dbecdaf6c53f7f50e",
+  "release_date": "2026-10-05",
+  "signature": "695fe223a525bec266ec20da497883c80cad05a2779003618229cd97cec4477c9054d564ad4aef938d0c7872b42ae112d8b04406413bced43dd007eaf865e707",
   "signed_by": "did:key:z6Mkfu5LT8d4DjETtrkATvHh9Dvcbnr7zBCUwfau8Sw7DLWT",
-  "version": "1.8.22-alpha"
+  "version": "1.9.0-alpha"
 }

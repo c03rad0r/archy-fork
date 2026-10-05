@@ -963,3 +963,18 @@ were not independently completed (funded regtest, prior operator purchase/free
 reopen and persisted ownership/file evidence remain separate). Dev Bitcoin is
 still in IBD; live full-chain Angor evidence is from Shorty. Historical discovery
 limitation was explicitly accepted, not relabeled a passing recovery test.
+
+### Public OTA assets verified and metadata promotion
+
+Canonical release proposal5957be8c89cd192308860c194b05bed9f3077093d8284db0350503ec4adbded8
+was marked applied. Local, ngit and Gitea main/tag parity passed; the annotated
+v1.9.0-alpha tag points to7abd04a7. Follow-up FIPS backlog proposal
+6015e09dcaba7004057dadb50b9dc09b5ada8e5cfdfa9be458ded7a0dad5002b
+was also marked applied with exact accepted main mirrored.
+
+Public backend, corrected frontend6d5135fa, signed manifest, signed catalog479f6193
+and companion0.5.34 APK all passed full download byte-count and SHA256 checks:
+`/tmp/archy-190-publish-ota.log`. Public manifest/catalog bytes also match their
+locally verified pinned-root signatures. Promote those exact bytes to the live
+metadata paths; no artifact or signature changed. ISO upload and demo deployment
+are separate ongoing operations, not inferred passed from OTA asset publication.
