@@ -71,15 +71,22 @@ echo "publish-companion-apk: zipalign + sign (v1+v2+v3)…" >&2
   "$SIGNED"
 
 # 4. Verify all three schemes (min-sdk 21 forces the v1 path to be exercised).
-VERIFY="$("$APKSIGNER" verify -v --min-sdk-version 21 "$SIGNED" 2>&1)"
+VERIFY="$("$APKSIGNER" verify -v --min-sdk-version 21 --print-certs "$SIGNED" 2>&1)"
 for scheme in "v1 scheme" "v2 scheme" "v3 scheme"; do
-  if ! printf '%s\n' "$VERIFY" | grep -iq "$scheme.*: true"; then
+  if ! grep -iq "$scheme.*: true" <<< "$VERIFY"; then
     echo "publish-companion-apk: ERROR — $scheme NOT present after signing. Aborting." >&2
     printf '%s\n' "$VERIFY" | grep -iE "scheme" >&2
     exit 1
   fi
 done
-echo "publish-companion-apk: verified v1 + v2 + v3 signatures." >&2
+# The existing shared companion identity must survive updates. Verifying a new
+# certificate's mathematical validity alone does not establish upgrade compatibility.
+EXPECTED_SIGNER_SHA256="d622e07e7f474246e8e2bcee828ca9bf6c6cdf9434c065c58fe89bb4eec2664d"
+if ! grep -iq "Signer #1 certificate SHA-256 digest: $EXPECTED_SIGNER_SHA256" <<< "$VERIFY"; then
+  echo "publish-companion-apk: ERROR — signing identity differs from the existing companion. Aborting." >&2
+  exit 1
+fi
+echo "publish-companion-apk: verified v1 + v2 + v3 signatures and existing signer." >&2
 
 # 5. Publish.
 mkdir -p "$(dirname "$DEST")"

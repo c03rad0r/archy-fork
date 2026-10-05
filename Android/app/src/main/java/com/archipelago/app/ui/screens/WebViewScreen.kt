@@ -611,6 +611,8 @@ fun WebViewScreen(
     // before surfacing the error page: the mesh tunnel works from anywhere.
     meshFallbackUrl: String? = null,
 ) {
+    val fullscreen = rememberWebViewFullscreen()
+    val downloads = rememberWebViewDownloads()
     var isLoading by remember { mutableStateOf(true) }
     // First kiosk load (often over the FIPS mesh) gets the full branded
     // loader; later navigations keep just the slim top progress bar.
@@ -913,6 +915,7 @@ fun WebViewScreen(
                         cookieManager.setAcceptThirdPartyCookies(this, true)
 
                         applyArchipelagoSettings()
+                        setDownloadListener(downloads)
                         settings.apply {
                             setSupportMultipleWindows(true)  // enables onCreateWindow for window.open
                             // Let JS open windows without a synchronous user-gesture
@@ -1181,6 +1184,12 @@ fun WebViewScreen(
                         }
 
                         webChromeClient = object : WebChromeClient() {
+                            override fun onShowCustomView(view: android.view.View?, callback: CustomViewCallback?) {
+                                fullscreen.show(view, callback)
+                            }
+
+                            override fun onHideCustomView() = fullscreen.hide()
+
                             override fun onProgressChanged(view: WebView?, newProgress: Int) {
                                 loadProgress = newProgress
                             }
@@ -1546,6 +1555,8 @@ private fun InAppBrowser(
     appName: String? = null,
     onClose: () -> Unit,
 ) {
+    val fullscreen = rememberWebViewFullscreen()
+    val downloads = rememberWebViewDownloads()
     val context = LocalContext.current
     // Same-node check across BOTH node addresses (LAN + mesh ULA) — see the
     // kiosk's isSameNode; a mismatch here bounced app links to the browser.
@@ -1643,6 +1654,7 @@ private fun InAppBrowser(
 
                         CookieManager.getInstance().setAcceptThirdPartyCookies(this, true)
                         applyArchipelagoSettings()
+                        setDownloadListener(downloads)
                         // Node apps (BTCPay invoices, LND, Portainer tokens) are
                         // served over plain HTTP too — same dead-clipboard trap.
                         addClipboardBridge()
@@ -1662,6 +1674,12 @@ private fun InAppBrowser(
                         )
 
                         webChromeClient = object : WebChromeClient() {
+                            override fun onShowCustomView(view: android.view.View?, callback: CustomViewCallback?) {
+                                fullscreen.show(view, callback)
+                            }
+
+                            override fun onHideCustomView() = fullscreen.hide()
+
                             override fun onProgressChanged(view: WebView?, newProgress: Int) {
                                 progress = newProgress
                             }

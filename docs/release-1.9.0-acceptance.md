@@ -12,19 +12,18 @@ whenever human acceptance is needed.
 
 ## Current evidence
 
-- Latest alpha backend source: isolated suite 1,681 passed, zero failed,
-  four explicit ignores; separate container runtime suite 82 passed. Optimized
-  build including the Nostr security and File Browser changes is in progress.
-- Frontend: full suite 1,211 passed across 148 files; production UI and AIUI
-  builds passed. Real dev desktop/mobile upload fault injection passes, including
-  interrupted JWT refresh and exact saved-file hashes.
-- Currently deployed backend on dev/yaya SHA256
-  `e218e40f5c16c3d0cc4dc06c0a378c14b56b9087ded5c515b8a48351ceea3bcf`.
-  It includes Nostr/File Browser fixes but predates the alpha version suffix.
-  Private rollback backups exist.
-- Latest deployed UI index SHA256 on dev/yaya
-  `67de835a25db59a483314eff583b809c3468c8529080bfa74c9962e44a6f54f9`.
-  Both served byte checks pass; unrelated production containers stayed unchanged.
+- Alpha backend: isolated suite **1,681 passed**, zero failed, four explicit
+  ignores; separate container runtime suite **82 passed**. Optimized binary
+  SHA256 `a5a6cfc7dcab011963a6f18dc570446b6fa624180d206a108fab27504f4fd41d`
+  is deployed on dev, yaya and Framework with private rollback backups.
+- Frontend: **1,222 passed across 150 files**; production build and real mobile/
+  desktop media/menu checks pass. Dev serves index SHA256
+  `c18b24024a78789fe65c74c5ce27efe2125ae869016ab65e33c5a2680b543f17`.
+  Yaya/Framework still have the preceding qualified upload UI `67de835a…`.
+- Companion **0.5.34/build54**: 12 native tests, clean build, v1/v2/v3 signatures
+  and unchanged signer pass. Viewer and phone download are operator accepted.
+  Dev APK SHA256 `ceb58a7dc5f1398fe84f30255ec9ed79834f5db5f8fbc03eac52e14186fab1a1`.
+  Fleet publication remains part of the final release.
 - NPM corrected gateway/client-IP integration: 23 Python checks and complete
   disposable real-image integration passed. Catalog generator now requires both
   migration-backup and legacy-gateway capabilities; its generator/drift selection
@@ -41,9 +40,10 @@ whenever human acceptance is needed.
 
 - [ ] **NPM:** corrected private signature, dev/yaya selection and yaya override
       retirement now PASS (2026-10-05). Remaining: full boot/OTA/ISO and
-      staging-CA issuance/renewal and full legacy-backend migration/rollback
+      full legacy-backend migration/rollback
       acceptance; retain the completed
-      fresh/nested disposable and actual yaya state-preservation checks.
+      fresh/nested disposable, public staging issuance/forced renewal and actual
+      yaya state-preservation checks.
 - [ ] **Shorty NPM:** shop certificate12/Force SSL are operator accepted and
       independently verified; qualify and apply the manual-route migration. Preserve live
       management containment and current public app routing.
@@ -56,14 +56,14 @@ whenever human acceptance is needed.
       No production spending or channel closure is authorized by this checklist.
 - [ ] **Paid files:** finish buyer restart/outage and updated-seller persistence
       acceptance; preserve atomic ownership and safe retries without repayment.
-- [ ] **Uploads:** prior physical companion flow is operator accepted. New
-      resumable-transfer requirement needs interrupted-network/background
-      recovery acceptance; viewport checks alone are not physical-phone proof.
+- [x] **Uploads:** real dev/yaya interrupted-network, offset recovery, lost
+      replies, hashes, cancellation and compact origin-screen display pass.
+      Physical companion background/reconnect and Framework Cloud flow are
+      operator accepted. Final packaged-artifact checks remain below.
 - [ ] **File Browser credentials:** unique managed login, default-password
       removal, account/file preservation and rollback pass real Podman fixtures
-      including actual Quadlet restart. Deploy/verify dev and yaya, rerun yaya
-      upload tests, qualify Framework's reported auth issue, and verify packaged
-      OTA/ISO startup. Docker behavior is not inferred from Podman fixtures.
+      including actual Quadlet restart. Dev/yaya/Framework migration and Cloud
+      acceptance pass. Remaining: packaged OTA/ISO startup. Docker behavior is not inferred from Podman fixtures.
 - [ ] **Apps:** complete upgrade inventory matrix for installed/stopped/removed/
       restarting/legacy aliases; Immich/retired-app removal and unexpected-service
       identification; Portainer/Gitea migration from actual request namespace.
@@ -517,3 +517,45 @@ reported1.8.8. Existing Docker Compose demo deployment located read-only; do not
 confuse it with Yaya's v4v stack. Update after release, preserving rollback and
 qualifying mock backend compatibility with new Cloud uploads. No demo deployed yet.
 No OTA/catalog/ISO has been published.
+
+## 2026-10-05 additional mobile media and file-action qualification
+
+Operator accepted both physical phone upload recovery and Framework Cloud
+folder/upload/open checks. These manual gates are closed.
+
+A subsequent Cloud screenshot and touch-action report introduced new release
+requirements: safe-area-aware photo/video viewing, separated touch controls,
+fullscreen/exit, permanent translucent file-card actions, and the same actions
+inside the viewer. Source and component tests are in the regression ledger.
+The complete updated frontend suite passes: **1,222 tests in 150 files**.
+Production frontend build passes. Chromium checks cover phone portrait,
+landscape and desktop geometry, native fullscreen, action-menu access while
+fullscreen, video decoding/playback, no accidental preview from a menu tap,
+and cancellation before deletion. The deployed dev box reads the operator's
+actual screenshot and 4K video without changing either file.
+
+The new Android fullscreen callback implementation compiles and its three
+Robolectric lifecycle tests pass with zero failures/errors. It still requires a
+clean APK, signature verification and physical companion acceptance; compilation
+and browser fullscreen do not establish that acceptance. Version 0.5.33/build53
+is reserved for the companion update. No native fullscreen APK published yet.
+
+Final OTA/frontend/ISO checksums and source attribution must be regenerated after
+these additions. Candidate ISO build215 is superseded for publication purposes.
+Previously recorded NPM fleet migration, exact signed OTA/rollback and ISO install
+qualification, full-chain/Angor scope, mirror parity and public-demo requirements
+remain open unless separately closed by direct evidence. No prior publication
+hold is waived by the mobile test results.
+
+### Companion download qualification update
+
+Operator accepted the viewer but reported companion-only download failure.
+Browser download of the same file matches its exact bytes. Added native saving
+through Android's system file picker with authentication, streamed progress,
+cancellation and error cleanup. The clean download/fullscreen suite passes all
+12cases. Canonical clean companion0.5.34/build54 packaging passes v1/v2/v3 and
+existing-signer verification. Dev serving is verified byte-for-byte with SHA256
+`ceb58a7dc5f1398fe84f30255ec9ed79834f5db5f8fbc03eac52e14186fab1a1`.
+The operator reports “works, we can proceed” after the phone save/open/cancel
+check. This physical companion download gate is **accepted (2026-10-05)**. The APK is staged for fleet OTA/ISO and official/demo downloads;
+only the dev-box test download is updated now. No fleet/public release is claimed.

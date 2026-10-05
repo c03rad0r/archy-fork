@@ -11,8 +11,8 @@ android {
         applicationId = "com.archipelago.app"
         minSdk = 26
         targetSdk = 35
-        versionCode = 52
-        versionName = "0.5.32"
+        versionCode = 54
+        versionName = "0.5.34"
 
         vectorDrawables {
             useSupportLibrary = true
@@ -142,6 +142,9 @@ tasks.matching {
 }.configureEach { dependsOn("buildRustArm64") }
 
 dependencies {
+    testImplementation("junit:junit:4.13.2")
+    testImplementation("com.squareup.okhttp3:mockwebserver:4.12.0")
+    testImplementation("org.robolectric:robolectric:4.14.1")
     val composeBom = platform("androidx.compose:compose-bom:2024.05.00")
     implementation(composeBom)
 

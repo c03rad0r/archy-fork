@@ -1425,3 +1425,120 @@ Nostr additions. The checker now rejects stale descriptions/dates for an existin
 version; its regression passes. Latest notes UI built and deployed dev/yaya index
 SHA256 `97aab07e67eccc1bb3d215534b537b83e1372bf5c36b505b6127a24a2b629e23`.
 Phone background/reconnect acceptance question is pending, not passed.
+
+## Mobile Cloud media viewer — 2026-10-05 release addition
+
+Operator screenshot shows the filename behind the companion status bar and a
+cramped video viewer. Confirmed mobile CSS positioned every toolbar button at the
+same coordinates; fullscreen was only attached to a video double-click, and the
+viewer ignored the companion's `--safe-area-top/bottom` values. Legacy global
+lightbox maximum dimensions also constrained the component unexpectedly.
+
+The viewer now reserves separate safe-area-aware title, media and action rows on
+phones, keeps each action at least44px without shrinking, and places previous/next
+beside the action row rather than over the media. Videos retain their intrinsic
+picture ratio with native playback controls. Photos and videos have a labeled
+fullscreen action: standard fullscreen where supported, native Safari video
+fallback, and an expandable in-page viewer when embedded browsers deny it.
+Escape/exit and keyboard focus remain usable. Decode failures offer retry, and
+late media requests cannot replace a newly selected file or leak their blob URL.
+
+Validation:11component tests pass, including existing PiP handoff, fullscreen
+success/denial/Safari fallback, decode retry, fetch ordering and focus restoration.
+Real Chromium checks at320x568,390x844,844x390 and1440x900 pass safe-area/control
+geometry, fullscreen and exit, generated video playback and close. Screenshots
+were inspected. This does not claim physical companion/Safari acceptance.
+Evidence: `/tmp/archy-190-lightbox-focused.log`,
+`/tmp/archy-190-lightbox-browser.log`; repeatable browser fixture
+`tests/lifecycle/media-lightbox-browser.cjs`.
+
+The operator separately accepted both physical phone upload background/reconnect
+and Framework Cloud folder/upload/open checks. Those upload manual gates are
+closed; this newly reported media viewer gate is separate. The ongoing candidate
+ISO and staged OTA predate this addition and must not be published as final;
+regenerate final artifacts and hashes after this fix is qualified.
+
+### Permanent file menus and companion fullscreen follow-up
+
+The operator additionally reported that touch users cannot reach hover-only file
+actions without opening the file. Grid and list cards now have a permanent44px
+translucent ellipsis action, and owned-file lightboxes expose the same menu.
+Share/download/delete are available without opening the underlying file; delete
+requires a separate explicit confirmation. Unsupported actions are omitted for
+non-owned callers. The menu stays within the viewport, participates in native
+fullscreen, traps keyboard focus, dismisses on Escape/outside tap and restores
+focus. Cloud-folder delete failures now remain visible instead of becoming an
+unhandled rejected promise.
+
+Sixteen focused component tests pass. Real Chromium grid/list touch checks pass
+at320,390and1440px, covering permanent visibility, unclipped menus, share and
+cancelled delete with no preview triggered. Lightbox action access also passes
+inside fullscreen at all four prior viewport sizes. The actual deployed dev
+Cloud screenshot and3840x2160video decode successfully (75.633seconds, no media
+error); native Chromium fullscreen/exit/close pass. No operator files changed.
+
+The Android companion has no existing `onShowCustomView` implementation. Added a
+shared fullscreen host to both dashboard and app WebViews: retains the current
+WebView, accepts Chromium's custom view, hides system bars with swipe escape,
+handles Back and Chromium exit, restores prior bars, releases the view on screen
+disposal and rejects duplicate/reparented requests. Kotlin compilation passes.
+Companion version0.5.33/build53 is reserved for this change. Lifecycle tests,
+clean signed APK build and physical companion acceptance remain required; the
+web fallback is not evidence of native Android fullscreen acceptance.
+
+Updated qualification: all **1,222 frontend tests / 150 files** pass, production
+build passes, and the permanent menus are deployed on the dev box. Live browser
+checks pass for real Cloud photo/video decode, card-menu access without preview,
+cancelled deletion, and the viewer's action menu during fullscreen. No files were
+deleted or shared by the tests. Android's three lifecycle tests pass (zero errors
+or failures). The clean APK build initially failed because the expected signing
+keystore was absent. Recovered the existing local key after matching its public
+certificate exactly to the currently served APK; a clean packaging retry is in
+progress. No replacement signing identity was generated, and no private signing
+material is included in this change.
+
+Companion packaging exposed an additional release-script defect: noisy successful
+`apksigner` output caused `printf | grep -q` under `pipefail` to return141/SIGPIPE,
+rejecting an APK whose v1/v2/v3 verification results were all true. The publisher
+now uses input redirection for these checks and additionally pins the existing
+companion certificate, protecting in-place update compatibility. Four executable
+regressions exercise the actual verification block: large valid output, missing
+signature schemes, wrong signer and verifier failure. All pass; the test is
+included in `tests/release/run.sh`. A fresh canonical clean/package/sign run is
+required after this script fix; no failed packaging attempt is marked published.
+
+### Companion download regression — operator report after build53
+
+The operator accepted the improved viewer, then reported Download did nothing,
+confirmed companion-only. Real Chromium downloaded the exact Cloud screenshot
+bytes (202,648 bytes; matching SHA256), so this is separate from the web menu.
+Both companion WebViews lack a general DownloadListener. Added a shared native
+Save dialog/download handler, with bounded streaming, existing WebView cookies,
+progress, cancellation and deletion of the newly created incomplete destination
+on failure. Redirects retain cookies only for the starting origin, HTTPS
+downgrades are rejected, and authentication/login-page failures do not save an
+error page as the user's file. TLS verification stays enabled. No broad storage
+permission is introduced. Blob/data URLs currently report unsupported instead of
+silently doing nothing; own Cloud files use authenticated HTTP(S) raw URLs.
+
+Companion0.5.34/build54 is reserved for this repair. Compile, network regression
+suite, canonical clean signing, dev deployment and a real phone download remain
+required. Build53 must not be described as having working companion downloads.
+The existing fullscreen suite also passed its Android28+35 matrix: six cases,
+zero failures/errors. No release or APK fleet publication has occurred.
+
+Download validation update: the sequential clean Android build and all12tests
+pass (six network-download cases plus six fullscreen lifecycle cases across
+Android28/35). Tests cover exact authenticated bytes/progress, same-origin versus
+cross-origin redirects, bounded redirects, unsupported URLs, auth failure,
+cancellation, destination failure, TLS downgrade refusal and login HTML rejection.
+XML evidence was preserved before packaging in
+`/tmp/archy-190-companion-download-test-results/`. The canonical clean0.5.34/build54
+APK package passes v1/v2/v3 verification and the existing signing-certificate pin;
+the APK contains the new download handler. Fleet publication remains held pending
+physical save/open acceptance and the existing release gates.
+
+2026-10-05 operator acceptance: companion0.5.34/build54 phone download check
+(save/open/cancel) accepted: “works, we can proceed”. Viewer and physical upload
+acceptance retained. Close this manual gate; other release/security/Angor gates
+remain open. No fleet OTA, ISO or public demo publication inferred.

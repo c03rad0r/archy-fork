@@ -4,7 +4,8 @@
       <div
         v-if="show"
         class="lightbox-backdrop"
-        :class="{ 'lightbox-pip-handoff': pipHandoff }"
+        :class="{ 'lightbox-pip-handoff': pipHandoff, 'lightbox-expanded': expanded }"
+        role="dialog" aria-modal="true" aria-label="Media viewer"
         @click.self="close"
         @keydown="onKeydown"
         tabindex="0"
@@ -12,17 +13,27 @@
       >
         <!-- Top bar -->
         <div class="lightbox-topbar">
-          <div class="flex items-center gap-3 min-w-0">
-            <span v-if="mediaItems.length > 1" class="text-sm text-white/50">
+          <div class="lightbox-heading">
+            <span v-if="mediaItems.length > 1" class="lightbox-count">
               {{ currentIndex + 1 }} / {{ mediaItems.length }}
             </span>
-            <p class="text-sm text-white/80 truncate">{{ currentItem?.name }}</p>
+            <p class="lightbox-title" :title="currentItem?.name">{{ currentItem?.name }}</p>
           </div>
-          <div class="flex items-center gap-1">
+          <FileActionsMenu v-if="currentItem && (fileActions || downloadUrl)" :name="currentItem.name"
+            :download-href="downloadUrl?.(currentItem.path)" :can-share="fileActions" :can-delete="fileActions"
+            @share="emit('share', currentItem!); close()" @delete="emit('delete', currentItem!); close()" />
+          <div class="lightbox-actions">
+            <button class="lightbox-btn" :aria-label="expanded ? 'Exit fullscreen' : 'Fullscreen'"
+              :title="expanded ? 'Exit fullscreen' : 'Fullscreen'" @click.stop="toggleFullscreen">
+              <svg width="20" height="20" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                <path v-if="!expanded" d="M8 3H3v5m13-5h5v5M3 16v5h5m13-5v5h-5" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
+                <path v-else d="M3 8h5V3m8 0v5h5M8 21v-5H3m13 5v-5h5" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
+              </svg>
+            </button>
             <button
               v-if="pipAvailable && currentItem && isVideoFile(currentItem)"
               class="lightbox-btn"
-              title="Picture-in-picture"
+              title="Picture-in-picture" aria-label="Picture-in-picture"
               @click.stop="togglePip(videoEl)"
             >
               <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -30,7 +41,7 @@
                 <rect x="12" y="12" width="7" height="5" rx="1" stroke-width="2" />
               </svg>
             </button>
-            <button class="lightbox-btn" @click="close">
+            <button class="lightbox-btn" aria-label="Close viewer" title="Close" @click="close">
               <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
               </svg>
@@ -41,7 +52,7 @@
         <!-- Navigation arrows -->
         <button
           v-if="mediaItems.length > 1"
-          class="lightbox-nav lightbox-nav-prev"
+          class="lightbox-nav lightbox-nav-prev" aria-label="Previous file"
           @click.stop="prev"
         >
           <svg class="w-7 h-7" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -50,7 +61,7 @@
         </button>
         <button
           v-if="mediaItems.length > 1"
-          class="lightbox-nav lightbox-nav-next"
+          class="lightbox-nav lightbox-nav-next" aria-label="Next file"
           @click.stop="next"
         >
           <svg class="w-7 h-7" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -67,21 +78,23 @@
 
           <!-- Image -->
           <img
-            v-else-if="currentItem && currentUrl && isImageFile(currentItem)"
+            v-else-if="!mediaError && currentItem && currentUrl && isImageFile(currentItem)"
             :src="currentUrl"
             :alt="currentItem.name"
             class="lightbox-media-img"
+            @dblclick="toggleFullscreen"
             @error="onMediaError"
           />
 
           <!-- Video -->
           <video
-            v-else-if="currentItem && currentUrl && isVideoFile(currentItem)"
+            v-else-if="!mediaError && currentItem && currentUrl && isVideoFile(currentItem)"
             ref="videoEl"
             :src="currentUrl"
             :key="currentUrl"
             class="lightbox-media-video"
             controls
+            playsinline
             autoplay
             @dblclick="toggleFullscreen"
             @error="onMediaError"
@@ -91,7 +104,7 @@
 
           <!-- Audio -->
           <div
-            v-else-if="currentItem && currentUrl && isAudioFile(currentItem)"
+            v-else-if="!mediaError && currentItem && currentUrl && isAudioFile(currentItem)"
             class="lightbox-audio-container"
           >
             <div class="lightbox-audio-artwork">
@@ -115,7 +128,8 @@
             <svg class="w-12 h-12 text-white/20" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-2.5L13.732 4.5c-.77-.833-2.694-.833-3.464 0L3.34 16.5c-.77.833.192 2.5 1.732 2.5z" />
             </svg>
-            <p class="text-white/40 text-sm">Failed to load media</p>
+            <p class="text-white/70 text-sm" role="alert">Unable to load this file.</p>
+            <button class="lightbox-retry" @click="retryMedia">Try again</button>
           </div>
         </div>
       </div>
@@ -128,6 +142,7 @@ import { ref, computed, watch, onUnmounted, nextTick } from 'vue'
 import type { FileBrowserItem } from '@/api/filebrowser-client'
 import { getFileCategory } from '@/composables/useFileType'
 import { isPipSupported, togglePip } from '@/utils/pip'
+import FileActionsMenu from './FileActionsMenu.vue'
 import { usePipSession } from '@/composables/usePipSession'
 
 const props = defineProps<{
@@ -136,10 +151,14 @@ const props = defineProps<{
   show: boolean
   fetchBlobUrl: (path: string) => Promise<string>
   streamUrl?: (path: string) => Promise<string>
+  downloadUrl?: (path: string) => string
+  fileActions?: boolean
 }>()
 
 const emit = defineEmits<{
   close: []
+  share: [item: FileBrowserItem]
+  delete: [item: FileBrowserItem]
 }>()
 
 const currentIndex = ref(0)
@@ -148,6 +167,12 @@ const mediaError = ref(false)
 const currentUrl = ref<string | null>(null)
 const backdropEl = ref<HTMLElement | null>(null)
 const videoEl = ref<HTMLVideoElement | null>(null)
+
+const expanded = ref(false)
+let loadId = 0
+let disposed = false
+let previousFocus: HTMLElement | null = null
+let previousOverflow: string | null = null
 
 const pipAvailable = isPipSupported()
 const pipSession = usePipSession()
@@ -187,49 +212,36 @@ function isAudioFile(item: FileBrowserItem): boolean {
 }
 
 async function loadMedia(item: FileBrowserItem) {
+  const requestId = ++loadId
   loading.value = true
   mediaError.value = false
   currentUrl.value = null
-
   try {
-    const cached = urlCache.get(item.path)
-    if (cached) {
-      currentUrl.value = cached
-    } else {
-      // Use streaming URL for video/audio (avoids downloading entire file into blob)
-      // Use blob URL for images (needed for rendering)
-      const isStreamable = isVideoFile(item) || isAudioFile(item)
-      if (isStreamable && props.streamUrl) {
-        const url = await props.streamUrl(item.path)
-        urlCache.set(item.path, url)
-        currentUrl.value = url
-      } else {
-        const url = await props.fetchBlobUrl(item.path)
-        urlCache.set(item.path, url)
-        currentUrl.value = url
+    let url = urlCache.get(item.path)
+    if (!url) {
+      url = (isVideoFile(item) || isAudioFile(item)) && props.streamUrl
+        ? await props.streamUrl(item.path) : await props.fetchBlobUrl(item.path)
+      if (disposed || requestId !== loadId) {
+        if (url.startsWith('blob:')) URL.revokeObjectURL(url)
+        return
       }
+      urlCache.set(item.path, url)
     }
+    if (requestId === loadId) currentUrl.value = url
   } catch {
-    mediaError.value = true
+    if (requestId === loadId) mediaError.value = true
   } finally {
-    loading.value = false
+    if (requestId === loadId) loading.value = false
   }
 }
 
-function preloadAdjacent() {
-  const items = mediaItems.value
-  if (items.length <= 1) return
-  const prevIdx = (currentIndex.value - 1 + items.length) % items.length
-  const nextIdx = (currentIndex.value + 1) % items.length
-
-  for (const idx of [prevIdx, nextIdx]) {
-    const item = items[idx]
-    if (item && !urlCache.has(item.path) && isImageFile(item)) {
-      props.fetchBlobUrl(item.path).then(url => {
-        urlCache.set(item.path, url)
-      }).catch(() => {})
-    }
-  }
+function retryMedia() {
+  const item = currentItem.value
+  if (!item) return
+  const old = urlCache.get(item.path)
+  if (old?.startsWith('blob:')) URL.revokeObjectURL(old)
+  urlCache.delete(item.path)
+  void loadMedia(item)
 }
 
 function prev() {
@@ -245,6 +257,7 @@ function next() {
 }
 
 function close() {
+  if (document.fullscreenElement === backdropEl.value) void document.exitFullscreen?.().catch(() => {})
   emit('close')
 }
 
@@ -280,14 +293,37 @@ function onLeavePip() {
   pipSession.release()
 }
 
-function toggleFullscreen() {
-  const el = videoEl.value
-  if (!el) return
-  if (document.fullscreenElement) {
-    document.exitFullscreen()
-  } else {
-    el.requestFullscreen().catch(() => {})
+type SafariVideo = HTMLVideoElement & { webkitEnterFullscreen?: () => void }
+async function toggleFullscreen() {
+  if (document.fullscreenElement === backdropEl.value) {
+    try { await document.exitFullscreen() } catch { /* Keep the exit control available. */ }
+    return
   }
+  if (expanded.value) { expanded.value = false; return }
+  const el = backdropEl.value
+  if (!el) return
+  try {
+    if (el.requestFullscreen) {
+      await el.requestFullscreen()
+      expanded.value = true
+      return
+    }
+    const video = videoEl.value as SafariVideo | null
+    if (video?.webkitEnterFullscreen) { video.webkitEnterFullscreen(); return }
+  } catch { /* Embedded browsers may deny native fullscreen; expand in-place. */ }
+  expanded.value = true
+}
+
+function fullscreenChanged() {
+  expanded.value = document.fullscreenElement === backdropEl.value
+}
+
+function restorePage() {
+  if (previousOverflow !== null) document.body.style.overflow = previousOverflow
+  previousOverflow = null
+  previousFocus?.focus()
+  previousFocus = null
+  document.removeEventListener('fullscreenchange', fullscreenChanged)
 }
 
 function onMediaError() {
@@ -296,33 +332,47 @@ function onMediaError() {
 }
 
 function onKeydown(e: KeyboardEvent) {
-  if (e.key === 'Escape') { e.preventDefault(); close() }
-  else if (e.key === 'ArrowLeft') { e.preventDefault(); prev() }
-  else if (e.key === 'ArrowRight') { e.preventDefault(); next() }
-}
-
-watch(currentItem, (item) => {
-  if (item) {
-    loadMedia(item)
-    preloadAdjacent()
+  if (e.key === 'Escape') {
+    e.preventDefault()
+    if (expanded.value) void toggleFullscreen()
+    else close()
+  } else if (e.key === 'Tab') {
+    const controls = Array.from(backdropEl.value?.querySelectorAll<HTMLElement>('button:not(:disabled), video[controls], audio[controls]') ?? [])
+    const first = controls[0], last = controls[controls.length - 1]
+    if (e.shiftKey && (document.activeElement === first || document.activeElement === backdropEl.value)) { e.preventDefault(); last?.focus() }
+    else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first?.focus() }
+  } else if (!(e.target instanceof HTMLMediaElement)) {
+    if (e.key === 'ArrowLeft') { e.preventDefault(); prev() }
+    else if (e.key === 'ArrowRight') { e.preventDefault(); next() }
   }
-})
+}
 
 watch(() => props.show, async (visible) => {
   if (visible) {
     pipHandoff.value = false
-    currentIndex.value = props.startIndex
-    const item = mediaItems.value[props.startIndex]
-    if (item) {
-      await loadMedia(item)
-      preloadAdjacent()
-    }
+    expanded.value = false
+    previousFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null
+    previousOverflow = document.body.style.overflow
+    document.body.style.overflow = 'hidden'
+    document.addEventListener('fullscreenchange', fullscreenChanged)
+    currentIndex.value = Math.max(0, Math.min(props.startIndex, mediaItems.value.length - 1))
     await nextTick()
     backdropEl.value?.focus()
+  } else {
+    ++loadId
+    restorePage()
   }
 }, { immediate: true })
 
+watch([currentItem, () => props.show], ([item, visible]) => {
+  if (visible && item) void loadMedia(item)
+}, { immediate: true })
+
 onUnmounted(() => {
+  disposed = true
+  ++loadId
+  if (handoffTimer) clearTimeout(handoffTimer)
+  restorePage()
   for (const url of urlCache.values()) {
     URL.revokeObjectURL(url)
   }
@@ -334,7 +384,10 @@ onUnmounted(() => {
 .lightbox-backdrop {
   position: fixed;
   inset: 0;
-  z-index: 60;
+  z-index: 4000;
+  height: 100dvh;
+  overflow: hidden;
+  overscroll-behavior: contain;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -352,14 +405,23 @@ onUnmounted(() => {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 1rem 1.5rem;
+  gap: 1rem;
+  padding: calc(var(--safe-area-top, env(safe-area-inset-top, 0px)) + 12px) max(16px, env(safe-area-inset-right, 0px)) 12px max(16px, env(safe-area-inset-left, 0px));
   background: linear-gradient(to bottom, rgba(0,0,0,0.6) 0%, transparent 100%);
   z-index: 10;
 }
 
+.lightbox-heading { flex: 1; display: flex; align-items: center; gap: 12px; min-width: 0; }
+.lightbox-title { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; color: #eee; font-size: 14px; }
+.lightbox-count { flex: none; font-size: 12px; color: #aaa; font-variant-numeric: tabular-nums; }
+.lightbox-actions { display: flex; flex: none; gap: 8px; }
+.lightbox-btn:focus-visible, .lightbox-nav:focus-visible, .lightbox-retry:focus-visible { outline: 2px solid white; outline-offset: 3px; }
+.lightbox-retry { padding: 12px 20px; border-radius: 24px; background: #292929; color: white; }
 .lightbox-btn {
-  width: 2.5rem;
-  height: 2.5rem;
+  width: 44px;
+  height: 44px;
+  flex: 0 0 44px;
+  padding: 0;
   border-radius: 50%;
   display: flex;
   align-items: center;
@@ -410,7 +472,11 @@ onUnmounted(() => {
   justify-content: center;
   width: 100%;
   height: 100%;
-  padding: 3.5rem 1rem;
+  max-width: none;
+  max-height: none;
+  min-height: 0;
+  box-sizing: border-box;
+  padding: calc(var(--safe-area-top, env(safe-area-inset-top, 0px)) + 76px) 76px calc(var(--safe-area-bottom, env(safe-area-inset-bottom, 0px)) + 16px);
 }
 
 .lightbox-media-img {
@@ -423,7 +489,8 @@ onUnmounted(() => {
 
 .lightbox-media-video {
   width: 100%;
-  height: 100%;
+  height: auto;
+  max-height: 100%;
   object-fit: contain;
   border-radius: 0;
   background: black;
@@ -501,28 +568,33 @@ onUnmounted(() => {
   }
 }
 
-/* Mobile */
-@media (max-width: 768px) {
-  .lightbox-content { padding: 3rem 0; }
-  .lightbox-nav { width: 2.5rem; height: 2.5rem; }
-  .lightbox-nav-prev { left: 0.5rem; }
-  .lightbox-nav-next { right: 0.5rem; }
-  .lightbox-audio-artwork { width: 8rem; height: 8rem; }
-  .lightbox-media-video { border-radius: 0; }
-
-  /* The close button used to sit in the top bar, which lands under the
-     status bar / notch safe area on most phones and is awkward to reach.
-     Detach it from the top bar and pin it bottom-center, under the media,
-     for mobile only — desktop keeps it in the top bar. */
-  .lightbox-topbar { padding-right: 1rem; }
-  .lightbox-topbar .lightbox-btn {
+/* Mobile controls have their own safe-area row, never covering video controls. */
+@media (max-width: 768px), (max-height: 500px) and (pointer: coarse) {
+  .lightbox-topbar { padding-bottom: 8px; }
+  .lightbox-heading { flex: 1; }
+  .lightbox-actions {
     position: fixed;
-    top: auto;
-    bottom: calc(env(safe-area-inset-bottom, 0px) + 1rem);
+    bottom: calc(var(--safe-area-bottom, env(safe-area-inset-bottom, 0px)) + 12px);
     left: 50%;
-    right: auto;
     transform: translateX(-50%);
-    z-index: 20;
+    gap: 8px;
   }
+  .lightbox-content {
+    padding: calc(var(--safe-area-top, env(safe-area-inset-top, 0px)) + 48px) max(8px, env(safe-area-inset-right, 0px)) calc(var(--safe-area-bottom, env(safe-area-inset-bottom, 0px)) + 72px) max(8px, env(safe-area-inset-left, 0px));
+  }
+  .lightbox-nav {
+    top: auto;
+    bottom: calc(var(--safe-area-bottom, env(safe-area-inset-bottom, 0px)) + 12px);
+    transform: none;
+    width: 44px; height: 44px; padding: 0;
+  }
+  .lightbox-nav-prev { left: max(12px, env(safe-area-inset-left, 0px)); }
+  .lightbox-nav-next { right: max(12px, env(safe-area-inset-right, 0px)); }
+  .lightbox-audio-artwork { width: 8rem; height: 8rem; }
+}
+.lightbox-expanded .lightbox-content { padding-top: var(--safe-area-top, env(safe-area-inset-top, 0px)); }
+.lightbox-expanded .lightbox-heading { visibility: hidden; }
+@media (prefers-reduced-motion: reduce) {
+  .lightbox-fade-enter-active, .lightbox-fade-leave-active { transition: none; }
 }
 </style>

@@ -130,6 +130,8 @@
       />
     </div>
 
+    <p v-if="actionError" role="alert" class="alert-error mt-3">{{ actionError }}</p>
+
     <!-- Share Modal -->
     <ShareModal
       v-if="shareTarget"
@@ -148,6 +150,10 @@
       :show="lightboxIndex !== null"
       :fetch-blob-url="cloudStore.fetchBlobUrl"
       :stream-url="cloudStore.streamUrl"
+      :download-url="cloudStore.downloadUrl"
+      file-actions
+      @share="item => handleShare(item.path, item.name, item.isDir)"
+      @delete="item => handleDelete(item.path)"
       @close="lightboxIndex = null"
     />
   </div>
@@ -314,6 +320,7 @@ watch([useNativeUI, section, routeFolderPath], async ([native, sec, path]) => {
   }
 }, { immediate: true })
 
+const actionError = ref<string | null>(null)
 const shareTarget = ref<{ path: string; name: string; isDir: boolean } | null>(null)
 const lightboxIndex = ref<number | null>(null)
 
@@ -370,7 +377,9 @@ async function handleUpload(files: File[]) {
 }
 
 async function handleDelete(path: string) {
-  await cloudStore.deleteItem(path)
+  actionError.value = null
+  try { await cloudStore.deleteItem(path) }
+  catch (error) { actionError.value = error instanceof Error ? error.message : 'Unable to delete this file. Please try again.' }
 }
 
 async function handlePlay(path: string, name: string) {

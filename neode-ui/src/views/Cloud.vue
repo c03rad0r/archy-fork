@@ -415,6 +415,10 @@
       :show="lightboxIndex !== null"
       :fetch-blob-url="cloudStore.fetchBlobUrl"
       :stream-url="cloudStore.streamUrl"
+      :download-url="cloudStore.downloadUrl"
+      file-actions
+      @share="item => handleShare(item.path, item.name, item.isDir)"
+      @delete="item => handleDelete(item.path)"
       @close="lightboxIndex = null"
     />
 
