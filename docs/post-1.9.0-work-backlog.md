@@ -388,13 +388,14 @@ cover startup migration, hostname regeneration, first boot and explicit rotation
 tests pass. Exact operator hostname/app, trusted TLS and companion acceptance
 remain open. See `docs/https-app-gate-followup-20261006.md`.
 
-## 18. Firewall and tunnel UI/settings — latest addition, last in sequence
+## 18. Firewall and tunnel UI/settings
 
 Status: handover read and acknowledged on6October; implementation pending.
 The private handover and acknowledgement live in the separate mining review
 checkout. Do not commit its deployment addresses or operational details here.
 
-- Keep this task at the end, after the previously deferred MeshCore work.
+- Keep this task after the previously deferred MeshCore work. The subsequent
+  connection UX additions below follow all other tasks and their acceptance.
 - Network → Local network: make the Firewall Active row clickable and add a
   bottom-anchored Firewall & tunnels button. Both open one central settings
   screen; app pages may link to it, but are not the primary configuration UI.
@@ -419,3 +420,36 @@ checkout. Do not commit its deployment addresses or operational details here.
   as requested, while retaining repository regression and release requirements.
 - Review and integrate once through ngit, preserve the already integrated mining
   work, and mirror accepted commits to Gitea. No release gate is waived.
+
+## Deferred expansion of tasks 3/6: connection UX and final functional review
+
+Operator sequencing on6October: finish all other tasks, related deployments,
+tests, app deployments and UAT first. Then perform this expansion and the final
+functional/UX review. These are additions to existing groups, not closed work.
+
+- Distinguish peer relationships from federation membership in labels, actions
+  and removal confirmations, including nodes with both relationships. Remove only
+  the selected relationship; describe exactly what changed.
+- Anchor removal buttons at card bottoms. Show an immediate per-action spinner,
+  prevent duplicate submissions, and show an accurate completion/error toast.
+- Measure and reduce removal latency. Verify whether an authenticated existing
+  FIPS connection is preferred; implement that priority where supported, with
+  bounded fallback and no weakening of identity or authorization checks.
+- Hide rejected, expired and otherwise resolved Nostr requests from actionable
+  lists. Prevent relay replay or stale refresh results from resurrecting them;
+  retain any history needed for diagnostics separately.
+- Give incoming peer requests useful notifications linking directly to the
+  correct Federation/Peers request and its accept/reject actions.
+- Update relationship, request, availability and operation states automatically
+  across screens without routine manual sync. Handle reconnect, missed events,
+  out-of-order replies and failed refreshes without invented success states.
+- When a request changes the 3D map layout, rotate its node to the front, top
+  centre and clearly expose the request action. Cover multiple requests,
+  completion, user camera interaction, reduced motion and mobile viewports.
+- Review complete desktop/mobile connection flows after the other work passes:
+  put useful node capabilities and actions first, reduce unnecessary navigation
+  and scrolling, and assess direct links to permitted peer Cloud files. Preserve
+  the design system, trust boundaries and meaningful loading/error feedback.
+- Qualify real reciprocal removal/requests, offline and reconnect behavior,
+  duplicate/replayed events, automatic UI convergence, notifications/deep links,
+  map positioning and responsive card geometry before claiming acceptance.

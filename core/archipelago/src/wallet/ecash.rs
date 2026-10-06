@@ -801,6 +801,128 @@ pub async fn send_token_at(data_dir: &Path, mint_url: &str, amount_sats: u64) ->
     send_token_at_locked(data_dir, mint_url, amount_sats).await
 }
 
+/// Prepare one immutable caller-owned payment. Callers must persist and reuse
+/// the operation ID and context hash; a fresh ID is a different payment.
+/// This does not authorize delivery or replace the seller's settlement receipt.
+pub async fn send_token_recoverable(
+    data_dir: &Path,
+    operation_id: &str,
+    network: EcashNetwork,
+    mint_url: &str,
+    amount_sats: u64,
+    context_hash: &str,
+) -> Result<String> {
+    use super::send_journal::{Binding, Journal, Outcome, Phase, Request};
+    let held = super::mutation::guard(data_dir).await?;
+    anyhow::ensure!(
+        load_network(data_dir).await? == network,
+        "Switch back to the payment's original network before recovering it"
+    );
+    let binding = Binding {
+        id: operation_id.into(),
+        network,
+        mint_url: mint_url.into(),
+        amount_sats,
+        context_hash: context_hash.into(),
+    };
+    let journal = Journal::new(&held);
+    let previous = journal.load(operation_id).await?;
+    let recovering = previous.is_some();
+    let record = if let Some(record) = previous {
+        anyhow::ensure!(
+            record.binding == binding,
+            "Payment operation terms changed; no new spend allowed"
+        );
+        record
+    } else {
+        anyhow::ensure!(amount_sats > 0, "Payment amount must be positive");
+        let wallet = load_wallet(data_dir).await?;
+        let (indices, excess) = wallet
+            .select_proofs(&binding.mint_url, amount_sats)
+            .context("Insufficient spendable balance for this payment")?;
+        let proofs: Vec<_> = indices
+            .iter()
+            .map(|&index| wallet.proofs[index].proof.clone())
+            .collect();
+        let request = if excess == 0 {
+            Request::Exact { proofs }
+        } else {
+            let mut denominations = amount_to_denominations(amount_sats);
+            denominations.extend(amount_to_denominations(excess));
+            let prepared = mint_client(data_dir, &binding.mint_url)
+                .await?
+                .prepare_swap_at_least(&proofs, &denominations, amount_sats)
+                .await?;
+            Request::Swap(prepared)
+        };
+        journal.prepare(binding.clone(), request).await?
+    };
+    if matches!(record.phase, Phase::Result(_) | Phase::Committed(_)) {
+        return journal.commit_wallet(&binding).await;
+    }
+    journal.reserve_wallet(&binding).await?;
+    let (send, change) = match &record.request {
+        Request::Exact { proofs } => (proofs.clone(), vec![]),
+        Request::Swap(prepared) => {
+            // All recovery material is already durable. Do not derive new
+            // outputs or release reservations after an ambiguous response.
+            let client = MintClient::new(&binding.mint_url)?;
+            let restored = if recovering {
+                client.restore_prepared_swap(prepared).await.map_err(|_| {
+                    anyhow::anyhow!("Could not recover this payment yet; its funds remain reserved")
+                })?
+            } else {
+                None
+            };
+            let result = if let Some(restored) = restored {
+                restored
+            } else {
+                if recovering {
+                    let states = client.check_state(prepared.inputs()).await.map_err(|_| {
+                        anyhow::anyhow!(
+                            "Could not verify this payment's original inputs; do not pay again"
+                        )
+                    })?;
+                    anyhow::ensure!(
+                        states.iter().all(|state| state.state == "UNSPENT"),
+                        "This payment is still pending at the mint; do not pay again"
+                    );
+                }
+                client.execute_prepared_swap(prepared).await.map_err(|_| anyhow::anyhow!(
+                    "The mint did not confirm this payment; retry this same operation to recover it"))?
+            };
+            let mut needed = amount_to_denominations(amount_sats);
+            let mut send = Vec::new();
+            let mut change = Vec::new();
+            for proof in result.new_proofs {
+                if let Some(index) = needed.iter().position(|amount| *amount == proof.amount) {
+                    needed.remove(index);
+                    send.push(proof);
+                } else {
+                    change.push(proof);
+                }
+            }
+            anyhow::ensure!(
+                needed.is_empty(),
+                "Recovered payment is incomplete; do not pay again"
+            );
+            (send, change)
+        }
+    };
+    let token = CashuToken::new(&binding.mint_url, send);
+    let encoded = token.serialize_v4().or_else(|_| token.serialize())?;
+    journal
+        .record_result(
+            &binding,
+            Outcome {
+                token: encoded,
+                change,
+            },
+        )
+        .await?;
+    journal.commit_wallet(&binding).await
+}
+
 async fn send_token_at_locked(data_dir: &Path, mint_url: &str, amount_sats: u64) -> Result<String> {
     let mut wallet = load_wallet(data_dir).await?;
     let mint_url = mint_url.to_string();
@@ -1611,11 +1733,9 @@ pub async fn restore_from_seed(data_dir: &Path, mint_url: &str) -> Result<Restor
         // have found coins beyond where the counter file thought we were —
         // reusing those would mint proofs that collide with existing ones.
         if let Some(highest) = highest_seen {
-            if let Err(e) =
-                super::nut13::advance_counter_to(data_dir, &keyset.id, highest + 1).await
-            {
-                warn!("Could not advance the NUT-13 counter after restore: {e:#}");
-            }
+            super::nut13::advance_counter_to(data_dir, &keyset.id, highest + 1)
+                .await
+                .context("Could not preserve the restored wallet derivation position")?;
         }
     }
 

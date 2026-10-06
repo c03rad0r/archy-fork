@@ -802,10 +802,24 @@ impl<'a> Journal<'a> {
         match &record.request {
             Request::Exact { proofs: expected } => {
                 anyhow::ensure!(
-                    outcome.change.is_empty()
-                        && serde_json::to_value(proofs)? == serde_json::to_value(expected)?,
+                    outcome.change.is_empty() && proofs.len() == expected.len(),
                     "Exact payment result changed its proofs"
                 );
+                let mut expected: std::collections::HashMap<_, _> = expected
+                    .iter()
+                    .map(|proof| (proof.secret.as_str(), proof))
+                    .collect();
+                for proof in proofs {
+                    let original = expected
+                        .remove(proof.secret.as_str())
+                        .context("Exact payment result has an unknown or duplicate proof")?;
+                    anyhow::ensure!(
+                        proof.amount == original.amount
+                            && super::cashu::matches_stored_keyset_id(&proof.id, &original.id)
+                            && proof.c_as_pubkey()? == original.c_as_pubkey()?,
+                        "Exact payment result changed its proofs"
+                    );
+                }
             }
             Request::Swap(prepared) => {
                 let mut all = proofs.clone();

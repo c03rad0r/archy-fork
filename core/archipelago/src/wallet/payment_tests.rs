@@ -89,14 +89,15 @@ impl Mint {
                                 {"id": ACTIVE,"unit":"sat","active":true,"input_fee_ppk":fee},
                                 {"id": V2,"unit":"sat","active":false,"input_fee_ppk":fee}
                             ]}),
-                            "/v1/keys" => {
+                            path if path == "/v1/keys" || path.starts_with("/v1/keys/") => {
                                 let public =
                                     PublicKey::from_secret_key(&Secp256k1::new(), &signing_key())
                                         .to_string();
                                 let keys: serde_json::Map<String, Value> = (0..16)
                                     .map(|i| ((1u64 << i).to_string(), json!(public)))
                                     .collect();
-                                json!({"keysets":[{"id": ACTIVE,"unit":"sat","keys":keys}]})
+                                let id = path.strip_prefix("/v1/keys/").unwrap_or(ACTIVE);
+                                json!({"keysets":[{"id": id,"unit":"sat","keys":keys}]})
                             }
                             "/v1/swap" => {
                                 let body: Value = serde_json::from_slice(
@@ -157,7 +158,10 @@ impl Mint {
                                 )
                                 .unwrap();
                                 let overridden = state_override.lock().unwrap().clone();
-                                overridden.unwrap_or_else(|| json!({"states": body["Ys"].as_array().unwrap().iter().map(|y| json!({"Y":y,"state":"UNSPENT"})).collect::<Vec<_>>()}))
+                                overridden.unwrap_or_else(|| {
+                                    let spent_points: std::collections::HashSet<_> = spent.lock().unwrap().iter().map(|secret| hex::encode(bdhke::hash_to_curve(secret.as_bytes()).unwrap().serialize())).collect();
+                                    json!({"states": body["Ys"].as_array().unwrap().iter().map(|y| json!({"Y":y,"state":if spent_points.contains(y.as_str().unwrap()) {"SPENT"} else {"UNSPENT"}})).collect::<Vec<_>>()})
+                                })
                             }
                             "/v1/restore" => {
                                 let body: Value = serde_json::from_slice(
@@ -711,6 +715,215 @@ async fn journal_recovers_lost_swap_reply_and_commits_change_once() {
         1,
         "Recovery must not send another swap"
     );
+}
+
+#[tokio::test]
+async fn recoverable_send_reuses_original_operation_after_ambiguous_mint_response() {
+    let mint = Mint::start(0, None).await;
+    let root = tempfile::tempdir().unwrap();
+    let mut wallet = WalletState::default();
+    wallet.mint_url = mint.url.clone();
+    wallet.add_proofs(&mint.url, vec![proof(ACTIVE, 8)]);
+    save_wallet(root.path(), &wallet).await.unwrap();
+    let id = uuid::Uuid::new_v4().to_string();
+    let context = "ab".repeat(32);
+    mint.lose_swap_reply
+        .store(true, std::sync::atomic::Ordering::SeqCst);
+    assert!(send_token_recoverable(
+        root.path(),
+        &id,
+        EcashNetwork::Mainnet,
+        &mint.url,
+        4,
+        &context
+    )
+    .await
+    .is_err());
+    assert_eq!(load_wallet(root.path()).await.unwrap().balance(), 0);
+    assert_eq!(mint.requests.lock().unwrap().len(), 1);
+    // A missing restore response is not permission to swap spent inputs again.
+    *mint.restore_reply.lock().unwrap() = Some(json!({"outputs":[],"signatures":[]}));
+    assert!(send_token_recoverable(
+        root.path(),
+        &id,
+        EcashNetwork::Mainnet,
+        &mint.url,
+        4,
+        &context
+    )
+    .await
+    .is_err());
+    assert_eq!(mint.requests.lock().unwrap().len(), 1);
+    *mint.restore_reply.lock().unwrap() = None;
+    let token = send_token_recoverable(
+        root.path(),
+        &id,
+        EcashNetwork::Mainnet,
+        &mint.url,
+        4,
+        &context,
+    )
+    .await
+    .unwrap();
+    assert_eq!(CashuToken::deserialize(&token).unwrap().total_amount(), 4);
+    let purse = std::fs::read(root.path().join("wallet/ecash.json")).unwrap();
+    assert_eq!(
+        send_token_recoverable(
+            root.path(),
+            &id,
+            EcashNetwork::Mainnet,
+            &mint.url,
+            4,
+            &context
+        )
+        .await
+        .unwrap(),
+        token
+    );
+    assert!(send_token_recoverable(
+        root.path(),
+        &id,
+        EcashNetwork::Mainnet,
+        &mint.url,
+        8,
+        &context
+    )
+    .await
+    .is_err());
+    assert!(send_token_recoverable(
+        root.path(),
+        &id,
+        EcashNetwork::Mainnet,
+        &mint.url,
+        4,
+        &"cd".repeat(32)
+    )
+    .await
+    .is_err());
+    assert_eq!(
+        std::fs::read(root.path().join("wallet/ecash.json")).unwrap(),
+        purse
+    );
+    assert_eq!(load_wallet(root.path()).await.unwrap().balance(), 4);
+    assert_eq!(
+        load_wallet(root.path()).await.unwrap().transactions.len(),
+        1
+    );
+    assert_eq!(mint.requests.lock().unwrap().len(), 1);
+}
+
+#[tokio::test]
+async fn recoverable_exact_send_supports_compact_v2_and_keeps_full_wallet_id() {
+    let root = tempfile::tempdir().unwrap();
+    let mint = "https://unused-mint.invalid/";
+    let mut wallet = WalletState::default();
+    wallet.mint_url = mint.into();
+    wallet.add_proofs(mint, vec![proof(V2, 8)]);
+    save_wallet(root.path(), &wallet).await.unwrap();
+    let id = uuid::Uuid::new_v4().to_string();
+    let context = "ab".repeat(32);
+    let token = send_token_recoverable(root.path(), &id, EcashNetwork::Mainnet, mint, 8, &context)
+        .await
+        .unwrap();
+    assert_eq!(
+        CashuToken::deserialize(&token).unwrap().token[0].proofs[0].id,
+        &V2[..16]
+    );
+    assert_eq!(
+        send_token_recoverable(root.path(), &id, EcashNetwork::Mainnet, mint, 8, &context)
+            .await
+            .unwrap(),
+        token
+    );
+    let wallet = load_wallet(root.path()).await.unwrap();
+    assert_eq!(wallet.balance(), 0);
+    assert_eq!(wallet.proofs[0].proof.id, V2);
+    assert_eq!(wallet.transactions.len(), 1);
+}
+
+#[tokio::test]
+async fn seed_restore_refuses_to_credit_when_counter_persistence_fails() {
+    let mint = Mint::start(0, None).await;
+    let root = tempfile::tempdir().unwrap();
+    crate::wallet::nut13::establish_independent(root.path())
+        .await
+        .unwrap();
+    let client = MintClient::new(&mint.url).unwrap().with_recovery(
+        crate::wallet::nut13::RecoverySource::load(root.path())
+            .await
+            .unwrap(),
+    );
+    let prepared = client
+        .prepare_swap_at_least(&[proof(ACTIVE, 8)], &[4, 4], 4)
+        .await
+        .unwrap();
+    client.execute_prepared_swap(&prepared).await.unwrap();
+    let counter = root.path().join("wallet/cashu_counters.json");
+    std::fs::rename(&counter, root.path().join("counter-fixture-backup")).unwrap();
+    std::fs::create_dir(&counter).unwrap();
+    let error = restore_from_seed(root.path(), &mint.url).await.unwrap_err();
+    assert!(error.to_string().contains("derivation position"));
+    assert!(counter.is_dir());
+    assert!(!root.path().join("wallet/ecash.json").exists());
+    std::fs::remove_dir(&counter).unwrap();
+    std::fs::rename(root.path().join("counter-fixture-backup"), &counter).unwrap();
+    assert_eq!(
+        restore_from_seed(root.path(), &mint.url)
+            .await
+            .unwrap()
+            .recovered_sats,
+        8
+    );
+    assert_eq!(
+        restore_from_seed(root.path(), &mint.url)
+            .await
+            .unwrap()
+            .recovered_sats,
+        0
+    );
+    assert_eq!(load_wallet(root.path()).await.unwrap().balance(), 8);
+    assert_eq!(mint.requests.lock().unwrap().len(), 1);
+}
+
+#[tokio::test]
+async fn seed_restore_matches_points_and_rejects_foreign_or_duplicated_metadata() {
+    let mint = Mint::start(0, None).await;
+    let client = MintClient::new(&mint.url).unwrap();
+    let prepared = client
+        .prepare_swap_at_least(&[proof(ACTIVE, 8)], &[4, 4], 4)
+        .await
+        .unwrap();
+    client.execute_prepared_swap(&prepared).await.unwrap();
+    let encoded = serde_json::to_value(&prepared).unwrap();
+    let outputs: Vec<crate::wallet::cashu::BlindedMessageRequest> =
+        serde_json::from_value(encoded["outputs"].clone()).unwrap();
+    let restored = client.restore(&outputs).await.unwrap();
+    assert_eq!(restored.len(), 2);
+    assert!(restored
+        .iter()
+        .all(|(point, _)| outputs.iter().any(|output| &output.b_prime == point)));
+    let output = encoded["outputs"][0].clone();
+    let signature = json!({"id":ACTIVE,"amount":4,"C_":signed_point(output["B_"].as_str().unwrap().parse().unwrap())});
+    // A seed scan legitimately receives only the outputs the mint signed.
+    *mint.restore_reply.lock().unwrap() =
+        Some(json!({"outputs":[output.clone()],"signatures":[signature.clone()]}));
+    assert_eq!(client.restore(&outputs).await.unwrap().len(), 1);
+    let mut foreign = output.clone();
+    foreign["B_"] =
+        json!(PublicKey::from_secret_key(&Secp256k1::new(), &signing_key()).to_string());
+    let mut wrong_keyset = signature.clone();
+    wrong_keyset["id"] = json!(V2);
+    let mut wrong_amount = signature.clone();
+    wrong_amount["amount"] = json!(8);
+    for response in [
+        json!({"outputs":[output.clone(),output.clone()],"signatures":[signature.clone(),signature.clone()]}),
+        json!({"outputs":[foreign],"signatures":[signature.clone()]}),
+        json!({"outputs":[output.clone()],"signatures":[wrong_keyset]}),
+        json!({"outputs":[output],"signatures":[wrong_amount]}),
+    ] {
+        *mint.restore_reply.lock().unwrap() = Some(response);
+        assert!(client.restore(&outputs).await.is_err());
+    }
 }
 
 #[tokio::test]

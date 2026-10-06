@@ -272,3 +272,20 @@ requests also must cover the bound payment amount before being recorded.
 Full isolated qualification:1,779passed, zero failures, five existing skips,
 `/tmp/archy-journal-restore-boundary-tests.log`. These source changes remain
 undeployed. The higher-level purchase/receipt executor remains open.
+
+### Recoverable send executor qualified locally
+
+The caller-owned operation now reserves inputs before remote spending, restores
+the original saved swap after an ambiguous response, and commits its original
+token/change/history once. Changed payment terms reject reuse. A spent input with
+no recoverable output blocks another swap. Exact sends support compact v2 wire
+keyset IDs while retaining the full wallet ID. Seed restoration canonicalizes
+curve points, rejects foreign or duplicate metadata, and requires durable counter
+advancement before crediting recovered funds.
+
+The first test run exposed compact-ID comparison and uppercase restore-point
+matching defects; both were fixed. The final isolated run passed1,783tests with
+zero failures and five existing skips:
+`/tmp/archy-recoverable-send-executor-final-tests.log`.
+No real payment or deployment was performed. Purchase RPC integration, durable
+seller settlement/receipt recovery and the end-to-end acceptance remain open.

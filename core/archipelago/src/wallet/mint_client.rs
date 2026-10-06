@@ -96,7 +96,7 @@ impl PreparedSwap {
 
     pub(super) fn validate_for_mint(&self, mint_url: &str) -> Result<()> {
         anyhow::ensure!(
-            self.mint_url == mint_url,
+            self.mint_url.trim_end_matches('/') == mint_url.trim_end_matches('/'),
             "Prepared swap belongs to a different mint"
         );
         anyhow::ensure!(
@@ -173,7 +173,7 @@ impl PreparedSwap {
             .collect::<Result<_>>()?;
         for proof in proofs {
             anyhow::ensure!(
-                proof.id == self.keyset.id
+                super::cashu::matches_stored_keyset_id(&proof.id, &self.keyset.id)
                     && expected.remove(proof.secret.as_str()) == Some(proof.amount),
                 "Payment result does not match prepared outputs"
             );
@@ -1009,11 +1009,40 @@ impl MintClient {
             );
         }
 
-        Ok(echoed
-            .into_iter()
-            .map(|o| o.b_prime)
-            .zip(signatures)
-            .collect())
+        let mut requested = std::collections::HashMap::new();
+        for output in outputs {
+            let point = output
+                .b_prime
+                .parse::<secp256k1::PublicKey>()
+                .context("Invalid restoration output point")?
+                .to_string();
+            anyhow::ensure!(
+                requested.insert(point, output).is_none(),
+                "Duplicate restoration request output"
+            );
+        }
+        let mut restored = Vec::new();
+        for (output, signature) in echoed.into_iter().zip(signatures) {
+            let point = output
+                .b_prime
+                .parse::<secp256k1::PublicKey>()
+                .context("Invalid restored output point")?
+                .to_string();
+            let original = requested
+                .remove(&point)
+                .context("Unknown or duplicate restored output")?;
+            anyhow::ensure!(
+                super::cashu::matches_stored_keyset_id(&output.id, &original.id)
+                    && super::cashu::matches_stored_keyset_id(&signature.id, &original.id)
+                    && signature.amount.is_power_of_two()
+                    && (original.amount == 0 || original.amount == signature.amount)
+                    && (output.amount == 0 || output.amount == signature.amount),
+                "Restored output metadata changed"
+            );
+            signature.c_prime_as_pubkey()?;
+            restored.push((point, signature));
+        }
+        Ok(restored)
     }
 
     /// Receive a CashuToken by swapping its proofs for fresh ones.
