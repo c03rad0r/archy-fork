@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 220" role="img" aria-label="NerdQAxe miner">
+  <rect width="320" height="220" fill="none"/>
+  <g filter="url(#g)">
+    <rect x="58" y="54" width="204" height="112" rx="10" fill="#111827" stroke="#29ffe6" stroke-width="4"/>
+    <rect x="78" y="74" width="74" height="70" rx="6" fill="#2a102b" stroke="#ff3df0" stroke-width="3"/>
+    <circle cx="115" cy="109" r="28" fill="#07090f" stroke="#29ffe6" stroke-width="5"/>
+    <path d="M115 82v54M88 109h54M96 90l38 38M134 90l-38 38" stroke="#6cff8c" stroke-width="3"/>
+    <rect x="170" y="76" width="70" height="28" rx="4" fill="#05070c" stroke="#ffd84a" stroke-width="3"/>
+    <path d="M180 92h50" stroke="#ffd84a" stroke-width="4"/>
+    <path d="M72 166h176M88 184h144" stroke="#475569" stroke-width="8" stroke-linecap="round"/>
+    <circle cx="81" cy="58" r="8" fill="#ff3df0"/>
+    <circle cx="239" cy="58" r="8" fill="#29ffe6"/>
+  </g>
+  <defs><filter id="g"><feDropShadow dx="0" dy="8" stdDeviation="8" flood-color="#000" flood-opacity=".55"/></filter></defs>
+</svg>

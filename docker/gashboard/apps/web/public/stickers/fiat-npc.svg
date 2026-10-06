@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256">
+  <rect width="256" height="256" fill="#080a10"/>
+  <circle cx="128" cy="93" r="58" fill="#8ea0c4" stroke="#2c3a66" stroke-width="5"/>
+  <circle cx="105" cy="86" r="9" fill="#0a0d17"/>
+  <circle cx="151" cy="86" r="9" fill="#0a0d17"/>
+  <path d="M103 123h50" stroke="#0a0d17" stroke-width="7"/>
+  <rect x="45" y="160" width="166" height="42" fill="#131a2e" stroke="#ff4f78" stroke-width="4"/>
+  <text x="128" y="187" text-anchor="middle" fill="#ff4f78" font-family="monospace" font-size="17" font-weight="700">I TRUST BANKS</text>
+  <text x="128" y="225" text-anchor="middle" fill="#ffd84a" font-family="monospace" font-size="14">NORMAL HEATER USER</text>
+</svg>

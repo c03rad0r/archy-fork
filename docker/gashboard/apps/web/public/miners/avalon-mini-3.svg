@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 420 220" role="img" aria-label="Avalon Mini 3 miner">
+  <rect width="420" height="220" fill="none"/>
+  <g filter="url(#g)">
+    <rect x="44" y="56" width="332" height="110" rx="16" fill="#1f2937" stroke="#ff3df0" stroke-width="4"/>
+    <rect x="70" y="78" width="210" height="66" rx="8" fill="#0b0f19" stroke="#29ffe6" stroke-width="3"/>
+    <path d="M92 96h166M92 112h166M92 128h166" stroke="#475569" stroke-width="7" stroke-linecap="round"/>
+    <circle cx="326" cy="111" r="34" fill="#07090f" stroke="#ffd84a" stroke-width="5"/>
+    <path d="M326 78v66M293 111h66M303 88l46 46M349 88l-46 46" stroke="#6cff8c" stroke-width="4"/>
+    <path d="M76 166h268M104 184h212" stroke="#475569" stroke-width="8" stroke-linecap="round"/>
+    <circle cx="62" cy="74" r="6" fill="#29ffe6"/>
+    <circle cx="360" cy="74" r="6" fill="#ff3df0"/>
+  </g>
+  <defs><filter id="g"><feDropShadow dx="0" dy="9" stdDeviation="9" flood-color="#000" flood-opacity=".55"/></filter></defs>
+</svg>

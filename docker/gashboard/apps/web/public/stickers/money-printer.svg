@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256">
+  <rect width="256" height="256" fill="#0c1120"/>
+  <rect x="45" y="56" width="166" height="82" fill="#151b2b" stroke="#ff4f78" stroke-width="5"/>
+  <rect x="64" y="118" width="128" height="62" fill="#101624" stroke="#29ffe6" stroke-width="4"/>
+  <path d="M79 151h98" stroke="#ffd84a" stroke-width="7" stroke-dasharray="10 8"/>
+  <text x="128" y="103" text-anchor="middle" fill="#ffd84a" font-family="monospace" font-size="26" font-weight="700">BRRR</text>
+  <text x="128" y="218" text-anchor="middle" fill="#ff3df0" font-family="monospace" font-size="17" font-weight="700">FIAT PATCH NOTES</text>
+</svg>

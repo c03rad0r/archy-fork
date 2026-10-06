@@ -1,0 +1,89 @@
+app:
+  id: gashboard
+  name: Gashboard
+  version: 0.2.0
+  description: A playful mining dashboard for your DATUM fleet, with live hashrates, share history, lottery odds, chat and a Nostr viewer access list.
+  upstream:
+    kind: internal
+  container:
+    build:
+      context: /opt/archipelago/docker/gashboard
+      dockerfile: Dockerfile
+      tag: localhost/archipelago-gashboard:0.2.0
+    network: archy-net
+    data_uid: "1000:1000"
+    derived_env:
+      - key: NOSTR_OWNER_PUBKEYS
+        template: "{{NODE_IDENTITY_PUBKEYS}}"
+    generated_secrets:
+      - name: gashboard-jwt-secret
+        kind: hex32
+    secret_env:
+      - key: JWT_SECRET
+        secret_file: gashboard-jwt-secret
+      - key: DATUM_ADMIN_PASSWORD
+        secret_file: datum-admin-password
+  install_prerequisites: [datum]
+  dependencies:
+    - app_id: datum
+    - storage: 1Gi
+  resources:
+    cpu_limit: 1
+    memory_limit: 512Mi
+    disk_limit: 1Gi
+  security:
+    capabilities: []
+    readonly_root: true
+    no_new_privileges: true
+    network_policy: isolated
+  ports:
+    - host: 1337
+      container: 1337
+      protocol: tcp
+      bind: 127.0.0.1
+      auth: open
+      auth_rationale: Gashboard verifies NIP-98 signatures and an owner-managed Nostr access list before issuing sessions. Every data route rechecks membership; invited miners must not need a node administrator login.
+  volumes:
+    - type: bind
+      source: /var/lib/archipelago/gashboard
+      target: /data
+      options: [rw]
+    - type: tmpfs
+      target: /tmp
+      tmpfs_options: rw,noexec,nosuid,size=16m
+  environment:
+    - NODE_ENV=production
+    - PORT=1337
+    - DATUM_URL=http://datum:7152
+    - DATUM_ADMIN_USER=admin
+    - CONTRIBUTION_LEDGER_PATH=/data/contribution-ledger.json
+    - ACCESS_LIST_PATH=/data/access.json
+    - ARCHIPELAGO_PROVIDER_PATH=/data/nostr-provider.js
+    - MEMPOOL_API_URL=https://mempool.space/api
+  hooks:
+    post_install:
+      - copy_from_host:
+          src: web-ui/nostr-provider.js
+          dest: /data/nostr-provider.js
+      - exec: ["test", "-s", "/data/nostr-provider.js"]
+  health_check:
+    type: http
+    endpoint: http://localhost:1337
+    path: /healthz
+    interval: 30s
+    timeout: 5s
+    retries: 3
+  interfaces:
+    main:
+      name: Mining dashboard
+      type: ui
+      port: 1337
+      protocol: http
+      path: /
+  metadata:
+    icon: /assets/img/app-icons/gashboard.svg
+    category: bitcoin
+    tier: optional
+    repo: https://gitworkshop.dev/npub1w3sqdkrhn0gyuvsex32effzgnfpyde6qrrc4u467flg5e9txh4wsfn5vjg/relay.ngit.dev/archy
+    launch:
+      open_in_new_tab: false

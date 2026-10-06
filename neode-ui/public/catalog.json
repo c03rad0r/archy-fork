@@ -673,6 +673,21 @@
       "tier": "optional",
       "icon": "/assets/img/app-icons/angor-green.png",
       "repoUrl": "https://github.com/hoytech/strfry"
+    },
+    {
+      "id": "gashboard",
+      "author": "Gashboard contributors",
+      "requires": [
+        "datum"
+      ],
+      "title": "Gashboard",
+      "version": "0.2.0",
+      "description": "A playful mining dashboard for your DATUM fleet, with live hashrates, share history, lottery odds, chat and a Nostr viewer access list.",
+      "dockerImage": "localhost/archipelago-gashboard:0.2.0",
+      "category": "bitcoin",
+      "tier": "optional",
+      "icon": "/assets/img/app-icons/gashboard.svg",
+      "repoUrl": "https://gitworkshop.dev/npub1w3sqdkrhn0gyuvsex32effzgnfpyde6qrrc4u467flg5e9txh4wsfn5vjg/relay.ngit.dev/archy"
     }
   ]
 }

@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="gashboard">
+  <rect width="512" height="512" fill="#07090f"/>
+  <circle cx="256" cy="256" r="188" fill="#0c1120" stroke="#29ffe6" stroke-width="14"/>
+  <path d="M126 316h62v72h-62zm84-118h62v190h-62zm84 52h62v138h-62zm84-126h62v264h-62z" fill="#ff3df0"/>
+  <path d="M104 258h66l32-82 60 176 58-132 44 70h54" fill="none" stroke="#29ffe6" stroke-width="18" stroke-linejoin="round" stroke-linecap="round"/>
+  <text x="256" y="112" text-anchor="middle" fill="#ffd84a" font-family="monospace" font-size="52" font-weight="700">G</text>
+</svg>

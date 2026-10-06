@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256">
+  <rect width="256" height="256" fill="#07090f"/>
+  <path d="M83 72l28-30h50l24 35-12 75-45 36-45-36z" fill="#d9d3c7" stroke="#29ffe6" stroke-width="5"/>
+  <path d="M86 76h87l-16-30h-45z" fill="#ff3df0"/>
+  <path d="M93 108h28M143 108h28" stroke="#07090f" stroke-width="7"/>
+  <path d="M101 145c23 13 49 13 72 0" fill="none" stroke="#07090f" stroke-width="7"/>
+  <text x="128" y="220" text-anchor="middle" fill="#6cff8c" font-family="monospace" font-size="18" font-weight="700">HASHING. UNBOTHERED.</text>
+</svg>

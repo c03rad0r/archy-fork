@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 100 100">
+  <!-- normalized by scripts/normalize-app-icon.py: margin=0.12 per side -->
+  <svg x="12.000" y="12.000" width="76.000" height="76.000" viewBox="0 0 512 512" preserveAspectRatio="xMidYMid meet">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="gashboard">
+  <rect width="512" height="512" fill="#07090f"/>
+  <rect x="34" y="34" width="444" height="444" fill="#0c1120" stroke="#29ffe6" stroke-width="12"/>
+  <path d="M98 314h68v74H98zm92-118h68v192h-68zm92 54h68v138h-68zm92-126h68v264h-68z" fill="#ff3df0"/>
+  <path d="M80 256h64l34-82 62 178 58-132 44 70h90" fill="none" stroke="#29ffe6" stroke-width="18" stroke-linejoin="round" stroke-linecap="round"/>
+  <text x="256" y="104" text-anchor="middle" fill="#ffd84a" font-family="monospace" font-size="54" font-weight="700">G</text>
+</svg>
+
+  </svg>
+</svg>
