@@ -434,6 +434,14 @@ async fn npub_only_request_accepts_bound_reply_but_rejects_other_sender_and_forg
             .state,
         PendingState::Approved
     );
+    assert_eq!(
+        pending::find_by_id(dir.path(), &row.id)
+            .await
+            .unwrap()
+            .unwrap()
+            .from_did,
+        remote_did
+    );
     let duplicate = handler.handle_handshake_poll().await.unwrap();
     assert!(duplicate["applied_invites"].as_array().unwrap().is_empty());
     assert_eq!(

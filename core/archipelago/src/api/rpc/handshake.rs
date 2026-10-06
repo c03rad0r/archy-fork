@@ -345,6 +345,7 @@ impl RpcHandler {
                     }
                 }
                 HandshakeMessage::PeerInvite { invite_code } => {
+                    let _decision = pending::outbound_decision_guard().await;
                     // Match against an outbound Sent request from this nostr
                     // pubkey. If we never sent them anything, ignore — we
                     // don't accept unsolicited invites over Nostr.
@@ -431,10 +432,11 @@ impl RpcHandler {
                                 .await;
                             }
 
-                            pending::set_state(
+                            pending::complete_outbound(
                                 &self.config.data_dir,
                                 &row_id,
-                                PendingState::Approved,
+                                &hs.from_nostr_pubkey,
+                                &node.did,
                             )
                             .await?;
                             applied_invites.push(node.did);
@@ -449,6 +451,7 @@ impl RpcHandler {
                     }
                 }
                 HandshakeMessage::PeerReject { reason } => {
+                    let _decision = pending::outbound_decision_guard().await;
                     let pendings = pending::load_pending(&self.config.data_dir).await?;
                     if let Some(row) = pendings.iter().find(|r| {
                         r.outbound

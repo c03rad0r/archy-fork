@@ -1430,16 +1430,7 @@ impl RpcHandler {
             .and_then(|v| v.as_bool())
             .unwrap_or(true);
 
-        let req = pending::find_by_id(&self.config.data_dir, id)
-            .await?
-            .ok_or_else(|| anyhow::anyhow!("Pending request not found: {}", id))?;
-        if !req.outbound || !matches!(req.state, pending::PendingState::Sent) {
-            anyhow::bail!(
-                "Can only cancel outbound requests in Sent state (outbound={}, state={:?})",
-                req.outbound,
-                req.state
-            );
-        }
+        let req = pending::cancel_outbound(&self.config.data_dir, id).await?;
 
         if notify {
             let identity_dir = self.config.data_dir.join("identity");
@@ -1462,7 +1453,6 @@ impl RpcHandler {
             }
         }
 
-        pending::delete(&self.config.data_dir, id).await?;
         info!(id = %id, to = %req.from_nostr_pubkey, notified = notify, "Cancelled outbound peer request");
         Ok(serde_json::json!({ "cancelled": true, "id": id, "notified": notify }))
     }
