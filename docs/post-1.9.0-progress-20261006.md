@@ -433,3 +433,19 @@ visible. A final rerun corrects a missing required prop in that test fixture.
 Authenticated read-only checks confirm both dev and Yaya have at least 25 Cashu
 sats available. No payment, deployment or release occurred. Backend compilation
 for the atomic sharing suite remains in progress; it is not marked passed.
+
+## Verified atomic-sharing results — October 6 continuation
+
+- Isolated backend suite passed **1,747 tests, zero failures, five explicit
+  skips** (`/tmp/archy-atomic-share-backend-tests.log`). This covers the new
+  publication policy, stable share IDs, concurrent catalog updates and corrupt
+  catalog preservation. Rust source is `19207282`; `f3264c8d` adds frontend failure
+  coverage and documentation only.
+- Final focused UI rerun passed **six tests** with the corrected required prop
+  (`/tmp/archy-atomic-share-ui-tests-final.log`); typecheck passed earlier.
+- Baseline production `081c8215` finished successfully and was archived with
+  SHA256 `1f26af4bd25d8676ced4152c0a2ed142c52a654c6684cfd0fa9130cd59b96000`.
+  It predates atomic sharing and is explicitly not the final candidate.
+- Production build of `f3264c8d` is running, log
+  `/tmp/archy-atomic-share-production-backend.log`. No deployment or payment
+  occurred. Cross-session deployment coordination remains open.
