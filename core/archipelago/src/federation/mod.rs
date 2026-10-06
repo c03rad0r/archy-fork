@@ -6,12 +6,14 @@
 
 mod invites;
 pub mod pending;
+pub(crate) mod handshake_delivery;
 mod storage;
 mod sync;
 mod types;
 
 // Re-export all public items so `crate::federation::*` continues to work.
 pub use invites::{accept_invite, create_invite, parse_invite};
+pub(crate) use invites::restrict_discovery_invite;
 // Crate-internal: used by the periodic federation auto-sync to re-assert
 // membership to peers that don't list us back (asymmetry self-heal).
 pub(crate) use invites::notify_join;

@@ -12,6 +12,7 @@ async fn managed_relay_receives_approval_rejection_and_cancellation() {
         ("reject", true),
         ("cancel", true),
         ("approve", false),
+        ("retry", true),
     ] {
         let tmp = tempfile::tempdir().unwrap();
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -68,6 +69,9 @@ async fn managed_relay_receives_approval_rejection_and_cancellation() {
         tokio::fs::write(identity_dir.join("nostr_secret"), "11".repeat(32))
             .await
             .unwrap();
+        tokio::fs::write(identity_dir.join("node_key"), [0x33; 32])
+            .await
+            .unwrap();
         let state = Arc::new(crate::state::StateManager::new());
         state
             .mutate_data(|data| {
@@ -90,7 +94,7 @@ async fn managed_relay_receives_approval_rejection_and_cancellation() {
                 tmp.path(),
                 recipient.public_key().to_hex(),
                 String::new(),
-                String::new(),
+                crate::identity::did_key_from_pubkey_hex(&"44".repeat(32)).unwrap(),
                 None,
                 None,
             )
@@ -101,7 +105,7 @@ async fn managed_relay_receives_approval_rejection_and_cancellation() {
                 tmp.path(),
                 recipient.public_key().to_hex(),
                 String::new(),
-                String::new(),
+                crate::identity::did_key_from_pubkey_hex(&"44".repeat(32)).unwrap(),
                 None,
                 None,
             )
@@ -109,18 +113,27 @@ async fn managed_relay_receives_approval_rejection_and_cancellation() {
             .unwrap()
             .unwrap()
         };
+        if operation == "retry" {
+            pending::decide(tmp.path(), &row.id, PendingState::Approved)
+                .await
+                .unwrap();
+        }
         let params = Some(serde_json::json!({"id": row.id, "notify": true}));
         let action = async {
             match operation {
                 "approve" => handler.handle_federation_approve_request(params).await,
                 "reject" => handler.handle_federation_reject_request(params).await,
+                "retry" => handler
+                    .retry_peer_approval_replies()
+                    .await
+                    .map(|_| serde_json::json!({"ok": true})),
                 _ => handler.handle_federation_cancel_request(params).await,
             }
         };
         let outcome = tokio::time::timeout(Duration::from_secs(20), action)
             .await
             .unwrap();
-        assert_eq!(outcome.is_ok(), accepted);
+        assert_eq!(outcome.is_ok(), accepted || operation == "approve");
         let event = tokio::time::timeout(Duration::from_secs(5), relay)
             .await
             .unwrap()
@@ -130,14 +143,30 @@ async fn managed_relay_receives_approval_rejection_and_cancellation() {
             nip44::decrypt(recipient.secret_key(), &event.pubkey, &event.content).unwrap();
         let message: serde_json::Value = serde_json::from_str(&plaintext).unwrap();
         let expected = match operation {
-            "approve" => "peer-invite",
+            "approve" | "retry" => "peer-invite",
             "reject" => "peer-reject",
             _ => "peer-cancel",
         };
         assert_eq!(message["type"], expected);
         let saved = pending::find_by_id(tmp.path(), &row.id).await.unwrap();
         if !accepted {
-            assert_eq!(saved.unwrap().state, PendingState::Pending);
+            assert_eq!(
+                saved.unwrap().state,
+                if operation == "approve" {
+                    PendingState::Approved
+                } else {
+                    PendingState::Pending
+                }
+            );
+            if operation == "approve" {
+                assert_eq!(outcome.unwrap()["delivery_pending"], true);
+                let durable = crate::federation::handshake_delivery::find(tmp.path(), &row.id)
+                    .await
+                    .unwrap()
+                    .unwrap();
+                assert_eq!(durable.recipient, recipient.public_key().to_hex());
+                assert_eq!(durable.attempts, 1);
+            }
             assert!(crate::federation::load_nodes(tmp.path())
                 .await
                 .unwrap()
@@ -145,8 +174,21 @@ async fn managed_relay_receives_approval_rejection_and_cancellation() {
             continue;
         }
         match operation {
-            "approve" => {
+            "approve" | "retry" => {
                 assert_eq!(saved.unwrap().state, PendingState::Approved);
+                let first = crate::federation::handshake_delivery::find(tmp.path(), &row.id)
+                    .await
+                    .unwrap()
+                    .unwrap();
+                assert_eq!(first.attempts, 1);
+                // Concurrent/background polling honors the persisted backoff.
+                handler.retry_peer_approval_replies().await.unwrap();
+                let second = crate::federation::handshake_delivery::find(tmp.path(), &row.id)
+                    .await
+                    .unwrap()
+                    .unwrap();
+                assert_eq!(second.attempts, 1);
+                assert_eq!(first.invite_code, second.invite_code);
                 let invite =
                     crate::federation::parse_invite(message["invite_code"].as_str().unwrap())
                         .unwrap();
