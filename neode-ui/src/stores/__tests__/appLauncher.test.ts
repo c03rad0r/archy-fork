@@ -55,6 +55,27 @@ describe('useAppLauncherStore', () => {
     })
   })
 
+  it.each(['close', 'another-app', 'none'])('waits for node demo launch policy, cancellation: %s', async cancel => {
+    const id = `node-demo-delayed-${cancel}`
+    const previousFetch = globalThis.fetch
+    let release!: (value: unknown) => void
+    vi.stubGlobal('fetch', vi.fn(() => new Promise(resolve => { release = resolve })))
+    const launcher = useAppLauncherStore()
+    launcher.openSession(id)
+    expect(launcher.panelAppId).toBeNull()
+    if (cancel === 'close') launcher.closePanel()
+    if (cancel === 'another-app') launcher.openSession('mempool')
+    release({ ok: true, json: async () => ({ scope: 'single-node-demo', expires_at: new Date(Date.now() + 60000).toISOString(), apps: {
+      [id]: { version: '1', manifest: { app: { metadata: { launch: { media_controls: 'archipelago-v1' } } } } },
+    } }) })
+    await new Promise(resolve => setTimeout(resolve, 0))
+    expect(launcher.panelAppId).toBe(cancel === 'none' ? id : cancel === 'another-app' ? 'mempool' : null)
+    launcher.openSession(id)
+    expect(launcher.panelAppId).toBe(id)
+    expect(launcher.mediaAppId).toBe(id)
+    vi.stubGlobal('fetch', previousFetch)
+  })
+
   it('blocks both browser and embedded launch while HTTP is unready', () => {
     const app = useAppStore()
     app.data = { 'package-data': { gitea: { state: 'running', 'ui-ready': false, health: 'healthy', manifest: { id: 'gitea', title: 'Gitea' } } } } as never

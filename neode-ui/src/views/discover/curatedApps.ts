@@ -105,8 +105,41 @@ export function signedCatalogToApps(catalog: SignedAppCatalog): MarketplaceApp[]
  *  after fetchAppCatalog() has run. Test-hookable. */
 let signedCatalogCache: SignedAppCatalog | null = null
 let nodeCatalogCache: SignedAppCatalog | null = null
+let nodeCatalogExpires = 0
+let nodeCatalogRequest: Promise<SignedAppCatalog | null> | null = null
+export function nodeAppIsAvailable(id: string): boolean {
+  return nodeCatalogExpires > Date.now() && Boolean(nodeCatalogCache?.apps[id])
+}
 export function appHasMediaBridge(id: string): boolean {
-  return nodeCatalogCache?.apps[id]?.manifest?.app?.metadata?.launch?.media_controls === 'archipelago-v1'
+  return nodeAppIsAvailable(id) && nodeCatalogCache?.apps[id]?.manifest?.app?.metadata?.launch?.media_controls === 'archipelago-v1'
+}
+
+/** Resolve node-owned launch policy independently of the public storefront.
+ * Home/companion launches must not depend on visiting Discover first. */
+async function fetchNodeCatalog(): Promise<SignedAppCatalog | null> {
+  if (nodeCatalogRequest) return nodeCatalogRequest
+  nodeCatalogRequest = (async () => {
+    try {
+      const response = await fetch('/api/node-app-catalog', { credentials: 'include', signal: AbortSignal.timeout(5000) })
+      const node = response.ok ? await response.json() : null
+      if (node?.scope !== 'single-node-demo' || !node.apps || Array.isArray(node.apps)
+        || !Object.keys(node.apps).every(id => id.startsWith('node-demo-'))
+        || !(Date.parse(node.expires_at) > Date.now())) throw new Error('Unavailable node catalog')
+      nodeCatalogCache = node as SignedAppCatalog
+      nodeCatalogExpires = Date.parse(node.expires_at)
+      return nodeCatalogCache
+    } catch {
+      nodeCatalogCache = null
+      nodeCatalogExpires = 0
+      return null
+    } finally { nodeCatalogRequest = null }
+  })()
+  return nodeCatalogRequest
+}
+
+export async function ensureNodeAppAvailable(id: string): Promise<boolean> {
+  if (!nodeAppIsAvailable(id)) await fetchNodeCatalog()
+  return nodeAppIsAvailable(id)
 }
 
 
@@ -197,14 +230,8 @@ const CATALOG_URLS = [
  * storage or the global release catalog. A copied catalog is rejected by the
  * daemon unless its release signature and exact node audience match. */
 export async function fetchAppCatalog(): Promise<AppCatalog | null> {
-  const nodeRequest = fetch('/api/node-app-catalog', { credentials: 'include', signal: AbortSignal.timeout(5000) })
-    .then(async response => response.ok ? await response.json() : null).catch(() => null)
-  const [base, node] = await Promise.all([fetchBaseAppCatalog(), nodeRequest])
-  nodeCatalogCache = null
-  if (!base || node?.scope !== 'single-node-demo' || !node.apps || Array.isArray(node.apps)
-      || !Object.keys(node.apps).every(id => id.startsWith('node-demo-'))
-      || !(Date.parse(node.expires_at) > Date.now())) return base
-  nodeCatalogCache = node as SignedAppCatalog
+  const [base, node] = await Promise.all([fetchBaseAppCatalog(), fetchNodeCatalog()])
+  if (!base || !node) return base
   const known = new Set(base.apps.map(app => app.id))
   const additions = signedCatalogToApps(node).filter(app => !known.has(app.id))
   const demoIds = new Set(additions.map(app => app.id))

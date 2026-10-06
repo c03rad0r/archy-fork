@@ -6,6 +6,38 @@ const demo = () => ({ scope: 'single-node-demo', expires_at: new Date(Date.now()
 
 afterEach(() => { vi.unstubAllGlobals(); localStorage.clear() })
 describe('node-scoped demo catalog', () => {
+  it('resolves launch policy before a slow public storefront and deduplicates requests', async () => {
+    vi.resetModules()
+    let release!: (value: unknown) => void
+    const pending = new Promise(resolve => { release = resolve })
+    const fetcher = vi.fn((_url: string) => pending)
+    vi.stubGlobal('fetch', fetcher)
+    const { ensureNodeAppAvailable, appHasMediaBridge } = await import('../curatedApps')
+    const first = ensureNodeAppAvailable('node-demo-v4v')
+    const second = ensureNodeAppAvailable('node-demo-v4v')
+    expect(fetcher).toHaveBeenCalledTimes(1)
+    expect(fetcher.mock.calls[0]?.[0]).toBe('/api/node-app-catalog')
+    expect(appHasMediaBridge('node-demo-v4v')).toBe(false)
+    const payload = demo()
+    Object.assign(payload.apps['node-demo-v4v'].manifest.app, { metadata: { launch: { media_controls: 'archipelago-v1' } } })
+    release({ ok: true, json: async () => payload })
+    expect(await first).toBe(true)
+    expect(await second).toBe(true)
+    expect(appHasMediaBridge('node-demo-v4v')).toBe(true)
+    expect(await ensureNodeAppAvailable('node-demo-v4v')).toBe(true)
+    expect(fetcher).toHaveBeenCalledTimes(1)
+  })
+  it('fails closed for unavailable and expired launch policy', async () => {
+    vi.resetModules()
+    const fetcher = vi.fn(async () => ({ ok: true, json: async () => ({ ...demo(), expires_at: '2000-01-01T00:00:00Z' }) }))
+    vi.stubGlobal('fetch', fetcher)
+    const { ensureNodeAppAvailable, appHasMediaBridge } = await import('../curatedApps')
+    expect(await ensureNodeAppAvailable('node-demo-v4v')).toBe(false)
+    expect(appHasMediaBridge('node-demo-v4v')).toBe(false)
+    fetcher.mockRejectedValueOnce(new Error('offline'))
+    expect(await ensureNodeAppAvailable('node-demo-v4v')).toBe(false)
+  })
+
   it.each([{}, [null]])('ignores malformed optional promotions: %j', async promotions => {
     vi.resetModules()
     vi.stubGlobal('fetch', vi.fn(async (url: string) => {

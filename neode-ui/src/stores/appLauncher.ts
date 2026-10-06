@@ -1,4 +1,4 @@
-import { appHasMediaBridge } from '@/views/discover/curatedApps'
+import { appHasMediaBridge, ensureNodeAppAvailable, nodeAppIsAvailable } from '@/views/discover/curatedApps'
 import { defineStore } from 'pinia'
 import { ref, watch } from 'vue'
 import { rpcClient } from '@/api/rpc-client'
@@ -239,6 +239,7 @@ export const useAppLauncherStore = defineStore('appLauncher', () => {
   const mediaAppId = ref<string | null>(null)
   /** Optional deep-link path inside the active app (e.g. /tx/<hash> for mempool) */
   const panelPath = ref<string | null>(null)
+  let launchGeneration = 0
 
   function openSessionNow(appId: string, opts: LaunchOptions = {}) {
     const pkg = useAppStore().data?.['package-data']?.[appId]
@@ -299,6 +300,19 @@ export const useAppLauncherStore = defineStore('appLauncher', () => {
    * Previously each Apps view owned a private modal, so Home skipped the
    * Portainer first-run token entirely. */
   function openSession(appId: string, opts: LaunchOptions = {}) {
+    const generation = ++launchGeneration
+    if (appId.startsWith('node-demo-') && !nodeAppIsAvailable(appId)) {
+      useToast().info('Loading this node’s demo app…')
+      void ensureNodeAppAvailable(appId).then(available => {
+        if (generation !== launchGeneration) return
+        if (!available) {
+          useToast().error('This node’s demo catalog is unavailable. Please retry.')
+          return
+        }
+        openSession(appId, opts)
+      })
+      return
+    }
     // Home/goal/deep-link launchers do not pass through AppCard.canLaunch.
     // Apply the same readiness gate here so a container that has just entered
     // `running` cannot race nginx and show a transient 502 to the user.
@@ -392,6 +406,7 @@ export const useAppLauncherStore = defineStore('appLauncher', () => {
   }
 
   function closePanel() {
+    launchGeneration += 1
     panelAppId.value = null
     panelPath.value = null
   }
