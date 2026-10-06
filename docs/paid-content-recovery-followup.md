@@ -296,3 +296,166 @@ Required restore fields cannot silently default to empty. The malformed-response
 regression verifies unchanged spendable balance/no swap, then successful retry
 when the mint responds correctly. Full isolated1,784passed initially; combined
 catalog-route qualification1,785passed, zero failures/five existing skips.
+
+### Recoverable incoming settlement — implementation under qualification
+
+A separate private receive journal now binds a caller-owned UUID to its original
+network, canonical mint, token hash, agreed minimum net price and purchase-context
+hash. Incoming proofs are claimed outside the spendable purse. Claims use their
+mint and secrets, so another operation cannot redeem a differently encoded token
+or an overlapping subset. The legacy receive entry point also checks these claims.
+
+Preparation verifies recovery support and mint fees before any swap. The exact
+prepared outputs are then saved before POST. An ambiguous response resumes the
+same outputs with NUT-09; empty restoration requires every original input to be
+strictly UNSPENT before the identical request can be retried. No automatic refund
+is inferred from a missing response. Mixed-mint and non-sat tokens are outside this
+primitive's deliberately narrow contract.
+
+Commit order is Result → Committing → atomic purse save → Committed. Committing
+stores a hash of the exact pre-save purse bytes (absence differs from an empty
+file). The purse contains an independent `received:<UUID>` commitment marker,
+separate from prunable history; it contains no bearer proofs. A retry either finds
+that marker or requires the exact unchanged pre-save purse. A changed purse whose
+marker is missing causes a manual-recovery hold. In particular, an older wallet
+writer dropping markers is not treated as permission to re-credit the receipt.
+Markers must not be compacted with ordinary history. A completed journal receipt
+returns its original net amount even if the wallet/history was subsequently
+pruned; it never reconstructs funds merely because its caller retries.
+
+Pending settlement blocks seed restoration for the bound network/mint. Committed
+incoming outputs remain ordinary wallet funds, subject to the existing mint-state
+checks during seed restoration; they are not outgoing-token exclusions.
+
+This is a source implementation under test, not a deployed seller receipt or
+purchase protocol. No real payments were made. Purchase authorization, delivery
+capabilities, transport correlation, refunds, and Fedimint/melt remain separate
+open requirements. Test results will be recorded after the isolated runner exits.
+
+### Resumed settlement qualification — 6 October
+
+The interrupted session's receive journal, executor and four regression tests
+were recovered intact from the existing worktree. The old focused log stopped
+at compilation; it does not establish a test pass. No wallet data was restored,
+replaced or modified to resume this source work.
+
+Review also found that `verify_and_receive_payment`, used by the legacy content
+server, needed the same incoming-proof claim check as ordinary `receive_token`.
+It now refuses to redeem another settlement's claimed proofs, including when the
+mint still considers those proofs unspent. An additional HTTP/curve regression
+covers a rejected first POST, legacy redemption refusal, a malformed state reply
+blocking a second POST, and then verified-unspent retry using the exact original
+request. The new regression must pass before qualification is claimed.
+
+Next integration boundary remains buyer purchase intent → recoverable sender →
+correlated seller settlement → durable delivery receipt/capability. The current
+`handle_content_download_peer_paid` still calls the legacy sender and records
+ownership after headers; `content_server::verify_payment_token` still calls the
+legacy payment verifier. These call sites are not yet the new purchase protocol.
+Do not deploy these primitives as a claim that pre-header paid-file recovery is
+complete. Keep the original payment/receipt context for retries and do not send
+another payment to recover delivery.
+
+Resumption compile checkpoint: `/tmp/archy-resumed-receive-tests.log` finished
+compilation successfully in 10m20s, but the requested `wallet::payment_tests`
+filter matched zero tests (1,794 filtered out). This is compilation evidence only,
+not a focused test pass. The module is `wallet::ecash::payment_tests`. Final-source
+qualification must include the later legacy-claim guard and fifth receive test;
+its build is queued behind coordinated IndeeHub/browser/image checks to avoid
+competing heavy jobs on the development node.
+
+#### Next implementation batch: purchase/receipt contract
+
+The next source batch should introduce `content_purchase` journals and protocol
+fixtures before switching the live RPC entry points. Bind a versioned UUID,
+verified buyer/seller DIDs, content SHA256/size, immutable terms hash, Cashu
+network/mint, gross token amount and minimum seller net amount. Account for mint
+fees explicitly; sending the displayed net price is not sufficient when the
+seller pays an input fee. `ContentItem` currently has no content hash, so obtain
+a stable readable content snapshot and authenticated offer before spending.
+
+The existing `content_auth` v1 signature covers GET/path/range/time, not payment
+headers or request bodies. Add a separately domain-separated signed-body proof
+for purchase requests covering method/path/audience/body hash; do not treat plain
+`X-Federation-DID` or appended unsigned purchase headers as authentication.
+`PeerRequest::send_json` already provides the transport operation.
+
+Persist the seller contract before calling recoverable receive with its UUID and
+context hash; persist receipt/capability after settlement. Authenticated status
+lookup by the same buyer must recover a lost receipt without another redemption.
+Buyer intent precedes recoverable send and retains its original token privately;
+retries resume that purchase and retrieve the receipt, rather than refunding or
+creating another payment after an ambiguous response. Reject unsupported protocol
+versions before spending. Cover changed content/terms, wrong buyer, duplicate
+requests, expired offers, interrupted writes and lost settlement/receipt replies
+with deterministic fixtures before any live purchase acceptance.
+
+The next batch now exists as the initially unreferenced
+`core/archipelago/src/content_purchase.rs`: strict versioned contracts/context
+hashes, private original buyer tokens, seller settlement and durable random
+receipts, buyer receipt/delivery states, and cross-process journal locking with
+flushed atomic private records. Six temporary-directory tests cover restart,
+exact replay, changed terms/results, expired new offers versus existing recovery,
+foreign receipts, corrupt/nonregular records and invalid state transitions.
+It performs no wallet or network operations. Root integration will declare the
+module for combined qualification; passing tests are still pending. Callers must
+authenticate offer/receipt provenance and discover/reuse an existing purchase
+UUID before generating another one; this primitive does not yet supply that
+business-level lookup or the transport/serving integration.
+
+
+Review caught a cancellation ordering issue in the asynchronous rename commit
+point. Purchase journals and the existing purse/send/receive writers now perform
+rename plus directory flush synchronously while their guard is held, so cancelled
+async work cannot later overwrite a newer writer. A deterministic purchase test
+pauses after flushing the temporary file but before commit, cancels the writer,
+then verifies that a subsequent token commit survives and the stale temporary
+file is removed. This is a source correction awaiting the combined isolated run.
+
+Next RPC/UI batch acceptance must also include node-side discovery of an existing
+pending purchase by authenticated buyer/seller/content before minting a fresh
+UUID. Caller-only UUID retention is insufficient after lost browser/client state.
+The current journal's UUID binding does not yet implement this lookup. The UI
+must show reserved/pending funds separately from spendable funds; a spendable
+balance of zero must not be presented as zero total owned funds while an operation
+still holds them. Neither requirement is satisfied by the wallet primitive tests.
+
+Transport integration detail: the new v2 peer proof hashes the exact request body.
+`PeerRequest::send_json` currently serializes independently inside its FIPS/Tor
+helpers. Add a serialize-once POST-bytes transport before wiring purchase routes;
+sign and send those exact bytes, rather than signing a separately serialized JSON
+value then allowing another `.json()` call to choose the wire bytes. Existing
+content dispatch currently routes GET reads only, so POST purchase routes remain
+a separate integration step. Existing v1 GET authentication must remain compatible.
+
+### Combined resumed qualification passed — 6 October
+
+The full isolated runner passed **1,808 tests, zero failures, five existing
+ignored tests**, with no filter. Compilation took 9m07s; isolated execution took
+15.01s. This includes all five recoverable-receive regressions, six purchase
+journal tests (including cancellation ordering), eleven media-registration tests,
+and the independently coordinated v2 request-authentication coverage. Only
+`scripts/test-backend-isolated.sh` executed backend tests.
+
+Evidence: `/tmp/archy-resumed-combined-backend-tests.log`.
+The exact tested coordinated tree was HEAD
+`1c6daab92a4e7c9fa70b81489c355a35163369b5` plus `git diff HEAD --binary`, SHA256
+`e9a8d75a81a966904d0929a1a1869adb892d266ef1b6b59580b7543a6b0ca7a4`, saved privately
+at `/tmp/archy-resumed-combined-tested-source.patch`. New source SHA256 values:
+
+- `content_purchase.rs`: `5d597f48c24ab96d4a7ee348ef641cc1f2d98c411574c46f14c579bea9930e84`
+- `wallet/receive_journal.rs`: `43333ec21a6b1f7613078083d8114ef934bd44af69c9e93138e58a419cb919ac`
+- `media_registration.rs`: `45450e99b50eff3d1115c2b9787e7235e9772209151a06fd09d62c47d0bd93a5`
+- Its `fixtures/v1.json`: `8fbfcbc3beb0b4758fadf677c39c688d55a89ed200d8a7cd8741de0da569feb3`
+
+All captured source hashes were rechecked unchanged at test completion before
+this evidence update. Machine-readable provenance is in
+`/tmp/archy-resumed-combined-source-provenance.json`. The test suite's isolated
+subprocess case also prints a one-test result; it is not a second full run.
+
+No real payment, wallet replacement, deployment or release occurred. The current
+purchase module is a qualified local journal primitive, not a wired purchase RPC,
+authenticated seller offer/receipt transport, or serving capability. Scratch
+acceptance/deadline/executor work in `/tmp/archy-purchase-executor-next` is separate
+and is NOT included in these test results. Explicit seller acceptance before
+buyer spending and retained late-settlement eligibility are the next batch.

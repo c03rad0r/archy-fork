@@ -979,14 +979,16 @@ impl<'a> Journal<'a> {
         file.write_all(&bytes).await?;
         file.sync_all().await?;
         drop(file);
-        fs::rename(&temporary.0, &path).await?;
+        // Keep the commit synchronous under the mutation guard: cancellation
+        // cannot leave a rename queued after a newer wallet mutation starts.
+        std::fs::rename(&temporary.0, &path)?;
         // Persist every new directory entry down from the existing node root.
         for directory in [
             parent.to_path_buf(),
             self.guard.data_dir.join("wallet"),
             self.guard.data_dir.clone(),
         ] {
-            fs::File::open(directory).await?.sync_all().await?;
+            std::fs::File::open(directory)?.sync_all()?;
         }
         Ok(())
     }

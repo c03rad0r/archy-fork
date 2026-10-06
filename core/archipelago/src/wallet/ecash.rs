@@ -88,6 +88,10 @@ pub struct WalletState {
     #[serde(default)]
     pub mint_url: String,
 
+    /// Durable receive commit ownership; never prune with transaction history.
+    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    pub(super) receive_commits: std::collections::BTreeMap<String, String>,
+
     // ── Legacy compatibility ──
     // Old wallet format had a `tokens` field. If present during deserialization,
     // we migrate to proofs. This field is never written.
@@ -239,7 +243,7 @@ pub enum EcashNetwork {
 }
 
 impl EcashNetwork {
-    fn wallet_file(&self) -> &'static str {
+    pub(super) fn wallet_file(&self) -> &'static str {
         match self {
             Self::Mainnet => WALLET_FILE,
             Self::Testnet => "wallet/ecash.testnet.json",
@@ -367,13 +371,11 @@ async fn write_file_atomically(path: &Path, content: &str) -> Result<()> {
         .await
         .context("Failed to flush wallet file")?;
     drop(file);
-    fs::rename(&tmp.0, path)
-        .await
-        .context("Failed to replace wallet file")?;
-    fs::File::open(parent)
-        .await?
+    // Complete the commit without yielding: async filesystem work must not
+    // rename an old purse after cancellation releases the mutation guard.
+    std::fs::rename(&tmp.0, path).context("Failed to replace wallet file")?;
+    std::fs::File::open(parent)?
         .sync_all()
-        .await
         .context("Failed to flush wallet directory")?;
     Ok(())
 }
@@ -856,7 +858,9 @@ pub async fn send_token_recoverable(
             // Establish recovery support before reserving or spending inputs.
             // Newly derived outputs must not already exist at the mint.
             let existing = client.restore_prepared_swap(&prepared).await.map_err(|_| {
-                anyhow::anyhow!("The mint could not verify payment recovery support; no funds spent")
+                anyhow::anyhow!(
+                    "The mint could not verify payment recovery support; no funds spent"
+                )
             })?;
             anyhow::ensure!(
                 existing.is_none(),
@@ -1366,6 +1370,150 @@ fn target_liquidity_score(liq: &SwapLiquidity, to_mint: &str) -> i64 {
         .sum()
 }
 
+/// Settle one caller-owned incoming token without losing an ambiguous mint
+/// response. Persist and reuse operation_id/context_hash for the same purchase.
+/// This is not a delivery receipt, refund authorization, or purchase protocol.
+pub async fn receive_token_recoverable(
+    data_dir: &Path,
+    operation_id: &str,
+    network: EcashNetwork,
+    mint_url: &str,
+    token_str: &str,
+    minimum_sats: u64,
+    context_hash: &str,
+) -> Result<u64> {
+    use super::receive_journal::{canonical_mint, Binding, Journal, Phase};
+    use sha2::{Digest, Sha256};
+    let held = super::mutation::guard(data_dir).await?;
+    anyhow::ensure!(
+        load_network(data_dir).await? == network,
+        "Switch back to the settlement's original network"
+    );
+    anyhow::ensure!(
+        token_str.len() <= 512 * 1024,
+        "Incoming token exceeds settlement size limit"
+    );
+    let binding = Binding {
+        id: operation_id.into(),
+        network,
+        mint_url: canonical_mint(mint_url)?,
+        token_hash: hex::encode(Sha256::digest(token_str.as_bytes())),
+        context_hash: context_hash.into(),
+        minimum_sats,
+    };
+    binding.validate()?;
+    let journal = Journal::new(&held);
+    let previous = journal.load(operation_id).await?;
+    let recovering = previous.is_some();
+    let record = if let Some(record) = previous {
+        anyhow::ensure!(
+            record.binding == binding,
+            "Settlement operation terms changed; do not redeem again"
+        );
+        record
+    } else {
+        let token = CashuToken::deserialize(token_str)
+            .map_err(|_| anyhow::anyhow!("Invalid incoming settlement token"))?;
+        anyhow::ensure!(
+            token.unit.as_deref().unwrap_or("sat") == "sat" && token.token.len() == 1,
+            "Settlement requires one sat-denominated mint"
+        );
+        let entry = &token.token[0];
+        anyhow::ensure!(
+            canonical_mint(&entry.mint)? == binding.mint_url,
+            "Incoming token mint does not match settlement terms"
+        );
+        let amount = entry
+            .proofs
+            .iter()
+            .try_fold(0u64, |sum, proof| sum.checked_add(proof.amount))
+            .context("Incoming amount overflow")?;
+        anyhow::ensure!(
+            amount >= minimum_sats
+                && entry
+                    .proofs
+                    .iter()
+                    .all(|proof| proof.amount.is_power_of_two()
+                        && !proof.secret.is_empty()
+                        && proof.c_as_pubkey().is_ok()),
+            "Invalid incoming settlement proofs or amount"
+        );
+        journal
+            .ensure_unclaimed(&binding.mint_url, &entry.proofs, Some(operation_id))
+            .await?;
+        let accepted = load_accepted_mints(data_dir).await?;
+        anyhow::ensure!(accepted.mints.iter().any(|mint| canonical_mint(mint).ok().as_deref() == Some(binding.mint_url.as_str())), "Settlement mint is not accepted");
+        let wallet = load_wallet(data_dir).await?;
+        anyhow::ensure!(
+            !entry
+                .proofs
+                .iter()
+                .any(|proof| wallet.proofs.iter().any(|stored| !stored.spent
+                    && canonical_mint(&stored.mint_url).ok().as_deref()
+                        == Some(binding.mint_url.as_str())
+                    && stored.proof.secret == proof.secret)),
+            "Incoming settlement overlaps existing wallet funds"
+        );
+        anyhow::ensure!(
+            !wallet
+                .receive_commits
+                .contains_key(&format!("received:{operation_id}")),
+            "Settlement marker exists without its recovery record; manual recovery required"
+        );
+        let client = mint_client(data_dir, &binding.mint_url).await?;
+        let prepared = client.prepare_swap_at_least(&entry.proofs, &amount_to_denominations(amount), minimum_sats).await
+            .map_err(|_| anyhow::anyhow!("Could not prepare a recoverable settlement covering the agreed net price; no proofs redeemed"))?;
+        let existing = client.restore_prepared_swap(&prepared).await.map_err(|_| {
+            anyhow::anyhow!(
+                "The mint could not verify settlement recovery support; no proofs redeemed"
+            )
+        })?;
+        anyhow::ensure!(
+            existing.is_none(),
+            "New settlement outputs already exist; no proofs redeemed"
+        );
+        journal.prepare(binding.clone(), prepared).await?
+    };
+    if !matches!(record.phase, Phase::Prepared) {
+        return journal.commit_wallet(&binding).await;
+    }
+    let client = MintClient::new(&binding.mint_url)?;
+    let restored = if recovering {
+        client
+            .restore_prepared_swap(&record.request)
+            .await
+            .map_err(|_| {
+                anyhow::anyhow!(
+                    "Could not recover this settlement yet; retain the original operation"
+                )
+            })?
+    } else {
+        None
+    };
+    let result = if let Some(result) = restored {
+        result
+    } else {
+        if recovering {
+            let states = client.check_state(record.request.inputs()).await
+                .map_err(|_| anyhow::anyhow!("Could not verify incoming settlement inputs; do not redeem or refund again"))?;
+            anyhow::ensure!(
+                states.iter().all(|state| state.state == "UNSPENT"),
+                "Incoming settlement remains pending at the mint; do not redeem or refund again"
+            );
+        }
+        client
+            .execute_prepared_swap(&record.request)
+            .await
+            .map_err(|_| {
+                anyhow::anyhow!(
+                    "The mint did not confirm settlement; retry this same operation to recover it"
+                )
+            })?
+    };
+    journal.record_result(&binding, result.new_proofs).await?;
+    journal.commit_wallet(&binding).await
+}
+
 /// Receive a Cashu token from a peer — swaps proofs at the mint for fresh ones.
 pub async fn receive_token(data_dir: &Path, token_str: &str) -> Result<u64> {
     let _mutation = super::mutation::guard(data_dir).await?;
@@ -1375,6 +1523,11 @@ pub async fn receive_token(data_dir: &Path, token_str: &str) -> Result<u64> {
     }
 
     let token = CashuToken::deserialize(token_str)?;
+    for entry in &token.token {
+        super::receive_journal::Journal::new(&_mutation)
+            .ensure_unclaimed(&entry.mint, &entry.proofs, None)
+            .await?;
+    }
     let total_amount = token.total_amount();
 
     if total_amount == 0 {
@@ -1530,6 +1683,9 @@ pub async fn verify_and_receive_payment(
         [entry] => entry,
         _ => anyhow::bail!("Use a single-mint token for this payment"),
     };
+    super::receive_journal::Journal::new(&_mutation)
+        .ensure_unclaimed(&entry.mint, &entry.proofs, None)
+        .await?;
     let total = entry
         .proofs
         .iter()
@@ -1616,6 +1772,9 @@ pub struct RestoreOutcome {
 /// time to press this button is when something already looks wrong.
 pub async fn restore_from_seed(data_dir: &Path, mint_url: &str) -> Result<RestoreOutcome> {
     let _mutation = super::mutation::guard(data_dir).await?;
+    super::receive_journal::Journal::new(&_mutation)
+        .ensure_restore_allowed(load_network(data_dir).await?, mint_url)
+        .await?;
     let outgoing = super::send_journal::Journal::new(&_mutation)
         .restore_exclusions(load_network(data_dir).await?, mint_url)
         .await?;

@@ -729,16 +729,30 @@ async fn recoverable_send_rejects_broken_recovery_before_reserving_or_spending()
     let id = uuid::Uuid::new_v4().to_string();
     let context = "ab".repeat(32);
     let error = send_token_recoverable(
-        root.path(), &id, EcashNetwork::Mainnet, &mint.url, 4, &context,
-    ).await.unwrap_err();
+        root.path(),
+        &id,
+        EcashNetwork::Mainnet,
+        &mint.url,
+        4,
+        &context,
+    )
+    .await
+    .unwrap_err();
     assert!(error.to_string().contains("recovery support"));
     assert_eq!(load_wallet(root.path()).await.unwrap().balance(), 8);
     assert!(mint.requests.lock().unwrap().is_empty());
     // Once the mint responds correctly the same unspent operation can proceed.
     *mint.restore_reply.lock().unwrap() = None;
     assert!(send_token_recoverable(
-        root.path(), &id, EcashNetwork::Mainnet, &mint.url, 4, &context,
-    ).await.is_ok());
+        root.path(),
+        &id,
+        EcashNetwork::Mainnet,
+        &mint.url,
+        4,
+        &context,
+    )
+    .await
+    .is_ok());
     assert_eq!(mint.requests.lock().unwrap().len(), 1);
     assert_eq!(load_wallet(root.path()).await.unwrap().balance(), 4);
 }
@@ -1015,4 +1029,548 @@ async fn incomplete_duplicate_or_unknown_restoration_never_completes_a_swap() {
         assert!(client.restore_prepared_swap(&prepared).await.is_err());
     }
     assert!(mint.requests.lock().unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn recoverable_receive_lost_reply_claims_inputs_and_recovers_once() {
+    let mint = Mint::start(0, None).await;
+    let root = mint.wallet().await;
+    let incoming = CashuToken::new(&mint.url, vec![proof(V2, 8), proof(ACTIVE, 4)]);
+    let token = incoming.serialize_v4().unwrap();
+    let id = uuid::Uuid::new_v4().to_string();
+    let context = "ab".repeat(32);
+    mint.lose_swap_reply
+        .store(true, std::sync::atomic::Ordering::SeqCst);
+    assert!(receive_token_recoverable(
+        root.path(),
+        &id,
+        EcashNetwork::Mainnet,
+        &mint.url,
+        &token,
+        12,
+        &context
+    )
+    .await
+    .is_err());
+    assert_eq!(mint.requests.lock().unwrap().len(), 1);
+    assert_eq!(load_wallet(root.path()).await.unwrap().balance(), 0);
+    assert!(restore_from_seed(root.path(), &mint.url)
+        .await
+        .unwrap_err()
+        .to_string()
+        .contains("pending receipts"));
+    for duplicate in [
+        token.clone(),
+        incoming.serialize().unwrap(),
+        CashuToken::new(&mint.url, vec![proof(ACTIVE, 4), proof(ACTIVE, 2)])
+            .serialize()
+            .unwrap(),
+    ] {
+        let other = uuid::Uuid::new_v4().to_string();
+        assert!(receive_token_recoverable(
+            root.path(),
+            &other,
+            EcashNetwork::Mainnet,
+            &mint.url,
+            &duplicate,
+            1,
+            &context
+        )
+        .await
+        .unwrap_err()
+        .to_string()
+        .contains("another settlement"));
+    }
+    assert!(receive_token(root.path(), &token)
+        .await
+        .unwrap_err()
+        .to_string()
+        .contains("another settlement"));
+    *mint.restore_reply.lock().unwrap() = Some(json!({"outputs":[],"signatures":[]}));
+    assert!(receive_token_recoverable(
+        root.path(),
+        &id,
+        EcashNetwork::Mainnet,
+        &mint.url,
+        &token,
+        12,
+        &context
+    )
+    .await
+    .unwrap_err()
+    .to_string()
+    .contains("pending at the mint"));
+    assert_eq!(mint.requests.lock().unwrap().len(), 1);
+    *mint.restore_reply.lock().unwrap() = None;
+    assert_eq!(
+        receive_token_recoverable(
+            root.path(),
+            &id,
+            EcashNetwork::Mainnet,
+            &mint.url,
+            &token,
+            12,
+            &context
+        )
+        .await
+        .unwrap(),
+        12
+    );
+    let wallet = load_wallet(root.path()).await.unwrap();
+    assert_eq!(wallet.balance(), 12);
+    assert_eq!(wallet.transactions.len(), 1);
+    assert_eq!(wallet.transactions[0].id, format!("received:{id}"));
+    assert_eq!(wallet.receive_commits.len(), 1);
+    for output in &wallet.proofs {
+        assert_eq!(
+            output.proof.c,
+            signed_point(bdhke::hash_to_curve(output.proof.secret.as_bytes()).unwrap())
+        );
+        assert!(!incoming.token[0]
+            .proofs
+            .iter()
+            .any(|input| input.secret == output.proof.secret));
+    }
+    let before = std::fs::read(root.path().join("wallet/ecash.json")).unwrap();
+    assert_eq!(
+        receive_token_recoverable(
+            root.path(),
+            &id,
+            EcashNetwork::Mainnet,
+            &mint.url,
+            &token,
+            12,
+            &context
+        )
+        .await
+        .unwrap(),
+        12
+    );
+    assert_eq!(
+        std::fs::read(root.path().join("wallet/ecash.json")).unwrap(),
+        before
+    );
+    assert_eq!(mint.requests.lock().unwrap().len(), 1);
+    for (network, price, terms) in [
+        (EcashNetwork::Testnet, 12, context.clone()),
+        (EcashNetwork::Mainnet, 11, context.clone()),
+        (EcashNetwork::Mainnet, 12, "cd".repeat(32)),
+    ] {
+        assert!(receive_token_recoverable(
+            root.path(),
+            &id,
+            network,
+            &mint.url,
+            &token,
+            price,
+            &terms
+        )
+        .await
+        .is_err());
+    }
+    // Completed receipts remain valid without re-crediting a pruned wallet.
+    std::fs::remove_file(root.path().join("wallet/ecash.json")).unwrap();
+    assert_eq!(
+        receive_token_recoverable(
+            root.path(),
+            &id,
+            EcashNetwork::Mainnet,
+            &mint.url,
+            &token,
+            12,
+            &context
+        )
+        .await
+        .unwrap(),
+        12
+    );
+    assert!(!root.path().join("wallet/ecash.json").exists());
+    assert!(receive_token_recoverable(
+        root.path(),
+        &uuid::Uuid::new_v4().to_string(),
+        EcashNetwork::Mainnet,
+        &mint.url,
+        &incoming.serialize().unwrap(),
+        12,
+        &context
+    )
+    .await
+    .is_err());
+}
+
+#[tokio::test]
+async fn recoverable_receive_recovery_support_fees_and_terms_fail_before_spend() {
+    let mint = Mint::start(1000, None).await;
+    let root = mint.wallet().await;
+    let token = CashuToken::new(&mint.url, vec![proof(ACTIVE, 8)])
+        .serialize()
+        .unwrap();
+    let id = uuid::Uuid::new_v4().to_string();
+    let context = "ab".repeat(32);
+    assert!(receive_token_recoverable(
+        root.path(),
+        &id,
+        EcashNetwork::Mainnet,
+        &mint.url,
+        &token,
+        8,
+        &context
+    )
+    .await
+    .is_err());
+    *mint.restore_reply.lock().unwrap() = Some(json!({}));
+    assert!(receive_token_recoverable(
+        root.path(),
+        &id,
+        EcashNetwork::Mainnet,
+        &mint.url,
+        &token,
+        7,
+        &context
+    )
+    .await
+    .unwrap_err()
+    .to_string()
+    .contains("recovery support"));
+    assert!(mint.requests.lock().unwrap().is_empty());
+    assert!(!root.path().join("wallet/receive-operations").exists());
+    assert_eq!(load_wallet(root.path()).await.unwrap().balance(), 0);
+    let mut foreign = CashuToken::new(&mint.url, vec![proof(ACTIVE, 8)]);
+    foreign.unit = Some("usd".into());
+    assert!(receive_token_recoverable(
+        root.path(),
+        &id,
+        EcashNetwork::Mainnet,
+        &mint.url,
+        &foreign.serialize().unwrap(),
+        7,
+        &context
+    )
+    .await
+    .is_err());
+    foreign.unit = Some("sat".into());
+    foreign.token.push(foreign.token[0].clone());
+    assert!(receive_token_recoverable(
+        root.path(),
+        &id,
+        EcashNetwork::Mainnet,
+        &mint.url,
+        &foreign.serialize().unwrap(),
+        7,
+        &context
+    )
+    .await
+    .is_err());
+    *mint.restore_reply.lock().unwrap() = None;
+    assert_eq!(
+        receive_token_recoverable(
+            root.path(),
+            &id,
+            EcashNetwork::Mainnet,
+            &format!("{}/", mint.url),
+            &token,
+            7,
+            &context
+        )
+        .await
+        .unwrap(),
+        7
+    );
+    assert_eq!(load_wallet(root.path()).await.unwrap().balance(), 7);
+    assert_eq!(mint.requests.lock().unwrap().len(), 1);
+}
+
+fn rewrite_receive_phase(root: &std::path::Path, id: &str, phase: Value) {
+    use sha2::{Digest, Sha256};
+    let path = root.join(format!("wallet/receive-operations/{id}.json"));
+    let mut envelope: Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+    let mut record: Value = serde_json::from_str(envelope["payload"].as_str().unwrap()).unwrap();
+    record["phase"] = phase;
+    let payload = serde_json::to_string(&record).unwrap();
+    envelope["checksum"] = json!(hex::encode(Sha256::digest(payload.as_bytes())));
+    envelope["payload"] = json!(payload);
+    std::fs::write(path, serde_json::to_vec(&envelope).unwrap()).unwrap();
+}
+
+#[tokio::test]
+async fn recoverable_receive_commit_boundaries_survive_history_pruning_without_recredit() {
+    use sha2::{Digest, Sha256};
+    let mint = Mint::start(0, None).await;
+    let root = mint.wallet().await;
+    let token = CashuToken::new(&mint.url, vec![proof(ACTIVE, 8)])
+        .serialize()
+        .unwrap();
+    let id = uuid::Uuid::new_v4().to_string();
+    let context = "ab".repeat(32);
+    assert_eq!(
+        receive_token_recoverable(
+            root.path(),
+            &id,
+            EcashNetwork::Mainnet,
+            &mint.url,
+            &token,
+            8,
+            &context
+        )
+        .await
+        .unwrap(),
+        8
+    );
+    let mut wallet = load_wallet(root.path()).await.unwrap();
+    let proofs: Vec<_> = wallet.proofs.iter().map(|p| p.proof.clone()).collect();
+    let committing =
+        json!({"Committing":{"proofs":proofs,"before":hex::encode(Sha256::digest(b"missing"))}});
+    let journal_path = root
+        .path()
+        .join(format!("wallet/receive-operations/{id}.json"));
+    let committed_record = std::fs::read(&journal_path).unwrap();
+    // Crash after purse save but before phase save; unrelated history pruning
+    // preserves the durable marker and must not restore already-spent outputs.
+    rewrite_receive_phase(root.path(), &id, committing.clone());
+    wallet.transactions.clear();
+    wallet.proofs.clear();
+    save_wallet(root.path(), &wallet).await.unwrap();
+    let purse = std::fs::read(root.path().join("wallet/ecash.json")).unwrap();
+    assert_eq!(
+        receive_token_recoverable(
+            root.path(),
+            &id,
+            EcashNetwork::Mainnet,
+            &mint.url,
+            &token,
+            8,
+            &context
+        )
+        .await
+        .unwrap(),
+        8
+    );
+    assert_eq!(
+        std::fs::read(root.path().join("wallet/ecash.json")).unwrap(),
+        purse
+    );
+    // Old writers dropping the marker cause a recovery hold, never a guessed credit.
+    rewrite_receive_phase(root.path(), &id, committing.clone());
+    wallet.receive_commits.clear();
+    save_wallet(root.path(), &wallet).await.unwrap();
+    assert!(receive_token_recoverable(
+        root.path(),
+        &id,
+        EcashNetwork::Mainnet,
+        &mint.url,
+        &token,
+        8,
+        &context
+    )
+    .await
+    .unwrap_err()
+    .to_string()
+    .contains("manual recovery"));
+    assert_eq!(load_wallet(root.path()).await.unwrap().balance(), 0);
+    // Crash before the purse save: exact absent pre-image authorizes first commit.
+    std::fs::remove_file(root.path().join("wallet/ecash.json")).unwrap();
+    assert_eq!(
+        receive_token_recoverable(
+            root.path(),
+            &id,
+            EcashNetwork::Mainnet,
+            &mint.url,
+            &token,
+            8,
+            &context
+        )
+        .await
+        .unwrap(),
+        8
+    );
+    assert_eq!(load_wallet(root.path()).await.unwrap().balance(), 8);
+    assert_eq!(mint.requests.lock().unwrap().len(), 1);
+    // Completed receipt survives a missing purse without rebuilding its proofs.
+    std::fs::write(journal_path, committed_record).unwrap();
+    std::fs::remove_file(root.path().join("wallet/ecash.json")).unwrap();
+    assert_eq!(
+        receive_token_recoverable(
+            root.path(),
+            &id,
+            EcashNetwork::Mainnet,
+            &mint.url,
+            &token,
+            8,
+            &context
+        )
+        .await
+        .unwrap(),
+        8
+    );
+    assert!(!root.path().join("wallet/ecash.json").exists());
+}
+
+#[tokio::test]
+async fn recoverable_receive_corrupt_claims_and_write_failures_preserve_funds() {
+    let mint = Mint::start(0, None).await;
+    let root = mint.wallet().await;
+    let token = CashuToken::new(&mint.url, vec![proof(ACTIVE, 8)])
+        .serialize()
+        .unwrap();
+    let id = uuid::Uuid::new_v4().to_string();
+    let context = "ab".repeat(32);
+    // A directory at the target blocks the private journal replacement before POST.
+    let path = root
+        .path()
+        .join(format!("wallet/receive-operations/{id}.json"));
+    std::fs::create_dir_all(&path).unwrap();
+    assert!(receive_token_recoverable(
+        root.path(),
+        &id,
+        EcashNetwork::Mainnet,
+        &mint.url,
+        &token,
+        8,
+        &context
+    )
+    .await
+    .is_err());
+    assert!(mint.requests.lock().unwrap().is_empty());
+    std::fs::remove_dir(&path).unwrap();
+    mint.lose_swap_reply
+        .store(true, std::sync::atomic::Ordering::SeqCst);
+    assert!(receive_token_recoverable(
+        root.path(),
+        &id,
+        EcashNetwork::Mainnet,
+        &mint.url,
+        &token,
+        8,
+        &context
+    )
+    .await
+    .is_err());
+    let saved = std::fs::read(&path).unwrap();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        assert_eq!(
+            std::fs::metadata(&path).unwrap().permissions().mode() & 0o777,
+            0o600
+        );
+        assert_eq!(
+            std::fs::metadata(path.parent().unwrap())
+                .unwrap()
+                .permissions()
+                .mode()
+                & 0o777,
+            0o700
+        );
+    }
+    std::fs::write(&path, b"damaged").unwrap();
+    assert!(receive_token_recoverable(
+        root.path(),
+        &id,
+        EcashNetwork::Mainnet,
+        &mint.url,
+        &token,
+        8,
+        &context
+    )
+    .await
+    .is_err());
+    assert!(receive_token_recoverable(
+        root.path(),
+        &uuid::Uuid::new_v4().to_string(),
+        EcashNetwork::Mainnet,
+        &mint.url,
+        &token,
+        8,
+        &context
+    )
+    .await
+    .is_err());
+    assert!(receive_token(root.path(), &token).await.is_err());
+    assert_eq!(mint.requests.lock().unwrap().len(), 1);
+    std::fs::write(&path, saved).unwrap();
+    assert_eq!(
+        receive_token_recoverable(
+            root.path(),
+            &id,
+            EcashNetwork::Mainnet,
+            &mint.url,
+            &token,
+            8,
+            &context
+        )
+        .await
+        .unwrap(),
+        8
+    );
+}
+
+#[tokio::test]
+async fn recoverable_receive_unspent_retry_reuses_exact_request_and_waits_for_verified_state() {
+    let mint = Mint::start(0, Some(503)).await;
+    let root = mint.wallet().await;
+    let token = CashuToken::new(&mint.url, vec![proof(ACTIVE, 8)])
+        .serialize()
+        .unwrap();
+    let id = uuid::Uuid::new_v4().to_string();
+    let context = "ab".repeat(32);
+    assert!(receive_token_recoverable(
+        root.path(),
+        &id,
+        EcashNetwork::Mainnet,
+        &mint.url,
+        &token,
+        8,
+        &context
+    )
+    .await
+    .is_err());
+    assert_eq!(mint.requests.lock().unwrap().len(), 1);
+    // Legacy paid-content redemption must respect claims even while mint inputs
+    // remain unspent; otherwise it could steal the pending operation's proofs.
+    assert!(verify_and_receive_payment(root.path(), &token, 8)
+        .await
+        .unwrap_err()
+        .to_string()
+        .contains("another settlement"));
+    assert_eq!(mint.requests.lock().unwrap().len(), 1);
+    let original = mint.requests.lock().unwrap()[0].clone();
+    assert_eq!(load_wallet(root.path()).await.unwrap().balance(), 0);
+    // An empty state response must not authorize a second POST.
+    *mint.state_reply.lock().unwrap() = Some(json!({"states":[]}));
+    mint.failure.store(0, std::sync::atomic::Ordering::SeqCst);
+    assert!(receive_token_recoverable(
+        root.path(),
+        &id,
+        EcashNetwork::Mainnet,
+        &mint.url,
+        &token,
+        8,
+        &context
+    )
+    .await
+    .is_err());
+    assert_eq!(mint.requests.lock().unwrap().len(), 1);
+    *mint.state_reply.lock().unwrap() = None;
+    assert_eq!(
+        receive_token_recoverable(
+            root.path(),
+            &id,
+            EcashNetwork::Mainnet,
+            &mint.url,
+            &token,
+            8,
+            &context
+        )
+        .await
+        .unwrap(),
+        8
+    );
+    let requests = mint.requests.lock().unwrap();
+    assert_eq!(requests.len(), 2);
+    assert_eq!(requests[1], original);
+    drop(requests);
+    let wallet = load_wallet(root.path()).await.unwrap();
+    assert_eq!(wallet.balance(), 8);
+    assert_eq!(wallet.transactions.len(), 1);
+    assert_eq!(wallet.receive_commits.len(), 1);
 }

@@ -12,3 +12,4 @@ mod mutation;
 pub mod nut13;
 pub mod profits;
 mod send_journal;
+mod receive_journal;
