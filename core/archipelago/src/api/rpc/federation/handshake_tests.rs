@@ -274,3 +274,174 @@ async fn federation_metrics_are_collected_values_or_unknown_never_placeholders()
         }
     }
 }
+
+/// Real encrypted relay -> poll -> persisted membership, including the normal
+/// npub-only outbound request whose DID is unknown until the authenticated reply.
+#[tokio::test]
+async fn npub_only_request_accepts_bound_reply_but_rejects_other_sender_and_forged_did() {
+    use base64::Engine;
+    use nostr_sdk::{EventBuilder, Kind, Tag};
+    let dir = tempfile::tempdir().unwrap();
+    let local = Keys::parse(&"11".repeat(32)).unwrap();
+    let remote = Keys::parse(&"22".repeat(32)).unwrap();
+    let stranger = Keys::parse(&"55".repeat(32)).unwrap();
+    let remote_key = "44".repeat(32);
+    let remote_did = crate::identity::did_key_from_pubkey_hex(&remote_key).unwrap();
+    let payload = serde_json::json!({"did":remote_did,"pubkey":remote_key,"onion":format!("{}.onion","b".repeat(56)),"token":"fixture-invite"});
+    let event = |sender: &Keys, payload: &serde_json::Value| {
+        let code = format!(
+            "fed1:{}",
+            base64::engine::general_purpose::URL_SAFE_NO_PAD
+                .encode(serde_json::to_vec(payload).unwrap())
+        );
+        let content = nip44::encrypt(
+            sender.secret_key(),
+            &local.public_key(),
+            serde_json::json!({"type":"peer-invite","invite_code":code}).to_string(),
+            nip44::Version::V2,
+        )
+        .unwrap();
+        EventBuilder::new(Kind::EncryptedDirectMessage, content)
+            .tag(Tag::public_key(local.public_key()))
+            .sign_with_keys(sender)
+            .unwrap()
+    };
+    let mut forged = payload.clone();
+    forged["pubkey"] = serde_json::json!("66".repeat(32));
+    let events = Arc::new(std::sync::Mutex::new(vec![
+        event(&stranger, &payload),
+        event(&remote, &forged),
+    ]));
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let relay_url = format!("ws://{}", listener.local_addr().unwrap());
+    let relay_events = events.clone();
+    let relay = tokio::spawn(async move {
+        while let Ok((socket, _)) = listener.accept().await {
+            let events = relay_events.clone();
+            tokio::spawn(async move {
+                let Ok(mut ws) = tokio_tungstenite::accept_async(socket).await else {
+                    return;
+                };
+                while let Some(Ok(message)) = ws.next().await {
+                    let Ok(text) = message.to_text() else {
+                        continue;
+                    };
+                    let Ok(value) = serde_json::from_str::<serde_json::Value>(text) else {
+                        continue;
+                    };
+                    if value[0] != "REQ" {
+                        continue;
+                    }
+                    let stored = events.lock().unwrap().clone();
+                    for event in stored {
+                        if ws
+                            .send(tokio_tungstenite::tungstenite::Message::Text(
+                                serde_json::json!(["EVENT", value[1], event]).to_string(),
+                            ))
+                            .await
+                            .is_err()
+                        {
+                            return;
+                        }
+                    }
+                    if ws
+                        .send(tokio_tungstenite::tungstenite::Message::Text(
+                            serde_json::json!(["EOSE", value[1]]).to_string(),
+                        ))
+                        .await
+                        .is_err()
+                    {
+                        return;
+                    }
+                }
+            });
+        }
+    });
+    let identity_dir = dir.path().join("identity");
+    tokio::fs::create_dir_all(&identity_dir).await.unwrap();
+    tokio::fs::write(identity_dir.join("nostr_secret"), "11".repeat(32))
+        .await
+        .unwrap();
+    let identity = crate::identity::NodeIdentity::load_or_create(&identity_dir)
+        .await
+        .unwrap();
+    tokio::fs::write(
+        dir.path()
+            .join(crate::nostr_handshake::DISCOVERY_STATE_FILE),
+        br#"{"enabled":true}"#,
+    )
+    .await
+    .unwrap();
+    let mut config = crate::config::Config::default();
+    config.data_dir = dir.path().into();
+    config.nostr_relays = vec![relay_url];
+    config.nostr_tor_proxy = None;
+    let state = Arc::new(crate::state::StateManager::new());
+    state
+        .mutate_data(|data| {
+            data.server_info.pubkey = identity.pubkey_hex();
+            data.server_info.tor_address = Some(format!("{}.onion", "a".repeat(56)));
+        })
+        .await;
+    let handler = crate::api::rpc::RpcHandler::new(
+        config,
+        state,
+        Arc::new(crate::monitoring::MetricsStore::new()),
+        crate::session::SessionStore::new_for_tests(dir.path().join("sessions.json")),
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+    let row = pending::insert_outbound(
+        dir.path(),
+        remote.public_key().to_hex(),
+        String::new(),
+        String::new(),
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+    let rejected = handler.handle_handshake_poll().await.unwrap();
+    assert!(rejected["applied_invites"].as_array().unwrap().is_empty());
+    assert!(crate::federation::load_nodes(dir.path())
+        .await
+        .unwrap()
+        .is_empty());
+    assert_eq!(
+        pending::find_by_id(dir.path(), &row.id)
+            .await
+            .unwrap()
+            .unwrap()
+            .state,
+        PendingState::Sent
+    );
+    *events.lock().unwrap() = vec![event(&remote, &payload)];
+    let accepted = handler.handle_handshake_poll().await.unwrap();
+    assert_eq!(accepted["applied_invites"], serde_json::json!([remote_did]));
+    let nodes = crate::federation::load_nodes(dir.path()).await.unwrap();
+    assert_eq!(nodes.len(), 1);
+    assert_eq!(
+        nodes[0].trust_level,
+        crate::federation::TrustLevel::Observer
+    );
+    assert_eq!(
+        pending::find_by_id(dir.path(), &row.id)
+            .await
+            .unwrap()
+            .unwrap()
+            .state,
+        PendingState::Approved
+    );
+    let duplicate = handler.handle_handshake_poll().await.unwrap();
+    assert!(duplicate["applied_invites"].as_array().unwrap().is_empty());
+    assert_eq!(
+        crate::federation::load_nodes(dir.path())
+            .await
+            .unwrap()
+            .len(),
+        1
+    );
+    relay.abort();
+}

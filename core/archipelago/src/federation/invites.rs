@@ -137,11 +137,14 @@ pub fn parse_invite(code: &str) -> Result<ParsedInvite> {
 /// Bind a Nostr-discovery reply to the node the operator requested, and cap
 /// its grant before any local node entry or callback is written. Legacy invites
 /// default to Trusted, which must never transiently authorize discovery peers.
+/// An npub-only outbound request has no DID yet: its caller must already have
+/// matched the authenticated Nostr sender to the stored requested public key.
+/// In that case the reply establishes the DID, which must still match its key.
 pub(crate) fn restrict_discovery_invite(code: &str, expected_did: &str) -> Result<String> {
     use base64::Engine;
     let parsed = parse_invite(code)?;
     anyhow::ensure!(
-        !expected_did.is_empty() && parsed.did == expected_did,
+        expected_did.is_empty() || parsed.did == expected_did,
         "Peer invite does not match the requested node"
     );
     anyhow::ensure!(
@@ -668,7 +671,11 @@ mod discovery_invite_scope_tests {
         assert_eq!(parsed.trust_level, TrustLevel::Observer);
         assert_eq!(parsed.token, "test-token");
         assert!(restrict_discovery_invite(&code, "did:key:someone-else").is_err());
-        assert!(restrict_discovery_invite(&code, "").is_err());
+        let first_contact = restrict_discovery_invite(&code, "").unwrap();
+        assert_eq!(
+            parse_invite(&first_contact).unwrap().trust_level,
+            TrustLevel::Observer
+        );
         let mut forged = payload;
         forged["pubkey"] = serde_json::json!("44".repeat(32));
         let forged = format!(
@@ -677,5 +684,6 @@ mod discovery_invite_scope_tests {
                 .encode(serde_json::to_vec(&forged).unwrap())
         );
         assert!(restrict_discovery_invite(&forged, &did).is_err());
+        assert!(restrict_discovery_invite(&forged, "").is_err());
     }
 }
