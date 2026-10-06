@@ -92,6 +92,9 @@
               @error="onIframeError"
             />
 
+            <AppSlowLoadNotice v-if="slowLoad && !iframeBlocked" :title="store.title || 'App'"
+              @refresh="refreshIframe" @dismiss-slow-load="slowLoad = false" />
+
             <!-- Iframe blocked fallback -->
             <Transition name="content-fade">
               <div v-if="iframeBlocked && !iframeLoading" class="absolute inset-0 z-10 flex flex-col items-center justify-center">
@@ -210,6 +213,7 @@ import { useAppLauncherStore } from '@/stores/appLauncher'
 import NostrSignConsent from '@/components/NostrSignConsent.vue'
 import NostrIdentityPicker from '@/components/NostrIdentityPicker.vue'
 import AppLoadingScreen from '@/components/AppLoadingScreen.vue'
+import AppSlowLoadNotice from '@/components/AppSlowLoadNotice.vue'
 import PaymentSuccessPane, { type SuccessRow } from '@/components/PaymentSuccessPane.vue'
 import { DEFAULT_APP_ICON } from '@/views/apps/appsConfig'
 import { rpcClient } from '@/api/rpc-client'
@@ -234,6 +238,7 @@ const iframeRefreshKey = ref(0)
 const isRefreshing = ref(false)
 const iframeLoading = ref(true)
 const iframeBlocked = ref(false)
+const slowLoad = ref(false)
 
 // Best-guess icon for the loading screen — resolved from the /app/{id}/ path
 // when present; AppLoadingScreen's <img> falls back to the default icon if the
@@ -366,12 +371,14 @@ function refreshIframe() {
   isRefreshing.value = true
   iframeLoading.value = true
   iframeBlocked.value = false
+  slowLoad.value = false
   clearTimers()
   iframeRefreshKey.value++
   loadTimeoutId = setTimeout(() => {
     if (iframeLoading.value) {
       iframeLoading.value = false
-      iframeBlocked.value = true
+      isRefreshing.value = false
+      slowLoad.value = true
     }
   }, 15000)
 }
@@ -400,6 +407,8 @@ function openInNewTabAndClose() {
 }
 
 function onIframeLoad() {
+  slowLoad.value = false
+  iframeBlocked.value = false
   injectScrollbarHideIfSameOrigin()
   isRefreshing.value = false
   iframeLoading.value = false
@@ -413,6 +422,8 @@ function onIframeLoad() {
 }
 
 function onIframeError() {
+  slowLoad.value = false
+  isRefreshing.value = false
   clearTimers()
   iframeLoading.value = false
   iframeBlocked.value = true
@@ -654,12 +665,14 @@ watch(
     if (open) {
       iframeLoading.value = true
       iframeBlocked.value = false
+      slowLoad.value = false
       clearTimers()
-      // Set max load timeout — if iframe never fires load, show fallback
+      // Keep a slow navigation alive; its eventual load clears this notice.
       loadTimeoutId = setTimeout(() => {
         if (iframeLoading.value) {
           iframeLoading.value = false
-          iframeBlocked.value = true
+          isRefreshing.value = false
+          slowLoad.value = true
         }
       }, 15000)
       closeBtnRef.value?.focus()
@@ -667,6 +680,7 @@ watch(
       isRefreshing.value = false
       iframeLoading.value = true
       iframeBlocked.value = false
+      slowLoad.value = false
       clearTimers()
       // Clear any pending payment when closing
       if (pendingPayment.value) {

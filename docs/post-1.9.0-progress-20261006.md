@@ -741,3 +741,11 @@ passed 1,299 tests but timed out in a Bitcoin modal case and then failed its nex
 case; all 20 targeted tests including both modal cases pass on rerun. A new full
 run with reduced concurrency and no simultaneous build is required and running.
 No failing full run is recorded as passed.
+
+The reduced-concurrency full rerun passed **1,301/1,301 tests in 163 files**
+(`/tmp/archy-slow-app-launch-full-tests-final.log`). Review then found the same
+iframe-removal defect in the custom-app overlay's 15-second timeout. It now keeps
+the frame alive too, sharing the same small loading notice. Three additional
+legacy-overlay tests pass, together with all nine frame tests; both launch paths
+are included in the served-browser harness. The final build and deployment for
+this extension are pending; physical companion acceptance is not implied.
