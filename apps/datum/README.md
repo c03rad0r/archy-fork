@@ -60,5 +60,27 @@ policy (including explicit false settings), secret/DNS refresh and invalid input
 Gashboard successfully polls this image using digest authentication and reconnects
 when its container IP changes. Manifest preflight and generated catalog drift
 checks pass. The catalog entries in this branch are review candidates; no signed
-catalog or image has been published. Real mining shares, rootless Podman and
-actual-node lifecycle acceptance remain required before release.
+catalog or image has been published. Real mining shares and full lifecycle acceptance remain required before release.
+
+## Operator-authorized node deployment (2026-10-06)
+
+Installed as rootless Podman apps on archi-dev-box and yaya-server, with the
+manifest and build context staged in the runtime payload. Both nodes report
+DATUM healthy. Chromium verified the normalized My Apps icon, title, Launch
+button, and embedded native UI with its Config navigation on both nodes.
+
+On yaya, a normal package restart recreated DATUM at 10.89.0.11 instead of
+10.89.0.9. Its configuration checksum was unchanged, and the still-running
+Gashboard resolved `datum` to the new address and resumed successful authenticated
+polling. Existing app container IDs remained unchanged on both hosts.
+
+The payout address remains unset. HTTP health proves that setup is available,
+not that Bitcoin/pool readiness or accepted mining shares have been established.
+No node reboot, IBD experiment, preserved-data reinstall, signed catalog release,
+or registry publication was performed in this deployment.
+
+The deployed platform drops manifest UI/icon metadata from its initial Installing
+placeholder, briefly showing a disk-only app under Services. Once scanned, both
+apps appear in My Apps with their declared icons and launch interfaces. A separate
+platform fix is being prepared; do not claim the installation-placeholder issue
+is fixed merely because the completed installation is displayed correctly.
