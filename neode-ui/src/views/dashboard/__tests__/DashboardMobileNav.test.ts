@@ -45,17 +45,17 @@ describe('mobile navigation clearance across app sessions', () => {
     await nextTick()
     expect(wrapper.find('[data-mobile-tab-bar]').exists()).toBe(false)
     expect(clearance()).toBe('')
-    expect(observers[0].disconnect).toHaveBeenCalledOnce()
+    expect(observers[0]!.disconnect).toHaveBeenCalledOnce()
     height = 88
     state.launcher.panelAppId = null
     await nextTick()
     expect(wrapper.find('[data-mobile-tab-bar]').exists()).toBe(true)
     expect(clearance()).toBe('88px')
     height = 104
-    observers.at(-1)!.callback()
+    observers[observers.length - 1]!.callback()
     expect(clearance()).toBe('104px')
     wrapper.unmount()
-    expect(observers.at(-1)!.disconnect).toHaveBeenCalledOnce()
+    expect(observers[observers.length - 1]!.disconnect).toHaveBeenCalledOnce()
   })
 
   it('does not reserve a visible navigation height on desktop', async () => {
