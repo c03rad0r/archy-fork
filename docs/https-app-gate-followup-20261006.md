@@ -48,7 +48,8 @@ backend or ISO has been deployed or published.
 Commit `88d473f6` fixes exact loopback authority handling for localhost, 127.0.0.1
 and IPv6 loopback, without rewriting external hostname/path substrings. Two
 regressions reproduced the old failures;22focused tests and production UI build
-pass. Source is not yet deployed. This is not claimed as the operator's gate cause.
+pass. This UI correction is now deployed to dev and Yaya; it is not claimed
+as the operator's exact gate cause.
 
 ## Remaining acceptance
 
@@ -56,3 +57,38 @@ Reproduce the exact hostname/app in iframe and tab; qualify trusted TLS, HTTP LA
 authenticated/expired/logged-out sessions, companion, service restart, hostname
 regeneration and update persistence. Verify unauthenticated app access is still
 challenged. Preserve the public-management source guard and Shorty containment.
+
+### HTTP/HTTPS session-boundary matrix
+
+A follow-up owned-browser check on dev and Yaya passed all12 cases: HTTP and
+HTTPS iframe loads each with authenticated, missing and invalid sessions.
+Authenticated File Browser responses were200 without the gate page; missing and
+invalid sessions remained401. Evidence: `/tmp/archy-https-frame-auth-matrix.log`.
+The HTTPS diagnostic still explicitly bypasses certificate trust only in its
+isolated browser contexts. This does not qualify the user's exact hostname/app,
+physical companion, normal trust or expired-session renewal. No live config or
+app state was changed by this matrix.
+
+### Dashboard deployment and repeat checks
+
+The UI from88d473f6 is deployed on dev and Yaya. Served index SHA256 is
+`29589517ea9eb6ebd8722a3dd1113a5b597dd6845e393fbf384e17732d1d14df`.
+Deployment verified unchanged backend bytes, session key and app container
+identities/start times. Each node has a protected UI backup and rollback script.
+Evidence: `/tmp/archy-https-runtime-ui-dev-deploy.log` and
+`/tmp/archy-https-runtime-ui-yaya-deploy-final.log`.
+
+Four delayed app-loading cases per node pass at390/1440 widths, in embedded and
+overlay modes. After deployment, all12 HTTP/HTTPS valid/missing/invalid-session
+iframe cases pass again. Logs: `/tmp/archy-https-ui-dev-browser.log`,
+`/tmp/archy-https-ui-yaya-browser-recheck.log` and
+`/tmp/archy-https-frame-auth-after-ui-recheck.log`.
+
+Initial post-deployment browser attempts timed out and are retained as failures.
+A diagnostic context without the dashboard's local authentication state landed
+on Login; fresh authenticated contexts rendered both apps without page errors.
+The matrix harness now catches its response timeout and seeds authenticated state
+explicitly. Build-time disk/memory pressure was also measured; the owned build
+was lowered in CPU/I/O priority without changing services. Neither observation
+proves the cause of every timeout. Normal certificate trust, the exact reported
+hostname/app, physical companion and restart/update persistence remain open.

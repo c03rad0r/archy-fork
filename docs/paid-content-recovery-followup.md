@@ -224,3 +224,12 @@ See the current [NUT-07](https://github.com/cashubtc/nuts/blob/main/07.md) and
 [NUT-09](https://github.com/cashubtc/nuts/blob/main/09.md) specifications. Wallet
 integration still needs crash-boundary fixtures, followed by purchase-context and
 seller-receipt integration before any new paid-content acceptance claim.
+
+### Additional restore checks retained for the next batch
+
+Review of seed restore found that the current NUT-07 consumer verifies response
+length but not each returned proof identifier. Match every response to the exact
+requested curve point and reject unknown state values before crediting proofs.
+Do not treat a same-length response as sufficient. Also prevent a seed scan from
+making reserved outgoing operation outputs available before that operation's
+result/commit is recovered. These are source findings; no live restore was run.

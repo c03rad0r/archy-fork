@@ -901,3 +901,25 @@ Final wallet serialization/network/seed qualification:1,764backend tests pass,
 zero failures, five existing skips. This includes the concurrent receipt/history
 and seed-backup tests. Source is ready for review; not deployed, and the durable
 purchase journal remains open.
+
+## Latest: journal storage and deployed iframe URL correction
+
+Prepared swap recovery is committed ina4ede202; immutable private send journal
+storage is committed ind4b359db. The final storage qualification passes1,773
+backend tests, zero failures, five existing skips, including changed terms,
+corruption, restart, wrong currency and private-file checks. No updated wallet
+backend has been deployed. Reservation/commit integration is the next uncommitted
+batch under qualification, not a completed purchase or seller receipt protocol.
+
+The iframe URL correction88d473f6 is now deployed on dev and Yaya. Backend, session
+key and app container identity/start times remained unchanged. Eight delayed app
+launch cases pass across mobile/desktop and session/overlay modes;12HTTP/HTTPS
+valid/missing/invalid session cases pass after deployment. Initial post-deployment
+timeouts remain recorded, followed by fresh-context checks and successful reruns.
+The exact reported app/hostname, ordinary certificate trust and physical companion
+remain open. Deployment/rollback evidence is in
+`docs/https-app-gate-followup-20261006.md`.
+
+The private HTML/PDF report was refreshed and passes390/1440layout checks with
+all17task groups and no external resources. V4V's prepared node-only catalog is
+still unsigned. No additional real payments, release publication or app update.
