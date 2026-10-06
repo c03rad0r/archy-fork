@@ -1,0 +1,121 @@
+# Post-1.9.0 work: qualification checkpoint
+
+2026-10-06. These follow-ups are not a new published OTA/ISO. The immutable
+1.9.0-alpha release and public demo are already published. This checkpoint does
+not replace the scope in [the complete backlog](post-1.9.0-work-backlog.md).
+
+## Implemented and deployed on dev/Yaya
+
+- AI provider setup, private credential handling and Routstr funding entry:
+  actual status endpoints and browser UI checks passed. No paid inference was
+  performed. Physical companion and successful paid-provider response remain
+  separate acceptance gates.
+- Reciprocal approved peering: both actual nodes retain each other as Observer,
+  with fresh contact timestamps. Live browser checks on both nodes at 390 and
+  1440 pixels show exactly one reciprocal peer and navigate to connection setup.
+  No peer RPC fixtures were used for these checks. Restart recovery and broader
+  failure/trust/duplicate coverage remain in the acceptance matrix.
+- Fleet/monitoring improvements: real metrics verified on dev/Yaya, with honest
+  unavailable/stale states. Full Fleet actions, authorization and mixed-version
+  failure matrix is not complete.
+
+## Latest incident and candidate
+
+Yaya's internet and physical interfaces were working. Its authentication signing
+key had been left root-owned during earlier diagnostic remediation. The previous
+loader ignored read/write failures and used an ephemeral key; restarts changed
+CSRF tokens while sessions remained valid. The owner/mode were corrected without
+rotating the existing key, and the repaired session survived another management
+restart. The kiosk again displayed the real Wi-Fi and Ethernet interfaces.
+
+Candidate `7e11f78e` adds bounded stale-CSRF recovery and distinguishes failed
+interface retrieval from an empty successful result. It also combines the
+container-store ownership, node-scoped catalog/player and FIPS follow-ups.
+
+- Full isolated backend: **1,707 passed, zero failures, four explicit skips**.
+- Full dashboard suite: **1,254 passed / 157 files**; production UI build passed.
+- Candidate browser: 390/1440 pixels, injected stale-token or failed-interface
+  response followed by real authenticated Yaya data; exactly one recovery retry.
+- Production backend build is still pending at this checkpoint. These results
+  do not establish live acceptance of that combined candidate.
+
+Separate hardening `aa10bd12` + `a2e61382` removes ephemeral-key fallback, preserves
+valid bytes, requires private durable creation, rejects damaged/unreadable keys,
+propagates storage failure before RPC dispatch, and handles concurrent creation.
+Its isolated full suite is compiling; it is not deployed. See
+[session recovery](session-recovery-followup.md).
+
+## V4V
+
+Versioned app image and node-only manifest are prepared; the original demo catalog,
+actual login-background promotion and app/player bridge are implemented. Focused
+player/bridge tests and image build passed. Yaya's existing Portainer app/data
+remain untouched. The final image is being loaded into isolated qualification
+storage; no Yaya-only catalog has been signed or enabled yet.
+
+A cleanup bug stopped the first isolated fixture: the backend confused containers
+from another Podman storage root with ghosts. Store/owner checks are fixed and
+focused tests pass. Deploy that fix, prove the final fixture survives cleanup,
+then test actual authenticated playback, pause/close/reopen, unchanged iframe,
+seek/resume and app relock. Only then enable the signed Yaya-DID catalog and
+complete upgrade/restart/rollback and mobile/companion acceptance.
+
+## IndeeHub and FIPS
+
+Signer fixes passed focused tests, production build and authenticated Yaya browser
+login/reload. Actual companion background/resume remains unverified. Publish the
+required app update at the end, after integrated qualification.
+
+The distributed Archipelago source and full publish/discover/pay-producer/timed
+viewing flow are not complete. The design review and selected Yaya video are
+prepared. Implement durable entitlements, settlement correlation and original
+signed discovery; qualify retries/outages/expiry without double payment. No new
+real spending is authorized by this checkpoint.
+
+FIPS-required peer media requests and bounded local-cache HTTP streaming are
+implemented in the combined candidate. Seller-side full-buffer reading and the
+complete IndeeHub media path remain open; no end-to-end all-media-FIPS claim.
+
+## Other active tasks
+
+| Task | Remaining acceptance or work |
+|---|---|
+| Connection UX | Flow plan written; broad navigation changes and lifecycle acceptance remain. |
+| Connect with Nodes / Nostr requests | Implemented; retain full request/retry/trust matrix and companion acceptance. |
+| Offline indicators/order/map | Fixture-tested changes; qualify real outages, stale metrics and recovery. |
+| Navigation and app launch speed | Establish before/after distributions; actual companion remains required. |
+| Framework Monitoring | Existing kiosk is signed out and RPC returns 401; not a passed monitoring check. |
+| Native companion reliability | No ADB device attached at checkpoint; browser tests do not substitute. |
+| Immich/Nextcloud libraries | Assessment/proposed authenticated API integration only; no enabled connector. |
+| Cosmetic Web5 Wallet label | Removed; legitimate wallet/hardware functions preserved. |
+| Mirrors, catalog, app updates, OTA/ISO | Integrate/review once through ngit; mirror exact accepted history to Gitea. Required artifact gates remain. |
+
+## Latency evidence and limitations
+
+The first live dev mobile connection-navigation check exceeded five seconds.
+A diagnostic repeat navigated in 763 ms. The saved dev diagnostic session was
+stale and restored through remember-me; after capturing refreshed cookies, the
+four node/viewport checks passed. Retain the initial failure: this does not prove
+that the operator's intermittent delay is solved. Cold peer visibility in these
+runs took roughly 3.1–4.6 seconds, including initial navigation/render/tab click;
+these are not isolated API latency or a before/after performance comparison.
+
+## Retained earlier limitations
+
+- Angor: operator accepted incomplete historical discovery for release on
+  2026-10-05. All 35 reference commitments were verified, but 34 original signed
+  announcements remain unrecovered from the queried sources. Recovery is open.
+- Framework radio/hardware investigation remains operator-deferred.
+- Earlier Framework LND incident remains separately closed with operator
+  acceptance; do not reopen it as the explanation for unrelated failures.
+
+## Local evidence
+
+No credentials or raw private inventories are included here. Qualification logs:
+`/tmp/archy-session-recovery-backend.log`,
+`/tmp/archy-session-recovery-full-ui.log`,
+`/tmp/archy-session-recovery-browser.log`,
+`/tmp/archy-peering-live-browser-2.log`,
+`/tmp/archy-peering-live-browser-diagnostic.log`,
+`/tmp/archy-session-key-backend-2.log`,
+`/tmp/archy-framework-monitoring-current-3.log`.

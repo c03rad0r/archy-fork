@@ -13,6 +13,8 @@ Framework's authenticated Monitoring check awaits an operator dashboard login.
 Streaming, storage-source integrations, AIUI setup, V4V packaging/player,
 companion hardware checks and the full Fleet acceptance matrix remain open.
 
+Current implementation and qualification evidence: [2026-10-06 checkpoint](post-1.9.0-progress-20261006.md). The scope below remains authoritative.
+
 ## 1. Distributed IndeeHub publishing and paid viewing
 
 - Recover and reconcile the earlier design in
