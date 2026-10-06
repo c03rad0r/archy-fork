@@ -103,9 +103,11 @@
           />
         </div>
       </Transition>
+      <Transition name="panel-slide">
       <div v-if="appLauncher.mediaAppId" v-show="appLauncher.panelAppId === appLauncher.mediaAppId" class="app-panel-container">
         <AppSession :key="appLauncher.mediaAppId" :app-id-prop="appLauncher.mediaAppId" :suspended="appLauncher.panelAppId !== appLauncher.mediaAppId" @close="appLauncher.closePanel()" />
       </div>
+      </Transition>
     </main>
 
     <!-- Persistent Mobile Tabs + Bottom Tab Bar — outside <main> so position:fixed isn't broken by will-change:transform -->
@@ -403,3 +405,7 @@ async function handleLogout() {
 </script>
 
 <!-- Styles extracted to dashboard/dashboard-styles.css -->
+
+<style scoped>
+@media (prefers-reduced-motion: reduce) { .panel-slide-enter-active, .panel-slide-leave-active { transition: none !important; } }
+</style>

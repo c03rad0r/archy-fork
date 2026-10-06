@@ -24,7 +24,7 @@ describe('app media session boundary', () => {
     bridge.connect()
     const hello = child.postMessage.mock.calls[0]![0]
     expect(child.postMessage.mock.calls[0]![1]).toBe('https://node.test:7475')
-    const state = { type: 'archipelago:media-state', version: 1, session: hello.session, available: true, title: 'Song', artist: 'Artist', playing: true, position: 22, duration: 100 }
+    const state = { type: 'archipelago:media-state', version: 1, session: hello.session, available: true, title: 'Song', artist: 'Artist', playing: true, position: 22, duration: 100, artwork: '/media/cover.jpg', shuffle: true }
     const message = (data = state, origin = 'https://node.test:7475', source: unknown = child) => bridge.handle({ data, origin, source } as MessageEvent)
     message(state, 'http://node.test:7475'); message(state, 'https://evil.test'); message(state, 'https://node.test:7475', {})
     message({ ...state, session: 'wrong' }); message({ ...state, duration: NaN })
@@ -32,6 +32,9 @@ describe('app media session boundary', () => {
     message()
     expect(fixture.player.updateExternal).toHaveBeenCalledOnce()
     const [controller, snapshot, shown] = fixture.player.updateExternal.mock.calls[0]!
+    expect(snapshot.artwork).toBe('https://node.test:7475/media/cover.jpg'); expect(snapshot.shuffle).toBe(true);
+    controller.next(); controller.previous(); controller.shuffle();
+    expect(child.postMessage.mock.calls.slice(-3).map(call => call[0].command)).toEqual(['next', 'previous', 'shuffle']);
     expect(snapshot.position).toBe(22); expect(shown).toBe(false)
     controller.seek(30)
     expect(child.postMessage.mock.calls[child.postMessage.mock.calls.length - 1]![0]).toMatchObject({ command: 'seek', position: 30, session: hello.session })

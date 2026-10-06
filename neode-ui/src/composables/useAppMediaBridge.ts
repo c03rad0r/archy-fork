@@ -18,6 +18,7 @@ export function useAppMediaBridge(appId: Ref<string>, url: Ref<string>, frame: R
     frame.value?.contentWindow?.postMessage({ type: 'archipelago:media-connect', version: 1, session }, origin())
   }
   const controller = { id, play: () => command('play'), pause: () => command('pause'), seek: (position: number) => command('seek', position),
+    next: () => command('next'), previous: () => command('previous'), shuffle: () => command('shuffle'),
     open: () => launcher.openSession(appId.value), close: () => {
       if (launcher.mediaAppId === appId.value && launcher.panelAppId !== appId.value) launcher.mediaAppId = null
     },
@@ -31,8 +32,15 @@ export function useAppMediaBridge(appId: Ref<string>, url: Ref<string>, frame: R
     if (data.available !== true) { player.detachExternal(id); return }
     if (typeof data.title !== 'string' || typeof data.artist !== 'string' || typeof data.playing !== 'boolean'
       || !Number.isFinite(data.position) || !Number.isFinite(data.duration) || data.position < 0 || data.duration < 0) return
+    let artwork = ''
+    try {
+      if (typeof data.artwork === 'string' && data.artwork.length <= 2048 && data.artwork) {
+        const candidate = new URL(data.artwork, url.value)
+        if ((candidate.protocol === 'https:' || candidate.origin === origin()) && !candidate.username && !candidate.password) artwork = candidate.href
+      }
+    } catch { /* Invalid optional artwork never prevents playback controls. */ }
     const state: ExternalAudioState = { title: data.title.slice(0, 256), artist: data.artist.slice(0, 256), playing: data.playing,
-      position: Math.min(data.position, data.duration), duration: data.duration }
+      position: Math.min(data.position, data.duration), duration: data.duration, artwork, shuffle: data.shuffle === true }
     player.updateExternal(controller, state, visible.value)
   }
   watch(visible, shown => player.setExternalVisible(id, shown))

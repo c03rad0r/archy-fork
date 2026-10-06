@@ -10,12 +10,15 @@ const duration = ref(0)
 const error = ref<string | null>(null)
 let initialized = false
 
-export interface ExternalAudioState { title: string; artist?: string; playing: boolean; position: number; duration: number }
+export interface ExternalAudioState { title: string; artist?: string; playing: boolean; position: number; duration: number; artwork?: string; shuffle?: boolean }
 export interface ExternalAudioController {
   id: string
   play: () => void
   pause: () => void
   seek: (position: number) => void
+  next?: () => void
+  previous?: () => void
+  shuffle?: () => void
   open: () => void
   close: () => void
 }
@@ -23,6 +26,11 @@ let external: ExternalAudioController | null = null
 const suppressedExternal = new Set<string>()
 const externalVisible = ref(false)
 const externalApp = ref(false)
+const externalArtwork = ref('')
+const externalShuffle = ref(false)
+function nextExternal() { external?.next?.() }
+function previousExternal() { external?.previous?.() }
+function shuffleExternal() { external?.shuffle?.() }
 
 function updateExternal(controller: ExternalAudioController, state: ExternalAudioState, visible: boolean) {
   if (suppressedExternal.has(controller.id)) { if (!state.playing) suppressedExternal.delete(controller.id); return }
@@ -32,6 +40,8 @@ function updateExternal(controller: ExternalAudioController, state: ExternalAudi
     if (external) { suppressedExternal.add(external.id); external.pause() }
     external = controller
   }
+  externalArtwork.value = state.artwork || ''
+  externalShuffle.value = state.shuffle === true
   externalApp.value = true
   externalVisible.value = visible
   currentSrc.value = `app:${controller.id}`
@@ -45,6 +55,8 @@ function updateExternal(controller: ExternalAudioController, state: ExternalAudi
 function detachExternal(id: string) {
   if (external?.id !== id) return
   external = null
+  externalArtwork.value = ''
+  externalShuffle.value = false
   externalApp.value = false
   externalVisible.value = false
   currentSrc.value = null
@@ -169,6 +181,7 @@ const progress = computed(() => {
 
 export function useAudioPlayer() {
   return {
+    externalArtwork, externalShuffle, nextExternal, previousExternal, shuffleExternal,
     updateExternal, detachExternal, releaseExternal, setExternalVisible, openExternal, externalVisible, externalApp,
     play,
     pause,

@@ -224,6 +224,10 @@
           class="featured-banner-img source-banner-img"
           @error="(e: Event) => (e.target as HTMLImageElement).style.display = 'none'"
         />
+        <div v-if="promotion.id === 'node-demo-v4v'" class="music-promotion-art" aria-hidden="true">
+          <div class="music-promotion-disc"><svg viewBox="0 0 100 100"><circle cx="50" cy="50" r="46" /><circle cx="50" cy="50" r="37" /><circle cx="50" cy="50" r="28" /><path d="m43 35 24 15-24 15z" /></svg></div>
+          <div class="music-promotion-wave"><i v-for="(height, index) in [12, 24, 40, 28, 56, 36, 64, 44, 28, 48, 32, 16]" :key="index" :style="{ height: height + 'px' }" /></div>
+        </div>
         <div class="featured-banner-overlay source-banner-overlay">
           <div class="flex items-center gap-3 mb-2">
             <span class="discover-terminal-tag">{{ promotion.eyebrow }}</span>
@@ -810,3 +814,13 @@ onMounted(() => {
 // same shared-key resources).
 defineExpose({ loadCommunityMarketplace, loadBitcoinPruneStatus })
 </script>
+
+<style scoped>
+.music-promotion-art { position: absolute; inset: 0 3% 0 auto; width: 30%; display: flex; align-items: center; justify-content: center; pointer-events: none; opacity: .9; }
+.music-promotion-disc { width: min(190px, 75%); aspect-ratio: 1; border-radius: 50%; background: linear-gradient(135deg, rgba(255,255,255,.15), rgba(0,0,0,.3)); box-shadow: 0 14px 60px #0008; backdrop-filter: blur(4px); transform: rotate(-12deg); }
+.music-promotion-disc svg { width: 100%; height: 100%; fill: none; stroke: #ffffff35; stroke-width: .7; }
+.music-promotion-disc path { fill: #fff; stroke: none; }
+.music-promotion-wave { display: flex; align-items: center; gap: 4px; position: absolute; bottom: 12%; right: 0; transform: rotate(-8deg); }
+.music-promotion-wave i { width: 4px; border-radius: 4px; background: linear-gradient(#fff, #ffffff30); }
+@media (max-width: 640px) { .music-promotion-art { width: 120px; top: 0; bottom: auto; height: 120px; opacity: .35; right: -12px; } .music-promotion-wave { display: none; } }
+</style>
