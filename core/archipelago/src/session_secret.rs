@@ -146,6 +146,7 @@ mod tests {
 
     #[test]
     fn unreadable_existing_key_is_not_replaced() {
+        use std::os::fd::AsRawFd;
         use std::os::unix::process::CommandExt;
         let dir = tempfile::tempdir().unwrap();
         fs::set_permissions(dir.path(), fs::Permissions::from_mode(0o755)).unwrap();
@@ -155,17 +156,21 @@ mod tests {
         if unsafe { libc::geteuid() } == 0 {
             // The isolated runner is root. Probe as an unprivileged child so
             // DAC_OVERRIDE cannot hide the exact production failure.
-            let status = std::process::Command::new(std::env::current_exe().unwrap())
-                .args([
-                    "--ignored",
-                    "--exact",
-                    "session::secret_file::tests::permission_denied_child_probe",
-                ])
-                .env("ARCHY_SESSION_KEY_PERMISSION_PROBE", &path)
-                .uid(65534)
-                .gid(65534)
-                .status()
-                .unwrap();
+            // Execute an already-open inode: the test checkout may live under
+            // a private home directory which the probe must not traverse.
+            let executable = File::open(std::env::current_exe().unwrap()).unwrap();
+            let status =
+                std::process::Command::new(format!("/proc/self/fd/{}", executable.as_raw_fd()))
+                    .args([
+                        "--ignored",
+                        "--exact",
+                        "session::secret_file::tests::permission_denied_child_probe",
+                    ])
+                    .env("ARCHY_SESSION_KEY_PERMISSION_PROBE", &path)
+                    .uid(65534)
+                    .gid(65534)
+                    .status()
+                    .unwrap();
             assert!(status.success());
         } else {
             fs::set_permissions(&path, fs::Permissions::from_mode(0o000)).unwrap();
