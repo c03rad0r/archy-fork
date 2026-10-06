@@ -84,7 +84,8 @@ async fn load_nodes_inner(data_dir: &Path) -> Result<Vec<FederatedNode>> {
     let content = fs::read_to_string(&path)
         .await
         .context("Failed to read federation nodes")?;
-    let file: NodesFile = serde_json::from_str(&content).unwrap_or_default();
+    let file: NodesFile = serde_json::from_str(&content)
+        .context("Invalid federation nodes; existing peer records were preserved")?;
     Ok(dedup_nodes_by_onion(file.nodes))
 }
 
