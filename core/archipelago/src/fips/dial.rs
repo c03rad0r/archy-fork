@@ -394,6 +394,8 @@ pub struct PeerRequest<'a> {
     /// The request carries something that must reach the peer at most once
     /// (a bearer ecash token). See [`PeerRequest::single_delivery`].
     pub single_delivery: bool,
+    /// Media explicitly requiring the mesh must never silently use Tor or redirects.
+    pub require_fips: bool,
 }
 
 impl<'a> PeerRequest<'a> {
@@ -408,7 +410,15 @@ impl<'a> PeerRequest<'a> {
             service: None,
             record_data_dir: None,
             single_delivery: false,
+            require_fips: false,
         }
+    }
+
+    /// Enforce the media transport contract independently of general service
+    /// preferences. A missing mesh route is a recoverable error, not a fallback.
+    pub fn require_fips(mut self) -> Self {
+        self.require_fips = true;
+        self
     }
 
     /// Never send this request twice. A paid download carries a bearer ecash
@@ -481,6 +491,9 @@ impl<'a> PeerRequest<'a> {
 
     /// Resolved preference: user setting if `service` was set, else Auto.
     async fn preference(&self) -> crate::settings::transport::TransportPref {
+        if self.require_fips {
+            return crate::settings::transport::TransportPref::Fips;
+        }
         match self.service {
             Some(s) => crate::settings::transport::get(s).await,
             None => crate::settings::transport::TransportPref::Auto,
@@ -523,7 +536,7 @@ impl<'a> PeerRequest<'a> {
                 None => {
                     if pref == TransportPref::Fips {
                         anyhow::bail!(
-                            "User set transport preference to FIPS only, but peer is unreachable over FIPS"
+                            "This request requires FIPS, but the peer is unreachable over FIPS"
                         );
                     }
                 }
@@ -562,7 +575,7 @@ impl<'a> PeerRequest<'a> {
                 None => {
                     if pref == TransportPref::Fips {
                         anyhow::bail!(
-                            "User set transport preference to FIPS only, but peer is unreachable over FIPS"
+                            "This request requires FIPS, but the peer is unreachable over FIPS"
                         );
                     }
                 }
@@ -611,7 +624,7 @@ impl<'a> PeerRequest<'a> {
         } else {
             budget
         };
-        let c = client_with_delivery_policy(per_attempt, self.single_delivery);
+        let c = client_with_delivery_policy(per_attempt, self.single_delivery || self.require_fips);
         let mut rb = c.post(&url).json(body);
         for (k, v) in &self.headers {
             rb = rb.header(*k, v);
@@ -680,7 +693,7 @@ impl<'a> PeerRequest<'a> {
         } else {
             budget
         };
-        let c = client_with_delivery_policy(per_attempt, self.single_delivery);
+        let c = client_with_delivery_policy(per_attempt, self.single_delivery || self.require_fips);
         let mut rb = c.get(&url);
         for (k, v) in &self.headers {
             rb = rb.header(*k, v);
@@ -769,6 +782,17 @@ impl<'a> PeerRequest<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn required_media_never_falls_back_when_peer_has_no_fips_identity() {
+        let request = PeerRequest::new(None, "unreachable.onion", "/content/video").require_fips();
+        assert_eq!(
+            request.preference().await,
+            crate::settings::transport::TransportPref::Fips
+        );
+        let error = request.send_get().await.unwrap_err();
+        assert!(error.to_string().contains("requires FIPS"));
+    }
 
     #[test]
     fn encode_query_round_trip_header_is_correct() {

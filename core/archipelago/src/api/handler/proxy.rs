@@ -238,54 +238,13 @@ impl ApiHandler {
             return bad("invalid onion or content id");
         }
 
-        // Already purchased? Serve the local cache — no network, no
-        // re-payment. The seller's node charges every fetch by design; the
-        // buyer-side store (content_owned) exists precisely so an owned item
-        // never has to be bought twice, and the content surface's cards were
-        // hitting the seller's 402 and rendering as permanent placeholders.
-        // Range is honoured by slicing, so seek/playback works from cache.
-        if crate::content_owned::is_owned(&self.config.data_dir, onion, content_id).await {
-            if let Some((mime_type, bytes)) =
-                crate::content_owned::read_owned(&self.config.data_dir, onion, content_id).await
-            {
-                let total = bytes.len();
-                let range = headers
-                    .get("range")
-                    .and_then(|v| v.to_str().ok())
-                    .and_then(crate::content_server::parse_range_header);
-                if let Some(r) = range {
-                    let start = (r.start as usize).min(total);
-                    let end = r
-                        .end
-                        .map(|e| e as usize)
-                        .unwrap_or(total.saturating_sub(1))
-                        .min(total.saturating_sub(1));
-                    if start <= end && total > 0 {
-                        let slice = &bytes[start..=end];
-                        return Ok(Response::builder()
-                            .status(StatusCode::PARTIAL_CONTENT)
-                            .header("Content-Type", mime_type)
-                            .header("Content-Length", slice.len().to_string())
-                            .header(
-                                "Content-Range",
-                                format!("bytes {}-{}/{}", start, end, total),
-                            )
-                            .header("Accept-Ranges", "bytes")
-                            .body(hyper::Body::from(slice.to_vec()))
-                            .unwrap_or_else(|_| Response::new(hyper::Body::empty())));
-                    }
-                }
-                return Ok(Response::builder()
-                    .status(StatusCode::OK)
-                    .header("Content-Type", mime_type)
-                    .header("Content-Length", total.to_string())
-                    .header("Accept-Ranges", "bytes")
-                    .body(hyper::Body::from(bytes))
-                    .unwrap_or_else(|_| Response::new(hyper::Body::empty())));
-            }
-            // Indexed as owned but bytes missing — fall through to the peer
-            // rather than erroring: the seller can still serve it (for the
-            // price already paid, the operator can re-fetch and re-cache).
+        // Ownership is checked before opening a bounded file stream. Corrupt
+        // records or missing purchased bytes never trigger another purchase.
+        match crate::content_owned::open_owned(&self.config.data_dir, onion, content_id).await {
+            Ok(Some((mime, file))) => return crate::media_stream::file_response(file, &mime, headers).await,
+            Ok(None) => {},
+            Err(_) => return Ok(build_response(StatusCode::CONFLICT, "application/json",
+                hyper::Body::from(serde_json::json!({"error": "Purchased file unavailable locally. Recover the existing purchase without paying again."}).to_string()))),
         }
 
         let fips_npub = crate::federation::fips_npub_for_onion(&self.config.data_dir, onion).await;
@@ -293,20 +252,30 @@ impl ApiHandler {
         // Generous overall timeout: this endpoint serves both seek/Range
         // playback (small, finishes fast) and full-file downloads of large
         // media (#38). 60s was too tight for a multi-hundred-MB transfer over
-        // Tor and aborted the download mid-stream.
+        // slow links and aborted the download mid-stream.
         let mut req = crate::fips::dial::PeerRequest::new(fips_npub.as_deref(), onion, &peer_path)
             .service(crate::settings::transport::PeerService::PeerFiles)
+            .require_fips()
+            .record_transport(&self.config.data_dir)
             .timeout(std::time::Duration::from_secs(900));
         if let Some(r) = headers.get("range").and_then(|v| v.to_str().ok()) {
             req = req.header("Range", r.to_string());
         }
         match req.send_get().await {
-            Ok((resp, _transport)) => {
+            Ok((resp, transport)) => {
+                if resp.status().is_redirection() {
+                    return Ok(build_response(
+                        StatusCode::BAD_GATEWAY,
+                        "application/json",
+                        hyper::Body::from("{\"error\":\"Peer media redirects are not allowed\"}"),
+                    ));
+                }
                 let status = resp.status().as_u16();
                 let rh = resp.headers().clone();
                 let mut builder = Response::builder()
                     .status(status)
-                    .header("Accept-Ranges", "bytes");
+                    .header("Accept-Ranges", "bytes")
+                    .header("X-Archipelago-Transport", transport.to_string());
                 for h in ["content-type", "content-range", "content-length"] {
                     if let Some(v) = rh.get(h).and_then(|v| v.to_str().ok()) {
                         builder = builder.header(h, v);

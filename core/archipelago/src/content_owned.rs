@@ -184,6 +184,45 @@ pub async fn is_owned(data_dir: &Path, onion: &str, content_id: &str) -> bool {
 }
 
 /// Read a purchased item's bytes + mime type from the local cache, if present.
+pub async fn open_owned(
+    data_dir: &Path,
+    onion: &str,
+    content_id: &str,
+) -> Result<Option<(String, fs::File)>> {
+    let index = load_index_checked(data_dir).await?;
+    let Some(item) = index
+        .items
+        .iter()
+        .find(|item| item.onion == onion && item.content_id == content_id)
+    else {
+        return Ok(None);
+    };
+    // Reject path components even when called outside the HTTP route.
+    anyhow::ensure!(
+        !onion.is_empty()
+            && !content_id.is_empty()
+            && onion != "."
+            && content_id != "."
+            && !onion.contains("..")
+            && !content_id.contains("..")
+            && sanitize(onion) == onion
+            && sanitize(content_id) == content_id,
+        "Invalid purchase path"
+    );
+    let file = fs::OpenOptions::new()
+        .read(true)
+        .custom_flags(libc::O_NOFOLLOW)
+        .open(bytes_path(data_dir, onion, content_id))
+        .await
+        .context("Purchased bytes unavailable")?;
+    let metadata = file.metadata().await?;
+    anyhow::ensure!(
+        metadata.is_file() && metadata.len() == item.size_bytes,
+        "Purchased bytes incomplete"
+    );
+    Ok(Some((item.mime_type.clone(), file)))
+}
+
 pub async fn read_owned(
     data_dir: &Path,
     onion: &str,
@@ -205,6 +244,48 @@ pub async fn read_owned(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[tokio::test]
+    async fn owned_stream_preserves_ownership_on_missing_corrupt_or_symlinked_bytes() {
+        let dir = tempfile::tempdir().unwrap();
+        record_purchase(
+            dir.path(),
+            "seller.onion",
+            "video",
+            "video",
+            "video/mp4",
+            b"video",
+            1,
+            "cashu",
+            "now",
+        )
+        .await
+        .unwrap();
+        assert!(open_owned(dir.path(), "seller.onion", "video")
+            .await
+            .unwrap()
+            .is_some());
+        let path = bytes_path(dir.path(), "seller.onion", "video");
+        fs::write(&path, b"bad").await.unwrap();
+        assert!(open_owned(dir.path(), "seller.onion", "video")
+            .await
+            .is_err());
+        fs::remove_file(&path).await.unwrap();
+        assert!(open_owned(dir.path(), "seller.onion", "video")
+            .await
+            .is_err());
+        let private = dir.path().join("private");
+        fs::write(&private, b"other").await.unwrap();
+        std::os::unix::fs::symlink(&private, &path).unwrap();
+        assert!(open_owned(dir.path(), "seller.onion", "video")
+            .await
+            .is_err());
+        assert_eq!(list_owned_checked(dir.path()).await.unwrap().len(), 1);
+        assert!(open_owned(dir.path(), "seller.onion", "not-bought")
+            .await
+            .unwrap()
+            .is_none());
+    }
+
     #[tokio::test]
     async fn concurrent_purchases_preserve_every_item_and_exact_bytes() {
         let dir = tempfile::tempdir().unwrap();
