@@ -1,7 +1,7 @@
 app:
   id: gashboard
   name: Gashboard
-  version: 0.2.0
+  version: 0.2.1
   description: A playful mining dashboard for your DATUM fleet, with live hashrates, share history, lottery odds, chat and a Nostr viewer access list.
   upstream:
     kind: internal
@@ -9,7 +9,7 @@ app:
     build:
       context: /opt/archipelago/docker/gashboard
       dockerfile: Dockerfile
-      tag: localhost/archipelago-gashboard:0.2.0
+      tag: localhost/archipelago-gashboard:0.2.1
     network: archy-net
     data_uid: "1000:1000"
     derived_env:
@@ -58,6 +58,7 @@ app:
     - DATUM_ADMIN_USER=admin
     - CONTRIBUTION_LEDGER_PATH=/data/contribution-ledger.json
     - ACCESS_LIST_PATH=/data/access.json
+    - CHAT_STORE_PATH=/data/chat.json
     - ARCHIPELAGO_PROVIDER_PATH=/data/nostr-provider.js
     - MEMPOOL_API_URL=https://mempool.space/api
   hooks:

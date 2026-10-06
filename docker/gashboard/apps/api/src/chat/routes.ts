@@ -1,7 +1,12 @@
 import { Router } from "express";
 import { z } from "zod";
 import { requireAuth } from "../auth/middleware.js";
-import { addMessage, addReaction, listChat, upsertKeyWrap } from "./store.js";
+import { ChatStore } from "./store.js";
+import { config } from "../config.js";
+import { isPubkeyAllowed } from "../nostr/allowlist.js";
+import { forbidden } from "../errors.js";
+
+const chat = new ChatStore(config.chatStorePath);
 
 export const chatRouter = Router();
 
@@ -26,12 +31,12 @@ const KeyWrapBody = z.object({
 chatRouter.use(requireAuth);
 
 chatRouter.get("/", (_req, res) => {
-  res.json(listChat());
+  res.json(chat.list());
 });
 
 chatRouter.post("/messages", (req, res) => {
   const body = MessageBody.parse(req.body);
-  const message = addMessage({
+  const message = chat.addMessage({
     pubkey: req.session!.pubkey,
     content: body.content,
     ...(body.replyToId ? { replyToId: body.replyToId } : {}),
@@ -42,7 +47,7 @@ chatRouter.post("/messages", (req, res) => {
 
 chatRouter.post("/reactions", (req, res) => {
   const body = ReactionBody.parse(req.body);
-  const reaction = addReaction({
+  const reaction = chat.addReaction({
     pubkey: req.session!.pubkey,
     messageId: body.messageId,
     content: body.content,
@@ -52,12 +57,10 @@ chatRouter.post("/reactions", (req, res) => {
 
 chatRouter.post("/key-wraps", (req, res) => {
   const body = KeyWrapBody.parse(req.body);
-  const wraps = body.wraps.map((wrap) =>
-    upsertKeyWrap({
-      recipientPubkey: wrap.recipientPubkey,
-      senderPubkey: req.session!.pubkey,
-      ciphertext: wrap.ciphertext,
-    }),
-  );
+  if (body.wraps.some(w => !isPubkeyAllowed(w.recipientPubkey))) throw forbidden();
+  if (new Set(body.wraps.map(w => w.recipientPubkey)).size !== body.wraps.length) {
+    throw forbidden("duplicate_recipients");
+  }
+  const wraps = chat.shareKey(req.session!.pubkey, body.wraps);
   res.status(201).json({ wraps });
 });

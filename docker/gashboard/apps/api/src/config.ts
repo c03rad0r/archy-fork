@@ -20,6 +20,7 @@ const RawEnv = z.object({
 
   NOSTR_ALLOWED_NPUBS: z.string().default(""),
   NOSTR_OWNER_PUBKEYS: z.string().default(""),
+  CHAT_STORE_PATH: z.string().min(1).default("/data/chat.json"),
   ACCESS_LIST_PATH: z.string().default("/data/access.json"),
   ARCHIPELAGO_PROVIDER_PATH: z.string().optional(),
 
@@ -61,6 +62,7 @@ export const config = {
   logLevel: parsed.LOG_LEVEL,
   corsOrigin: parsed.CORS_ORIGIN,
   staticDir: parsed.STATIC_DIR,
+  chatStorePath: parsed.CHAT_STORE_PATH,
   providerPath: parsed.ARCHIPELAGO_PROVIDER_PATH,
   datum: {
     url: (parsed.DATUM_URL ?? "http://127.0.0.1:21000").replace(/\/$/, ""),

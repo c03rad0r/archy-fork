@@ -34,6 +34,7 @@ test("signed logins, owner-only invitations, immediate revocation, and provider 
   process.env.JWT_SECRET = "local-test-only-secret-32-characters-long";
   process.env.DATUM_ADMIN_PASSWORD = "local-test-only";
   process.env.NOSTR_OWNER_PUBKEYS = ownerHex;
+  process.env.CHAT_STORE_PATH = join(dir, "chat.json");
   process.env.ACCESS_LIST_PATH = join(dir, "api-access.json");
   process.env.ARCHIPELAGO_PROVIDER_PATH = join(dir, "provider.js");
   process.env.LOG_LEVEL = "silent";
@@ -65,6 +66,11 @@ test("signed logins, owner-only invitations, immediate revocation, and provider 
     assert.equal(viewerLogin.status, 200);
     const viewerToken = (await viewerLogin.json()).token as string;
     assert.equal((await call("/api/datum/stats", viewerToken)).status, 200);
+    assert.equal((await call("/api/chat/key-wraps", ownerToken, "POST", { wraps: [{ recipientPubkey: ownerHex, ciphertext: "owner-wrap" }] })).status, 201);
+    assert.equal((await call("/api/chat/key-wraps", viewerToken, "POST", { wraps: [{ recipientPubkey: viewerHex, ciphertext: "replacement" }] })).status, 409);
+    assert.equal((await call("/api/chat/key-wraps", ownerToken, "POST", { wraps: [{ recipientPubkey: getPublicKey(outsider), ciphertext: "outsider-wrap" }] })).status, 403);
+    assert.equal((await call("/api/chat/key-wraps", ownerToken, "POST", { wraps: [{ recipientPubkey: viewerHex, ciphertext: "viewer-wrap" }] })).status, 201);
+    assert.equal((await call("/api/chat/key-wraps", ownerToken, "POST", { wraps: [{ recipientPubkey: ownerHex, ciphertext: "replacement" }] })).status, 409);
     assert.equal((await call("/api/access", viewerToken, "POST", { npub: nip19.npubEncode(getPublicKey(outsider)) })).status, 403);
     assert.deepEqual(await (await call("/api/access", viewerToken)).json(), { isOwner: false, members: [] });
     assert.equal((await call(`/api/access/${nip19.npubEncode(ownerHex)}`, ownerToken, "DELETE")).status, 400);

@@ -34,7 +34,6 @@ export type ChatProfile = {
 };
 
 let reactionCache: ChatReaction[] = [];
-let cachedRecipients: string[] | null = null;
 let cachedRoomKey: Uint8Array | null = null;
 let cachedRoomKeyRaw = "";
 
@@ -42,7 +41,6 @@ export function clearChatSession(): void {
   cachedRoomKey?.fill(0);
   cachedRoomKey = null;
   cachedRoomKeyRaw = "";
-  cachedRecipients = null;
   reactionCache = [];
 }
 
@@ -216,43 +214,63 @@ async function decryptReaction(reaction: ChatReaction): Promise<ChatReaction> {
   return { ...reaction, content: await decryptPayload(reaction.content) };
 }
 
-async function getRecipients(): Promise<string[]> {
-  const signer = getActiveSigner();
-  const own = await signer?.getPublicKey();
-  if (!cachedRecipients) cachedRecipients = await fetchChatPubkeys();
-  return [...new Set([...(cachedRecipients ?? []), ...(own ? [own] : [])])].filter(Boolean);
-}
+let roomKeyPending: Promise<Uint8Array> | null = null;
 
 async function ensureRoomKey(snapshot?: ChatSnapshot): Promise<Uint8Array> {
-  if (cachedRoomKey) return cachedRoomKey;
+  if (roomKeyPending) return roomKeyPending;
+  if (cachedRoomKey && !snapshot) return cachedRoomKey;
+  roomKeyPending = unlockRoom(snapshot);
+  try { return await roomKeyPending; }
+  finally { roomKeyPending = null; }
+}
+
+async function unlockRoom(snapshot?: ChatSnapshot): Promise<Uint8Array> {
   const signer = getActiveSigner();
   if (!signer) throw new Error("Reconnect your signer to unlock private chat");
   const own = await signer.getPublicKey();
   const current = snapshot ?? await fetchChat();
   const wrap = current.keyWraps.find((item) => item.recipientPubkey === own);
   if (wrap) {
-    const raw = await signer.decrypt(wrap.senderPubkey, wrap.ciphertext);
-    return importRoomKey(raw);
+    if (!cachedRoomKey) await importRoomKey(await signer.decrypt(wrap.senderPubkey, wrap.ciphertext));
+    const recipients = await fetchChatPubkeys();
+    const missing = recipients.filter(key => !current.keyWraps.some(w => w.recipientPubkey === key));
+    await publishRoomKey(cachedRoomKeyRaw, missing);
+    return cachedRoomKey!;
+  }
+  if (current.keyWraps.length || current.messages.length || current.reactions.length) {
+    throw new Error("Your chat invitation is waiting for its encryption key. Ask an existing chat member to open chat, then reopen this panel.");
   }
 
-  const rawBytes = crypto.getRandomValues(new Uint8Array(32));
-  const raw = base64(rawBytes);
+  const raw = base64(crypto.getRandomValues(new Uint8Array(32)));
+  // Publish our own wrap first to claim an empty room atomically. A competing
+  // first visitor must use the winning key, never overwrite it with their own.
+  try {
+    await postChatKeyWraps({ wraps: [{ recipientPubkey: own, ciphertext: await signer.encrypt(own, raw) }] });
+  } catch (error) {
+    if ((error as { code?: string }).code?.startsWith("chat_key_")) return unlockRoom();
+    throw error;
+  }
   await importRoomKey(raw);
-  await publishRoomKey(raw);
-  return cachedRoomKey!;
+  return unlockRoom();
 }
 
-async function publishRoomKey(raw: string): Promise<void> {
+async function publishRoomKey(raw: string, recipients: string[]): Promise<void> {
+  if (!recipients.length) return;
   const signer = getActiveSigner();
   if (!signer) throw new Error("Reconnect your signer to share private chat key");
-  const recipients = await getRecipients();
-  const wraps = await Promise.all(
-    recipients.map(async (recipientPubkey) => ({
+  // The API accepts ten recipients per request; invitations support larger rooms.
+  for (let offset = 0; offset < recipients.length; offset += 10) {
+    const wraps = await Promise.all(recipients.slice(offset, offset + 10).map(async recipientPubkey => ({
       recipientPubkey,
       ciphertext: await signer.encrypt(recipientPubkey, raw),
-    })),
-  );
-  await postChatKeyWraps({ wraps });
+    })));
+    try { await postChatKeyWraps({ wraps }); }
+    catch (error) {
+      // Another existing member may have shared these recipients during signing.
+      // Polling refreshes the remaining recipients without replacing any wrap.
+      if ((error as { code?: string }).code !== "chat_key_exists") throw error;
+    }
+  }
 }
 
 async function importRoomKey(raw: string): Promise<Uint8Array> {

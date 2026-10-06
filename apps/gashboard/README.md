@@ -108,3 +108,22 @@ HTTPS, companion, preserved-data reinstall and reboot acceptance remain separate
 
 Payouts are not configured and no real miner shares were submitted in this check.
 These are node test deployments of review candidates, not catalog publication.
+
+### Private chat persistence and invitations
+
+Encrypted messages, reactions and per-recipient room-key wraps are saved atomically
+in `/data/chat.json` (mode 0600), alongside the viewer list. The server never saves
+the plaintext room key or decrypted messages. Back up the whole app data directory;
+keep chat history and key wraps together. Invalid saved chat data stops startup
+instead of silently discarding history.
+
+An existing member with chat open shares the existing room key with newly invited
+viewers. If no existing member is online, the new viewer sees a pending-key message;
+an existing member must open chat, then the viewer can reopen the panel. A new
+viewer or simultaneous first visitor cannot replace the established key. Existing
+history becomes readable to invited viewers. Revoking membership blocks API access
+but cannot erase a key or history already received by that viewer.
+
+When upgrading from 0.2.0, export the authenticated `/api/chat` snapshot to
+`/data/chat.json` before stopping the old container: that version holds chat only
+in memory. Preserve the snapshot and data-directory backup through the upgrade.
