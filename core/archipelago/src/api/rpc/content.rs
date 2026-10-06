@@ -381,6 +381,7 @@ impl RpcHandler {
         let (response, transport) =
             crate::fips::dial::PeerRequest::new(fips_npub.as_deref(), onion, &path)
                 .service(crate::settings::transport::PeerService::PeerFiles)
+                .require_fips()
                 .header("X-Federation-DID", local_did)
                 .timeout(std::time::Duration::from_secs(120))
                 .fips_timeout(std::time::Duration::from_secs(8))
@@ -556,6 +557,13 @@ impl RpcHandler {
             return Ok(cached);
         }
 
+        let fips_npub = crate::federation::fips_npub_for_onion(&self.config.data_dir, onion).await;
+        if fips_npub.is_none() {
+            return Ok(
+                serde_json::json!({ "error": "Connect with this node over FIPS before buying its files. No payment was made." }),
+            );
+        }
+
         // `method` pins the backend the user confirmed in the UI ("cashu" |
         // "fedimint"); absent = auto (Cashu first, then Fedimint). The seller's
         // verify_payment_token accepts either, so a node whose balance lives in
@@ -617,7 +625,6 @@ impl RpcHandler {
 
         let (data, _) = self.state_manager.get_snapshot().await;
         let local_did = crate::identity::did_key_from_pubkey_hex(&data.server_info.pubkey)?;
-        let fips_npub = crate::federation::fips_npub_for_onion(&self.config.data_dir, onion).await;
 
         let path = format!("/content/{}", content_id);
         // Surface a real reason instead of the generic sanitized error (#30):
@@ -626,6 +633,7 @@ impl RpcHandler {
         let (response, transport) =
             match crate::fips::dial::PeerRequest::new(fips_npub.as_deref(), onion, &path)
                 .service(crate::settings::transport::PeerService::PeerFiles)
+                .require_fips()
                 .header("X-Federation-DID", local_did)
                 .header("X-Payment-Token", token_str.clone())
                 .single_delivery()
@@ -922,6 +930,7 @@ impl RpcHandler {
             &path,
         )
         .service(crate::settings::transport::PeerService::PeerFiles)
+        .require_fips()
         .header("X-Federation-DID", local_did)
         .header("X-Invoice-Hash", payment_hash.to_string())
         .timeout(std::time::Duration::from_secs(900))
@@ -932,7 +941,7 @@ impl RpcHandler {
             Err(e) => {
                 tracing::warn!("invoice download dial failed for {}: {:#}", onion, e);
                 return Ok(serde_json::json!({
-                    "error": "Could not reach the peer over mesh or Tor — it may be offline. Please try again."
+                    "error": "The peer’s FIPS connection is unavailable. Retry when it reconnects; do not pay again."
                 }));
             }
         };
@@ -1142,6 +1151,7 @@ impl RpcHandler {
             &path,
         )
         .service(crate::settings::transport::PeerService::PeerFiles)
+        .require_fips()
         .header("X-Federation-DID", local_did)
         .header("X-Onchain-Address", address.to_string())
         .timeout(std::time::Duration::from_secs(900))
@@ -1152,7 +1162,7 @@ impl RpcHandler {
             Err(e) => {
                 tracing::warn!("onchain download dial failed for {}: {:#}", onion, e);
                 return Ok(serde_json::json!({
-                    "error": "Could not reach the peer over mesh or Tor — it may be offline. Please try again."
+                    "error": "The peer’s FIPS connection is unavailable. Retry when it reconnects; do not pay again."
                 }));
             }
         };
@@ -1222,6 +1232,7 @@ impl RpcHandler {
         let (response, transport) =
             crate::fips::dial::PeerRequest::new(fips_npub.as_deref(), onion, &path)
                 .service(crate::settings::transport::PeerService::PeerFiles)
+                .require_fips()
                 .timeout(std::time::Duration::from_secs(30))
                 .fips_timeout(std::time::Duration::from_secs(6))
                 .send_get()
