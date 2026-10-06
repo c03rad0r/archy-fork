@@ -58,7 +58,7 @@ pub async fn file_response(
         .map(|(start, end)| (start, end - start + 1))
         .unwrap_or((0, total));
     file.seek(std::io::SeekFrom::Start(start)).await?;
-    let chunks = futures::stream::try_unfold((file, length), |(mut file, left)| async move {
+    let chunks = futures_util::stream::try_unfold((file, length), |(mut file, left)| async move {
         if left == 0 {
             return Ok::<_, std::io::Error>(None);
         }
