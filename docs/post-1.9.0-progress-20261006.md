@@ -178,3 +178,30 @@ fixture must survive live state refreshes, and proxying media through Playwright
 introduced buffering delays. Qualification is being repeated using the direct
 loopback fixture route on the updated Yaya dashboard. Do not substitute these
 fixture results for a signed catalog installation or physical companion check.
+
+
+### Subsequent deployment overlap and source reconciliation
+
+Another session replaced both node backends with a mining-launch artifact after
+the successful checks above. Those checks remain evidence for the stated hashes,
+not acceptance of the replacement binary. Deployment writes are paused while
+reconciling the sources and artifact provenance.
+
+The local mining handoff bundle contains `2fad10c8`, descended from our backend
+`57923b0a`, with app presentation and DATUM credential changes. Integration merge
+`6c985b8d` retains both original commits and the later dashboard fixes. All 46
+focused launcher/catalog tests pass; full backend/dashboard suites and dashboard
+production build are in progress. No reviewed main, remote or release changed.
+
+The actual dashboard media check initially passed at mobile and desktop widths,
+then repetition exposed a cold catalog-loading race. `69cd4021` loads node launch
+policy independently of the public catalog, gates demo launch on current policy,
+and cancels a deferred launch when the user closes it or chooses another app.
+The repeated actual-browser check is still required on the final integrated UI.
+
+V4V image verification and its immutable digest are recorded in
+[node demo qualification](node-demo-catalog-and-media.md). A private unsigned
+Yaya-only catalog is prepared with one Sovereign Music banner and a 90-day
+expiry. No catalog has been signed or installed, and the original Portainer
+stack/data remain unchanged. Signature, managed installation, data migration,
+wrong-node rejection and physical companion acceptance remain open.
