@@ -547,3 +547,47 @@ with two successful purchases; do not reset it or repay for these tests.
 before successful response headers, timed IndeeHub rentals, producer receiving
 and full app integration. Cached-download interruption does not test the earlier
 payment boundary. No new release/catalog/app image was published by this work.
+
+## IndeeHub implementation continued after missing-source report
+
+The operator's observation was correct: Yaya's IndeeHub image had no Archipelago
+source. Only the Archy sharing backend had been deployed. No IndeeHub app image
+has been published or deployed during this continuation.
+
+IndeeHub branch `work/archipelago-auth-and-sharing` now contains:
+
+- `b52407c`: verified signed-offer discovery, deterministic revisions and deletion
+  tombstones, persistent browser cache, explicit relay completion/error handling,
+  signed publication retry outbox, and configured Archipelago browsing/search.
+  **74 tests passed**. Built-browser checks passed at 390/1440px for signed titles,
+  forged rejection, source isolation, mobile/desktop search, cache outage/retry,
+  displayed price and rejection of legacy payment/playback. Existing library and
+  session-restoration browser checks passed again on that bundle.
+- `38ed9b6`: timed-rental access policy and PostgreSQL row-locking store.
+  **26 tests passed**, including a real isolated PostgreSQL instance and 24
+  concurrent first-play requests. Window, expiry, buyer/offer/hash bindings,
+  unpaid/revoked rejection and persisted clock-rollback protection were tested.
+  Backend build passed. Temporary DB container, volume and credentials removed.
+
+These are component checkpoints, not complete paid-video acceptance. Backstage
+project authorization/publication transaction, node offer registration, correlated
+receiving/payment recovery and actual FIPS timed playback are still open. The
+browser qualification bundle contains an intercepted test relay and **must not be
+deployed**. Its playback guard is deliberately disabled until those paths exist.
+See the IndeeHub repository's `docs/archipelago-catalog-implementation.md`.
+
+While tracing producer signing, source inspection found an existing dashboard
+bridge defect: concurrent consent requests overwrite the one stored promise,
+leaving the earlier app request waiting indefinitely. A queue/cancellation fix is
+being qualified in this worktree. It preserves the approved signing animation,
+checks identity/session changes, bounds the queue and cancels pending work on
+close/unmount. This is a confirmed source defect, not yet proof of the physical
+companion grey-screen cause. It is not deployed at this checkpoint.
+
+Signer queue checkpoint: **17 focused tests across five files pass**, covering
+concurrent requests, denial, error dismissal, closure, queue bounds, identity
+changes, reopening a retained session, existing consent scoping, tab signing and
+the approved consent presentation. Dashboard typecheck passes. Logs:
+`/tmp/archy-signer-queue-related-tests.log`,
+`/tmp/archy-signer-queue-typecheck.log`. Production UI build/deployment still
+pending; physical companion causality remains unverified.

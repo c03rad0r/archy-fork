@@ -486,7 +486,7 @@ function handleBackdropClick() {
 }
 
 function closeSession() {
-  if (nostrBridge.showConsent.value) nostrBridge.denyConsent()
+  nostrBridge.cancelPending()
   if (document.fullscreenElement) document.exitFullscreen().catch(() => {})
   if (isInlinePanel.value) emit('close')
   else closeRouteSession()
@@ -577,6 +577,7 @@ onMounted(() => {
 })
 
 onBeforeUnmount(() => {
+  nostrBridge.dispose()
   if (loadTimeoutId) clearTimeout(loadTimeoutId)
   if (autoRetryId) clearTimeout(autoRetryId)
   if (iframeCheckId) clearTimeout(iframeCheckId)
