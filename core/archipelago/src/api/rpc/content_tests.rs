@@ -214,7 +214,10 @@ async fn onchain_delivery_streams_to_owned_cache_and_preserves_incomplete_recove
 
     let truncated: reqwest::Response = hyper::Response::builder()
         .header("content-length", "100")
-        .body(hyper::Body::from("short"))
+        .body(hyper::Body::wrap_stream(futures_util::stream::iter([
+            Ok(bytes::Bytes::from_static(b"short")),
+            Err(std::io::Error::new(std::io::ErrorKind::UnexpectedEof, "connection closed before delivery completed")),
+        ])))
         .unwrap()
         .into();
     assert!(cache_peer_response(dir.path(), "seller.onion", "interrupted", "film.mp4", "video/mp4", 1, "onchain", truncated).await.is_err());
