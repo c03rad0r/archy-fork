@@ -127,3 +127,29 @@ messages not exchanged, no other radios shown, missing-listener error and mesh
 page 502s. The earlier radio deferral is superseded for this new scoped task.
 See backlog item15 for the full settings-clarity and two-radio acceptance scope.
 No radio settings, firmware or services were changed while recording this task.
+
+## Subsequent qualification — morning 2026-10-06
+
+The 7e11 backend/UI candidate reached dev and passed actual stale/missing-CSRF
+rejection and recovery against the interface RPC. Durable signing-key hardening
+then passed the full isolated suite: 1,714 tests, zero failures (five listed
+ignores, including the subprocess helper exercised by its parent test).
+
+Deployment exposed a second cleanup path in the shell doctor and an EROFS
+failure in its embedded repair. The old OTA runtime payload retained on disk
+replaced the corrected helper during startup. Dev containment now covers both
+the runtime payload and installed helper; the isolated V4V fixture has survived
+five subsequent scheduled doctor runs and answers health requests. Source repair
+57923b0a uses the host namespace and runs before reconciliation. Its 12 focused
+bootstrap tests pass, including stale content, execute-mode repair, idempotence
+and installation failure. Production build/live restart qualification is pending;
+Yaya has not received this newest backend yet.
+
+The reusable V4V media bridge browser check passes at 390/1440 pixels with real
+bundled audio, hidden playback, pause/resume and the same retained iframe. Full
+dashboard integration found a mobile defect: the recreated bottom navigation
+was not remeasured after a store-driven app closed, covering the audio controls.
+7946ef86 repairs that lifecycle and adds accessible player-button names; three
+focused navigation/bridge tests pass. Final UI build and actual browser rerun are
+pending. No node-only catalog is signed/enabled yet. These results do not close
+the remaining IndeeHub, Fleet, FIPS, companion or standard-channel radio gates.
