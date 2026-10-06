@@ -846,3 +846,19 @@ recovery source fails, and atomically flush counter reservations before use.
 Rust wallet tests are running only through the required isolated test runner.
 No real wallet mutation or additional payment is involved. This prerequisite is
 not a completed purchase journal, seller receipt or initial-payment recovery gate.
+
+## Latest continuation: publication lifecycle and HTTPS iframe report
+
+IndeeHub commit `2ec3600` wires the authenticated publication API and bounded
+outbox loop, disabled by default. Full backend qualification passes 151 tests
+in 17 suites, including actual PostgreSQL/HTTP/local-relay reconstruction.
+Final backend production build passes. Disposable database, volume and private
+credentials removed; no app deployment or public event/payment occurred.
+
+Archy recovery-counter follow-up `9771378b` passes 1,755 isolated backend
+tests with five existing skips. Not deployed; full purchase recovery remains open.
+
+User reports an HTTPS-only embedded app gate while tab mode works. Added task17,
+with exact node/app clarification pending. No authentication bypass or live
+nginx modification. The private operator report is updated, regenerated and
+checked at390/1440px; SCP path remains unchanged.

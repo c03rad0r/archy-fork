@@ -372,3 +372,9 @@ as a substitute for repairing the standard public-channel experience.
   absolute positioning that overlaps content. Verify tall neighbours, shrinking
   results, long labels, keyboard access and mobile/desktop layouts.
 - Record actual browser geometry checks and deployment acceptance separately.
+
+## 17. HTTPS embedded app authentication (reported 6 October)
+
+- User reports opening apps inside an iframe on an HTTPS node shows the app gate, while opening the same app in a separate tab works. Reproduce both modes with the same authenticated session before identifying a cause.
+- Trace generated launch origins, cookie attributes and scope, bootstrap redirects, iframe navigation and gate session exchange. Preserve authentication and public-management access restrictions; do not bypass the gate or expose credentials to embedded apps.
+- Test HTTPS iframe and tab, HTTP LAN compatibility, desktop/mobile companion, reload, expired sessions, denied access and logout. Record actual-node evidence separately from fixtures. This remains open, not a confirmed diagnosis.

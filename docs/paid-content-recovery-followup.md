@@ -111,3 +111,24 @@ not deserialized as a fresh zero state. The full isolated suite again passes
 1,755tests,0failures,5existing ignored in
 `/tmp/archy-wallet-recovery-strict-schema-full-tests.log`. No live deployment or
 claim of complete initial-payment recovery is implied.
+
+## Additional wallet boundaries found during review (6 October)
+
+Source review of `ecash::melt_tokens`, `swap_between_mints` and
+`MintClient::melt_tokens` found further work required before full recovery can
+be accepted. The melt path does not currently submit or retain fee-change
+outputs, and the caller does not require a PAID response before proceeding.
+Cross-mint recovery records are written after the remote operation, leaving an
+interruption window. These are source findings, not newly induced live losses.
+
+The implementation must account for NUT-05 quote states and NUT-08 change using
+the mint's advertised support, preserve uncertain operations, and verify amount
+conservation. Reference specifications:
+https://github.com/cashubtc/nuts/blob/main/05.md and
+https://github.com/cashubtc/nuts/blob/main/08.md .
+
+Wallet-wide serialization must also include network changes and streaming
+revenue writes; a load/save outside the operation lock can overwrite another
+mutation. Current empty-wallet-file handling, file permissions and directory
+fsync require review as part of durable storage. Counter fail-closed tests do
+not establish that this larger transaction journal has been implemented.
