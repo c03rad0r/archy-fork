@@ -34,7 +34,7 @@ describe('app media session boundary', () => {
     const [controller, snapshot, shown] = fixture.player.updateExternal.mock.calls[0]!
     expect(snapshot.position).toBe(22); expect(shown).toBe(false)
     controller.seek(30)
-    expect(child.postMessage.mock.calls.at(-1)![0]).toMatchObject({ command: 'seek', position: 30, session: hello.session })
+    expect(child.postMessage.mock.calls[child.postMessage.mock.calls.length - 1]![0]).toMatchObject({ command: 'seek', position: 30, session: hello.session })
     controller.open(); expect(fixture.launcher.openSession).toHaveBeenCalledWith('node-demo-v4v')
     visible.value = true; await nextTick()
     expect(fixture.player.setExternalVisible).toHaveBeenCalledWith(controller.id, true)
@@ -43,6 +43,6 @@ describe('app media session boundary', () => {
     fixture.allowed = true
     wrapper.unmount()
     expect(fixture.player.releaseExternal).toHaveBeenCalledWith(controller.id)
-    expect(child.postMessage.mock.calls.at(-1)![0]).toMatchObject({ command: 'pause' })
+    expect(child.postMessage.mock.calls[child.postMessage.mock.calls.length - 1]![0]).toMatchObject({ command: 'pause' })
   })
 })
