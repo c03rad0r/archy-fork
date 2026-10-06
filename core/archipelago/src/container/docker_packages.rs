@@ -208,7 +208,7 @@ impl DockerPackageScanner {
                 crate::container::app_catalog::available_update_for_app(&app_id, &container.image)
             };
 
-            let package = PackageDataEntry {
+            let mut package = PackageDataEntry {
                 ui_ready: Some(false),
                 state: package_state.clone(),
                 health: container.health.clone(),
@@ -298,6 +298,7 @@ impl DockerPackageScanner {
                 uninstall_stage: None,
             };
 
+            apply_manifest_presentation(&app_id, &mut package);
             packages.insert(app_id.clone(), package);
             info!(
                 "Detected container: {} ({})",
@@ -445,6 +446,71 @@ async fn launch_http_ready(candidate: &str) -> bool {
 mod lifecycle_regression_tests {
     use super::*;
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+    fn installing_fixture() -> PackageDataEntry {
+        serde_json::from_value(serde_json::json!({
+            "state": "installing", "ui-ready": false,
+            "static-files": {"license":"", "instructions":"", "icon":""},
+            "manifest": {
+                "id":"new-app", "title":"new-app", "version":"running-version",
+                "description":{"short":"Installing...", "long":""},
+                "release-notes":"", "license":"", "wrapper-repo":"",
+                "upstream-repo":"", "support-site":"", "marketing-site":""
+            }
+        }))
+        .unwrap()
+    }
+
+    #[test]
+    fn manifest_presentation_keeps_unpublished_ui_in_apps_during_install() {
+        let mut entry = installing_fixture();
+        let manifest = serde_json::json!({"app": {
+            "name":"New App", "version":"different-catalog-version", "description":"Setup and monitor",
+            "metadata":{"icon":"/assets/img/app-icons/new-app.svg", "tier":"optional"},
+            "interfaces":{"main":{"type":"ui", "port":7152}}
+        }});
+        apply_manifest_value(&manifest, &mut entry);
+        assert_eq!(entry.manifest.title, "New App");
+        assert_eq!(entry.static_files.icon, "/assets/img/app-icons/new-app.svg");
+        assert_eq!(entry.manifest.description.short, "Setup and monitor");
+        assert_eq!(
+            entry
+                .manifest
+                .interfaces
+                .unwrap()
+                .main
+                .unwrap()
+                .ui
+                .as_deref(),
+            Some("true")
+        );
+        assert_eq!(entry.ui_ready, Some(false));
+        assert_eq!(entry.state, PackageState::Installing);
+        assert_eq!(entry.manifest.version, "running-version");
+        assert!(entry.installed.is_none());
+    }
+
+    #[test]
+    fn manifest_presentation_does_not_promote_api_to_ui_or_discard_addresses() {
+        let mut entry = installing_fixture();
+        entry.manifest.interfaces = Some(Interfaces {
+            main: Some(MainInterface {
+                ui: Some("true".to_owned()),
+                tor_config: Some("kept.onion".to_owned()),
+                lan_config: Some("kept".to_owned()),
+            }),
+        });
+        apply_manifest_value(
+            &serde_json::json!({"app":{
+                "interfaces":{"main":{"type":"api", "port":3000}}
+            }}),
+            &mut entry,
+        );
+        let main = entry.manifest.interfaces.unwrap().main.unwrap();
+        assert_eq!(main.ui, None);
+        assert_eq!(main.tor_config.as_deref(), Some("kept.onion"));
+        assert_eq!(main.lan_config.as_deref(), Some("kept"));
+    }
 
     #[test]
     fn btcpay_aliases_share_one_package_without_promoting_dependencies() {
@@ -613,12 +679,28 @@ fn is_transient_podman_helper(app_id: &str, ports: &[String]) -> bool {
 /// every surface (My Apps, Services, launcher, companion) instead of the
 /// generic A-mark — the exact regression Cuprate exposed on install.
 fn real_manifest_metadata(app_id: &str) -> Option<serde_json::Value> {
+    real_manifest_value(app_id)?
+        .get("app")?
+        .get("metadata")
+        .cloned()
+}
+
+fn real_manifest_value(app_id: &str) -> Option<serde_json::Value> {
     for (id, value) in crate::container::app_catalog::catalog_manifest_values() {
         if id == app_id {
-            return value.get("app").and_then(|a| a.get("metadata")).cloned();
+            return Some(value);
         }
     }
     let mut candidates = Vec::new();
+    if let Ok(dir) = std::env::var("ARCHIPELAGO_APPS_DIR") {
+        if !dir.trim().is_empty() {
+            candidates.push(
+                std::path::PathBuf::from(dir)
+                    .join(app_id)
+                    .join("manifest.yml"),
+            );
+        }
+    }
     if let Ok(dir) = std::env::var("ARCHIPELAGO_DATA_DIR") {
         candidates.push(
             std::path::PathBuf::from(dir)
@@ -639,12 +721,73 @@ fn real_manifest_metadata(app_id: &str) -> Option<serde_json::Value> {
         let Ok(value) = serde_yaml::from_str::<serde_json::Value>(&content) else {
             continue;
         };
-        let meta = value.get("app").and_then(|a| a.get("metadata")).cloned();
-        if meta.is_some() {
-            return meta;
+        if value.get("app").is_some() {
+            return Some(value);
         }
     }
     None
+}
+
+/// Keep disk-only apps presentable before their first container exists.
+/// The signed catalog wins wherever it supplies a manifest.
+pub(crate) fn apply_manifest_presentation(app_id: &str, entry: &mut PackageDataEntry) {
+    if let Some(value) = real_manifest_value(app_id) {
+        apply_manifest_value(&value, entry);
+    }
+}
+
+fn apply_manifest_value(value: &serde_json::Value, entry: &mut PackageDataEntry) {
+    let Some(app) = value.get("app") else { return };
+    let text = |value: Option<&serde_json::Value>| {
+        value
+            .and_then(|v| v.as_str())
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(str::to_owned)
+    };
+    if let Some(name) = text(app.get("name")) {
+        entry.manifest.title = name;
+    }
+    if let Some(description) = text(app.get("description")) {
+        entry.manifest.description.short = description.clone();
+        entry.manifest.description.long = description.clone();
+        entry.static_files.instructions = description;
+    }
+    if let Some(metadata) = app.get("metadata") {
+        if let Some(icon) = text(metadata.get("icon")) {
+            entry.static_files.icon = icon;
+        }
+        if let Some(tier) = text(metadata.get("tier")) {
+            entry.manifest.tier = Some(tier);
+        }
+    }
+    // Once installed, the scanner owns UI detection (including companion UIs).
+    // Only seed classification while there is no observed runtime package.
+    if entry.installed.is_some() {
+        return;
+    }
+    if let Some(interfaces) = app.get("interfaces").and_then(|v| v.as_object()) {
+        if !interfaces.is_empty() {
+            let has_ui = interfaces.values().any(|interface| {
+                interface
+                    .get("type")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("ui")
+                    == "ui"
+            });
+            // Preserve scanner-owned addresses; a declared UI does not imply readiness.
+            let interfaces = entry
+                .manifest
+                .interfaces
+                .get_or_insert(Interfaces { main: None });
+            let main = interfaces.main.get_or_insert(MainInterface {
+                ui: None,
+                tor_config: None,
+                lan_config: None,
+            });
+            main.ui = has_ui.then(|| "true".to_owned());
+        }
+    }
 }
 
 fn get_app_metadata(app_id: &str) -> AppMetadata {

@@ -164,6 +164,22 @@ describe('useAppLauncherStore', () => {
     expect(mockWindowOpen).not.toHaveBeenCalled()
   })
 
+  it('shows DATUM generated credentials before opening its embedded UI', async () => {
+    mockRpcCall.mockResolvedValueOnce({
+      title: 'DATUM Gateway login',
+      credentials: [{ label: 'Password', value: 'fixture-only-password', sensitive: true }],
+    })
+    const store = useAppLauncherStore()
+    store.openSession('datum')
+    await vi.waitFor(() => expect(store.credentialPrompt.loading).toBe(false))
+    expect(store.credentialPrompt.show).toBe(true)
+    expect(store.credentialPrompt.credentials[0]?.value).toBe('fixture-only-password')
+    expect(store.panelAppId).toBeNull()
+    expect(mockWindowOpen).not.toHaveBeenCalled()
+    store.continueCredentialLaunch()
+    expect(store.panelAppId).toBe('datum')
+  })
+
   it('gates a Home-style Portainer launch until its first-run token is shown', async () => {
     mockRpcCall.mockResolvedValueOnce({
       title: 'Portainer first-run token',

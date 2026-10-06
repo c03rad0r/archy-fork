@@ -1892,6 +1892,26 @@ autopilot.active=false\n",
             }));
         }
 
+        if app_id == "datum" {
+            // This is the same platform-owned secret injected into DATUM and
+            // Gashboard. Never publish it in the manifest or a UI fallback.
+            let password = tokio::fs::read_to_string(
+                self.config.data_dir.join("secrets/datum-admin-password"),
+            )
+            .await
+            .context("DATUM credentials are not available yet; wait for installation to finish")?;
+            let password = password.trim();
+            anyhow::ensure!(!password.is_empty(), "DATUM administrator password is empty");
+            return Ok(serde_json::json!({
+                "title": "DATUM Gateway login",
+                "description": "Use this password when DATUM asks you to unlock configuration. In Config, set your Bitcoin payout address. Point miners at this node's IP address on Stratum port 23334 (stratum+tcp://NODE-IP:23334). Gashboard connects automatically.",
+                "credentials": [
+                    { "label": "Username", "value": "admin" },
+                    { "label": "Password", "value": password, "sensitive": true }
+                ]
+            }));
+        }
+
         if app_id == "photoprism" {
             return Ok(serde_json::json!({
                 "title": "PhotoPrism credentials",

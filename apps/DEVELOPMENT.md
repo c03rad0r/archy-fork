@@ -91,3 +91,5 @@ Adding a new app requires updates in multiple places:
 ## Port Assignments
 
 See [PORTS.md](./PORTS.md) for complete mapping. Dev ports are offset by +10000.
+
+Before submitting an app, complete **Launch acceptance: credentials, signer, and HTTP nodes** in `docs/app-developer-guide.md`. A generated password needs an authenticated credential interstitial; native Nostr login needs a tested first-launch chooser. Container health alone is not launch acceptance.
