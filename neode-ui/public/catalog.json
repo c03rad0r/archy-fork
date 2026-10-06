@@ -681,9 +681,9 @@
         "datum"
       ],
       "title": "Gashboard",
-      "version": "0.2.0",
+      "version": "0.2.1",
       "description": "A playful mining dashboard for your DATUM fleet, with live hashrates, share history, lottery odds, chat and a Nostr viewer access list.",
-      "dockerImage": "localhost/archipelago-gashboard:0.2.0",
+      "dockerImage": "localhost/archipelago-gashboard:0.2.1",
       "category": "bitcoin",
       "tier": "optional",
       "icon": "/assets/img/app-icons/gashboard.svg",
