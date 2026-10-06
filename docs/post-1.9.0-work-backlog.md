@@ -313,3 +313,40 @@ ahead of that work or as an untested addition to the current release.
 - Instrument transport selection and verify it in headless multi-node integration
   tests and actual mobile/desktop playback. Keep technical diagnostics available
   without burdening normal playback with implementation details.
+
+## 15. MeshCore public-channel reliability and settings clarity — perform last
+
+Added by the operator on 2026-10-06, explicitly at the end of this backlog.
+Framework is Heltec V4; Archi dev is Heltec V3. The operator configured both for
+UK in Frequency Plan but reports no messages between them, no other radios
+visible, Framework reporting “mesh listener isn't running”, and intermittent
+502 Bad Gateway on the mesh page. This request reopens Framework radio
+investigation for this scoped task; earlier hardware deferral is not a pass.
+
+- Diagnose actual firmware/protocol, device identity and serial ownership,
+  listener lifecycle, channel identity/key and every relevant RF parameter on
+  both radios. Matching regional labels alone does not prove matching settings.
+  Preserve radio identity and existing settings; do not flash or reset merely
+  because discovery is empty. Use the authorized UK plan and verify applicable
+  hardware/firmware constraints before transmitting.
+- Trace public-channel transmission and reception end to end on both nodes:
+  UI acknowledgement, serial command/result, radio delivery and listener event,
+  persisted message and rendered conversation. Distinguish sent from received;
+  report listener/USB/RF failures accurately. Do not claim no nearby radios means
+  broken discovery without a known transmitting peer.
+- Investigate the missing-listener error and intermittent 502 separately.
+  Cover service readiness, process ownership, competing serial clients, USB
+  detach/reconnect, background/resume, stale connections, backend/radio restart,
+  bounded retries and recovery without duplicate listeners/messages.
+- Compare current official MeshCore documentation and established MeshCore apps
+  when needed. Qualify actual public-channel behavior and interoperability;
+  do not substitute another protocol's radio settings or infer compatibility.
+- Simplify the satellite/settings tab using the existing design system. Explain
+  and organize Radio Settings versus Frequency Plan, show actual applied/read-back
+  values, and distinguish a proposed change from one confirmed on the radio.
+- After earlier backlog work: implement, deploy, test real messages in both
+  directions between Framework and dev, investigate failures, repair and repeat.
+  Include desktop and companion, private-key-safe diagnostics, long-running
+  listener stability, restart/reconnect and meaningful negative cases. Record
+  firmware/builds, radios, conditions and results. Simulated or headless checks
+  alone do not constitute RF acceptance or a claim of flawless operation.

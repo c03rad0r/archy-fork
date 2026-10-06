@@ -119,3 +119,11 @@ No credentials or raw private inventories are included here. Qualification logs:
 `/tmp/archy-peering-live-browser-diagnostic.log`,
 `/tmp/archy-session-key-backend-2.log`,
 `/tmp/archy-framework-monitoring-current-3.log`.
+
+## Latest addition: MeshCore (last in sequence)
+
+Operator reopened Framework/dev radio investigation on 2026-10-06: UK-plan public
+messages not exchanged, no other radios shown, missing-listener error and mesh
+page 502s. The earlier radio deferral is superseded for this new scoped task.
+See backlog item15 for the full settings-clarity and two-radio acceptance scope.
+No radio settings, firmware or services were changed while recording this task.
