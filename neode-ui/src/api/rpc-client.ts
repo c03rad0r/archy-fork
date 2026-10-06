@@ -125,6 +125,7 @@ class RPCClient {
   private async callInner<T>(options: RPCOptions): Promise<T> {
     const { method, params = {}, timeout = 15000, signal: external } = options
     const maxRetries = Math.max(1, options.maxRetries ?? 3)
+    let csrfRefreshed = false
 
     for (let attempt = 0; attempt < maxRetries; attempt++) {
       if (external?.aborted) throw new Error('Aborted')
@@ -187,6 +188,16 @@ class RPCClient {
             } catch { /* body parse failed */ }
 
             const isCsrf = !reason || reason.toLowerCase().includes('csrf')
+            const refreshedToken = getCsrfToken()
+            if (isCsrf && !csrfRefreshed && refreshedToken && refreshedToken !== csrfToken) {
+              // The server rejected the action before dispatch and refreshed
+              // the cookie for this authenticated session. Allow exactly one
+              // retry even for single-attempt reads; never replay on ambiguous
+              // network failures or a permissions rejection.
+              csrfRefreshed = true
+              attempt--
+              continue
+            }
             if (isCsrf && attempt < maxRetries - 1) {
               // CSRF mismatch — cookie may have been updated by a concurrent
               // Set-Cookie response not yet visible to JS. Retry after delay.

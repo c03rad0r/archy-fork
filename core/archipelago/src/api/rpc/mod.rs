@@ -424,29 +424,28 @@ impl RpcHandler {
             };
 
             if !csrf_valid {
-                // Debug: log expected vs received for diagnosis
-                if let (Some(token), Some(header)) = (&session_token, &csrf_header) {
-                    let expected = derive_csrf_token(token).await;
-                    tracing::warn!(
-                        method = %rpc_req.method,
-                        session_prefix = %&token[..8.min(token.len())],
-                        csrf_prefix = %&header[..8.min(header.len())],
-                        expected_prefix = %&expected[..8.min(expected.len())],
-                        "403 CSRF mismatch — session/csrf/expected prefixes shown"
-                    );
-                } else {
-                    tracing::warn!(
-                        method = %rpc_req.method,
-                        has_session = session_token.is_some(),
-                        has_header = csrf_header.is_some(),
-                        "403 CSRF validation failed — rejecting RPC call"
-                    );
-                }
-                return Ok(self.error_response(
+                tracing::warn!(method = %rpc_req.method, "CSRF mismatch; rejecting action and refreshing authenticated session token");
+                let mut response = self.error_response(
                     403,
                     "CSRF token missing or invalid",
                     StatusCode::FORBIDDEN,
-                ));
+                );
+                // Authentication and RBAC have already passed. Reject this
+                // request without dispatch, but refresh the deterministic CSRF
+                // cookie so the browser can retry normally after a key rotation
+                // or a stale companion cookie. Never return a token to an
+                // unauthenticated client or relax CSRF validation on retry.
+                if let Some(token) = &session_token {
+                    self.set_csrf_cookie(
+                        &mut response,
+                        &derive_csrf_token(token).await,
+                        secure_suffix,
+                    );
+                }
+                response
+                    .headers_mut()
+                    .insert("Cache-Control", cookie_header("private, no-store"));
+                return Ok(response);
             }
         }
 
@@ -832,5 +831,94 @@ mod session_probe_contract_tests {
         assert!(!UNAUTHENTICATED_METHODS.contains(&PROBE));
         assert!(DISPATCHER.contains("\"system.get-hostname\" =>"));
         assert!(!DISPATCHER.contains("\"system.get-version\" =>"));
+    }
+}
+
+#[cfg(test)]
+mod csrf_recovery_tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn stale_csrf_is_refreshed_without_executing_action_or_authenticating_strangers() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut config = crate::config::Config::default();
+        config.data_dir = dir.path().to_path_buf();
+        config.dev_mode = false;
+        let sessions =
+            crate::session::SessionStore::new_for_tests(dir.path().join("sessions.json"));
+        let token = sessions.create().await;
+        let handler = Arc::new(
+            RpcHandler::new(
+                config,
+                Arc::new(crate::state::StateManager::new()),
+                Arc::new(crate::monitoring::MetricsStore::new()),
+                sessions,
+                None,
+                None,
+            )
+            .await
+            .unwrap(),
+        );
+        let request = |session: &str, csrf: Option<&str>, secure: bool| {
+            let mut builder = Request::builder()
+                .method("POST")
+                .uri("/rpc/v1")
+                .header("Cookie", format!("session={session}"));
+            if let Some(csrf) = csrf {
+                builder = builder.header("X-CSRF-Token", csrf);
+            }
+            if secure {
+                builder = builder.header("X-Forwarded-Proto", "https");
+            }
+            builder.body(hyper::Body::from(serde_json::json!({
+                "jsonrpc":"2.0", "id":1, "method":"system.settings.set",
+                "params":{"key":"ai_provider", "value":"{\"provider\":\"local\",\"openai_model\":\"\"}"}
+            }).to_string())).unwrap()
+        };
+        let settings = dir.path().join("settings/model-provider.json");
+        for stale in [None, Some("stale-token"), Some("00")] {
+            let response = handler
+                .clone()
+                .handle(request(&token, stale, true))
+                .await
+                .unwrap();
+            assert_eq!(response.status(), StatusCode::FORBIDDEN);
+            assert!(!settings.exists(), "rejected action must not have run");
+            let cookies: Vec<_> = response
+                .headers()
+                .get_all("set-cookie")
+                .iter()
+                .map(|v| v.to_str().unwrap())
+                .collect();
+            assert_eq!(cookies.len(), 1);
+            let expected = derive_csrf_token(&token).await;
+            assert_eq!(
+                cookies[0],
+                format!("csrf_token={expected}; SameSite=Lax; Path=/; Secure")
+            );
+            assert_eq!(response.headers()["cache-control"], "private, no-store");
+        }
+        let stranger = handler
+            .clone()
+            .handle(request("not-a-session", None, true))
+            .await
+            .unwrap();
+        assert_eq!(stranger.status(), StatusCode::UNAUTHORIZED);
+        assert!(!stranger.headers().contains_key("set-cookie"));
+        assert!(!settings.exists());
+        let valid = derive_csrf_token(&token).await;
+        let response = handler
+            .handle(request(&token, Some(&valid), false))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let body: serde_json::Value =
+            serde_json::from_slice(&hyper::body::to_bytes(response.into_body()).await.unwrap())
+                .unwrap();
+        assert!(
+            body["error"].is_null(),
+            "valid retry must reach the handler"
+        );
+        assert!(settings.exists());
     }
 }

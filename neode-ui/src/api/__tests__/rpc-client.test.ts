@@ -36,7 +36,36 @@ describe('RPCClient', () => {
   })
 
   afterEach(() => {
+    document.cookie = 'csrf_token=; Max-Age=0; Path=/'
     vi.useRealTimers()
+  })
+
+  it('uses a refreshed CSRF cookie once even with a single-attempt request', async () => {
+    document.cookie = 'csrf_token=old; Path=/'
+    mockFetch.mockImplementationOnce(async () => {
+      document.cookie = 'csrf_token=new; Path=/'
+      return jsonResponse({ error: { message: 'CSRF token missing or invalid' } }, 403)
+    }).mockResolvedValueOnce(jsonResponse({ result: { interfaces: [] } }))
+    await expect(rpcClient.call({ method: 'network.list-interfaces', maxRetries: 1 })).resolves.toEqual({ interfaces: [] })
+    expect(mockFetch).toHaveBeenCalledTimes(2)
+    expect(mockFetch.mock.calls[0]![1].headers['X-CSRF-Token']).toBe('old')
+    expect(mockFetch.mock.calls[1]![1].headers['X-CSRF-Token']).toBe('new')
+  })
+
+  it('never loops on changing CSRF cookies or retries a permissions rejection', async () => {
+    let count = 0
+    mockFetch.mockImplementation(async () => {
+      document.cookie = `csrf_token=rotated-${++count}; Path=/`
+      return jsonResponse({ error: { message: 'CSRF token missing or invalid' } }, 403)
+    })
+    await expect(rpcClient.call({ method: 'network.list-interfaces', maxRetries: 1 })).rejects.toThrow('CSRF')
+    expect(mockFetch).toHaveBeenCalledTimes(2)
+    mockFetch.mockReset().mockImplementationOnce(async () => {
+      document.cookie = 'csrf_token=another; Path=/'
+      return jsonResponse({ error: { message: 'Forbidden: insufficient permissions' } }, 403)
+    })
+    await expect(rpcClient.call({ method: 'system.settings.set', maxRetries: 1 })).rejects.toThrow('insufficient permissions')
+    expect(mockFetch).toHaveBeenCalledOnce()
   })
 
   it('makes a successful RPC call and returns the result', async () => {

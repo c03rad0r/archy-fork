@@ -279,7 +279,11 @@
               />
             </div>
           </div>
-          <p v-if="physicalInterfaces.length === 0" class="text-sm text-white/50 text-center py-4">No physical interfaces detected</p>
+          <div v-if="interfacesError" role="status" class="flex items-center justify-between gap-3 text-sm text-white/60 py-2">
+            <span>{{ allInterfaces.length ? 'Couldn’t refresh interfaces. Showing last known information.' : 'Couldn’t load network interfaces.' }}</span>
+            <button class="glass-button rounded px-3 py-1.5 text-xs shrink-0" :disabled="interfacesRefreshing" @click="loadInterfaces">Retry</button>
+          </div>
+          <p v-else-if="physicalInterfaces.length === 0 && interfacesRes.data.value !== null" class="text-sm text-white/50 text-center py-4">No physical interfaces detected</p>
           <p v-if="wifiRadioError" class="text-xs text-red-400">{{ wifiRadioError }}</p>
         </div>
       </template>
@@ -653,7 +657,8 @@ const interfacesRes = useCachedResource<NetworkInterface[]>({
     return res.interfaces
   },
 })
-const interfacesLoading = computed(() => interfacesRes.loadState.value === 'loading')
+const interfacesError = computed(() => interfacesRes.error.value)
+const interfacesLoading = computed(() => interfacesRes.loadState.value === 'loading' || (interfacesRes.loadState.value === 'idle' && interfacesRes.data.value === null))
 const interfacesRefreshing = computed(() => interfacesRes.loadState.value === 'refreshing')
 const allInterfaces = computed(() => interfacesRes.data.value ?? [])
 const physicalInterfaces = computed(() => allInterfaces.value.filter(i => i.type === 'ethernet' || i.type === 'wifi'))
