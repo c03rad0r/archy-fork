@@ -126,7 +126,7 @@ async fn known_purchase_never_becomes_a_new_spend_when_cache_or_index_is_unavail
     )
     .await
     .unwrap();
-    for (id, filename) in [("id", None, false), ("duplicate-id", Some("/file.txt"))] {
+    for (id, filename) in [("id", None), ("duplicate-id", Some("/file.txt"))] {
         let cached = existing_paid_content(dir.path(), "seller.onion", id, filename, false)
             .await
             .unwrap()
