@@ -449,3 +449,24 @@ for the atomic sharing suite remains in progress; it is not marked passed.
 - Production build of `f3264c8d` is running, log
   `/tmp/archy-atomic-share-production-backend.log`. No deployment or payment
   occurred. Cross-session deployment coordination remains open.
+
+## IndeeHub catalog and actual-library work
+
+IndeeHub follow-up `f47a466` discards stale source/refresh responses, including
+late failures and late ownership-enrichment responses; it also avoids logging
+raw HTTP errors that may contain request credentials. All 20 app tests passed.
+
+`926b87a` replaces Browse's random progress and fabricated rentals/saved lists
+with authenticated `/library` and `/rents?status=active` records. Nested film IDs
+are retained for playback/payment, expired or invalid-expiry rentals are excluded,
+and the UI shows the actual rental end timestamp rather than a fixed “48h left”.
+The library clears on logout/account changes and ignores late responses; failed
+same-account refreshes retain previous records with an error/retry control.
+The add-to-library client route now matches `POST /library/:projectId`.
+All 25 app tests passed; production typecheck completed and Vite build is running.
+
+These changes are not deployed and do not complete the distributed paid-video
+feature. Actual browser/companion acceptance, full library pagination (current
+API defaults to 30), persisted viewing progress, FIPS distribution, creator
+payment routing and the new entitlement window remain open. No test purchase,
+commercial rental policy change, or app-image publication occurred.
