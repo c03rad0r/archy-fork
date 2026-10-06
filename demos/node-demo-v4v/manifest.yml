@@ -1,0 +1,91 @@
+# Intentionally outside apps/: this demo must never enter the public catalog.
+# Publish only inside a release-signed single-node-demo catalog.
+app:
+  id: node-demo-v4v
+  name: V4V · Sovereign Music
+  version: 0.6.7-alpha-archy1
+  description: Listen to the original V4V demo catalog and explore sovereign music on this node.
+  category: media
+  container:
+    image: source.archipelago-foundation.org/lfg2025/v4v-demo:0.6.7-alpha-archy1
+    generated_secrets:
+      - name: node-demo-v4v-session
+        kind: hex32
+      - name: node-demo-v4v-receipts
+        kind: hex32
+    secret_env:
+      - key: ALPHA_PASSWORD_HASH
+        secret_file: node-demo-v4v-password-hash
+      - key: SESSION_SECRET
+        secret_file: node-demo-v4v-session
+      - key: RECEIPT_SIGNING_SECRET
+        secret_file: node-demo-v4v-receipts
+  resources:
+    cpu_limit: 2
+    memory_limit: 768Mi
+  security:
+    capabilities: []
+    readonly_root: true
+    no_new_privileges: true
+    network_policy: bridge
+  ports:
+    - host: 7475
+      container: 5181
+      protocol: tcp
+      bind: 127.0.0.1
+      auth: gated
+  volumes:
+    - type: volume
+      source: node-demo-v4v-data
+      target: /app/data
+    - type: volume
+      source: node-demo-v4v-media
+      target: /app/media
+    - type: tmpfs
+      target: /tmp
+      tmpfs_options: rw,noexec,nosuid,size=64m,mode=1777
+  environment:
+    - NODE_ENV=production
+    - HOST=0.0.0.0
+    - PORT=5181
+    - PULSEWIRE_COMMIT=5bc5f61b
+    - PULSEWIRE_PASSWORD_LOGIN=on
+    - PULSEWIRE_PASSWORD_OPERATOR=on
+    - PULSEWIRE_SECURE_COOKIES=off
+    - PULSEWIRE_NOSTR_REGISTRATION=closed
+    - PULSEWIRE_STORE=json
+    - PULSEWIRE_STATE_BACKUP_DIR=data/backups
+    - PULSEWIRE_RATE_LIMIT_DB_FILE=data/rate-limits.db
+    - PULSEWIRE_JOBS_DB_FILE=data/jobs.db
+    - PULSEWIRE_FEED_INDEX_FILE=data/feed-index.db
+    - PULSEWIRE_FEED_FRONTIER_FILE=data/feed-frontier.db
+    - PULSEWIRE_LN_MODE=mock
+    - PULSEWIRE_LOG_FORMAT=json
+    - PULSEWIRE_ACCESS_LOG=on
+    - PULSEWIRE_DISCOVERY_DEMO_FIXTURES=on
+  health_check:
+    type: http
+    endpoint: http://127.0.0.1:5181
+    path: /healthz
+    interval: 30s
+    timeout: 5s
+    retries: 3
+  interfaces:
+    main:
+      name: V4V
+      description: Sovereign music demo
+      type: ui
+      port: 7475
+      protocol: http
+      path: /
+  metadata:
+    icon: /assets/img/app-icons/v4v-demo.svg
+    author: V4V contributors
+    tier: optional
+    launch:
+      requires_host_frame: true
+      media_controls: archipelago-v1
+    features:
+      - Original demo song catalog
+      - Background playback with dashboard controls
+      - Demo payments only

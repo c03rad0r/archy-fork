@@ -178,7 +178,7 @@ fn find_cache_file() -> Option<(PathBuf, SystemTime)> {
 
 /// Load and cache the on-node catalog. Returns an empty catalog when absent —
 /// callers then fall back to `image-versions.sh`.
-fn load_catalog() -> AppCatalog {
+fn load_global_catalog() -> AppCatalog {
     let (path, mtime) = match find_cache_file() {
         Some(v) => v,
         None => return AppCatalog::default(),
@@ -214,6 +214,18 @@ fn load_catalog() -> AppCatalog {
             mtime,
             catalog: catalog.clone(),
         });
+    }
+    catalog
+}
+
+fn load_catalog() -> AppCatalog {
+    let mut catalog = load_global_catalog();
+    if let Some((path, _)) = find_cache_file() {
+        if let Some(data_dir) = path.parent() {
+            for (id, entry) in super::node_catalog::entries(data_dir) {
+                catalog.apps.entry(id).or_insert(entry);
+            }
+        }
     }
     catalog
 }

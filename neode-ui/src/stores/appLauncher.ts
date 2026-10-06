@@ -1,3 +1,4 @@
+import { appHasMediaBridge } from '@/views/discover/curatedApps'
 import { defineStore } from 'pinia'
 import { ref, watch } from 'vue'
 import { rpcClient } from '@/api/rpc-client'
@@ -235,6 +236,7 @@ export const useAppLauncherStore = defineStore('appLauncher', () => {
 
   /** Active app in the store-driven session (no route change) */
   const panelAppId = ref<string | null>(null)
+  const mediaAppId = ref<string | null>(null)
   /** Optional deep-link path inside the active app (e.g. /tx/<hash> for mempool) */
   const panelPath = ref<string | null>(null)
 
@@ -251,7 +253,7 @@ export const useAppLauncherStore = defineStore('appLauncher', () => {
     // phone controls and better performance. Apps with manifest-declared host
     // integrations stay in the dashboard frame so their parent bridge remains
     // connected (for example GitWorkshop's consent-gated NIP-07 provider).
-    if (!IS_DEMO && isCompanionApp() && !HOST_FRAME_APPS.has(appId)) {
+    if (!IS_DEMO && isCompanionApp() && !HOST_FRAME_APPS.has(appId) && !appHasMediaBridge(appId)) {
       const runtimeUrl = useAppStore().data?.['package-data']?.[appId]?.installed?.['interface-addresses']?.main?.['lan-address'] || undefined
       const launchUrl = directAppUrl(appId) || resolveAppUrl(appId, opts.path, runtimeUrl)
       if (launchUrl) {
@@ -288,6 +290,7 @@ export const useAppLauncherStore = defineStore('appLauncher', () => {
     // page never changes: panel mode renders beside the page, overlay and
     // fullscreen modes render above it (AppSession styles per display mode).
     // Closing always returns the user exactly where they launched from.
+    if (appHasMediaBridge(appId)) mediaAppId.value = appId
     panelPath.value = opts.path ?? null
     panelAppId.value = appId
   }
@@ -712,6 +715,7 @@ export const useAppLauncherStore = defineStore('appLauncher', () => {
     close,
     closePanel,
     panelAppId,
+    mediaAppId,
     panelPath,
     credentialPrompt,
     cancelCredentialLaunch,

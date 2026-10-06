@@ -93,14 +93,19 @@
 
       <!-- Panel mode app session — renders alongside current page content -->
       <Transition name="panel-slide">
-        <div v-if="appLauncher.panelAppId" class="app-panel-container">
+        <div v-if="appLauncher.panelAppId && appLauncher.panelAppId !== appLauncher.mediaAppId" class="app-panel-container">
           <AppSession
+            v-if="appLauncher.panelAppId !== appLauncher.mediaAppId"
+            :key="appLauncher.panelAppId"
             :app-id-prop="appLauncher.panelAppId"
             :path-prop="appLauncher.panelPath ?? undefined"
             @close="appLauncher.closePanel()"
           />
         </div>
       </Transition>
+      <div v-if="appLauncher.mediaAppId" v-show="appLauncher.panelAppId === appLauncher.mediaAppId" class="app-panel-container">
+        <AppSession :key="appLauncher.mediaAppId" :app-id-prop="appLauncher.mediaAppId" :suspended="appLauncher.panelAppId !== appLauncher.mediaAppId" @close="appLauncher.closePanel()" />
+      </div>
     </main>
 
     <!-- Persistent Mobile Tabs + Bottom Tab Bar — outside <main> so position:fixed isn't broken by will-change:transform -->

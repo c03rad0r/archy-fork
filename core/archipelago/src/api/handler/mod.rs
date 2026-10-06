@@ -623,6 +623,24 @@ impl ApiHandler {
             // (upstream Gitea has no ACAO header) or CSP (IP-port upstream
             // falls outside `connect-src`). Session-authenticated so only
             // the logged-in node owner can spin up fetches.
+            (Method::GET, "/api/node-app-catalog") => {
+                if !self.is_authenticated(&headers).await { return Ok(Self::unauthorized()); }
+                let data_dir = self.config.data_dir.clone();
+                let result = tokio::task::spawn_blocking(move || {
+                    crate::container::node_catalog::verified_body(&data_dir)
+                }).await.unwrap_or_else(|error| Err(anyhow::anyhow!(error)));
+                let (status, body) = match result {
+                    Ok(Some(body)) => (StatusCode::OK, body),
+                    Ok(None) => (StatusCode::NOT_FOUND, "{}".to_owned()),
+                    Err(error) => {
+                        tracing::warn!("Node demo catalog rejected: {error}");
+                        (StatusCode::CONFLICT, "{\"error\":\"Node demo catalog is unavailable\"}".to_owned())
+                    },
+                };
+                Ok(Response::builder().status(status).header("Content-Type", "application/json")
+                    .header("Cache-Control", "private, no-store").body(hyper::Body::from(body))?)
+            }
+
             (Method::GET, "/api/app-catalog") => {
                 if !self.is_authenticated(&headers).await {
                     return Ok(Self::unauthorized());

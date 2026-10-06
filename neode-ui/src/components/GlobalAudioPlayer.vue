@@ -2,7 +2,7 @@
   <Teleport to="body">
     <Transition name="slide-up">
       <div
-        v-if="audioPlayer.currentName.value"
+        v-if="audioPlayer.currentName.value && !audioPlayer.externalVisible.value"
         ref="barEl"
         class="fixed left-0 right-0 z-40 audio-player-bar"
       >
@@ -41,6 +41,8 @@
             <p v-else class="text-sm font-medium text-white/90 truncate">{{ audioPlayer.currentName.value }}</p>
             <p class="text-xs text-white/40">{{ formatTime(audioPlayer.currentTime.value) }} / {{ formatTime(audioPlayer.duration.value) }}</p>
           </div>
+
+          <button v-if="audioPlayer.externalApp.value" class="glass-button px-3 py-2 rounded-lg text-sm text-white shrink-0" @click="audioPlayer.openExternal()" aria-label="Open playing app">Open app</button>
 
           <!-- Close -->
           <button
@@ -81,7 +83,7 @@ function clearPlayerHeightVar() {
   document.documentElement.classList.remove('audio-active')
 }
 
-watch(() => audioPlayer.currentName.value, (name) => {
+watch(() => audioPlayer.currentName.value && !audioPlayer.externalVisible.value, (name) => {
   if (name) {
     nextTick(setPlayerHeightVar)
   } else {

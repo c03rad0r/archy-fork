@@ -68,7 +68,7 @@ export interface SignedAppEntry {
       description?: string
       category?: string
       container?: { image?: string }
-      metadata?: { icon?: string; author?: string; repo?: string }
+      metadata?: { icon?: string; author?: string; repo?: string; launch?: { media_controls?: string } }
       ports?: { host?: number | string; container?: number | string; auth?: string }[]
     }
   }
@@ -104,6 +104,11 @@ export function signedCatalogToApps(catalog: SignedAppCatalog): MarketplaceApp[]
 /** The daemon-verified signed catalog, kept for synchronous port-auth lookups
  *  after fetchAppCatalog() has run. Test-hookable. */
 let signedCatalogCache: SignedAppCatalog | null = null
+let nodeCatalogCache: SignedAppCatalog | null = null
+export function appHasMediaBridge(id: string): boolean {
+  return nodeCatalogCache?.apps[id]?.manifest?.app?.metadata?.launch?.media_controls === 'archipelago-v1'
+}
+
 
 /** Launch aliases → the catalog app id that OWNS the UI port.
  *
@@ -141,7 +146,7 @@ const CATALOG_APP_ID_ALIASES: Record<string, string> = {
  *  answered `gated`, or an https frame URL would point at a port that never
  *  serves TLS. */
 export function portAuth(appId: string, hostPort: number | string): string | null {
-  const apps = signedCatalogCache?.apps
+  const apps = { ...signedCatalogCache?.apps, ...nodeCatalogCache?.apps }
   if (!apps) return null
   const alias: string | undefined = CATALOG_APP_ID_ALIASES[appId]
   const ids: string[] = alias === undefined || alias === appId ? [appId] : [appId, alias]
@@ -188,9 +193,32 @@ const CATALOG_URLS = [
   '/catalog.json',
 ]
 
+/** Node demos are requested separately and never persisted in browser fallback
+ * storage or the global release catalog. A copied catalog is rejected by the
+ * daemon unless its release signature and exact node audience match. */
+export async function fetchAppCatalog(): Promise<AppCatalog | null> {
+  const nodeRequest = fetch('/api/node-app-catalog', { credentials: 'include', signal: AbortSignal.timeout(5000) })
+    .then(async response => response.ok ? await response.json() : null).catch(() => null)
+  const [base, node] = await Promise.all([fetchBaseAppCatalog(), nodeRequest])
+  nodeCatalogCache = null
+  if (!base || node?.scope !== 'single-node-demo' || !node.apps || Array.isArray(node.apps)
+      || !Object.keys(node.apps).every(id => id.startsWith('node-demo-'))
+      || !(Date.parse(node.expires_at) > Date.now())) return base
+  nodeCatalogCache = node as SignedAppCatalog
+  const known = new Set(base.apps.map(app => app.id))
+  const additions = signedCatalogToApps(node).filter(app => !known.has(app.id))
+  const demoIds = new Set(additions.map(app => app.id))
+  const promotions = (Array.isArray(node.storefront?.promotions) ? node.storefront.promotions : [])
+    .filter((promotion: CatalogPromotion | null) => promotion && demoIds.has(promotion.id))
+  return { ...base, apps: [...base.apps, ...additions], storefront: {
+    popular: base.storefront?.popular ?? [],
+    promotions: [...(base.storefront?.promotions ?? []), ...promotions],
+  } }
+}
+
 /** Fetch app catalog from remote registry, with local fallback.
  *  Caches for 1 hour. Returns null only if ALL sources fail. */
-export async function fetchAppCatalog(): Promise<AppCatalog | null> {
+async function fetchBaseAppCatalog(): Promise<AppCatalog | null> {
   // Return cache if fresh
   if (cachedCatalog && Date.now() - catalogFetchedAt < CATALOG_TTL) return { ...cachedCatalog, apps: normalizeStoreApps(cachedCatalog.apps) }
 

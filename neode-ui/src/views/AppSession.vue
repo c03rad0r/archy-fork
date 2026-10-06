@@ -131,6 +131,7 @@ import {
 } from './appSession/appSessionConfig'
 import { launchBlockedReason, resolveAppIcon } from './apps/appsConfig'
 import { PackageState } from '@/types/api'
+import { useAppMediaBridge } from '@/composables/useAppMediaBridge'
 import { useAppIdentity } from './appSession/useAppIdentity'
 import { useNostrBridge } from './appSession/useNostrBridge'
 import { openExternalUrl, openInAppOrNewTab } from '@/utils/openExternal'
@@ -141,6 +142,7 @@ const props = defineProps<{
   appIdProp?: string
   /** Deep-link path inside the app (store-driven sessions), e.g. /tx/<hash> */
   pathProp?: string
+  suspended?: boolean
 }>()
 
 const emit = defineEmits<{
@@ -179,8 +181,8 @@ const appId = computed(() => {
 // Display mode -- per-app user choice → per-app default → last global → panel
 const displayMode = ref<DisplayMode>(initialDisplayMode(appId.value))
 
-const appTitle = computed(() => resolveAppTitle(appId.value))
 const packageEntry = computed(() => store.data?.['package-data']?.[appId.value] || null)
+const appTitle = computed(() => packageEntry.value?.manifest?.title || resolveAppTitle(appId.value))
 const appIcon = computed(() =>
   packageEntry.value
     ? resolveAppIcon(appId.value, packageEntry.value)
@@ -279,6 +281,7 @@ function closeRouteSession() {
 // --- Identity & Nostr bridge ---
 
 const iframeRef = computed(() => frameRef.value?.iframeRef ?? null)
+const mediaBridge = useAppMediaBridge(appId, appUrl, iframeRef, computed(() => !props.suspended))
 
 const identity = useAppIdentity(appId, iframeRef, showIdentityPicker)
 const nostrBridge = useNostrBridge(identity.getStoredIdentity, {
@@ -342,6 +345,7 @@ function syncInlineRect() {
 }
 
 const inlineRectStyle = computed<Record<string, string> | undefined>(() => {
+  if (props.suspended) return { display: 'none' }
   if (!inlinePanelMode.value) return undefined
   const r = inlineRect.value
   // Never paint the inline backdrop over the whole viewport while unmeasured.
@@ -393,6 +397,7 @@ watch(() => packageEntry.value?.['ui-ready'], (ready, previous) => {
 // --- Lifecycle handlers ---
 
 function onLoad() {
+  mediaBridge.connect()
   if (loadTimeoutId) { clearTimeout(loadTimeoutId); loadTimeoutId = null }
   if (autoRetryId) { clearTimeout(autoRetryId); autoRetryId = null }
   loading.value = false
@@ -404,7 +409,7 @@ function onLoad() {
   forgetAutoTabApp(appId.value)
   // TV/keyboard: hand focus to the app so keys (incl. the gamepad bridge's
   // virtual keyboard) flow into the iframe without needing a pointer click.
-  try { frameRef.value?.iframeRef?.focus() } catch { /* cross-origin is fine */ }
+  try { if (!props.suspended) frameRef.value?.iframeRef?.focus() } catch { /* cross-origin is fine */ }
   // Check if iframe actually loaded content (same-origin only)
   iframeCheckId = setTimeout(() => {
     try {
@@ -488,6 +493,7 @@ function closeSession() {
 }
 
 function onKeyDown(e: KeyboardEvent) {
+  if (props.suspended) return
   if (e.key === 'Escape') {
     if (nostrBridge.showConsent.value) {
       nostrBridge.denyConsent()
@@ -508,6 +514,8 @@ function onFullscreenChange() {
 }
 
 function onMessage(e: MessageEvent) {
+  if (e.source !== iframeRef.value?.contentWindow) return
+  mediaBridge.handle(e)
   if (e.data?.type === 'nostr-request') nostrBridge.handleNostrRequest(e)
   if (e.data?.type === 'archipelago:identity:request') identity.handleIdentityRequest(e.data?.force === true)
   if (e.data?.type === 'archipelago:media:playing') screensaverStore.suppress(screensaverReason.value)

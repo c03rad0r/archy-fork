@@ -1,0 +1,41 @@
+import { onBeforeUnmount, watch, type Ref } from 'vue'
+import { appHasMediaBridge } from '@/views/discover/curatedApps'
+import { useAudioPlayer, type ExternalAudioState } from './useAudioPlayer'
+import { useAppLauncherStore } from '@/stores/appLauncher'
+
+export function useAppMediaBridge(appId: Ref<string>, url: Ref<string>, frame: Ref<HTMLIFrameElement | null>, visible: Ref<boolean>) {
+  const player = useAudioPlayer()
+  const launcher = useAppLauncherStore()
+  const session = Array.from(crypto.getRandomValues(new Uint8Array(16)), byte => byte.toString(16).padStart(2, '0')).join('')
+  const id = `${appId.value}:${session}`
+  const origin = () => { try { return new URL(url.value, window.location.origin).origin } catch { return '' } }
+  function command(command: string, position?: number) {
+    if (!appHasMediaBridge(appId.value) || !origin()) return
+    frame.value?.contentWindow?.postMessage({ type: 'archipelago:media-control', version: 1, session, command, position }, origin())
+  }
+  function connect() {
+    if (!appHasMediaBridge(appId.value) || !origin()) return
+    frame.value?.contentWindow?.postMessage({ type: 'archipelago:media-connect', version: 1, session }, origin())
+  }
+  const controller = { id, play: () => command('play'), pause: () => command('pause'), seek: (position: number) => command('seek', position),
+    open: () => launcher.openSession(appId.value), close: () => {
+      if (launcher.mediaAppId === appId.value && launcher.panelAppId !== appId.value) launcher.mediaAppId = null
+    },
+  }
+  function handle(event: MessageEvent) {
+    if (!appHasMediaBridge(appId.value) || event.source !== frame.value?.contentWindow || event.origin !== origin()) return
+    const data = event.data
+    if (data?.version !== 1) return
+    if (data.type === 'archipelago:media-ready') { connect(); return }
+    if (data.type !== 'archipelago:media-state' || data.session !== session) return
+    if (data.available !== true) { player.detachExternal(id); return }
+    if (typeof data.title !== 'string' || typeof data.artist !== 'string' || typeof data.playing !== 'boolean'
+      || !Number.isFinite(data.position) || !Number.isFinite(data.duration) || data.position < 0 || data.duration < 0) return
+    const state: ExternalAudioState = { title: data.title.slice(0, 256), artist: data.artist.slice(0, 256), playing: data.playing,
+      position: Math.min(data.position, data.duration), duration: data.duration }
+    player.updateExternal(controller, state, visible.value)
+  }
+  watch(visible, shown => player.setExternalVisible(id, shown))
+  onBeforeUnmount(() => { command('pause'); player.releaseExternal(id) })
+  return { connect, handle }
+}
