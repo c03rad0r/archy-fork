@@ -82,5 +82,29 @@ browser-check workspace. These browser tests simulate the app gate and signer
 host; they do not establish real-node consent, HTTPS or Android acceptance.
 
 The generated storefront entries are review candidates. No signed catalog,
-registry image, deployment or release was published. Keep actual-node acceptance
+registry image or release was published. Keep actual-node acceptance
 separate from these local results.
+
+## Operator-authorized node deployment (2026-10-06)
+
+Installed alongside DATUM on archi-dev-box and yaya-server using rootless Podman,
+read-only roots and the node-generated secrets. Both apps report healthy. Their
+My Apps tiles show normalized icons, names and Launch controls. Chromium verified
+Gashboard's embedded launch, native identity selection/signing, and owner Access
+page on both nodes. Standalone native login and fresh DATUM polling passed too.
+
+On yaya, Chromium 153, Firefox 155 and WebKit 26.6 passed owner login, Access-page
+layout and reload persistence at 1440x900 and 390x844. These are Linux browser and
+viewport checks, not Android companion or physical iPhone acceptance. Anonymous
+requests to mining data and membership endpoints returned 401. No viewers were
+added to the live allowlist during these read-only UI checks.
+
+DATUM's normal package restart on yaya changed its address from 10.89.0.9 to
+10.89.0.11; Gashboard was not restarted or reconfigured and its authenticated stats
+API returned a successful poll less than five seconds old afterwards. Gashboard
+also completed its own normal package restart. The previous Docker tests cover
+invitation, revocation and membership persistence; full live-node membership,
+HTTPS, companion, preserved-data reinstall and reboot acceptance remain separate.
+
+Payouts are not configured and no real miner shares were submitted in this check.
+These are node test deployments of review candidates, not catalog publication.
