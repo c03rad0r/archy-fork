@@ -267,3 +267,89 @@ async fn onchain_delivery_streams_to_owned_cache_and_preserves_incomplete_recove
             .is_err()
     );
 }
+
+#[test]
+fn share_creation_stays_hidden_without_explicit_visibility_and_rejects_invalid_policy() {
+    let empty = serde_json::json!({});
+    assert!(matches!(
+        parse_content_availability(&empty, "nobody").unwrap(),
+        Availability::Nobody
+    ));
+    assert!(matches!(
+        parse_content_access(&empty).unwrap(),
+        AccessControl::Free
+    ));
+    for invalid in [
+        serde_json::json!({"access":null}),
+        serde_json::json!({"access":"paid","price_sats":0}),
+        serde_json::json!({"access":"paid","price_sats":1,"accepted_methods":["unsupported"]}),
+        serde_json::json!({"access":"paid","price_sats":1,"accepted_methods":"ecash"}),
+    ] {
+        assert!(parse_content_access(&invalid).is_err());
+    }
+    let paid = serde_json::json!({"access":"paid","price_sats":1,"accepted_methods":["ecash"],"availability":"all_peers"});
+    assert!(matches!(
+        parse_content_access(&paid).unwrap(),
+        AccessControl::Paid { price_sats: 1, .. }
+    ));
+    assert!(matches!(
+        parse_content_availability(&paid, "nobody").unwrap(),
+        Availability::AllPeers
+    ));
+}
+
+#[tokio::test]
+async fn repeated_share_returns_stable_id_and_complete_policy() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut config = crate::config::Config::default();
+    config.data_dir = dir.path().to_path_buf();
+    config.dev_mode = false;
+    let sessions = crate::session::SessionStore::new_for_tests(dir.path().join("sessions.json"));
+    let handler = RpcHandler::new(
+        config,
+        std::sync::Arc::new(crate::state::StateManager::new()),
+        std::sync::Arc::new(crate::monitoring::MetricsStore::new()),
+        sessions,
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+    let first = handler
+        .handle_content_publish(Some(serde_json::json!({
+            "filename":"film.mp4", "access":"paid", "price_sats":1,
+            "accepted_methods":["ecash"], "availability":"nobody"
+        })))
+        .await
+        .unwrap();
+    let second = handler
+        .handle_content_publish(Some(serde_json::json!({
+            "filename":"film.mp4", "access":"paid", "price_sats":2,
+            "accepted_methods":["lightning"], "availability":"nobody"
+        })))
+        .await
+        .unwrap();
+    assert_eq!(first["item"]["id"], second["item"]["id"]);
+    let catalog = content_server::load_catalog(dir.path()).await.unwrap();
+    assert_eq!(catalog.items.len(), 1);
+    let item = &catalog.items[0];
+    assert_eq!(second["item"]["id"].as_str(), Some(item.id.as_str()));
+    assert!(
+        matches!(&item.access, AccessControl::Paid { price_sats: 2, accepted } if accepted == &["lightning"])
+    );
+    assert!(matches!(item.availability, Availability::Nobody));
+    assert!(handler
+        .handle_content_configure(Some(serde_json::json!({
+            "id":item.id, "access":"free"
+        })))
+        .await
+        .is_err());
+    assert!(matches!(
+        content_server::load_catalog(dir.path())
+            .await
+            .unwrap()
+            .items[0]
+            .access,
+        AccessControl::Paid { price_sats: 2, .. }
+    ));
+}

@@ -116,3 +116,17 @@ describe('Web5SharedContent', () => {
     expect(wrapper.text()).not.toContain('Refreshing peer content...')
   })
 })
+
+it('creates a paid Web5 share with its price in the first write', async () => {
+  vi.mocked(rpcClient.call).mockReset()
+  vi.mocked(rpcClient.call).mockResolvedValue({ items: [] })
+  const wrapper = mount(Web5SharedContent, { props: { showStagger: false, peers: [] } })
+  await flushPromises()
+  const vm = (wrapper.vm as any).$.setupState
+  vm.newContentFilename = 'film.mp4'; vm.newContentAccess = 'paid'; vm.newContentPrice = 1
+  await vm.addContentItem()
+  const writes = vi.mocked(rpcClient.call).mock.calls.map(([call]) => call).filter(call => ['content.publish','content.set-pricing'].includes(call.method))
+  expect(writes).toHaveLength(1)
+  expect(writes[0]).toMatchObject({ method: 'content.publish', params: { filename: 'film.mp4', access: 'paid', price_sats: 1, availability: 'all_peers' } })
+  wrapper.unmount()
+})

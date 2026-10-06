@@ -322,6 +322,8 @@ impl RpcHandler {
             // Content catalog management
             "content.list-mine" => self.handle_content_list_mine().await,
             "content.add" => self.handle_content_add(params).await,
+            "content.publish" => self.handle_content_publish(params).await,
+            "content.configure" => self.handle_content_configure(params).await,
             "content.remove" => self.handle_content_remove(params).await,
             "content.set-pricing" => self.handle_content_set_pricing(params).await,
             "content.set-availability" => self.handle_content_set_availability(params).await,

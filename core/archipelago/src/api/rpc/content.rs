@@ -19,6 +19,81 @@ fn is_valid_v3_onion(addr: &str) -> bool {
 
 const FILE_CATALOG_PROTOCOL: &str = "https://archipelago.dev/protocols/file-catalog/v1";
 
+fn parse_content_access(params: &serde_json::Value) -> Result<AccessControl> {
+    let access_type = match params.get("access") {
+        None => "free",
+        Some(value) => value.as_str().context("Invalid access type")?,
+    };
+
+    match access_type {
+        "free" => Ok(AccessControl::Free),
+        "peers_only" => Ok(AccessControl::PeersOnly),
+        "paid" => {
+            let price = params
+                .get("price_sats")
+                .and_then(|v| v.as_u64())
+                .unwrap_or(0);
+            if price == 0 {
+                return Err(anyhow::anyhow!("Paid content requires price_sats > 0"));
+            }
+            // Optional list of payment methods the sharer accepts.
+            // Absent/empty = all methods (backward compatible).
+            const KNOWN_METHODS: [&str; 4] = ["lightning", "onchain", "ecash", "fedimint"];
+            let accepted = match params.get("accepted_methods") {
+                None => Vec::new(),
+                Some(value) => value
+                    .as_array()
+                    .context("Invalid accepted methods")?
+                    .iter()
+                    .map(|method| {
+                        let method = method.as_str().context("Invalid payment method")?;
+                        anyhow::ensure!(
+                            KNOWN_METHODS.contains(&method),
+                            "Unsupported payment method"
+                        );
+                        Ok(method.to_owned())
+                    })
+                    .collect::<Result<Vec<_>>>()?,
+            };
+            Ok(AccessControl::Paid {
+                price_sats: price,
+                accepted,
+            })
+        }
+        _ => return Err(anyhow::anyhow!("Invalid access type: {}", access_type)),
+    }
+}
+
+fn parse_content_availability(params: &serde_json::Value, default: &str) -> Result<Availability> {
+    let availability_type = match params.get("availability") {
+        None => default,
+        Some(value) => value.as_str().context("Invalid availability")?,
+    };
+
+    match availability_type {
+        "nobody" => Ok(Availability::Nobody),
+        "all_peers" => Ok(Availability::AllPeers),
+        "specific" => {
+            let peers = params
+                .get("peers")
+                .and_then(|v| v.as_array())
+                .map(|arr| {
+                    arr.iter()
+                        .filter_map(|v| v.as_str().map(|s| s.to_string()))
+                        .collect::<Vec<_>>()
+                })
+                .unwrap_or_default();
+            Ok(Availability::Specific { peers })
+        }
+        _ => {
+            return Err(anyhow::anyhow!(
+                "Invalid availability: {}",
+                availability_type
+            ))
+        }
+    }
+}
+
 /// Best-effort reclaim of an ecash payment token that was minted but the sale
 /// didn't complete (seller unreachable or couldn't redeem it), so the buyer
 /// doesn't lose the value. For Fedimint the spender can reissue its own
@@ -238,6 +313,20 @@ impl RpcHandler {
         Ok(serde_json::json!({ "items": catalog.items }))
     }
 
+    /// Explicit atomic publication endpoint. Older servers reject this method
+    /// instead of accepting an add request while ignoring its pricing fields.
+    pub(super) async fn handle_content_publish(
+        &self,
+        params: Option<serde_json::Value>,
+    ) -> Result<serde_json::Value> {
+        let policy = params.as_ref().context("Missing params")?;
+        anyhow::ensure!(
+            policy.get("access").is_some() && policy.get("availability").is_some(),
+            "A complete sharing policy is required"
+        );
+        self.handle_content_add(params).await
+    }
+
     /// Add content to my catalog.
     pub(super) async fn handle_content_add(
         &self,
@@ -282,8 +371,10 @@ impl RpcHandler {
             mime_type: mime_type.to_string(),
             size_bytes: 0,
             description: description.to_string(),
-            access: AccessControl::Free,
-            availability: Availability::default(),
+            access: parse_content_access(&params)?,
+            // Legacy multi-call clients must configure visibility explicitly;
+            // an interrupted setup must not publish a paid file as free.
+            availability: parse_content_availability(&params, "nobody")?,
             added_at: chrono::Utc::now().to_rfc3339(),
         };
 
@@ -293,34 +384,45 @@ impl RpcHandler {
             item.size_bytes = metadata.len();
         }
 
-        content_server::add_item(&self.config.data_dir, item.clone()).await?;
+        let catalog = content_server::add_item(&self.config.data_dir, item.clone()).await?;
+        let item = catalog
+            .items
+            .into_iter()
+            .find(|saved| saved.filename == item.filename)
+            .context("Saved content item is unavailable")?;
 
-        // Also store as DWN message for interoperable file catalog
-        if let Ok(store) = DwnStore::new(&self.config.data_dir).await {
-            let did = crate::identity::did_key_from_pubkey_hex(
-                &self.state_manager.get_snapshot().await.0.server_info.pubkey,
-            )
-            .unwrap_or_default();
-            let dwn_data = serde_json::json!({
-                "id": item.id,
-                "title": item.filename,
-                "description": item.description,
-                "content_type": item.mime_type,
-                "size_bytes": item.size_bytes,
-                "access": format!("{:?}", item.access).to_lowercase(),
-                "created_at": item.added_at,
-            });
-            if let Err(e) = store
-                .write_message(
-                    &did,
-                    Some(FILE_CATALOG_PROTOCOL),
-                    Some("https://archipelago.dev/schemas/file-entry/v1"),
-                    Some("application/json"),
-                    Some(dwn_data),
+        // Export only explicitly public metadata. A staged or peer-restricted
+        // share must not leak its filename through the public DWN catalog.
+        if matches!(&item.availability, Availability::AllPeers)
+            && !matches!(&item.access, AccessControl::PeersOnly)
+        {
+            // Also store as DWN message for interoperable file catalog
+            if let Ok(store) = DwnStore::new(&self.config.data_dir).await {
+                let did = crate::identity::did_key_from_pubkey_hex(
+                    &self.state_manager.get_snapshot().await.0.server_info.pubkey,
                 )
-                .await
-            {
-                debug!("DWN file catalog write (non-fatal): {}", e);
+                .unwrap_or_default();
+                let dwn_data = serde_json::json!({
+                    "id": item.id,
+                    "title": item.filename,
+                    "description": item.description,
+                    "content_type": item.mime_type,
+                    "size_bytes": item.size_bytes,
+                    "access": format!("{:?}", item.access).to_lowercase(),
+                    "created_at": item.added_at,
+                });
+                if let Err(e) = store
+                    .write_message(
+                        &did,
+                        Some(FILE_CATALOG_PROTOCOL),
+                        Some("https://archipelago.dev/schemas/file-entry/v1"),
+                        Some("application/json"),
+                        Some(dwn_data),
+                    )
+                    .await
+                {
+                    debug!("DWN file catalog write (non-fatal): {}", e);
+                }
             }
         }
 
@@ -342,6 +444,26 @@ impl RpcHandler {
         Ok(serde_json::json!({ "removed": true }))
     }
 
+    /// Save a complete sharing policy without an intermediate public/free state.
+    pub(super) async fn handle_content_configure(
+        &self,
+        params: Option<serde_json::Value>,
+    ) -> Result<serde_json::Value> {
+        let params = params.context("Missing params")?;
+        let id = params
+            .get("id")
+            .and_then(|v| v.as_str())
+            .context("Missing id")?;
+        anyhow::ensure!(
+            params.get("access").is_some() && params.get("availability").is_some(),
+            "A complete sharing policy is required"
+        );
+        let access = parse_content_access(&params)?;
+        let availability = parse_content_availability(&params, "nobody")?;
+        content_server::configure_item(&self.config.data_dir, id, access, availability).await?;
+        Ok(serde_json::json!({"updated":true}))
+    }
+
     /// Set pricing for a content item.
     pub(super) async fn handle_content_set_pricing(
         &self,
@@ -352,43 +474,7 @@ impl RpcHandler {
             .get("id")
             .and_then(|v| v.as_str())
             .ok_or_else(|| anyhow::anyhow!("Missing id"))?;
-        let access_type = params
-            .get("access")
-            .and_then(|v| v.as_str())
-            .unwrap_or("free");
-
-        let access = match access_type {
-            "free" => AccessControl::Free,
-            "peers_only" => AccessControl::PeersOnly,
-            "paid" => {
-                let price = params
-                    .get("price_sats")
-                    .and_then(|v| v.as_u64())
-                    .unwrap_or(0);
-                if price == 0 {
-                    return Err(anyhow::anyhow!("Paid content requires price_sats > 0"));
-                }
-                // Optional list of payment methods the sharer accepts.
-                // Absent/empty = all methods (backward compatible).
-                const KNOWN_METHODS: [&str; 4] = ["lightning", "onchain", "ecash", "fedimint"];
-                let accepted: Vec<String> = params
-                    .get("accepted_methods")
-                    .and_then(|v| v.as_array())
-                    .map(|arr| {
-                        arr.iter()
-                            .filter_map(|m| m.as_str())
-                            .filter(|m| KNOWN_METHODS.contains(m))
-                            .map(str::to_string)
-                            .collect()
-                    })
-                    .unwrap_or_default();
-                AccessControl::Paid {
-                    price_sats: price,
-                    accepted,
-                }
-            }
-            _ => return Err(anyhow::anyhow!("Invalid access type: {}", access_type)),
-        };
+        let access = parse_content_access(&params)?;
 
         content_server::set_access(&self.config.data_dir, id, access).await?;
         Ok(serde_json::json!({ "updated": true }))
@@ -404,33 +490,7 @@ impl RpcHandler {
             .get("id")
             .and_then(|v| v.as_str())
             .ok_or_else(|| anyhow::anyhow!("Missing id"))?;
-        let availability_type = params
-            .get("availability")
-            .and_then(|v| v.as_str())
-            .unwrap_or("all_peers");
-
-        let availability = match availability_type {
-            "nobody" => Availability::Nobody,
-            "all_peers" => Availability::AllPeers,
-            "specific" => {
-                let peers = params
-                    .get("peers")
-                    .and_then(|v| v.as_array())
-                    .map(|arr| {
-                        arr.iter()
-                            .filter_map(|v| v.as_str().map(|s| s.to_string()))
-                            .collect::<Vec<_>>()
-                    })
-                    .unwrap_or_default();
-                Availability::Specific { peers }
-            }
-            _ => {
-                return Err(anyhow::anyhow!(
-                    "Invalid availability: {}",
-                    availability_type
-                ))
-            }
-        };
+        let availability = parse_content_availability(&params, "all_peers")?;
 
         content_server::set_availability(&self.config.data_dir, id, availability).await?;
         Ok(serde_json::json!({ "updated": true }))

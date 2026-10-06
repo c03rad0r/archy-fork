@@ -397,3 +397,31 @@ build does not claim durable recovery at every pre-header payment failure or
 resolve the previously recorded on-chain bearer-address concern. IndeeHub's
 integration boundaries are mapped in [the integration map](indeehub-integration-map.md).
 Deployment coordination with the separate mining session is still pending.
+
+## Atomic share publication qualification in progress — October 6
+
+Paid share creation previously added a free/public item, then set its price and
+visibility in later RPCs. The Web5 form also selected the final catalog item to
+price, which could target another concurrent share. The candidate now sends a
+complete policy through `content.publish` or `content.configure`. These distinct
+methods fail on an older backend instead of silently ignoring pricing fields.
+Legacy `content.add` defaults new entries to hidden until explicitly configured.
+A cached old Web5 form may therefore require a refresh to publish; do not restore
+an unsafe public default for that compatibility case.
+
+Catalog mutations serialize their read/change/write transaction, replace the
+catalog atomically after syncing the temporary file, and reject malformed saved
+JSON without overwriting it. Re-sharing a filename retains and returns its saved
+ID. New hidden or peer-restricted shares do not export public DWN metadata;
+retracting already-exported metadata remains a separate open requirement.
+
+Focused UI checks passed five cases before the compatibility endpoint adjustment;
+a rerun and isolated backend suite are in progress. Added regressions exercise
+concurrent updates, malformed catalog preservation, stable IDs and rejection of
+incomplete policy updates. These changes are not covered by the earlier 1,743
+backend result or the archived dashboard build, and are not deployed. The running
+`081c8215` production build also predates them.
+
+The operator-funded wallets remain untouched in this pass. The private ledger
+retains the 25-sat inclusive test cap and zero spent. Deployment coordination and
+the durable payment recovery gates above remain open.

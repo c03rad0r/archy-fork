@@ -467,27 +467,16 @@ async function addContentItem() {
   addContentError.value = ''
   try {
     await rpcClient.call({
-      method: 'content.add',
+      method: 'content.publish',
       params: {
         filename: newContentFilename.value.trim(),
         mime_type: newContentMimeType.value.trim() || 'application/octet-stream',
         description: newContentDescription.value.trim(),
+        access: newContentAccess.value,
+        availability: 'all_peers',
+        ...(newContentAccess.value === 'paid' ? { price_sats: newContentPrice.value || 100 } : {}),
       },
     })
-    if (newContentAccess.value !== 'free') {
-      const items = (await rpcClient.call<{ items: ContentItemData[] }>({ method: 'content.list-mine' })).items || []
-      const latest = items[items.length - 1]
-      if (latest) {
-        await rpcClient.call({
-          method: 'content.set-pricing',
-          params: {
-            id: latest.id,
-            access: newContentAccess.value,
-            ...(newContentAccess.value === 'paid' ? { price_sats: newContentPrice.value || 100 } : {}),
-          },
-        })
-      }
-    }
     showAddContentModal.value = false
     newContentFilename.value = ''
     newContentMimeType.value = 'application/octet-stream'
