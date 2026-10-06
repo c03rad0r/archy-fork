@@ -36,17 +36,25 @@ const fs=require('fs');const {chromium,expect}=require(process.env.PLAYWRIGHT_MO
   const authenticate=p.getByRole('button',{name:'Authenticate',exact:true});await expect(authenticate).toBeEnabled({timeout:30000});await authenticate.click();
   proof.stage='open app sign-in';
   const frame=p.frameLocator('iframe[src*="7778"]');
-  const signIn=frame.getByRole('button',{name:'Sign In',exact:true});await expect(signIn).toBeVisible({timeout:30000});await signIn.click();
-  proof.stage='choose native signer';
+  const signIn=frame.getByRole('button',{name:'Sign In',exact:true});
+  proof.stage='approve native login';
   const extension=frame.getByRole('button',{name:'Extension',exact:true});
-  try{await expect(extension).toBeVisible({timeout:10000});await extension.click()}catch(e){console.log(JSON.stringify({...proof,stage:'auth choices',buttons:await frame.getByRole('button').allTextContents()}));throw e}
-  proof.stage='approve login consent';
-  const deadline=Date.now()+45000;let approved=0;
+  const deadline=Date.now()+45000;let approved=0,extensionChosen=false,signInOpened=false;
   while(Date.now()<deadline){
    if(proof.blockedUnexpectedRequest)throw new Error('An unexpected signing/payment request was blocked');
    if(proof.sessionResponses.some(s=>s===200||s===201)&&proof.profileResponses.includes(200))break;
    const approve=p.getByRole('button',{name:'Approve',exact:true});
-   if(await approve.isVisible()){if(++approved>6)throw new Error('Unexpected repeated consent');await approve.click();await p.waitForTimeout(800)}else await p.waitForTimeout(250);
+   if(await approve.isVisible()){
+    if(++approved>6)throw new Error('Unexpected repeated consent');
+    await approve.click();await p.waitForTimeout(800);
+   }else if(!signInOpened&&await signIn.isVisible()){
+    try{await signIn.click({timeout:1000});signInOpened=true}catch{await p.waitForTimeout(200)}
+   }else if(!extensionChosen&&await extension.isVisible()){
+    // The app can automatically request native login after identity selection.
+    // Do not click through the parent's consent overlay to choose it again.
+    try{await extension.click({timeout:1000});extensionChosen=true}
+    catch{await p.waitForTimeout(200)}
+   }else await p.waitForTimeout(250);
   }
   expect(proof.signedAuthRequests).toBeGreaterThan(0);expect(proof.sessionResponses.some(s=>s===200||s===201)).toBe(true);expect(proof.profileResponses).toContain(200);
   await expect(signIn).toHaveCount(0,{timeout:10000});

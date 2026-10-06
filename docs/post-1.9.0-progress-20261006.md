@@ -749,3 +749,40 @@ the frame alive too, sharing the same small loading notice. Three additional
 legacy-overlay tests pass, together with all nine frame tests; both launch paths
 are included in the served-browser harness. The final build and deployment for
 this extension are pending; physical companion acceptance is not implied.
+
+## Both launch paths deployed; actual IndeeHub login verified
+
+Final UI source `e8683aa5` is deployed on dev and Yaya. Production build and
+**1,304 tests across 164 files pass**. Index SHA256:
+`629d80d7dea362492d21e174e66e17e6243b6591fa36ba8c2cecf36b4c645eb5`.
+Archive SHA256 `a1352d02b444daf8991916afb6faf2b90b7a84160aa471d0ef882b135df49249`.
+Backend `2c881f68...`, session keys and app container IDs/start times were preserved;
+no management/app restart was needed for this UI rollout. Authenticated RPC passes.
+
+All **20 served-browser checks pass** across dev/Yaya at 390/1440px:
+
+- Eight delayed-load checks (standard and custom overlay): hold the app document
+  beyond the real 12/15-second deadline, retain the exact same iframe, complete
+  navigation, clear the notice, and keep the automatic companion offer deferred.
+  The four standard-session cases also retain the frame through readiness flaps.
+- Eight concurrent signer checks: both launch paths answer two queued requests
+  exactly once, preserving the approved completion animation. Signing uses fixtures.
+- Four actual IndeeHub native-login checks: genuine NIP-98 authentication,
+  session201/profile200 and a fresh profile200 after reload. Only guarded local
+  authentication signatures were allowed; no public events or payments were made.
+
+The actual-login harness initially tried to click Sign In/Extension after the
+app had already opened native consent automatically following identity selection.
+Those attempts failed and were retained. The final harness handles either manual
+or automatic start, gives consent priority, requires actual successful session and
+profile responses, and never force-clicks through an overlay. This is a harness
+correction, not a claim that a blocked desktop click was a new product defect.
+
+Logs: `/tmp/archy-slow-app-{dev,yaya}-{deploy,browser,signer}.log`,
+`/tmp/archy-indeehub-fixed-dev-login-3.log`, `/tmp/archy-indeehub-fixed-yaya-login.log`,
+`/tmp/archy-slow-app-launch-both-{full-tests,production-build}.log`.
+Artifact receipt: `~/.local/state/archipelago/release-qualification/slow-app-ui-e8683aa5/receipt.json`.
+
+Physical Android WebView background/resume and the separate IndeeHub app-image
+update remain open. These results do not imply distributed publishing, payment
+recovery or timed rental playback is complete, and no public release was cut.
