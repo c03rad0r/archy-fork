@@ -1,0 +1,40 @@
+// Real deployed dashboard + disposable V4V media. Catalog/package metadata is
+// a browser-only fixture: this does NOT qualify release signatures or installs.
+const fs = require('node:fs');
+const { chromium, expect } = require('../../neode-ui/node_modules/@playwright/test');
+const cdp = process.env.ARCHY_TEST_CDP;
+const sessionFile = process.env.ARCHY_TEST_SESSION_FILE;
+const passwordFile = process.env.V4V_TEST_PASSWORD_FILE;
+const origin = new URL(process.env.ARCHY_TEST_PARENT_ORIGIN || 'http://127.0.0.1').origin;
+const appOrigin = new URL(process.env.V4V_TEST_ORIGIN || 'http://127.0.0.1:32908').origin;
+if (!cdp || !sessionFile || !passwordFile) throw Error('CDP endpoint, private session file and fixture password file are required');
+if (new URL(origin).hostname !== new URL(appOrigin).hostname) throw Error('Fixture must be on the same hostname as the dashboard');
+(async()=>{const browser=await chromium.connectOverCDP(cdp),contexts=[];
+try{for(const width of [390,1440]){
+ const id='node-demo-v4v';
+ const c=await browser.newContext({viewport:{width,height:900},serviceWorkers:'block'});contexts.push(c);
+ await c.addCookies(Object.entries(JSON.parse(fs.readFileSync(sessionFile))).map(([name,value])=>({name,value,url:origin,httpOnly:name!=='csrf_token'})));
+ await c.addInitScript(()=>{localStorage.setItem('neode-auth','true');localStorage.setItem('neode_onboarding_complete','1');localStorage.setItem('neode_companion_intro_seen','build:54');window.__qualificationMedia=[];const play=HTMLMediaElement.prototype.play;HTMLMediaElement.prototype.play=function(...args){this.muted=true;if(!window.__qualificationMedia.includes(this))window.__qualificationMedia.push(this);return play.apply(this,args)}});
+ const login=await c.request.post(appOrigin + '/api/alpha/login',{data:{password:fs.readFileSync(passwordFile,'utf8').trim()},timeout:30000});if(!login.ok())throw Error('Fixture authentication failed');
+ await c.route('**/api/node-app-catalog',r=>r.fulfill({json:{scope:'single-node-demo',expires_at:'2030-01-01T00:00:00Z',apps:{[id]:{version:'0.6.7',manifest:{app:{id,name:'V4V Demo',metadata:{launch:{media_controls:'archipelago-v1'}},ports:[{host:Number(new URL(appOrigin).port),container:5181,auth:'open'}]}}}}}}));
+ const fixturePackage={state:'running',health:'healthy','ui-ready':true,manifest:{id,title:'V4V Demo'},installed:{'interface-addresses':{main:{'lan-address':appOrigin}}}};
+ await c.route('**/rpc/v1', async route=>{const body=route.request().postDataJSON();if(body?.method!=='server.get-state')return route.continue();const response=await route.fetch();const json=await response.json();if(json.result?.data?.['package-data'])json.result.data['package-data'][id]=fixturePackage;await route.fulfill({response,json});});
+ const p=await c.newPage();p.on('framenavigated',f=>{if(f!==p.mainFrame())console.log('frame navigation',new URL(f.url()||origin).pathname)});p.on('framedetached',f=>console.log('frame detached',new URL(f.url()||origin).pathname));await p.goto(origin+'/dashboard/discover',{waitUntil:'domcontentloaded',timeout:60000});
+ await p.waitForFunction(()=>document.querySelector('#app')?.__vue_app__?.config.globalProperties.$pinia?._s.has('appLauncher'),undefined,{timeout:30000});
+ await p.waitForTimeout(1500);const later=p.getByRole('button',{name:'Later',exact:true});if(await later.isVisible().catch(()=>false))await later.click();
+ await p.evaluate(({id,appOrigin})=>{const s=document.querySelector('#app').__vue_app__.config.globalProperties.$pinia._s;const app=s.get('app');app.data['package-data'][id]={state:'running',health:'healthy','ui-ready':true,manifest:{id,title:'V4V Demo'},installed:{'interface-addresses':{main:{'lan-address':appOrigin}}}};s.get('sync').$subscribe((mutation,state)=>{if(state.data?.['package-data']&&!state.data['package-data'][id])state.data['package-data'][id]={state:'running',health:'healthy','ui-ready':true,manifest:{id,title:'V4V Demo'},installed:{'interface-addresses':{main:{'lan-address':appOrigin}}}}},{flush:'sync'});s.get('appLauncher').openSession(id)},{id,appOrigin});
+ console.log('stage',width,'launched',await p.evaluate(()=>{const s=document.querySelector('#app').__vue_app__.config.globalProperties.$pinia._s.get('appLauncher');return {panel:s.panelAppId,media:s.mediaAppId}}));
+ await expect.poll(()=>p.frames().some(f=>f.url().startsWith(appOrigin)),{timeout:30000}).toBe(true);const frame=p.frames().find(f=>f.url().startsWith(appOrigin));
+ console.log('stage',width,'frame loaded');await frame.waitForFunction(()=>window.PulsewireLegacy?.getReactBridge?.(),undefined,{timeout:30000,polling:100});
+ await frame.waitForFunction(()=>{const b=window.PulsewireLegacy?.getReactBridge?.();return b?.getState().releases.some(r=>{try{return new URL(b.helpers.releasePlayableUrl(r),location.href).pathname.startsWith('/media/dev-audio/')}catch{return false}})},undefined,{timeout:30000,polling:100});console.log('stage',width,'bridge ready');await frame.evaluate(()=>{const b=window.PulsewireLegacy.getReactBridge();const track=b.getState().releases.find(r=>{try{return new URL(b.helpers.releasePlayableUrl(r),location.href).pathname.startsWith('/media/dev-audio/')}catch{return false}});if(!track)throw Error('Bundled track missing');b.actions.play(track.id)});
+ await frame.waitForFunction(()=>window.__qualificationMedia.some(a=>!a.paused&&a.currentTime>0),undefined,{timeout:15000,polling:100});
+ console.log('stage',width,'playing');const before=await frame.evaluate(()=>window.__qualificationMedia.find(a=>!a.paused).currentTime);
+ await p.getByRole('button',{name:'Close',exact:true}).filter({visible:true}).click();
+ console.log('stage',width,'closed app');const bar=p.locator('.audio-player-bar');await expect(bar).toBeVisible();console.log('stage',width,'bar visible');
+ await frame.waitForFunction(t=>window.__qualificationMedia.some(a=>!a.paused&&a.currentTime>t+1),before,{timeout:15000,polling:100});
+ console.log('stage',width,'hidden time advanced');console.log('bar pointer target',await bar.locator('button').first().evaluate(el=>{const r=el.getBoundingClientRect();const t=document.elementFromPoint(r.x+r.width/2,r.y+r.height/2);const bar=el.closest('.audio-player-bar');const css=getComputedStyle(bar);return {button:{x:r.x,y:r.y,width:r.width,height:r.height},target:t?.outerHTML?.slice(0,700),window:[innerWidth,innerHeight,scrollY],viewport:[visualViewport?.height,visualViewport?.offsetTop],css:{bottom:css.bottom,transform:css.transform,position:css.position,zoom:css.zoom},root:{zoom:getComputedStyle(document.documentElement).zoom,transform:getComputedStyle(document.documentElement).transform,mobile:getComputedStyle(document.documentElement).getPropertyValue('--mobile-tab-bar-height')}}}));await bar.getByRole('button',{name:'Pause audio',exact:true}).click();await frame.waitForFunction(()=>window.__qualificationMedia.every(a=>a.paused),undefined,{timeout:10000,polling:100});
+ await bar.getByRole('button',{name:'Play audio',exact:true}).click();await frame.waitForFunction(()=>window.__qualificationMedia.some(a=>!a.paused),undefined,{timeout:10000,polling:100});
+ await bar.getByRole('button',{name:'Open playing app'}).click();await expect(bar).toBeHidden();if(!p.frames().includes(frame))throw Error('Frame recreated');
+ await p.getByRole('button',{name:'Close',exact:true}).filter({visible:true}).click();await expect(bar).toBeVisible();await bar.getByRole('button',{name:'Stop audio',exact:true}).click();await expect(bar).toBeHidden();
+ console.log(JSON.stringify({passed:true,width,scope:'actual deployed dashboard and real V4V media; browser-only catalog/package metadata fixture',hidden_playback:true,bar_pause_resume:true,reopen_same_frame:true,stop:true}));await c.unrouteAll({behavior:'ignoreErrors'});await c.close();
+}}catch(error){console.log('test failure',String(error.message).split(/Call [Ll]og:/)[0]);throw error;}finally{for(const c of contexts){await c.unrouteAll({behavior:'ignoreErrors'}).catch(()=>{});await c.close().catch(()=>{})}}process.exit(0)})().catch(e=>{console.error(String(e.message).split('Call log:')[0]);process.exit(1)});

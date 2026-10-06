@@ -63,3 +63,15 @@ it never closes the kiosk browser. It plays bundled demo audio muted, checks rea
 media time advances while hidden, pauses/resumes, and preserves iframe identity.
 Mobile 390px and desktop 1440px pass on the final isolated image. This harness
 check does not substitute for the actual dashboard player/catalog deployment.
+
+Actual deployed dashboard acceptance now passes at 390/1440px using real fixture
+audio and browser-only catalog/package metadata. Checks close/hidden playback,
+visible and clickable parent pause/resume, same-frame reopen, and stop. This
+found and verified the mobile navigation-height correction. Reproduction:
+`tests/lifecycle/v4v-dashboard-player.cjs` with the bridge runner's environment
+plus `ARCHY_TEST_SESSION_FILE` pointing to a private authenticated dashboard
+cookie JSON file. Both origins must be reachable directly by the browser;
+proxying media through Playwright buffers responses and distorts playback timing.
+The fixture package is pinned only inside that browser context so real periodic
+state refresh cannot erase it. The node's app inventory is never modified by
+this test. Root signature, actual installation and companion remain separate gates.
