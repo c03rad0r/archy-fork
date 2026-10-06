@@ -93,6 +93,7 @@ const NEW_TAB_APP_IDS = new Set([
  * original synchronous user gesture. Portainer is dynamic (first-run only);
  * File Browser and PhotoPrism have stable fallback credentials. */
 export const CREDENTIAL_INTERSTITIAL_APPS = new Set([
+  'datum',
   'filebrowser',
   'photoprism',
   'portainer',
