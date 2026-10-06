@@ -591,3 +591,16 @@ the approved consent presentation. Dashboard typecheck passes. Logs:
 `/tmp/archy-signer-queue-related-tests.log`,
 `/tmp/archy-signer-queue-typecheck.log`. Production UI build/deployment still
 pending; physical companion causality remains unverified.
+
+The signer UI candidate `715e86c9` was deployed to dev only, with UI backup;
+backend/session secret/app containers were unchanged. Live served-browser checks
+with isolated signing RPC fixtures passed at 390/1440px, but an earlier run saw
+two first-request responses after iframe startup. Do not erase that failed run.
+Inspection found fallback `http://host:7778` versus runtime `http://host:7778/`
+changes the raw iframe src during initial state discovery. Canonicalizing the
+computed URL prevents this semantically identical destination from reloading.
+The new regression observes no reactive iframe-source change for this update,
+while real path changes still propagate and cancel prior pending consent.
+29 focused routing/session/signer tests pass; final rebuild/redeployment remains
+pending. The first browser attempt was also missing the signed-in local marker
+and redirected to login; this fixture error was corrected separately.

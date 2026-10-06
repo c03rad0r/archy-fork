@@ -49,6 +49,8 @@ vi.mock('../appSession/useNostrBridge', () => ({
     consentError: { value: '' },
     approveConsent: vi.fn(),
     denyConsent: vi.fn(),
+    cancelPending: vi.fn(),
+    dispose: vi.fn(),
   }),
 }))
 

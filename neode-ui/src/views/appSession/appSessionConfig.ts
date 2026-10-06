@@ -119,6 +119,12 @@ export const HOST_FRAME_APPS = new Set([
 /** Sites known to block iframes -- skip the timeout and go straight to fallback */
 export const IFRAME_BLOCKED_APPS = new Set<string>([])
 
+/** Stable iframe src while the initial runtime state replaces the fallback URL. */
+export function canonicalAppUrl(url: string): string {
+  if (!url) return ''
+  try { return new URL(url, window.location.origin).href } catch { return url }
+}
+
 /** Resolve app URL using direct port mapping (source of truth) */
 export function resolveAppUrl(id: string, routeQueryPath?: string, runtimeUrl?: string): string {
   // Demo: route to the app's mock UI or real external site (mempool.space,

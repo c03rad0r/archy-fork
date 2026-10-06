@@ -127,7 +127,7 @@ import AppSessionFrame from './appSession/AppSessionFrame.vue'
 import MobileGamepad from './appSession/MobileGamepad.vue'
 import {
   type DisplayMode, DISPLAY_MODE_KEY, NEW_TAB_APPS, IFRAME_BLOCKED_APPS,
-  initialDisplayMode, resolveAppUrl, resolveAppTitle,
+  initialDisplayMode, resolveAppUrl, resolveAppTitle, canonicalAppUrl,
 } from './appSession/appSessionConfig'
 import { launchBlockedReason, resolveAppIcon } from './apps/appsConfig'
 import { PackageState } from '@/types/api'
@@ -267,7 +267,7 @@ const screensaverSuppressedApps = new Set([
 const appUrl = computed(() => {
   const runtimeUrl = store.data?.['package-data']?.[appId.value]?.installed?.['interface-addresses']?.main?.['lan-address'] || undefined
   const deepPath = props.pathProp ?? (route.query.path as string | undefined)
-  return resolveAppUrl(appId.value, deepPath, runtimeUrl)
+  return canonicalAppUrl(resolveAppUrl(appId.value, deepPath, runtimeUrl))
 })
 
 function closeRouteSession() {
@@ -290,6 +290,9 @@ const nostrBridge = useNostrBridge(identity.getStoredIdentity, {
   appUrl: () => appUrl.value,
   frameWindow: () => iframeRef.value?.contentWindow ?? null,
 })
+
+// An actual destination change invalidates consent queued for the previous app page.
+watch(appUrl, () => nostrBridge.cancelPending())
 
 // --- Display mode ---
 
