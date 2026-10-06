@@ -1136,13 +1136,15 @@ mod paid_read_order_tests {
             None,
             false,
             |path, range, mime| prepare_content(dir.path(), path, range, mime),
-            |_, amount| async {
+            |_, amount| {
                 assert_eq!(amount, 10);
-                charged.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-                fs::remove_file(dir.path().join("content/files/test.bin"))
-                    .await
-                    .unwrap();
-                true
+                async {
+                    charged.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                    fs::remove_file(dir.path().join("content/files/test.bin"))
+                        .await
+                        .unwrap();
+                    true
+                }
             },
         )
         .await
