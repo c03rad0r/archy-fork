@@ -24,6 +24,9 @@ const stack: Entry[] = []
 // gone, so the close-side cleanup must not call history.back() again.
 let poppedClose = false
 let listening = false
+// Vue can replace one modal with another in the same update. Reuse that
+// history entry rather than scheduling a Back that would close the new modal.
+let pendingCleanup: { depth: number } | null = null
 
 function modalDepth(state: unknown): number {
   return (state as { __archyModal?: number } | null)?.__archyModal ?? 0
@@ -58,10 +61,11 @@ export function useModalHistory(show: Ref<boolean>, close: () => void) {
       try {
         // Preserve vue-router's own keys in state — clobbering them breaks
         // its scroll restoration and position tracking.
-        window.history.pushState(
-          { ...(window.history.state ?? {}), __archyModal: stack.length },
-          '',
-        )
+        const replacement = pendingCleanup !== null && modalDepth(window.history.state) === pendingCleanup.depth
+        pendingCleanup = null
+        const state = { ...(window.history.state ?? {}), __archyModal: stack.length }
+        if (replacement) window.history.replaceState(state, '')
+        else window.history.pushState(state, '')
       } catch { /* history can throw in exotic embeds — modal still works */ }
     } else {
       const wasTop = stack[stack.length - 1] === entry
@@ -75,7 +79,15 @@ export function useModalHistory(show: Ref<boolean>, close: () => void) {
       // only if it is still the current one (a route change after opening
       // moves history past it — backing out then would eat a real entry).
       if (wasTop && modalDepth(window.history.state) > stack.length) {
-        try { window.history.back() } catch { /* same guard as above */ }
+        const cleanup = { depth: modalDepth(window.history.state) }
+        pendingCleanup = cleanup
+        queueMicrotask(() => {
+          if (pendingCleanup !== cleanup) return
+          pendingCleanup = null
+          if (modalDepth(window.history.state) === cleanup.depth && cleanup.depth > stack.length) {
+            try { window.history.back() } catch { /* same guard as above */ }
+          }
+        })
       }
     }
   })
