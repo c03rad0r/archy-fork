@@ -635,3 +635,44 @@ Still track the separate legacy `stores/appLauncher.ts` signing handler, which
 has its own consent implementation; this deployment qualifies the AppSession /
 shared bridge path. Do not describe every possible app launcher or the physical
 companion grey-screen report as fully accepted from these checks.
+
+## IndeeHub durable publication and relay delivery checkpoint
+
+IndeeHub follow-up commits `c7cf672` and `46f128c` add a shared signed-offer
+validator, authorized publication/database outbox transaction and bounded relay
+worker. **53 backend tests pass**, including real disposable PostgreSQL and
+WebSocket integration: concurrent publishers/workers, ownership/moderation and
+registered-term checks, transaction rollback, lease recovery, lost relay ACK,
+unchanged signed-event retry and exact acceptance. Backend build passes; **74
+frontend tests** passed after sharing the protocol validator. The disposable DB,
+volume and private credentials were removed. No public announcements or wallet
+payments were made. See the IndeeHub implementation document for exact logs.
+
+This is not a deployed IndeeHub source or a finished rental flow. Production
+migration/scheduling, trusted node-media registration, authenticated Backstage
+integration and settlement-backed FIPS playback remain open. Source inspection
+also confirms the existing peer ecash path only creates its durable buyer record
+after response headers: lost headers or interruption during minting can leave no
+purchase record. It additionally falls back from Cashu to Fedimint after any
+Cashu error. Complete purchase-intent/wallet-operation recovery and unambiguous
+backend selection are required before reusing that path for rentals. Existing
+successful two-node paid-file tests exercised cached delivery recovery, not that
+initial mint/response-loss gap. No new paid test was performed here.
+
+## Legacy overlay signer candidate
+
+The legacy overlay now reuses `useNostrBridge` rather than maintaining another
+single-promise consent implementation. The actual iframe window is registered
+by the overlay; another same-origin window cannot drive the signer. Existing
+URL-keyed identity selections and remembered consent remain compatible. Closing,
+changing URL, replacing the iframe or disposing the store cancels pending work.
+The approved completion animation remains unchanged.
+
+56 focused signer/launcher tests and typecheck pass. The full dashboard suite
+passes **1,293 tests across 161 files**, with production build passing. Logs:
+`/tmp/archy-legacy-signer-tests.log`,
+`/tmp/archy-legacy-signer-full-ui-tests.log`,
+`/tmp/archy-legacy-signer-typecheck.log`,
+`/tmp/archy-legacy-signer-production-build.log`.
+The served-browser harness now covers both AppSession and the legacy overlay at
+390/1440px. Deployment/live results will be recorded separately below.

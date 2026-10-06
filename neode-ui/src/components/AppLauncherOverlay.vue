@@ -229,6 +229,7 @@ interface PaymentRequest {
 const store = useAppLauncherStore()
 const closeBtnRef = ref<HTMLButtonElement | null>(null)
 const iframeRef = ref<HTMLIFrameElement | null>(null)
+watch(iframeRef, frame => store.setNostrFrame(frame?.contentWindow || null), { flush: 'post' })
 const iframeRefreshKey = ref(0)
 const isRefreshing = ref(false)
 const iframeLoading = ref(true)
@@ -682,6 +683,7 @@ onMounted(() => {
 })
 
 onBeforeUnmount(() => {
+  store.setNostrFrame(null)
   clearTimers()
   stopProgress()
   window.removeEventListener('keydown', onKeyDown, true)

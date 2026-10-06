@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { setActivePinia, createPinia } from 'pinia'
 import { __setSignedCatalogForTests } from '@/views/discover/curatedApps'
+import { nextTick } from 'vue'
 
 // The signed catalog's embedded manifests decide which ports the app gate
 // fronts (TLS on the same port) — prime the same shape the live catalog
@@ -35,6 +36,90 @@ vi.stubGlobal('open', mockWindowOpen)
 
 import { useAppLauncherStore, senderMatchesApp } from '../appLauncher'
 import { useAppStore } from '../app'
+
+describe('legacy overlay native signer lifecycle', () => {
+  let store: ReturnType<typeof useAppLauncherStore>
+  const appUrl = 'http://192.0.2.10:19999'
+  const identityKey = 'archipelago_app_identity_' + appUrl.replace(/[^a-z0-9]/gi, '_')
+  const frame = { postMessage: vi.fn() } as unknown as Window
+  function request(id: string, source = frame, origin = appUrl) {
+    const event = new MessageEvent('message', { origin, data: { type: 'nostr-request', id,
+      method: 'signEvent', params: { event: { kind: 27235, content: id } } } })
+    Object.defineProperty(event, 'source', { value: source })
+    window.dispatchEvent(event)
+  }
+  beforeEach(() => {
+    vi.useFakeTimers()
+    setActivePinia(createPinia())
+    localStorage.clear()
+    vi.clearAllMocks()
+    mockRpcCall.mockResolvedValue({ id: 'signed-fixture' })
+    Object.defineProperty(window, 'location', { value: { origin: 'http://192.0.2.10', protocol: 'http:', hostname: '192.0.2.10' }, configurable: true })
+    Object.defineProperty(window, 'innerWidth', { value: 1024, configurable: true })
+    localStorage.setItem(identityKey, JSON.stringify({ id: 'legacy-identity', name: 'Saved creator' }))
+    store = useAppLauncherStore()
+    store.open({ url: appUrl, title: 'Custom film app' })
+    store.setNostrFrame(frame)
+  })
+  afterEach(async () => {
+    store.close(); store.$dispose()
+    await vi.runAllTimersAsync()
+    vi.useRealTimers()
+  })
+  it('queues simultaneous requests and preserves the saved identity and success animation', async () => {
+    request('first'); request('second')
+    expect(store.consentRequest?.content).toBe('first')
+    expect(store.consentRequest?.identityLabel).toBe('Saved creator')
+    store.approveConsent(false)
+    await vi.advanceTimersByTimeAsync(350)
+    expect(store.consentPhase).toBe('success')
+    expect(mockRpcCall).toHaveBeenCalledTimes(1)
+    expect(mockRpcCall).toHaveBeenCalledWith({ method: 'identity.nostr-sign', params: {
+      id: 'legacy-identity', event: { kind: 27235, content: 'first' } } })
+    await vi.advanceTimersByTimeAsync(325)
+    expect(store.consentRequest?.content).toBe('second')
+    store.approveConsent(false)
+    await vi.advanceTimersByTimeAsync(675)
+    expect(frame.postMessage).toHaveBeenCalledTimes(2)
+    expect(frame.postMessage).toHaveBeenNthCalledWith(1, { type: 'nostr-response', id: 'first', result: { id: 'signed-fixture' } }, appUrl)
+    expect(frame.postMessage).toHaveBeenNthCalledWith(2, { type: 'nostr-response', id: 'second', result: { id: 'signed-fixture' } }, appUrl)
+    expect(store.showConsent).toBe(false)
+  })
+  it('rejects a same-origin window that is not the actual app iframe', async () => {
+    const other = { postMessage: vi.fn() } as unknown as Window
+    request('forged-window', other)
+    await nextTick()
+    expect(store.showConsent).toBe(false)
+    expect(mockRpcCall).not.toHaveBeenCalled()
+    expect(other.postMessage).not.toHaveBeenCalled()
+  })
+  it.each(['close', 'frame', 'url', 'dispose'])('settles all pending requests on %s without signing', async action => {
+    request('first'); request('second')
+    if (action === 'close') store.close()
+    if (action === 'frame') store.setNostrFrame(null)
+    if (action === 'url') store.url = 'http://192.0.2.10:19998'
+    if (action === 'dispose') store.$dispose()
+    await vi.runAllTimersAsync()
+    expect(mockRpcCall).not.toHaveBeenCalled()
+    expect(frame.postMessage).toHaveBeenCalledTimes(2)
+    for (const [response] of vi.mocked(frame.postMessage).mock.calls) expect(response).toHaveProperty('error')
+  })
+  it('rejects identity changes before approval and can reopen after closing', async () => {
+    request('old-identity')
+    localStorage.setItem(identityKey, JSON.stringify({ id: 'another-identity', name: 'Other' }))
+    store.approveConsent(false)
+    await vi.runAllTimersAsync()
+    expect(mockRpcCall).not.toHaveBeenCalled()
+    store.close()
+    store.open({ url: appUrl, title: 'Custom film app' })
+    store.setNostrFrame(frame)
+    request('reopened')
+    await vi.advanceTimersByTimeAsync(0)
+    store.approveConsent(false)
+    await vi.advanceTimersByTimeAsync(675)
+    expect(mockRpcCall).toHaveBeenCalledWith(expect.objectContaining({ params: expect.objectContaining({ id: 'another-identity' }) }))
+  })
+});
 
 describe('useAppLauncherStore', () => {
   beforeEach(() => {

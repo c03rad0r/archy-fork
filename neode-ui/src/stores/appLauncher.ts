@@ -1,6 +1,6 @@
 import { appHasMediaBridge, ensureNodeAppAvailable, nodeAppIsAvailable } from '@/views/discover/curatedApps'
 import { defineStore } from 'pinia'
-import { ref, watch } from 'vue'
+import { ref, watch, onScopeDispose } from 'vue'
 import { rpcClient } from '@/api/rpc-client'
 import { recordAppLaunch } from '@/utils/appUsage'
 import { requestExternalOpen } from '@/api/remote-relay'
@@ -13,11 +13,8 @@ import { useToast } from '@/composables/useToast'
 import { IS_DEMO, isDemoApp, isDemoExternal, demoAppUrl } from '@/composables/useDemoIntro'
 import type { AppCredential, AppCredentialsResponse } from '@/types/api'
 import { resolveAppCredentials } from '@/views/apps/appCredentials'
-import {
-  consentKey,
-  hasRememberedConsent,
-  rememberConsent,
-} from '@/views/appSession/nostrConsent'
+import { useNostrBridge } from '@/views/appSession/useNostrBridge'
+import type { SelectedIdentity } from '@/views/appSession/useAppIdentity'
 
 /**
  * Open a URL in a new browser tab — but if a companion (phone) is currently
@@ -190,16 +187,6 @@ const PORT_TO_APP_ID: Record<string, string> = {
   '50002': 'electrumx',
 }
 
-export interface NostrConsentRequest {
-  appName: string
-  method: string
-  eventKind?: number
-  content?: string
-  identityLabel?: string
-  resolve: (remember: boolean) => void
-  reject: () => void
-}
-
 /** App identity (catalog icon + display name) for the companion's native
  *  branded loader. Undefined when the app isn't in package-data. */
 function launchMeta(appId: string): InAppLaunchMeta | undefined {
@@ -215,10 +202,6 @@ export const useAppLauncherStore = defineStore('appLauncher', () => {
   const isOpen = ref(false)
   const url = ref('')
   const title = ref('')
-  const consentRequest = ref<NostrConsentRequest | null>(null)
-  const showConsent = ref(false)
-  const consentPhase = ref<'review' | 'signing' | 'success' | 'error'>('review')
-  const consentError = ref('')
   const credentialPrompt = ref({
     show: false,
     loading: false,
@@ -230,9 +213,6 @@ export const useAppLauncherStore = defineStore('appLauncher', () => {
   })
   let pendingCredentialLaunch: { appId: string; path?: string } | null = null
   let credentialGeneration = 0
-  let consentApprovedAt = 0
-  let consentGeneration = 0
-  let approvedGeneration = 0
   let previousActiveElement: HTMLElement | null = null
 
   /** Active app in the store-driven session (no route change) */
@@ -526,7 +506,7 @@ export const useAppLauncherStore = defineStore('appLauncher', () => {
   }
 
   function close() {
-    if (showConsent.value) denyConsent()
+    bridge.cancelPending()
     const toRestore = previousActiveElement
     previousActiveElement = null
     isOpen.value = false
@@ -542,176 +522,37 @@ export const useAppLauncherStore = defineStore('appLauncher', () => {
     }
   }
 
-  function approveConsent(remember: boolean) {
-    if (consentRequest.value) {
-      consentRequest.value.resolve(remember)
-    }
-    consentApprovedAt = Date.now()
-    approvedGeneration = consentGeneration
-    consentPhase.value = 'signing'
-  }
-
-  function denyConsent() {
-    consentGeneration += 1
-    if (consentRequest.value) {
-      consentRequest.value.reject()
-      consentRequest.value = null
-    }
-    showConsent.value = false
-    consentPhase.value = 'review'
-    consentError.value = ''
-  }
-
-  async function finishConsentSuccess() {
-    const generation = approvedGeneration
-    const remaining = Math.max(0, 350 - (Date.now() - consentApprovedAt))
-    if (remaining) await new Promise(resolve => setTimeout(resolve, remaining))
-    if (generation !== consentGeneration || !showConsent.value) return
-    consentPhase.value = 'success'
-    await new Promise(resolve => setTimeout(resolve, 325))
-    if (generation !== consentGeneration) return
-    consentRequest.value = null
-    showConsent.value = false
-    consentPhase.value = 'review'
-  }
-
-  function finishConsentError(error: unknown) {
-    consentError.value = error instanceof Error ? error.message : 'The node could not complete this request.'
-    consentPhase.value = 'error'
-  }
-
-  function requestConsent(appName: string, method: string, eventKind?: number, content?: string, identityLabel?: string): Promise<boolean> {
-    return new Promise((resolve, reject) => {
-      consentGeneration += 1
-      consentRequest.value = {
-        appName, method, eventKind, content, identityLabel,
-        resolve, reject,
-      }
-      consentPhase.value = 'review'
-      consentError.value = ''
-      showConsent.value = true
-    })
-  }
-
-  // NIP-07 postMessage handler — responds to nostr-request from iframe apps
-  async function handleNostrRequest(event: MessageEvent) {
-    if (!event.data || event.data.type !== 'nostr-request') return
-    const { id, method, params } = event.data
-    const source = event.source as Window | null
-    if (!source) return
-
-    // Only the app we actually opened may drive this bridge — see
-    // senderMatchesApp for why the scheme is deliberately not compared.
-    if (!senderMatchesApp(url.value, event.origin)) return
-
-    const origin = event.origin
-    let prompted = false
-    const activeAppId = resolveAppIdFromUrl(url.value) || inferAppIdFromTitle(title.value) || 'unknown-app'
-
-    // Check if app has a per-app identity stored (from identity picker)
-    const IDENTITY_KEY = 'archipelago_app_identity_'
-    const appKey = IDENTITY_KEY + (url.value || '').replace(/[^a-z0-9]/gi, '_')
-    let appIdentityId: string | null = null
+  // Reuse the same bounded queue and consent lifecycle as AppSession. Keep
+  // the legacy URL-based identity storage key so existing selections survive.
+  let nostrFrame: Window | null = null
+  function overlayIdentity(): SelectedIdentity | null {
     try {
-      const stored = localStorage.getItem(appKey)
-      if (stored) {
-        const parsed: unknown = JSON.parse(stored)
-        if (typeof parsed === 'object' && parsed !== null && 'id' in parsed) {
-          const idVal = (parsed as Record<string, unknown>).id
-          appIdentityId = typeof idVal === 'string' ? idVal : null
-        }
-      }
-    } catch { /* ignore */ }
-
-    // Every identity-sensitive method needs consent (or a remembered
-    // approval for this origin) — not just signEvent. getPublicKey
-    // deanonymizes; the decrypts turn the node into a decryption oracle.
-    const CONSENT_METHODS = new Set([
-      'getPublicKey', 'signEvent',
-      'nip04.encrypt', 'nip04.decrypt',
-      'nip44.encrypt', 'nip44.decrypt',
-    ])
-    const scopedKey = consentKey(origin, activeAppId, appIdentityId || 'node-default', method)
-    const alreadyApproved = hasRememberedConsent(scopedKey)
-    if (CONSENT_METHODS.has(method) && !alreadyApproved) {
-      prompted = true
-      const eventKind = method === 'signEvent' ? (params?.event?.kind as number | undefined) : undefined
-      const content = method === 'signEvent' ? (params?.event?.content as string | undefined) : undefined
-      try {
-        const remember = await requestConsent(
-          title.value || 'App', method, eventKind, content,
-          appIdentityId || 'Node default identity',
-        )
-        if (remember) rememberConsent(scopedKey)
-      } catch {
-        source.postMessage({ type: 'nostr-response', id, error: `User denied ${method} request` }, origin || '*')
-        return
-      }
-    }
-
-    try {
-      let result: unknown
-
-      if (method === 'getPublicKey') {
-        if (appIdentityId) {
-          // Use the app-specific identity's Nostr key
-          const res = await rpcClient.call<{ nostr_pubkey: string; nostr_npub: string; id: string; name: string; pubkey: string; did: string; is_default: boolean }>({
-            method: 'identity.get', params: { id: appIdentityId }
-          })
-          result = res.nostr_pubkey
-        } else {
-          const res = await rpcClient.call<{ nostr_pubkey: string }>({ method: 'node.nostr-pubkey' })
-          result = res.nostr_pubkey
-        }
-      } else if (method === 'signEvent') {
-        if (appIdentityId) {
-          // Sign with the app-specific identity's Nostr key
-          const res = await rpcClient.call<unknown>({
-            method: 'identity.nostr-sign',
-            params: { id: appIdentityId, event: params.event }
-          })
-          result = res
-        } else {
-          const res = await rpcClient.call<unknown>({ method: 'node.nostr-sign', params: { event: params.event } })
-          result = res
-        }
-      } else if (method === 'getRelays') {
-        result = {}
-      } else if (method === 'nip04.encrypt') {
-        const res = await rpcClient.call<{ ciphertext: string }>({
-          method: 'identity.nostr-encrypt-nip04',
-          params: { id: appIdentityId || undefined, pubkey: params.pubkey, plaintext: params.plaintext }
-        })
-        result = res.ciphertext
-      } else if (method === 'nip04.decrypt') {
-        const res = await rpcClient.call<{ plaintext: string }>({
-          method: 'identity.nostr-decrypt-nip04',
-          params: { id: appIdentityId || undefined, pubkey: params.pubkey, ciphertext: params.ciphertext }
-        })
-        result = res.plaintext
-      } else if (method === 'nip44.encrypt') {
-        const res = await rpcClient.call<{ ciphertext: string }>({
-          method: 'identity.nostr-encrypt-nip44',
-          params: { id: appIdentityId || undefined, pubkey: params.pubkey, plaintext: params.plaintext }
-        })
-        result = res.ciphertext
-      } else if (method === 'nip44.decrypt') {
-        const res = await rpcClient.call<{ plaintext: string }>({
-          method: 'identity.nostr-decrypt-nip44',
-          params: { id: appIdentityId || undefined, pubkey: params.pubkey, ciphertext: params.ciphertext }
-        })
-        result = res.plaintext
-      } else {
-        throw new Error(`Unsupported NIP-07 method: ${method}`)
-      }
-      source.postMessage({ type: 'nostr-response', id, result }, origin || '*')
-      if (prompted) void finishConsentSuccess()
-    } catch (err) {
-      const message = err instanceof Error ? err.message : 'Unknown error'
-      source.postMessage({ type: 'nostr-response', id, error: message }, origin || '*')
-      if (prompted && showConsent.value) finishConsentError(err)
-    }
+      const key = 'archipelago_app_identity_' + url.value.replace(/[^a-z0-9]/gi, '_')
+      const stored = JSON.parse(localStorage.getItem(key) || 'null')
+      if (!stored || typeof stored.id !== 'string' || !stored.id) return null
+      return { ...stored, name: typeof stored.name === 'string' ? stored.name : stored.id }
+    } catch { return null }
   }
+  const bridge = useNostrBridge(overlayIdentity, {
+    appId: () => resolveAppIdFromUrl(url.value) || inferAppIdFromTitle(title.value) || 'unknown-app',
+    appName: () => title.value || 'App',
+    appUrl: () => url.value,
+    frameWindow: () => isOpen.value ? nostrFrame : null,
+  })
+  const { handleNostrRequest, showConsent, consentRequest, consentPhase,
+    consentError, approveConsent, denyConsent } = bridge
+
+  function setNostrFrame(frame: Window | null) {
+    if (frame === nostrFrame) return
+    bridge.cancelPending()
+    nostrFrame = frame
+  }
+  watch(url, () => bridge.cancelPending(), { flush: 'sync' })
+  onScopeDispose(() => {
+    window.removeEventListener('message', handleNostrRequest)
+    bridge.dispose()
+    nostrFrame = null
+  })
 
   // Listen for NIP-07 requests only while an app is open
   watch(isOpen, (open) => {
@@ -719,8 +560,9 @@ export const useAppLauncherStore = defineStore('appLauncher', () => {
       window.addEventListener('message', handleNostrRequest)
     } else {
       window.removeEventListener('message', handleNostrRequest)
+      bridge.cancelPending()
     }
-  })
+  }, { flush: 'sync' })
 
   return {
     isOpen,
@@ -743,5 +585,6 @@ export const useAppLauncherStore = defineStore('appLauncher', () => {
     consentError,
     approveConsent,
     denyConsent,
+    setNostrFrame,
   }
 })
