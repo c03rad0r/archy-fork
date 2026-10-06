@@ -364,3 +364,36 @@ and fixture results do not establish live cross-node acceptance.
 MeshCore is last in the requested order: the later explicit two-radio request
 reopens that scoped Framework work (standard public channel, UK plan, Heltec V3
 and V4). The older general hardware deferral is not a reason to omit it.
+
+## Combined qualification — October 6, 11:25 UTC
+
+- Isolated backend at source `d46f6cee`: **1,743 passed, zero failures, five
+  explicit skips** (`/tmp/archy-payment-method-final-backend.log`). This includes
+  the seller's persisted on-chain/Lightning method, legacy payment records,
+  interrupted HTTP delivery and the corrupt-peer-store correction.
+- Dashboard: **1,271 passed / 159 files**, followed by a successful production
+  typecheck/build. One earlier full run missed a certificate readiness deadline;
+  the focused certificate tests passed. A second full run was stopped after
+  load-related timeouts. The final sequential run passed without test exclusions
+  or raised deadlines (`/tmp/archy-stream-fleet-full-ui-3.log`).
+- Fleet source fixes now age status/counts/ordering without successful network
+  refresh and discard history responses for a previously selected node. All
+  15 focused tests pass. Chromium at 390/1440 pixels verifies stale status and
+  reordering with telemetry fixtures and no new report. This is browser fixture
+  evidence, not proof of a real node outage or full Fleet acceptance.
+- UI archive saved under `stream-fleet-ui-d46f6cee` in the local qualification
+  directory, SHA256 `ab6e3807dc6a74e63b8effb3e9948622434861d816d9ec49f0ffa28434760672`.
+- A production backend build from `081c8215` (same tested code, later docs only)
+  is running. No new candidate deployment or publication is implied.
+- Framework's management service is active; actual kiosk is on `/login`, and the
+  saved session returns401. Monitoring UI acceptance remains open. Dev has enough
+  Cashu balance for initial live tests; no payment has been made in this pass.
+- Operator subsequently topped up both nodes and authorized longer node-to-node
+  tests. The expanded test cap is **25 sats total including fees**, with one-sat
+  transfers and a private per-payment ledger. This is not creator pricing.
+
+Open payment gates and the complete backlog above remain in force. The current
+build does not claim durable recovery at every pre-header payment failure or
+resolve the previously recorded on-chain bearer-address concern. IndeeHub's
+integration boundaries are mapped in [the integration map](indeehub-integration-map.md).
+Deployment coordination with the separate mining session is still pending.
