@@ -432,6 +432,13 @@ impl ApiHandler {
         let catalog = content_server::load_catalog(&self.config.data_dir)
             .await
             .unwrap_or_default();
+        let Some(item) = catalog.items.iter().find(|item| item.id == content_id) else {
+            return Ok(build_response(
+                StatusCode::NOT_FOUND,
+                "text/plain",
+                hyper::Body::from("Content not found"),
+            ));
+        };
         if !content_server::visible_to(item, peer.as_deref(), known, owner) {
             return Ok(build_response(
                 StatusCode::NOT_FOUND,
@@ -439,33 +446,24 @@ impl ApiHandler {
                 hyper::Body::from("Content not found"),
             ));
         }
-        let price_sats = match catalog.items.iter().find(|i| i.id == content_id) {
-            Some(i) => match &i.access {
-                content_server::AccessControl::Paid { price_sats, .. } => {
-                    if !content_server::method_accepted(&i.access, "onchain") {
-                        return Ok(build_response(
-                            StatusCode::BAD_REQUEST,
-                            "application/json",
-                            hyper::Body::from(
-                                r#"{"error":"The seller does not accept on-chain payment for this item"}"#,
-                            ),
-                        ));
-                    }
-                    *price_sats
-                }
-                _ => {
+        let price_sats = match &item.access {
+            content_server::AccessControl::Paid { price_sats, .. } => {
+                if !content_server::method_accepted(&item.access, "onchain") {
                     return Ok(build_response(
                         StatusCode::BAD_REQUEST,
                         "application/json",
-                        hyper::Body::from(r#"{"error":"Item is not paid"}"#),
-                    ))
+                        hyper::Body::from(
+                            r#"{"error":"The seller does not accept on-chain payment for this item"}"#,
+                        ),
+                    ));
                 }
-            },
-            None => {
+                *price_sats
+            }
+            _ => {
                 return Ok(build_response(
-                    StatusCode::NOT_FOUND,
-                    "text/plain",
-                    hyper::Body::from("Content not found"),
+                    StatusCode::BAD_REQUEST,
+                    "application/json",
+                    hyper::Body::from(r#"{"error":"Item is not paid"}"#),
                 ))
             }
         };
