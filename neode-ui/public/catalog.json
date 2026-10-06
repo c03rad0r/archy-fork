@@ -673,6 +673,21 @@
       "tier": "optional",
       "icon": "/assets/img/app-icons/angor-green.png",
       "repoUrl": "https://github.com/hoytech/strfry"
+    },
+    {
+      "id": "datum",
+      "author": "OCEAN contributors",
+      "requires": [
+        "bitcoin-knots"
+      ],
+      "title": "DATUM",
+      "version": "0.4.1-beta.1",
+      "description": "Build Bitcoin mining templates on your own node and connect your miners to OCEAN through DATUM.",
+      "dockerImage": "localhost/archipelago-datum:0.4.1-beta.1",
+      "category": "bitcoin",
+      "tier": "optional",
+      "icon": "/assets/img/app-icons/datum.svg",
+      "repoUrl": "https://github.com/OCEAN-xyz/datum_gateway"
     }
   ]
 }
