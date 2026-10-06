@@ -502,6 +502,15 @@ impl<'a> PeerRequest<'a> {
         Ok(self)
     }
 
+    /// Return authentication and delivery failures through one result. Payment
+    /// callers must be able to reclaim an unsent token if proof preparation fails.
+    pub async fn send_content_get(
+        self,
+        data_dir: &std::path::Path,
+    ) -> Result<(reqwest::Response, crate::transport::TransportKind)> {
+        self.authenticate_content(data_dir).await?.send_get().await
+    }
+
     pub fn header(mut self, name: &'a str, value: impl Into<String>) -> Self {
         self.headers.push((name, value.into()));
         self

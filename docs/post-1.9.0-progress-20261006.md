@@ -304,3 +304,31 @@ Seller streaming's first full compile found a lifetime error in one new test;
 `df7677d2` corrects it. The repeated isolated full suite is compiling from that
 frozen source (`/tmp/archy-bounded-media-backend-tests-2.log`). The failed run is
 retained and is not counted as a pass.
+
+
+### Latest peer-content review
+
+Seller streaming at `df7677d2` passed the full isolated suite: 1,729 passed,
+zero failures, five explicit skips. Buyer streaming required updating existing
+regression fixtures to the new streamed Files-copy boundary; two failed compile
+runs are retained. The final buyer UI has 21 focused tests passing and its
+production build passes (`/tmp/archy-buyer-cache-ui-tests-final.log`,
+`/tmp/archy-buyer-stream-ui-build.log`). No deployment has occurred.
+
+A separate source review found restricted requests trusting an unsigned peer DID.
+The candidate now verifies recipient/path/range/time-bound node signatures, and
+uses the same visibility gate for metadata, invoice issuance and bytes. The
+isolated combined suite is compiling from the frozen authentication worktree;
+see `peer-content-authentication.md` for compatibility and remaining gates.
+
+Further review caught an authentication-preparation failure escaping the payment
+request's refund branch. Authentication and transport now return through one
+result, and local identity validation happens before ecash creation. Inline
+preview/legacy RPC bodies are also bounded, including unknown-length responses:
+large free videos must not be base64-loaded merely to populate a card preview.
+Those final changes still require backend qualification.
+
+Read-only checks at09:49UTC confirm dev and Yaya Monitoring/federation CPU, memory
+and disk measurements match, with each tested RPC below0.5seconds. Framework
+still returns401 for the saved dashboard session. These are current live-source
+checks, not acceptance of the new undeployed file-streaming candidate.

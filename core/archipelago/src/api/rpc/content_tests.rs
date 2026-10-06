@@ -168,3 +168,26 @@ async fn known_purchase_never_becomes_a_new_spend_when_cache_or_index_is_unavail
         b"damaged"
     );
 }
+
+#[tokio::test]
+async fn inline_download_limits_known_and_chunked_bodies_without_draining_them() {
+    use futures_util::StreamExt;
+    use std::sync::{
+        atomic::{AtomicUsize, Ordering},
+        Arc,
+    };
+    let response: reqwest::Response = hyper::Response::new("small").into();
+    assert!(bounded_content_bytes(response, 4).await.is_err());
+    let response: reqwest::Response = hyper::Response::new("small").into();
+    assert_eq!(bounded_content_bytes(response, 5).await.unwrap(), b"small");
+    let consumed = Arc::new(AtomicUsize::new(0));
+    let counter = consumed.clone();
+    let chunks = futures_util::stream::iter(0..1000).map(move |_| {
+        counter.fetch_add(1, Ordering::SeqCst);
+        Ok::<_, std::io::Error>(bytes::Bytes::from_static(b"abc"))
+    });
+    let body = reqwest::Body::wrap_stream(chunks);
+    let response: reqwest::Response = hyper::Response::new(body).into();
+    assert!(bounded_content_bytes(response, 4).await.is_err());
+    assert_eq!(consumed.load(Ordering::SeqCst), 2);
+}

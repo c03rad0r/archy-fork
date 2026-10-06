@@ -219,6 +219,26 @@ mod tests {
         assert!(!visible_to(&item, Some("verified-peer"), true, false));
     }
 
+    #[tokio::test]
+    async fn authentication_failure_is_a_delivery_error_before_any_network_attempt() {
+        let dir = tempfile::tempdir().unwrap();
+        tokio::fs::create_dir(dir.path().join("federation"))
+            .await
+            .unwrap();
+        tokio::fs::write(dir.path().join("federation/nodes.json"), b"invalid")
+            .await
+            .unwrap();
+        let error = crate::fips::dial::PeerRequest::new(None, "peer.onion", "/content/file")
+            .require_fips()
+            .send_content_get(dir.path())
+            .await
+            .unwrap_err();
+        // The corrupt identity store fails before the separate missing-FIPS
+        // route error. It reaches the payment caller's existing refund branch.
+        assert!(!error.to_string().contains("FIPS"));
+        assert!(!dir.path().join("identity").exists());
+    }
+
     #[test]
     fn plain_claimed_did_never_becomes_an_authenticated_peer() {
         let mut headers = hyper::HeaderMap::new();

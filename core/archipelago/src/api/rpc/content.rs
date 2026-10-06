@@ -43,6 +43,26 @@ async fn reclaim_spent_ecash(data_dir: &std::path::Path, token: &str, backend: &
     }
 }
 
+// Inline RPC responses are for previews/small legacy downloads. Films use the
+// Range-capable HTTP path; never let a peer force whole-film base64 allocation.
+async fn bounded_content_bytes(mut response: reqwest::Response, limit: usize) -> Result<Vec<u8>> {
+    anyhow::ensure!(
+        response
+            .content_length()
+            .is_none_or(|size| size <= limit as u64),
+        "Content exceeds the inline limit; open it through the streaming viewer"
+    );
+    let mut bytes = Vec::new();
+    while let Some(chunk) = response.chunk().await? {
+        anyhow::ensure!(
+            chunk.len() <= limit.saturating_sub(bytes.len()),
+            "Content exceeds the inline limit; use streaming"
+        );
+        bytes.extend_from_slice(&chunk);
+    }
+    Ok(bytes)
+}
+
 async fn bounded_seller_error(mut response: reqwest::Response) -> String {
     let mut bytes = Vec::new();
     let _ = tokio::time::timeout(std::time::Duration::from_secs(5), async {
@@ -450,9 +470,7 @@ impl RpcHandler {
                 .header("X-Federation-DID", local_did)
                 .timeout(std::time::Duration::from_secs(120))
                 .fips_timeout(std::time::Duration::from_secs(8))
-                .authenticate_content(&self.config.data_dir)
-                .await?
-                .send_get()
+                .send_content_get(&self.config.data_dir)
                 .await
                 .context("Failed to connect to peer")?;
         // Record which transport actually reached the peer (B14) so the UI
@@ -494,10 +512,9 @@ impl RpcHandler {
             return Err(anyhow::anyhow!("Peer returned: {}", response.status()));
         }
 
-        let bytes = response
-            .bytes()
+        let bytes = bounded_content_bytes(response, 16 * 1024 * 1024)
             .await
-            .context("Failed to read response body")?;
+            .context("Failed to read bounded content")?;
 
         use base64::Engine;
         let encoded = base64::engine::general_purpose::STANDARD.encode(&bytes);
@@ -542,9 +559,7 @@ impl RpcHandler {
                 // against the UI's 30s deadline — users saw errors, not
                 // fallback.
                 .fips_timeout(std::time::Duration::from_secs(6))
-                .authenticate_content(&self.config.data_dir)
-                .await?
-                .send_get()
+                .send_content_get(&self.config.data_dir)
                 .await
                 .context("Failed to connect to peer")?;
         // Record which transport actually reached the peer (B14).
@@ -646,6 +661,9 @@ impl RpcHandler {
         // one system can still pay (#3).
         let method = params.get("method").and_then(|v| v.as_str());
 
+        let (data, _) = self.state_manager.get_snapshot().await;
+        let local_did = crate::identity::did_key_from_pubkey_hex(&data.server_info.pubkey)?;
+
         let mint_cashu = || ecash::send_token(&self.config.data_dir, price_sats);
         let mint_fedimint =
             || crate::wallet::fedimint_client::spend_from_any(&self.config.data_dir, price_sats);
@@ -699,9 +717,6 @@ impl RpcHandler {
             "paid download: paying {price_sats} sats to {onion} via {used_backend} ecash"
         );
 
-        let (data, _) = self.state_manager.get_snapshot().await;
-        let local_did = crate::identity::did_key_from_pubkey_hex(&data.server_info.pubkey)?;
-
         let path = format!("/content/{}", content_id);
         // Surface a real reason instead of the generic sanitized error (#30):
         // A bearer token must not be replayed after an ambiguous delivery.
@@ -714,9 +729,7 @@ impl RpcHandler {
                 .header("X-Payment-Token", token_str.clone())
                 .single_delivery()
                 .timeout(std::time::Duration::from_secs(900))
-                .authenticate_content(&self.config.data_dir)
-                .await?
-                .send_get()
+                .send_content_get(&self.config.data_dir)
                 .await
             {
                 Ok(v) => v,
@@ -835,9 +848,7 @@ impl RpcHandler {
                 .header("X-Federation-DID", local_did)
                 .timeout(std::time::Duration::from_secs(25))
                 .fips_timeout(std::time::Duration::from_secs(6))
-                .authenticate_content(&self.config.data_dir)
-                .await?
-                .send_get()
+                .send_content_get(&self.config.data_dir)
                 .await
             {
                 Ok(v) => v,
@@ -901,9 +912,7 @@ impl RpcHandler {
                 .service(crate::settings::transport::PeerService::PeerFiles)
                 .timeout(std::time::Duration::from_secs(15))
                 .fips_timeout(std::time::Duration::from_secs(6))
-                .authenticate_content(&self.config.data_dir)
-                .await?
-                .send_get()
+                .send_content_get(&self.config.data_dir)
                 .await
             {
                 Ok(v) => v,
@@ -995,9 +1004,7 @@ impl RpcHandler {
         .header("X-Federation-DID", local_did)
         .header("X-Invoice-Hash", payment_hash.to_string())
         .timeout(std::time::Duration::from_secs(900))
-        .authenticate_content(&self.config.data_dir)
-        .await?
-        .send_get()
+        .send_content_get(&self.config.data_dir)
         .await
         {
             Ok(v) => v,
@@ -1095,9 +1102,7 @@ impl RpcHandler {
                 .header("X-Federation-DID", local_did)
                 .timeout(std::time::Duration::from_secs(25))
                 .fips_timeout(std::time::Duration::from_secs(6))
-                .authenticate_content(&self.config.data_dir)
-                .await?
-                .send_get()
+                .send_content_get(&self.config.data_dir)
                 .await
             {
                 Ok(v) => v,
@@ -1156,9 +1161,7 @@ impl RpcHandler {
                 .service(crate::settings::transport::PeerService::PeerFiles)
                 .timeout(std::time::Duration::from_secs(15))
                 .fips_timeout(std::time::Duration::from_secs(6))
-                .authenticate_content(&self.config.data_dir)
-                .await?
-                .send_get()
+                .send_content_get(&self.config.data_dir)
                 .await
             {
                 Ok(v) => v,
@@ -1215,9 +1218,7 @@ impl RpcHandler {
         .header("X-Federation-DID", local_did)
         .header("X-Onchain-Address", address.to_string())
         .timeout(std::time::Duration::from_secs(900))
-        .authenticate_content(&self.config.data_dir)
-        .await?
-        .send_get()
+        .send_content_get(&self.config.data_dir)
         .await
         {
             Ok(v) => v,
@@ -1297,9 +1298,7 @@ impl RpcHandler {
                 .require_fips()
                 .timeout(std::time::Duration::from_secs(30))
                 .fips_timeout(std::time::Duration::from_secs(6))
-                .authenticate_content(&self.config.data_dir)
-                .await?
-                .send_get()
+                .send_content_get(&self.config.data_dir)
                 .await
                 .context("Failed to connect to peer for preview")?;
         // Record which transport actually reached the peer (B14).
@@ -1335,10 +1334,9 @@ impl RpcHandler {
             .unwrap_or("application/octet-stream")
             .to_string();
 
-        let bytes = response
-            .bytes()
+        let bytes = bounded_content_bytes(response, 8 * 1024 * 1024)
             .await
-            .context("Failed to read preview response")?;
+            .context("Failed to read bounded preview")?;
 
         use base64::Engine;
         let encoded = base64::engine::general_purpose::STANDARD.encode(&bytes);
