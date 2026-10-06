@@ -273,6 +273,7 @@ export function useFleetData() {
   const sortBy = ref<SortOption>(cached.sortBy ?? 'status')
   const chartWidth = ref(300)
   let pollTimer: ReturnType<typeof setInterval> | null = null
+  let historyRequest = 0
 
   // --- Computed ---
 
@@ -384,17 +385,20 @@ export function useFleetData() {
   }
 
   async function fetchNodeHistory(nodeId: string) {
+    const request = ++historyRequest
     nodeHistoryLoading.value = true
     try {
       const data = await rpcClient.call<{ history?: NodeHistoryEntry[]; entries?: NodeHistoryEntry[] }>({
         method: 'telemetry.fleet-node-history',
         params: { node_id: nodeId },
       })
-      nodeHistory.value = normalizeNodeHistoryResponse(data)
+      if (request === historyRequest && selectedNodeId.value === nodeId) {
+        nodeHistory.value = normalizeNodeHistoryResponse(data)
+      }
     } catch {
       // Non-critical
     } finally {
-      nodeHistoryLoading.value = false
+      if (request === historyRequest) nodeHistoryLoading.value = false
     }
   }
 
@@ -477,6 +481,9 @@ export function useFleetData() {
 
   // Fetch node history when selection changes
   watch(selectedNodeId, (newId) => {
+    historyRequest++
+    nodeHistory.value = []
+    nodeHistoryLoading.value = false
     if (newId) {
       fetchNodeHistory(newId)
     } else {

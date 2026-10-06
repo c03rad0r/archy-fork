@@ -46,3 +46,25 @@ it('does not rearm timers when requests finish after unmount', async () => {
   expect(intervals).toHaveBeenCalledTimes(intervalCalls)
   intervals.mockRestore(); clear.mockRestore()
 })
+
+it('keeps a late node history response out of the newly selected node', async () => {
+  const history = new Map<string, (value: unknown) => void>()
+  vi.mocked(rpcClient.call).mockImplementation(({ method, params }) => {
+    if (method === 'telemetry.fleet-node-history') return new Promise(done => { history.set((params as { node_id: string }).node_id, done) }) as never
+    return Promise.resolve({ nodes: [], alerts: [] }) as never
+  })
+  let fleet!: ReturnType<typeof useFleetData>
+  const wrapper = mount(defineComponent({ setup() { fleet = useFleetData(); return () => null } }))
+  await flushPromises()
+  fleet.selectNode('first'); await flushPromises()
+  fleet.selectNode('second'); await flushPromises()
+  history.get('first')!({ history: [{ timestamp: 'old', cpu_pct: 99 }] })
+  await flushPromises()
+  expect(fleet.nodeHistory.value).toEqual([])
+  expect(fleet.nodeHistoryLoading.value).toBe(true)
+  history.get('second')!({ history: [{ timestamp: 'current', cpu_pct: 10 }] })
+  await flushPromises()
+  expect(fleet.nodeHistory.value[0]?.timestamp).toBe('current')
+  expect(fleet.nodeHistoryLoading.value).toBe(false)
+  wrapper.unmount()
+})
