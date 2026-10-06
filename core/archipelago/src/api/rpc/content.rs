@@ -1203,6 +1203,28 @@ impl RpcHandler {
             return Err(anyhow::anyhow!("Invalid address"));
         }
 
+        crate::content_owned::validate_identity(onion, content_id)?;
+        let _purchase_lock = crate::content_owned::lock_seller_purchases(onion).await;
+        let cache_only = params
+            .get("cache_only")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
+        if crate::content_owned::list_owned_checked(&self.config.data_dir)
+            .await?
+            .iter()
+            .any(|item| {
+                item.onion == onion && item.content_id == content_id && item.download_complete
+            })
+        {
+            return cached_purchase_response(
+                &self.config.data_dir,
+                onion,
+                content_id,
+                cache_only,
+                0,
+            )
+            .await;
+        }
         let (data, _) = self.state_manager.get_snapshot().await;
         let local_did = crate::identity::did_key_from_pubkey_hex(&data.server_info.pubkey)?;
         let fips_npub = crate::federation::fips_npub_for_onion(&self.config.data_dir, onion).await;
@@ -1251,16 +1273,38 @@ impl RpcHandler {
             }));
         }
 
-        let bytes = response
-            .bytes()
-            .await
-            .context("Failed to read response body")?;
-        use base64::Engine;
-        let encoded = base64::engine::general_purpose::STANDARD.encode(&bytes);
-        Ok(serde_json::json!({
-            "data": encoded,
-            "size": bytes.len(),
-        }))
+        let mime = response
+            .headers()
+            .get(reqwest::header::CONTENT_TYPE)
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or("application/octet-stream")
+            .split(';')
+            .next()
+            .unwrap_or("application/octet-stream")
+            .to_string();
+        let filename = params
+            .get("filename")
+            .and_then(|v| v.as_str())
+            .unwrap_or(content_id);
+        let item = cache_peer_response(
+            &self.config.data_dir,
+            onion,
+            content_id,
+            filename,
+            &mime,
+            params
+                .get("price_sats")
+                .and_then(|v| v.as_u64())
+                .unwrap_or(0),
+            "onchain",
+            response,
+        )
+        .await
+        .context("Paid file could not be saved; retry delivery without paying again")?;
+        if let Err(error) = file_cached_purchase_in_files(&self.config.data_dir, &item).await {
+            tracing::warn!("On-chain purchase cached; optional Files copy failed: {error:#}");
+        }
+        cached_purchase_response(&self.config.data_dir, onion, content_id, cache_only, 0).await
     }
 
     /// Fetch a preview of paid content from a peer (no payment required).
