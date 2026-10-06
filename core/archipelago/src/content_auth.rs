@@ -235,7 +235,8 @@ mod tests {
             .unwrap_err();
         // The corrupt identity store fails before the separate missing-FIPS
         // route error. It reaches the payment caller's existing refund branch.
-        assert!(!error.to_string().contains("FIPS"));
+        assert!(error.to_string().contains("Invalid federation nodes"));
+        assert_eq!(tokio::fs::read(dir.path().join("federation/nodes.json")).await.unwrap(), b"invalid");
         assert!(!dir.path().join("identity").exists());
     }
 
