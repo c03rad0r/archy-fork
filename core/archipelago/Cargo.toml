@@ -106,6 +106,8 @@ flate2 = "1.0"
 # TOTP 2FA
 totp-rs = { version = "5.7", features = ["otpauth", "gen_secret"] }
 qrcode = "0.14"
+# Paid image previews must be degraded on the server, never by browser CSS.
+image = { version = "0.25.9", default-features = false, features = ["jpeg", "png", "webp"] }
 data-encoding = "2.6"
 zeroize = { version = "1.8.2", features = ["derive"] }
 

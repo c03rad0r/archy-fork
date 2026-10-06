@@ -246,3 +246,25 @@ same iframe and Stop. Logs: `/tmp/archy-integrated-v4v-browser-origin-4.log`
 production notification suppression were used. Production UI rebuild including
 the new card footers is running; signed-install and physical companion gates
 remain open.
+
+
+### Paid-preview access boundary (new finding during FIPS work)
+
+Source review found that the anonymous preview route returned full paid image
+bytes and relied on browser CSS blur. It also served previews for restricted
+shares without checking a recipient, and the minimum byte-prefix size could
+return a small paid audio/video file in full.
+
+The candidate now produces a fresh, small blurred JPEG on the server, drops
+original metadata, bounds raster input/dimensions/decoder concurrency, and fails
+closed on unsupported images. Anonymous previews reject specific-recipient and
+peer-only content. Audio/video prefixes are at most 10% and 8 MiB, with no
+minimum that can reveal the full original. Four isolated regression cases are
+compiling; no deployed fix or full preview acceptance is claimed yet.
+
+The preceding integrated backend suite completed: 1,718 passed, zero failures,
+five listed ignores. The ignores cover opt-in real AI providers, RNode hardware,
+Reticulum daemons, live Minibits and the subprocess permission helper (which its
+parent test executes separately). A production build of the earlier integration
+is running from detached `11f016a9`; it does not include this new preview fix and
+must not be described as the final release candidate.

@@ -544,11 +544,11 @@ async fn read_filebrowser_via_userns(data_dir: &Path, path: &Path) -> Result<Vec
 
 /// Result of attempting to serve a preview.
 pub enum PreviewResult {
-    /// Full content (free/peers-only items — redirect to normal serve).
+    /// Full publicly shared free content.
     FullContent(Vec<u8>, String),
-    /// Blurred preview for paid image (full bytes, frontend applies blur).
+    /// Small, server-blurred JPEG for a paid image; never the original bytes.
     BlurPreview(Vec<u8>, String),
-    /// Truncated preview for paid video (first ~2% of bytes).
+    /// Bounded preview for paid video/audio (at most 10% of bytes).
     TruncatedPreview(Vec<u8>, String, u64),
     /// A preview can't be produced for this media without re-encoding (e.g. a
     /// non-faststart MP4 whose moov atom is at the end, so a byte prefix won't
@@ -612,6 +612,53 @@ async fn mp4_is_faststart(path: &std::path::Path) -> Option<bool> {
 /// - Videos: first 2% of file bytes (minimum 512KB for codec headers)
 /// - Other: not available
 /// For free/peers-only content, returns the full file.
+/// Decode only bounded raster inputs, discard original metadata, then reduce
+/// and blur pixels before encoding a new image. Browser styling is not a gate.
+async fn blurred_image_preview(path: PathBuf) -> Result<Vec<u8>> {
+    static WORKERS: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(2);
+    let permit = WORKERS.try_acquire().context("Preview workers busy")?;
+    tokio::task::spawn_blocking(move || {
+        use std::io::{Cursor, Read};
+        use std::os::unix::fs::OpenOptionsExt;
+        let _permit = permit;
+        const MAX_INPUT: u64 = 16 * 1024 * 1024;
+        let file = std::fs::OpenOptions::new()
+            .read(true)
+            .custom_flags(libc::O_NONBLOCK)
+            .open(path)?;
+        let meta = file.metadata()?;
+        anyhow::ensure!(
+            meta.is_file() && meta.len() <= MAX_INPUT,
+            "Invalid preview source"
+        );
+        let mut encoded = Vec::new();
+        file.take(MAX_INPUT + 1).read_to_end(&mut encoded)?;
+        anyhow::ensure!(
+            encoded.len() as u64 <= MAX_INPUT,
+            "Preview source grew too large"
+        );
+        let mut reader = image::ImageReader::new(Cursor::new(encoded)).with_guessed_format()?;
+        anyhow::ensure!(
+            matches!(
+                reader.format(),
+                Some(image::ImageFormat::Jpeg | image::ImageFormat::Png | image::ImageFormat::WebP)
+            ),
+            "Unsupported preview image"
+        );
+        let mut limits = image::Limits::default();
+        limits.max_image_width = Some(4096);
+        limits.max_image_height = Some(4096);
+        limits.max_alloc = Some(32 * 1024 * 1024);
+        reader.limits(limits);
+        let reduced = reader.decode()?.thumbnail(160, 160).blur(8.0).to_rgb8();
+        let mut output = Cursor::new(Vec::new());
+        image::DynamicImage::ImageRgb8(reduced).write_to(&mut output, image::ImageFormat::Jpeg)?;
+        Ok(output.into_inner())
+    })
+    .await
+    .context("Preview worker failed")?
+}
+
 pub async fn serve_content_preview(data_dir: &Path, id: &str) -> Result<PreviewResult> {
     let catalog = load_catalog(data_dir).await?;
     let item = match catalog.items.iter().find(|i| i.id == id) {
@@ -619,8 +666,11 @@ pub async fn serve_content_preview(data_dir: &Path, id: &str) -> Result<PreviewR
         None => return Ok(PreviewResult::NotFound),
     };
 
-    // Check availability — don't preview hidden items
-    if matches!(item.availability, Availability::Nobody) {
+    // This endpoint is anonymous. It must not become an alternate download
+    // route around peer-only or specific-recipient access checks.
+    if !matches!(item.availability, Availability::AllPeers)
+        || matches!(item.access, AccessControl::PeersOnly)
+    {
         return Ok(PreviewResult::NotFound);
     }
 
@@ -633,16 +683,10 @@ pub async fn serve_content_preview(data_dir: &Path, id: &str) -> Result<PreviewR
         AccessControl::Paid { .. } => {
             let mime = &item.mime_type;
             if mime.starts_with("image/") {
-                // Serve full image — frontend applies CSS blur
-                let bytes = fs::read(&file_path)
-                    .await
-                    .context("Failed to read preview file")?;
-                debug!(
-                    "Serving blur preview for paid image '{}' ({} bytes)",
-                    id,
-                    bytes.len()
-                );
-                Ok(PreviewResult::BlurPreview(bytes, item.mime_type.clone()))
+                match blurred_image_preview(file_path).await {
+                    Ok(bytes) => Ok(PreviewResult::BlurPreview(bytes, "image/jpeg".into())),
+                    Err(_) => Ok(PreviewResult::PreviewUnavailable),
+                }
             } else if mime.starts_with("video/") || mime.starts_with("audio/") {
                 // A byte-prefix preview only plays if the container's index is at
                 // the front. For MP4/MOV that means the `moov` atom must precede
@@ -664,12 +708,16 @@ pub async fn serve_content_preview(data_dir: &Path, id: &str) -> Result<PreviewR
                     return Ok(PreviewResult::PreviewUnavailable);
                 }
 
-                // Serve first 10% of video/audio, minimum 512KB for codec headers
+                // Never return the whole paid file just to reach a minimum
+                // header size. Bound allocation even for very large videos.
                 let metadata = fs::metadata(&file_path)
                     .await
                     .context("Failed to read file metadata")?;
                 let total_size = metadata.len();
-                let preview_bytes = ((total_size * 10) / 100).max(512 * 1024).min(total_size);
+                let preview_bytes = (total_size / 10).min(8 * 1024 * 1024);
+                if preview_bytes == 0 {
+                    return Ok(PreviewResult::PreviewUnavailable);
+                }
 
                 use tokio::io::AsyncReadExt;
                 let mut file = tokio::fs::File::open(&file_path)
@@ -1157,6 +1205,202 @@ mod paid_read_order_tests {
         ));
         assert!(
             matches!(slice_prepared_content(b"abc".to_vec(), Some(ByteRange { start: 1, end: None }), "x".into()).unwrap(), ServeResult::Partial { bytes, start: 1, end: 2, total: 3, .. } if bytes == b"bc")
+        );
+    }
+}
+
+#[cfg(test)]
+mod preview_boundary_tests {
+    use super::*;
+
+    async fn fixture(
+        bytes: &[u8],
+        mime: &str,
+        access: AccessControl,
+        availability: Availability,
+    ) -> tempfile::TempDir {
+        let dir = tempfile::tempdir().unwrap();
+        fs::create_dir_all(dir.path().join(CONTENT_DIR))
+            .await
+            .unwrap();
+        fs::write(dir.path().join(CONTENT_DIR).join("preview.bin"), bytes)
+            .await
+            .unwrap();
+        save_catalog(
+            dir.path(),
+            &ContentCatalog {
+                items: vec![ContentItem {
+                    id: "preview-test".into(),
+                    filename: "preview.bin".into(),
+                    mime_type: mime.into(),
+                    size_bytes: bytes.len() as u64,
+                    description: String::new(),
+                    added_at: String::new(),
+                    access,
+                    availability,
+                }],
+            },
+        )
+        .await
+        .unwrap();
+        dir
+    }
+
+    fn paid() -> AccessControl {
+        AccessControl::Paid {
+            price_sats: 10,
+            accepted: vec!["ecash".into()],
+        }
+    }
+
+    #[tokio::test]
+    async fn anonymous_preview_never_bypasses_restricted_sharing() {
+        for (access, availability) in [
+            (AccessControl::Free, Availability::Nobody),
+            (paid(), Availability::Nobody),
+            (
+                AccessControl::Free,
+                Availability::Specific {
+                    peers: vec!["did:key:allowed".into()],
+                },
+            ),
+            (
+                paid(),
+                Availability::Specific {
+                    peers: vec!["did:key:allowed".into()],
+                },
+            ),
+            (AccessControl::PeersOnly, Availability::AllPeers),
+        ] {
+            let dir = fixture(b"PRIVATE", "image/png", access, availability).await;
+            assert!(matches!(
+                serve_content_preview(dir.path(), "preview-test")
+                    .await
+                    .unwrap(),
+                PreviewResult::NotFound
+            ));
+        }
+    }
+
+    #[tokio::test]
+    async fn paid_image_preview_is_degraded_and_drops_original_metadata() {
+        use std::io::Cursor;
+        let source = image::RgbImage::from_fn(640, 320, |x, y| {
+            let c = if (x / 8 + y / 8) % 2 == 0 { 0 } else { 255 };
+            image::Rgb([c, c, c])
+        });
+        let original = image::DynamicImage::ImageRgb8(source);
+        let mut encoded = Cursor::new(Vec::new());
+        original
+            .write_to(&mut encoded, image::ImageFormat::Png)
+            .unwrap();
+        let mut bytes = encoded.into_inner();
+        const PRIVATE: &[u8] = b"PRIVATE-ORIGINAL-METADATA";
+        bytes.extend_from_slice(PRIVATE);
+        let dir = fixture(&bytes, "image/png", paid(), Availability::AllPeers).await;
+        let PreviewResult::BlurPreview(preview, mime) =
+            serve_content_preview(dir.path(), "preview-test")
+                .await
+                .unwrap()
+        else {
+            panic!("No degraded preview")
+        };
+        assert_eq!(mime, "image/jpeg");
+        assert_ne!(preview, bytes);
+        assert!(!preview.windows(PRIVATE.len()).any(|w| w == PRIVATE));
+        let decoded = image::load_from_memory(&preview).unwrap().to_rgb8();
+        assert!(decoded.width() <= 160 && decoded.height() <= 160);
+        assert!(
+            decoded.pixels().all(|p| p[0] > 30 && p[0] < 225),
+            "High-contrast original detail must be blurred"
+        );
+        assert_eq!(
+            fs::read(dir.path().join(CONTENT_DIR).join("preview.bin"))
+                .await
+                .unwrap(),
+            bytes
+        );
+
+        // Malformed/unsupported and oversized inputs never fall back to the paid original.
+        fs::write(
+            dir.path().join(CONTENT_DIR).join("preview.bin"),
+            b"<svg>private source</svg>",
+        )
+        .await
+        .unwrap();
+        assert!(matches!(
+            serve_content_preview(dir.path(), "preview-test")
+                .await
+                .unwrap(),
+            PreviewResult::PreviewUnavailable
+        ));
+        let file = fs::OpenOptions::new()
+            .write(true)
+            .open(dir.path().join(CONTENT_DIR).join("preview.bin"))
+            .await
+            .unwrap();
+        file.set_len(17 * 1024 * 1024).await.unwrap();
+        assert!(matches!(
+            serve_content_preview(dir.path(), "preview-test")
+                .await
+                .unwrap(),
+            PreviewResult::PreviewUnavailable
+        ));
+    }
+
+    #[tokio::test]
+    async fn paid_audio_preview_does_not_release_small_files_or_allocate_a_whole_film() {
+        let dir = fixture(
+            &vec![42; 1000],
+            "audio/mpeg",
+            paid(),
+            Availability::AllPeers,
+        )
+        .await;
+        let PreviewResult::TruncatedPreview(bytes, _, total) =
+            serve_content_preview(dir.path(), "preview-test")
+                .await
+                .unwrap()
+        else {
+            panic!("No audio preview")
+        };
+        assert_eq!(total, 1000);
+        assert_eq!(bytes, vec![42; 100]);
+        let file = fs::OpenOptions::new()
+            .write(true)
+            .open(dir.path().join(CONTENT_DIR).join("preview.bin"))
+            .await
+            .unwrap();
+        file.set_len(100 * 1024 * 1024).await.unwrap();
+        let PreviewResult::TruncatedPreview(bytes, _, total) =
+            serve_content_preview(dir.path(), "preview-test")
+                .await
+                .unwrap()
+        else {
+            panic!("No bounded preview")
+        };
+        assert_eq!(total, 100 * 1024 * 1024);
+        assert_eq!(bytes.len(), 8 * 1024 * 1024);
+        file.set_len(0).await.unwrap();
+        assert!(matches!(
+            serve_content_preview(dir.path(), "preview-test")
+                .await
+                .unwrap(),
+            PreviewResult::PreviewUnavailable
+        ));
+    }
+
+    #[tokio::test]
+    async fn public_free_preview_remains_available() {
+        let dir = fixture(
+            b"public",
+            "text/plain",
+            AccessControl::Free,
+            Availability::AllPeers,
+        )
+        .await;
+        assert!(
+            matches!(serve_content_preview(dir.path(), "preview-test").await.unwrap(), PreviewResult::FullContent(bytes, _) if bytes == b"public")
         );
     }
 }
