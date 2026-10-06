@@ -51,3 +51,29 @@ Retain follow-ups: durable remember-secret creation must be private and atomic;
 unreadable/unpersistable keys must not silently become ephemeral successful
 configuration; logout must expire/revoke remember credentials as intended.
 Those broader hardening changes are not claimed by this recovery patch.
+
+## Persistent key follow-up (qualification pending)
+
+The previous loader silently generated an in-memory signing key after any read
+failure and ignored write failures. It now returns storage errors, so RPC auth
+fails before dispatch and app login returns an uncached service-unavailable
+response rather than issuing mismatched cookies. Existing valid bytes are never
+rotated as a permissions repair. Remember-token validation still reads the
+current on-disk key, preserving the existing rotation/revocation behavior.
+
+Creation writes and syncs a private temporary inode, publishes it without
+replacement, syncs the directory, and reads the winning key. Concurrent creators
+therefore agree. Existing symlinks, non-files, malformed files and unreadable
+files are rejected. Legacy readable files have their permissions tightened on
+the opened inode. Storage failures are not cached as successful initialization.
+
+Regression cases cover reload, permissions, malformed keys, links/non-files,
+failed storage, concurrent creation, and the actual root-owned 0600 failure
+using an unprivileged child inside the isolated backend runner. This section is
+implementation scope, not a claim that compilation or live acceptance passed.
+
+Candidate frontend browser checks passed at 390 and 1440 pixels for stale-CSRF
+recovery and interface-fetch failure/retry, with real Yaya interfaces on retry.
+The initial failures were injected. Evidence:
+`/tmp/archy-session-recovery-browser.log`. Physical companion and deployed
+backend recovery acceptance remain separate gates.

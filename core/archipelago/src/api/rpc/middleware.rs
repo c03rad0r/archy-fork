@@ -317,14 +317,14 @@ mod sanitize_tests {
 /// Deterministic: same session token always produces the same CSRF token.
 /// Survives backend restarts because it depends only on the session token
 /// and the on-disk remember secret (not ephemeral state).
-pub(crate) async fn derive_csrf_token(session_token: &str) -> String {
+pub(crate) async fn derive_csrf_token(session_token: &str) -> std::io::Result<String> {
     use hmac::{Hmac, Mac};
     use sha2::Sha256;
     type HmacSha256 = Hmac<Sha256>;
-    let secret = SessionStore::load_or_create_remember_secret().await;
+    let secret = SessionStore::load_or_create_remember_secret().await?;
     let mut mac = HmacSha256::new_from_slice(&secret).expect("HMAC key");
     mac.update(format!("csrf:{}", session_token).as_bytes());
-    hex::encode(mac.finalize().into_bytes())
+    Ok(hex::encode(mac.finalize().into_bytes()))
 }
 
 /// Extract a named cookie value from headers.

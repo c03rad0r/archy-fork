@@ -1,5 +1,6 @@
+#[path = "session_secret.rs"]
+mod secret_file;
 use hmac::{Hmac, Mac};
-use rand::RngCore;
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -398,8 +399,8 @@ impl SessionStore {
     // Format: "timestamp_hex:hmac_hex"
 
     /// Create a remember-me token. Returns the cookie value.
-    pub async fn create_remember_token(&self) -> String {
-        let secret = Self::load_or_create_remember_secret().await;
+    pub async fn create_remember_token(&self) -> std::io::Result<String> {
+        let secret = Self::load_or_create_remember_secret().await?;
         let now = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap_or_default()
@@ -408,13 +409,17 @@ impl SessionStore {
         let mut mac = HmacSha256::new_from_slice(&secret).expect("HMAC key");
         mac.update(format!("remember:{}", ts_hex).as_bytes());
         let sig = hex::encode(mac.finalize().into_bytes());
-        format!("{}:{}", ts_hex, sig)
+        Ok(format!("{}:{}", ts_hex, sig))
     }
 
     /// Validate a remember-me token. Returns true if valid and not expired.
     pub async fn validate_remember_token(token: &str) -> bool {
-        let secret = match tokio::fs::read(REMEMBER_SECRET_FILE).await {
-            Ok(s) if s.len() == 32 => s,
+        let secret = match tokio::task::spawn_blocking(|| {
+            secret_file::read_existing(Path::new(REMEMBER_SECRET_FILE))
+        })
+        .await
+        {
+            Ok(Ok(s)) => s,
             _ => return false,
         };
         let parts: Vec<&str> = token.splitn(2, ':').collect();
@@ -454,27 +459,17 @@ impl SessionStore {
         now.saturating_sub(ts_bytes) < REMEMBER_TTL
     }
 
-    pub async fn load_or_create_remember_secret() -> Vec<u8> {
+    pub async fn load_or_create_remember_secret() -> std::io::Result<Vec<u8>> {
         REMEMBER_SECRET
-            .get_or_init(|| async {
-                // Try existing secret file first
-                if let Ok(secret) = tokio::fs::read(REMEMBER_SECRET_FILE).await {
-                    if secret.len() == 32 {
-                        return secret;
-                    }
-                }
-                // Generate a cryptographically random 32-byte secret on first boot
-                let mut secret = [0u8; 32];
-                rand::rngs::OsRng.fill_bytes(&mut secret);
-                // Ensure parent directory exists
-                if let Some(parent) = std::path::Path::new(REMEMBER_SECRET_FILE).parent() {
-                    let _ = tokio::fs::create_dir_all(parent).await;
-                }
-                let _ = tokio::fs::write(REMEMBER_SECRET_FILE, &secret).await;
-                secret.to_vec()
+            .get_or_try_init(|| async {
+                tokio::task::spawn_blocking(|| {
+                    secret_file::load_or_create(Path::new(REMEMBER_SECRET_FILE))
+                })
+                .await
+                .map_err(std::io::Error::other)?
             })
             .await
-            .clone()
+            .cloned()
     }
 }
 

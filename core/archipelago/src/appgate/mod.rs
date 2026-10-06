@@ -700,6 +700,14 @@ fn strip_gate_cookies(headers: &mut hyper::HeaderMap) {
 }
 
 async fn set_session_cookie(resp: &mut Response<Body>, token: &str) {
+    // The dashboard RPC layer requires a readable CSRF cookie as well as the
+    // HttpOnly session cookie. An app-gate login is a complete node login, so
+    // it must establish the same pair as auth.login; otherwise a fresh browser
+    // can open the signer broker but every identity/signing RPC is rejected
+    // with `has_session=true, has_header=false`.
+    if !set_csrf_cookie(resp, token).await {
+        return;
+    }
     // No Domain attribute, so the cookie is host-only. Cookies ignore port,
     // which is what makes one sign-in cover the dashboard and every app port
     // on the same host — and equally why an app on a *different* host (its
@@ -709,22 +717,29 @@ async fn set_session_cookie(resp: &mut Response<Body>, token: &str) {
     {
         resp.headers_mut().append(header::SET_COOKIE, value);
     }
-
-    // The dashboard RPC layer requires a readable CSRF cookie as well as the
-    // HttpOnly session cookie. An app-gate login is a complete node login, so
-    // it must establish the same pair as auth.login; otherwise a fresh browser
-    // can open the signer broker but every identity/signing RPC is rejected
-    // with `has_session=true, has_header=false`.
-    set_csrf_cookie(resp, token).await;
 }
 
-async fn set_csrf_cookie(resp: &mut Response<Body>, token: &str) {
-    let csrf = crate::api::rpc::derive_csrf_token(token).await;
+async fn set_csrf_cookie(resp: &mut Response<Body>, token: &str) -> bool {
+    let csrf = match crate::api::rpc::derive_csrf_token(token).await {
+        Ok(csrf) => csrf,
+        Err(error) => {
+            tracing::error!(%error, "App login could not load persistent session signing key");
+            *resp = Response::builder()
+                .status(StatusCode::SERVICE_UNAVAILABLE)
+                .header(header::CACHE_CONTROL, "no-store")
+                .body(Body::from(
+                    "Sign-in temporarily unavailable. Check server session storage.",
+                ))
+                .expect("static error response");
+            return false;
+        }
+    };
     if let Ok(value) =
         header::HeaderValue::from_str(&format!("csrf_token={csrf}; SameSite=Lax; Path=/"))
     {
         resp.headers_mut().append(header::SET_COOKIE, value);
     }
+    true
 }
 
 fn cookie_value(headers: &HeaderMap, name: &str) -> Option<String> {
@@ -1691,7 +1706,7 @@ mod tests {
             .iter()
             .filter_map(|value| value.to_str().ok())
             .collect();
-        let expected_csrf = crate::api::rpc::derive_csrf_token(token).await;
+        let expected_csrf = crate::api::rpc::derive_csrf_token(token).await.unwrap();
         assert!(cookies
             .iter()
             .any(|cookie| cookie.starts_with(&format!("session={token};"))));

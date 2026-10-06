@@ -347,6 +347,16 @@ impl RpcHandler {
 
         // Enforce authentication for non-allowlisted methods
         let is_unauthenticated = UNAUTHENTICATED_METHODS.contains(&rpc_req.method.as_str());
+        if !is_unauthenticated || rpc_req.method.starts_with("auth.") {
+            if let Err(error) = SessionStore::load_or_create_remember_secret().await {
+                tracing::error!(%error, "Persistent session signing key unavailable");
+                return Ok(self.error_response(
+                    503,
+                    "Sign-in temporarily unavailable. Check server session storage.",
+                    StatusCode::SERVICE_UNAVAILABLE,
+                ));
+            }
+        }
         let mut new_session_cookies: Option<(String, String)> = None;
         if !is_unauthenticated {
             let mut authenticated = match &session_token {
@@ -359,7 +369,7 @@ impl RpcHandler {
                 if let Some(remember) = extract_cookie(&parts.headers, "remember") {
                     if crate::session::SessionStore::validate_remember_token(&remember).await {
                         let new_token = self.session_store.create().await;
-                        let new_csrf = derive_csrf_token(&new_token).await;
+                        let new_csrf = derive_csrf_token(&new_token).await?;
                         tracing::info!("Auto-restored session from remember-me token");
                         new_session_cookies = Some((new_token, new_csrf));
                         authenticated = true;
@@ -407,7 +417,7 @@ impl RpcHandler {
                     use hmac::{Hmac, Mac};
                     use sha2::Sha256;
                     type HmacSha256 = Hmac<Sha256>;
-                    let secret = SessionStore::load_or_create_remember_secret().await;
+                    let secret = SessionStore::load_or_create_remember_secret().await?;
                     let mut mac = match HmacSha256::new_from_slice(&secret) {
                         Ok(m) => m,
                         Err(_) => {
@@ -438,7 +448,7 @@ impl RpcHandler {
                 if let Some(token) = &session_token {
                     self.set_csrf_cookie(
                         &mut response,
-                        &derive_csrf_token(token).await,
+                        &derive_csrf_token(token).await?,
                         secure_suffix,
                     );
                 }
@@ -550,7 +560,7 @@ impl RpcHandler {
             client_ip,
             secure_suffix,
         )
-        .await;
+        .await?;
 
         Ok(response)
     }
@@ -602,7 +612,7 @@ impl RpcHandler {
         new_session_cookies: &Option<(String, String)>,
         client_ip: std::net::IpAddr,
         secure_suffix: &str,
-    ) {
+    ) -> Result<()> {
         // Track failed login attempts for rate limiting
         if method == "auth.login" && rpc_resp.error.is_some() {
             self.login_rate_limiter.record_failure(client_ip).await;
@@ -642,7 +652,7 @@ impl RpcHandler {
                 if let Ok(Some(totp_data)) = self.auth_manager.get_totp_data().await {
                     if let Ok(secret) = crate::totp::decrypt_secret(&totp_data, password) {
                         let token = self.session_store.create_pending(secret).await;
-                        let csrf_token = derive_csrf_token(&token).await;
+                        let csrf_token = derive_csrf_token(&token).await?;
                         self.set_session_cookie(response, &token, secure_suffix);
                         self.set_csrf_cookie(response, &csrf_token, secure_suffix);
                         let totp_body = serde_json::json!({
@@ -655,8 +665,8 @@ impl RpcHandler {
                 }
             } else {
                 let token = self.session_store.create().await;
-                let csrf_token = derive_csrf_token(&token).await;
-                let remember_token = self.session_store.create_remember_token().await;
+                let csrf_token = derive_csrf_token(&token).await?;
+                let remember_token = self.session_store.create_remember_token().await?;
                 self.set_session_cookie(response, &token, secure_suffix);
                 self.set_csrf_cookie(response, &csrf_token, secure_suffix);
                 self.set_remember_cookie(response, &remember_token, secure_suffix);
@@ -675,8 +685,8 @@ impl RpcHandler {
                 .map(|s| s.to_string());
 
             if let Some(new_token) = new_token_opt {
-                let csrf_token = derive_csrf_token(&new_token).await;
-                let remember_token = self.session_store.create_remember_token().await;
+                let csrf_token = derive_csrf_token(&new_token).await?;
+                let remember_token = self.session_store.create_remember_token().await?;
                 self.set_session_cookie(response, &new_token, secure_suffix);
                 self.set_csrf_cookie(response, &csrf_token, secure_suffix);
                 self.set_remember_cookie(response, &remember_token, secure_suffix);
@@ -695,7 +705,7 @@ impl RpcHandler {
         if method == "auth.changePassword" && rpc_resp.error.is_none() {
             if let Some(token) = session_token {
                 let new_token = self.session_store.rotate(token).await;
-                let csrf_token = derive_csrf_token(&new_token).await;
+                let csrf_token = derive_csrf_token(&new_token).await?;
                 self.set_session_cookie(response, &new_token, secure_suffix);
                 self.set_csrf_cookie(response, &csrf_token, secure_suffix);
             }
@@ -727,6 +737,7 @@ impl RpcHandler {
             self.set_session_cookie(response, new_session, secure_suffix);
             self.set_csrf_cookie(response, new_csrf, secure_suffix);
         }
+        Ok(())
     }
 
     fn set_session_cookie(
@@ -891,7 +902,7 @@ mod csrf_recovery_tests {
                 .map(|v| v.to_str().unwrap())
                 .collect();
             assert_eq!(cookies.len(), 1);
-            let expected = derive_csrf_token(&token).await;
+            let expected = derive_csrf_token(&token).await.unwrap();
             assert_eq!(
                 cookies[0],
                 format!("csrf_token={expected}; SameSite=Lax; Path=/; Secure")
@@ -906,7 +917,7 @@ mod csrf_recovery_tests {
         assert_eq!(stranger.status(), StatusCode::UNAUTHORIZED);
         assert!(!stranger.headers().contains_key("set-cookie"));
         assert!(!settings.exists());
-        let valid = derive_csrf_token(&token).await;
+        let valid = derive_csrf_token(&token).await.unwrap();
         let response = handler
             .handle(request(&token, Some(&valid), false))
             .await
