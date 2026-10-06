@@ -350,3 +350,13 @@ investigation for this scoped task; earlier hardware deferral is not a pass.
   listener stability, restart/reconnect and meaningful negative cases. Record
   firmware/builds, radios, conditions and results. Simulated or headless checks
   alone do not constitute RF acceptance or a claim of flawless operation.
+
+### MeshCore channel scope clarification
+
+The operator explicitly requires the standard MeshCore public channel(s) used
+by the wider community, not an Archipelago-specific/custom channel. Verify the
+current official default channel identity/key/configuration and interoperability
+with standard MeshCore clients on the selected UK RF plan. Two Archipelago radios
+agreeing with each other on a private/custom channel is not acceptance. Custom
+channel creation/configuration is deferred to later work and must not be added
+as a substitute for repairing the standard public-channel experience.
