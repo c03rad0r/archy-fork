@@ -221,11 +221,10 @@ impl MintClient {
     /// the `(secret, blinding factor, amount)` needed to unblind the mint's
     /// signatures afterwards.
     ///
-    /// Prefers NUT-13 derivation so the resulting proofs are restorable. Falls
-    /// back to random secrets when this wallet has no phrase yet, or when the
-    /// keyset id is one NUT-13 cannot address — a random secret still mints a
-    /// perfectly valid, spendable proof, so refusing here would break the
-    /// wallet to protect a backup that does not exist.
+    /// Uses NUT-13 when the wallet has a recovery source. Derivation or durable
+    /// counter failures stop before sending a mint request; they must not
+    /// silently turn a backed-up wallet into one with unrecoverable outputs.
+    /// Legacy wallets with no seed retain their explicit random-output path.
     async fn blinded_outputs(
         &self,
         keyset_id: &str,
@@ -235,13 +234,14 @@ impl MintClient {
         Vec<(Vec<u8>, secp256k1::SecretKey, u64)>,
     )> {
         let derived = match &self.recovery {
-            Some(source) => match source.next_outputs(keyset_id, amounts.len()).await {
-                Ok(pairs) => Some(pairs),
-                Err(e) => {
-                    warn!("Minting unrecoverable proofs — NUT-13 derivation failed: {e:#}");
-                    None
-                }
-            },
+            Some(source) => Some(
+                source
+                    .next_outputs(keyset_id, amounts.len())
+                    .await
+                    .context(
+                        "Could not prepare recoverable ecash outputs; no mint request was sent",
+                    )?,
+            ),
             None => None,
         };
 
@@ -907,5 +907,58 @@ mod tests {
     fn test_mint_client_url_no_trailing_slash() {
         let client = MintClient::new("http://mint.example.com").unwrap();
         assert_eq!(client.url(), "http://mint.example.com");
+    }
+
+    #[tokio::test]
+    async fn backed_outputs_fail_closed_when_counter_storage_is_damaged() {
+        let directory = tempfile::tempdir().unwrap();
+        let (_, master) = crate::seed::MasterSeed::generate().unwrap();
+        super::super::nut13::establish_from_master(directory.path(), &master)
+            .await
+            .unwrap();
+        let recovery = RecoverySource::load(directory.path())
+            .await
+            .unwrap()
+            .unwrap();
+        let client = MintClient::new("http://127.0.0.1:1")
+            .unwrap()
+            .with_recovery(Some(recovery.clone()));
+        let counter = directory.path().join("wallet/cashu_counters.json");
+        tokio::fs::write(&counter, "").await.unwrap();
+        assert!(client
+            .blinded_outputs("009a1f293253e41e", &[1, 2])
+            .await
+            .is_err());
+        assert!(tokio::fs::read(&counter).await.unwrap().is_empty());
+        tokio::fs::remove_file(&counter).await.unwrap();
+        let (messages, blinding) = client
+            .blinded_outputs("009a1f293253e41e", &[1, 2])
+            .await
+            .unwrap();
+        assert_eq!(messages.len(), 2);
+        for (index, (secret, _, _)) in blinding.iter().enumerate() {
+            assert!(
+                *secret
+                    == recovery
+                        .derive_at("009a1f293253e41e", index as u32)
+                        .unwrap()
+                        .0
+            );
+        }
+        assert!(client
+            .blinded_outputs("01fc0ec0e59cd6fa", &[1])
+            .await
+            .is_err());
+    }
+
+    #[tokio::test]
+    async fn an_explicit_legacy_wallet_without_a_seed_still_prepares_outputs() {
+        let client = MintClient::new("http://127.0.0.1:1").unwrap();
+        let (messages, blinding) = client
+            .blinded_outputs("009a1f293253e41e", &[1, 2])
+            .await
+            .unwrap();
+        assert_eq!(messages.len(), 2);
+        assert_eq!(blinding.len(), 2);
     }
 }

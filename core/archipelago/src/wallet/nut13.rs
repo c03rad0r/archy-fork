@@ -197,8 +197,10 @@ pub fn seed_exists(data_dir: &Path) -> bool {
 /// telling the operator their backup was fine.
 pub async fn load_seed(data_dir: &Path) -> Result<Option<EcashSeed>> {
     let path = seed_path(data_dir);
-    let Ok(content) = fs::read_to_string(&path).await else {
-        return Ok(None);
+    let content = match fs::read_to_string(&path).await {
+        Ok(content) => content,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(error).context("Could not read the existing ecash backup seed"),
     };
     let stored: StoredSeed = serde_json::from_str(&content)
         .with_context(|| format!("The ecash seed file is damaged: {}", path.display()))?;
@@ -400,9 +402,10 @@ pub async fn reserve_counters(data_dir: &Path, keyset_id: &str, count: usize) ->
     let path = data_dir.join(COUNTER_FILE);
 
     let mut state: StoredCounters = match fs::read_to_string(&path).await {
-        Ok(content) if !content.trim().is_empty() => serde_json::from_str(&content)
+        Ok(content) => serde_json::from_str(&content)
             .with_context(|| format!("The ecash counter file is damaged: {}", path.display()))?,
-        _ => StoredCounters::default(),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => StoredCounters::default(),
+        Err(error) => return Err(error).context("Could not read the ecash counter file"),
     };
 
     let start = *state.counters.get(keyset_id).unwrap_or(&0);
@@ -418,11 +421,47 @@ pub async fn reserve_counters(data_dir: &Path, keyset_id: &str, count: usize) ->
     }
     let content =
         serde_json::to_string_pretty(&state).context("Failed to serialize ecash counters")?;
-    fs::write(&path, content)
-        .await
-        .context("Failed to persist ecash counters")?;
+    persist_counters(&path, content.as_bytes()).await?;
 
     Ok(start)
+}
+
+/// Never truncate the active reservation file. A reservation is not usable
+/// until both its replacement file and directory entry have reached storage.
+async fn persist_counters(path: &Path, content: &[u8]) -> Result<()> {
+    use tokio::io::AsyncWriteExt;
+    struct PendingCounterFile(PathBuf);
+    impl Drop for PendingCounterFile {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_file(&self.0);
+        }
+    }
+    let parent = path.parent().context("Counter file has no directory")?;
+    let temporary =
+        PendingCounterFile(parent.join(format!(".cashu-counters-{}.tmp", uuid::Uuid::new_v4())));
+    let mut file = fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .mode(0o600)
+        .open(&temporary.0)
+        .await
+        .context("Could not create the ecash counter reservation")?;
+    file.write_all(content)
+        .await
+        .context("Could not write the ecash counter reservation")?;
+    file.sync_all()
+        .await
+        .context("Could not flush the ecash counter reservation")?;
+    drop(file);
+    fs::rename(&temporary.0, path)
+        .await
+        .context("Could not replace the ecash counter reservation")?;
+    fs::File::open(parent)
+        .await?
+        .sync_all()
+        .await
+        .context("Could not flush the ecash counter directory")?;
+    Ok(())
 }
 
 /// Read the next-unused counter for a keyset without reserving anything.
@@ -463,17 +502,13 @@ impl RecoverySource {
     /// Build a recovery source for this node, or `None` when the wallet has no
     /// seed yet. Callers fall back to random secrets in that case, which is
     /// exactly the pre-NUT-13 behaviour — correct, just not restorable.
-    pub async fn load(data_dir: &Path) -> Option<Self> {
-        match load_seed(data_dir).await {
-            Ok(Some(seed)) => Some(Self {
+    pub async fn load(data_dir: &Path) -> Result<Option<Self>> {
+        match load_seed(data_dir).await? {
+            Some(seed) => Ok(Some(Self {
                 seed,
                 data_dir: data_dir.to_path_buf(),
-            }),
-            Ok(None) => None,
-            Err(e) => {
-                warn!("Ecash wallet seed unusable, minting unrecoverable proofs: {e:#}");
-                None
-            }
+            })),
+            None => Ok(None),
         }
     }
 
@@ -485,6 +520,7 @@ impl RecoverySource {
     ) -> Result<Vec<(Vec<u8>, SecretKey)>> {
         // Fail the derivation *before* burning counters if this keyset id is
         // one NUT-13 cannot address.
+        self.seed.derive_output(keyset_id, 0)?;
         let start = reserve_counters(&self.data_dir, keyset_id, count).await?;
         (0..count)
             .map(|i| self.seed.derive_output(keyset_id, start + i as u32))
@@ -763,8 +799,8 @@ mod tests {
 
         assert!(load_seed(d).await.is_err());
         assert!(
-            RecoverySource::load(d).await.is_none(),
-            "an unusable seed must not be presented as a working one"
+            RecoverySource::load(d).await.is_err(),
+            "an unusable seed must not downgrade to an unbacked wallet"
         );
     }
 
@@ -775,7 +811,10 @@ mod tests {
         let (_, master) = MasterSeed::from_mnemonic_words(TEST_MNEMONIC).unwrap();
         establish_from_master(d, &master).await.unwrap();
 
-        let source = RecoverySource::load(d).await.expect("seed was established");
+        let source = RecoverySource::load(d)
+            .await
+            .unwrap()
+            .expect("seed was established");
         let first = source.next_outputs(V1_KEYSET, 2).await.unwrap();
         let second = source.next_outputs(V1_KEYSET, 2).await.unwrap();
 
@@ -793,5 +832,82 @@ mod tests {
             let (expected, _) = source.derive_at(V1_KEYSET, i as u32).unwrap();
             assert_eq!(secret, &expected);
         }
+    }
+
+    #[tokio::test]
+    async fn missing_seed_is_distinct_from_a_seed_read_failure() {
+        let dir = tempfile::tempdir().unwrap();
+        assert!(RecoverySource::load(dir.path()).await.unwrap().is_none());
+        fs::create_dir_all(seed_path(dir.path())).await.unwrap();
+        assert!(load_seed(dir.path()).await.is_err());
+        assert!(RecoverySource::load(dir.path()).await.is_err());
+        assert!(seed_path(dir.path()).is_dir());
+    }
+
+    #[tokio::test]
+    async fn empty_or_corrupt_counters_never_reset_a_reservation() {
+        let dir = tempfile::tempdir().unwrap();
+        fs::create_dir_all(dir.path().join("wallet")).await.unwrap();
+        let path = dir.path().join(COUNTER_FILE);
+        for damaged in ["", "   ", "{ truncated"] {
+            fs::write(&path, damaged).await.unwrap();
+            assert!(reserve_counters(dir.path(), V1_KEYSET, 1).await.is_err());
+            assert_eq!(fs::read_to_string(&path).await.unwrap(), damaged);
+        }
+        fs::remove_file(&path).await.unwrap();
+        fs::create_dir(&path).await.unwrap();
+        assert!(reserve_counters(dir.path(), V1_KEYSET, 1).await.is_err());
+        assert!(path.is_dir());
+    }
+
+    #[tokio::test]
+    async fn concurrent_counter_reservations_survive_reload_and_leave_no_temporary_files() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut tasks = Vec::new();
+        for _ in 0..24 {
+            let path = dir.path().to_path_buf();
+            tasks.push(tokio::spawn(async move {
+                reserve_counters(&path, V1_KEYSET, 2).await.unwrap()
+            }));
+        }
+        let mut starts = std::collections::HashSet::new();
+        for task in tasks {
+            assert!(starts.insert(task.await.unwrap()));
+        }
+        assert_eq!(counter_for(dir.path(), V1_KEYSET).await, 48);
+        assert_eq!(
+            reserve_counters(dir.path(), V1_KEYSET, 1).await.unwrap(),
+            48
+        );
+        let entries = std::fs::read_dir(dir.path().join("wallet"))
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name())
+            .collect::<Vec<_>>();
+        assert_eq!(
+            entries,
+            vec![std::ffi::OsString::from("cashu_counters.json")]
+        );
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            assert_eq!(
+                std::fs::metadata(dir.path().join(COUNTER_FILE))
+                    .unwrap()
+                    .permissions()
+                    .mode()
+                    & 0o777,
+                0o600
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn invalid_derivation_does_not_reserve_counters() {
+        let dir = tempfile::tempdir().unwrap();
+        let (_, master) = MasterSeed::from_mnemonic_words(TEST_MNEMONIC).unwrap();
+        establish_from_master(dir.path(), &master).await.unwrap();
+        let source = RecoverySource::load(dir.path()).await.unwrap().unwrap();
+        assert!(source.next_outputs("01fc0ec0e59cd6fa", 1).await.is_err());
+        assert!(!dir.path().join(COUNTER_FILE).exists());
     }
 }

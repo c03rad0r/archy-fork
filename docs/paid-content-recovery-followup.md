@@ -76,3 +76,31 @@ ignored tests**. Logs: `/tmp/archy-peer-payment-selection-tests.log` and
 `/tmp/archy-peer-payment-selection-full-tests.log`. Only the required isolated
 runner was used. No live wallet data or real payments were involved. This is
 source/test qualification; production build and deployment are separate.
+
+## Recovery-metadata prerequisite qualified (2026-10-06)
+
+Seed reads now distinguish genuine absence from I/O failure. Loading a damaged
+recovery source returns an error instead of silently enabling random outputs.
+A configured recovery source must reserve/derive outputs successfully before a
+mint request; derivation/counter failures no longer fall back to random secrets.
+Legacy wallets which genuinely have no seed retain their existing output path.
+
+Counter reservations reject empty/corrupt/unreadable existing files rather than
+resetting to zero. Updates use an owner-only sibling temporary file, file flush,
+atomic replacement and directory flush before returning a usable reservation.
+Invalid derivation is rejected before reserving counters. Existing counter
+serialization within the management process is preserved; this is not a claim
+that a new cross-process wallet lock or the purchase journal has been implemented.
+
+Six new regressions cover damaged seed/counter reads, preserved damaged files,
+concurrent reservations/reload/private permissions/temp cleanup, invalid keysets,
+no silent random-output fallback and explicit legacy behavior. Wallet-focused
+isolated result:150passed,0failed,1existing ignored. Full isolated result:
+**1,755passed,0failed,5existing ignored**. Evidence:
+`/tmp/archy-wallet-recovery-prerequisites-tests.log` and
+`/tmp/archy-wallet-recovery-prerequisites-full-tests.log`.
+
+Read-only checks found well-shaped seed/counter JSON on dev and Yaya; no secret
+values were printed and no wallet files were changed by those checks. Production
+build/deployment of this prerequisite remains pending. Durable initial purchase
+intent, mint-operation recovery, seller receipt and refund recovery remain open.

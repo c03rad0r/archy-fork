@@ -831,3 +831,18 @@ payment recovery, timed FIPS playback and complete node-to-node acceptance remai
 open. V4V managed installation still requires the pending node-only catalog
 signature. The running dev/Yaya dashboard/backend builds are unchanged, and no
 additional real payment was made.
+
+Full-suite follow-up: IndeeHub `f2668c0` adds active-rental continuation and
+`920f3b0` repairs the subscription regressions and records final qualification.
+All143backend tests across14suites now pass, with no skipped/failed tests;
+all94frontend tests pass. Both production builds and mobile/desktop library/rental
+browser checks pass. Failed original logs are retained. The disposable database,
+volume and fixture credentials were removed. These remain source/artifact checks;
+no IndeeHub app update was deployed and the full paid-video flow is still open.
+
+Payment-recovery prerequisite under qualification next: preserve errors reading
+an existing Cashu seed/counter, stop random-output fallback when an established
+recovery source fails, and atomically flush counter reservations before use.
+Rust wallet tests are running only through the required isolated test runner.
+No real wallet mutation or additional payment is involved. This prerequisite is
+not a completed purchase journal, seller receipt or initial-payment recovery gate.

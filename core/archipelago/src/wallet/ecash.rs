@@ -426,7 +426,7 @@ pub async fn save_accepted_mints(data_dir: &Path, mints: &AcceptedMints) -> Resu
 /// through here. On a node with no phrase yet the source is absent and the
 /// behaviour is exactly as it was before: valid proofs, no backup.
 async fn mint_client(data_dir: &Path, mint_url: &str) -> Result<MintClient> {
-    Ok(MintClient::new(mint_url)?.with_recovery(RecoverySource::load(data_dir).await))
+    Ok(MintClient::new(mint_url)?.with_recovery(RecoverySource::load(data_dir).await?))
 }
 
 /// Request a mint quote — returns a Lightning invoice to pay.
@@ -1424,7 +1424,7 @@ pub struct RestoreOutcome {
 /// coins or resurrecting spent ones, which matters because the most likely
 /// time to press this button is when something already looks wrong.
 pub async fn restore_from_seed(data_dir: &Path, mint_url: &str) -> Result<RestoreOutcome> {
-    let recovery = RecoverySource::load(data_dir).await.ok_or_else(|| {
+    let recovery = RecoverySource::load(data_dir).await?.ok_or_else(|| {
         anyhow::anyhow!(
             "This wallet has no backup phrase yet, so there is nothing to restore from. \
              Set one up in Settings → Ecash backup phrase."
