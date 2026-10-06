@@ -34,3 +34,21 @@ existing managed container IDs and start times remain unchanged. Retain valid
 orphan cleanup in the normal storage root and distinguish this from a claim
 that all lifecycle failures are solved. No live production orphan is created
 merely to exercise a destructive cleanup test.
+
+## Second cleanup path and deployment repair (2026-10-06)
+
+The isolated fixture survived the scoped Rust reaper but was subsequently killed
+by the independent shell doctor's global conmon scan. Its service journal names
+the fixture supervisor at the termination time. Removed that shell cleanup;
+only the backend's storage- and owner-scoped cleanup remains. The fixture then
+survived a complete scheduled doctor run.
+
+Candidate deployment exposed a separate packaging/startup problem: an older
+runtime script remained inside the frontend payload, which startup promotes into
+`/opt`. The embedded repair then failed with EROFS under `ProtectSystem=strict`.
+The dev box's safe helper was restored; Yaya rollout is held until verification.
+The repair now uses the established host command mechanism, checks executable
+permissions, and runs synchronously after runtime promotion before reconciliation.
+Regression tests cover stale content, missing execute permission, idempotence and
+installation failure. Actual sandboxed service restart remains an acceptance gate;
+unit tests alone do not prove escape from the production mount namespace.

@@ -162,6 +162,12 @@ pub async fn ensure_runtime_assets_ready() {
         Ok(_) => debug!("No OTA runtime payload to synchronize"),
         Err(e) => warn!("Runtime asset bootstrap failed (non-fatal): {:#}", e),
     }
+    // A frontend payload can predate the binary during qualification or rollback.
+    // Replace its doctor before starting reconciliation; direct writes cannot
+    // escape the management service's ProtectSystem filesystem namespace.
+    if let Err(error) = sync_doctor_script().await {
+        warn!("Doctor script synchronization failed: {error:#}");
+    }
     // A binary-only qualification or OTA rollback can precede the matching
     // script payload. Install the exact embedded helper before Quadlet
     // reconciliation can introduce its required ExecStartPre command.
@@ -1355,17 +1361,7 @@ async fn run() -> Result<bool> {
     let mut changed = false;
 
     // 1. Script — lives in the canonical OTA runtime scripts directory.
-    if needs_write(DOCTOR_SH_PATH, DOCTOR_SH).await {
-        fs::write(DOCTOR_SH_PATH, DOCTOR_SH)
-            .await
-            .with_context(|| format!("write {}", DOCTOR_SH_PATH))?;
-        let _ = tokio::process::Command::new("chmod")
-            .args(["+x", DOCTOR_SH_PATH])
-            .status()
-            .await;
-        info!("Updated {}", DOCTOR_SH_PATH);
-        changed = true;
-    }
+    changed |= sync_doctor_script().await?;
 
     // 2. Systemd unit files — /etc is restricted; route through host_sudo.
     let service_changed = write_root_if_needed(DOCTOR_SERVICE_PATH, DOCTOR_SERVICE).await?;
@@ -1390,6 +1386,20 @@ async fn needs_write(path: &str, expected: &str) -> bool {
         Ok(current) => current != expected,
         Err(_) => true,
     }
+}
+
+async fn sync_doctor_script() -> Result<bool> {
+    if !Path::new(DOCTOR_SH_PATH).parent().is_some_and(Path::exists) {
+        return Ok(false);
+    }
+    sync_root_executable(DOCTOR_SH_PATH, DOCTOR_SH).await
+}
+
+async fn sync_root_executable(path: &str, content: &str) -> Result<bool> {
+    let changed = write_root_if_needed(path, content).await?;
+    let status = host_sudo(&["chmod", "755", path]).await?;
+    anyhow::ensure!(status.success(), "doctor chmod failed: {status}");
+    Ok(changed)
 }
 
 /// Write content to a root-owned path via `sudo mv` of a user-owned tmp file.
@@ -1989,6 +1999,38 @@ async fn patch_nginx_conf(path: &str) -> Result<bool> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn executable_sync_replaces_stale_payload_and_repairs_mode_idempotently() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("doctor-test.sh");
+        fs::write(&path, "stale payload").await.unwrap();
+        fs::set_permissions(&path, std::fs::Permissions::from_mode(0o444))
+            .await
+            .unwrap();
+        let path_str = path.to_str().unwrap();
+        assert!(sync_root_executable(path_str, DOCTOR_SH).await.unwrap());
+        assert_eq!(fs::read_to_string(&path).await.unwrap(), DOCTOR_SH);
+        fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644))
+            .await
+            .unwrap();
+        assert!(!sync_root_executable(path_str, DOCTOR_SH).await.unwrap());
+        assert_eq!(
+            fs::metadata(&path).await.unwrap().permissions().mode() & 0o777,
+            0o755
+        );
+    }
+
+    #[tokio::test]
+    async fn executable_sync_reports_unwritable_destination() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("missing-parent/missing-doctor-test.sh");
+        assert!(sync_root_executable(path.to_str().unwrap(), DOCTOR_SH)
+            .await
+            .is_err());
+        assert!(!path.exists());
+    }
 
     #[test]
     fn doctor_service_uses_the_canonical_ota_script_path() {
