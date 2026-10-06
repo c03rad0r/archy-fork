@@ -20,6 +20,8 @@ struct Mint {
     requests: Arc<Mutex<Vec<Value>>>,
     task: tokio::task::JoinHandle<()>,
     failure: Arc<std::sync::atomic::AtomicU16>,
+    lose_swap_reply: Arc<std::sync::atomic::AtomicBool>,
+    restore_reply: Arc<Mutex<Option<Value>>>,
 }
 impl Drop for Mint {
     fn drop(&mut self) {
@@ -55,15 +57,26 @@ impl Mint {
         let failure = Arc::new(std::sync::atomic::AtomicU16::new(failure.unwrap_or(0)));
         let rejection = failure.clone();
         let spent = Arc::new(Mutex::new(std::collections::HashSet::<String>::new()));
+        let issued = Arc::new(Mutex::new(std::collections::HashMap::<String, Value>::new()));
+        let lose_swap_reply = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let lose_reply = lose_swap_reply.clone();
+        let restore_reply = Arc::new(Mutex::new(None::<Value>));
+        let restore_override = restore_reply.clone();
         let service = make_service_fn(move |_| {
             let seen = seen.clone();
             let rejection = rejection.clone();
             let spent = spent.clone();
+            let issued = issued.clone();
+            let lose_reply = lose_reply.clone();
+            let restore_override = restore_override.clone();
             async move {
                 Ok::<_, Infallible>(service_fn(move |req: Request<Body>| {
                     let seen = seen.clone();
                     let rejection = rejection.clone();
                     let spent = spent.clone();
+                    let issued = issued.clone();
+                    let lose_reply = lose_reply.clone();
+                    let restore_override = restore_override.clone();
                     async move {
                         let mut status = 200;
                         let body = match req.uri().path() {
@@ -119,10 +132,46 @@ impl Mint {
                                             .unwrap()
                                             .insert(p["secret"].as_str().unwrap().into());
                                     }
-                                    json!({"signatures":outputs.iter().map(|o| json!({
-                                    "amount":o["amount"],"id":ACTIVE,
-                                    "C_":signed_point(o["B_"].as_str().unwrap().parse().unwrap())
-                                })).collect::<Vec<_>>()})
+                                    let signatures: Vec<_> = outputs.iter().map(|o| {
+                                        let signature = json!({"amount":o["amount"],"id":ACTIVE,
+                                            "C_":signed_point(o["B_"].as_str().unwrap().parse().unwrap())});
+                                        issued.lock().unwrap().insert(o["B_"].as_str().unwrap().into(), signature.clone());
+                                        signature
+                                    }).collect();
+                                    if lose_reply.load(std::sync::atomic::Ordering::SeqCst) {
+                                        status = 500;
+                                        json!({"detail":"Fixture lost the reply after consuming inputs"})
+                                    } else {
+                                        json!({"signatures":signatures})
+                                    }
+                                }
+                            }
+                            "/v1/restore" => {
+                                let body: Value = serde_json::from_slice(
+                                    &hyper::body::to_bytes(req.into_body()).await.unwrap(),
+                                )
+                                .unwrap();
+                                let override_reply = restore_override.lock().unwrap().clone();
+                                if let Some(reply) = override_reply {
+                                    reply
+                                } else {
+                                    let issued = issued.lock().unwrap();
+                                    let mut outputs = Vec::new();
+                                    let mut signatures = Vec::new();
+                                    for output in body["outputs"].as_array().unwrap().iter().rev() {
+                                        if let Some(signature) =
+                                            issued.get(output["B_"].as_str().unwrap())
+                                        {
+                                            let mut echoed = output.clone();
+                                            echoed["B_"] = json!(output["B_"]
+                                                .as_str()
+                                                .unwrap()
+                                                .to_uppercase());
+                                            outputs.push(echoed);
+                                            signatures.push(signature.clone());
+                                        }
+                                    }
+                                    json!({"outputs":outputs,"signatures":signatures})
                                 }
                             }
                             _ => {
@@ -150,6 +199,8 @@ impl Mint {
             requests,
             task,
             failure,
+            lose_swap_reply,
+            restore_reply,
         }
     }
     async fn wallet(&self) -> tempfile::TempDir {
@@ -459,4 +510,109 @@ async fn simultaneous_receipts_and_revenue_writes_preserve_every_payment() {
     assert_eq!(wallet.balance(), 255);
     assert_eq!(wallet.transactions.len(), 24);
     assert_eq!(mint.requests.lock().unwrap().len(), 8);
+}
+
+#[tokio::test]
+async fn prepared_swap_recovers_a_lost_reply_without_a_second_spend() {
+    let mint = Mint::start(0, None).await;
+    let client = MintClient::new(&mint.url).unwrap();
+    let prepared = client
+        .prepare_swap_at_least(&[proof(ACTIVE, 8)], &[4, 4], 4)
+        .await
+        .unwrap();
+    assert!(
+        mint.requests.lock().unwrap().is_empty(),
+        "Preparation must not consume inputs"
+    );
+    assert!(client
+        .restore_prepared_swap(&prepared)
+        .await
+        .unwrap()
+        .is_none());
+    let stored = serde_json::to_vec(&prepared).unwrap();
+    mint.lose_swap_reply
+        .store(true, std::sync::atomic::Ordering::SeqCst);
+    assert!(client.execute_prepared_swap(&prepared).await.is_err());
+    let reconstructed: crate::wallet::mint_client::PreparedSwap =
+        serde_json::from_slice(&stored).unwrap();
+    let restarted = MintClient::new(&mint.url).unwrap();
+    let restored = restarted
+        .restore_prepared_swap(&reconstructed)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(restored.new_proofs.iter().map(|p| p.amount).sum::<u64>(), 8);
+    for proof in &restored.new_proofs {
+        assert_eq!(
+            proof.c,
+            signed_point(bdhke::hash_to_curve(proof.secret.as_bytes()).unwrap())
+        );
+    }
+    assert_eq!(mint.requests.lock().unwrap().len(), 1);
+    assert_eq!(
+        serde_json::to_value(&reconstructed).unwrap(),
+        serde_json::from_slice::<Value>(&stored).unwrap()
+    );
+    assert!(!format!("{:?}", reconstructed).contains(&restored.new_proofs[0].secret));
+}
+
+#[tokio::test]
+async fn damaged_or_wrong_mint_preparation_fails_before_spending() {
+    let mint = Mint::start(0, None).await;
+    let client = MintClient::new(&mint.url).unwrap();
+    let prepared = client
+        .prepare_swap_at_least(&[proof(ACTIVE, 8)], &[4, 4], 4)
+        .await
+        .unwrap();
+    for field in ["mint_url", "outputs", "blinding", "duplicate"] {
+        let mut data = serde_json::to_value(&prepared).unwrap();
+        match field {
+            "mint_url" => data["mint_url"] = json!("https://different.invalid"),
+            "outputs" => data["outputs"][0]["amount"] = json!(2),
+            "duplicate" => {
+                data["outputs"][1] = data["outputs"][0].clone();
+                data["blinding"][1] = data["blinding"][0].clone();
+            }
+            _ => data["blinding"][0]["secret"] = json!([1, 2, 3]),
+        }
+        let corrupted = serde_json::from_value(data).unwrap();
+        assert!(client.execute_prepared_swap(&corrupted).await.is_err());
+    }
+    assert!(mint.requests.lock().unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn incomplete_duplicate_or_unknown_restoration_never_completes_a_swap() {
+    let mint = Mint::start(0, None).await;
+    let client = MintClient::new(&mint.url).unwrap();
+    let prepared = client
+        .prepare_swap_at_least(&[proof(ACTIVE, 8)], &[4, 4], 4)
+        .await
+        .unwrap();
+    let data = serde_json::to_value(&prepared).unwrap();
+    let output = data["outputs"][0].clone();
+    let signature = json!({"amount":4,"id":ACTIVE,
+        "C_":signed_point(output["B_"].as_str().unwrap().parse().unwrap())});
+    let mut unknown = output.clone();
+    unknown["B_"] =
+        json!(PublicKey::from_secret_key(&Secp256k1::new(), &signing_key()).to_string());
+    let second = data["outputs"][1].clone();
+    let second_signature = json!({"amount":4,"id":ACTIVE,
+        "C_":signed_point(second["B_"].as_str().unwrap().parse().unwrap())});
+    let mut wrong_amount = signature.clone();
+    wrong_amount["amount"] = json!(2);
+    let mut wrong_keyset = signature.clone();
+    wrong_keyset["id"] = json!(V2);
+    for reply in [
+        json!({"outputs":[output.clone(),second.clone()],"signatures":[wrong_amount,second_signature.clone()]}),
+        json!({"outputs":[output.clone(),second],"signatures":[wrong_keyset,second_signature]}),
+        json!({"outputs":[output.clone()],"signatures":[signature.clone()]}),
+        json!({"outputs":[output.clone(),output.clone()],"signatures":[signature.clone(),signature.clone()]}),
+        json!({"outputs":[unknown],"signatures":[signature.clone()]}),
+        json!({"outputs":[output],"signatures":[]}),
+    ] {
+        *mint.restore_reply.lock().unwrap() = Some(reply);
+        assert!(client.restore_prepared_swap(&prepared).await.is_err());
+    }
+    assert!(mint.requests.lock().unwrap().is_empty());
 }

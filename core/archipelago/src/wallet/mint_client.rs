@@ -57,6 +57,31 @@ pub struct SwapResult {
     pub new_proofs: Vec<Proof>,
 }
 
+/// Exact private request material to persist before a remote swap. Debug
+/// deliberately omits bearer secrets and blinding factors.
+#[derive(Clone, Serialize, Deserialize)]
+pub struct PreparedSwap {
+    mint_url: String,
+    inputs: Vec<Proof>,
+    keyset: MintKeyset,
+    outputs: Vec<BlindedMessageRequest>,
+    blinding: Vec<PreparedBlinding>,
+}
+#[derive(Clone, Serialize, Deserialize)]
+struct PreparedBlinding {
+    secret: Vec<u8>,
+    factor: [u8; 32],
+    amount: u64,
+}
+impl std::fmt::Debug for PreparedSwap {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("PreparedSwap")
+            .field("input_count", &self.inputs.len())
+            .field("output_count", &self.outputs.len())
+            .finish_non_exhaustive()
+    }
+}
+
 /// Result of a mint operation.
 pub struct MintResult {
     pub proofs: Vec<Proof>,
@@ -537,6 +562,19 @@ impl MintClient {
         target_amounts: &[u64],
         minimum: u64,
     ) -> Result<SwapResult> {
+        let prepared = self
+            .prepare_swap_at_least(inputs, target_amounts, minimum)
+            .await?;
+        self.execute_prepared_swap(&prepared).await
+    }
+
+    /// Read mint metadata and derive outputs, but do not consume any input.
+    pub async fn prepare_swap_at_least(
+        &self,
+        inputs: &[Proof],
+        target_amounts: &[u64],
+        minimum: u64,
+    ) -> Result<PreparedSwap> {
         // V4 tokens carry short keyset IDs. Every swap path (including paid
         // files and streams) must expand these, not only wallet imports.
         let resolved = self.resolve_truncated_keyset_ids(inputs).await?;
@@ -599,13 +637,102 @@ impl MintClient {
         let (blinded_messages, blinding_data) =
             self.blinded_outputs(&keyset.id, target_amounts).await?;
 
+        let prepared = PreparedSwap {
+            mint_url: self.url.clone(),
+            inputs: inputs.to_vec(),
+            keyset,
+            outputs: blinded_messages,
+            blinding: blinding_data
+                .into_iter()
+                .map(|(secret, factor, amount)| PreparedBlinding {
+                    secret,
+                    factor: factor.secret_bytes(),
+                    amount,
+                })
+                .collect(),
+        };
+        self.validate_prepared_swap(&prepared)?;
+        Ok(prepared)
+    }
+
+    fn validate_prepared_swap(&self, prepared: &PreparedSwap) -> Result<()> {
+        anyhow::ensure!(
+            prepared.mint_url == self.url,
+            "Prepared swap belongs to a different mint"
+        );
+        anyhow::ensure!(
+            !prepared.inputs.is_empty()
+                && !prepared.outputs.is_empty()
+                && prepared.outputs.len() == prepared.blinding.len(),
+            "Invalid prepared swap structure"
+        );
+        let commitments: std::collections::HashSet<_> = prepared
+            .outputs
+            .iter()
+            .map(|output| output.b_prime.as_str())
+            .collect();
+        anyhow::ensure!(
+            commitments.len() == prepared.outputs.len(),
+            "Prepared swap contains duplicate outputs"
+        );
+        let input_secrets: std::collections::HashSet<_> = prepared
+            .inputs
+            .iter()
+            .map(|proof| proof.secret.as_str())
+            .collect();
+        anyhow::ensure!(
+            input_secrets.len() == prepared.inputs.len(),
+            "Prepared swap contains duplicate inputs"
+        );
+        anyhow::ensure!(
+            prepared.keyset.unit == "sat",
+            "Prepared swap is not denominated in sats"
+        );
+        let input_total = prepared
+            .inputs
+            .iter()
+            .try_fold(0u64, |sum, proof| sum.checked_add(proof.amount))
+            .context("Prepared input amount overflow")?;
+        let output_total = prepared
+            .outputs
+            .iter()
+            .try_fold(0u64, |sum, output| sum.checked_add(output.amount))
+            .context("Prepared output amount overflow")?;
+        anyhow::ensure!(
+            output_total <= input_total,
+            "Prepared swap output value exceeds its inputs"
+        );
+        for (output, secret) in prepared.outputs.iter().zip(&prepared.blinding) {
+            anyhow::ensure!(
+                output.id == prepared.keyset.id
+                    && output.amount == secret.amount
+                    && output.amount.is_power_of_two(),
+                "Prepared swap output metadata changed"
+            );
+            let factor = secp256k1::SecretKey::from_slice(&secret.factor)
+                .context("Invalid prepared blinding factor")?;
+            let blinded = bdhke::blind_message(&secret.secret, &factor)?;
+            anyhow::ensure!(
+                output.b_prime == hex::encode(blinded.b_prime.serialize()),
+                "Prepared swap output commitment changed"
+            );
+            std::str::from_utf8(&secret.secret).context("Invalid prepared secret encoding")?;
+            prepared.keyset.key_for_amount(output.amount)?;
+        }
+        Ok(())
+    }
+
+    /// Execute only an already prepared request. Callers implementing recovery
+    /// must save it before invoking this method, and retain it on any error.
+    pub async fn execute_prepared_swap(&self, prepared: &PreparedSwap) -> Result<SwapResult> {
+        self.validate_prepared_swap(prepared)?;
         let url = format!("{}/v1/swap", self.url);
         let res = self
             .client
             .post(&url)
             .json(&serde_json::json!({
-                "inputs": inputs,
-                "outputs": blinded_messages,
+                "inputs": prepared.inputs,
+                "outputs": prepared.outputs,
             }))
             .send()
             .await
@@ -625,37 +752,82 @@ impl MintClient {
         )
         .context("Failed to parse swap signatures")?;
 
-        if signatures.len() != blinding_data.len() {
-            anyhow::bail!(
-                "Swap returned {} signatures, expected {}",
-                signatures.len(),
-                blinding_data.len()
+        self.unblind_prepared_swap(prepared, &signatures)
+    }
+
+    fn unblind_prepared_swap(
+        &self,
+        prepared: &PreparedSwap,
+        signatures: &[BlindSignature],
+    ) -> Result<SwapResult> {
+        anyhow::ensure!(
+            signatures.len() == prepared.blinding.len(),
+            "Swap returned an incomplete signature set; preserve the prepared operation"
+        );
+        let mut new_proofs = Vec::with_capacity(signatures.len());
+        for (sig, secret) in signatures.iter().zip(&prepared.blinding) {
+            anyhow::ensure!(
+                sig.amount == secret.amount && sig.id == prepared.keyset.id,
+                "Mint returned a swap signature for an unexpected amount or keyset"
             );
-        }
-
-        let mut new_proofs = Vec::new();
-        for (sig, (secret, r, amount)) in signatures.iter().zip(blinding_data.iter()) {
-            if sig.amount != *amount || sig.id != keyset.id {
-                anyhow::bail!("Mint returned a swap signature for an unexpected amount or keyset");
-            }
-            let c_prime = sig.c_prime_as_pubkey()?;
-            let mint_key = keyset.key_for_amount(*amount)?;
-            let c = bdhke::unblind_signature(&c_prime, r, &mint_key)?;
-
+            let factor = secp256k1::SecretKey::from_slice(&secret.factor)?;
+            let c = bdhke::unblind_signature(
+                &sig.c_prime_as_pubkey()?,
+                &factor,
+                &prepared.keyset.key_for_amount(secret.amount)?,
+            )?;
             new_proofs.push(Proof {
-                amount: *amount,
-                id: keyset.id.clone(),
-                secret: String::from_utf8_lossy(secret).to_string(),
+                amount: secret.amount,
+                id: prepared.keyset.id.clone(),
+                secret: std::str::from_utf8(&secret.secret)?.to_owned(),
                 c: hex::encode(c.serialize()),
             });
         }
-
-        debug!(
-            "Swapped {} inputs for {} new proofs",
-            inputs.len(),
-            new_proofs.len()
-        );
         Ok(SwapResult { new_proofs })
+    }
+
+    /// Recover signatures for the exact persisted outputs after a lost reply.
+    /// No result is not proof of failure; callers must retain the reservation.
+    pub async fn restore_prepared_swap(
+        &self,
+        prepared: &PreparedSwap,
+    ) -> Result<Option<SwapResult>> {
+        self.validate_prepared_swap(prepared)?;
+        let returned = self.restore(&prepared.outputs).await?;
+        if returned.is_empty() {
+            return Ok(None);
+        }
+        let mut by_output = std::collections::HashMap::new();
+        for (commitment, signature) in returned {
+            // Hex case is not part of the curve-point identity.
+            let commitment = hex::encode(
+                commitment
+                    .parse::<secp256k1::PublicKey>()
+                    .context("Mint restored an invalid output commitment")?
+                    .serialize(),
+            );
+            anyhow::ensure!(
+                prepared
+                    .outputs
+                    .iter()
+                    .any(|output| output.b_prime == commitment),
+                "Mint restored an unknown output"
+            );
+            anyhow::ensure!(
+                by_output.insert(commitment, signature).is_none(),
+                "Mint restored duplicate outputs"
+            );
+        }
+        let ordered: Vec<_> = prepared
+            .outputs
+            .iter()
+            .map(|output| {
+                by_output
+                    .remove(&output.b_prime)
+                    .context("Mint restored only part of the prepared swap")
+            })
+            .collect::<Result<_>>()?;
+        Ok(Some(self.unblind_prepared_swap(prepared, &ordered)?))
     }
 
     // ── Check state (NUT-07) ──

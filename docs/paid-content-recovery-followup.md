@@ -170,3 +170,26 @@ prepared outputs, quote/change handling and seller receipts, interrupted-operati
 recovery and complete timed-playback integration. Higher-level Minibits claim and
 purchase flows must pin their network/terms across their entire business operation;
 serializing individual wallet calls alone does not provide that contract.
+
+### Recoverable prepared Cashu swaps
+
+MintClient now separates preparation from execution. Prepared requests contain
+the exact outputs and private unblinding material, can survive serialization, and
+validate their mint, commitments, values and keyset before execution. Debug output
+omits bearer secrets. Recovery uses the original outputs, matches returned curve
+points independently of response ordering/hex case, and rejects partial,
+duplicate, unknown or mismatched signatures. An empty restore response remains
+uncertain; it is never interpreted as permission to spend again.
+
+Real HTTP/curve fixtures simulate a mint consuming inputs and returning500instead
+of its successful response. A reconstructed client recovers the original valid
+proofs without a second swap. Negative tests cover changed preparation and
+malformed recovery. The first run failed an overly strict test comparing JSON
+bytes with unordered map keys; the corrected test compares semantic contents.
+Original log: /tmp/archy-prepared-swap-tests.log. Final complete isolated backend
+suite: **1,767 pass, zero failures, five existing skips**, in
+/tmp/archy-prepared-swap-final-full-tests.log.
+
+This introduces the request/recovery primitive. Existing swap callers still
+execute immediately; durable wallet reservations and the correlated purchase
+journal are not wired yet. No live money, wallet state or app deployment changed.
