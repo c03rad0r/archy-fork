@@ -436,7 +436,9 @@ where
                 }
                 if !authorized {
                     if let Some(hash) = invoice_hash {
-                        if let Some(method) = crate::content_invoice::paid_method_for(data_dir, hash, id).await {
+                        if let Some(method) =
+                            crate::content_invoice::paid_method_for(data_dir, hash, id).await
+                        {
                             authorized = method_accepted(&item.access, method.as_str());
                         }
                     }
@@ -1316,7 +1318,7 @@ mod paid_read_order_tests {
 
     #[tokio::test]
     async fn durable_payment_uses_its_recorded_method_for_seller_acceptance() {
-        use crate::content_invoice::{record_pending_method, mark_paid, PaymentMethod};
+        use crate::content_invoice::{mark_paid, record_pending_method, PaymentMethod};
         for (paid_with, accepted, expected) in [
             (PaymentMethod::Onchain, "onchain", true),
             (PaymentMethod::Onchain, "lightning", false),
@@ -1325,15 +1327,33 @@ mod paid_read_order_tests {
         ] {
             let dir = fixture(b"paid bytes").await;
             let mut catalog = load_catalog(dir.path()).await.unwrap();
-            catalog.items[0].access = AccessControl::Paid { price_sats: 10, accepted: vec![accepted.into()] };
+            catalog.items[0].access = AccessControl::Paid {
+                price_sats: 10,
+                accepted: vec![accepted.into()],
+            };
             save_catalog(dir.path(), &catalog).await.unwrap();
-            record_pending_method(dir.path(), "receipt", "paid", 10, paid_with).await.unwrap();
+            record_pending_method(dir.path(), "receipt", "paid", 10, paid_with)
+                .await
+                .unwrap();
             mark_paid(dir.path(), "receipt").await.unwrap();
-            let result = serve_content_with(dir.path(), "paid", None, Some("receipt"), None, None, false,
+            let result = serve_content_with(
+                dir.path(),
+                "paid",
+                None,
+                Some("receipt"),
+                None,
+                None,
+                false,
                 |path, range, mime| prepare_content(dir.path(), path, range, mime),
-                |_, _| async { panic!("must not redeem another payment") }).await.unwrap();
-            if expected { assert!(matches!(result, ServeResult::Ok(bytes, _) if bytes == b"paid bytes")); }
-            else { assert!(matches!(result, ServeResult::PaymentRequired(10))); }
+                |_, _| async { panic!("must not redeem another payment") },
+            )
+            .await
+            .unwrap();
+            if expected {
+                assert!(matches!(result, ServeResult::Ok(bytes, _) if bytes == b"paid bytes"));
+            } else {
+                assert!(matches!(result, ServeResult::PaymentRequired(10)));
+            }
         }
     }
 
