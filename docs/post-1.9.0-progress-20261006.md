@@ -425,3 +425,11 @@ backend result or the archived dashboard build, and are not deployed. The runnin
 The operator-funded wallets remain untouched in this pass. The private ledger
 retains the 25-sat inclusive test cap and zero spent. Deployment coordination and
 the durable payment recovery gates above remain open.
+
+Qualification follow-up: the atomic endpoint change passed five focused UI tests
+and `vue-tsc --noEmit`. The added old-server rejection case also passed (six UI
+cases total): no fallback to legacy writes, no success event, and the error stays
+visible. A final rerun corrects a missing required prop in that test fixture.
+Authenticated read-only checks confirm both dev and Yaya have at least 25 Cashu
+sats available. No payment, deployment or release occurred. Backend compilation
+for the atomic sharing suite remains in progress; it is not marked passed.
