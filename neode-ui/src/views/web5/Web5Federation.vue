@@ -1,6 +1,6 @@
 <template>
   <!-- Federation Summary -->
-  <div class="glass-card p-6">
+  <div class="glass-card p-6 flex flex-col">
     <div class="flex items-center justify-between mb-4">
       <div class="flex items-center gap-3">
         <div class="flex-shrink-0 w-10 h-10 rounded-lg bg-white/10 flex items-center justify-center">
@@ -72,7 +72,7 @@
       </div>
     </div>
 
-    <div class="web5-card-actions-bottom-grid mt-6 grid-cols-2 gap-3">
+    <div class="web5-card-actions-bottom-grid mt-auto pt-6 grid-cols-2 gap-3">
       <RouterLink to="/dashboard/server/federation" class="mobile-card-action glass-button rounded-lg text-sm font-medium text-white/90 hover:text-white transition-colors no-underline">
         Connect with Nodes
       </RouterLink>

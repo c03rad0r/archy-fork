@@ -360,3 +360,15 @@ with standard MeshCore clients on the selected UK RF plan. Two Archipelago radio
 agreeing with each other on a private/custom channel is not acceptance. Custom
 channel creation/configuration is deferred to later work and must not be added
 as a substitute for repairing the standard public-channel experience.
+
+
+## 16. Web5 card footer alignment
+
+- Keep Monitoring buttons anchored to the bottom of their card when adjacent
+  cards grow, including search/loading/results changes. Apply the same footer
+  behaviour to matching cards without changing the design system or adding
+  unnecessary minimum height.
+- Preserve normal document flow and space between content and actions; avoid
+  absolute positioning that overlaps content. Verify tall neighbours, shrinking
+  results, long labels, keyboard access and mobile/desktop layouts.
+- Record actual browser geometry checks and deployment acceptance separately.

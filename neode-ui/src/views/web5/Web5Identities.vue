@@ -1,6 +1,6 @@
 <template>
   <!-- Identity Management -->
-  <div class="glass-card p-6 identities-card">
+  <div class="glass-card p-6 identities-card flex flex-col">
     <!-- Desktop: side-by-side -->
     <div class="hidden md:flex items-center justify-between mb-4">
       <div class="flex items-center gap-3">
@@ -220,9 +220,11 @@
       </div>
     </div>
 
-    <button @click="showCreateIdentityModal = true" class="web5-card-actions-bottom mt-4 mobile-card-action glass-button rounded-lg text-sm font-medium">
-      Create
-    </button>
+    <div class="mt-auto pt-4">
+      <button @click="showCreateIdentityModal = true" class="web5-card-actions-bottom mobile-card-action glass-button rounded-lg text-sm font-medium">
+        Create
+      </button>
+    </div>
   </div>
 
   <!-- Create Identity Modal -->

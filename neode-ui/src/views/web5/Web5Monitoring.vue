@@ -1,6 +1,6 @@
 <template>
   <!-- System Monitoring Summary -->
-  <div class="glass-card p-6">
+  <div class="glass-card p-6 flex flex-col">
     <div class="flex items-center justify-between mb-4">
       <div class="flex items-center gap-3">
         <div class="flex-shrink-0 w-10 h-10 rounded-lg bg-white/10 flex items-center justify-center">
@@ -65,9 +65,11 @@
       </div>
     </div>
 
-    <RouterLink to="/dashboard/monitoring" class="web5-card-actions-bottom mt-6 mobile-card-action glass-button rounded-lg text-sm font-medium text-white/90 hover:text-white transition-colors shrink-0 no-underline">
-      Details
-    </RouterLink>
+    <div class="mt-auto pt-6">
+      <RouterLink to="/dashboard/monitoring" class="web5-card-actions-bottom mobile-card-action glass-button rounded-lg text-sm font-medium text-white/90 hover:text-white transition-colors shrink-0 no-underline">
+        Details
+      </RouterLink>
+    </div>
   </div>
 </template>
 

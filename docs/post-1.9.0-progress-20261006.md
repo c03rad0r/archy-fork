@@ -205,3 +205,32 @@ Yaya-only catalog is prepared with one Sovereign Music banner and a 90-day
 expiry. No catalog has been signed or installed, and the original Portainer
 stack/data remain unchanged. Signature, managed installation, data migration,
 wrong-node rejection and physical companion acceptance remain open.
+
+
+### Web5 footer alignment and continued qualification
+
+The operator added bottom-aligned Monitoring/card actions to the backlog.
+Monitoring, Federation and Identities now use growing card columns with footer
+space above the actions. No fixed card height or absolute-positioned button is
+introduced. Connected Nodes, Node Visibility and Nostr Relays already use growing
+content or automatic footer margins.
+
+A headless browser with the source candidate and authenticated local backend
+passed all six card/viewport cases (three cards at 390px and 1440px), measuring
+bottom padding while adjacent content expands and shrinks. Seven relevant
+component tests pass. Evidence: `/tmp/archy-card-footer-browser.log` and
+`/tmp/archy-card-footer-unit.log`. These are candidate checks; node deployment
+and operator acceptance remain pending.
+
+The integrated dashboard suite before this footer-only change passed 1,262 tests
+in 158 files, and its production build passed. The isolated backend suite is
+still compiling. A candidate-production V4V browser run passed mobile hidden
+playback, bottom-bar pause/resume, reopen of the same frame and stop. Desktop
+currently times out clicking Close and remains under investigation.
+
+The alternate-port preview correctly failed V4V's dashboard-origin restriction.
+Candidate HTML substituted at the normal origin also needed Chromium's explicit
+local-network permission because synthetic responses lack normal address-space
+metadata. That permission is confined to the isolated loopback test context;
+no app origin policy or live browser settings were weakened. These fixture
+results cannot replace final deployed-node/companion acceptance.
