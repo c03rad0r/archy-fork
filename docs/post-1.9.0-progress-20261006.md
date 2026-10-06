@@ -604,3 +604,34 @@ while real path changes still propagate and cancel prior pending consent.
 29 focused routing/session/signer tests pass; final rebuild/redeployment remains
 pending. The first browser attempt was also missing the signed-in local marker
 and redirected to login; this fixture error was corrected separately.
+
+## Native signer queue and stable app URL deployed
+
+Final dashboard source `cc9f02df` is deployed on **dev and Yaya**. Served UI index
+SHA256 is `2beddd7ea77b9b186031e29ef1a8b5e4184878d0ff1db7e25447a9e9b1406c00`;
+archive SHA256 is
+`a06562613e29e923486871d20dfa2c557369a7ade8f036942eb8eb29295b0e83`.
+Production build/typecheck and the final 29 focused routing/session/signer tests
+pass. Existing backend `9fe2eb98...`, session secret and app container IDs/start
+times stayed unchanged; no management/app restart was performed for this UI fix.
+Both nodes retain a support-directory UI rollback.
+
+Served-dashboard browser fixtures pass at **390 and 1440px on each node**:
+exactly one app iframe load, two concurrent consent requests, ordered individual
+approvals, exactly one response per request and the preserved completion
+presentation. Signing RPCs were intercepted using a qualification-only identity;
+**no real key was used, no event published and no payment made**. These checks
+exercise the actual deployed dashboard, not a replacement dashboard fixture.
+The app iframe/signing backend are isolated fixtures, not actual IndeeHub login
+or physical companion acceptance. Harness:
+`tests/lifecycle/native-signer-concurrency.cjs`.
+
+Evidence: `/tmp/archy-native-signer-stable-{dev,yaya}-deploy.log` and
+`/tmp/archy-native-signer-stable-{dev,yaya}-browser.log`. Earlier failed fixture
+login and duplicate-first-response runs remain retained; final acceptance does
+not erase them. Artifact receipt is updated with both deployments.
+
+Still track the separate legacy `stores/appLauncher.ts` signing handler, which
+has its own consent implementation; this deployment qualifies the AppSession /
+shared bridge path. Do not describe every possible app launcher or the physical
+companion grey-screen report as fully accepted from these checks.
