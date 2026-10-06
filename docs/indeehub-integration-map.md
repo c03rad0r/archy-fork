@@ -40,8 +40,9 @@ private media keys, wallet quotes, tokens or management endpoints.
 
 Creators choose prices and viewing terms. **One sat is an initial test amount,
 not a product-wide price or default.** On October 6 the operator authorized
-node-to-node test spending. The initial self-imposed limit is five sats total,
-including fees, between operator-owned nodes. Record each payment and verify the
+node-to-node test spending. The expanded self-imposed limit is 25 sats total,
+including fees, between operator-owned nodes, after the operator reported topping
+up both nodes and authorized longer tests. Record each payment and verify the
 recipient, settlement, delivery and retry without repayment. No payment has been
 made under this authorization at this checkpoint. No paid AI use is authorized.
 
