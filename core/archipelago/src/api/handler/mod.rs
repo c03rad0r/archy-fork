@@ -591,7 +591,7 @@ impl ApiHandler {
 
             // Lightning-invoice peer-file sale (#46): mint invoice / poll settlement
             (Method::GET, p) if p.starts_with("/content/") && p.ends_with("/invoice") => {
-                self.handle_content_invoice(p).await
+                self.handle_content_invoice(p, &headers).await
             }
             (Method::GET, p) if p.starts_with("/content/") && p.contains("/invoice-status/") => {
                 self.handle_content_invoice_status(p).await
@@ -602,7 +602,7 @@ impl ApiHandler {
                 self.handle_content_onchain_status(p).await
             }
             (Method::GET, p) if p.starts_with("/content/") && p.ends_with("/onchain") => {
-                self.handle_content_onchain(p).await
+                self.handle_content_onchain(p, &headers).await
             }
 
             // Content serving — peers access shared content over Tor (no session auth);
@@ -612,7 +612,7 @@ impl ApiHandler {
             }
 
             // Content catalog — list available content (no session auth, for peers)
-            (Method::GET, "/content") => Self::handle_content_catalog(&self.config).await,
+            (Method::GET, "/content") => self.handle_content_catalog(&headers).await,
 
             // Electrs status — unauthenticated (read-only sync status)
             (Method::GET, "/electrs-status") => Self::handle_electrs_status().await,

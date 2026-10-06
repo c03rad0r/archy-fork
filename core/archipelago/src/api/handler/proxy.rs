@@ -261,6 +261,7 @@ impl ApiHandler {
         if let Some(r) = headers.get("range").and_then(|v| v.to_str().ok()) {
             req = req.header("Range", r.to_string());
         }
+        let req = req.authenticate_content(&self.config.data_dir).await?;
         match req.send_get().await {
             Ok((resp, transport)) => {
                 if resp.status().is_redirection() {

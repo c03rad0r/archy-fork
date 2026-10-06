@@ -40,6 +40,7 @@ mod ceremony;
 mod config;
 mod constants;
 mod container;
+mod content_auth;
 mod content_hash;
 mod content_indeehub;
 mod content_invoice;

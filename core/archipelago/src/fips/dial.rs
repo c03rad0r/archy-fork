@@ -479,6 +479,29 @@ impl<'a> PeerRequest<'a> {
         self
     }
 
+    /// Authenticate peer content without granting trust to a caller-supplied DID.
+    /// Call after setting Range, since the exact range is signed too.
+    pub async fn authenticate_content(mut self, data_dir: &std::path::Path) -> Result<Self> {
+        anyhow::ensure!(
+            self.path == "/content" || self.path.starts_with("/content/"),
+            "Not a content route"
+        );
+        let range = self
+            .headers
+            .iter()
+            .find(|(name, _)| name.eq_ignore_ascii_case("range"))
+            .map(|(_, value)| value.as_str())
+            .unwrap_or("");
+        if let Some(proof) =
+            crate::content_auth::outgoing(data_dir, self.onion_host, self.path, range).await?
+        {
+            self.headers
+                .retain(|(name, _)| !name.eq_ignore_ascii_case(crate::content_auth::HEADER));
+            self.headers.push((crate::content_auth::HEADER, proof));
+        }
+        Ok(self)
+    }
+
     pub fn header(mut self, name: &'a str, value: impl Into<String>) -> Self {
         self.headers.push((name, value.into()));
         self

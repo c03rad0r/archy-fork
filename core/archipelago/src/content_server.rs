@@ -1,7 +1,7 @@
-//! Tor-based content serving with access control.
+//! Peer content serving with access control.
 //!
 //! Serves only explicitly shared content items to authenticated peers.
-//! Content items can be free or ecash-gated (gating implemented later).
+//! Content items can be public, peer-restricted, or gated by verified payment.
 
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
@@ -38,7 +38,7 @@ pub enum Availability {
     /// All connected peers can access.
     #[default]
     AllPeers,
-    /// Only specific peers (by onion address).
+    /// Only specific peers (by verified node DID).
     Specific { peers: Vec<String> },
 }
 
@@ -256,6 +256,28 @@ pub enum ServeResult {
     RangeNotSatisfiable(u64),
 }
 
+/// Shared metadata/payment/bytes visibility gate. `peer_did` must already have
+/// a verified request signature; a header claim alone must never reach here.
+pub fn visible_to(
+    item: &ContentItem,
+    peer_did: Option<&str>,
+    known_peer: bool,
+    owner: bool,
+) -> bool {
+    if matches!(item.availability, Availability::Nobody) {
+        return false;
+    }
+    if owner {
+        return true;
+    }
+    if let Availability::Specific { peers } = &item.availability {
+        if !peer_did.is_some_and(|did| peers.iter().any(|allowed| allowed == did)) {
+            return false;
+        }
+    }
+    !matches!(item.access, AccessControl::PeersOnly) || known_peer
+}
+
 /// Serve a content item by ID with access control and optional range request.
 /// If the content is paid, checks for a valid payment token in the header.
 /// `peer_did` is the DID from the X-Federation-DID header (if present).
@@ -335,22 +357,12 @@ where
         false
     };
 
-    // Check availability
-    if !owner_session {
-        match &item.availability {
-            Availability::Nobody => return Ok(ServeResult::NotFound),
-            Availability::Specific { peers } => {
-                if let Some(did) = peer_did {
-                    if !peers.iter().any(|p| p == did) {
-                        debug!("Content '{}' not available to peer {}", id, did);
-                        return Ok(ServeResult::Forbidden);
-                    }
-                } else {
-                    return Ok(ServeResult::Forbidden);
-                }
-            }
-            Availability::AllPeers => {}
-        }
+    if !visible_to(item, peer_did, is_known_peer, owner_session) {
+        return Ok(if matches!(item.availability, Availability::Nobody) {
+            ServeResult::NotFound
+        } else {
+            ServeResult::Forbidden
+        });
     }
 
     let file_path = content_file_path(data_dir, item);

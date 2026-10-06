@@ -450,6 +450,8 @@ impl RpcHandler {
                 .header("X-Federation-DID", local_did)
                 .timeout(std::time::Duration::from_secs(120))
                 .fips_timeout(std::time::Duration::from_secs(8))
+                .authenticate_content(&self.config.data_dir)
+                .await?
                 .send_get()
                 .await
                 .context("Failed to connect to peer")?;
@@ -540,6 +542,8 @@ impl RpcHandler {
                 // against the UI's 30s deadline — users saw errors, not
                 // fallback.
                 .fips_timeout(std::time::Duration::from_secs(6))
+                .authenticate_content(&self.config.data_dir)
+                .await?
                 .send_get()
                 .await
                 .context("Failed to connect to peer")?;
@@ -710,6 +714,8 @@ impl RpcHandler {
                 .header("X-Payment-Token", token_str.clone())
                 .single_delivery()
                 .timeout(std::time::Duration::from_secs(900))
+                .authenticate_content(&self.config.data_dir)
+                .await?
                 .send_get()
                 .await
             {
@@ -829,6 +835,8 @@ impl RpcHandler {
                 .header("X-Federation-DID", local_did)
                 .timeout(std::time::Duration::from_secs(25))
                 .fips_timeout(std::time::Duration::from_secs(6))
+                .authenticate_content(&self.config.data_dir)
+                .await?
                 .send_get()
                 .await
             {
@@ -893,6 +901,8 @@ impl RpcHandler {
                 .service(crate::settings::transport::PeerService::PeerFiles)
                 .timeout(std::time::Duration::from_secs(15))
                 .fips_timeout(std::time::Duration::from_secs(6))
+                .authenticate_content(&self.config.data_dir)
+                .await?
                 .send_get()
                 .await
             {
@@ -985,6 +995,8 @@ impl RpcHandler {
         .header("X-Federation-DID", local_did)
         .header("X-Invoice-Hash", payment_hash.to_string())
         .timeout(std::time::Duration::from_secs(900))
+        .authenticate_content(&self.config.data_dir)
+        .await?
         .send_get()
         .await
         {
@@ -1083,6 +1095,8 @@ impl RpcHandler {
                 .header("X-Federation-DID", local_did)
                 .timeout(std::time::Duration::from_secs(25))
                 .fips_timeout(std::time::Duration::from_secs(6))
+                .authenticate_content(&self.config.data_dir)
+                .await?
                 .send_get()
                 .await
             {
@@ -1142,6 +1156,8 @@ impl RpcHandler {
                 .service(crate::settings::transport::PeerService::PeerFiles)
                 .timeout(std::time::Duration::from_secs(15))
                 .fips_timeout(std::time::Duration::from_secs(6))
+                .authenticate_content(&self.config.data_dir)
+                .await?
                 .send_get()
                 .await
             {
@@ -1199,6 +1215,8 @@ impl RpcHandler {
         .header("X-Federation-DID", local_did)
         .header("X-Onchain-Address", address.to_string())
         .timeout(std::time::Duration::from_secs(900))
+        .authenticate_content(&self.config.data_dir)
+        .await?
         .send_get()
         .await
         {
@@ -1279,6 +1297,8 @@ impl RpcHandler {
                 .require_fips()
                 .timeout(std::time::Duration::from_secs(30))
                 .fips_timeout(std::time::Duration::from_secs(6))
+                .authenticate_content(&self.config.data_dir)
+                .await?
                 .send_get()
                 .await
                 .context("Failed to connect to peer for preview")?;

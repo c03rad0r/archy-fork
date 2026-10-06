@@ -7,14 +7,48 @@ use hyper::{Response, StatusCode};
 use super::{is_valid_app_id, ApiHandler};
 
 impl ApiHandler {
-    pub(super) async fn handle_content_catalog(config: &Config) -> Result<Response<hyper::Body>> {
-        match content_server::load_catalog(&config.data_dir).await {
+    fn verified_content_peer(
+        &self,
+        path: &str,
+        headers: &hyper::HeaderMap,
+    ) -> Result<Option<String>> {
+        let audience = crate::identity::did_key_from_pubkey_hex(&self.self_pubkey_hex)?;
+        crate::content_auth::incoming(headers, &audience, path, chrono::Utc::now().timestamp())
+    }
+
+    async fn content_access_context(
+        &self,
+        path: &str,
+        headers: &hyper::HeaderMap,
+    ) -> Result<(Option<String>, bool, bool)> {
+        let peer = self.verified_content_peer(path, headers)?;
+        let known = if let Some(did) = &peer {
+            crate::federation::load_nodes(&self.config.data_dir)
+                .await?
+                .iter()
+                .any(|node| &node.did == did)
+        } else {
+            false
+        };
+        let owner = match crate::session::extract_session_cookie(headers) {
+            Some(token) => self.session_store.validate(&token).await,
+            None => false,
+        };
+        Ok((peer, known, owner))
+    }
+
+    pub(super) async fn handle_content_catalog(
+        &self,
+        headers: &hyper::HeaderMap,
+    ) -> Result<Response<hyper::Body>> {
+        let (peer, known, owner) = self.content_access_context("/content", headers).await?;
+        match content_server::load_catalog(&self.config.data_dir).await {
             Ok(catalog) => {
                 // Only expose public metadata for available items
                 let items: Vec<serde_json::Value> = catalog
                     .items
                     .iter()
-                    .filter(|i| !matches!(i.availability, content_server::Availability::Nobody))
+                    .filter(|item| content_server::visible_to(item, peer.as_deref(), known, owner))
                     .map(|i| {
                         serde_json::json!({
                             "id": i.id,
@@ -82,11 +116,18 @@ impl ApiHandler {
                     .map(|s| s.to_string())
             });
 
-        // Extract federation peer DID from X-Federation-DID header
-        let peer_did = headers
-            .get("x-federation-did")
-            .and_then(|v| v.to_str().ok())
-            .map(|s| s.to_string());
+        let peer_did = match self.verified_content_peer(path, headers) {
+            Ok(peer) => peer,
+            Err(_) => {
+                return Ok(build_response(
+                    StatusCode::FORBIDDEN,
+                    "application/json",
+                    hyper::Body::from(
+                        r#"{"error":"Peer authentication failed. Check both nodes are updated and their clocks are correct."}"#,
+                    ),
+                ))
+            }
+        };
 
         // The authenticated local operator never pays for their own node's
         // content: validate the session cookie (same discipline as the model
@@ -249,7 +290,11 @@ impl ApiHandler {
     /// Seller side (#46): mint a Lightning invoice for a paid catalog item so a
     /// buyer can pay from any external wallet. Path: GET /content/{id}/invoice.
     /// Records a pending entitlement keyed by the invoice's payment hash.
-    pub(super) async fn handle_content_invoice(&self, path: &str) -> Result<Response<hyper::Body>> {
+    pub(super) async fn handle_content_invoice(
+        &self,
+        path: &str,
+        headers: &hyper::HeaderMap,
+    ) -> Result<Response<hyper::Body>> {
         let content_id = path
             .strip_prefix("/content/")
             .and_then(|s| s.strip_suffix("/invoice"))
@@ -262,6 +307,7 @@ impl ApiHandler {
             ));
         }
 
+        let (peer, known, owner) = self.content_access_context(path, headers).await?;
         let catalog = content_server::load_catalog(&self.config.data_dir)
             .await
             .unwrap_or_default();
@@ -275,6 +321,13 @@ impl ApiHandler {
                 ))
             }
         };
+        if !content_server::visible_to(item, peer.as_deref(), known, owner) {
+            return Ok(build_response(
+                StatusCode::NOT_FOUND,
+                "text/plain",
+                hyper::Body::from("Content not found"),
+            ));
+        }
         let price_sats = match &item.access {
             content_server::AccessControl::Paid { price_sats, .. } => *price_sats,
             _ => {
@@ -359,7 +412,11 @@ impl ApiHandler {
     /// Seller side (#46): issue a fresh on-chain address for a paid catalog item
     /// so a buyer can pay on-chain. Path: GET /content/{id}/onchain. Records a
     /// pending entitlement keyed by the address; price doubles as expected amount.
-    pub(super) async fn handle_content_onchain(&self, path: &str) -> Result<Response<hyper::Body>> {
+    pub(super) async fn handle_content_onchain(
+        &self,
+        path: &str,
+        headers: &hyper::HeaderMap,
+    ) -> Result<Response<hyper::Body>> {
         let content_id = path
             .strip_prefix("/content/")
             .and_then(|s| s.strip_suffix("/onchain"))
@@ -371,9 +428,17 @@ impl ApiHandler {
                 hyper::Body::from("Invalid content ID"),
             ));
         }
+        let (peer, known, owner) = self.content_access_context(path, headers).await?;
         let catalog = content_server::load_catalog(&self.config.data_dir)
             .await
             .unwrap_or_default();
+        if !content_server::visible_to(item, peer.as_deref(), known, owner) {
+            return Ok(build_response(
+                StatusCode::NOT_FOUND,
+                "text/plain",
+                hyper::Body::from("Content not found"),
+            ));
+        }
         let price_sats = match catalog.items.iter().find(|i| i.id == content_id) {
             Some(i) => match &i.access {
                 content_server::AccessControl::Paid { price_sats, .. } => {
