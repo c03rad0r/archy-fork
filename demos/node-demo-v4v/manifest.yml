@@ -7,7 +7,7 @@ app:
   description: Listen to the original V4V demo catalog and explore sovereign music on this node.
   category: media
   container:
-    image: source.archipelago-foundation.org/lfg2025/v4v-demo:0.6.7-alpha-archy1
+    image: source.archipelago-foundation.org/chaum/v4v-demo:0.6.7-alpha-archy1@sha256:13044ecbeae9eb17bc98cc531ca202db9e9a0db8dc2ce01bb9f8cb789248d020
     generated_secrets:
       - name: node-demo-v4v-session
         kind: hex32

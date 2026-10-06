@@ -82,3 +82,25 @@ origin/nonce rejection, locked controls and removal of metadata after relocking.
 The isolated container reached HTTP health 200, then exposed the management
 reaper's separate-storage ownership bug. Runtime acceptance is blocked on its
 tested deployment; the old V4V image and live Portainer volumes are untouched.
+
+## Registry qualification — 2026-10-06
+
+The node-only manifest now pins the staged image by immutable digest:
+`sha256:13044ecbeae9eb17bc98cc531ca202db9e9a0db8dc2ce01bb9f8cb789248d020`.
+The registry namespace is `chaum/v4v-demo`, where the publisher has package write
+access. This does not publish an app catalog entry.
+
+Anonymous registry access verified the raw manifest digest and raw Docker
+configuration blob. Its configuration digest matches the qualified local image,
+`sha256:cd56bef6ec2c9d5d56b41d370c735fc3b4c12885acb1530be75c79a5dbde923f`.
+The raw blob retains the Node `/healthz` probe, 30-second interval, 3-second
+timeout, 10-second start period and three retries. `skopeo inspect --config`
+normalizes this configuration and omits the Docker Healthcheck field; therefore
+that output alone must not be used to decide whether this image retains it.
+The accepted push explicitly used Docker v2 schema 2 format.
+
+This is registry verification, not managed-install acceptance. Root-signed
+node catalog, copied-data installation, lifecycle checks, physical companion
+checks and final dashboard cold-launch regression remain required. Deployment
+writes to dev and Yaya are paused because another session installed a mining
+candidate on both nodes; reconcile source before replacing either build.
