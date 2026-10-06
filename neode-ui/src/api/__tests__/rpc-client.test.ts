@@ -637,4 +637,20 @@ describe('RPCClient convenience methods', () => {
     await rpcClient.diskCleanup()
     expect(getLastMethod()).toBe('system.disk-cleanup')
   })
+  it.each([
+    [{ status: 'failed', payment_hash: 'a'.repeat(64), failure_reason: 'No route' }, 'failed'],
+    [{ status: 'unknown', payment_hash: 'a'.repeat(64) }, 'pending'],
+    [{ status: 'new-status', payment_hash: 'a'.repeat(64) }, 'pending'],
+    [{ status: '', payment_hash: 'a'.repeat(64) }, 'pending'],
+    [{}, 'pending'],
+    [{ status: 'succeeded', payment_hash: 'a'.repeat(64) }, 'succeeded'],
+    [{ payment_hash: 'a'.repeat(64), amount_sats: 5 }, 'succeeded'],
+  ])('keeps terminal, uncertain and legacy payment states distinct: %j', async (response, expected) => {
+    mockFetch.mockResolvedValueOnce(jsonResponse({ result: response }))
+    const result = await rpcClient.payLightningInvoice({ payment_request: 'ln-test' })
+    expect(result.status).toBe(expected)
+    if (expected === 'failed') expect(result.failure_reason).toBe('No route')
+    expect(mockFetch).toHaveBeenCalledOnce()
+  })
+
 })

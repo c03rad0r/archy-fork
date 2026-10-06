@@ -459,3 +459,91 @@ authenticated seller offer/receipt transport, or serving capability. Scratch
 acceptance/deadline/executor work in `/tmp/archy-purchase-executor-next` is separate
 and is NOT included in these test results. Explicit seller acceptance before
 buyer spending and retained late-settlement eligibility are the next batch.
+
+### New live report: failed Lightning blocks the other payment methods
+
+The 6 October operator test reproduced a distinct payment-choice dead end. Yaya's
+outgoing LND record at 23:23:41 UTC is a 2-sat terminal `FAILED` payment with
+`FAILURE_REASON_INSUFFICIENT_BALANCE`. The old backend turned that state into an
+RPC exception; PeerFiles retained its invoice as unresolved and hid ecash forever.
+The generic frontend Lightning helper also treated unknown returned statuses as
+success. Both source paths now distinguish failed, pending and succeeded.
+
+The frontend keeps the failed attempt's receipt/history, but permits another
+method only after an explicit returned failure or read-only `lnd.paymentstatus`
+confirmation for that saved hash. It supports old deployed backends that throw
+for terminal failures. An existing saved attempt can be checked without asking
+for another invoice or sending another payment. Unknown, unavailable, possibly
+settled and corrupt saved attempts remain blocked from a second payment; delivery
+recovery remains available. This does not cancel the seller's invoice or claim
+that an externally displayed invoice cannot subsequently be paid.
+
+Focused qualification passed 108 tests across PeerFilesLightning and rpc-client:
+`/tmp/archy-payment-switch-ui-tests.log`. Coverage includes returned terminal
+failure, old-backend exceptions, persisted failed-attempt recovery, ambiguous
+status retaining its block, and unknown status never becoming success. The new
+Rust LND status test is awaiting the coordinated combined isolated backend run.
+These changes are not yet claimed deployed or accepted on the three real nodes.
+
+Separate live evidence must remain open: Yaya's 100-sat ecash request to Archi
+Dev Box at 23:25:16 UTC encountered an unavailable FIPS route/connection timeout;
+the existing backend logged reclaim at 23:25:33. Investigation did not initiate
+that reclaim or any payment. Dev's FIPS/backend services and listeners were active,
+but the journals show repeated control-socket/seed/peer connection timeouts.
+Framework access was restored and actual hostname `framework-pt` verified. At
+23:24:58 its seller catalog pruned `Photos/web54321-balanced-2.mp4` because its
+backing file was missing; neither supported source path exists. This is separate
+from the closed historical Framework LND-startup incident. Raw node journals and
+sanitized payment summaries are retained privately under
+`/tmp/archy-payment-switch-incident/` (mode 0600).
+
+Acceptance still requires real-node no-charge checks of failed-Lightning method
+switching, unknown/settled delivery recovery, reconnect and cross-method state,
+seller missing-file/changed-catalog feedback, and FIPS delivery between Yaya,
+Framework and dev. No new real payment, proof mutation, data deletion, or pending
+state reset was performed during this investigation.
+
+Further review separated three remaining cases from that targeted fix. An old
+failed local receipt must not be reused automatically for a newly displayed QR;
+request a fresh seller invoice. Known in-flight Lightning recovery should return
+promptly with retained receipt and a check-later action, instead of locking the
+UI behind a long delivery request. Spending RPCs must use a single network
+attempt: automatic timeout/502 retries of legacy ecash purchase or on-chain send
+can otherwise repeat a mutation. These frontend refinements and two additional
+regressions are prepared; their focused rerun is queued behind backend isolation.
+
+The larger payment-flow followup remains required: persist per-item on-chain
+address/amount before broadcast, preserve txid and uncertain send state on close
+and reload, and resume seller/status/cache lookup rather than issue another send.
+Persist ecash dispatch intent and recover through authoritative backend purchase
+state rather than call a potentially spending legacy endpoint as a status check.
+Unpaid/failed/ambiguous/settled states must stay distinct across method changes;
+externally exposed QR invoices/addresses remain payable until their actual expiry
+or cancellation, and local attempt failure is not evidence of their cancellation.
+Browser storage is supplemental only: server-owned pending lookup must survive
+lost client state and another browser. This cannot be called fully fixed by the
+current Lightning-only recovery improvements.
+
+Current no-payment route check: Yaya's FIPS request to dev's `/health` timed out
+before TCP connection after four seconds; the same FIPS endpoint on dev returns
+200 locally. The target matches dev's live fips0 address, backend is listening,
+and nft accepts TCP 5679 on fips0. Both mesh daemons report connected common peers,
+but no direct link between those two nodes. Further mesh routing diagnosis is
+required; no firewall or daemon state was changed. Framework's live FileBrowser
+bind mounts point to `filebrowser` and `filebrowser-data`; both were searched for
+the stale filename, with no match. The persistent ext4 mount is present and its
+Photos/Videos directories exist. This establishes absence from the current Cloud
+roots, not deletion everywhere or a justification to rebuild any buyer receipt.
+
+The final focused frontend rerun passed **110 tests across two files** in 8.52s
+(`/tmp/archy-payment-switch-ui-tests-final.log`), including the fresh-QR and prompt
+pending-status cases. The combined isolated backend batch passed the LND status
+regression and all purchase-executor tests, but was **not an overall pass**:
+1,821 passed, one failed, five ignored. Its failure is in the separately owned
+FIPS duplicate-identity transport assertion; follow-up is underway. The urgent
+frontend source is frozen for the coordinated production build.
+
+Subsequent read-only route checks by the coordinating agent returned Yaya→dev
+health 200 twice (2.57s and 0.49s total), with no restart or configuration change.
+The earlier four-second connect timeout remains valid evidence of an intermittent
+mesh route problem, not a claim of permanent loss of connectivity.

@@ -396,9 +396,9 @@
                  accepts for this item are offered -->
             <div v-if="payMode === 'choose'" class="space-y-3">
               <button
-                v-if="!lnReceipt && (acceptsMethod(payItem.access, 'ecash') || acceptsMethod(payItem.access, 'fedimint'))"
+                v-if="!hasBlockingLightningReceipt && (acceptsMethod(payItem.access, 'ecash') || acceptsMethod(payItem.access, 'fedimint'))"
                 class="w-full glass-button px-4 py-3 rounded-xl flex items-center justify-start gap-3 text-left"
-                :disabled="ecashPreparing || downloading === payItem.id"
+                :disabled="paymentActionBusy"
                 @click="prepareEcashPay"
               >
                 <svg class="w-6 h-6 text-green-400 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -413,22 +413,22 @@
               <button
                 v-if="acceptsMethod(payItem.access, 'lightning')"
                 class="w-full glass-button px-4 py-3 rounded-xl flex items-center justify-start gap-3 text-left"
-                :disabled="lnPaying"
+                :disabled="paymentActionBusy"
                 @click="payWithLightning"
               >
                 <svg class="w-6 h-6 text-yellow-400 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z" />
                 </svg>
                 <span>
-                  <span class="block text-base text-white">{{ lnPaying ? (lnReceipt ? 'Checking payment…' : 'Paying…') : (lnReceipt ? 'Retry paid download' : 'Pay with my Lightning node') }}</span>
-                  <span class="block text-sm text-white/50">{{ lnReceipt ? 'Uses the saved payment; does not send more sats' : 'Pays the seller’s invoice from your node’s Lightning wallet' }}</span>
+                  <span class="block text-base text-white">{{ lnPaying ? (hasBlockingLightningReceipt ? 'Checking payment…' : 'Paying…') : (hasBlockingLightningReceipt ? 'Check payment / retry download' : 'Pay with my Lightning node') }}</span>
+                  <span class="block text-sm text-white/50">{{ hasBlockingLightningReceipt ? 'Checks the saved attempt; does not send more sats' : 'Pays the seller’s invoice from your node’s Lightning wallet' }}</span>
                 </span>
               </button>
 
               <button
                 v-if="acceptsMethod(payItem.access, 'lightning') || acceptsMethod(payItem.access, 'onchain')"
                 class="w-full glass-button px-4 py-3 rounded-xl flex items-center justify-start gap-3 text-left"
-                :disabled="lnPaying || onchainPaying"
+                :disabled="paymentActionBusy"
                 @click="openQrPay"
               >
                 <svg class="w-6 h-6 text-amber-400 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -443,7 +443,7 @@
               <button
                 v-if="acceptsMethod(payItem.access, 'onchain')"
                 class="w-full glass-button px-4 py-3 rounded-xl flex items-center justify-start gap-3 text-left"
-                :disabled="lnPaying || onchainPaying"
+                :disabled="paymentActionBusy"
                 @click="payOnchain"
               >
                 <svg class="w-6 h-6 text-orange-400 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -845,21 +845,46 @@ const onchainError = ref('')
 const onchainCopied = ref(false)
 const lnPaying = ref(false)
 const lnError = ref('')
-type LightningReceipt = { bolt11: string; payment_hash: string; price_sats: number }
+type LightningReceipt = { bolt11: string; payment_hash: string; price_sats: number; state?: 'pending' | 'succeeded' | 'failed'; failure_reason?: string }
 const lnReceipt = ref<LightningReceipt | null>(null)
+const lnReceiptReadError = ref(false)
+const hasBlockingLightningReceipt = computed(() => lnReceiptReadError.value || Boolean(lnReceipt.value && lnReceipt.value.state !== 'failed'))
+const paymentActionBusy = computed(() => lnPaying.value || onchainPaying.value || ecashPreparing.value || downloading.value !== null)
+function activePaymentMatches(onion: string, id: string) {
+  return payItem.value?.id === id && (props.peerId || currentPeer.value?.onion) === onion
+}
 function receiptKey(onion: string, id: string) { return `peer-file-lightning:${onion}:${id}` }
 function readReceipt(onion: string, id: string): LightningReceipt | null {
   const raw = localStorage.getItem(receiptKey(onion, id))
   if (!raw) return null
   const receipt = JSON.parse(raw) as LightningReceipt
-  if (!receipt.bolt11 || !/^[a-f0-9]{64}$/i.test(receipt.payment_hash)) throw new Error('Saved payment needs recovery. Do not pay again.')
+  if (!receipt.bolt11 || !/^[a-f0-9]{64}$/i.test(receipt.payment_hash) || (receipt.state !== undefined && !['pending', 'succeeded', 'failed'].includes(receipt.state))) throw new Error('Saved payment needs recovery. Do not pay again.')
   return receipt
 }
 function keepReceipt(onion: string, id: string, receipt: LightningReceipt) {
   // Must succeed before handing an invoice to a payer. A failed transfer or
   // navigation must never turn Retry into a second payment.
   localStorage.setItem(receiptKey(onion, id), JSON.stringify(receipt))
-  lnReceipt.value = receipt
+  if (activePaymentMatches(onion, id)) lnReceipt.value = receipt
+}
+function keepFailedLightningAttempt(onion: string, id: string, receipt: LightningReceipt, reason: string) {
+  keepReceipt(onion, id, { ...receipt, state: 'failed', failure_reason: reason })
+  if (activePaymentMatches(onion, id)) lnError.value = `Lightning attempt failed: ${reason}. No sats were sent by this attempt. You can choose another payment method.`
+}
+async function recoverFailedLightningAttempt(onion: string, id: string, receipt: LightningReceipt): Promise<'failed' | 'pending' | 'other'> {
+  // Old backends throw for terminal failures. Only LND's matching payment status
+  // can distinguish that from a lost reply; never infer failure from error text.
+  try {
+    const result = await rpcClient.call<{ status?: string; failure_reason?: string }>({
+      method: 'lnd.paymentstatus', params: { payment_hash: receipt.payment_hash }, timeout: 15000,
+    })
+    if (result?.status === 'failed') {
+      keepFailedLightningAttempt(onion, id, receipt, result.failure_reason || 'Payment failed')
+      return 'failed'
+    }
+    if (result?.status === 'pending' || result?.status === 'in_flight') return 'pending'
+  } catch { /* unavailable/unknown is still recoverable, never permission to pay again */ }
+  return 'other'
 }
 const onchainPaying = ref(false)
 let onchainPollTimer: ReturnType<typeof setTimeout> | null = null
@@ -1113,8 +1138,12 @@ function openPayModal(item: CatalogItem) {
   onchainCopied.value = false
   lnPaying.value = false
   lnError.value = ''
-  try { lnReceipt.value = readReceipt(props.peerId || currentPeer.value?.onion || '', item.id) }
-  catch { lnError.value = 'Saved payment could not be read. Do not pay again.' }
+  lnReceipt.value = null
+  lnReceiptReadError.value = false
+  try {
+    lnReceipt.value = readReceipt(props.peerId || currentPeer.value?.onion || '', item.id)
+    if (lnReceipt.value?.state === 'failed') lnError.value = `Previous Lightning attempt failed: ${lnReceipt.value.failure_reason || 'Payment failed'}. You can choose another method.`
+  } catch { lnReceiptReadError.value = true; lnError.value = 'Saved payment could not be read. Do not pay again.' }
   onchainPaying.value = false
 }
 
@@ -1137,7 +1166,7 @@ function closePayModal() {
  */
 function openQrPay() {
   payMode.value = 'qr'
-  if (lnReceipt.value) { qrTab.value = 'lightning'; void payWithInvoice(); return }
+  if (hasBlockingLightningReceipt.value) { qrTab.value = 'lightning'; void payWithInvoice(); return }
   payMode.value = 'qr'
   invoiceData.value = null
   invoiceQr.value = ''
@@ -1161,7 +1190,7 @@ function openQrPay() {
  * forth doesn't silently stop watching for payment). */
 function selectQrTab(tab: 'onchain' | 'lightning') {
   if (qrTab.value === tab) return
-  if (tab === 'onchain' && lnReceipt.value) {
+  if (tab === 'onchain' && hasBlockingLightningReceipt.value) {
     invoiceError.value = 'A Lightning payment is saved. Recover it before choosing another payment method.'
     return
   }
@@ -1243,7 +1272,8 @@ async function copyOnchain() {
 async function payOnchain() {
   const item = payItem.value
   const onion = props.peerId || currentPeer.value?.onion
-  if (!item || !onion || onchainPaying.value) return
+  if (!item || !onion || paymentActionBusy.value) return
+  if (hasBlockingLightningReceipt.value) { lnError.value = 'Check the saved Lightning attempt before choosing another method.'; return }
 
   onchainPaying.value = true
   lnError.value = ''
@@ -1262,7 +1292,7 @@ async function payOnchain() {
     const send = await rpcClient.call<{ txid?: string; error?: string }>({
       method: 'lnd.sendcoins',
       params: { addr, amount: req.amount_sats },
-      timeout: 60000,
+      timeout: 60000, maxRetries: 1,
     })
     if (!send?.txid) {
       lnError.value = send?.error || 'On-chain send failed (insufficient on-chain balance?).'
@@ -1322,7 +1352,8 @@ function ecashBalanceOf(b: EcashBackend): number {
  */
 async function prepareEcashPay() {
   const item = payItem.value
-  if (!item) return
+  if (!item || paymentActionBusy.value) return
+  if (hasBlockingLightningReceipt.value) { lnError.value = 'Check the saved Lightning attempt before choosing another method.'; return }
   const price = getItemPrice(item.access)
   ecashPreparing.value = true
   purchaseError.value = null
@@ -1397,7 +1428,7 @@ async function confirmEcashPay() {
   const item = payItem.value
   const onion = props.peerId || currentPeer.value?.onion
   const method = ecashPlan.value?.chosen
-  if (!item || !onion || !method || downloading.value) return
+  if (!item || !onion || !method || paymentActionBusy.value || hasBlockingLightningReceipt.value) return
   const price = getItemPrice(item.access)
 
   downloading.value = item.id
@@ -1406,7 +1437,7 @@ async function confirmEcashPay() {
     const result = await rpcClient.call<{ data?: string; owned?: boolean; owned_content_id?: string; error?: string; ecash_backend?: string; mime_type?: string }>({
       method: 'content.download-peer-paid',
       params: { onion, content_id: item.id, price_sats: price, method, filename: item.filename, cache_only: true },
-      timeout: 960000,
+      timeout: 960000, maxRetries: 1,
     })
     if (result?.data !== undefined || result?.owned === true) {
       // The purchase is now cached + owned by this node (backend persisted it).
@@ -1432,7 +1463,8 @@ async function payWithInvoice() {
   invoiceError.value = ''
   invoiceWaiting.value = true
   try {
-    const res = readReceipt(onion, item.id) as (LightningReceipt & { error?: string }) | null || await rpcClient.call<{ bolt11?: string; payment_hash?: string; price_sats?: number; error?: string }>({
+    const saved = readReceipt(onion, item.id)
+    const res = (saved?.state === 'failed' ? null : saved) as (LightningReceipt & { error?: string }) | null || await rpcClient.call<{ bolt11?: string; payment_hash?: string; price_sats?: number; error?: string }>({
       method: 'content.request-invoice',
       params: { onion, content_id: item.id },
       timeout: 45000,
@@ -1443,7 +1475,7 @@ async function payWithInvoice() {
       return
     }
     invoiceData.value = { bolt11: res.bolt11, payment_hash: res.payment_hash, price_sats: res.price_sats ?? getItemPrice(item.access) }
-    keepReceipt(onion, item.id, invoiceData.value)
+    keepReceipt(onion, item.id, { ...invoiceData.value, state: 'pending' })
     try {
       invoiceQr.value = await QRCode.toDataURL(res.bolt11.toUpperCase(), { margin: 1, width: 240 })
     } catch {
@@ -1464,40 +1496,51 @@ async function payWithInvoice() {
 async function payWithLightning() {
   const item = payItem.value
   const onion = props.peerId || currentPeer.value?.onion
-  if (!item || !onion || lnPaying.value) return
+  if (!item || !onion || paymentActionBusy.value || lnReceiptReadError.value) return
   lnPaying.value = true
   lnError.value = ''
+  let inv: LightningReceipt | null = null
   try {
-    let inv = readReceipt(onion, item.id)
-    if (!inv) {
+    inv = readReceipt(onion, item.id)
+    if (inv && inv.state !== 'failed') {
+      const state = await recoverFailedLightningAttempt(onion, item.id, inv)
+      if (state === 'failed') return
+      if (state === 'pending') {
+        if (activePaymentMatches(onion, item.id)) lnError.value = 'Payment is still settling. You can close this window; check this saved attempt later without sending more sats.'
+        return
+      }
+    }
+    if (!inv || inv.state === 'failed') {
       const result = await rpcClient.call<{ bolt11?: string; payment_hash?: string; error?: string }>({
         method: 'content.request-invoice', params: { onion, content_id: item.id }, timeout: 45000,
       })
       if (!result?.bolt11 || !result.payment_hash) throw new Error(result?.error || 'The seller could not create an invoice.')
-      inv = { bolt11: result.bolt11, payment_hash: result.payment_hash, price_sats: getItemPrice(item.access) }
+      inv = { bolt11: result.bolt11, payment_hash: result.payment_hash, price_sats: getItemPrice(item.access), state: 'pending' }
       keepReceipt(onion, item.id, inv)
       const pay = await rpcClient.payLightningInvoice({ payment_request: inv.bolt11 })
       if (pay.status === 'failed') {
-        localStorage.removeItem(receiptKey(onion, item.id)); lnReceipt.value = null
-        lnError.value = `Payment failed: ${pay.failure_reason || 'unknown reason'}`
+        keepFailedLightningAttempt(onion, item.id, inv, pay.failure_reason || 'Payment failed')
         return
       }
-      if (pay.status === 'pending') {
-        lnError.value = 'Payment is still settling. Retry checks this payment without sending more sats.'
+      if (pay.status !== 'succeeded') {
+        if (activePaymentMatches(onion, item.id)) lnError.value = 'Payment is still settling. Retry checks this payment without sending more sats.'
         return
       }
+      inv = { ...inv, state: 'succeeded' }
+      keepReceipt(onion, item.id, inv)
     }
-    lnReceipt.value = inv
     const dl = await rpcClient.call<{ data?: string; owned?: boolean; owned_content_id?: string; mime_type?: string; error?: string }>({
       method: 'content.download-peer-invoice',
       params: { onion, content_id: item.id, payment_hash: inv.payment_hash, filename: item.filename, price_sats: inv.price_sats, cache_only: true },
       timeout: 960000,
     })
+    if (!activePaymentMatches(onion, item.id)) return
     if (dl?.data !== undefined || dl?.owned === true) openPurchased(item, dl.data, dl.mime_type, onion)
     else lnError.value = dl?.error || 'Download unavailable. Retry uses this payment without sending more sats.'
   } catch (e: unknown) {
-    lnError.value = (e instanceof Error ? e.message : 'Payment or download could not be confirmed') + ' Retry checks the saved payment; do not pay again.'
-  } finally { lnPaying.value = false }
+    if (inv && inv.state !== 'failed' && inv.state !== 'succeeded' && await recoverFailedLightningAttempt(onion, item.id, inv) === 'failed') return
+    if (activePaymentMatches(onion, item.id)) lnError.value = (e instanceof Error ? e.message : 'Payment or download could not be confirmed') + ' Retry checks the saved payment; do not pay again.'
+  } finally { if (activePaymentMatches(onion, item.id)) lnPaying.value = false }
 }
 
 function scheduleInvoicePoll() {
