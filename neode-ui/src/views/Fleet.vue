@@ -99,6 +99,7 @@
       </div>
 
       <FleetNodeGrid
+        :now="fleet.now.value"
         :nodes="fleet.nodes.value"
         :sorted-nodes="fleet.sortedNodes.value"
         :sort-by="fleet.sortBy.value"
@@ -133,7 +134,7 @@
 
       <p class="text-xs text-white/30 mt-4 text-center">
         {{ fleet.autoRefresh.value ? 'Auto-refreshing every 60s' : 'Auto-refresh paused' }}
-        &middot; Last updated {{ fleet.lastRefreshed.value ? timeAgo(fleet.lastRefreshed.value) : 'never' }}
+        &middot; Last updated {{ fleet.lastRefreshed.value ? timeAgo(fleet.lastRefreshed.value, fleet.now.value) : 'never' }}
       </p>
     </template>
   </div>

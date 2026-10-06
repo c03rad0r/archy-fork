@@ -32,7 +32,7 @@
           <div class="flex items-center gap-2">
             <span
               class="fleet-status-dot"
-              :class="fleetStatus(node.reported_at) === 'unknown' ? 'bg-white/30' : isOnline(node.reported_at) ? 'fleet-dot-online' : 'fleet-dot-offline'"
+              :class="fleetStatus(node.reported_at, now) === 'unknown' ? 'bg-white/30' : isOnline(node.reported_at, now) ? 'fleet-dot-online' : 'fleet-dot-offline'"
             ></span>
             <span class="text-sm font-semibold text-white truncate">{{ fleetNodeDisplayName(node) }}</span>
           </div>
@@ -84,7 +84,7 @@
         </div>
         <div class="flex flex-wrap gap-x-3 gap-y-1 items-center justify-between text-xs text-white/40 mt-1">
           <span>{{ node.uptime_secs === null ? 'Uptime unavailable' : 'Up ' + formatUptime(node.uptime_secs) }}</span>
-          <span>{{ fleetStatus(node.reported_at) === 'unknown' ? 'Status unknown' : fleetStatus(node.reported_at) === 'stale' ? 'Not reporting · last seen ' + timeAgo(node.reported_at) : 'Seen ' + timeAgo(node.reported_at) }}</span>
+          <span>{{ fleetStatus(node.reported_at, now) === 'unknown' ? 'Status unknown' : fleetStatus(node.reported_at, now) === 'stale' ? 'Not reporting · last seen ' + timeAgo(node.reported_at, now) : 'Seen ' + timeAgo(node.reported_at, now) }}</span>
         </div>
       </div>
     </div>
@@ -98,6 +98,7 @@ import {
 } from './useFleetData'
 
 defineProps<{
+  now?: number
   nodes: FleetNode[]
   sortedNodes: FleetNode[]
   sortBy: SortOption

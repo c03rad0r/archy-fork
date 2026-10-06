@@ -54,8 +54,7 @@ export function formatUptime(secs: number | null): string {
   return `${mins}m`
 }
 
-export function timeAgo(dateStr: string): string {
-  const now = Date.now()
+export function timeAgo(dateStr: string, now = Date.now()): string {
   const then = new Date(dateStr).getTime()
   if (!Number.isFinite(then) || then > now + 60_000) return 'Unknown'
   const diffMs = now - then
@@ -70,22 +69,22 @@ export function timeAgo(dateStr: string): string {
   return `${diffDays}d ago`
 }
 
-export function fleetStatus(reportedAt: string): 'online' | 'stale' | 'unknown' {
-  const age = Date.now() - new Date(reportedAt).getTime()
+export function fleetStatus(reportedAt: string, now = Date.now()): 'online' | 'stale' | 'unknown' {
+  const age = now - new Date(reportedAt).getTime()
   if (!Number.isFinite(age) || age < -60_000) return 'unknown'
   return age < 30 * 60 * 1000 ? 'online' : 'stale'
 }
 
-export function isOnline(reportedAt: string): boolean {
-  return fleetStatus(reportedAt) === 'online'
+export function isOnline(reportedAt: string, now = Date.now()): boolean {
+  return fleetStatus(reportedAt, now) === 'online'
 }
 
 export function formatMetric(value: number | null, digits = 0): string {
   return value === null ? '—' : `${value.toFixed(digits)}%`
 }
 
-export function averageMetric(nodes: FleetNode[], field: 'cpu_pct' | 'mem_pct' | 'disk_pct'): number | null {
-  const values = nodes.filter(n => isOnline(n.reported_at)).map(n => n[field]).filter((v): v is number => v !== null && Number.isFinite(v))
+export function averageMetric(nodes: FleetNode[], field: 'cpu_pct' | 'mem_pct' | 'disk_pct', now = Date.now()): number | null {
+  const values = nodes.filter(n => isOnline(n.reported_at, now)).map(n => n[field]).filter((v): v is number => v !== null && Number.isFinite(v))
   return values.length ? values.reduce((sum, value) => sum + value, 0) / values.length : null
 }
 
@@ -150,21 +149,21 @@ export const SORT_OPTIONS: Array<{ label: string; value: SortOption }> = [
   { label: 'Name', value: 'name' },
 ]
 
-function reportTime(node: FleetNode): number {
-  return fleetStatus(node.reported_at) === 'unknown' ? 0 : new Date(node.reported_at).getTime()
+function reportTime(node: FleetNode, now: number): number {
+  return fleetStatus(node.reported_at, now) === 'unknown' ? 0 : new Date(node.reported_at).getTime()
 }
 
-export function sortFleetNodes(nodes: FleetNode[], sortBy: SortOption): FleetNode[] {
+export function sortFleetNodes(nodes: FleetNode[], sortBy: SortOption, now = Date.now()): FleetNode[] {
   const sorted = [...nodes]
   switch (sortBy) {
     case 'status':
       sorted.sort((a, b) => {
         const rank = { online: 0, unknown: 1, stale: 2 }
-        return rank[fleetStatus(a.reported_at)] - rank[fleetStatus(b.reported_at)]
+        return rank[fleetStatus(a.reported_at, now)] - rank[fleetStatus(b.reported_at, now)]
       })
       break
     case 'last-seen':
-      sorted.sort((a, b) => reportTime(b) - reportTime(a))
+      sorted.sort((a, b) => reportTime(b, now) - reportTime(a, now))
       break
     case 'name':
       sorted.sort((a, b) => fleetNodeDisplayName(a).localeCompare(fleetNodeDisplayName(b)))
@@ -256,6 +255,9 @@ function writeFleetCache(state: FleetCache) {
 // --- Composable ---
 
 export function useFleetData() {
+  const now = ref(Date.now())
+  let clockTimer: ReturnType<typeof setInterval> | null = null
+  let active = true
   const cached = readFleetCache()
   const loading = ref(!(cached.nodes?.length ?? 0))
   const errorMessage = ref('')
@@ -274,28 +276,28 @@ export function useFleetData() {
 
   // --- Computed ---
 
-  const onlineCount = computed(() => nodes.value.filter(n => isOnline(n.reported_at)).length)
-  const offlineCount = computed(() => nodes.value.filter(n => fleetStatus(n.reported_at) === 'stale').length)
-  const unknownCount = computed(() => nodes.value.filter(n => fleetStatus(n.reported_at) === 'unknown').length)
-  const healthyCount = computed(() => nodes.value.filter(n => isOnline(n.reported_at) && n.cpu_pct !== null && n.mem_pct !== null && n.disk_pct !== null && n.recent_alerts.length === 0).length)
+  const onlineCount = computed(() => nodes.value.filter(n => isOnline(n.reported_at, now.value)).length)
+  const offlineCount = computed(() => nodes.value.filter(n => fleetStatus(n.reported_at, now.value) === 'stale').length)
+  const unknownCount = computed(() => nodes.value.filter(n => fleetStatus(n.reported_at, now.value) === 'unknown').length)
+  const healthyCount = computed(() => nodes.value.filter(n => isOnline(n.reported_at, now.value) && n.cpu_pct !== null && n.mem_pct !== null && n.disk_pct !== null && n.recent_alerts.length === 0).length)
 
   const fleetHealthPct = computed(() => {
     if (!nodes.value.length) return 0
     return Math.round((healthyCount.value / nodes.value.length) * 100)
   })
 
-  const avgCpu = computed(() => averageMetric(nodes.value, 'cpu_pct'))
+  const avgCpu = computed(() => averageMetric(nodes.value, 'cpu_pct', now.value))
 
-  const avgMem = computed(() => averageMetric(nodes.value, 'mem_pct'))
+  const avgMem = computed(() => averageMetric(nodes.value, 'mem_pct', now.value))
 
-  const avgDisk = computed(() => averageMetric(nodes.value, 'disk_pct'))
+  const avgDisk = computed(() => averageMetric(nodes.value, 'disk_pct', now.value))
 
   const selectedNode = computed(() => {
     if (!selectedNodeId.value) return null
     return nodes.value.find(n => n.node_id === selectedNodeId.value) ?? null
   })
 
-  const sortedNodes = computed(() => sortFleetNodes(nodes.value, sortBy.value))
+  const sortedNodes = computed(() => sortFleetNodes(nodes.value, sortBy.value, now.value))
 
   const allAppIds = computed(() => {
     const appSet = new Set<string>()
@@ -426,7 +428,7 @@ export function useFleetData() {
 
   function toggleAutoRefresh() {
     autoRefresh.value = !autoRefresh.value
-    if (autoRefresh.value) {
+    if (autoRefresh.value && active) {
       startAutoRefresh()
     } else {
       stopAutoRefresh()
@@ -516,17 +518,24 @@ export function useFleetData() {
   // first, so calling it from both onMounted and onActivated on a fresh
   // KeepAlive-wrapped mount is safe and idempotent.
   function armFleetPoll() {
+    active = true
+    now.value = Date.now()
+    if (clockTimer) clearInterval(clockTimer)
+    clockTimer = setInterval(() => { now.value = Date.now() }, 15_000)
     if (autoRefresh.value) startAutoRefresh()
   }
   function disarmFleetPoll() {
+    active = false
+    if (clockTimer) clearInterval(clockTimer)
+    clockTimer = null
     stopAutoRefresh()
   }
 
   onMounted(async () => {
     updateChartWidth()
     window.addEventListener('resize', updateChartWidth)
-    await refreshAll()
     armFleetPoll()
+    await refreshAll()
   })
 
   onActivated(() => {
@@ -545,7 +554,7 @@ export function useFleetData() {
   return {
     loading, refreshing, errorMessage, nodes, fleetAlerts, alertsLoading,
     selectedNodeId, selectedNode, nodeHistory, nodeHistoryLoading,
-    autoRefresh, lastRefreshed, sortBy, chartWidth,
+    autoRefresh, lastRefreshed, sortBy, chartWidth, now,
     onlineCount, offlineCount, unknownCount, healthyCount, fleetHealthPct,
     avgCpu, avgMem, avgDisk, sortedNodes, allAppIds,
     nodeHistoryLabels, nodeHistoryCpuDatasets, nodeHistoryMemDatasets, nodeHistoryDiskDatasets,

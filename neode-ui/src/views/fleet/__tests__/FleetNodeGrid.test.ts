@@ -25,6 +25,20 @@ describe('fleet unavailable readings', () => {
     expect(wrapper.text()).not.toContain('NaN')
     wrapper.unmount()
   })
+  it('updates last-seen text and status when only the local clock changes', async () => {
+    const start = Date.parse('2026-10-06T12:00:00Z')
+    const nodes = [normalizeFleetNode({ node_id: 'node', reported_at: '2026-10-06T11:30:10Z' })]
+    const wrapper = mount(FleetNodeGrid, {
+      props: { nodes, sortedNodes: nodes, sortBy: 'status', selectedNodeId: null, now: start },
+      global: { mocks: { $ver: (v: string) => v } },
+    })
+    expect(wrapper.text()).toContain('Seen 29m ago')
+    expect(wrapper.find('.fleet-dot-online').exists()).toBe(true)
+    await wrapper.setProps({ now: start + 15_000 })
+    expect(wrapper.text()).toContain('Not reporting · last seen 30m ago')
+    expect(wrapper.find('.fleet-dot-offline').exists()).toBe(true)
+    wrapper.unmount()
+  })
   it('renders empty averages without claiming zero load', () => {
     const wrapper = mount(FleetOverviewCards, {props: {
       nodeCount: 1, onlineCount: 0, offlineCount: 0, unknownCount: 1,
