@@ -24,8 +24,16 @@ type ProviderWindow = Window & {
 
 describe('nostr-provider identity selection', () => {
   let providerWindow: ProviderWindow
+  let listeners: Array<[string, EventListenerOrEventListenerObject, boolean | AddEventListenerOptions | undefined]>
 
   beforeEach(() => {
+    vi.useFakeTimers()
+    listeners = []
+    const add = window.addEventListener.bind(window)
+    vi.spyOn(window, 'addEventListener').mockImplementation((type, listener, options) => {
+      if (listener) listeners.push([type, listener as EventListenerOrEventListenerObject, options])
+      add(type, listener, options)
+    })
     sessionStorage.clear()
     providerWindow = window as ProviderWindow
     delete providerWindow.__archipelagoNostr
@@ -37,6 +45,9 @@ describe('nostr-provider identity selection', () => {
   })
 
   afterEach(() => {
+    for (const [type, listener, options] of listeners) window.removeEventListener(type, listener, options)
+    vi.clearAllTimers()
+    vi.unstubAllGlobals()
     vi.useRealTimers()
     vi.restoreAllMocks()
     Reflect.deleteProperty(document, 'readyState')

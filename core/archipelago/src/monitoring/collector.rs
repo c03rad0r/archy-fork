@@ -13,11 +13,11 @@ pub async fn collect_snapshot() -> Result<MetricSnapshot> {
         read_loadavg(),
     );
 
-    let cpu = cpu.unwrap_or(0.0);
-    let (mem_used, mem_total) = mem.unwrap_or((0, 0));
-    let (disk_used, disk_total) = disk.unwrap_or((0, 0));
-    let (net_rx, net_tx) = net.unwrap_or((0, 0));
-    let (l1, l5, l15) = load.unwrap_or((0.0, 0.0, 0.0));
+    let cpu = cpu?;
+    let (mem_used, mem_total) = mem?;
+    let (disk_used, disk_total) = disk?;
+    let (net_rx, net_tx) = net?;
+    let (l1, l5, l15) = load?;
 
     let system = SystemMetrics {
         cpu_percent: cpu,
@@ -120,10 +120,9 @@ async fn read_disk_usage() -> Result<(u64, u64)> {
     } else {
         "/"
     };
-    let output = tokio::process::Command::new("df")
-        .args(["--block-size=1", "--output=used,size", target])
-        .output()
-        .await
+    let mut command = tokio::process::Command::new("df");
+    command.args(["--block-size=1", "--output=used,size", target]);
+    let output = bounded_output(command, std::time::Duration::from_secs(3)).await
         .context("Failed to run df")?;
 
     if !output.status.success() {
@@ -215,12 +214,23 @@ async fn read_network_totals() -> Result<(u64, u64)> {
     Ok((rx_total, tx_total))
 }
 
+/// A wedged runtime or filesystem must not freeze every monitoring snapshot.
+/// Dropping a timed-out child kills it, so repeated polls cannot leak processes.
+async fn bounded_output(
+    mut command: tokio::process::Command,
+    timeout: std::time::Duration,
+) -> Result<std::process::Output> {
+    command.kill_on_drop(true);
+    tokio::time::timeout(timeout, command.output())
+        .await.context("Metrics subprocess timed out")?
+        .context("Metrics subprocess failed")
+}
+
 /// Get per-container resource stats via `podman stats --no-stream --format json`.
 async fn read_container_stats() -> Result<Vec<ContainerMetrics>> {
-    let output = tokio::process::Command::new("podman")
-        .args(["stats", "--no-stream", "--format", "json"])
-        .output()
-        .await
+    let mut command = tokio::process::Command::new("podman");
+    command.args(["stats", "--no-stream", "--format", "json"]);
+    let output = bounded_output(command, std::time::Duration::from_secs(8)).await
         .context("Failed to run podman stats")?;
 
     if !output.status.success() {
@@ -389,5 +399,37 @@ mod tests {
     fn test_parse_bytes_field_string() {
         let obj = serde_json::json!({"mem": "256MiB"});
         assert_eq!(parse_bytes_field(&obj, "mem"), Some(268435456));
+    }
+}
+
+#[cfg(test)]
+mod subprocess_deadline_tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn a_stalled_metrics_command_is_bounded_and_killed() {
+        let dir = tempfile::tempdir().unwrap();
+        let pid_file = dir.path().join("pid");
+        let mut command = tokio::process::Command::new("sh");
+        command.arg("-c").arg("echo $$ > \"$1\"; exec sleep 30").arg("metrics-test").arg(&pid_file);
+        let start = std::time::Instant::now();
+        let error = bounded_output(command, std::time::Duration::from_millis(500)).await.unwrap_err();
+        assert!(error.to_string().contains("timed out"));
+        assert!(start.elapsed() < std::time::Duration::from_secs(3));
+        let pid = tokio::fs::read_to_string(pid_file).await.unwrap();
+        for _ in 0..40 {
+            if !std::path::Path::new(&format!("/proc/{}", pid.trim())).exists() { return; }
+            tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+        }
+        panic!("Timed-out metrics subprocess was not reaped");
+    }
+
+    #[tokio::test]
+    async fn successful_metrics_output_is_preserved() {
+        let mut command = tokio::process::Command::new("printf");
+        command.arg("metrics-ok");
+        let output = bounded_output(command, std::time::Duration::from_secs(1)).await.unwrap();
+        assert!(output.status.success());
+        assert_eq!(output.stdout, b"metrics-ok");
     }
 }
