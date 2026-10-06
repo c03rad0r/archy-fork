@@ -786,3 +786,48 @@ Artifact receipt: `~/.local/state/archipelago/release-qualification/slow-app-ui-
 Physical Android WebView background/resume and the separate IndeeHub app-image
 update remain open. These results do not imply distributed publishing, payment
 recovery or timed rental playback is complete, and no public release was cut.
+
+## IndeeHub follow-up qualification — afternoon continuation
+
+The private operator report is available as HTML/Markdown/PDF in the local
+Reports directory; the LAN SCP command was provided. Its addendum records these
+source changes without describing them as deployed app updates.
+
+IndeeHub commits through `1c8f21b`:
+
+- `5cc82d2`: verified catalog pagination follows short pages and tied timestamp
+  boundaries; new transactional migration retains publication/rental data and
+  refuses destructive schema rollback. Arbitrary public-relay completeness is
+  still an explicit managed-relay/node-inventory acceptance requirement.
+- `731fc20`: service-worker startup cache excludes the bundled film artwork,
+  reducing generated precache from about77MiB to about1.6MiB. Artifact regression
+  and actual worker installation/offline-shell checks pass. This does not prove
+  the physical companion launch problem is fully resolved.
+- `38fb3c5`: URL response caching is now explicit public opt-in; authenticated,
+  cookie-bearing and identity-bearing requests bypass it and return no-store.
+  Four real HTTP isolation checks pass. No live cross-account exposure test was
+  performed and no such incident is claimed.
+- `1c8f21b`: saved-library pages use stable timestamp/row-ID continuations, preserve
+  PostgreSQL microseconds and user isolation, handle deleted cursors/new records,
+  and follow empty visible pages. Source/unit/database/build/browser checks pass.
+
+At that checkpoint all93frontend tests and73database/policy tests passed,
+plus four separate cache-isolation HTTP tests. Browser source/library tests pass
+at390/1440px. The disposable database, volume and credentials were removed.
+
+The next candidate adds active-rental continuation as well. Its13PostgreSQL
+regressions, full94frontend tests and mobile/desktop library browser checks pass.
+Full backend qualification then exposed three older failing suites: obsolete
+Stripe-method tests, outdated Flash payload fixtures and an auth-controller
+fixture missing guard dependencies. They are being repaired against the current
+contracts; do not report the full backend suite green yet. Modernized regressions
+also reproduced actual Flash renewal null-history and billing-period bugs; those
+source repairs and exact subscription matching are under test.
+
+No IndeeHub app image, production migration, public catalog, OTA or ISO was
+published during this continuation. The frontend preview still uses the fixture
+relay and must not be deployed. Production Backstage/node gateway, durable initial
+payment recovery, timed FIPS playback and complete node-to-node acceptance remain
+open. V4V managed installation still requires the pending node-only catalog
+signature. The running dev/Yaya dashboard/backend builds are unchanged, and no
+additional real payment was made.
