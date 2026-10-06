@@ -83,7 +83,7 @@ const RUNTIME_ASSETS_DIR: &str = "/opt/archipelago/web-ui/archipelago-runtime";
 /// Inserted into every server block of the nginx config that lacks the
 /// `/api/app-catalog` proxy. Kept in sync with the canonical block in
 /// image-recipe/configs/nginx-archipelago.conf.
-const NGINX_APP_CATALOG_BLOCK: &str = "\n    # App Store catalog proxy — backend fetches from configured registries\n    # so the browser doesn't hit CORS/CSP. Without this block nginx falls\n    # through to the SPA index.html and the frontend gets HTML back instead\n    # of JSON.\n    location /api/app-catalog {\n        proxy_pass http://127.0.0.1:5678;\n        proxy_http_version 1.1;\n        proxy_set_header Host $host;\n        proxy_set_header X-Real-IP $remote_addr;\n        proxy_set_header Cookie $http_cookie;\n        proxy_connect_timeout 15s;\n        proxy_read_timeout 30s;\n        proxy_send_timeout 15s;\n        error_page 502 503 = @backend_unavailable;\n        error_page 504 = @backend_timeout;\n    }\n\n";
+const NGINX_APP_CATALOG_BLOCK: &str = "\n    # App Store catalog proxy — backend fetches from configured registries\n    # so the browser doesn't hit CORS/CSP. Without this block nginx falls\n    # through to the SPA index.html and the frontend gets HTML back instead\n    # of JSON.\n    location ~ ^/api/(?:app-catalog|node-app-catalog)$ {\n        proxy_pass http://127.0.0.1:5678;\n        proxy_http_version 1.1;\n        proxy_set_header Host $host;\n        proxy_set_header X-Real-IP $remote_addr;\n        proxy_set_header Cookie $http_cookie;\n        proxy_connect_timeout 15s;\n        proxy_read_timeout 30s;\n        proxy_send_timeout 15s;\n        error_page 502 503 = @backend_unavailable;\n        error_page 504 = @backend_timeout;\n    }\n\n";
 
 const NGINX_SOURCE_PROXY_BLOCK: &str = "    # GitWorkshop follows the dashboard origin so LAN, Tailscale, FIPS, Tor,\n    # hostnames and reverse proxies all use the connection that already works.\n    location /app/archipelago-source/ {\n        proxy_pass http://127.0.0.2:8337/;\n        proxy_http_version 1.1;\n        proxy_set_header Host $http_host;\n        proxy_set_header Cookie $http_cookie;\n        proxy_set_header X-Real-IP $remote_addr;\n        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;\n        proxy_set_header X-Forwarded-Proto $scheme;\n        proxy_set_header X-Forwarded-Prefix /app/archipelago-source;\n        proxy_hide_header X-Frame-Options;\n        add_header X-Frame-Options \"SAMEORIGIN\" always;\n        add_header X-Content-Type-Options \"nosniff\" always;\n        proxy_read_timeout 300s;\n    }\n";
 
@@ -1783,6 +1783,14 @@ fn heal_missing_nostr_signer(content: &str) -> Option<String> {
         .then(|| content.replace(anchor, &format!("{}{}", NGINX_NOSTR_SIGNER_BLOCK, anchor)))
 }
 
+/// Keep both authenticated catalog endpoints on the backend in every vhost.
+fn heal_node_catalog_route(content: &str) -> String {
+    content.replace(
+        "location /api/app-catalog {",
+        "location ~ ^/api/(?:app-catalog|node-app-catalog)$ {",
+    )
+}
+
 async fn patch_nginx_conf(path: &str) -> Result<bool> {
     let content = fs::read_to_string(path)
         .await
@@ -1795,7 +1803,8 @@ async fn patch_nginx_conf(path: &str) -> Result<bool> {
         || content.contains("    location /electrs-status {");
     let missing_app_catalog = content
         .contains("    # DWN endpoints — peer access over Tor (no auth)")
-        && !content.contains("location /api/app-catalog");
+        && !content.contains("location /api/app-catalog")
+        && !content.contains("location ~ ^/api/(?:app-catalog|node-app-catalog)$ {");
     let missing_bitcoin_status = content.contains("    location /electrs-status {")
         && !content.contains("location /bitcoin-status");
     let missing_lnd_proxy = has_lnd_anchor && !content.contains("location /proxy/lnd/");
@@ -1816,7 +1825,9 @@ async fn patch_nginx_conf(path: &str) -> Result<bool> {
     let missing_source_proxy = heal_missing_source_proxy(&content).is_some();
     let missing_source_prefix = heal_source_forwarded_prefix(&content).is_some();
     let missing_nostr_signer = heal_missing_nostr_signer(&content).is_some();
+    let legacy_catalog_route = content.contains("location /api/app-catalog {");
     if !missing_app_catalog
+        && !legacy_catalog_route
         && !missing_bitcoin_status
         && !missing_lnd_proxy
         && !missing_peer_content
@@ -1833,7 +1844,7 @@ async fn patch_nginx_conf(path: &str) -> Result<bool> {
         return Ok(false);
     }
 
-    let mut patched = content.clone();
+    let mut patched = heal_node_catalog_route(&content);
 
     if let Some(p) = heal_stale_web_search_block(&patched) {
         patched = p;
@@ -2012,6 +2023,21 @@ async fn patch_nginx_conf(path: &str) -> Result<bool> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn catalog_routes_upgrade_both_vhosts_without_changing_access_guards() {
+        let old = "server { if ($guard) { return 404; } location /api/app-catalog { proxy_pass http://127.0.0.1:5678; } }\nserver { location /api/app-catalog { proxy_set_header Cookie $http_cookie; } }";
+        let fixed = super::heal_node_catalog_route(old);
+        assert_eq!(fixed.matches("location ~ ^/api/(?:app-catalog|node-app-catalog)$ {").count(), 2);
+        assert!(fixed.contains("if ($guard) { return 404; }"));
+        assert!(fixed.contains("proxy_set_header Cookie $http_cookie;"));
+        assert_eq!(super::heal_node_catalog_route(&fixed), fixed);
+        let route = regex::Regex::new(r"^/api/(?:app-catalog|node-app-catalog)$").unwrap();
+        assert!(route.is_match("/api/node-app-catalog"));
+        assert!(route.is_match("/api/app-catalog"));
+        assert!(!route.is_match("/api/node-app-catalog/extra"));
+        assert!(!route.is_match("/api/unrelated"));
+    }
+
     use super::*;
 
     #[tokio::test]

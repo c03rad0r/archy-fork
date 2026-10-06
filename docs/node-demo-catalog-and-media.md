@@ -1,6 +1,7 @@
 # Node-scoped demo apps and persistent media
 
-Status: implementation under qualification; **not deployed or accepted**.
+Status: managed demo deployed to the authorized node on6October; playback and
+full lifecycle acceptance remain open. This is not a global catalog release.
 
 The V4V demo is restricted to Yaya. The global catalog and other nodes must not
 receive an install button or banner for this prototype. Its manifest lives in
@@ -104,3 +105,61 @@ node catalog, copied-data installation, lifecycle checks, physical companion
 checks and final dashboard cold-launch regression remain required. Deployment
 writes to dev and Yaya are paused because another session installed a mining
 candidate on both nodes; reconcile source before replacing either build.
+
+## Signed managed installation — 6October
+
+The operator signed the prepared node-only catalog. Pinned-root verification
+passed, and canonical payload comparison matched the reviewed unsigned file.
+The signer reordered JSON keys; raw-file reconstruction was not a valid payload
+comparison. Neither catalog contents nor its audience were changed.
+
+A fresh consistent backup preserved the original demo data/media and password
+hash. The unused managed volumes were refreshed and verified byte-for-byte with
+ownership/modes retained. An initial copy attempt found rsync unavailable; the
+copy was completed using the standard library before catalog activation. The
+original demo remains running on its original port with its volumes untouched.
+
+Catalog activation preserved the backend binary, session key and all preexisting
+app container identities/start times. The first public endpoint check exposed
+missing nginx routing: the SPA returned HTML for the node catalog. Both dashboard
+vhosts now route the two exact catalog endpoint names to the authenticated
+backend. The original nginx configuration was backed up and nginx validation and
+reload passed. Source template and upgrade repair are updated; their new backend
+regression run is pending. Public management guards were not modified.
+
+Both HTTP and HTTPS catalog checks return401 without authentication and200 with
+the existing owner session. HTTPS diagnostics ignored the previously documented
+legacy certificate trust problem; ordinary browser trust is not claimed fixed.
+The signed response contains only the node-demo-v4v entry. The initial manual RPC
+omitted required dockerImage and failed before creating the app; the corrected
+normal install request used the exact image from the signed manifest.
+
+The installed app reports running/ui-ready and its container health endpoint
+returns200. A real deployed dashboard browser, with no catalog/package fixtures,
+shows the Sovereign Music listing and launches the retained-password login screen
+at390px with no app-gate screen. The operator login/song check has been requested.
+Managed restart, playback controls, desktop/browser/companion acceptance and
+audience/lifecycle checks remain open until their results are recorded.
+
+Qualification update: normal managed restart returned to running/ui-ready with
+container health200; the original demo remained running. Desktop1440px also
+passes real listing/launch-to-login checks. The full isolated backend suite for
+recovery preflight and catalog route migration passed1,785tests, zero failures,
+five existing skips (`/tmp/archy-node-catalog-route-tests.log`).
+
+### Operator changes and live player regression
+
+The operator now explicitly requests Nostr sign-in and native signer integration
+instead of the alpha password mode. This supersedes the earlier instruction to
+omit native signing for this demo. Preserve cryptographic login and user consent;
+qualify actual platform signer, cancellation, logout, browser and companion flows.
+A newly qualified app image/manifest and node-only catalog signature are required.
+
+The operator reports music continues after closing the deployed app but the native
+bottom player does not appear. Earlier fixture tests do not close this real
+installation regression. Test the actual signed catalog and package state, close,
+controls and reopening the same frame before accepting the repair.
+
+The requested promotion uses the final intro cymatic still as its background,
+with a music/play graphic on the right or the app's For You banner treatment.
+The previously captured login background does not satisfy this updated request.

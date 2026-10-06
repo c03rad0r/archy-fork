@@ -991,13 +991,13 @@ impl MintClient {
         let echoed: Vec<BlindedMessageRequest> = serde_json::from_value(
             body.get("outputs")
                 .cloned()
-                .unwrap_or(serde_json::json!([])),
+                .context("Mint restore response omitted outputs")?,
         )
         .context("Failed to parse restored outputs")?;
         let signatures: Vec<BlindSignature> = serde_json::from_value(
             body.get("signatures")
                 .cloned()
-                .unwrap_or(serde_json::json!([])),
+                .context("Mint restore response omitted signatures")?,
         )
         .context("Failed to parse restored signatures")?;
 

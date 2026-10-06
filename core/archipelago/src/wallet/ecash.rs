@@ -849,10 +849,19 @@ pub async fn send_token_recoverable(
         } else {
             let mut denominations = amount_to_denominations(amount_sats);
             denominations.extend(amount_to_denominations(excess));
-            let prepared = mint_client(data_dir, &binding.mint_url)
-                .await?
+            let client = mint_client(data_dir, &binding.mint_url).await?;
+            let prepared = client
                 .prepare_swap_at_least(&proofs, &denominations, amount_sats)
                 .await?;
+            // Establish recovery support before reserving or spending inputs.
+            // Newly derived outputs must not already exist at the mint.
+            let existing = client.restore_prepared_swap(&prepared).await.map_err(|_| {
+                anyhow::anyhow!("The mint could not verify payment recovery support; no funds spent")
+            })?;
+            anyhow::ensure!(
+                existing.is_none(),
+                "Payment outputs already exist at the mint; no funds spent"
+            );
             Request::Swap(prepared)
         };
         journal.prepare(binding.clone(), request).await?

@@ -718,6 +718,32 @@ async fn journal_recovers_lost_swap_reply_and_commits_change_once() {
 }
 
 #[tokio::test]
+async fn recoverable_send_rejects_broken_recovery_before_reserving_or_spending() {
+    let mint = Mint::start(0, None).await;
+    let root = tempfile::tempdir().unwrap();
+    let mut wallet = WalletState::default();
+    wallet.mint_url = mint.url.clone();
+    wallet.add_proofs(&mint.url, vec![proof(ACTIVE, 8)]);
+    save_wallet(root.path(), &wallet).await.unwrap();
+    *mint.restore_reply.lock().unwrap() = Some(json!({}));
+    let id = uuid::Uuid::new_v4().to_string();
+    let context = "ab".repeat(32);
+    let error = send_token_recoverable(
+        root.path(), &id, EcashNetwork::Mainnet, &mint.url, 4, &context,
+    ).await.unwrap_err();
+    assert!(error.to_string().contains("recovery support"));
+    assert_eq!(load_wallet(root.path()).await.unwrap().balance(), 8);
+    assert!(mint.requests.lock().unwrap().is_empty());
+    // Once the mint responds correctly the same unspent operation can proceed.
+    *mint.restore_reply.lock().unwrap() = None;
+    assert!(send_token_recoverable(
+        root.path(), &id, EcashNetwork::Mainnet, &mint.url, 4, &context,
+    ).await.is_ok());
+    assert_eq!(mint.requests.lock().unwrap().len(), 1);
+    assert_eq!(load_wallet(root.path()).await.unwrap().balance(), 4);
+}
+
+#[tokio::test]
 async fn recoverable_send_reuses_original_operation_after_ambiguous_mint_response() {
     let mint = Mint::start(0, None).await;
     let root = tempfile::tempdir().unwrap();
@@ -916,6 +942,10 @@ async fn seed_restore_matches_points_and_rejects_foreign_or_duplicated_metadata(
     let mut wrong_amount = signature.clone();
     wrong_amount["amount"] = json!(8);
     for response in [
+        json!({}),
+        json!({"outputs":[]}),
+        json!({"signatures":[]}),
+        json!({"outputs":null,"signatures":[]}),
         json!({"outputs":[output.clone(),output.clone()],"signatures":[signature.clone(),signature.clone()]}),
         json!({"outputs":[foreign],"signatures":[signature.clone()]}),
         json!({"outputs":[output.clone()],"signatures":[wrong_keyset]}),

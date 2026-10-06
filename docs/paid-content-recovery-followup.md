@@ -289,3 +289,10 @@ zero failures and five existing skips:
 `/tmp/archy-recoverable-send-executor-final-tests.log`.
 No real payment or deployment was performed. Purchase RPC integration, durable
 seller settlement/receipt recovery and the end-to-end acceptance remain open.
+
+Recovery preflight now rejects malformed or unsupported restore responses before
+reserving or spending inputs, and refuses already-issued newly derived outputs.
+Required restore fields cannot silently default to empty. The malformed-response
+regression verifies unchanged spendable balance/no swap, then successful retry
+when the mint responds correctly. Full isolated1,784passed initially; combined
+catalog-route qualification1,785passed, zero failures/five existing skips.

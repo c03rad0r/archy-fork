@@ -432,6 +432,17 @@ functional/UX review. These are additions to existing groups, not closed work.
   the selected relationship; describe exactly what changed.
 - Anchor removal buttons at card bottoms. Show an immediate per-action spinner,
   prevent duplicate submissions, and show an accurate completion/error toast.
+- Add a bottom-anchored Network map button to the Connected Nodes container,
+  linking directly to the network map screen on desktop and mobile.
+- Include peer and trusted-node counts in the Connected Nodes top summary row,
+  with explicit labels and a compact responsive layout. Derive counts from the
+  authoritative relationship/trust state, update them automatically, and avoid
+  double-counting identities in the overall node total when categories overlap.
+- Lay out these card-footer actions for mobile as well as desktop: maintain
+  bottom alignment within the card, clear labels, comfortable tap targets and
+  consistent spacing. Stack actions when needed instead of squeezing them;
+  prevent clipping, overlap and horizontal overflow. Check narrow phone widths,
+  enlarged text and loading states while preserving the existing design system.
 - Measure and reduce removal latency. Verify whether an authenticated existing
   FIPS connection is preferred; implement that priority where supported, with
   bounded fallback and no weakening of identity or authorization checks.
