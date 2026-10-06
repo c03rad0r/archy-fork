@@ -506,3 +506,44 @@ both directions. Both funded wallets select the same default mint; its three
 advertised sat keysets report zero input fees. Spend ledger remains zero.
 Repeat route checks on the deployed candidate before paid transfers. These
 checks do not close the durable-payment or distributed-IndeeHub requirements.
+
+## Live deployment and paid-file qualification completed October 6
+
+This supersedes the pre-deployment checkpoint above. The optimized candidate
+finished building and was deployed to **dev and Yaya** after the operator cleared
+coordination. Both run backend SHA256
+`9fe2eb984675d6ed6d1eb1d2facd342101988aa6863fc27416865d733ad231b7`;
+served UI entry SHA256 is
+`c192dda713b512acad2aca01458d8e06b64df828a8028ee6e41d0c7b647a9264`.
+Health, saved login, session-secret preservation and unchanged app container IDs
+and start times passed. Each deployment retained a local support-directory
+rollback. Bitcoin, Electrum and wallet apps were not stopped.
+
+- Free FIPS file transfers passed in both directions with exact hashes.
+- Each node bought one 20 MiB fixture from the other for **1 sat** using the
+  explicitly selected Cashu method. Total gross transfer **2 sats; fees 0**.
+  Each seller received the expected sat and each buyer paid exactly once.
+- Complete cached bytes and HTTP range reads matched. Removing each seller's
+  temporary share did not prevent an owned-cache reopen; no further payment.
+- Twenty deliberate cached-download interruptions in total, accompanying seeks,
+  and an additional management-service restart on each node passed. Owned records
+  and cached reads survived, balances stayed unchanged and app containers were
+  not restarted.
+- Live legacy-add policy stayed hidden; an atomically configured paid share
+  required payment on the unpaid path, in both directions, without wallet changes.
+- One initial fixture-cleanup attempt encountered a Files ownership permission
+  error after successful payment/reopen checks. Exact-hash-guarded privileged
+  removal of only the named fixture resolved cleanup, followed by verification.
+  The failed attempt remains in the evidence; it is not counted as a clean run.
+
+Evidence logs: `/tmp/archy-fips-free-qualification.log`,
+`/tmp/archy-fips-paid-qualification.log`,
+`/tmp/archy-fips-paid-qualification-second.log`,
+`/tmp/archy-paid-cache-restart-qualification.log`,
+`/tmp/archy-share-policy-live.log`. The private spend ledger remains cumulative
+with two successful purchases; do not reset it or repay for these tests.
+
+**Still open:** interruption during initial payment/delivery, durable recovery
+before successful response headers, timed IndeeHub rentals, producer receiving
+and full app integration. Cached-download interruption does not test the earlier
+payment boundary. No new release/catalog/app image was published by this work.
