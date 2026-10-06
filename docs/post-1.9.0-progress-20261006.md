@@ -332,3 +332,35 @@ Read-only checks at09:49UTC confirm dev and Yaya Monitoring/federation CPU, memo
 and disk measurements match, with each tested RPC below0.5seconds. Framework
 still returns401 for the saved dashboard session. These are current live-source
 checks, not acceptance of the new undeployed file-streaming candidate.
+
+## Streaming/security continuation — October 6, 10:50 UTC
+
+The later candidate supersedes the checkpoint above; no new deployment or release
+is implied. Source integration preserves the separate mining-launch commits.
+Both-node deployment remains on hold while coordinating that session's writes.
+
+- Full backend at `8ffbf5ff`: **1,738 passed, zero failures, five skips**.
+- Candidate `b8e512fe`: **1,739 passed, one failed, five skips**. The new
+  corrupt-peer-store test exposed federation parsing that silently returned an
+  empty list. `1971aeb3` makes parsing fail explicitly and preserves the source
+  file. Its full rerun is pending; the failed run is not an acceptance pass.
+- Paid seller responses and buyer caches now stream bounded chunks. Anonymous
+  paid-image previews are generated thumbnails; private availability is enforced
+  and peer identity proofs bind the recipient, route, range and time.
+- On-chain cache follow-up `2e761666` uses the same durable local file path and
+  avoids whole-file base64 for current clients. All nine focused payment UI
+  tests pass, including cache playback without another payment. Backend tests
+  for complete and interrupted streamed delivery are pending.
+- Production binary compilation is still for `b8e512fe`, which excludes the
+  corrupt-store correction and on-chain follow-up. Do not deploy it as final.
+- The UI archive at source `6fba95fe` passed 21 viewer/payment tests and production
+  typecheck/build; it excludes the new on-chain UI follow-up.
+
+Remaining payment gates include durable recovery before response headers, seller
+capability/identity binding for on-chain delivery, and crash/ambiguous-settlement
+recovery without a second spend. No additional real payment was made. Source
+and fixture results do not establish live cross-node acceptance.
+
+MeshCore is last in the requested order: the later explicit two-radio request
+reopens that scoped Framework work (standard public channel, UK plan, Heltec V3
+and V4). The older general hardware deferral is not a reason to omit it.
