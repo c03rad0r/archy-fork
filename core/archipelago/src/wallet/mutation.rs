@@ -10,7 +10,7 @@ use tokio::sync::{Mutex, OwnedMutexGuard};
 type Registry = HashMap<PathBuf, Weak<Mutex<()>>>;
 static LOCKS: OnceLock<RegistryMutex<Registry>> = OnceLock::new();
 
-async fn lock_for(data_dir: &Path) -> Result<Arc<Mutex<()>>> {
+async fn canonical_lock(data_dir: &Path) -> Result<(PathBuf, Arc<Mutex<()>>)> {
     tokio::fs::create_dir_all(data_dir)
         .await
         .context("Could not prepare wallet data directory")?;
@@ -23,15 +23,29 @@ async fn lock_for(data_dir: &Path) -> Result<Arc<Mutex<()>>> {
         .map_err(|_| anyhow::anyhow!("Wallet mutation lock registry is unavailable"))?;
     registry.retain(|_, lock| lock.strong_count() > 0);
     if let Some(lock) = registry.get(&canonical).and_then(Weak::upgrade) {
-        return Ok(lock);
+        return Ok((canonical, lock));
     }
     let lock = Arc::new(Mutex::new(()));
-    registry.insert(canonical, Arc::downgrade(&lock));
-    Ok(lock)
+    registry.insert(canonical.clone(), Arc::downgrade(&lock));
+    Ok((canonical, lock))
 }
 
-pub(super) async fn guard(data_dir: &Path) -> Result<OwnedMutexGuard<()>> {
-    Ok(lock_for(data_dir).await?.lock_owned().await)
+pub(super) struct WalletMutation {
+    pub(super) data_dir: PathBuf,
+    _held: OwnedMutexGuard<()>,
+}
+
+pub(super) async fn guard(data_dir: &Path) -> Result<WalletMutation> {
+    let (data_dir, lock) = canonical_lock(data_dir).await?;
+    Ok(WalletMutation {
+        data_dir,
+        _held: lock.lock_owned().await,
+    })
+}
+
+#[cfg(test)]
+async fn lock_for(data_dir: &Path) -> Result<Arc<Mutex<()>>> {
+    Ok(canonical_lock(data_dir).await?.1)
 }
 
 #[cfg(test)]

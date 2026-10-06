@@ -82,6 +82,100 @@ impl std::fmt::Debug for PreparedSwap {
     }
 }
 
+impl PreparedSwap {
+    pub(super) fn validate_for_mint(&self, mint_url: &str) -> Result<()> {
+        anyhow::ensure!(
+            self.mint_url == mint_url,
+            "Prepared swap belongs to a different mint"
+        );
+        anyhow::ensure!(
+            !self.inputs.is_empty()
+                && !self.outputs.is_empty()
+                && self.outputs.len() == self.blinding.len(),
+            "Invalid prepared swap structure"
+        );
+        let commitments: std::collections::HashSet<_> = self
+            .outputs
+            .iter()
+            .map(|output| output.b_prime.as_str())
+            .collect();
+        anyhow::ensure!(
+            commitments.len() == self.outputs.len(),
+            "Prepared swap contains duplicate outputs"
+        );
+        let input_secrets: std::collections::HashSet<_> = self
+            .inputs
+            .iter()
+            .map(|proof| proof.secret.as_str())
+            .collect();
+        anyhow::ensure!(
+            input_secrets.len() == self.inputs.len(),
+            "Prepared swap contains duplicate inputs"
+        );
+        anyhow::ensure!(
+            self.keyset.unit == "sat",
+            "Prepared swap is not denominated in sats"
+        );
+        let input_total = self
+            .inputs
+            .iter()
+            .try_fold(0u64, |sum, proof| sum.checked_add(proof.amount))
+            .context("Prepared input amount overflow")?;
+        let output_total = self
+            .outputs
+            .iter()
+            .try_fold(0u64, |sum, output| sum.checked_add(output.amount))
+            .context("Prepared output amount overflow")?;
+        anyhow::ensure!(
+            output_total <= input_total,
+            "Prepared swap output value exceeds its inputs"
+        );
+        for (output, secret) in self.outputs.iter().zip(&self.blinding) {
+            anyhow::ensure!(
+                output.id == self.keyset.id
+                    && output.amount == secret.amount
+                    && output.amount.is_power_of_two(),
+                "Prepared swap output metadata changed"
+            );
+            let factor = secp256k1::SecretKey::from_slice(&secret.factor)
+                .context("Invalid prepared blinding factor")?;
+            let blinded = bdhke::blind_message(&secret.secret, &factor)?;
+            anyhow::ensure!(
+                output.b_prime == hex::encode(blinded.b_prime.serialize()),
+                "Prepared swap output commitment changed"
+            );
+            std::str::from_utf8(&secret.secret).context("Invalid prepared secret encoding")?;
+            self.keyset.key_for_amount(output.amount)?;
+        }
+        Ok(())
+    }
+
+    pub(super) fn validate_result_proofs(&self, proofs: &[Proof]) -> Result<()> {
+        anyhow::ensure!(
+            proofs.len() == self.blinding.len(),
+            "Payment result has missing or extra proofs"
+        );
+        let mut expected: std::collections::HashMap<_, _> = self
+            .blinding
+            .iter()
+            .map(|output| Ok((std::str::from_utf8(&output.secret)?, output.amount)))
+            .collect::<Result<_>>()?;
+        for proof in proofs {
+            anyhow::ensure!(
+                proof.id == self.keyset.id
+                    && expected.remove(proof.secret.as_str()) == Some(proof.amount),
+                "Payment result does not match prepared outputs"
+            );
+            proof.c_as_pubkey()?;
+        }
+        anyhow::ensure!(
+            expected.is_empty(),
+            "Payment result omitted prepared outputs"
+        );
+        Ok(())
+    }
+}
+
 /// Result of a mint operation.
 pub struct MintResult {
     pub proofs: Vec<Proof>,
@@ -656,70 +750,7 @@ impl MintClient {
     }
 
     fn validate_prepared_swap(&self, prepared: &PreparedSwap) -> Result<()> {
-        anyhow::ensure!(
-            prepared.mint_url == self.url,
-            "Prepared swap belongs to a different mint"
-        );
-        anyhow::ensure!(
-            !prepared.inputs.is_empty()
-                && !prepared.outputs.is_empty()
-                && prepared.outputs.len() == prepared.blinding.len(),
-            "Invalid prepared swap structure"
-        );
-        let commitments: std::collections::HashSet<_> = prepared
-            .outputs
-            .iter()
-            .map(|output| output.b_prime.as_str())
-            .collect();
-        anyhow::ensure!(
-            commitments.len() == prepared.outputs.len(),
-            "Prepared swap contains duplicate outputs"
-        );
-        let input_secrets: std::collections::HashSet<_> = prepared
-            .inputs
-            .iter()
-            .map(|proof| proof.secret.as_str())
-            .collect();
-        anyhow::ensure!(
-            input_secrets.len() == prepared.inputs.len(),
-            "Prepared swap contains duplicate inputs"
-        );
-        anyhow::ensure!(
-            prepared.keyset.unit == "sat",
-            "Prepared swap is not denominated in sats"
-        );
-        let input_total = prepared
-            .inputs
-            .iter()
-            .try_fold(0u64, |sum, proof| sum.checked_add(proof.amount))
-            .context("Prepared input amount overflow")?;
-        let output_total = prepared
-            .outputs
-            .iter()
-            .try_fold(0u64, |sum, output| sum.checked_add(output.amount))
-            .context("Prepared output amount overflow")?;
-        anyhow::ensure!(
-            output_total <= input_total,
-            "Prepared swap output value exceeds its inputs"
-        );
-        for (output, secret) in prepared.outputs.iter().zip(&prepared.blinding) {
-            anyhow::ensure!(
-                output.id == prepared.keyset.id
-                    && output.amount == secret.amount
-                    && output.amount.is_power_of_two(),
-                "Prepared swap output metadata changed"
-            );
-            let factor = secp256k1::SecretKey::from_slice(&secret.factor)
-                .context("Invalid prepared blinding factor")?;
-            let blinded = bdhke::blind_message(&secret.secret, &factor)?;
-            anyhow::ensure!(
-                output.b_prime == hex::encode(blinded.b_prime.serialize()),
-                "Prepared swap output commitment changed"
-            );
-            std::str::from_utf8(&secret.secret).context("Invalid prepared secret encoding")?;
-            prepared.keyset.key_for_amount(output.amount)?;
-        }
-        Ok(())
+        prepared.validate_for_mint(&self.url)
     }
 
     /// Execute only an already prepared request. Callers implementing recovery

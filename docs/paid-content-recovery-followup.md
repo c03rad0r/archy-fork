@@ -193,3 +193,34 @@ suite: **1,767 pass, zero failures, five existing skips**, in
 This introduces the request/recovery primitive. Existing swap callers still
 execute immediately; durable wallet reservations and the correlated purchase
 journal are not wired yet. No live money, wallet state or app deployment changed.
+
+### Operation journal qualification in progress
+
+A separate private write-ahead store now records immutable operation ID, network,
+mint, amount and purchase-context hash alongside the exact request material.
+Records advance from prepared to saved result to committed; they cannot skip the
+saved-result boundary. Retries retain the original request, changed terms are
+rejected, and damaged/unsupported/oversized records block a fresh operation.
+Files use0600, the journal directory0700, atomic replacement and file/directory
+flushes. A wallet mutation guard scopes writes to the canonical node directory.
+The checksum detects accidental corruption; it is not authorization against a
+process able to edit the node's private state.
+
+The initial full isolated run passed1,773tests with zero failures and five existing
+skips (`/tmp/archy-send-journal-full-tests.log`). Review subsequently added explicit
+sat-unit validation and a negative regression. The final full isolated run also
+passed1,773tests, zero failures and five existing skips
+(`/tmp/archy-send-journal-final-tests.log`).
+This storage module is not yet connected to wallet reservation/commit or paid-file
+purchase/receipt handling and has not been deployed. Do not infer complete
+payment recovery from the storage tests.
+
+The next integration must reserve selected inputs with an operation owner before
+any remote request, recover the exact prepared outputs, and commit change/history
+once. A restored result must match all outputs; absence is not proof of failure.
+An input-state response must account for every requested proof without foreign or
+duplicate entries. Pending/spent/unknown states must never authorize a new payment.
+See the current [NUT-07](https://github.com/cashubtc/nuts/blob/main/07.md) and
+[NUT-09](https://github.com/cashubtc/nuts/blob/main/09.md) specifications. Wallet
+integration still needs crash-boundary fixtures, followed by purchase-context and
+seller-receipt integration before any new paid-content acceptance claim.
