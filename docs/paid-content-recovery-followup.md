@@ -132,3 +132,13 @@ revenue writes; a load/save outside the operation lock can overwrite another
 mutation. Current empty-wallet-file handling, file permissions and directory
 fsync require review as part of durable storage. Counter fail-closed tests do
 not establish that this larger transaction journal has been implemented.
+
+### Wallet storage durability follow-up
+
+Existing empty/whitespace wallet files now fail closed instead of reporting zero;
+only a missing file creates fresh state. Atomic saves use unique0600 temporary
+files, file and directory fsync, and cleanup on failure. Concurrency tests prove
+whole-file replacement (not read-modify-write serialization), private permissions
+and retained targets on rename failure. Wallet tests:57passed. Full backend
+qualification passes in `/tmp/archy-wallet-storage-tls-full-tests.log`. No live
+wallet was altered. Operation serialization and recovery journal remain open.

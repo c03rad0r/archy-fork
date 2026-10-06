@@ -302,36 +302,27 @@ struct NetworkConfig {
 pub async fn load_wallet(data_dir: &Path) -> Result<WalletState> {
     let network = load_network(data_dir).await;
     let path = data_dir.join(network.wallet_file());
-    if !path.exists() {
-        return Ok(WalletState {
-            mint_url: network.default_mint(),
-            ..Default::default()
-        });
-    }
-    let content = fs::read_to_string(&path)
-        .await
-        .context("Failed to read wallet file")?;
-
-    // An empty file is a legitimate "nothing here yet" (a create that never
-    // got its first write); anything else that fails to parse is a damaged
-    // purse and must NOT be read as an empty one.
-    //
-    // This used to be `unwrap_or_default()`, which turned a truncated file
-    // into a zero balance — and because the very next operation saves the
-    // wallet back, that empty state was then written over the only copy of
-    // the proofs. Failing here keeps the damaged file intact so the coins
-    // can still be recovered from it (or from a backup) by hand.
-    let mut wallet: WalletState = if content.trim().is_empty() {
-        WalletState::default()
-    } else {
-        serde_json::from_str(&content).with_context(|| {
-            format!(
-                "Ecash wallet file {} is damaged and was NOT overwritten — your coins are \
-                 still in it. Restore it from a backup, or move it aside to start empty.",
-                path.display()
-            )
-        })?
+    let content = match fs::read_to_string(&path).await {
+        Ok(content) => content,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            return Ok(WalletState {
+                mint_url: network.default_mint(),
+                ..Default::default()
+            });
+        }
+        Err(error) => return Err(error).context("Failed to read wallet file"),
     };
+
+    // An existing empty file is indistinguishable from a truncated purse.
+    // Only absence represents a fresh wallet; never turn damaged data into
+    // a successful zero balance that a later operation could overwrite.
+    let mut wallet: WalletState = serde_json::from_str(&content).with_context(|| {
+        format!(
+            "Ecash wallet file {} is damaged and was NOT overwritten. \
+             Recover it from a backup before continuing.",
+            path.display()
+        )
+    })?;
 
     // Set default mint URL if empty
     if wallet.mint_url.is_empty() {
@@ -349,19 +340,38 @@ pub async fn load_wallet(data_dir: &Path) -> Result<WalletState> {
 /// previous plain write truncated the real file first, which is precisely how
 /// a wallet ends up unparseable.
 async fn write_file_atomically(path: &Path, content: &str) -> Result<()> {
-    let tmp = path.with_extension("json.tmp");
-    let mut f = fs::File::create(&tmp)
-        .await
-        .with_context(|| format!("Failed to create {}", tmp.display()))?;
     use tokio::io::AsyncWriteExt;
-    f.write_all(content.as_bytes())
+    struct TemporaryFile(std::path::PathBuf);
+    impl Drop for TemporaryFile {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_file(&self.0);
+        }
+    }
+    let parent = path.parent().context("Wallet file has no directory")?;
+    let tmp = TemporaryFile(parent.join(format!(".ecash-{}.tmp", uuid::Uuid::new_v4())));
+    let mut options = fs::OpenOptions::new();
+    options.write(true).create_new(true);
+    #[cfg(unix)]
+    options.mode(0o600);
+    let mut file = options
+        .open(&tmp.0)
+        .await
+        .context("Failed to create wallet temp file")?;
+    file.write_all(content.as_bytes())
         .await
         .context("Failed to write wallet temp file")?;
-    f.sync_all().await.context("Failed to flush wallet file")?;
-    drop(f);
-    fs::rename(&tmp, path)
+    file.sync_all()
         .await
-        .with_context(|| format!("Failed to replace {}", path.display()))?;
+        .context("Failed to flush wallet file")?;
+    drop(file);
+    fs::rename(&tmp.0, path)
+        .await
+        .context("Failed to replace wallet file")?;
+    fs::File::open(parent)
+        .await?
+        .sync_all()
+        .await
+        .context("Failed to flush wallet directory")?;
     Ok(())
 }
 
@@ -2382,16 +2392,55 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn an_empty_wallet_file_is_treated_as_a_fresh_wallet() {
+    async fn an_empty_wallet_file_is_preserved_as_damaged() {
         let tmp = TempDir::new().unwrap();
-        let dir = tmp.path();
-        std::fs::create_dir_all(dir.join("wallet")).unwrap();
-        std::fs::write(dir.join("wallet/ecash.json"), "   \n").unwrap();
-        // A create that never got its first write is not damage.
-        let w = load_wallet(dir)
-            .await
-            .expect("empty file is a fresh wallet");
-        assert_eq!(w.balance(), 0);
+        let path = tmp.path().join("wallet/ecash.json");
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        for content in ["", "   \n"] {
+            std::fs::write(&path, content).unwrap();
+            assert!(load_wallet(tmp.path())
+                .await
+                .unwrap_err()
+                .to_string()
+                .contains("damaged"));
+            assert_eq!(std::fs::read_to_string(&path).unwrap(), content);
+        }
+    }
+
+    #[tokio::test]
+    async fn concurrent_atomic_writes_keep_complete_private_files() {
+        use std::os::unix::fs::PermissionsExt;
+        let tmp = TempDir::new().unwrap();
+        let path = tmp.path().join("wallet.json");
+        let first = "a".repeat(65536);
+        let second = "b".repeat(65536);
+        let (a, b) = tokio::join!(
+            write_file_atomically(&path, &first),
+            write_file_atomically(&path, &second)
+        );
+        a.unwrap();
+        b.unwrap();
+        let saved = std::fs::read_to_string(&path).unwrap();
+        assert!(saved == first || saved == second);
+        assert_eq!(
+            std::fs::metadata(&path).unwrap().permissions().mode() & 0o777,
+            0o600
+        );
+        assert_eq!(std::fs::read_dir(tmp.path()).unwrap().count(), 1);
+    }
+
+    #[tokio::test]
+    async fn failed_atomic_replace_preserves_target_and_cleans_temporary_file() {
+        let tmp = TempDir::new().unwrap();
+        let path = tmp.path().join("wallet.json");
+        std::fs::create_dir(&path).unwrap();
+        std::fs::write(path.join("keep"), "preserved").unwrap();
+        assert!(write_file_atomically(&path, "new state").await.is_err());
+        assert_eq!(
+            std::fs::read_to_string(path.join("keep")).unwrap(),
+            "preserved"
+        );
+        assert_eq!(std::fs::read_dir(tmp.path()).unwrap().count(), 1);
     }
 
     #[tokio::test]
