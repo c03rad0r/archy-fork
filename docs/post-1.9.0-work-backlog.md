@@ -387,3 +387,17 @@ iframe loading, while unauthenticated requests still return401. Source fixes
 cover startup migration, hostname regeneration, first boot and explicit rotation;
 tests pass. Exact operator hostname/app, trusted TLS and companion acceptance
 remain open. See `docs/https-app-gate-followup-20261006.md`.
+
+## 18. Firewall and tunnel UI/settings — latest addition, last in sequence
+
+- Operator requested this at the end of the remaining tasks on6October, after
+  the previously deferred MeshCore work. Preserve the existing task order.
+- Obtain and read the other agent's specific firewall/tunnel UI/settings handover
+  before fixing scope or implementing controls. It has not been located in the
+  local worktree documentation or temporary handoff files. Earlier NPM/public
+  management security handovers are received; they are not this new UI handover.
+- Keep this item open as awaiting handover. Do not invent proposed settings or
+  mark receipt, implementation, deployment or acceptance complete.
+- Once scoped, require tests of authorization, network-policy boundaries,
+  persistence, rollback and actual-node UI behavior without compromising
+  management access, existing tunnels or the public-management source guard.

@@ -92,3 +92,20 @@ explicitly. Build-time disk/memory pressure was also measured; the owned build
 was lowered in CPU/I/O priority without changing services. Neither observation
 proves the cause of every timeout. Normal certificate trust, the exact reported
 hostname/app, physical companion and restart/update persistence remain open.
+
+### Certificate identity validation (without bypass)
+
+Using each node's existing public trust material explicitly, dev's LAN IP
+validates at443(HTTP200) and8083(HTTP401 without authentication). Yaya has no node
+CA files: its legacy self-signed leaf contains only generic local DNS names and
+127.0.0.1. Even when that leaf is explicitly trusted, its LAN IP fails certificate
+identity validation (curl60); a DNS name actually listed on that certificate
+validates and correctly returns401 at the app port. No certificate was replaced.
+
+This is an additional confirmed limitation, not proof of the reported exact
+iframe gate cause. `scripts/setup-node-ca.sh` provides the intended node CA flow,
+but review found its live key/cert install and nginx-listener edits need safe
+staging/rollback before using it as repair. Preserve existing CA identities and
+custom certificates; do not blindly regenerate trust. A client must explicitly
+trust the node's public CA for normal browser validation. Keep normal-trust
+acceptance open pending a tested provisioning repair and the operator's access URL.
