@@ -68,6 +68,19 @@ describe('AppSessionFrame warm-up state', () => {
 })
 
 describe('HTTP readiness gate', () => {
+  it('keeps the same iframe while reporting a slow load and lets the user dismiss the notice', async () => {
+    const frame = mountFrame({ iframeBlocked: false, slowLoad: false });
+    const original = frame.get('iframe').element;
+    await frame.setProps({ slowLoad: true });
+    expect(frame.get('iframe').element).toBe(original);
+    expect(frame.get('[role="status"]').text()).toContain('Bitcoin is taking longer to load');
+    await frame.get('[aria-label="Dismiss loading notice"]').trigger('click');
+    expect(frame.emitted('dismissSlowLoad')).toHaveLength(1);
+    await frame.setProps({ slowLoad: false });
+    expect(frame.get('iframe').element).toBe(original);
+    expect(frame.find('[role="status"]').exists()).toBe(false);
+    frame.unmount();
+  })
   it('does not show a missing-configuration error during initial installation', () => {
     const frame = mountFrame({ appUrl: '', uiReadyBlocked: true, blockedReason: 'Waiting for the app to be ready…' })
     expect(frame.text()).not.toContain('App not configured')

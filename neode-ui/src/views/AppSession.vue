@@ -39,7 +39,8 @@
         :must-open-new-tab="mustOpenNewTab"
         :auto-retry-count="autoRetryCount"
         :refresh-key="refreshKey"
-        :ui-ready-blocked="packageEntry?.['ui-ready'] === false"
+        :ui-ready-blocked="uiReadyBlocked"
+        :slow-load="slowLoad"
         :blocked-reason="blockedReason"
         :blocked-title="blockedTitle"
         :warming-up="warmingUp"
@@ -48,6 +49,7 @@
         @iframe-error="onError"
         @refresh="refresh"
         @open-new-tab-and-back="openNewTabAndBack"
+        @dismiss-slow-load="slowLoad = false"
       />
 
       <!-- Mobile: gamepad for botfights (with utility buttons), browser bar for everything else -->
@@ -162,6 +164,8 @@ const frameRef = ref<InstanceType<typeof AppSessionFrame> | null>(null)
 const loading = ref(true)
 const isRefreshing = ref(false)
 const iframeBlocked = ref(false)
+const slowLoad = ref(false)
+const loadedAppUrl = ref('')
 const refreshKey = ref(0)
 const showIdentityPicker = ref(false)
 const autoRetryCount = ref(0)
@@ -224,7 +228,7 @@ const mustOpenNewTab = computed(() =>
   (IS_DEMO && isDemoExternal(appId.value))
 )
 
-// The auto-tab detector: the load-timeout marked the frame blocked, the
+// The auto-tab detector: an actual frame error marked the frame blocked, the
 // warming-up retry loop has given up, and the backend says the app is
 // actually RUNNING — that combination is the embed-refusal signature (a
 // down app is "warming up" or shows a blocked reason instead). Remember it
@@ -270,6 +274,12 @@ const appUrl = computed(() => {
   return canonicalAppUrl(resolveAppUrl(appId.value, deepPath, runtimeUrl))
 })
 
+// Readiness protects a first load. A transient background probe must not tear
+// down an already loaded login, upload or player and discard its session state.
+const uiReadyBlocked = computed(() =>
+  packageEntry.value?.['ui-ready'] === false && loadedAppUrl.value !== appUrl.value
+)
+
 function closeRouteSession() {
   const fallback = route.query.returnTo
   const fallbackPath = typeof fallback === 'string' && fallback.startsWith('/dashboard')
@@ -292,7 +302,11 @@ const nostrBridge = useNostrBridge(identity.getStoredIdentity, {
 })
 
 // An actual destination change invalidates consent queued for the previous app page.
-watch(appUrl, () => nostrBridge.cancelPending())
+watch(appUrl, () => {
+  loadedAppUrl.value = ''
+  slowLoad.value = false
+  nostrBridge.cancelPending()
+})
 
 // --- Display mode ---
 
@@ -385,13 +399,13 @@ const panelClasses = computed(() => {
 
 // A cold/restarting upstream is held outside the iframe. Start one fresh
 // load when the scanner observes HTTP readiness; no manual refresh required.
-watch(() => packageEntry.value?.['ui-ready'], (ready, previous) => {
-  if (ready === false) {
+watch(uiReadyBlocked, (blocked, previous) => {
+  if (blocked) {
     if (loadTimeoutId) clearTimeout(loadTimeoutId)
     if (autoRetryId) clearTimeout(autoRetryId)
     if (iframeCheckId) clearTimeout(iframeCheckId)
     loading.value = false
-  } else if (previous === false && ready === true) {
+  } else if (previous === true && !blocked) {
     autoRetryCount.value = 0
     refresh()
   }
@@ -400,6 +414,9 @@ watch(() => packageEntry.value?.['ui-ready'], (ready, previous) => {
 // --- Lifecycle handlers ---
 
 function onLoad() {
+  loadedAppUrl.value = appUrl.value
+  slowLoad.value = false
+  iframeBlocked.value = false
   mediaBridge.connect()
   if (loadTimeoutId) { clearTimeout(loadTimeoutId); loadTimeoutId = null }
   if (autoRetryId) { clearTimeout(autoRetryId); autoRetryId = null }
@@ -432,6 +449,8 @@ function onLoad() {
 }
 
 function onError() {
+  loadedAppUrl.value = ''
+  slowLoad.value = false
   if (loadTimeoutId) { clearTimeout(loadTimeoutId); loadTimeoutId = null }
   loading.value = false
   isRefreshing.value = false
@@ -446,6 +465,8 @@ function onError() {
 }
 
 function refresh() {
+  loadedAppUrl.value = ''
+  slowLoad.value = false
   if (autoRetryId) { clearTimeout(autoRetryId); autoRetryId = null }
   isRefreshing.value = true
   loading.value = true
@@ -456,23 +477,26 @@ function refresh() {
 
 function startLoadTimeout() {
   if (loadTimeoutId) clearTimeout(loadTimeoutId)
-  if (packageEntry.value?.['ui-ready'] === false) return
+  if (uiReadyBlocked.value) return
   loadTimeoutId = setTimeout(() => {
     if (loading.value) {
       loading.value = false
-      iframeBlocked.value = true
+      isRefreshing.value = false
+      // Removing the iframe here aborted slow navigation before its load event
+      // could recover it. Keep the actual frame and offer non-blocking feedback.
+      slowLoad.value = true
     }
   }, 12000)
 }
 
 function openNewTabAndBack() {
-  if (packageEntry.value?.['ui-ready'] === false) return
+  if (uiReadyBlocked.value) return
   if (appUrl.value) openExternalUrl(appUrl.value)
   closeSession()
 }
 
 function openNewTab() {
-  if (packageEntry.value?.['ui-ready'] === false) return
+  if (uiReadyBlocked.value) return
   if (appUrl.value) openExternalUrl(appUrl.value)
 }
 

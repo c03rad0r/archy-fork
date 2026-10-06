@@ -115,7 +115,7 @@
     <HealthNotifications />
 
     <!-- First-use companion intro overlay -->
-    <CompanionIntroOverlay />
+    <CompanionIntroOverlay :defer-automatic="!!appLauncher.panelAppId || appLauncher.isOpen || route.name === 'app-session'" />
   </div>
 </template>
 

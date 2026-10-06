@@ -708,3 +708,36 @@ RPC tests and the complete isolated suite (**1,749 pass, zero fail, five existin
 ignores**) pass. No real payment or live wallet mutation was used. This is not yet
 in the running backend. Durable pre-mint purchase journaling and seller receipt
 recovery remain open in [the recovery follow-up](paid-content-recovery-followup.md).
+
+## Payment selection deployed; slow-app launch regression under qualification
+
+The production backend at `a3f0bf0a` built successfully and is deployed on dev
+and Yaya. SHA256 `2c881f68592f7a395cc53c641cc936217426893a7f9f994253026ce36cda79f3`.
+Both nodes pass health and authenticated RPC; persistent session keys, UI and
+all app container identities/start times remained unchanged. Rollback paths are
+recorded in the private artifact receipt and `/tmp/archy-payment-selection-{dev,yaya}-deploy.log`.
+No payment was made for this deployment. This closes backend-selection rollout,
+not the durable initial-payment recovery gate.
+
+Actual Yaya mobile-width IndeeHub native login returned session201 and profile200,
+and retained login after reload (`/tmp/archy-indeehub-live-login.log`). A broader
+attempt then failed on dev/Yaya: the 12-second AppSession load timeout destroys
+the iframe, and the automatic companion introduction can cover login. These
+failed runs are retained, not counted as acceptance. Source now preserves a
+slow iframe, offers a compact dismissible notice, retains a loaded app through
+transient readiness failure, and defers automatic companion prompts while an
+app is active. Four parent lifecycle tests and the frame/intro tests pass;
+full-suite/build and actual served-browser checks are still in progress.
+
+V4V preparation on Yaya is complete without replacing the original Portainer
+app: consistent private backup of 28 data files and 170 media files, independently
+populated managed volumes, preserved existing password hash and pinned managed
+image pulled. The original container and volumes remain the rollback path. The
+single-node catalog awaits the operator root signature at
+`/tmp/archy-yaya-v4v-catalog.json`; no managed app installation is claimed yet.
+
+Launcher qualification update: production build passes. The first full UI run
+passed 1,299 tests but timed out in a Bitcoin modal case and then failed its next
+case; all 20 targeted tests including both modal cases pass on rerun. A new full
+run with reduced concurrency and no simultaneous build is required and running.
+No failing full run is recorded as passed.

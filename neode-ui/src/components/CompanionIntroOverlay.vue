@@ -153,6 +153,8 @@ import { useLoginTransitionStore } from '@/stores/loginTransition'
 import { useServerStore } from '@/stores/server'
 import { rpcClient } from '@/api/rpc-client'
 
+const props = defineProps<{ deferAutomatic?: boolean }>()
+
 const STORAGE_KEY = 'neode_companion_intro_seen'
 // Absolute URL so the QR works when scanned by a phone (a relative path has no
 // host to resolve). Points at the companion APK on the release server's https
@@ -200,6 +202,16 @@ const BASE_DELAY_MS = 5000
 const POST_INTRO_GRACE_MS = 2000
 
 let calmTicker: ReturnType<typeof setInterval> | null = null
+let baseDelay: ReturnType<typeof setTimeout> | null = null
+let disposed = false
+let automaticDisplay = false
+
+function clearAutomaticTimers() {
+  if (baseDelay) clearTimeout(baseDelay)
+  if (calmTicker) clearInterval(calmTicker)
+  baseDelay = null
+  calmTicker = null
+}
 
 // Running inside the companion app's own WebView (it injects the JS bridge —
 // detected with the canonical helper, not a raw window check, so the gate
@@ -213,9 +225,10 @@ onMounted(async () => {
   // The prompt is remembered per APK build, not forever. A browser that saw
   // 0.5.28 should be told once when this node begins serving 0.5.32.
   await loadCompanionRelease()
+  if (disposed) return
   try {
     if (localStorage.getItem(STORAGE_KEY) !== companionReleaseMarker(companionVersion.value)) {
-      setTimeout(maybeShow, BASE_DELAY_MS)
+      baseDelay = setTimeout(maybeShow, BASE_DELAY_MS)
     }
   } catch {
     // localStorage unavailable
@@ -223,18 +236,21 @@ onMounted(async () => {
 })
 
 onUnmounted(() => {
-  if (calmTicker) clearInterval(calmTicker)
+  disposed = true
+  clearAutomaticTimers()
 })
 
 function maybeShow() {
+  if (disposed) return
+  clearAutomaticTimers()
   // Show only after the scene has been CONTINUOUSLY calm (no reveal
   // cinematic) for the full grace window. The previous point-in-time check
   // raced a slow-starting reveal — on a cold cache the entrance video can
   // begin buffering after the 5s base delay, so the flag was still false
   // when sampled and the popup cut straight into the cinematic.
-  let calmSince = loginTransition.introCinematicPlaying ? null : Date.now()
+  let calmSince = loginTransition.introCinematicPlaying || props.deferAutomatic ? null : Date.now()
   calmTicker = setInterval(() => {
-    if (loginTransition.introCinematicPlaying) {
+    if (loginTransition.introCinematicPlaying || props.deferAutomatic) {
       calmSince = null
       return
     }
@@ -242,10 +258,20 @@ function maybeShow() {
     if (Date.now() - calmSince >= POST_INTRO_GRACE_MS) {
       if (calmTicker) clearInterval(calmTicker)
       calmTicker = null
+      automaticDisplay = true
       visible.value = true
     }
   }, 250)
 }
+
+// A route change can open an app after the automatic offer was displayed.
+// Defer that offer until the app closes; never cover its identity/consent UI.
+watch(() => props.deferAutomatic, active => {
+  if (active && visible.value && automaticDisplay) {
+    visible.value = false
+    maybeShow()
+  }
+})
 
 // Manual open (App Store banner etc.) — ignores the once-per-browser gate.
 // The trigger itself is already a no-op inside the companion (useCompanionIntro),
@@ -255,10 +281,8 @@ watch(companionIntroRequested, (requested) => {
   if (!requested) return
   companionIntroRequested.value = false
   if (IN_COMPANION_APP) return
-  if (calmTicker) {
-    clearInterval(calmTicker)
-    calmTicker = null
-  }
+  clearAutomaticTimers()
+  automaticDisplay = false
   step.value = 'download'
   visible.value = true
 })
@@ -449,6 +473,7 @@ function showDownloadScreen() {
 }
 
 function dismiss() {
+  clearAutomaticTimers()
   visible.value = false
   step.value = 'download'
   try {
