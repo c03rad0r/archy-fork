@@ -665,6 +665,20 @@ sudo cp apps/my-app/manifest.yml /opt/archipelago/web-ui/archipelago-runtime/app
 sudo systemctl restart archipelago   # manifests are loaded at startup
 ```
 
+Stage the other files declared by the manifest too. A local-build app needs its
+build context under the corresponding runtime payload `docker/<app-id>/`
+directory, so boot sync can promote it to `/opt/archipelago/docker/<app-id>/`.
+Copy the normalized icon to its declared public path under
+`/opt/archipelago/web-ui/` for a local test; the normal frontend bundle must carry
+that asset for release. Do not replace the signed catalog to make a local test
+app appear in the store.
+
+Check the **My Apps** tile while installation is in progress and after it
+finishes: name, icon and UI classification come from the manifest. An API-only
+app belongs in Services. A UI app must remain in My Apps while installing, with
+launch disabled until it is ready. Verify the real Launch button opens the
+embedded app, rather than testing only its direct port URL.
+
 Watch `journalctl -u archipelago` after the restart — the orchestrator
 validates every manifest on load and tells you about problems immediately
 (for example a host-port collision with another installed app).

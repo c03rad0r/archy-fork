@@ -398,53 +398,12 @@ impl RpcHandler {
 /// Matches what the inner handler's `set_install_progress` would do on first
 /// call, but fires before the spawn so the UI sees it immediately.
 async fn flip_to_installing(state_manager: &StateManager, package_id: &str) {
-    use crate::data_model::{Description, Manifest, PackageDataEntry, StaticFiles};
     state_manager
         .mutate_data(|data| {
             let entry = data
                 .package_data
                 .entry(package_id.to_string())
-                .or_insert_with(|| PackageDataEntry {
-                    ui_ready: None,
-                    state: PackageState::Installing,
-                    health: None,
-                    exit_code: None,
-                    static_files: StaticFiles {
-                        license: String::new(),
-                        instructions: String::new(),
-                        // Leave icon empty during the transient Installing window:
-                        // hardcoding `<id>.png` is wrong for ~half our apps (many use
-                        // `.svg` / `.webp`), producing a broken-image flicker until
-                        // the scanner refreshes the entry. The frontend's `icon`
-                        // computed falls through to `curatedMap.get(id)?.icon` which
-                        // has the correct extensions for known apps.
-                        icon: String::new(),
-                    },
-                    manifest: Manifest {
-                        id: package_id.to_string(),
-                        title: package_id.to_string(),
-                        version: String::new(),
-                        description: Description {
-                            short: "Installing...".to_string(),
-                            long: String::new(),
-                        },
-                        release_notes: String::new(),
-                        license: String::new(),
-                        wrapper_repo: String::new(),
-                        upstream_repo: String::new(),
-                        support_site: String::new(),
-                        marketing_site: String::new(),
-                        donation_url: None,
-                        author: None,
-                        website: None,
-                        interfaces: None,
-                        tier: None,
-                    },
-                    installed: None,
-                    install_progress: None,
-                    uninstall_stage: None,
-                    available_update: None,
-                });
+                .or_insert_with(|| super::progress::create_installing_entry(package_id));
             entry.ui_ready = Some(false);
             entry.state = PackageState::Installing;
         })
