@@ -44,11 +44,22 @@ only the backend's storage- and owner-scoped cleanup remains. The fixture then
 survived a complete scheduled doctor run.
 
 Candidate deployment exposed a separate packaging/startup problem: an older
-runtime script remained inside the frontend payload, which startup promotes into
-`/opt`. The embedded repair then failed with EROFS under `ProtectSystem=strict`.
+runtime payload remained on disk from a previous OTA; the qualification UI archive
+did not replace it. Startup promoted those retained scripts back into `/opt`. The embedded repair then failed with EROFS under `ProtectSystem=strict`.
 The dev box's safe helper was restored; Yaya rollout is held until verification.
 The repair now uses the established host command mechanism, checks executable
 permissions, and runs synchronously after runtime promotion before reconciliation.
 Regression tests cover stale content, missing execute permission, idempotence and
 installation failure. Actual sandboxed service restart remains an acceptance gate;
 unit tests alone do not prove escape from the production mount namespace.
+
+Repeatable fixture-only browser check: `tests/lifecycle/v4v-media-bridge.cjs`.
+Set `ARCHY_TEST_CDP` to an authorized Chromium debugging endpoint and
+`V4V_TEST_PASSWORD_FILE` to the private fixture password file. Optional
+`V4V_TEST_ORIGIN` and `ARCHY_TEST_PARENT_ORIGIN` select same-host origins reachable
+by that browser (default loopback ports 32908 and 80). Install frontend test
+dependencies first. The runner creates and closes only its own browser contexts;
+it never closes the kiosk browser. It plays bundled demo audio muted, checks real
+media time advances while hidden, pauses/resumes, and preserves iframe identity.
+Mobile 390px and desktop 1440px pass on the final isolated image. This harness
+check does not substitute for the actual dashboard player/catalog deployment.
