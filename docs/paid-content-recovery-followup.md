@@ -104,3 +104,10 @@ Read-only checks found well-shaped seed/counter JSON on dev and Yaya; no secret
 values were printed and no wallet files were changed by those checks. Production
 build/deployment of this prerequisite remains pending. Durable initial purchase
 intent, mint-operation recovery, seller receipt and refund recovery remain open.
+
+Strict-schema follow-up: an existing counter document must actually contain its
+counter map. Empty JSON objects and null maps are rejected without modification,
+not deserialized as a fresh zero state. The full isolated suite again passes
+1,755tests,0failures,5existing ignored in
+`/tmp/archy-wallet-recovery-strict-schema-full-tests.log`. No live deployment or
+claim of complete initial-payment recovery is implied.

@@ -387,7 +387,6 @@ async fn write_seed(data_dir: &Path, mnemonic: &bip39::Mnemonic, source: SeedSou
 #[derive(Debug, Default, Serialize, Deserialize)]
 struct StoredCounters {
     /// keyset id → next unused counter.
-    #[serde(default)]
     counters: BTreeMap<String, u32>,
 }
 
@@ -849,7 +848,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         fs::create_dir_all(dir.path().join("wallet")).await.unwrap();
         let path = dir.path().join(COUNTER_FILE);
-        for damaged in ["", "   ", "{ truncated"] {
+        for damaged in ["", "   ", "{ truncated", "{}", "{\"counters\":null}"] {
             fs::write(&path, damaged).await.unwrap();
             assert!(reserve_counters(dir.path(), V1_KEYSET, 1).await.is_err());
             assert_eq!(fs::read_to_string(&path).await.unwrap(), damaged);
