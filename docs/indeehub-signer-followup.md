@@ -40,3 +40,25 @@ Review found additional app-side concerns to test: production network failures
 can flip the app into mock mode and fabricate subscribed users, and the header
 can discard a valid backend Nostr session when the local signer account has not
 been restored. Do not claim these repaired by the broker object-cloning fix.
+
+## Live candidate qualification and restored-session prompting
+
+2026-10-05: actual Yaya NIP-98 session exchange returns201 and authenticated
+profile returns200 using candidate dashboard and app assets. The overlay hides;
+a full refresh reuses the session and profile without another auth exchange.
+Evidence: /tmp/archy-indeehub-full-candidate-2.log. This uses headless Chromium
+390x844, real cookies/signatures/RPC/API, with only static candidate assets routed
+locally. Initial asset-routing attempts hit Chromium private-network checks;
+forwarding real API requests in the fixture resolved that test harness failure.
+No backend authentication was mocked or bypassed.
+
+Public-key lookups can inherit transient activation from the identity-picker
+click/reload. The provider now avoids interpreting a restored-session hint or
+already selected identity as a new account-switch request. Requests still pass
+to the authenticated broker; the hint grants no signature permission. Explicit
+selectIdentity remains available. Twelve provider/tab-signer regressions pass.
+
+The combined frontend production check found strict TypeScript nullability
+errors in Fleet test array indexing; the fixture now asserts both cards exist
+and uses non-null indexing. No production Fleet behavior changed in that repair.
+Actual deployment, companion lifecycle and the remaining recovery cases stay open.
