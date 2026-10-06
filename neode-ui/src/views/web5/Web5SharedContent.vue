@@ -612,26 +612,29 @@ async function purchaseAndDownload(item: PeerContentItem) {
 
   purchasingId.value = item.id
   try {
-    const result = await rpcClient.call<{ data?: string; error?: string }>({
+    const result = await rpcClient.call<{ data?: string; owned?: boolean; owned_content_id?: string; error?: string }>({
       method: 'content.download-peer-paid',
-      params: { onion: browsePeerOnion.value, content_id: item.id, price_sats: price },
-      timeout: 120000,
+      params: { onion: browsePeerOnion.value, content_id: item.id, price_sats: price, filename: item.filename, cache_only: true },
+      timeout: 960000,
     })
 
-    if (result?.data) {
-      const blob = new Blob(
-        [Uint8Array.from(atob(result.data), c => c.charCodeAt(0))],
-        { type: item.mime_type },
-      )
+    if (result?.owned === true) {
+      const a = document.createElement('a')
+      a.href = `/api/peer-content/${encodeURIComponent(browsePeerOnion.value)}/${encodeURIComponent(result.owned_content_id || item.id)}`
+      a.download = item.filename.split('/').pop() || item.filename
+      a.click()
+      emit('toast', 'Purchase saved — download started')
+    } else if (result?.data) {
+      const blob = new Blob([Uint8Array.from(atob(result.data), c => c.charCodeAt(0))], { type: item.mime_type })
       const url = URL.createObjectURL(blob)
       const a = document.createElement('a')
       a.href = url
       a.download = item.filename.split('/').pop() || item.filename
       a.click()
-      URL.revokeObjectURL(url)
-      emit('toast', `Downloaded for ${price} sats`)
+      setTimeout(() => URL.revokeObjectURL(url), 60000)
+      emit('toast', 'Purchase saved — download started')
     } else {
-      emit('toast', 'Purchase failed — no data received')
+      emit('toast', result?.error || 'Purchase could not be completed')
     }
   } catch (e: unknown) {
     emit('toast', e instanceof Error ? e.message : 'Purchase failed')

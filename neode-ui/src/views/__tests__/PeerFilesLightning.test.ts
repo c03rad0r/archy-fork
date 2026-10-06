@@ -30,6 +30,35 @@ beforeEach(() => {
   vi.mocked(rpcClient.payLightningInvoice).mockResolvedValue({ status: 'succeeded' } as never)
 })
 describe('Lightning file delivery recovery', () => {
+  it('opens a cached ecash purchase without transferring base64 into the UI', async () => {
+    vi.mocked(rpcClient.call).mockImplementation(async ({ method }) => {
+      if (method === 'content.download-peer-paid') return { owned: true, mime_type: 'video/mp4', size_bytes: 200000000 }
+      return { items: [] }
+    })
+    const { wrapper, vm } = await open()
+    vm.ecashPlan = { cashu: 10, fedimint: 0, ark: 0, total: 10, chosen: 'cashu' }
+    await vm.confirmEcashPay()
+    expect(vm.viewerUrl).toBe('/api/peer-content/peer.onion/paid-file')
+    expect(vm.viewerMime).toBe('video/mp4')
+    expect(vi.mocked(rpcClient.call).mock.calls.find(([v]) => v.method === 'content.download-peer-paid')![0].params).toMatchObject({ cache_only: true, method: 'cashu' })
+    wrapper.unmount()
+  })
+  it('does not issue a duplicate ecash purchase while delivery is pending', async () => {
+    let finish!: (value: unknown) => void
+    vi.mocked(rpcClient.call).mockImplementation(async ({ method }) => {
+      if (method === 'content.download-peer-paid') return await new Promise(resolve => { finish = resolve })
+      return { items: [] }
+    })
+    const { wrapper, vm } = await open()
+    vm.ecashPlan = { cashu: 10, fedimint: 0, ark: 0, total: 10, chosen: 'cashu' }
+    const first = vm.confirmEcashPay()
+    await vm.confirmEcashPay()
+    expect(vi.mocked(rpcClient.call).mock.calls.filter(([v]) => v.method === 'content.download-peer-paid')).toHaveLength(1)
+    finish({ error: 'Delivery needs recovery; do not pay again' })
+    await first
+    expect(vm.purchaseError).toContain('do not pay again')
+    wrapper.unmount()
+  })
   it('retries delivery after a seller rejection without paying or requesting another invoice', async () => {
     download.mockResolvedValue({ error: 'Seller has not registered this payment yet' })
     const { wrapper, vm } = await open()

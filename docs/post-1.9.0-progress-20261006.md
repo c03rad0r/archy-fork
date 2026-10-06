@@ -268,3 +268,39 @@ Reticulum daemons, live Minibits and the subprocess permission helper (which its
 parent test executes separately). A production build of the earlier integration
 is running from detached `11f016a9`; it does not include this new preview fix and
 must not be described as the final release candidate.
+
+
+### Bounded peer delivery and preview qualification
+
+Paid-preview source at `051dc7e3` passed all four isolated regression cases
+(`/tmp/archy-preview-boundary-tests.log`). No live deployment is claimed.
+The earlier production backend at `11f016a9` also built successfully and was
+archived with its SHA256/source receipt under the private qualification directory;
+it excludes these later fixes and is not the final candidate.
+
+`2fee0339` replaces whole-file seller buffering with bounded file-backed responses.
+Bearer payments prepare a complete private anonymous snapshot before redemption;
+free/owner/durable-invoice transfers can stream an open file directly. Rootless
+Files reads consume bounded subprocess stdout and require successful completion
+before payment. Malformed ranges are rejected, suffix ranges are supported, and
+free public previews also stream. New tests cover source deletion during payment,
+invalid payment, multi-gigabyte sparse files, truncated preparation and ranges.
+Full isolated backend qualification is running from the separate frozen media
+worktree (`/tmp/archy-bounded-media-backend-tests.log`); results remain pending.
+Buyer-side caching still needs bounded transfer and recovery work.
+
+Buyer follow-up now streams successful ecash/Lightning deliveries into the owned
+cache, records incomplete delivery before consuming the response, removes partial
+temporary files on cancellation, and blocks duplicate concurrent ecash purchases
+per seller. Owned-file opens and saves use local HTTP streaming rather than base64
+for current clients; small legacy reads remain supported. Optional Files copies
+stream through the existing no-clobber namespace writer. Interrupted receipt/body
+handling is not equivalent to a durable end-to-end ecash retry protocol: loss
+before response headers or during mint settlement remains an explicit review gate.
+No real funds were spent. Nineteen focused UI tests passed before the final two
+stream-viewer cases were added; backend/production qualification is pending.
+
+Seller streaming's first full compile found a lifetime error in one new test;
+`df7677d2` corrects it. The repeated isolated full suite is compiling from that
+frozen source (`/tmp/archy-bounded-media-backend-tests-2.log`). The failed run is
+retained and is not counted as a pass.

@@ -22,7 +22,7 @@ export function paidItemKey(it: OwnedItemLike): string {
 }
 
 /**
- * Fetch, decode, route-to-viewer and loading/error state for a purchased
+ * Validate ownership, stream to viewer and manage loading/error state for a purchased
  * item (UIFIX-04 / UIFIX-06).
  *
  * - image/video → routed into the caller's MediaLightbox via `lightboxItems`
@@ -42,7 +42,7 @@ export function usePaidItemViewer() {
   const lightboxItems = ref<FileBrowserItem[]>([])
   const lightboxIndex = ref<number | null>(null)
 
-  // Synthetic-path -> already-fetched blob URL. Populated only for items
+  // Synthetic-path -> authenticated cache URL (or legacy blob URL). Populated only for items
   // routed to the lightbox; resolveBlobUrl reads from here and never fetches.
   const urlByPath = new Map<string, string>()
   // One in-flight fetch per item key — a second open() for the same key
@@ -61,21 +61,20 @@ export function usePaidItemViewer() {
       opening.value = key
       error.value = null
       try {
-        const res = await rpcClient.call<{ data_base64?: string; data?: string; mime_type?: string }>({
+        const res = await rpcClient.call<{ data_base64?: string; data?: string; owned?: boolean; mime_type?: string; error?: string }>({
           method: 'content.owned-get',
-          params: { onion: it.onion, content_id: it.content_id },
+          params: { onion: it.onion, content_id: it.content_id, cache_only: true },
           timeout: 60000,
         })
-        const b64 = res.data_base64 || res.data
-        if (!b64) {
-          error.value = "Couldn't open this file — the peer returned no data."
+        const b64 = res.data_base64 ?? res.data
+        if (b64 === undefined && res.owned !== true) {
+          error.value = res.error || "Couldn't open this file — its cached copy is unavailable."
           return
         }
-        const bin = atob(b64)
-        const arr = new Uint8Array(bin.length)
-        for (let i = 0; i < bin.length; i++) arr[i] = bin.charCodeAt(i)
         const mime = res.mime_type || it.mime_type
-        const url = URL.createObjectURL(new Blob([arr], { type: mime }))
+        const url = b64 === undefined
+          ? `/api/peer-content/${encodeURIComponent(it.onion)}/${encodeURIComponent(it.content_id)}`
+          : URL.createObjectURL(new Blob([Uint8Array.from(atob(b64), c => c.charCodeAt(0))], { type: mime }))
 
         // Music ALWAYS plays in the global bottom-bar player — never a
         // lightbox (blob URL stays alive for the bar; it owns playback now).
@@ -104,7 +103,7 @@ export function usePaidItemViewer() {
 
         // No in-app viewer (documents, etc.) — keep today's behaviour.
         window.open(url, '_blank', 'noopener')
-        setTimeout(() => URL.revokeObjectURL(url), 60000)
+        if (url.startsWith("blob:")) setTimeout(() => URL.revokeObjectURL(url), 60000)
       } catch {
         error.value = "Couldn't open this file — it may be unavailable right now."
       } finally {

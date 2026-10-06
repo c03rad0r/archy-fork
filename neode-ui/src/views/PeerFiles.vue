@@ -701,7 +701,7 @@ function base64ToBlob(base64: string, mime: string): Blob {
 }
 
 // In-app viewer (lightbox) for owned content AND free images. Owned content is
-// loaded as a blob URL from the purchase cache; free images point straight at
+// loaded through local cached streaming; free images point straight at
 // the Range-capable streaming proxy (no base64 round-trip).
 const viewerItem = ref<CatalogItem | null>(null)
 const viewerUrl = ref<string | null>(null)
@@ -717,22 +717,23 @@ async function viewOwned(item: CatalogItem) {
   playing.value = item.id
   purchaseError.value = null
   try {
-    const res = await rpcClient.call<{ data?: string; mime_type?: string; error?: string }>({
+    const res = await rpcClient.call<{ data?: string; owned?: boolean; owned_content_id?: string; mime_type?: string; error?: string }>({
       method: 'content.owned-get',
-      params: { onion, content_id: item.id },
+      params: { onion, content_id: item.id, filename: item.filename, cache_only: true },
       timeout: 60000,
     })
-    if (!res?.data) { purchaseError.value = res?.error || 'Could not open your purchased file'; return }
+    if (res?.data === undefined && res?.owned !== true) { purchaseError.value = res?.error || 'Could not open your purchased file'; return }
     const mime = res.mime_type || item.mime_type
+    const url = res.data !== undefined ? URL.createObjectURL(base64ToBlob(res.data, mime))
+      : `/api/peer-content/${encodeURIComponent(onion)}/${encodeURIComponent(res.owned_content_id || item.id)}`
     // Audio always plays in the global bottom-bar player — never the lightbox
     // (the blob URL is intentionally not revoked while the bar plays it).
     if (mime.startsWith('audio/')) {
-      const url = URL.createObjectURL(base64ToBlob(res.data, mime))
       audioPlayer.play(url, item.filename.split('/').pop() || item.filename)
       return
     }
     releaseViewerUrl()
-    viewerUrl.value = URL.createObjectURL(base64ToBlob(res.data, mime))
+    viewerUrl.value = url
     viewerMime.value = mime
     viewerItem.value = item
   } catch (e: unknown) {
@@ -797,12 +798,13 @@ async function saveOwned(item: CatalogItem) {
   const onion = props.peerId || currentPeer.value?.onion
   if (!onion) return
   try {
-    const res = await rpcClient.call<{ data?: string; mime_type?: string; error?: string }>({
+    const res = await rpcClient.call<{ data?: string; owned?: boolean; owned_content_id?: string; mime_type?: string; error?: string }>({
       method: 'content.owned-get',
-      params: { onion, content_id: item.id },
+      params: { onion, content_id: item.id, filename: item.filename, cache_only: true },
       timeout: 60000,
     })
-    if (res?.data) triggerDownload(res.data, item)
+    if (res?.owned === true) streamDownload(`/api/peer-content/${encodeURIComponent(onion)}/${encodeURIComponent(res.owned_content_id || item.id)}`, item)
+    else if (res?.data) triggerDownload(res.data, item)
     else purchaseError.value = res?.error || 'Could not save your purchased file'
   } catch (e: unknown) {
     purchaseError.value = e instanceof Error ? e.message : 'Could not save your purchased file'
@@ -1362,11 +1364,11 @@ async function prepareEcashPay() {
  * mobile companion ("paid but never unlocked"); the viewer's Save button
  * still offers an explicit download.
  */
-function openPurchased(item: CatalogItem, base64Data: string | undefined, mimeType?: string, seller?: string) {
+function openPurchased(item: CatalogItem, base64Data: string | undefined, mimeType?: string, seller?: string, cachedId?: string) {
   const onion = seller || props.peerId || currentPeer.value?.onion
   const url = base64Data !== undefined
     ? URL.createObjectURL(base64ToBlob(base64Data, mimeType || item.mime_type))
-    : `/api/peer-content/${encodeURIComponent(onion || "")}/${encodeURIComponent(item.id)}`
+    : `/api/peer-content/${encodeURIComponent(onion || "")}/${encodeURIComponent(cachedId || item.id)}`
   if (onion) {
     try { localStorage.removeItem(receiptKey(onion, item.id)) } catch { /* owned cache remains authoritative */ }
     lnReceipt.value = null
@@ -1395,20 +1397,20 @@ async function confirmEcashPay() {
   const item = payItem.value
   const onion = props.peerId || currentPeer.value?.onion
   const method = ecashPlan.value?.chosen
-  if (!item || !onion || !method) return
+  if (!item || !onion || !method || downloading.value) return
   const price = getItemPrice(item.access)
 
   downloading.value = item.id
   purchaseError.value = null
   try {
-    const result = await rpcClient.call<{ data?: string; error?: string; ecash_backend?: string; mime_type?: string }>({
+    const result = await rpcClient.call<{ data?: string; owned?: boolean; owned_content_id?: string; error?: string; ecash_backend?: string; mime_type?: string }>({
       method: 'content.download-peer-paid',
-      params: { onion, content_id: item.id, price_sats: price, method, filename: item.filename },
-      timeout: 120000,
+      params: { onion, content_id: item.id, price_sats: price, method, filename: item.filename, cache_only: true },
+      timeout: 960000,
     })
-    if (result?.data) {
+    if (result?.data !== undefined || result?.owned === true) {
       // The purchase is now cached + owned by this node (backend persisted it).
-      openPurchased(item, result.data, result.mime_type)
+      openPurchased(item, result.data, result.mime_type, onion, result.owned_content_id)
     } else if (result?.error) {
       // Keep the confirm screen open so the user can switch backend and retry.
       purchaseError.value = result.error
@@ -1486,7 +1488,7 @@ async function payWithLightning() {
       }
     }
     lnReceipt.value = inv
-    const dl = await rpcClient.call<{ data?: string; owned?: boolean; mime_type?: string; error?: string }>({
+    const dl = await rpcClient.call<{ data?: string; owned?: boolean; owned_content_id?: string; mime_type?: string; error?: string }>({
       method: 'content.download-peer-invoice',
       params: { onion, content_id: item.id, payment_hash: inv.payment_hash, filename: item.filename, price_sats: inv.price_sats, cache_only: true },
       timeout: 960000,
@@ -1517,7 +1519,7 @@ async function pollInvoice() {
     if (res?.paid) {
       // Settled — pull the file using the payment hash as the gate token.
       invoiceWaiting.value = false
-      const dl = await rpcClient.call<{ data?: string; owned?: boolean; mime_type?: string; error?: string }>({
+      const dl = await rpcClient.call<{ data?: string; owned?: boolean; owned_content_id?: string; mime_type?: string; error?: string }>({
         method: 'content.download-peer-invoice',
         params: { onion, content_id: item.id, payment_hash: inv.payment_hash, filename: item.filename, price_sats: inv.price_sats, cache_only: true },
         timeout: 960000,

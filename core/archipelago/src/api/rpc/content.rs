@@ -43,6 +43,22 @@ async fn reclaim_spent_ecash(data_dir: &std::path::Path, token: &str, backend: &
     }
 }
 
+async fn bounded_seller_error(mut response: reqwest::Response) -> String {
+    let mut bytes = Vec::new();
+    let _ = tokio::time::timeout(std::time::Duration::from_secs(5), async {
+        while bytes.len() < 4096 {
+            match response.chunk().await {
+                Ok(Some(chunk)) => {
+                    bytes.extend_from_slice(&chunk[..chunk.len().min(4096 - bytes.len())])
+                }
+                _ => break,
+            }
+        }
+    })
+    .await;
+    String::from_utf8_lossy(&bytes).into_owned()
+}
+
 /// Only pass through the peer's bounded, printable explanation; refund status
 /// is always determined locally and must never come from the peer's wording.
 fn seller_error_message(status: reqwest::StatusCode, body: &str) -> String {
@@ -80,6 +96,7 @@ async fn existing_paid_content(
     onion: &str,
     content_id: &str,
     filename: Option<&str>,
+    cache_only: bool,
 ) -> Result<Option<serde_json::Value>> {
     let owned = crate::content_owned::list_owned_checked(data_dir)
         .await
@@ -93,35 +110,80 @@ async fn existing_paid_content(
     }) else {
         return Ok(None);
     };
-    let (mime, bytes) = crate::content_owned::read_owned(data_dir, &item.onion, &item.content_id)
-        .await.context("This purchase is recorded, but its cached file is unavailable. No new payment was sent. Restore the cached file or contact the seller.")?;
-    let mut response = paid_content_response(&bytes, &mime, 0);
+    let mut response = cached_purchase_response(data_dir, &item.onion, &item.content_id, cache_only, 0).await
+        .context("This purchase is recorded, but its cached file is unavailable. No new payment was sent. Recover delivery without paying again.")?;
     response["already_owned"] = serde_json::json!(true);
     response["filename"] = serde_json::json!(item.filename);
     Ok(Some(response))
 }
 
-// Updated clients open the persisted file through the Range-capable HTTP
-// endpoint. Avoid putting two base64 copies of a large video in a JSON reply.
-// Keep older clients compatible until both sides have upgraded.
-fn invoice_download_response(bytes: &[u8], mime: &str, cache_only: bool) -> serde_json::Value {
-    if cache_only {
-        serde_json::json!({ "owned": true, "mime_type": mime, "size_bytes": bytes.len() })
-    } else {
-        paid_content_response(bytes, mime, 0)
+async fn cached_purchase_response(
+    data_dir: &std::path::Path,
+    onion: &str,
+    content_id: &str,
+    cache_only: bool,
+    paid_sats: u64,
+) -> Result<serde_json::Value> {
+    use tokio::io::AsyncReadExt;
+    let (mime, file) = crate::content_owned::open_owned(data_dir, onion, content_id)
+        .await?
+        .context("Purchased content is not cached")?;
+    let size = file.metadata().await?.len();
+    if cache_only || size > 16 * 1024 * 1024 {
+        return Ok(
+            serde_json::json!({"owned":true,"mime_type":mime,"size":size,"size_bytes":size,"paid_sats":paid_sats,"owned_content_id":content_id}),
+        );
     }
+    let mut bytes = Vec::with_capacity(size as usize);
+    file.take(16 * 1024 * 1024 + 1)
+        .read_to_end(&mut bytes)
+        .await?;
+    anyhow::ensure!(
+        bytes.len() as u64 == size,
+        "Purchased file changed during reading"
+    );
+    let mut result = paid_content_response(&bytes, &mime, paid_sats);
+    result["owned_content_id"] = serde_json::json!(content_id);
+    Ok(result)
 }
 
-/// File purchases through an atomic no-clobber write in Files' own namespace.
-async fn file_purchase_in_files(
+async fn cache_peer_response(
     data_dir: &std::path::Path,
+    onion: &str,
+    content_id: &str,
     filename: &str,
     mime: &str,
-    bytes: &[u8],
-) -> Result<String> {
-    let folder = if mime.starts_with("image/") || mime.starts_with("video/") {
+    paid_sats: u64,
+    backend: &str,
+    response: reqwest::Response,
+) -> Result<crate::content_owned::OwnedItem> {
+    let expected = response.content_length();
+    crate::content_owned::record_purchase_stream(
+        data_dir,
+        crate::content_owned::OwnedItem {
+            onion: onion.into(),
+            content_id: content_id.into(),
+            filename: filename.into(),
+            mime_type: mime.into(),
+            size_bytes: expected.unwrap_or(0),
+            paid_sats,
+            ecash_backend: backend.into(),
+            purchased_at: chrono::Utc::now().to_rfc3339(),
+            download_complete: false,
+        },
+        response.bytes_stream(),
+        expected,
+    )
+    .await
+}
+
+async fn file_cached_purchase_in_files(
+    data_dir: &std::path::Path,
+    item: &crate::content_owned::OwnedItem,
+) -> Result<()> {
+    let folder = if item.mime_type.starts_with("image/") || item.mime_type.starts_with("video/") {
         "Photos"
-    } else if mime.starts_with("audio/") {
+    } else if item.mime_type.starts_with("audio/") {
         "Music"
     } else {
         "Documents"
@@ -131,19 +193,16 @@ async fn file_purchase_in_files(
         tokio::fs::metadata(&root).await?.is_dir(),
         "Files storage is unavailable"
     );
-    let name = std::path::Path::new(filename)
+    let name = std::path::Path::new(&item.filename)
         .file_name()
         .and_then(|n| n.to_str())
         .filter(|n| !n.is_empty())
         .unwrap_or("download");
-    let path =
-        crate::container::filebrowser::save_new_file(&root.join(folder), name, bytes).await?;
-    Ok(format!(
-        "{folder}/{}",
-        path.file_name()
-            .and_then(|n| n.to_str())
-            .context("Invalid Files name")?
-    ))
+    let (_, file) = crate::content_owned::open_owned(data_dir, &item.onion, &item.content_id)
+        .await?
+        .context("Purchase unavailable")?;
+    crate::container::filebrowser::save_new_file_from(&root.join(folder), name, file).await?;
+    Ok(())
 }
 
 impl RpcHandler {
@@ -540,6 +599,9 @@ impl RpcHandler {
             return Err(anyhow::anyhow!("Invalid v3 onion address"));
         }
 
+        crate::content_owned::validate_identity(onion, content_id)?;
+        let _purchase_lock = crate::content_owned::lock_seller_purchases(onion).await;
+
         // NEVER pay twice for content we already own (2026-07-22: a file
         // shared twice produced two catalog ids for the same bytes and the
         // buyer paid both). Guard BEFORE any ecash is minted, matching both
@@ -551,6 +613,10 @@ impl RpcHandler {
             onion,
             content_id,
             params.get("filename").and_then(|v| v.as_str()),
+            params
+                .get("cache_only")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false),
         )
         .await?
         {
@@ -668,12 +734,11 @@ impl RpcHandler {
         if response.status() == reqwest::StatusCode::PAYMENT_REQUIRED {
             // A 402 can mean mint validation, network failure, underpayment,
             // or an unaccepted mint. Do not invent a mint-mismatch diagnosis.
-            let body = response.text().await.unwrap_or_default();
+            drop(response);
             tracing::warn!(
-                "paid download: seller {onion} rejected {used_backend} payment of {price_sats} sats: {body}"
+                "paid download: seller rejected {used_backend} payment of {price_sats} sats"
             );
-            // Seller couldn't redeem the token — reclaim it so the buyer keeps
-            // their funds (the spent-but-unredeemed-notes case the user hit).
+            // Reclaim only proofs the mint still considers unspent.
             let refund = reclaim_spent_ecash(&self.config.data_dir, &token_str, used_backend).await;
             return Ok(serde_json::json!({
                 "error": format!("The seller could not verify the payment. {refund}")
@@ -682,8 +747,8 @@ impl RpcHandler {
 
         if !response.status().is_success() {
             let status = response.status();
-            let body = response.text().await.unwrap_or_default();
-            tracing::warn!("paid download: seller {onion} returned {status}: {body}");
+            let body = bounded_seller_error(response).await;
+            tracing::warn!("paid download: seller {onion} returned {status}");
             let refund = reclaim_spent_ecash(&self.config.data_dir, &token_str, used_backend).await;
             return Ok(serde_json::json!({
                 "error": format!("{} {refund}", seller_error_message(status, &body))
@@ -700,59 +765,26 @@ impl RpcHandler {
             .filter(|s| !s.is_empty())
             .unwrap_or_else(|| "application/octet-stream".to_string());
 
-        let bytes = match response.bytes().await {
-            Ok(bytes) => bytes,
-            Err(error) => {
-                tracing::warn!("paid download: response body failed: {error}");
-                let refund =
-                    reclaim_spent_ecash(&self.config.data_dir, &token_str, used_backend).await;
-                return Ok(serde_json::json!({
-                    "error": format!("The file transfer was interrupted after payment was sent. {refund}")
-                }));
-            }
-        };
-
-        // Persist the purchase so it "stays unlocked" for this buyer: cache the
-        // bytes + metadata keyed by (onion, content_id). The gallery then renders
-        // it unblurred and views it in-app from this cache — no re-payment and no
-        // reliance on a browser download (which silently fails on the mobile
-        // companion, the original "paid but never unlocked" report). Best-effort:
-        // a cache-write failure must not fail an already-paid download.
         let filename = params
             .get("filename")
             .and_then(|v| v.as_str())
-            .unwrap_or(content_id)
-            .to_string();
-        let purchased_at = chrono::Utc::now().to_rfc3339();
-        if let Err(e) = crate::content_owned::record_purchase(
+            .unwrap_or(content_id);
+        let item = cache_peer_response(&self.config.data_dir,onion,content_id,filename,&mime_type,price_sats,used_backend,response)
+            .await.context("Paid file delivery could not be saved. Do not send another payment; recover this purchase first")?;
+        if let Err(error) = file_cached_purchase_in_files(&self.config.data_dir, &item).await {
+            tracing::warn!("Purchase cached; optional Files copy failed: {error:#}");
+        }
+        let mut result = cached_purchase_response(
             &self.config.data_dir,
             onion,
             content_id,
-            &filename,
-            &mime_type,
-            &bytes,
+            params
+                .get("cache_only")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false),
             price_sats,
-            used_backend,
-            &purchased_at,
         )
-        .await
-        {
-            tracing::warn!("paid download: failed to cache purchased content (non-fatal): {e:#}");
-        }
-
-        // The durable purchased-content cache above is primary. A Files copy
-        // remains optional: a stopped FileBrowser must not undo a paid download.
-        let filed =
-            file_purchase_in_files(&self.config.data_dir, &filename, &mime_type, &bytes).await;
-        match filed {
-            Ok(path) => tracing::info!("paid download: filed into Files/{path}"),
-            Err(error) => tracing::warn!(
-                "paid download: optional Files copy failed; purchase cache retained: {error}"
-            ),
-        }
-
-        tracing::info!("paid download: received {} bytes from {onion} (paid {price_sats} sats via {used_backend})", bytes.len());
-        let mut result = paid_content_response(&bytes, &mime_type, price_sats);
+        .await?;
         result["ecash_backend"] = serde_json::json!(used_backend);
         Ok(result)
     }
@@ -900,14 +932,27 @@ impl RpcHandler {
             return Err(anyhow::anyhow!("Invalid payment_hash"));
         }
 
+        crate::content_owned::validate_identity(onion, content_id)?;
+        let _purchase_lock = crate::content_owned::lock_seller_purchases(onion).await;
         let cache_only = params
             .get("cache_only")
             .and_then(|v| v.as_bool())
             .unwrap_or(false);
-        if let Some((mime, bytes)) =
-            crate::content_owned::read_owned(&self.config.data_dir, onion, content_id).await
+        if crate::content_owned::list_owned_checked(&self.config.data_dir)
+            .await?
+            .iter()
+            .any(|item| {
+                item.onion == onion && item.content_id == content_id && item.download_complete
+            })
         {
-            return Ok(invoice_download_response(&bytes, &mime, cache_only));
+            return cached_purchase_response(
+                &self.config.data_dir,
+                onion,
+                content_id,
+                cache_only,
+                0,
+            )
+            .await;
         }
         // Older sellers only mark settlement during status polling. Always
         // perform that handshake before requesting bytes; retries never pay.
@@ -976,36 +1021,29 @@ impl RpcHandler {
             .next()
             .unwrap_or("application/octet-stream")
             .to_string();
-        let bytes = response
-            .bytes()
-            .await
-            .context("Paid file transfer interrupted; retry the download without paying again")?;
         let filename = params
             .get("filename")
             .and_then(|v| v.as_str())
             .unwrap_or(content_id);
-        crate::content_owned::record_purchase(
+        let item = cache_peer_response(
             &self.config.data_dir,
             onion,
             content_id,
             filename,
             &mime,
-            &bytes,
             params
                 .get("price_sats")
                 .and_then(|v| v.as_u64())
                 .unwrap_or(0),
             "lightning",
-            &chrono::Utc::now().to_rfc3339(),
+            response,
         )
         .await
-        .context("Paid file could not be saved; retry the download without paying again")?;
-        if let Err(error) =
-            file_purchase_in_files(&self.config.data_dir, filename, &mime, &bytes).await
-        {
+        .context("Paid file could not be saved; retry delivery without paying again")?;
+        if let Err(error) = file_cached_purchase_in_files(&self.config.data_dir, &item).await {
             tracing::warn!("Lightning purchase cached; optional Files copy failed: {error:#}");
         }
-        Ok(invoice_download_response(&bytes, &mime, cache_only))
+        cached_purchase_response(&self.config.data_dir, onion, content_id, cache_only, 0).await
     }
 
     /// Buyer side (#46): ask the seller for a fresh on-chain address to pay.
@@ -1462,20 +1500,18 @@ impl RpcHandler {
             .and_then(|v| v.as_str())
             .ok_or_else(|| anyhow::anyhow!("Missing content_id"))?;
 
-        match crate::content_owned::read_owned(&self.config.data_dir, onion, content_id).await {
-            Some((mime_type, bytes)) => {
-                use base64::Engine;
-                let encoded = base64::engine::general_purpose::STANDARD.encode(&bytes);
-                Ok(serde_json::json!({
-                    "data": encoded,
-                    "size": bytes.len(),
-                    "mime_type": mime_type,
-                }))
-            }
-            None => Ok(serde_json::json!({
-                "error": "You don't own this item yet, or its cached copy is missing."
-            })),
-        }
+        existing_paid_content(
+            &self.config.data_dir,
+            onion,
+            content_id,
+            params.get("filename").and_then(|v| v.as_str()),
+            params
+                .get("cache_only")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false),
+        )
+        .await?
+        .context("Purchased content is not cached")
     }
 }
 
@@ -1486,15 +1522,62 @@ mod tests;
 #[cfg(test)]
 mod invoice_delivery_response_tests {
     use super::*;
-    #[test]
-    fn cached_delivery_avoids_base64_but_keeps_old_clients_compatible() {
-        let cached = invoice_download_response(b"paid bytes", "video/mp4", true);
+    #[tokio::test]
+    async fn cached_delivery_avoids_base64_and_legacy_small_reads_remain_compatible() {
+        let dir = tempfile::tempdir().unwrap();
+        crate::content_owned::record_purchase(
+            dir.path(),
+            "seller.onion",
+            "film",
+            "film",
+            "video/mp4",
+            b"paid bytes",
+            1,
+            "cashu",
+            "now",
+        )
+        .await
+        .unwrap();
+        let cached = cached_purchase_response(dir.path(), "seller.onion", "film", true, 0)
+            .await
+            .unwrap();
         assert_eq!(cached["owned"], true);
         assert_eq!(cached["size_bytes"], 10);
         assert!(cached.get("data").is_none());
         assert!(cached.get("data_base64").is_none());
-        let legacy = invoice_download_response(b"paid bytes", "video/mp4", false);
+        let alias = existing_paid_content(
+            dir.path(),
+            "seller.onion",
+            "new-catalog-id",
+            Some("film"),
+            true,
+        )
+        .await
+        .unwrap()
+        .unwrap();
+        assert_eq!(alias["owned_content_id"], "film");
+        let legacy = cached_purchase_response(dir.path(), "seller.onion", "film", false, 0)
+            .await
+            .unwrap();
         assert_eq!(legacy["data"], "cGFpZCBieXRlcw==");
         assert_eq!(legacy["data"], legacy["data_base64"]);
+        let mut entry = crate::content_owned::list_owned_checked(dir.path())
+            .await
+            .unwrap()
+            .remove(0);
+        entry.content_id = "incomplete".into();
+        let stream = futures_util::stream::iter([Ok::<_, std::io::Error>(
+            bytes::Bytes::from_static(b"part"),
+        )]);
+        assert!(
+            crate::content_owned::record_purchase_stream(dir.path(), entry, stream, Some(10))
+                .await
+                .is_err()
+        );
+        assert!(
+            existing_paid_content(dir.path(), "seller.onion", "incomplete", None, true)
+                .await
+                .is_err()
+        );
     }
 }
