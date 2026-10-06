@@ -158,3 +158,77 @@ async fn managed_relay_receives_approval_rejection_and_cancellation() {
         }
     }
 }
+
+#[tokio::test]
+async fn federation_metrics_are_collected_values_or_unknown_never_placeholders() {
+    for age in [None, Some(0), Some(181), Some(-120)] {
+        let tmp = tempfile::tempdir().unwrap();
+        let mut config = crate::config::Config::default();
+        config.data_dir = tmp.path().to_path_buf();
+        let metrics = Arc::new(crate::monitoring::MetricsStore::new());
+        if let Some(age) = age {
+            metrics
+                .push(
+                    serde_json::from_value(serde_json::json!({
+                        "timestamp": chrono::Utc::now().timestamp() - age,
+                        "system": {"cpu_percent": 37.5, "mem_used_bytes": 200,
+                            "mem_total_bytes": 800, "disk_used_bytes": 600,
+                            "disk_total_bytes": 1000, "net_rx_bytes": 0, "net_tx_bytes": 0,
+                            "load_avg_1": 0.0, "load_avg_5": 0.0, "load_avg_15": 0.0},
+                        "containers": [], "rpc_latency_ms": 0.0, "ws_connections": 0
+                    }))
+                    .unwrap(),
+                )
+                .await;
+        }
+        let handler = crate::api::rpc::RpcHandler::new(
+            config,
+            Arc::new(crate::state::StateManager::new()),
+            metrics,
+            crate::session::SessionStore::new_for_tests(tmp.path().join("sessions.json")),
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+        let snapshot = handler.handle_federation_get_state().await.unwrap();
+        if age == Some(0) {
+            assert_eq!(snapshot["cpu_usage_percent"], 37.5);
+            assert_eq!(snapshot["mem_used_bytes"], 200);
+            assert_eq!(snapshot["disk_total_bytes"], 1000);
+        } else {
+            for field in [
+                "cpu_usage_percent",
+                "mem_used_bytes",
+                "mem_total_bytes",
+                "disk_used_bytes",
+                "disk_total_bytes",
+            ] {
+                assert!(
+                    snapshot.get(field).is_none_or(|v| v.is_null()),
+                    "{age:?}: {field}"
+                );
+            }
+        }
+        let peer = serde_json::from_value(serde_json::json!({
+            "did": "did:key:test", "pubkey": "11".repeat(32), "onion": "test.onion",
+            "trust_level": "trusted", "added_at": chrono::Utc::now().to_rfc3339(),
+            "last_state": snapshot
+        }))
+        .unwrap();
+        crate::federation::save_nodes(tmp.path(), &[peer])
+            .await
+            .unwrap();
+        let fleet = handler.handle_telemetry_fleet_status().await.unwrap();
+        let report = &fleet["nodes"][0];
+        if age == Some(0) {
+            assert_eq!(report["cpu_pct"], 38.0);
+            assert_eq!(report["mem_pct"], 25.0);
+            assert_eq!(report["disk_pct"], 60.0);
+        } else {
+            for field in ["cpu_pct", "mem_pct", "disk_pct"] {
+                assert!(report[field].is_null(), "{age:?}: {field}");
+            }
+        }
+    }
+}

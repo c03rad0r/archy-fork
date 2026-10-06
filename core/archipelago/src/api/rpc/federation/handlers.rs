@@ -572,14 +572,27 @@ impl RpcHandler {
             None
         };
 
+        // Reuse the minute collector instead of running expensive probes for
+        // every peer. An absent/stalled collector is unknown, never zero load.
+        let now = chrono::Utc::now().timestamp();
+        let latest = self.metrics_store.latest().await.filter(|sample| {
+            (0..=180).contains(&now.saturating_sub(sample.timestamp))
+        });
+        let metrics = latest.as_ref().map(|sample| &sample.system);
+        let uptime = tokio::fs::read_to_string("/proc/uptime")
+            .await
+            .ok()
+            .and_then(|s| s.split_whitespace().next()?.parse::<f64>().ok())
+            .filter(|v| v.is_finite() && *v >= 0.0)
+            .map(|v| v as u64);
         let state = federation::build_local_state(
             apps,
-            0.0,
-            0,
-            0,
-            0,
-            0,
-            0,
+            metrics.map(|m| m.cpu_percent).filter(|v| v.is_finite() && (0.0..=100.0).contains(v)),
+            metrics.filter(|m| m.mem_total_bytes > 0).map(|m| m.mem_used_bytes),
+            metrics.filter(|m| m.mem_total_bytes > 0).map(|m| m.mem_total_bytes),
+            metrics.filter(|m| m.disk_total_bytes > 0).map(|m| m.disk_used_bytes),
+            metrics.filter(|m| m.disk_total_bytes > 0).map(|m| m.disk_total_bytes),
+            uptime,
             tor_active,
             server_name,
             nostr_npub,

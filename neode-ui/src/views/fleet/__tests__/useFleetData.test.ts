@@ -1,5 +1,9 @@
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
+  averageMetric,
+  fleetStatus,
+  formatMetric,
+  timeAgo,
   fleetNodeDisplayName,
   fleetNodeSubtitle,
   isOnline,
@@ -31,6 +35,7 @@ function node(id: string, reportedAt: string): FleetNode {
 }
 
 describe('fleet data helpers', () => {
+  afterEach(() => vi.useRealTimers())
   it('treats nodes reported within 30 minutes as online', () => {
     vi.useFakeTimers()
     vi.setSystemTime(new Date('2026-06-10T12:00:00Z'))
@@ -79,9 +84,9 @@ describe('fleet data helpers', () => {
     expect(normalized.node_name).toBeNull()
     expect(normalized.hostname).toBeNull()
     expect(normalized.server_url).toBeNull()
-    expect(normalized.cpu_pct).toBe(0)
-    expect(normalized.mem_pct).toBe(0)
-    expect(normalized.disk_pct).toBe(0)
+    expect(normalized.cpu_pct).toBeNull()
+    expect(normalized.mem_pct).toBeNull()
+    expect(normalized.disk_pct).toBeNull()
     expect(normalized.containers).toEqual([])
     expect(normalized.recent_alerts).toEqual([])
   })
@@ -114,5 +119,49 @@ describe('fleet data helpers', () => {
     expect(normalizeNodeHistoryResponse({ entries: [entry] })).toEqual([entry])
     expect(normalizeNodeHistoryResponse({ history: [entry] })).toEqual([entry])
     expect(normalizeNodeHistoryResponse({})).toEqual([])
+  })
+})
+
+
+describe('fleet missing data and clock boundaries', () => {
+  afterEach(() => vi.useRealTimers())
+  it('does not turn malformed, missing or future timestamps into online status', () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date('2026-06-10T12:00:00Z'))
+    for (const value of ['', 'broken', '2027-01-01T00:00:00Z']) {
+      expect(fleetStatus(value)).toBe('unknown')
+      expect(isOnline(value)).toBe(false)
+      expect(timeAgo(value)).toBe('Unknown')
+    }
+    expect(fleetStatus('2026-06-10T11:30:00Z')).toBe('offline')
+    expect(fleetStatus('2026-06-10T12:00:30Z')).toBe('online')
+    expect(sortFleetNodes([node('unknown', ''), node('future', '2027-01-01T00:00:00Z'), node('old', '2026-06-10T10:00:00Z'), node('new', '2026-06-10T11:59:00Z')], 'status').map(n => n.node_id)).toEqual(['new', 'old', 'unknown', 'future'])
+  })
+  it('keeps valid zero separate from unavailable and invalid measurements', () => {
+    expect(normalizeFleetNode({cpu_pct: 0}).cpu_pct).toBe(0)
+    for (const value of [null, undefined, NaN, Infinity, -1, 101]) {
+      const result = normalizeFleetNode({cpu_pct: value, mem_pct: value, disk_pct: value})
+      expect(result.cpu_pct).toBeNull()
+      expect(result.mem_pct).toBeNull()
+      expect(result.disk_pct).toBeNull()
+    }
+    expect(formatMetric(null)).toBe('—')
+    expect(formatMetric(0)).toBe('0%')
+    expect(formatMetric(25.25, 1)).toBe('25.3%')
+  })
+  it('averages only real measurements from reporting online nodes', () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date('2026-06-10T12:00:00Z'))
+    const first = node('first', '2026-06-10T11:59:00Z')
+    first.cpu_pct = 0
+    const second = node('second', first.reported_at)
+    second.cpu_pct = 50
+    const missing = node('missing', first.reported_at)
+    missing.cpu_pct = null
+    const offline = node('offline', '2026-06-01T00:00:00Z')
+    offline.cpu_pct = 100
+    expect(averageMetric([first, second, missing, offline], 'cpu_pct')).toBe(25)
+    expect(averageMetric([missing, offline], 'cpu_pct')).toBeNull()
+    expect(averageMetric([], 'cpu_pct')).toBeNull()
   })
 })

@@ -12,11 +12,11 @@ export interface FleetNode {
   hostname?: string | null
   server_url?: string | null
   version: string
-  uptime_secs: number
+  uptime_secs: number | null
   cpu_cores: number
-  cpu_pct: number
-  mem_pct: number
-  disk_pct: number
+  cpu_pct: number | null
+  mem_pct: number | null
+  disk_pct: number | null
   container_count: number
   running_count: number
   federation_peers: number
@@ -43,7 +43,8 @@ export type SortOption = 'status' | 'last-seen' | 'name'
 
 // --- Utility Functions ---
 
-export function formatUptime(secs: number): string {
+export function formatUptime(secs: number | null): string {
+  if (secs === null) return 'Unavailable'
   if (secs < 60) return `${secs}s`
   const days = Math.floor(secs / 86400)
   const hours = Math.floor((secs % 86400) / 3600)
@@ -56,6 +57,7 @@ export function formatUptime(secs: number): string {
 export function timeAgo(dateStr: string): string {
   const now = Date.now()
   const then = new Date(dateStr).getTime()
+  if (!Number.isFinite(then) || then > now + 60_000) return 'Unknown'
   const diffMs = now - then
   if (diffMs < 0) return 'just now'
   const diffSecs = Math.floor(diffMs / 1000)
@@ -68,18 +70,34 @@ export function timeAgo(dateStr: string): string {
   return `${diffDays}d ago`
 }
 
-export function isOnline(reportedAt: string): boolean {
-  const thirtyMinMs = 30 * 60 * 1000
-  return Date.now() - new Date(reportedAt).getTime() < thirtyMinMs
+export function fleetStatus(reportedAt: string): 'online' | 'offline' | 'unknown' {
+  const age = Date.now() - new Date(reportedAt).getTime()
+  if (!Number.isFinite(age) || age < -60_000) return 'unknown'
+  return age < 30 * 60 * 1000 ? 'online' : 'offline'
 }
 
-export function healthBarClass(pct: number): string {
+export function isOnline(reportedAt: string): boolean {
+  return fleetStatus(reportedAt) === 'online'
+}
+
+export function formatMetric(value: number | null, digits = 0): string {
+  return value === null ? '—' : `${value.toFixed(digits)}%`
+}
+
+export function averageMetric(nodes: FleetNode[], field: 'cpu_pct' | 'mem_pct' | 'disk_pct'): number | null {
+  const values = nodes.filter(n => isOnline(n.reported_at)).map(n => n[field]).filter((v): v is number => v !== null && Number.isFinite(v))
+  return values.length ? values.reduce((sum, value) => sum + value, 0) / values.length : null
+}
+
+export function healthBarClass(pct: number | null): string {
+  if (pct === null) return ''
   if (pct >= 85) return 'monitoring-bar-danger'
   if (pct >= 60) return 'monitoring-bar-warn'
   return 'monitoring-bar-ok'
 }
 
-export function healthTextClass(pct: number): string {
+export function healthTextClass(pct: number | null): string {
+  if (pct === null) return ''
   if (pct >= 85) return 'fleet-text-danger'
   if (pct >= 60) return 'fleet-text-warn'
   return ''
@@ -132,6 +150,10 @@ export const SORT_OPTIONS: Array<{ label: string; value: SortOption }> = [
   { label: 'Name', value: 'name' },
 ]
 
+function reportTime(node: FleetNode): number {
+  return fleetStatus(node.reported_at) === 'unknown' ? 0 : new Date(node.reported_at).getTime()
+}
+
 export function sortFleetNodes(nodes: FleetNode[], sortBy: SortOption): FleetNode[] {
   const sorted = [...nodes]
   switch (sortBy) {
@@ -140,17 +162,26 @@ export function sortFleetNodes(nodes: FleetNode[], sortBy: SortOption): FleetNod
         const aOnline = isOnline(a.reported_at)
         const bOnline = isOnline(b.reported_at)
         if (aOnline !== bOnline) return aOnline ? -1 : 1
-        return new Date(b.reported_at).getTime() - new Date(a.reported_at).getTime()
+        return reportTime(b) - reportTime(a)
       })
       break
     case 'last-seen':
-      sorted.sort((a, b) => new Date(b.reported_at).getTime() - new Date(a.reported_at).getTime())
+      sorted.sort((a, b) => reportTime(b) - reportTime(a))
       break
     case 'name':
       sorted.sort((a, b) => fleetNodeDisplayName(a).localeCompare(fleetNodeDisplayName(b)))
       break
   }
   return sorted
+}
+
+function numberOrNull(value: unknown): number | null {
+  return typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : null
+}
+
+function percentageOrNull(value: unknown): number | null {
+  const number = numberOrNull(value)
+  return number !== null && number <= 100 ? number : null
 }
 
 function numberOrZero(value: unknown): number {
@@ -164,17 +195,17 @@ export function normalizeFleetNode(node: Partial<FleetNode>): FleetNode {
     hostname: typeof node.hostname === 'string' ? node.hostname : null,
     server_url: typeof node.server_url === 'string' ? node.server_url : null,
     version: typeof node.version === 'string' ? node.version : 'unknown',
-    uptime_secs: numberOrZero(node.uptime_secs),
+    uptime_secs: numberOrNull(node.uptime_secs),
     cpu_cores: numberOrZero(node.cpu_cores),
-    cpu_pct: numberOrZero(node.cpu_pct),
-    mem_pct: numberOrZero(node.mem_pct),
-    disk_pct: numberOrZero(node.disk_pct),
+    cpu_pct: percentageOrNull(node.cpu_pct),
+    mem_pct: percentageOrNull(node.mem_pct),
+    disk_pct: percentageOrNull(node.disk_pct),
     container_count: numberOrZero(node.container_count),
     running_count: numberOrZero(node.running_count),
     federation_peers: numberOrZero(node.federation_peers),
     recent_alerts: Array.isArray(node.recent_alerts) ? node.recent_alerts : [],
     containers: Array.isArray(node.containers) ? node.containers : [],
-    reported_at: typeof node.reported_at === 'string' ? node.reported_at : new Date(0).toISOString(),
+    reported_at: typeof node.reported_at === 'string' ? node.reported_at : '',
   }
 }
 
@@ -195,7 +226,7 @@ type FleetCache = {
   sortBy: SortOption
 }
 
-const FLEET_CACHE_KEY = 'archipelago.fleet.cache.v1'
+const FLEET_CACHE_KEY = 'archipelago.fleet.cache.v2'
 
 function readFleetCache(): Partial<FleetCache> {
   if (typeof window === 'undefined') return {}
@@ -246,28 +277,20 @@ export function useFleetData() {
   // --- Computed ---
 
   const onlineCount = computed(() => nodes.value.filter(n => isOnline(n.reported_at)).length)
-  const offlineCount = computed(() => nodes.value.length - onlineCount.value)
-  const healthyCount = computed(() => nodes.value.filter(n => n.recent_alerts.length === 0).length)
+  const offlineCount = computed(() => nodes.value.filter(n => fleetStatus(n.reported_at) === 'offline').length)
+  const unknownCount = computed(() => nodes.value.filter(n => fleetStatus(n.reported_at) === 'unknown').length)
+  const healthyCount = computed(() => nodes.value.filter(n => isOnline(n.reported_at) && n.cpu_pct !== null && n.mem_pct !== null && n.disk_pct !== null && n.recent_alerts.length === 0).length)
 
   const fleetHealthPct = computed(() => {
     if (!nodes.value.length) return 0
     return Math.round((healthyCount.value / nodes.value.length) * 100)
   })
 
-  const avgCpu = computed(() => {
-    if (!nodes.value.length) return 0
-    return nodes.value.reduce((sum, n) => sum + n.cpu_pct, 0) / nodes.value.length
-  })
+  const avgCpu = computed(() => averageMetric(nodes.value, 'cpu_pct'))
 
-  const avgMem = computed(() => {
-    if (!nodes.value.length) return 0
-    return nodes.value.reduce((sum, n) => sum + n.mem_pct, 0) / nodes.value.length
-  })
+  const avgMem = computed(() => averageMetric(nodes.value, 'mem_pct'))
 
-  const avgDisk = computed(() => {
-    if (!nodes.value.length) return 0
-    return nodes.value.reduce((sum, n) => sum + n.disk_pct, 0) / nodes.value.length
-  })
+  const avgDisk = computed(() => averageMetric(nodes.value, 'disk_pct'))
 
   const selectedNode = computed(() => {
     if (!selectedNodeId.value) return null
@@ -525,7 +548,7 @@ export function useFleetData() {
     loading, refreshing, errorMessage, nodes, fleetAlerts, alertsLoading,
     selectedNodeId, selectedNode, nodeHistory, nodeHistoryLoading,
     autoRefresh, lastRefreshed, sortBy, chartWidth,
-    onlineCount, offlineCount, healthyCount, fleetHealthPct,
+    onlineCount, offlineCount, unknownCount, healthyCount, fleetHealthPct,
     avgCpu, avgMem, avgDisk, sortedNodes, allAppIds,
     nodeHistoryLabels, nodeHistoryCpuDatasets, nodeHistoryMemDatasets, nodeHistoryDiskDatasets,
     refreshAll, selectNode, toggleAutoRefresh, exportFleetData,

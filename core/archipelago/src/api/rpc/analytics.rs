@@ -352,20 +352,19 @@ impl RpcHandler {
                     (Some(u), Some(t)) if t > 0 => {
                         serde_json::json!((u as f64 / t as f64 * 100.0).round())
                     }
-                    _ => serde_json::json!(0),
+                    _ => serde_json::Value::Null,
                 }
             };
             let apps = state.map(|s| s.apps.as_slice()).unwrap_or(&[]);
             let reported_at = state
                 .map(|s| s.timestamp.clone())
-                .or_else(|| n.last_seen.clone())
-                .unwrap_or_else(|| n.added_at.clone());
+                .or_else(|| n.last_seen.clone());
 
             let mut report = serde_json::json!({
                 "node_id": n.did,
                 "node_name": state.and_then(|s| s.node_name.clone()).or_else(|| n.name.clone()),
-                "uptime_secs": state.and_then(|s| s.uptime_secs).unwrap_or(0),
-                "cpu_pct": state.and_then(|s| s.cpu_usage_percent).map(|v| v.round()).unwrap_or(0.0),
+                "uptime_secs": state.and_then(|s| s.uptime_secs),
+                "cpu_pct": state.and_then(|s| s.cpu_usage_percent).filter(|v| v.is_finite() && (0.0..=100.0).contains(v)).map(|v| v.round()),
                 "mem_pct": pct(state.and_then(|s| s.mem_used_bytes), state.and_then(|s| s.mem_total_bytes)),
                 "disk_pct": pct(state.and_then(|s| s.disk_used_bytes), state.and_then(|s| s.disk_total_bytes)),
                 "container_count": apps.len(),
@@ -561,7 +560,7 @@ fn annotate_fleet_report(report: &mut serde_json::Value) {
     let is_online = reported
         .map(|dt| {
             let age = chrono::Utc::now().signed_duration_since(dt);
-            age.num_minutes() < 30
+            age.num_seconds() >= -60 && age.num_seconds() < 1800
         })
         .unwrap_or(false);
 
@@ -569,7 +568,9 @@ fn annotate_fleet_report(report: &mut serde_json::Value) {
         .map(|dt| {
             let age = chrono::Utc::now().signed_duration_since(dt);
             let mins = age.num_minutes();
-            if mins < 1 {
+            if age.num_seconds() < -60 {
+                "unknown (clock ahead)".to_string()
+            } else if mins < 1 {
                 "just now".to_string()
             } else if mins < 60 {
                 format!("{}m ago", mins)
