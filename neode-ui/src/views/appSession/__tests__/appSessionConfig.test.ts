@@ -107,6 +107,22 @@ describe('appSessionConfig', () => {
     expect(resolveAppUrl('filebrowser', undefined, 'http://localhost:8083')).toBe('http://192.0.2.10:8083')
   })
 
+  it('keeps loopback runtime addresses on the dashboard host for embedded apps', () => {
+    stubLocation({ hostname: 'node.example', protocol: 'https:' })
+    for (const host of ['localhost', '127.0.0.1', '[::1]']) {
+      expect(resolveAppUrl('filebrowser', undefined, `http://${host}:8083/files?view=grid#recent`))
+        .toBe('https://node.example:8083/files?view=grid#recent')
+    }
+  })
+
+  it('does not replace localhost text inside an external hostname or path', () => {
+    stubLocation({ hostname: 'node.example', protocol: 'http:' })
+    expect(resolveAppUrl('filebrowser', undefined, 'http://localhost.example:8083/localhost'))
+      .toBe('http://localhost.example:8083/localhost')
+    expect(resolveAppUrl('filebrowser', undefined, 'http://media.example:8083/localhost'))
+      .toBe('http://media.example:8083/localhost')
+  })
+
   // The direct-port launch path (new-tab apps on desktop, the companion's
   // native WebView on phones) used to hardcode http:// — so a node reached
   // over HTTPS opened Vaultwarden and friends in cleartext. It must follow

@@ -172,7 +172,12 @@ export function resolveAppUrl(id: string, routeQueryPath?: string, runtimeUrl?: 
   }
 
   if (runtimeUrl && id !== 'netbird') {
-    let base = runtimeUrl.replace(/localhost/i, window.location.hostname)
+    // Only rewrite a loopback authority. A substring replacement also changes
+    // external hostnames and paths, while leaving 127.0.0.1 pointed at the viewer.
+    let base = runtimeUrl.replace(
+      /^(https?:\/\/)(localhost|127\.0\.0\.1|\[::1\])(?=[:/?#]|$)/i,
+      (_match, scheme: string) => `${scheme}${window.location.hostname}`,
+    )
     // The backend reports runtime URLs as http:// because that is how the app
     // binds locally. On an HTTPS dashboard that is mixed content and the
     // frame is blocked outright — but ONLY upgrade when the gate fronts the

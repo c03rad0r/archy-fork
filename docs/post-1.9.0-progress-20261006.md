@@ -862,3 +862,21 @@ User reports an HTTPS-only embedded app gate while tab mode works. Added task17,
 with exact node/app clarification pending. No authentication bypass or live
 nginx modification. The private operator report is updated, regenerated and
 checked at390/1440px; SCP path remains unchanged.
+
+### HTTPS iframe investigation: bounded findings
+
+A real HTTPS parent on dev with an existing session successfully loaded File
+Browser in an iframe (200, no gate). Certificate trust was ignored only inside
+the disposable diagnostic context; this does not qualify normal browser trust.
+Yaya's File Browser HTTPS port resets the connection in both curl and browser.
+The exact operator URL/app is still needed to reproduce the reported gate.
+Initial intercepted-parent probes were blocked by Chromium local-network access
+checks; the corrected probe used the actual parent origin. Logs:
+`/tmp/archy-https-frame-probe-2.log` and `...-3.log`. No gate/TLS settings changed.
+
+Separate regression tests reproduced embedded runtime-URL handling errors:
+127.0.0.1/IPv6 loopback were not translated to the dashboard host, while a loose
+localhost replacement could alter external hostnames or paths. Exact authority
+matching fixes these errors. The 22 focused launch/stable-URL/loader tests pass
+after two new failures were reproduced. This is not claimed as the live gate
+incident's cause. Production UI build passes (`/tmp/archy-https-runtime-ui-build.log`). This change is not yet deployed.
