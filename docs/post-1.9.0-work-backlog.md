@@ -390,14 +390,32 @@ remain open. See `docs/https-app-gate-followup-20261006.md`.
 
 ## 18. Firewall and tunnel UI/settings — latest addition, last in sequence
 
-- Operator requested this at the end of the remaining tasks on6October, after
-  the previously deferred MeshCore work. Preserve the existing task order.
-- Obtain and read the other agent's specific firewall/tunnel UI/settings handover
-  before fixing scope or implementing controls. It has not been located in the
-  local worktree documentation or temporary handoff files. Earlier NPM/public
-  management security handovers are received; they are not this new UI handover.
-- Keep this item open as awaiting handover. Do not invent proposed settings or
-  mark receipt, implementation, deployment or acceptance complete.
-- Once scoped, require tests of authorization, network-policy boundaries,
-  persistence, rollback and actual-node UI behavior without compromising
-  management access, existing tunnels or the public-management source guard.
+Status: handover read and acknowledged on6October; implementation pending.
+The private handover and acknowledgement live in the separate mining review
+checkout. Do not commit its deployment addresses or operational details here.
+
+- Keep this task at the end, after the previously deferred MeshCore work.
+- Network → Local network: make the Firewall Active row clickable and add a
+  bottom-anchored Firewall & tunnels button. Both open one central settings
+  screen; app pages may link to it, but are not the primary configuration UI.
+- Show firewall services/ports, protocols, allowed sources and effective state;
+  tunnel connection/handshake status, peers and endpoints; manifest-backed app
+  and service selection, existing tunnel, public port and domain when relevant.
+- Treat transport reachability separately from browser/app-gate authentication.
+  Raw TCP services need a copyable protocol endpoint, not an HTTP proxy host or
+  certificate requirement. Keep mining service exposure separate from admin UI.
+- Own the complete route: public forwarding, container/host listener and node
+  tunnel firewall, restricted to the tunnel peer. Show independent checks and
+  name the precise failing stage. Unmanaged/unreachable VPS must show VPS setup
+  required with concrete instructions, never a misleading success indication.
+- Preserve unrelated rules/tunnels/apps; validate before applying, persist scoped
+  changes, roll back failures, remove only owned exposure rules on disable, and
+  provide repair/reconcile for detected drift.
+- Preserve the manual node repair. The handover's later external mining success
+  supersedes its earlier unverified-forwarding notes. Treat this as received
+  evidence, not newly performed validation. Reboot/persistence gates remain open.
+- Use the requested shared browser-check skill when located; it is not available
+  in this session's skill catalog. Keep its browser scenarios outside repositories
+  as requested, while retaining repository regression and release requirements.
+- Review and integrate once through ngit, preserve the already integrated mining
+  work, and mirror accepted commits to Gitea. No release gate is waived.
