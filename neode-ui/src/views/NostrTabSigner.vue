@@ -74,7 +74,19 @@ function hideSigner(delay = 0) {
 }
 
 function sendIdentity(identity: SelectedIdentity) {
-  parentPost({ type: 'archipelago:signer-identity', identity })
+  // The picker emits a Vue reactive object. Browser postMessage cannot clone
+  // that proxy: sending it closes the picker, then throws before the broker
+  // can hide, leaving a blank full-screen surface. Send public scalar fields
+  // explicitly, also keeping any unrelated identity metadata out of the app.
+  const publicIdentity: SelectedIdentity = {
+    id: identity.id,
+    name: identity.name,
+    did: identity.did,
+    pubkey: identity.pubkey,
+    nostr_pubkey: identity.nostr_pubkey,
+    nostr_npub: identity.nostr_npub,
+  }
+  parentPost({ type: 'archipelago:signer-identity', identity: publicIdentity })
 }
 
 const bridge = useNostrBridge(getStoredIdentity, {
