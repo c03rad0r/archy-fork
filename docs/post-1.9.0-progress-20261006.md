@@ -234,3 +234,15 @@ local-network permission because synthetic responses lack normal address-space
 metadata. That permission is confined to the isolated loopback test context;
 no app origin policy or live browser settings were weakened. These fixture
 results cannot replace final deployed-node/companion acceptance.
+
+
+The desktop timeout was identified from a failure screenshot: a visible CPU-load
+notification covered the session Close button. The repeat used the notification's
+normal dismiss button, then passed the entire desktop sequence. Mobile and
+desktop candidate checks now pass hidden playback, pause/resume, reopening the
+same iframe and Stop. Logs: `/tmp/archy-integrated-v4v-browser-origin-4.log`
+(mobile pass, earlier desktop obstruction) and
+`/tmp/archy-integrated-v4v-desktop-2.log` (desktop pass). No forced clicks or
+production notification suppression were used. Production UI rebuild including
+the new card footers is running; signed-install and physical companion gates
+remain open.
