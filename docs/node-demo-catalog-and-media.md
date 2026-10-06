@@ -163,3 +163,41 @@ controls and reopening the same frame before accepting the repair.
 The requested promotion uses the final intro cymatic still as its background,
 with a music/play graphic on the right or the app's For You banner treatment.
 The previously captured login background does not satisfy this updated request.
+
+Latest operator observation: the bottom-bar transition is now working; controls
+and the artwork background are still missing. Preserve the working transition.
+Add legible current-track artwork plus play/pause, previous/next and shuffle
+synchronized with the app's actual queue/state. This observation narrows the
+reported symptom; it does not replace automated login-boundary and playback tests.
+
+Mobile refinement requested: previous/next and the open-app action must fit neatly
+at narrow widths with comfortable touch targets; prefer a compact app icon with
+an accessible name. Fresh V4V launch should open Browse. Reopening the retained
+playing iframe must preserve the current song, queue and session rather than
+resetting it to the initial route.
+
+
+### Session recovery and private distribution — 6 October, 22:24 UTC
+
+All three development worktrees survived the interrupted session. Private recovery
+bundles, patches, untracked source and test logs were saved and verified under
+`~/.local/state/archipelago/session-recovery/20261006T221806Z/`.
+
+At the operator's explicit request, the publicly downloadable original V4V demo
+package version was deleted through the registry package API (204); authenticated
+package enumeration confirms it is absent. Anonymous registry bearer-token pulls
+of both its original tag and manifest digest now return404. This does not establish
+that no one downloaded it before removal or that external copies can be recalled.
+
+The original image was first exported privately and its configuration digest
+verified against the installed-image record. Yaya authenticated dashboard RPC
+reports the managed app running/ui-ready both before and after removal. Existing
+containers and data were not modified. A future fresh pull of the deleted public
+reference will fail; retain the on-node image and private archive until the private
+replacement delivery/update path is qualified. No updated demo image is authorized
+for public publication. Native login/player update still awaits live deployment.
+
+The prior temporary SSH control connection no longer authenticates. Operator was
+asked to restore access; dashboard RPC remains available. IndeeHub, V4V and wallet
+recovery work have been reassigned to three active agents. Incomplete test runs are
+being resumed, with heavy qualification staggered to avoid disk-pressure timeouts.

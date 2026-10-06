@@ -238,7 +238,10 @@ ahead of that work or as an untested addition to the current release.
 
 - After the current release, deploy/package the existing V4V Portainer deployment
   as a demo app on Yaya, showcasing how an ordinary third-party app works on a
-  node **without native Nostr signer integration**, as explicitly requested.
+  node. Updated operator instruction on6October supersedes the original
+  no-native-signer brief: use Nostr sign-in and the native signer, replacing the
+  alpha password gate for this demo. Preserve explicit signing consent and
+  cryptographic authentication; newly registered users gain no operator powers.
 - Inspect the actual existing Portainer source, branch/image revision, Compose
   stack, access/authentication and data before changes; retain the working V4V
   site, stack and persistent state. Do not confuse this with the public Archipelago
@@ -246,7 +249,7 @@ ahead of that work or as an untested addition to the current release.
 - Follow the current app-development guide and supported app packaging/gate/
   lifecycle conventions. Define the app card/icon/category, launch URL/readiness,
   network/auth boundaries, health, configuration and persistent mounts properly.
-  Do not expose the native signer or implicitly grant signing permissions.
+  Integrate the supported native signer without implicitly granting permissions.
 - Qualify fresh installation in isolation, then Yaya deployment, desktop/mobile/
   companion launch, normal app functionality, restart, update/rollback and safe
   removal behavior. Verify the deployed app actually runs the intended V4V source
@@ -260,8 +263,12 @@ ahead of that work or as an untested addition to the current release.
 - Source is on the existing Gitea on the146 server; locate the actual V4V repo,
   branch and deployment revision there rather than guessing a replacement source.
 - Add a **Sovereign Music** banner for V4V on Yaya, following the existing
-  Sovereign Streaming banner treatment and using the app's own login background.
-  Retrieve and inspect the real asset; do not invent a replacement illustration.
+  Sovereign Streaming banner treatment. Updated request: use the final intro
+  cymatic still as the background and a music/play graphic on the right, or adapt
+  the app's For You banner treatment. Inspect the actual intro ending and assets.
+- Fix the reported real managed-app regression: closing V4V leaves playback
+  running without the native bottom player. Qualify against the signed catalog
+  and real installed app, not only browser-injected package fixtures.
 - Both demo app availability and its promotion must be confined to Yaya. Evaluate
   a signed per-node/DID-scoped demo catalog or existing supported node-specific
   candidate mechanism. Do not publish the demo to the global catalog or let
@@ -272,6 +279,15 @@ ahead of that work or as an untested addition to the current release.
 - This may become a real app later; preserve an explicit tested promotion path
   from node-only demo to proper public app release without duplicate app IDs,
   conflicting state, lost configuration or automatic exposure before approval.
+
+### Private demo distribution correction
+
+The operator authorized removal of the publicly downloadable V4V demo container
+on 6 October. Preserve Yaya's working installed demo, its data, and a private
+recovery image. V4V application source and images must remain private until the
+operator explicitly approves publication. Audience restriction on a signed node
+catalog does not make the referenced registry image private. Updated deployment
+must use a qualified private delivery path; do not republish the demo image.
 
 ### V4V persistent playback and existing demo music catalog
 
@@ -286,7 +302,7 @@ ahead of that work or as an untested addition to the current release.
   system termination/background restrictions require separate qualification.
 - Inspect supported app/player integration before choosing an implementation.
   Maintain one playback session, prevent duplicate audio on reopen, authenticate
-  app-to-shell messages, and preserve the requirement of no native Nostr signer.
+  app-to-shell messages, and support the updated native Nostr sign-in requirement.
 - Test navigation, repeated close/reopen, pause/resume/seek, track changes,
   disconnect/recovery and unavailable media on desktop and the actual companion.
   Check track, queue and position continuity, accessible compact controls and
@@ -464,3 +480,27 @@ functional/UX review. These are additions to existing groups, not closed work.
 - Qualify real reciprocal removal/requests, offline and reconnect behavior,
   duplicate/replayed events, automatic UI convergence, notifications/deep links,
   map positioning and responsive card geometry before claiming acceptance.
+
+## 19. Reusable media developer guide and companion Cloud video PiP
+
+Added by the operator after the V4V player refinements. Preserve the earlier
+instruction to complete the other work before the deferred final connection UX
+review; this new media task is part of that preceding work.
+
+- Document the reusable audio manifest, handshake/state/control protocol,
+  security boundaries, login redirects, queue ownership, artwork, lifecycle,
+  mobile layout and reproducible test/deployment steps for developers and agents.
+  Use V4V as the reference; distinguish implemented source from live acceptance.
+- Implement companion picture-in-picture for Cloud videos first. Investigate
+  viewer controls and native Android support together, preserving the same video
+  and authorized/FIPS transport rather than opening an unauthenticated second URL.
+- Scope PiP to video, never expose the dashboard/management UI in the PiP window.
+  Test entry/exit, play/pause/close, return, aspect ratio, rotation, background,
+  completion, unsupported/disabled PiP, session expiry and network interruption.
+- Require physical Android companion acceptance and signed APK distribution.
+  Document the supported video/PiP contract for other apps after qualification;
+  do not claim the audio postMessage bridge already implements video PiP.
+
+Source inspection so far: MainActivity declares no supportsPictureInPicture flag,
+and the native sources contain no PiP entry/controller implementation. Existing
+WebViewFullscreen handles fullscreen; this is not evidence of native PiP support.

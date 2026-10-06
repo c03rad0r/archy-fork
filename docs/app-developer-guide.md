@@ -831,3 +831,12 @@ verify its first launch from My Apps, app details, a browser tab and Companion:
 - Verify first launch, cancellation/retry, reload, owner/viewer authorization,
   and persisted data after app recreation. Use the shared browser-check suite
   outside the repository; record which nodes and browser engines were tested.
+
+## Native audio player and video integration
+
+Audio apps can integrate with the native bottom player while retaining their own
+playback engine, queue and authenticated media. Follow the
+[audio message protocol, manifest example and acceptance checklist](app-media-integration.md).
+V4V is the reference implementation for close/reopen, artwork and queue controls.
+That guide also tracks the separate companion Cloud video PiP work; audio bridge
+support must not be advertised as already providing native video PiP.

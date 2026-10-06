@@ -41,3 +41,16 @@ native bar, and reopen the same iframe. Verify uninterrupted audio, matching
 song/cover/shuffle, and the app's actual queue. Repeat at mobile and desktop
 sizes and through the new Nostr login. Verify banner visually with the signed
 node-only catalog. This follow-up does not claim those live checks passed yet.
+
+
+## Resumed dashboard deployment — 6 October
+
+The previously completed full dashboard suite passed 1,307 tests in 165 files;
+the production build passed. Both logs survived the session interruption, and the
+UI source remains unchanged from that build. The resulting dashboard was deployed
+to the dev node with index SHA-256
+`a03f3e7a366613f82dd9fe014dc04301f223b9896f6684bf2ee5aa06aa59b2de`.
+Served bytes match; backend, session key and app container identities/start times
+were preserved. A rollback archive/script was saved in the node support directory.
+Post-deployment browser checks are in progress. This is dashboard deployment only;
+Yaya and the new private V4V app image still require deployment/acceptance.
