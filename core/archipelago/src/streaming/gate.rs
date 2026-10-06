@@ -172,19 +172,8 @@ async fn process_payment(
 
     session::save_sessions(data_dir, &store).await?;
 
-    // Record the streaming revenue
-    let mut wallet = ecash::load_wallet(data_dir).await?;
-    wallet.record_tx(
-        ecash::TransactionType::StreamingRevenue,
-        received_sats,
-        &format!(
-            "Streaming payment: {} sats for {} from {}",
-            received_sats, service.service_id, peer_id
-        ),
-        &wallet.mint_url.clone(),
-        peer_id,
-    );
-    ecash::save_wallet(data_dir, &wallet).await?;
+    // Serialize the history write with all other wallet mutations.
+    ecash::record_streaming_revenue(data_dir, received_sats, &service.service_id, peer_id).await?;
 
     debug!(
         "Gate: accepted {} sats from {} for {}, allotment={}",

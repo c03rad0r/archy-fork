@@ -426,3 +426,37 @@ async fn paid_file_gate_delivers_bytes_only_after_payment_and_does_not_charge_mi
         }
     }
 }
+
+#[tokio::test]
+async fn simultaneous_receipts_and_revenue_writes_preserve_every_payment() {
+    let mint = Mint::start(0, None).await;
+    let wallet_dir = mint.wallet().await;
+    let mut tasks = tokio::task::JoinSet::new();
+    for exponent in 0..8 {
+        let amount = 1u64 << exponent;
+        let token = CashuToken::new(&mint.url, vec![proof(ACTIVE, amount)])
+            .serialize()
+            .unwrap();
+        let data_dir = wallet_dir.path().to_path_buf();
+        tasks.spawn(async move {
+            verify_and_receive_payment(&data_dir, &token, amount)
+                .await
+                .unwrap();
+        });
+    }
+    for index in 0..16 {
+        let data_dir = wallet_dir.path().to_path_buf();
+        tasks.spawn(async move {
+            record_streaming_revenue(&data_dir, 1, "fixture-service", &format!("peer-{index}"))
+                .await
+                .unwrap();
+        });
+    }
+    while let Some(result) = tasks.join_next().await {
+        result.unwrap();
+    }
+    let wallet = load_wallet(wallet_dir.path()).await.unwrap();
+    assert_eq!(wallet.balance(), 255);
+    assert_eq!(wallet.transactions.len(), 24);
+    assert_eq!(mint.requests.lock().unwrap().len(), 8);
+}

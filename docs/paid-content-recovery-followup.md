@@ -142,3 +142,31 @@ whole-file replacement (not read-modify-write serialization), private permission
 and retained targets on rename failure. Wallet tests:57passed. Full backend
 qualification passes in `/tmp/archy-wallet-storage-tls-full-tests.log`. No live
 wallet was altered. Operation serialization and recovery journal remain open.
+
+### Serialized wallet mutations and seed durability
+
+The wallet now serializes public mutations by canonical node data directory,
+including network changes and seed establishment/import. Independent node
+fixtures retain separate locks; nested send/swap paths use private implementations
+under the outer lock. Streaming revenue records use the same boundary, and direct
+wallet saves are restricted to the wallet module. This is in-process serialization,
+not a cross-process transaction journal or a claim that an entire payment RPC is
+recoverable.
+
+Damaged network configuration now errors instead of silently choosing mainnet;
+only an absent configuration retains the historical mainnet default. The previous
+seed is durably copied to a unique private backup before atomic replacement,
+rather than moved away before the replacement write succeeds.
+
+Final isolated suite: **1,764 tests pass, zero failures, five existing skips**.
+Log: /tmp/archy-wallet-mutation-seed-final-tests.log. Regressions include eight
+simultaneous real HTTP/curve-signed fixture receipts plus sixteen history writes,
+preserving255sats and24entries; canonical/symlink lock identity; damaged network
+configuration; and simultaneous seed establishment/unique retained backups.
+No live wallet data or additional real payments were used.
+
+Still required: correlated purchase and mint-operation journal, recoverable
+prepared outputs, quote/change handling and seller receipts, interrupted-operation
+recovery and complete timed-playback integration. Higher-level Minibits claim and
+purchase flows must pin their network/terms across their entire business operation;
+serializing individual wallet calls alone does not provide that contract.

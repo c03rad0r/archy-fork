@@ -880,3 +880,24 @@ localhost replacement could alter external hostnames or paths. Exact authority
 matching fixes these errors. The 22 focused launch/stable-URL/loader tests pass
 after two new failures were reproduced. This is not claimed as the live gate
 incident's cause. Production UI build passes (`/tmp/archy-https-runtime-ui-build.log`). This change is not yet deployed.
+
+## Wallet storage and Yaya TLS qualification
+
+Commits `719e7238` and `9f0df2ac` pass the complete isolated backend suite:
+1,757passed, zero failures, five existing skips. Wallet storage tests57pass;
+permission repair tests6pass; first-boot9and rotation8cases pass. Live Yaya's
+root-only leaf key was confirmed by gate permission-denied logs; changing only
+its group/mode restored authenticated HTTPS iframe200. No cert bytes, nginx
+configuration or app processes changed. Normal trust and the exact operator
+URL/app remain open. See `docs/https-app-gate-followup-20261006.md`.
+
+Per-wallet mutation serialization is now being qualified separately. It uses
+canonical data-directory locks so independent fixture nodes cannot deadlock one
+another, and private nested helpers avoid recursive locking. Wallet network
+changes and streaming revenue writes participate. This remains uncommitted
+and is not a durable transaction journal.
+
+Final wallet serialization/network/seed qualification:1,764backend tests pass,
+zero failures, five existing skips. This includes the concurrent receipt/history
+and seed-backup tests. Source is ready for review; not deployed, and the durable
+purchase journal remains open.

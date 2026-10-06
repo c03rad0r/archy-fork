@@ -267,40 +267,39 @@ impl EcashNetwork {
 
 /// Read the node's ecash network. Absent file = mainnet, so nodes that never
 /// touch this setting behave exactly as before.
-pub async fn load_network(data_dir: &Path) -> EcashNetwork {
+pub async fn load_network(data_dir: &Path) -> Result<EcashNetwork> {
     let path = data_dir.join(NETWORK_FILE);
-    let Ok(content) = fs::read_to_string(&path).await else {
-        return EcashNetwork::Mainnet;
-    };
-    serde_json::from_str::<NetworkConfig>(&content)
-        .map(|c| c.network)
-        .unwrap_or_default()
+    match fs::read_to_string(&path).await {
+        Ok(content) => Ok(serde_json::from_str::<NetworkConfig>(&content)
+            .context("Ecash network configuration is damaged; no wallet was selected")?
+            .network),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(EcashNetwork::Mainnet),
+        Err(error) => Err(error).context("Could not read ecash network configuration"),
+    }
 }
 
 /// Switch the node's ecash network. The other network's wallet is left on
 /// disk untouched, so switching is reversible and loses nothing.
 pub async fn save_network(data_dir: &Path, network: EcashNetwork) -> Result<()> {
+    let _mutation = super::mutation::guard(data_dir).await?;
     let dir = data_dir.join("wallet");
     fs::create_dir_all(&dir)
         .await
         .context("Failed to create wallet dir")?;
     let content = serde_json::to_string_pretty(&NetworkConfig { network })
         .context("Failed to serialize ecash network")?;
-    fs::write(data_dir.join(NETWORK_FILE), content)
-        .await
-        .context("Failed to write ecash network")?;
+    write_file_atomically(&data_dir.join(NETWORK_FILE), &content).await?;
     Ok(())
 }
 
 #[derive(Debug, Clone, Copy, Default, Serialize, Deserialize)]
 struct NetworkConfig {
-    #[serde(default)]
     network: EcashNetwork,
 }
 
 /// Load wallet state from disk.
 pub async fn load_wallet(data_dir: &Path) -> Result<WalletState> {
-    let network = load_network(data_dir).await;
+    let network = load_network(data_dir).await?;
     let path = data_dir.join(network.wallet_file());
     let content = match fs::read_to_string(&path).await {
         Ok(content) => content,
@@ -376,20 +375,42 @@ async fn write_file_atomically(path: &Path, content: &str) -> Result<()> {
 }
 
 /// Save wallet state to disk.
-pub async fn save_wallet(data_dir: &Path, wallet: &WalletState) -> Result<()> {
+pub(super) async fn save_wallet(data_dir: &Path, wallet: &WalletState) -> Result<()> {
     let dir = data_dir.join("wallet");
     fs::create_dir_all(&dir)
         .await
         .context("Failed to create wallet dir")?;
-    let path = data_dir.join(load_network(data_dir).await.wallet_file());
+    let path = data_dir.join(load_network(data_dir).await?.wallet_file());
     let content = serde_json::to_string_pretty(wallet).context("Failed to serialize wallet")?;
     write_file_atomically(&path, &content).await?;
     Ok(())
 }
 
+/// Record revenue without overwriting a simultaneous receipt/send snapshot.
+pub(crate) async fn record_streaming_revenue(
+    data_dir: &Path,
+    amount_sats: u64,
+    service_id: &str,
+    peer_id: &str,
+) -> Result<()> {
+    let _mutation = super::mutation::guard(data_dir).await?;
+    let mut wallet = load_wallet(data_dir).await?;
+    wallet.record_tx(
+        TransactionType::StreamingRevenue,
+        amount_sats,
+        &format!(
+            "Streaming payment: {} sats for {} from {}",
+            amount_sats, service_id, peer_id
+        ),
+        &wallet.mint_url.clone(),
+        peer_id,
+    );
+    save_wallet(data_dir, &wallet).await
+}
+
 /// Load accepted mints list.
 pub async fn load_accepted_mints(data_dir: &Path) -> Result<AcceptedMints> {
-    let network = load_network(data_dir).await;
+    let network = load_network(data_dir).await?;
     let path = data_dir.join(network.mints_file());
     if !path.exists() {
         return Ok(AcceptedMints {
@@ -415,11 +436,12 @@ pub async fn load_accepted_mints(data_dir: &Path) -> Result<AcceptedMints> {
 
 /// Save accepted mints list.
 pub async fn save_accepted_mints(data_dir: &Path, mints: &AcceptedMints) -> Result<()> {
+    let _mutation = super::mutation::guard(data_dir).await?;
     let dir = data_dir.join("wallet");
     fs::create_dir_all(&dir)
         .await
         .context("Failed to create wallet dir")?;
-    let path = data_dir.join(load_network(data_dir).await.mints_file());
+    let path = data_dir.join(load_network(data_dir).await?.mints_file());
     let content =
         serde_json::to_string_pretty(mints).context("Failed to serialize accepted mints")?;
     write_file_atomically(&path, &content).await?;
@@ -451,6 +473,7 @@ pub async fn mint_quote(
 
 /// Mint new ecash tokens after a Lightning invoice has been paid.
 pub async fn mint_tokens(data_dir: &Path, quote_id: &str, amount_sats: u64) -> Result<u64> {
+    let _mutation = super::mutation::guard(data_dir).await?;
     let mut wallet = load_wallet(data_dir).await?;
     let mint_url = wallet.mint_url.clone();
     let client = mint_client(data_dir, &mint_url).await?;
@@ -481,6 +504,7 @@ pub async fn melt_quote(data_dir: &Path, bolt11: &str) -> Result<super::mint_cli
 
 /// Melt ecash tokens to pay a Lightning invoice.
 pub async fn melt_tokens(data_dir: &Path, quote_id: &str, bolt11: &str) -> Result<u64> {
+    let _mutation = super::mutation::guard(data_dir).await?;
     let mut wallet = load_wallet(data_dir).await?;
     let mint_url = wallet.mint_url.clone();
     let client = mint_client(data_dir, &mint_url).await?;
@@ -586,6 +610,17 @@ fn swap_fee(total_paid: u64, amount_delivered: u64) -> u64 {
 /// are left unclaimed (reconcilable from the mint quote id). Idempotent resume
 /// is phasing step 3 (deferred).
 pub async fn swap_between_mints(
+    data_dir: &Path,
+    from_mint: &str,
+    to_mint: &str,
+    amount_sats: u64,
+    max_fee_sats: u64,
+) -> Result<u64> {
+    let _mutation = super::mutation::guard(data_dir).await?;
+    swap_between_mints_locked(data_dir, from_mint, to_mint, amount_sats, max_fee_sats).await
+}
+
+async fn swap_between_mints_locked(
     data_dir: &Path,
     from_mint: &str,
     to_mint: &str,
@@ -747,8 +782,9 @@ async fn wait_for_mint_quote_paid(client: &MintClient, quote_id: &str) -> Result
 
 /// Create an ecash token string to send to a peer, drawing from the home mint.
 pub async fn send_token(data_dir: &Path, amount_sats: u64) -> Result<String> {
+    let _mutation = super::mutation::guard(data_dir).await?;
     let mint_url = load_wallet(data_dir).await?.mint_url;
-    send_token_at(data_dir, &mint_url, amount_sats).await
+    send_token_at_locked(data_dir, &mint_url, amount_sats).await
 }
 
 /// Create an ecash token denominated in a specific mint's tokens.
@@ -757,6 +793,11 @@ pub async fn send_token(data_dir: &Path, amount_sats: u64) -> Result<String> {
 /// on the seeder's accepted mint, we send a token from *that* mint so the seeder
 /// only ever receives its own mint's proofs (see plan §2a, payer-side swap).
 pub async fn send_token_at(data_dir: &Path, mint_url: &str, amount_sats: u64) -> Result<String> {
+    let _mutation = super::mutation::guard(data_dir).await?;
+    send_token_at_locked(data_dir, mint_url, amount_sats).await
+}
+
+async fn send_token_at_locked(data_dir: &Path, mint_url: &str, amount_sats: u64) -> Result<String> {
     let mut wallet = load_wallet(data_dir).await?;
     let mint_url = mint_url.to_string();
 
@@ -947,6 +988,7 @@ pub async fn build_payment_token(
     amount_sats: u64,
     max_fee_sats: u64,
 ) -> Result<String> {
+    let _mutation = super::mutation::guard(data_dir).await?;
     if amount_sats == 0 {
         anyhow::bail!("payment amount must be greater than zero");
     }
@@ -975,15 +1017,16 @@ pub async fn build_payment_token(
                 "Payment plan: direct from {} for {} sats",
                 mint_url, amount_sats
             );
-            send_token_at(data_dir, &mint_url, amount_sats).await
+            send_token_at_locked(data_dir, &mint_url, amount_sats).await
         }
         PaymentPlan::Swap { from_mint, to_mint } => {
             debug!(
                 "Payment plan: swap {}→{} then pay {} sats (fee cap {})",
                 from_mint, to_mint, amount_sats, max_fee_sats
             );
-            swap_between_mints(data_dir, &from_mint, &to_mint, amount_sats, max_fee_sats).await?;
-            send_token_at(data_dir, &to_mint, amount_sats).await
+            swap_between_mints_locked(data_dir, &from_mint, &to_mint, amount_sats, max_fee_sats)
+                .await?;
+            send_token_at_locked(data_dir, &to_mint, amount_sats).await
         }
         PaymentPlan::Insufficient => anyhow::bail!(
             "cannot pay {} sats: no accepted mint covers it within balance/trust",
@@ -1051,6 +1094,7 @@ async fn remove_pending_swap(data_dir: &Path, mint_quote_id: &str) -> Result<()>
 /// Returns the total sats reclaimed. Safe to call repeatedly (idempotent): a
 /// quote is only minted once, and `ISSUED` quotes are never re-claimed.
 pub async fn resume_pending_swaps(data_dir: &Path) -> Result<u64> {
+    let _mutation = super::mutation::guard(data_dir).await?;
     let pending = load_pending_swaps(data_dir).await?;
     let mut reclaimed = 0u64;
     for swap in pending {
@@ -1189,6 +1233,7 @@ fn target_liquidity_score(liq: &SwapLiquidity, to_mint: &str) -> i64 {
 
 /// Receive a Cashu token from a peer — swaps proofs at the mint for fresh ones.
 pub async fn receive_token(data_dir: &Path, token_str: &str) -> Result<u64> {
+    let _mutation = super::mutation::guard(data_dir).await?;
     // Handle legacy format for backwards compatibility
     if token_str.starts_with("cashuSend_") {
         return receive_legacy_token(data_dir, token_str).await;
@@ -1314,6 +1359,7 @@ pub async fn verify_and_receive_payment(
     token_str: &str,
     required_sats: u64,
 ) -> Result<u64> {
+    let _mutation = super::mutation::guard(data_dir).await?;
     let token_str = token_str.trim();
     // Synthetic legacy balances are not cryptographic proof of payment.
     if token_str.starts_with("cashuSend_") {
@@ -1434,6 +1480,7 @@ pub struct RestoreOutcome {
 /// coins or resurrecting spent ones, which matters because the most likely
 /// time to press this button is when something already looks wrong.
 pub async fn restore_from_seed(data_dir: &Path, mint_url: &str) -> Result<RestoreOutcome> {
+    let _mutation = super::mutation::guard(data_dir).await?;
     let recovery = RecoverySource::load(data_dir).await?.ok_or_else(|| {
         anyhow::anyhow!(
             "This wallet has no backup phrase yet, so there is nothing to restore from. \
@@ -2297,7 +2344,7 @@ mod tests {
     async fn ecash_network_defaults_to_mainnet_and_leaves_files_alone() {
         let tmp = TempDir::new().unwrap();
         let dir = tmp.path();
-        assert_eq!(load_network(dir).await, EcashNetwork::Mainnet);
+        assert_eq!(load_network(dir).await.unwrap(), EcashNetwork::Mainnet);
         // A node that never touches this setting has no new file.
         assert!(!dir.join(NETWORK_FILE).exists());
         assert_eq!(
@@ -2389,6 +2436,23 @@ mod tests {
 
         // And the bytes must still be there for recovery.
         assert_eq!(std::fs::read_to_string(&path).unwrap(), damaged);
+    }
+
+    #[tokio::test]
+    async fn damaged_network_selection_never_falls_back_to_real_funds() {
+        let tmp = TempDir::new().unwrap();
+        let path = tmp.path().join(NETWORK_FILE);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        for bytes in ["", "{}", "{broken", r#"{"network":"unknown"}"#] {
+            std::fs::write(&path, bytes).unwrap();
+            assert!(load_network(tmp.path()).await.is_err());
+            assert!(load_wallet(tmp.path()).await.is_err());
+            assert!(save_wallet(tmp.path(), &WalletState::default())
+                .await
+                .is_err());
+            assert!(!tmp.path().join("wallet/ecash.json").exists());
+            assert_eq!(std::fs::read_to_string(&path).unwrap(), bytes);
+        }
     }
 
     #[tokio::test]

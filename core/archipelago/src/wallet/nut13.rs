@@ -223,6 +223,7 @@ pub async fn establish_from_master(
     data_dir: &Path,
     master: &crate::seed::MasterSeed,
 ) -> Result<EcashSeed> {
+    let _mutation = super::mutation::guard(data_dir).await?;
     let derived = crate::seed::derive_cashu_mnemonic(master)?;
 
     if let Some(existing) = load_seed(data_dir).await? {
@@ -259,6 +260,7 @@ pub async fn establish_from_master(
 /// silent default when derivation was possible; [`establish_from_master`] is
 /// what a node with a master seed gets.
 pub async fn establish_independent(data_dir: &Path) -> Result<EcashSeed> {
+    let _mutation = super::mutation::guard(data_dir).await?;
     if let Some(existing) = load_seed(data_dir).await? {
         return Ok(existing);
     }
@@ -294,6 +296,7 @@ pub async fn establish_independent(data_dir: &Path) -> Result<EcashSeed> {
 /// dangerous choice if the imported phrase turned out to be the one already
 /// in use.
 pub async fn import_mnemonic(data_dir: &Path, words: &str, confirm: bool) -> Result<EcashSeed> {
+    let _mutation = super::mutation::guard(data_dir).await?;
     let mnemonic: bip39::Mnemonic = words
         .split_whitespace()
         .collect::<Vec<_>>()
@@ -330,24 +333,24 @@ pub async fn import_mnemonic(data_dir: &Path, words: &str, confirm: bool) -> Res
     Ok(EcashSeed::from_mnemonic(mnemonic, SeedSource::Imported))
 }
 
-/// Move the current seed file aside, timestamped, before it is replaced.
+/// Durably copy the current seed before replacing it; keep the live seed on failure.
 ///
 /// Never deleted and never overwritten: this file may be the last copy of the
 /// words a balance was minted under, and the whole point of the module is that
 /// such a thing is not casually destroyed.
 async fn archive_seed(data_dir: &Path) -> Result<()> {
     let from = seed_path(data_dir);
-    if !from.exists() {
-        return Ok(());
-    }
+    let content = fs::read(&from)
+        .await
+        .context("Could not read the previous ecash phrase for backup")?;
     let stamp = chrono::Utc::now().format("%Y%m%dT%H%M%SZ");
-    let to = data_dir.join(format!("wallet/cashu_seed.replaced-{stamp}.json"));
-    fs::rename(&from, &to).await.with_context(|| {
-        format!(
-            "Could not archive the previous ecash phrase to {}",
-            to.display()
-        )
-    })?;
+    let to = data_dir.join(format!(
+        "wallet/cashu_seed.replaced-{stamp}-{}.json",
+        uuid::Uuid::new_v4()
+    ));
+    persist_private_file(&to, &content)
+        .await
+        .context("Could not durably archive the previous ecash phrase")?;
     warn!("Previous ecash phrase archived to {}", to.display());
     Ok(())
 }
@@ -367,17 +370,7 @@ async fn write_seed(data_dir: &Path, mnemonic: &bip39::Mnemonic, source: SeedSou
     };
     let content =
         serde_json::to_string_pretty(&stored).context("Failed to serialize the ecash seed")?;
-    fs::write(&path, content)
-        .await
-        .context("Failed to write the ecash seed")?;
-
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600))
-            .await
-            .context("Failed to restrict permissions on the ecash seed")?;
-    }
+    persist_private_file(&path, content.as_bytes()).await?;
     Ok(())
 }
 
@@ -420,46 +413,48 @@ pub async fn reserve_counters(data_dir: &Path, keyset_id: &str, count: usize) ->
     }
     let content =
         serde_json::to_string_pretty(&state).context("Failed to serialize ecash counters")?;
-    persist_counters(&path, content.as_bytes()).await?;
+    persist_private_file(&path, content.as_bytes()).await?;
 
     Ok(start)
 }
 
 /// Never truncate the active reservation file. A reservation is not usable
 /// until both its replacement file and directory entry have reached storage.
-async fn persist_counters(path: &Path, content: &[u8]) -> Result<()> {
+async fn persist_private_file(path: &Path, content: &[u8]) -> Result<()> {
     use tokio::io::AsyncWriteExt;
-    struct PendingCounterFile(PathBuf);
-    impl Drop for PendingCounterFile {
+    struct PendingPrivateFile(PathBuf);
+    impl Drop for PendingPrivateFile {
         fn drop(&mut self) {
             let _ = std::fs::remove_file(&self.0);
         }
     }
-    let parent = path.parent().context("Counter file has no directory")?;
+    let parent = path
+        .parent()
+        .context("Private wallet file has no directory")?;
     let temporary =
-        PendingCounterFile(parent.join(format!(".cashu-counters-{}.tmp", uuid::Uuid::new_v4())));
+        PendingPrivateFile(parent.join(format!(".cashu-private-{}.tmp", uuid::Uuid::new_v4())));
     let mut file = fs::OpenOptions::new()
         .write(true)
         .create_new(true)
         .mode(0o600)
         .open(&temporary.0)
         .await
-        .context("Could not create the ecash counter reservation")?;
+        .context("Could not create the private ecash state")?;
     file.write_all(content)
         .await
-        .context("Could not write the ecash counter reservation")?;
+        .context("Could not write the private ecash state")?;
     file.sync_all()
         .await
-        .context("Could not flush the ecash counter reservation")?;
+        .context("Could not flush the private ecash state")?;
     drop(file);
     fs::rename(&temporary.0, path)
         .await
-        .context("Could not replace the ecash counter reservation")?;
+        .context("Could not replace the private ecash state")?;
     fs::File::open(parent)
         .await?
         .sync_all()
         .await
-        .context("Could not flush the ecash counter directory")?;
+        .context("Could not flush the private ecash directory")?;
     Ok(())
 }
 
@@ -908,5 +903,43 @@ mod tests {
         let source = RecoverySource::load(dir.path()).await.unwrap().unwrap();
         assert!(source.next_outputs("01fc0ec0e59cd6fa", 1).await.is_err());
         assert!(!dir.path().join(COUNTER_FILE).exists());
+    }
+    #[tokio::test]
+    async fn archiving_keeps_the_live_seed_and_never_overwrites_an_earlier_backup() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().unwrap();
+        establish_independent(dir.path()).await.unwrap();
+        let live = fs::read(seed_path(dir.path())).await.unwrap();
+        archive_seed(dir.path()).await.unwrap();
+        archive_seed(dir.path()).await.unwrap();
+        assert_eq!(fs::read(seed_path(dir.path())).await.unwrap(), live);
+        let backups: Vec<_> = std::fs::read_dir(dir.path().join("wallet"))
+            .unwrap()
+            .map(|entry| entry.unwrap().path())
+            .filter(|path| {
+                path.file_name()
+                    .unwrap()
+                    .to_string_lossy()
+                    .starts_with("cashu_seed.replaced-")
+            })
+            .collect();
+        assert_eq!(backups.len(), 2);
+        for backup in backups {
+            assert_eq!(std::fs::read(&backup).unwrap(), live);
+            assert_eq!(
+                std::fs::metadata(backup).unwrap().permissions().mode() & 0o777,
+                0o600
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn simultaneous_seed_establishment_keeps_one_identity() {
+        let dir = tempfile::tempdir().unwrap();
+        let (first, second) = tokio::join!(
+            establish_independent(dir.path()),
+            establish_independent(dir.path())
+        );
+        assert_eq!(first.unwrap().phrase(), second.unwrap().phrase());
     }
 }

@@ -378,3 +378,12 @@ as a substitute for repairing the standard public-channel experience.
 - User reports opening apps inside an iframe on an HTTPS node shows the app gate, while opening the same app in a separate tab works. Reproduce both modes with the same authenticated session before identifying a cause.
 - Trace generated launch origins, cookie attributes and scope, bootstrap redirects, iframe navigation and gate session exchange. Preserve authentication and public-management access restrictions; do not bypass the gate or expose credentials to embedded apps.
 - Test HTTPS iframe and tab, HTTP LAN compatibility, desktop/mobile companion, reload, expired sessions, denied access and logout. Record actual-node evidence separately from fixtures. This remains open, not a confirmed diagnosis.
+
+### Task 17 progress
+
+Yaya's app gate could not read its root-only TLS leaf key; logs confirmed
+permission denied. Correcting only its group/mode restored authenticated HTTPS
+iframe loading, while unauthenticated requests still return401. Source fixes
+cover startup migration, hostname regeneration, first boot and explicit rotation;
+tests pass. Exact operator hostname/app, trusted TLS and companion acceptance
+remain open. See `docs/https-app-gate-followup-20261006.md`.
