@@ -153,3 +153,28 @@ was not remeasured after a store-driven app closed, covering the audio controls.
 focused navigation/bridge tests pass. Final UI build and actual browser rerun are
 pending. No node-only catalog is signed/enabled yet. These results do not close
 the remaining IndeeHub, Fleet, FIPS, companion or standard-channel radio gates.
+
+### Deployment gates passed on dev and Yaya
+
+Backend57923b0a (`506dbe55d03617d4d500f67f7c4e5baf50a45c89bedaed48408417b48e13bdc9`)
+and dashboard883c5a7c (entry SHA256
+`3dc1565ad0a12b47c7d8f0d9a84154e5f7c9be430cf599d9733358d2c39fdc7b`)
+are deployed to both nodes. Production builds pass. Prior binaries/UI and app
+state are retained under each node's root-only support directory.
+
+Both actual nodes pass:
+
+- Backend health, served dashboard hash and unchanged qualified AIUI entry.
+- Existing normal-store container IDs and start timestamps unchanged by rollout.
+- A further management restart repairs an inert stale runtime script through the
+  real service filesystem sandbox; resulting script matches embedded bytes and
+  is executable. The safe runtime payload is restored after the probe.
+- Persistent signing-key bytes unchanged through restart (values never logged).
+- Authenticated stale/missing CSRF rejected with403 and a replacement CSRF cookie;
+  retry succeeds200. Unauthenticated requests get401 without a recovery cookie.
+
+The actual dashboard player browser check remains open. A browser-only package
+fixture must survive live state refreshes, and proxying media through Playwright
+introduced buffering delays. Qualification is being repeated using the direct
+loopback fixture route on the updated Yaya dashboard. Do not substitute these
+fixture results for a signed catalog installation or physical companion check.
