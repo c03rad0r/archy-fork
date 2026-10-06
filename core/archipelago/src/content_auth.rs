@@ -10,6 +10,113 @@ use std::path::Path;
 pub const HEADER: &str = "x-archipelago-content-auth";
 const MAX_AGE: u64 = 60;
 
+/// Purchase requests use a separate proof format bound to the exact body bytes.
+/// Authentication does not prevent replay: purchase handlers must retain their
+/// durable operation ID and return the original result for the same operation.
+pub(crate) const REQUEST_HEADER: &str = "x-archipelago-content-request-auth";
+
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RequestProof {
+    did: String,
+    audience: String,
+    method: String,
+    path: String,
+    body_sha256: String,
+    timestamp: i64,
+    signature: String,
+}
+
+impl RequestProof {
+    fn preimage(&self) -> Result<Vec<u8>> {
+        Ok(serde_json::to_vec(&(
+            "archipelago-content-request-auth-v2",
+            &self.did,
+            &self.audience,
+            &self.method,
+            &self.path,
+            &self.body_sha256,
+            self.timestamp,
+        ))?)
+    }
+}
+
+fn body_hash(body: &[u8]) -> String {
+    use sha2::{Digest, Sha256};
+    hex::encode(Sha256::digest(body))
+}
+
+/// The caller must obtain the recipient DID from an authenticated peer binding,
+/// and send precisely these bytes, method and path (including any query string).
+pub(crate) fn sign_request(
+    identity: &crate::identity::NodeIdentity,
+    audience: &str,
+    method: &hyper::Method,
+    path: &str,
+    body: &[u8],
+    now: i64,
+) -> Result<String> {
+    crate::identity::pubkey_bytes_from_did_key(audience)?;
+    anyhow::ensure!(
+        path.starts_with('/') && !path.contains('#'),
+        "Invalid request path"
+    );
+    let mut proof = RequestProof {
+        did: identity.did_key()?,
+        audience: audience.into(),
+        method: method.as_str().into(),
+        path: path.into(),
+        body_sha256: body_hash(body),
+        timestamp: now,
+        signature: String::new(),
+    };
+    proof.signature = hex::encode(identity.signing_key().sign(&proof.preimage()?).to_bytes());
+    let encoded = base64::engine::general_purpose::STANDARD.encode(serde_json::to_vec(&proof)?);
+    anyhow::ensure!(encoded.len() <= 4096, "Peer request proof is too large");
+    Ok(encoded)
+}
+
+/// Verify a required purchase proof after enforcing the route's body-size limit.
+/// A legacy GET proof or a claimed DID is never accepted as a purchase proof.
+pub(crate) fn authenticate_request(
+    headers: &hyper::HeaderMap,
+    audience: &str,
+    method: &hyper::Method,
+    path: &str,
+    body: &[u8],
+    now: i64,
+) -> Result<String> {
+    let mut values = headers.get_all(REQUEST_HEADER).iter();
+    let value = values.next().context("Missing peer request proof")?;
+    anyhow::ensure!(values.next().is_none(), "Duplicate peer request proof");
+    anyhow::ensure!(
+        value.as_bytes().len() <= 4096,
+        "Peer request proof is too large"
+    );
+    let raw = base64::engine::general_purpose::STANDARD
+        .decode(value.as_bytes())
+        .context("Invalid peer request proof encoding")?;
+    let proof: RequestProof = serde_json::from_slice(&raw).context("Invalid peer request proof")?;
+    anyhow::ensure!(
+        proof.audience == audience
+            && proof.method == method.as_str()
+            && proof.path == path
+            && proof.body_sha256 == body_hash(body),
+        "Peer request proof scope mismatch"
+    );
+    anyhow::ensure!(
+        proof.timestamp.abs_diff(now) <= MAX_AGE,
+        "Peer request proof expired or clock differs"
+    );
+    let key = VerifyingKey::from_bytes(&crate::identity::pubkey_bytes_from_did_key(&proof.did)?)?;
+    let signature = Signature::from_slice(
+        &hex::decode(&proof.signature).context("Invalid peer request signature")?,
+    )?;
+    key.verify_strict(&proof.preimage()?, &signature)
+        .context("Peer request signature rejected")?;
+    Ok(proof.did)
+}
+
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Proof {
@@ -115,6 +222,112 @@ pub fn incoming(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn purchase_proof_binds_exact_body_method_route_recipient_and_time() {
+        let dir = tempfile::tempdir().unwrap();
+        let identity = crate::identity::NodeIdentity::load_or_create(dir.path())
+            .await
+            .unwrap();
+        let audience = crate::identity::did_key_from_pubkey_hex(&hex::encode([7; 32])).unwrap();
+        let body = br#"{"id":"same-operation","token":"private"}"#;
+        let path = "/content/purchase/settle";
+        let mut headers = hyper::HeaderMap::new();
+        let proof =
+            sign_request(&identity, &audience, &hyper::Method::POST, path, body, 1000).unwrap();
+        headers.insert(REQUEST_HEADER, proof.parse().unwrap());
+        assert_eq!(
+            authenticate_request(&headers, &audience, &hyper::Method::POST, path, body, 1000)
+                .unwrap(),
+            identity.did_key().unwrap()
+        );
+        for (recipient, method, route, bytes, now) in [
+            (
+                audience.as_str(),
+                hyper::Method::GET,
+                path,
+                body.as_slice(),
+                1000,
+            ),
+            (
+                audience.as_str(),
+                hyper::Method::POST,
+                "/content/purchase/status",
+                body.as_slice(),
+                1000,
+            ),
+            (
+                audience.as_str(),
+                hyper::Method::POST,
+                path,
+                b"changed-token".as_slice(),
+                1000,
+            ),
+            (
+                "different-recipient",
+                hyper::Method::POST,
+                path,
+                body.as_slice(),
+                1000,
+            ),
+            (
+                audience.as_str(),
+                hyper::Method::POST,
+                path,
+                body.as_slice(),
+                1061,
+            ),
+            (
+                audience.as_str(),
+                hyper::Method::POST,
+                path,
+                body.as_slice(),
+                939,
+            ),
+        ] {
+            assert!(authenticate_request(&headers, recipient, &method, route, bytes, now).is_err());
+        }
+        let mut decoded: RequestProof = serde_json::from_slice(
+            &base64::engine::general_purpose::STANDARD
+                .decode(&proof)
+                .unwrap(),
+        )
+        .unwrap();
+        decoded.did = audience.clone();
+        headers.insert(
+            REQUEST_HEADER,
+            base64::engine::general_purpose::STANDARD
+                .encode(serde_json::to_vec(&decoded).unwrap())
+                .parse()
+                .unwrap(),
+        );
+        assert!(
+            authenticate_request(&headers, &audience, &hyper::Method::POST, path, body, 1000)
+                .is_err()
+        );
+        headers.insert(REQUEST_HEADER, proof.parse().unwrap());
+        headers.append(REQUEST_HEADER, proof.parse().unwrap());
+        assert!(
+            authenticate_request(&headers, &audience, &hyper::Method::POST, path, body, 1000)
+                .is_err()
+        );
+        headers.remove(REQUEST_HEADER);
+        headers.insert(
+            HEADER,
+            sign(&identity, &audience, path, "", 1000)
+                .unwrap()
+                .parse()
+                .unwrap(),
+        );
+        headers.insert(
+            "x-federation-did",
+            identity.did_key().unwrap().parse().unwrap(),
+        );
+        assert!(
+            authenticate_request(&headers, &audience, &hyper::Method::POST, path, body, 1000)
+                .is_err()
+        );
+    }
 
     #[tokio::test]
     async fn proof_is_bound_to_signer_recipient_path_range_and_time() {
@@ -236,7 +449,12 @@ mod tests {
         // The corrupt identity store fails before the separate missing-FIPS
         // route error. It reaches the payment caller's existing refund branch.
         assert!(error.to_string().contains("Invalid federation nodes"));
-        assert_eq!(tokio::fs::read(dir.path().join("federation/nodes.json")).await.unwrap(), b"invalid");
+        assert_eq!(
+            tokio::fs::read(dir.path().join("federation/nodes.json"))
+                .await
+                .unwrap(),
+            b"invalid"
+        );
         assert!(!dir.path().join("identity").exists());
     }
 

@@ -54,3 +54,12 @@ Served bytes match; backend, session key and app container identities/start time
 were preserved. A rollback archive/script was saved in the node support directory.
 Post-deployment browser checks are in progress. This is dashboard deployment only;
 Yaya and the new private V4V app image still require deployment/acceptance.
+
+Post-deployment dev browser retry passed all four delayed-loading cases: session
+and overlay at390/1440px, retaining the original frame and deferring the companion
+prompt. The first attempt timed out on navigation during shared build I/O pressure;
+its failure log is retained. This verifies launcher regression behaviour on the
+served candidate, not live V4V queue controls or Yaya playback. Logs:
+`/tmp/archy-native-player-dev-browser{,-retry}.log`.
+
+Resumed Yaya dashboard deployment passed using the same qualified UI archive as dev. Served index SHA256 is `a03f3e7a366613f82dd9fe014dc04301f223b9896f6684bf2ee5aa06aa59b2de`; backend binary, node session key and all app container identities/start times were unchanged. Evidence: `/tmp/archy-native-player-yaya-deploy.log`. Rollback: `/var/lib/archipelago/support/native-player-ui-20261006T232200Z-3529899/rollback.sh`. The private native-login app image is being staged separately; this dashboard deployment alone does not establish real app/companion playback acceptance.
