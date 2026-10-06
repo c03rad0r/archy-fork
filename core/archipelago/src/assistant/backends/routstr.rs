@@ -295,7 +295,7 @@ fn parse_openai_tool_calls(raw_calls: &[Value]) -> Vec<ToolCall> {
 /// (the wire-format inverse of `parse_openai_tool_calls`), and tool-result
 /// turns carry `tool_call_id` so each call's id is echoed back exactly —
 /// the OpenAI-shape contract this adapter's edge is responsible for.
-fn message_to_wire(msg: &ChatMessage) -> Vec<Value> {
+pub(super) fn message_to_wire(msg: &ChatMessage) -> Vec<Value> {
     match msg.role {
         Role::System => vec![],
         Role::User => vec![json!({

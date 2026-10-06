@@ -40,6 +40,17 @@ beforeEach(() => {
 // unmounts the dialog — but the RPC-eager tab switch is exactly the kind of
 // path a future change could regress, so it's worth pinning down.
 describe('ReceiveBitcoinModal — ecash tab click', () => {
+  it('loads the ecash address on each open when funding starts on the ecash tab', async () => {
+    vi.mocked(rpcClient.call).mockResolvedValue({ address: 'funding@minibits.cash' } as never)
+    const wrapper = mount(ReceiveBitcoinModal, { props: { show: false, initialMethod: 'ecash' }, attachTo: document.body })
+    await wrapper.setProps({ show: true }); await flushPromises()
+    expect(document.body.textContent).toContain('funding@minibits.cash')
+    await wrapper.setProps({ show: false }); await wrapper.setProps({ show: true }); await flushPromises()
+    expect(document.body.textContent).toContain('funding@minibits.cash')
+    expect(vi.mocked(rpcClient.call).mock.calls.filter(([r]) => r.method === 'wallet.ecash-lnaddress')).toHaveLength(2)
+    wrapper.unmount()
+  })
+
   it('offers authenticated setup for an unseeded wallet and retries the address after setup', async () => {
     let active = false
     vi.mocked(rpcClient.call).mockImplementation(async ({ method }) => {

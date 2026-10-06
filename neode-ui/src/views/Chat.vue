@@ -15,6 +15,8 @@
       />
     </div>
 
+    <AIConnectionModal ref="connectionSetup" :show="showConnectionSetup" @close="showConnectionSetup = false" @configured="providerConfigured" />
+
     <!-- Loading indicator while iframe loads. pointer-events:none on the
          wrapper (see <style>) so this never blocks clicks reaching the
          iframe underneath even while shown; the bounded timeout below
@@ -124,6 +126,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { ContextBroker } from '@/services/contextBroker'
 import ToolConfirmModal from '@/components/ToolConfirmModal.vue'
+import AIConnectionModal from '@/components/AIConnectionModal.vue'
 import { AI_PERMISSION_CATEGORIES } from '@/stores/aiPermissions'
 import { IS_DEMO } from '@/composables/useDemoIntro'
 
@@ -133,6 +136,13 @@ const router = useRouter()
 const route = useRoute()
 const aiuiFrame = ref<HTMLIFrameElement | null>(null)
 const aiuiConnected = ref(false)
+const connectionSetup = ref<InstanceType<typeof AIConnectionModal> | null>(null)
+const showConnectionSetup = ref(false)
+function providerConfigured(provider: 'claude' | 'openai' | 'routstr' | 'auto' | 'local', model?: string) {
+  if (!aiuiFrame.value?.contentWindow || !aiuiUrl.value) return
+  aiuiFrame.value.contentWindow.postMessage({ type: 'ai:provider-configured', provider, model }, new URL(aiuiUrl.value, window.location.origin).origin)
+}
+onMounted(async () => { if (!IS_DEMO && await connectionSetup.value?.checkNeeded()) showConnectionSetup.value = true })
 // Belt-and-suspenders backstop (2026-07-30 live-testing follow-up): the
 // loading overlay must never be able to wedge the UI permanently regardless
 // of AIUI/backend state — a broken handshake, a misconfigured origin, or the
@@ -285,15 +295,21 @@ function openAISettings() {
 }
 
 function onAiuiMessage(event: MessageEvent) {
-  if (!aiuiUrl.value) return
+  if (!aiuiUrl.value || event.source !== aiuiFrame.value?.contentWindow) return
   // Validate origin — only accept messages from AIUI
   try {
     const expected = new URL(aiuiUrl.value, window.location.origin).origin
     if (event.origin !== expected) return
   } catch { return }
+  if (event.data?.type === 'ai:setup-request') {
+    showConnectionSetup.value = true
+    if (event.data.reason === 'funding') connectionSetup.value?.showRoutstr()
+    return
+  }
   // Listen for ready messages from AIUI iframe
   if (event.data?.type === 'ready') {
     aiuiConnected.value = true
+    if (!IS_DEMO) void connectionSetup.value?.syncSelection()
     if (loadTimeout) { clearTimeout(loadTimeout); loadTimeout = null }
     // A ⌘K ask that arrived before the handshake is waiting — send it now.
     flushAsk()
@@ -362,6 +378,7 @@ onBeforeUnmount(() => {
 </script>
 
 <style scoped>
+
 /* Teleported to body, so this is positioned against the viewport, not the
    chat panel. Sits above the iframe but below the confirm modal — a
    blocking decision must always win over a passive offer. */

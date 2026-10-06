@@ -11,6 +11,8 @@ import { KeepAlive, defineComponent, h, ref } from 'vue'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import Chat from '../Chat.vue'
 
+vi.mock('@/components/AIConnectionModal.vue', () => ({ default: { template: '<div />', methods: { checkNeeded: async () => false, syncSelection: async () => {} } } }))
+
 const routerBackMock = vi.fn()
 const routerPushMock = vi.fn()
 const routerReplaceMock = vi.fn()
@@ -99,6 +101,7 @@ describe('Chat / AIUI embed URL stability + D-14 defaults (02-07)', () => {
     Object.defineProperty(frame, 'contentWindow', { configurable: true, value: { postMessage: post } })
 
     window.dispatchEvent(new MessageEvent('message', {
+      source: (wrapper.find('iframe').element as HTMLIFrameElement).contentWindow,
       origin: 'http://localhost:5173',
       data: { type: 'ready' },
     }))
@@ -125,6 +128,7 @@ describe('Chat / AIUI embed URL stability + D-14 defaults (02-07)', () => {
     Object.defineProperty(frame, 'contentWindow', { configurable: true, value: { postMessage: post } })
 
     window.dispatchEvent(new MessageEvent('message', {
+      source: (wrapper.find('iframe').element as HTMLIFrameElement).contentWindow,
       origin: 'http://localhost:5173',
       data: { type: 'ready' },
     }))
@@ -165,6 +169,7 @@ describe('Chat / AIUI embed URL stability + D-14 defaults (02-07)', () => {
     const { wrapper } = mountChatInKeepAlive()
 
     window.dispatchEvent(new MessageEvent('message', {
+      source: (wrapper.find('iframe').element as HTMLIFrameElement).contentWindow,
       data: { type: 'ready' },
       origin: 'http://evil.example',
     }))
@@ -177,10 +182,22 @@ describe('Chat / AIUI embed URL stability + D-14 defaults (02-07)', () => {
     wrapper.unmount()
   })
 
+  it('ignores ready and setup messages from a different same-origin frame', async () => {
+    const { wrapper } = mountChatInKeepAlive()
+    for (const type of ['ready', 'ai:setup-request']) window.dispatchEvent(new MessageEvent('message', {
+      source: window, origin: 'http://localhost:5173', data: { type },
+    }))
+    await flushPromises()
+    expect(wrapper.find('.chat-loading').exists()).toBe(true)
+    expect(wrapper.find('[title="chat.aiuiConnected"]').exists()).toBe(false)
+    wrapper.unmount()
+  })
+
   it('aiuiConnected survives a deactivate/reactivate cycle once set by a same-origin ready message', async () => {
     const { wrapper, show } = mountChatInKeepAlive()
 
     window.dispatchEvent(new MessageEvent('message', {
+      source: (wrapper.find('iframe').element as HTMLIFrameElement).contentWindow,
       data: { type: 'ready' },
       origin: 'http://localhost:5173',
     }))

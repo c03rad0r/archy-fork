@@ -11,6 +11,7 @@ use crate::api::rpc::RpcHandler;
 
 pub mod claude;
 pub mod ollama;
+pub mod openai;
 pub mod routstr;
 #[cfg(test)]
 pub mod scripted;
@@ -39,6 +40,8 @@ pub trait Backend: Send + Sync {
 pub enum BackendId {
     Ollama,
     Claude,
+    Openai,
+    Unavailable,
     /// 13-13: the third D-04 leg. Not currently returned as the "primary"
     /// id by `select_backend` (mirroring the existing convention that the
     /// returned id names the primary attempt, not necessarily which leg of
@@ -52,8 +55,20 @@ impl std::fmt::Display for BackendId {
         match self {
             BackendId::Ollama => write!(f, "ollama"),
             BackendId::Claude => write!(f, "claude"),
+            BackendId::Openai => write!(f, "openai"),
+            BackendId::Unavailable => write!(f, "unavailable"),
             BackendId::Routstr => write!(f, "routstr"),
         }
+    }
+}
+
+struct InvalidProviderSettings;
+#[async_trait]
+impl Backend for InvalidProviderSettings {
+    async fn send(&self, _: &str, _: &[ToolDef], _: &[ChatMessage]) -> Result<BackendTurn> {
+        anyhow::bail!(
+            "AI connection settings could not be loaded. Review them before sending a message."
+        )
     }
 }
 
@@ -115,6 +130,54 @@ fn ollama_is_selectable(detected: bool, tool_capable: bool) -> bool {
 /// tools-free degrade.
 pub async fn select_backend(handler: &RpcHandler) -> (Box<dyn Backend>, BackendId) {
     let data_dir = handler.data_dir();
+    // An explicit provider is a privacy and billing choice. Never silently
+    // fall through to another provider if its credentials or network fail.
+    match crate::settings::model_provider::ModelProvider::load(data_dir).await {
+        Ok(settings) => match settings.provider {
+            crate::settings::model_provider::Provider::Openai => {
+                return (
+                    Box::new(openai::OpenaiBackend::new(
+                        data_dir.to_path_buf(),
+                        settings.openai_model,
+                    )),
+                    BackendId::Openai,
+                )
+            }
+            crate::settings::model_provider::Provider::Claude => {
+                return (
+                    Box::new(claude::ClaudeBackend::new(data_dir.to_path_buf())),
+                    BackendId::Claude,
+                )
+            }
+            crate::settings::model_provider::Provider::Local => {
+                return (
+                    Box::new(ollama::OllamaBackend::new(
+                        ollama::OLLAMA_BASE_URL.to_string(),
+                        ollama::OLLAMA_DEFAULT_MODEL.to_string(),
+                    )),
+                    BackendId::Ollama,
+                )
+            }
+            crate::settings::model_provider::Provider::Routstr => {
+                let budget = crate::assistant::AssistantBudget::load(data_dir).await;
+                let mints = crate::wallet::ecash::load_accepted_mints(data_dir)
+                    .await
+                    .map(|m| m.mints)
+                    .unwrap_or_default();
+                return (
+                    Box::new(routstr::RoutstrBackend::new(
+                        data_dir.to_path_buf(),
+                        budget.payment_policy(),
+                        mints,
+                        handler.nostr_tor_proxy(),
+                    )),
+                    BackendId::Routstr,
+                );
+            }
+            crate::settings::model_provider::Provider::Auto => {}
+        },
+        Err(_) => return (Box::new(InvalidProviderSettings), BackendId::Unavailable),
+    }
     let (detected, _models) = crate::api::rpc::mesh::assistant::detect_ollama().await;
     let model = ollama::OLLAMA_DEFAULT_MODEL;
     let tool_capable = if detected {

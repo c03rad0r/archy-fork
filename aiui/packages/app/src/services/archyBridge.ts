@@ -55,6 +55,10 @@ interface ThemeInfo {
 type PermissionsCallback = (categories: AIContextCategory[]) => void
 type ThemeCallback = (theme: ThemeInfo) => void
 
+export interface AIProviderSelection { provider: 'auto' | 'local' | 'claude' | 'openai' | 'routstr'; model: string }
+const providerCallbacks = new Set<(selection: AIProviderSelection) => void>()
+let currentProvider: AIProviderSelection | null = null
+
 let requestId = 0
 const pendingRequests = new Map<string, {
   resolve: (value: unknown) => void
@@ -80,12 +84,19 @@ function postToParent(msg: unknown) {
 
 function handleMessage(event: MessageEvent) {
   // Always validate origin — reject if not configured or mismatched
-  if (!allowedOrigin || event.origin !== allowedOrigin) return
+  if (!allowedOrigin || event.origin !== allowedOrigin || event.source !== window.parent) return
 
   const msg = event.data
   if (!msg || typeof msg.type !== 'string') return
 
   switch (msg.type) {
+    case 'ai:provider-configured': {
+      if (!['auto', 'local', 'claude', 'openai', 'routstr'].includes(msg.provider)) break
+      const selection = { provider: msg.provider as AIProviderSelection['provider'], model: typeof msg.model === 'string' ? msg.model : '' }
+      currentProvider = selection
+      for (const callback of providerCallbacks) callback(selection)
+      break
+    }
     case 'context:response': {
       const pending = pendingRequests.get(msg.id)
       if (pending) {
@@ -223,11 +234,21 @@ export const archyBridge = {
     }
   },
 
+  requestAISetup(reason?: 'funding') { postToParent({ type: 'ai:setup-request', ...(reason ? { reason } : {}) }) },
+
+  onProviderConfigured(callback: (selection: AIProviderSelection) => void) {
+    providerCallbacks.add(callback)
+    if (currentProvider) callback(currentProvider)
+    return () => { providerCallbacks.delete(callback) }
+  },
+
   /** Clean up listeners */
   destroy() {
     window.removeEventListener('message', handleMessage)
     pendingRequests.clear()
     initialized = false
+    currentProvider = null
+    allowedOrigin = null
   },
 
   /** Check if running inside Archy iframe */
