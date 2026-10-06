@@ -9,13 +9,23 @@ const route = useRoute();
 const bunkerUri = ref("");
 const showBunkerInput = ref(false);
 const waitingRemote = ref(false);
+const choosingIdentity = ref(false);
 
-async function loginExt(): Promise<void> {
+async function loginExt(initialLaunch = false): Promise<void> {
+  if (auth.busy || choosingIdentity.value) return;
+  choosingIdentity.value = true;
+  auth.error = null;
   try {
+    const native = window.archipelagoNostr;
+    if (native && (!initialLaunch || !native.getSelectedIdentity())) {
+      await native.selectIdentity();
+    }
     await auth.loginExtension();
     void router.push({ name: "dashboard" });
-  } catch {
-    /* surfaced via auth.error */
+  } catch (error) {
+    auth.error = error instanceof Error ? error.message : "Sign-in cancelled";
+  } finally {
+    choosingIdentity.value = false;
   }
 }
 
@@ -58,7 +68,12 @@ async function resumeRemoteApp(): Promise<void> {
 }
 
 onMounted(() => {
-  if (route.query.remote === "return") void resumeRemoteApp();
+  if (route.query.remote === "return") {
+    void resumeRemoteApp();
+  } else if (window.archipelagoNostr && auth.nativeLoginPending && !auth.isLoggedIn) {
+    auth.nativeLoginPending = false;
+    void loginExt(true);
+  }
 });
 </script>
 
@@ -73,14 +88,14 @@ onMounted(() => {
       </div>
 
       <div class="options">
-        <button class="primary big" :disabled="auth.busy" @click="loginExt">
+        <button class="primary big" :disabled="auth.busy || choosingIdentity" @click="loginExt(false)">
           {{ auth.busy ? "..." : "sign in with Nostr" }}
           <small>Archipelago identity or browser extension</small>
         </button>
 
         <button
           class="primary big"
-          :disabled="auth.busy"
+          :disabled="auth.busy || choosingIdentity"
           @click="loginRemoteApp"
         >
           {{ waitingRemote ? "waiting for signer..." : "open signer app" }}
@@ -89,7 +104,7 @@ onMounted(() => {
 
         <button
           class="big"
-          :disabled="auth.busy"
+          :disabled="auth.busy || choosingIdentity"
           @click="showBunkerInput = !showBunkerInput"
         >
           bunker URI
@@ -104,7 +119,7 @@ onMounted(() => {
             spellcheck="false"
             autocomplete="off"
           />
-          <button class="primary" :disabled="auth.busy" @click="loginBunker">
+          <button class="primary" :disabled="auth.busy || choosingIdentity" @click="loginBunker">
             {{ auth.busy ? "connecting…" : "connect" }}
           </button>
         </div>

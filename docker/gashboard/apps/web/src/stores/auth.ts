@@ -9,6 +9,7 @@ export const useAuthStore = defineStore("auth", () => {
   const token = ref<string | null>(stored?.token ?? null);
   const error = ref<string | null>(null);
   const busy = ref(false);
+  const nativeLoginPending = ref(!stored?.token);
   const restoringSigner = ref(false);
 
   const isLoggedIn = computed(() => !!token.value);
@@ -107,6 +108,7 @@ export const useAuthStore = defineStore("auth", () => {
   }
 
   function logout(): void {
+    nativeLoginPending.value = false;
     api.clearToken();
     signer.clearSigner();
     token.value = null;
@@ -133,6 +135,7 @@ export const useAuthStore = defineStore("auth", () => {
     error,
     busy,
     restoringSigner,
+    nativeLoginPending,
     isLoggedIn,
     hasActiveSigner,
     loginExtension,

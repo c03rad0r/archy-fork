@@ -120,6 +120,10 @@ export type ApiError = { error: { code: string; message: string } };
 
 declare global {
   interface Window {
+    archipelagoNostr?: {
+      selectIdentity(): Promise<unknown>;
+      getSelectedIdentity(): { nostr_pubkey: string } | null;
+    };
     nostr?: {
       getPublicKey(): Promise<string>;
       signEvent(event: {

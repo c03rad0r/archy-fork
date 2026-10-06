@@ -1,3 +1,4 @@
+import { gcm } from "@noble/ciphers/aes";
 import type { Event as NostrEvent } from "nostr-tools";
 import { nip19 } from "nostr-tools";
 import { SimplePool } from "nostr-tools/pool";
@@ -34,8 +35,16 @@ export type ChatProfile = {
 
 let reactionCache: ChatReaction[] = [];
 let cachedRecipients: string[] | null = null;
-let cachedRoomKey: CryptoKey | null = null;
+let cachedRoomKey: Uint8Array | null = null;
 let cachedRoomKeyRaw = "";
+
+export function clearChatSession(): void {
+  cachedRoomKey?.fill(0);
+  cachedRoomKey = null;
+  cachedRoomKeyRaw = "";
+  cachedRecipients = null;
+  reactionCache = [];
+}
 
 export function canSendChat(): boolean {
   return hasActiveSigner();
@@ -164,11 +173,9 @@ async function encryptPayload(plaintext: string): Promise<string> {
   const key = await ensureRoomKey();
   try {
     const iv = crypto.getRandomValues(new Uint8Array(12));
-    const ciphertext = await crypto.subtle.encrypt(
-      { name: "AES-GCM", iv },
-      key,
-      new TextEncoder().encode(plaintext),
-    );
+    // WebCrypto is unavailable on LAN HTTP. Noble preserves the same AES-GCM
+    // wire format (ciphertext followed by the 128-bit authentication tag).
+    const ciphertext = gcm(key, iv).encrypt(new TextEncoder().encode(plaintext));
     return JSON.stringify({
       v: 1,
       alg: "aes-gcm",
@@ -192,11 +199,9 @@ async function decryptPayload(value: string): Promise<string> {
       return "[encrypted with unknown chat format]";
     }
     const key = await ensureRoomKey();
-    const decrypted = await crypto.subtle.decrypt(
-      { name: "AES-GCM", iv: unbase64(envelope.iv) },
-      key,
-      unbase64(envelope.ciphertext),
-    );
+    const iv = unbase64(envelope.iv);
+    if (iv.length !== 12) throw new Error("Invalid chat nonce");
+    const decrypted = gcm(key, iv).decrypt(unbase64(envelope.ciphertext));
     return new TextDecoder().decode(decrypted);
   } catch {
     return "[encrypted - decrypt failed]";
@@ -218,7 +223,7 @@ async function getRecipients(): Promise<string[]> {
   return [...new Set([...(cachedRecipients ?? []), ...(own ? [own] : [])])].filter(Boolean);
 }
 
-async function ensureRoomKey(snapshot?: ChatSnapshot): Promise<CryptoKey> {
+async function ensureRoomKey(snapshot?: ChatSnapshot): Promise<Uint8Array> {
   if (cachedRoomKey) return cachedRoomKey;
   const signer = getActiveSigner();
   if (!signer) throw new Error("Reconnect your signer to unlock private chat");
@@ -250,12 +255,11 @@ async function publishRoomKey(raw: string): Promise<void> {
   await postChatKeyWraps({ wraps });
 }
 
-async function importRoomKey(raw: string): Promise<CryptoKey> {
+async function importRoomKey(raw: string): Promise<Uint8Array> {
   if (cachedRoomKey && cachedRoomKeyRaw === raw) return cachedRoomKey;
-  cachedRoomKey = await crypto.subtle.importKey("raw", unbase64(raw), { name: "AES-GCM" }, false, [
-    "encrypt",
-    "decrypt",
-  ]);
+  const key = unbase64(raw);
+  if (key.length !== 32) throw new Error("Invalid private chat room key");
+  cachedRoomKey = key;
   cachedRoomKeyRaw = raw;
   return cachedRoomKey;
 }

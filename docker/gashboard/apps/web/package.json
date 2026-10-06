@@ -10,6 +10,7 @@
     "typecheck": "vue-tsc --noEmit"
   },
   "dependencies": {
+    "@noble/ciphers": "0.5.3",
     "applesauce-accounts": "5.1.0",
     "applesauce-signers": "5.1.0",
     "nostr-tools": "2.10.4",

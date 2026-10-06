@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from "vue";
-import { RouterLink, RouterView, useRoute } from "vue-router";
+import { RouterLink, RouterView, useRoute, useRouter } from "vue-router";
 import { useAuthStore } from "./stores/auth";
 import { useStatsStore } from "./stores/stats";
 import ChatDrawer from "./components/ChatDrawer.vue";
@@ -9,6 +9,11 @@ import ReleaseNotesDrawer from "./components/ReleaseNotesDrawer.vue";
 const auth = useAuthStore();
 const stats = useStatsStore();
 const route = useRoute();
+const router = useRouter();
+function logout(): void {
+  auth.logout();
+  void router.push({ name: "login" });
+}
 const crt = ref(false);
 const chatOpen = ref(false);
 const releaseOpen = ref(false);
@@ -63,7 +68,7 @@ watch(
       <template v-if="auth.isLoggedIn">
         <button class="thin" @click="chatOpen = !chatOpen">chat</button>
         <span class="muted">{{ auth.npub ? shortNpub(auth.npub) : "" }}</span>
-        <button class="thin" @click="auth.logout()">logout</button>
+        <button class="thin" @click="logout">logout</button>
       </template>
     </div>
   </header>

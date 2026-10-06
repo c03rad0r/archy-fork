@@ -26,7 +26,7 @@ const mediaStickers = computed(() => CHAT_STICKERS.filter((sticker) => sticker.i
 const textStickers = computed(() => CHAT_STICKERS.filter((sticker) => !sticker.image));
 
 onMounted(() => {
-  if (auth.isLoggedIn) void start();
+  if (props.open && auth.isLoggedIn) void start();
 });
 
 onUnmounted(() => {
@@ -36,10 +36,12 @@ onUnmounted(() => {
 watch(
   () => auth.isLoggedIn,
   (loggedIn) => {
-    if (loggedIn) void start();
-    else {
+    if (loggedIn) {
+      if (props.open) void start();
+    } else {
       sub?.close();
       sub = null;
+      chat.clearChatSession();
       messages.value = [];
       profiles.value = {};
       reactions.value = {};
@@ -50,16 +52,17 @@ watch(
 
 watch(
   () => props.open,
-  (open) => {
+  async (open) => {
     if (open) {
-      if (!canSend.value) void auth.restoreSavedSigner();
+      if (!canSend.value) await auth.restoreSavedSigner();
+      if (auth.isLoggedIn) await start();
       void scrollBottom();
     }
   },
 );
 
 async function start(): Promise<void> {
-  if (sub) return;
+  if (sub || loading.value) return;
   loading.value = true;
   error.value = "";
   try {
