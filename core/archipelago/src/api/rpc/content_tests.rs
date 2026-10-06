@@ -191,3 +191,34 @@ async fn inline_download_limits_known_and_chunked_bodies_without_draining_them()
     assert!(bounded_content_bytes(response, 4).await.is_err());
     assert_eq!(consumed.load(Ordering::SeqCst), 2);
 }
+
+#[tokio::test]
+async fn onchain_delivery_streams_to_owned_cache_and_preserves_incomplete_recovery() {
+    use tokio::io::AsyncReadExt;
+    let dir = tempfile::tempdir().unwrap();
+    let response: reqwest::Response = hyper::Response::builder()
+        .header("content-length", "2097152")
+        .body(hyper::Body::from(vec![71u8; 2 * 1024 * 1024]))
+        .unwrap()
+        .into();
+    let item = cache_peer_response(dir.path(), "seller.onion", "film", "film.mp4", "video/mp4", 1, "onchain", response).await.unwrap();
+    assert!(item.download_complete);
+    assert_eq!(item.ecash_backend, "onchain");
+    let (_, mut file) = crate::content_owned::open_owned(dir.path(), "seller.onion", "film").await.unwrap().unwrap();
+    let mut bytes = Vec::new();
+    file.read_to_end(&mut bytes).await.unwrap();
+    assert_eq!(bytes, vec![71u8; 2 * 1024 * 1024]);
+    let reply = cached_purchase_response(dir.path(), "seller.onion", "film", true, 0).await.unwrap();
+    assert_eq!(reply["owned"], true);
+    assert!(reply.get("data").is_none());
+
+    let truncated: reqwest::Response = hyper::Response::builder()
+        .header("content-length", "100")
+        .body(hyper::Body::from("short"))
+        .unwrap()
+        .into();
+    assert!(cache_peer_response(dir.path(), "seller.onion", "interrupted", "film.mp4", "video/mp4", 1, "onchain", truncated).await.is_err());
+    let entries = crate::content_owned::list_owned_checked(dir.path()).await.unwrap();
+    assert!(!entries.iter().find(|item| item.content_id == "interrupted").unwrap().download_complete);
+    assert!(existing_paid_content(dir.path(), "seller.onion", "interrupted", None, true).await.is_err());
+}

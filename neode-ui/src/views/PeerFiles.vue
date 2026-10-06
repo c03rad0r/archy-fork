@@ -1288,14 +1288,14 @@ async function pollOnchain(address: string) {
       timeout: 30000,
     })
     if (res?.paid) {
-      const dl = await rpcClient.call<{ data?: string; mime_type?: string; error?: string }>({
+      const dl = await rpcClient.call<{ data?: string; owned?: boolean; owned_content_id?: string; mime_type?: string; error?: string }>({
         method: 'content.download-peer-onchain',
-        params: { onion, content_id: item.id, address },
-        timeout: 120000,
+        params: { onion, content_id: item.id, address, filename: item.filename, price_sats: getItemPrice(item.access), cache_only: true },
+        timeout: 960000,
       })
       onchainPaying.value = false
-      if (dl?.data) {
-        openPurchased(item, dl.data, dl.mime_type)
+      if (dl?.data !== undefined || dl?.owned === true) {
+        openPurchased(item, dl.data, dl.mime_type, onion, dl.owned_content_id)
       } else {
         lnError.value = dl?.error || 'Paid, but the download failed. Try again shortly.'
       }

@@ -30,6 +30,21 @@ beforeEach(() => {
   vi.mocked(rpcClient.payLightningInvoice).mockResolvedValue({ status: 'succeeded' } as never)
 })
 describe('Lightning file delivery recovery', () => {
+  it('opens a confirmed on-chain delivery from HTTP cache without another payment', async () => {
+    vi.mocked(rpcClient.call).mockImplementation(async ({ method }) => {
+      if (method === 'content.onchain-status') return { paid: true }
+      if (method === 'content.download-peer-onchain') return { owned: true, mime_type: 'video/mp4', size_bytes: 200000000 }
+      return { items: [] }
+    })
+    const { wrapper, vm } = await open()
+    await vm.pollOnchain('bc1test')
+    expect(vm.viewerUrl).toBe('/api/peer-content/peer.onion/paid-file')
+    expect(vm.viewerMime).toBe('video/mp4')
+    const calls = vi.mocked(rpcClient.call).mock.calls.map(([call]) => call)
+    expect(calls.find(call => call.method === 'content.download-peer-onchain')?.params).toMatchObject({ cache_only: true, address: 'bc1test', filename: 'bought.txt' })
+    expect(calls.some(call => ['lnd.sendcoins', 'content.request-onchain'].includes(call.method))).toBe(false)
+    wrapper.unmount()
+  })
   it('opens a cached ecash purchase without transferring base64 into the UI', async () => {
     vi.mocked(rpcClient.call).mockImplementation(async ({ method }) => {
       if (method === 'content.download-peer-paid') return { owned: true, mime_type: 'video/mp4', size_bytes: 200000000 }
