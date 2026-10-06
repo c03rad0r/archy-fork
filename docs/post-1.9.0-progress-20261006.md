@@ -470,3 +470,39 @@ feature. Actual browser/companion acceptance, full library pagination (current
 API defaults to 30), persisted viewing progress, FIPS distribution, creator
 payment routing and the new entitlement window remain open. No test purchase,
 commercial rental policy change, or app-image publication occurred.
+
+## Deployment coordination cleared; IndeeHub browser qualification
+
+The operator confirmed that the other mining session has finished and handed
+over. The dev/Yaya deployment hold is cleared. Both live binaries still match
+handoff SHA `b35c478fc11895ff2349c89c92c4d4c177f783e598ddf34389b08a36bcebb1f8`;
+Yaya's management service is active. Prepared deployment verifies those hashes,
+backs up the binary/UI, switches the backend before the new UI entry, checks
+health/session-key/container preservation, and rolls back on a failed switch.
+
+IndeeHub production-browser testing found a real direct `/library` redirect:
+Browse decided login was missing before session restoration finished. Marking
+the route authenticated alone was insufficient because the guard skipped an
+already-running restoration. `4b8667f` shares that in-flight promise and waits
+for it in the guard. All **26 app unit tests pass**. `5f22e71` also keeps the actual
+expiry label within mobile cards, retaining the full expiry in accessible text.
+The final production build and browser fixture checks pass at **390 and 1440px**:
+direct saved-session entry, saved projects, active rentals, expiry containment,
+empty state, outage and retry. Logs: `/tmp/indeehub-session-library-tests.log`,
+`/tmp/indeehub-library-final-build.log`, `/tmp/indeehub-library-browser-final.log`.
+Earlier failed browser runs remain recorded; one intercepted the document as an
+API response, two exposed the auth race, and another used a midnight-UTC fixture
+that crossed the year boundary locally. None is counted as a passing run.
+
+Final IndeeHub UI archive SHA:
+`e8d7a9f70c0db4c8af10177783bcc773927d6b95a57e68a83764674582054f68`.
+Updated dashboard production UI archive SHA:
+`a60c8ae5a2d23ebb672c8e10634891cf3b409721960257a330068cd70bcccecb`.
+No app image, catalog or live deployment is implied by these bundles.
+
+Live **pre-deployment** checks verify reciprocal peer records against each
+node's authenticated public key and successful catalog browsing over FIPS in
+both directions. Both funded wallets select the same default mint; its three
+advertised sat keysets report zero input fees. Spend ledger remains zero.
+Repeat route checks on the deployed candidate before paid transfers. These
+checks do not close the durable-payment or distributed-IndeeHub requirements.
