@@ -83,6 +83,10 @@ impl std::fmt::Debug for PreparedSwap {
 }
 
 impl PreparedSwap {
+    pub(super) fn inputs(&self) -> &[Proof] {
+        &self.inputs
+    }
+
     pub(super) fn validate_for_mint(&self, mint_url: &str) -> Result<()> {
         anyhow::ensure!(
             self.mint_url == mint_url,

@@ -70,6 +70,9 @@ pub struct StoredProof {
     /// Whether this proof is reserved (allocated to an in-progress operation).
     #[serde(default)]
     pub reserved: bool,
+    /// Owner of a recoverable send reservation; absent on legacy proofs.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reserved_by: Option<String>,
     /// Timestamp when received.
     pub created_at: String,
 }
@@ -180,6 +183,7 @@ impl WalletState {
                 mint_url: mint_url.to_string(),
                 spent: false,
                 reserved: false,
+                reserved_by: None,
                 created_at: now.clone(),
             });
         }
@@ -1958,6 +1962,7 @@ mod tests {
             mint_url: "http://mint".into(),
             spent: true,
             reserved: false,
+            reserved_by: None,
             created_at: "2020-01-01T00:00:00Z".into(),
         });
         // Add a recent unspent proof
@@ -1971,6 +1976,7 @@ mod tests {
             mint_url: "http://mint".into(),
             spent: false,
             reserved: false,
+            reserved_by: None,
             created_at: chrono::Utc::now().to_rfc3339(),
         });
 
@@ -2371,6 +2377,7 @@ mod tests {
             mint_url: default_mint_url(),
             spent: false,
             reserved: false,
+            reserved_by: None,
             created_at: "2026-01-01T00:00:00Z".into(),
         });
         save_wallet(dir, &real).await.unwrap();
@@ -2400,6 +2407,7 @@ mod tests {
             mint_url: EcashNetwork::Testnet.default_mint(),
             spent: false,
             reserved: false,
+            reserved_by: None,
             created_at: "2026-01-01T00:00:00Z".into(),
         });
         save_wallet(dir, &t).await.unwrap();
@@ -2522,6 +2530,7 @@ mod tests {
             mint_url: default_mint_url(),
             spent: false,
             reserved: false,
+            reserved_by: None,
             created_at: "2026-01-01T00:00:00Z".into(),
         });
         save_wallet(dir, &w).await.unwrap();

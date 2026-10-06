@@ -55,6 +55,137 @@ mod tests {
         (binding, Request::Exact { proofs }, outcome)
     }
 
+    async fn fund_fixture(path: &std::path::Path, binding: &Binding, request: &Request) {
+        let mut wallet = super::super::ecash::WalletState::default();
+        wallet.mint_url = binding.mint_url.clone();
+        wallet.add_proofs(&binding.mint_url, Journal::inputs(request).to_vec());
+        super::super::ecash::save_wallet(path, &wallet)
+            .await
+            .unwrap();
+    }
+
+    #[tokio::test]
+    async fn reservation_and_wallet_commit_survive_each_local_boundary() {
+        let root = tempfile::tempdir().unwrap();
+        let (binding, request, outcome) = fixture();
+        {
+            let held = mutation::guard(root.path()).await.unwrap();
+            let journal = Journal::new(&held);
+            fund_fixture(root.path(), &binding, &request).await;
+            journal
+                .prepare(binding.clone(), request.clone())
+                .await
+                .unwrap();
+            assert!(journal.commit_wallet(&binding).await.is_err());
+            journal.reserve_wallet(&binding).await.unwrap();
+            journal.reserve_wallet(&binding).await.unwrap();
+            let wallet = super::super::ecash::load_wallet(root.path()).await.unwrap();
+            assert_eq!(wallet.balance(), 0);
+            assert_eq!(
+                wallet.proofs[0].reserved_by.as_deref(),
+                Some(binding.id.as_str())
+            );
+            journal
+                .record_result(&binding, outcome.clone())
+                .await
+                .unwrap();
+        }
+        let held = mutation::guard(root.path()).await.unwrap();
+        let journal = Journal::new(&held);
+        let before_commit = journal.load(&binding.id).await.unwrap().unwrap();
+        assert_eq!(
+            journal.commit_wallet(&binding).await.unwrap(),
+            outcome.token
+        );
+        let after = fs::read(root.path().join("wallet/ecash.json"))
+            .await
+            .unwrap();
+        // Emulate interruption between atomic purse save and journal phase save.
+        journal.write(&before_commit).await.unwrap();
+        assert_eq!(
+            journal.commit_wallet(&binding).await.unwrap(),
+            outcome.token
+        );
+        assert_eq!(
+            journal.commit_wallet(&binding).await.unwrap(),
+            outcome.token
+        );
+        assert_eq!(
+            fs::read(root.path().join("wallet/ecash.json"))
+                .await
+                .unwrap(),
+            after
+        );
+        let wallet = super::super::ecash::load_wallet(root.path()).await.unwrap();
+        assert_eq!(wallet.transactions.len(), 1);
+        assert_eq!(wallet.transactions[0].id, binding.id);
+        assert!(wallet.proofs[0].spent && !wallet.proofs[0].reserved);
+        assert!(wallet.proofs[0].reserved_by.is_none());
+    }
+
+    #[tokio::test]
+    async fn competing_operation_cannot_take_another_reservation() {
+        let root = tempfile::tempdir().unwrap();
+        let held = mutation::guard(root.path()).await.unwrap();
+        let journal = Journal::new(&held);
+        let (binding, request, outcome) = fixture();
+        fund_fixture(root.path(), &binding, &request).await;
+        journal
+            .prepare(binding.clone(), request.clone())
+            .await
+            .unwrap();
+        journal.reserve_wallet(&binding).await.unwrap();
+        let mut other = binding.clone();
+        other.id = uuid::Uuid::new_v4().to_string();
+        journal.prepare(other.clone(), request).await.unwrap();
+        let before = fs::read(root.path().join("wallet/ecash.json"))
+            .await
+            .unwrap();
+        assert!(journal.reserve_wallet(&other).await.is_err());
+        journal.record_result(&other, outcome).await.unwrap();
+        assert!(journal.commit_wallet(&other).await.is_err());
+        assert_eq!(
+            fs::read(root.path().join("wallet/ecash.json"))
+                .await
+                .unwrap(),
+            before
+        );
+    }
+
+    #[tokio::test]
+    async fn network_switch_cannot_redirect_a_pending_payment_commit() {
+        let root = tempfile::tempdir().unwrap();
+        let (binding, request, outcome) = fixture();
+        {
+            let held = mutation::guard(root.path()).await.unwrap();
+            let journal = Journal::new(&held);
+            fund_fixture(root.path(), &binding, &request).await;
+            journal.prepare(binding.clone(), request).await.unwrap();
+            journal.reserve_wallet(&binding).await.unwrap();
+            journal
+                .record_result(&binding, outcome.clone())
+                .await
+                .unwrap();
+        }
+        super::super::ecash::save_network(root.path(), EcashNetwork::Testnet)
+            .await
+            .unwrap();
+        {
+            let held = mutation::guard(root.path()).await.unwrap();
+            let journal = Journal::new(&held);
+            assert!(journal.commit_wallet(&binding).await.is_err());
+            assert!(!root.path().join("wallet/ecash.testnet.json").exists());
+        }
+        super::super::ecash::save_network(root.path(), EcashNetwork::Mainnet)
+            .await
+            .unwrap();
+        let held = mutation::guard(root.path()).await.unwrap();
+        assert_eq!(
+            Journal::new(&held).commit_wallet(&binding).await.unwrap(),
+            outcome.token
+        );
+    }
+
     #[tokio::test]
     async fn restart_preserves_original_request_and_private_files() {
         use std::os::unix::fs::PermissionsExt;
@@ -294,6 +425,170 @@ pub(super) struct Journal<'a> {
 impl<'a> Journal<'a> {
     pub fn new(guard: &'a WalletMutation) -> Self {
         Self { guard }
+    }
+
+    async fn bound_record(&self, binding: &Binding) -> Result<Record> {
+        let record = self
+            .load(&binding.id)
+            .await?
+            .context("Payment recovery record is missing")?;
+        anyhow::ensure!(
+            &record.binding == binding,
+            "Payment operation terms changed"
+        );
+        anyhow::ensure!(
+            super::ecash::load_network(&self.guard.data_dir).await? == binding.network,
+            "Switch back to the payment's original network before recovering it"
+        );
+        Ok(record)
+    }
+
+    fn inputs(request: &Request) -> &[Proof] {
+        match request {
+            Request::Exact { proofs } => proofs,
+            Request::Swap(prepared) => prepared.inputs(),
+        }
+    }
+
+    fn input_indices(
+        record: &Record,
+        wallet: &super::ecash::WalletState,
+        require_reserved: bool,
+    ) -> Result<Vec<usize>> {
+        Self::inputs(&record.request)
+            .iter()
+            .map(|proof| {
+                let matching: Vec<_> = wallet
+                    .proofs
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, stored)| {
+                        stored.mint_url == record.binding.mint_url
+                            && stored.proof.secret == proof.secret
+                    })
+                    .collect();
+                anyhow::ensure!(
+                    matching.len() == 1,
+                    "Payment input is missing or duplicated in the wallet"
+                );
+                let (index, stored) = matching[0];
+                anyhow::ensure!(
+                    serde_json::to_value(&stored.proof)? == serde_json::to_value(proof)?,
+                    "Payment input changed in the wallet"
+                );
+                anyhow::ensure!(!stored.spent, "Payment input was already spent");
+                let owned = stored.reserved
+                    && stored.reserved_by.as_deref() == Some(record.binding.id.as_str());
+                let available = !stored.reserved && stored.reserved_by.is_none();
+                anyhow::ensure!(
+                    owned || (!require_reserved && available),
+                    "Payment input belongs to another operation"
+                );
+                Ok(index)
+            })
+            .collect()
+    }
+
+    /// The immutable journal must already exist. Return only after the purse
+    /// reservation is durable, before a caller may send a mint request.
+    pub async fn reserve_wallet(&self, binding: &Binding) -> Result<()> {
+        let record = self.bound_record(binding).await?;
+        anyhow::ensure!(
+            matches!(record.phase, Phase::Prepared),
+            "Payment already has a saved result"
+        );
+        let mut wallet = super::ecash::load_wallet(&self.guard.data_dir).await?;
+        anyhow::ensure!(
+            !wallet.transactions.iter().any(|tx| tx.id == binding.id),
+            "Payment history already contains this operation"
+        );
+        let indices = Self::input_indices(&record, &wallet, false)?;
+        for index in indices {
+            wallet.proofs[index].reserved = true;
+            wallet.proofs[index].reserved_by = Some(binding.id.clone());
+        }
+        super::ecash::save_wallet(&self.guard.data_dir, &wallet).await
+    }
+
+    /// Commit a previously saved result exactly once. A crash after the purse
+    /// save but before the phase save is recognized by its stable history ID.
+    pub async fn commit_wallet(&self, binding: &Binding) -> Result<String> {
+        use super::ecash::TransactionType;
+        let record = self.bound_record(binding).await?;
+        let (outcome, committed) = match &record.phase {
+            Phase::Prepared => anyhow::bail!("Payment result is not durable yet"),
+            Phase::Result(outcome) => (outcome, false),
+            Phase::Committed(outcome) => (outcome, true),
+        };
+        let mut wallet = super::ecash::load_wallet(&self.guard.data_dir).await?;
+        let history: Vec<_> = wallet
+            .transactions
+            .iter()
+            .filter(|tx| tx.id == binding.id)
+            .collect();
+        if !history.is_empty() {
+            anyhow::ensure!(
+                history.len() == 1
+                    && matches!(history[0].tx_type, TransactionType::Send)
+                    && history[0].amount_sats == binding.amount_sats
+                    && history[0].mint_url == binding.mint_url
+                    && history[0].kind == "cashu",
+                "Payment history does not match its recovery record"
+            );
+            if !committed {
+                self.mark_committed(binding).await?;
+            }
+            return Ok(outcome.token.clone());
+        }
+        anyhow::ensure!(
+            !committed,
+            "Committed payment is missing from the wallet; recovery required"
+        );
+        let indices = Self::input_indices(&record, &wallet, true)?;
+        let token = super::cashu::CashuToken::deserialize(&outcome.token)?;
+        // Outgoing swap proofs are retained as spent locally so a seed scan
+        // cannot re-credit the still-unredeemed recipient's token.
+        let outgoing = if matches!(record.request, Request::Swap(_)) {
+            token.token[0].proofs.clone()
+        } else {
+            vec![]
+        };
+        for proof in outgoing.iter().chain(&outcome.change) {
+            anyhow::ensure!(
+                !wallet
+                    .proofs
+                    .iter()
+                    .any(|stored| stored.mint_url == binding.mint_url
+                        && stored.proof.secret == proof.secret),
+                "Payment output already exists without its transaction record"
+            );
+        }
+        for index in indices {
+            wallet.proofs[index].spent = true;
+            wallet.proofs[index].reserved = false;
+            wallet.proofs[index].reserved_by = None;
+        }
+        let start = wallet.proofs.len();
+        wallet.add_proofs(&binding.mint_url, outgoing);
+        for stored in &mut wallet.proofs[start..] {
+            stored.spent = true;
+        }
+        wallet.add_proofs(&binding.mint_url, outcome.change.clone());
+        wallet.record_tx(
+            TransactionType::Send,
+            binding.amount_sats,
+            "Sent ecash",
+            &binding.mint_url,
+            "",
+        );
+        wallet
+            .transactions
+            .last_mut()
+            .context("Payment history could not be recorded")?
+            .id = binding.id.clone();
+        super::ecash::save_wallet(&self.guard.data_dir, &wallet).await?;
+        self.mark_committed(binding).await?;
+        Ok(outcome.token.clone())
     }
 
     fn path(&self, id: &str) -> Result<PathBuf> {

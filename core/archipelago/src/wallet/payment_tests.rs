@@ -557,6 +557,97 @@ async fn prepared_swap_recovers_a_lost_reply_without_a_second_spend() {
 }
 
 #[tokio::test]
+async fn journal_recovers_lost_swap_reply_and_commits_change_once() {
+    use crate::wallet::{
+        mutation,
+        send_journal::{Binding, Journal, Outcome, Request as SendRequest},
+    };
+    let mint = Mint::start(0, None).await;
+    let root = tempfile::tempdir().unwrap();
+    let client = MintClient::new(&mint.url).unwrap();
+    let input = proof(ACTIVE, 8);
+    let binding = Binding {
+        id: uuid::Uuid::new_v4().to_string(),
+        network: EcashNetwork::Mainnet,
+        mint_url: mint.url.clone(),
+        amount_sats: 4,
+        context_hash: "ab".repeat(32),
+    };
+    {
+        let held = mutation::guard(root.path()).await.unwrap();
+        let journal = Journal::new(&held);
+        let mut wallet = WalletState::default();
+        wallet.mint_url = mint.url.clone();
+        wallet.add_proofs(&mint.url, vec![input.clone()]);
+        save_wallet(root.path(), &wallet).await.unwrap();
+        let prepared = client
+            .prepare_swap_at_least(&[input], &[4, 4], 4)
+            .await
+            .unwrap();
+        journal
+            .prepare(binding.clone(), SendRequest::Swap(prepared.clone()))
+            .await
+            .unwrap();
+        journal.reserve_wallet(&binding).await.unwrap();
+        mint.lose_swap_reply
+            .store(true, std::sync::atomic::Ordering::SeqCst);
+        assert!(client.execute_prepared_swap(&prepared).await.is_err());
+        assert_eq!(load_wallet(root.path()).await.unwrap().balance(), 0);
+    }
+    let held = mutation::guard(root.path()).await.unwrap();
+    let journal = Journal::new(&held);
+    let record = journal.load(&binding.id).await.unwrap().unwrap();
+    let SendRequest::Swap(prepared) = record.request else {
+        panic!("Lost prepared swap")
+    };
+    let mut restored = MintClient::new(&mint.url)
+        .unwrap()
+        .restore_prepared_swap(&prepared)
+        .await
+        .unwrap()
+        .unwrap()
+        .new_proofs;
+    let send = restored.remove(0);
+    let token = CashuToken::new(&mint.url, vec![send.clone()])
+        .serialize()
+        .unwrap();
+    journal
+        .record_result(
+            &binding,
+            Outcome {
+                token: token.clone(),
+                change: restored,
+            },
+        )
+        .await
+        .unwrap();
+    assert_eq!(journal.commit_wallet(&binding).await.unwrap(), token);
+    assert_eq!(journal.commit_wallet(&binding).await.unwrap(), token);
+    let wallet = load_wallet(root.path()).await.unwrap();
+    assert_eq!(wallet.balance(), 4);
+    assert_eq!(wallet.transactions.len(), 1);
+    assert_eq!(wallet.transactions[0].id, binding.id);
+    assert_eq!(wallet.proofs.len(), 3);
+    assert!(
+        wallet
+            .proofs
+            .iter()
+            .find(|stored| stored.proof.secret == send.secret)
+            .unwrap()
+            .spent
+    );
+    assert!(wallet
+        .proofs
+        .iter()
+        .all(|stored| !stored.reserved && stored.reserved_by.is_none()));
+    assert_eq!(
+        mint.requests.lock().unwrap().len(),
+        1,
+        "Recovery must not send another swap"
+    );
+}
+
+#[tokio::test]
 async fn damaged_or_wrong_mint_preparation_fails_before_spending() {
     let mint = Mint::start(0, None).await;
     let client = MintClient::new(&mint.url).unwrap();

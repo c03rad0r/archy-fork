@@ -233,3 +233,24 @@ requested curve point and reject unknown state values before crediting proofs.
 Do not treat a same-length response as sufficient. Also prevent a seed scan from
 making reserved outgoing operation outputs available before that operation's
 result/commit is recovered. These are source findings; no live restore was run.
+
+### Wallet reservation/commit boundaries qualified
+
+The journal can now durably reserve its exact inputs with an operation owner,
+refuse another operation's reservation, and commit its saved token/change/history
+once. Recovery after purse-save but before journal-phase-save uses the same stable
+transaction ID. Changing the selected network cannot redirect that commit into
+the other purse. Outgoing swap proofs are retained as locally spent, alongside
+spendable change, so they are not immediately rediscovered as wallet funds.
+
+Four additional regressions cover local restart boundaries, competing operations,
+network switching and a real HTTP/curve-signature lost-response scenario. The
+latter reconstructs the journal, restores the original swap outputs, commits twice,
+and verifies one mint swap, one history entry,4sats sent and4sats change from8.
+Full isolated qualification:1,777passed, zero failures, five existing skips,
+`/tmp/archy-journal-wallet-commit-tests.log`. No real sats or live wallet data used.
+
+These methods are not yet wired into the purchase RPC or a remote-operation
+executor. Seller receipts, delivery capabilities, ambiguous refunds, melt/change
+and seed-restore interaction remain open. A passing commit primitive is not full
+paid-content recovery acceptance.
