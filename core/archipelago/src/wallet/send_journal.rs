@@ -153,6 +153,66 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn seed_restore_blocks_pending_payments_and_excludes_committed_outgoing_tokens() {
+        let root = tempfile::tempdir().unwrap();
+        let held = mutation::guard(root.path()).await.unwrap();
+        let journal = Journal::new(&held);
+        let (binding, request, outcome) = fixture();
+        assert!(journal
+            .restore_exclusions(binding.network, &binding.mint_url)
+            .await
+            .unwrap()
+            .is_empty());
+        fund_fixture(root.path(), &binding, &request).await;
+        journal.prepare(binding.clone(), request).await.unwrap();
+        assert!(journal
+            .restore_exclusions(binding.network, &binding.mint_url)
+            .await
+            .is_err());
+        assert!(journal
+            .restore_exclusions(EcashNetwork::Testnet, &binding.mint_url)
+            .await
+            .unwrap()
+            .is_empty());
+        assert!(journal
+            .restore_exclusions(binding.network, "https://other.example")
+            .await
+            .unwrap()
+            .is_empty());
+        journal.reserve_wallet(&binding).await.unwrap();
+        journal.record_result(&binding, outcome).await.unwrap();
+        assert!(journal
+            .restore_exclusions(binding.network, &binding.mint_url)
+            .await
+            .is_err());
+        journal.commit_wallet(&binding).await.unwrap();
+        let excluded = journal
+            .restore_exclusions(binding.network, &binding.mint_url)
+            .await
+            .unwrap();
+        assert_eq!(excluded.len(), 1);
+        assert!(excluded.contains("private-journal-fixture"));
+        // Journal exclusions survive removal/pruning of the legacy purse.
+        fs::remove_file(root.path().join("wallet/ecash.json"))
+            .await
+            .unwrap();
+        assert_eq!(
+            journal
+                .restore_exclusions(binding.network, &binding.mint_url)
+                .await
+                .unwrap(),
+            excluded
+        );
+        fs::write(journal.path(&binding.id).unwrap(), b"damaged")
+            .await
+            .unwrap();
+        assert!(journal
+            .restore_exclusions(binding.network, &binding.mint_url)
+            .await
+            .is_err());
+    }
+
+    #[tokio::test]
     async fn network_switch_cannot_redirect_a_pending_payment_commit() {
         let root = tempfile::tempdir().unwrap();
         let (binding, request, outcome) = fixture();
@@ -427,6 +487,64 @@ impl<'a> Journal<'a> {
         Self { guard }
     }
 
+    /// Seed restoration must not re-credit an outgoing token which its recipient
+    /// has not redeemed yet. Resolve ambiguous operations before scanning.
+    pub async fn restore_exclusions(
+        &self,
+        network: EcashNetwork,
+        mint_url: &str,
+    ) -> Result<std::collections::HashSet<String>> {
+        let mut excluded = std::collections::HashSet::new();
+        let mut entries =
+            match fs::read_dir(self.guard.data_dir.join("wallet/send-operations")).await {
+                Ok(entries) => entries,
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(excluded),
+                Err(error) => {
+                    return Err(error)
+                        .context("Cannot inspect payment recovery before restoring the wallet")
+                }
+            };
+        while let Some(entry) = entries.next_entry().await? {
+            let name = entry.file_name();
+            let name = name.to_str().context("Invalid payment recovery filename")?;
+            // A temporary write cannot have authorized a remote operation.
+            if let Some(id) = name
+                .strip_prefix('.')
+                .and_then(|name| name.strip_suffix(".tmp"))
+            {
+                if uuid::Uuid::parse_str(id).is_ok() {
+                    continue;
+                }
+            }
+            let id = name
+                .strip_suffix(".json")
+                .context("Unexpected payment recovery entry")?;
+            let record = self
+                .load(id)
+                .await?
+                .context("Payment recovery record disappeared")?;
+            if record.binding.network != network
+                || record.binding.mint_url.trim_end_matches('/') != mint_url.trim_end_matches('/')
+            {
+                continue;
+            }
+            let Phase::Committed(outcome) = record.phase else {
+                anyhow::bail!(
+                    "Recover pending payments before restoring this mint from the backup phrase"
+                );
+            };
+            let token = super::cashu::CashuToken::deserialize(&outcome.token)?;
+            excluded.extend(
+                token
+                    .token
+                    .into_iter()
+                    .flat_map(|entry| entry.proofs)
+                    .map(|proof| proof.secret),
+            );
+        }
+        Ok(excluded)
+    }
+
     async fn bound_record(&self, binding: &Binding) -> Result<Record> {
         let record = self
             .load(&binding.id)
@@ -648,7 +766,13 @@ impl<'a> Journal<'a> {
                     proof.c_as_pubkey()?;
                 }
             }
-            Request::Swap(prepared) => prepared.validate_for_mint(&binding.mint_url)?,
+            Request::Swap(prepared) => {
+                prepared.validate_for_mint(&binding.mint_url)?;
+                anyhow::ensure!(
+                    prepared.covers_payment(binding.amount_sats),
+                    "Prepared outputs cannot cover the payment amount"
+                );
+            }
         }
         Ok(())
     }

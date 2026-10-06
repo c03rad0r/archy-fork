@@ -254,3 +254,21 @@ These methods are not yet wired into the purchase RPC or a remote-operation
 executor. Seller receipts, delivery capabilities, ambiguous refunds, melt/change
 and seed-restore interaction remain open. A passing commit primitive is not full
 paid-content recovery acceptance.
+
+### Seed-restore interaction qualified
+
+NUT-07 responses now require one correctly identified state per requested proof
+in protocol order, with only defined states accepted. Duplicate requests, foreign
+or duplicated response identifiers, omissions, reordered entries and unknown
+states fail closed. Hexadecimal case differences remain accepted.
+
+Seed restore inspects the private send journal before contacting the mint: it
+blocks unresolved operations for the selected network/mint and excludes committed
+outgoing token secrets even after legacy purse pruning/removal. Damaged journal
+records block restoration rather than disappearing from the decision. Other
+network/mint operations do not block an unrelated valid restore. Prepared swap
+requests also must cover the bound payment amount before being recorded.
+
+Full isolated qualification:1,779passed, zero failures, five existing skips,
+`/tmp/archy-journal-restore-boundary-tests.log`. These source changes remain
+undeployed. The higher-level purchase/receipt executor remains open.

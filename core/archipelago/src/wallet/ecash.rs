@@ -1485,6 +1485,9 @@ pub struct RestoreOutcome {
 /// time to press this button is when something already looks wrong.
 pub async fn restore_from_seed(data_dir: &Path, mint_url: &str) -> Result<RestoreOutcome> {
     let _mutation = super::mutation::guard(data_dir).await?;
+    let outgoing = super::send_journal::Journal::new(&_mutation)
+        .restore_exclusions(load_network(data_dir).await?, mint_url)
+        .await?;
     let recovery = RecoverySource::load(data_dir).await?.ok_or_else(|| {
         anyhow::anyhow!(
             "This wallet has no backup phrase yet, so there is nothing to restore from. \
@@ -1507,6 +1510,7 @@ pub async fn restore_from_seed(data_dir: &Path, mint_url: &str) -> Result<Restor
         .proofs
         .iter()
         .map(|p| p.proof.secret.clone())
+        .chain(outgoing)
         .collect();
 
     let mut outcome = RestoreOutcome::default();

@@ -22,6 +22,7 @@ struct Mint {
     failure: Arc<std::sync::atomic::AtomicU16>,
     lose_swap_reply: Arc<std::sync::atomic::AtomicBool>,
     restore_reply: Arc<Mutex<Option<Value>>>,
+    state_reply: Arc<Mutex<Option<Value>>>,
 }
 impl Drop for Mint {
     fn drop(&mut self) {
@@ -62,6 +63,8 @@ impl Mint {
         let lose_reply = lose_swap_reply.clone();
         let restore_reply = Arc::new(Mutex::new(None::<Value>));
         let restore_override = restore_reply.clone();
+        let state_reply = Arc::new(Mutex::new(None::<Value>));
+        let state_override = state_reply.clone();
         let service = make_service_fn(move |_| {
             let seen = seen.clone();
             let rejection = rejection.clone();
@@ -69,6 +72,7 @@ impl Mint {
             let issued = issued.clone();
             let lose_reply = lose_reply.clone();
             let restore_override = restore_override.clone();
+            let state_override = state_override.clone();
             async move {
                 Ok::<_, Infallible>(service_fn(move |req: Request<Body>| {
                     let seen = seen.clone();
@@ -77,6 +81,7 @@ impl Mint {
                     let issued = issued.clone();
                     let lose_reply = lose_reply.clone();
                     let restore_override = restore_override.clone();
+                    let state_override = state_override.clone();
                     async move {
                         let mut status = 200;
                         let body = match req.uri().path() {
@@ -146,6 +151,14 @@ impl Mint {
                                     }
                                 }
                             }
+                            "/v1/checkstate" => {
+                                let body: Value = serde_json::from_slice(
+                                    &hyper::body::to_bytes(req.into_body()).await.unwrap(),
+                                )
+                                .unwrap();
+                                let overridden = state_override.lock().unwrap().clone();
+                                overridden.unwrap_or_else(|| json!({"states": body["Ys"].as_array().unwrap().iter().map(|y| json!({"Y":y,"state":"UNSPENT"})).collect::<Vec<_>>()}))
+                            }
                             "/v1/restore" => {
                                 let body: Value = serde_json::from_slice(
                                     &hyper::body::to_bytes(req.into_body()).await.unwrap(),
@@ -201,6 +214,7 @@ impl Mint {
             failure,
             lose_swap_reply,
             restore_reply,
+            state_reply,
         }
     }
     async fn wallet(&self) -> tempfile::TempDir {
@@ -557,6 +571,51 @@ async fn prepared_swap_recovers_a_lost_reply_without_a_second_spend() {
 }
 
 #[tokio::test]
+async fn proof_state_checks_reject_foreign_duplicate_missing_and_unknown_states() {
+    let mint = Mint::start(0, None).await;
+    let client = MintClient::new(&mint.url).unwrap();
+    let proofs = vec![proof(ACTIVE, 4), proof(ACTIVE, 8)];
+    let states = client.check_state(&proofs).await.unwrap();
+    assert_eq!(states.len(), 2);
+    let valid: Vec<_> = states
+        .iter()
+        .map(|state| json!({"Y":state.y,"state":state.state}))
+        .collect();
+    let mut duplicate = valid.clone();
+    duplicate[1] = duplicate[0].clone();
+    let mut foreign = valid.clone();
+    foreign[0]["Y"] = json!("00".repeat(33));
+    let mut unknown = valid.clone();
+    unknown[0]["state"] = json!("UNKNOWN");
+    let mut reversed = valid.clone();
+    reversed.reverse();
+    for response in [
+        json!({}),
+        json!({"states":[valid[0].clone()]}),
+        json!({"states":duplicate}),
+        json!({"states":foreign}),
+        json!({"states":unknown}),
+        json!({"states":reversed}),
+    ] {
+        *mint.state_reply.lock().unwrap() = Some(response);
+        assert!(client.check_state(&proofs).await.is_err());
+    }
+    let mut mixed = valid;
+    mixed[0]["Y"] = json!(states[0].y.to_uppercase());
+    mixed[0]["state"] = json!("PENDING");
+    mixed[1]["state"] = json!("SPENT");
+    *mint.state_reply.lock().unwrap() = Some(json!({"states":mixed}));
+    let result = client.check_state(&proofs).await.unwrap();
+    assert_eq!(result[0].state, "PENDING");
+    assert_eq!(result[1].state, "SPENT");
+    assert!(client
+        .check_state(&[proofs[0].clone(), proofs[0].clone()])
+        .await
+        .is_err());
+    assert!(client.check_state(&[]).await.unwrap().is_empty());
+}
+
+#[tokio::test]
 async fn journal_recovers_lost_swap_reply_and_commits_change_once() {
     use crate::wallet::{
         mutation,
@@ -584,6 +643,13 @@ async fn journal_recovers_lost_swap_reply_and_commits_change_once() {
             .prepare_swap_at_least(&[input], &[4, 4], 4)
             .await
             .unwrap();
+        let mut impossible = binding.clone();
+        impossible.id = uuid::Uuid::new_v4().to_string();
+        impossible.amount_sats = 16;
+        assert!(journal
+            .prepare(impossible, SendRequest::Swap(prepared.clone()))
+            .await
+            .is_err());
         journal
             .prepare(binding.clone(), SendRequest::Swap(prepared.clone()))
             .await

@@ -87,6 +87,13 @@ impl PreparedSwap {
         &self.inputs
     }
 
+    pub(super) fn covers_payment(&self, amount: u64) -> bool {
+        self.outputs
+            .iter()
+            .try_fold(0u64, |sum, output| sum.checked_add(output.amount))
+            .is_some_and(|total| total >= amount)
+    }
+
     pub(super) fn validate_for_mint(&self, mint_url: &str) -> Result<()> {
         anyhow::ensure!(
             self.mint_url == mint_url,
@@ -878,11 +885,19 @@ impl MintClient {
             })
             .collect::<Result<Vec<_>>>()?;
 
+        anyhow::ensure!(
+            ys.iter().collect::<std::collections::HashSet<_>>().len() == ys.len(),
+            "Cannot check duplicate proof identifiers"
+        );
+        if ys.is_empty() {
+            return Ok(Vec::new());
+        }
+
         let url = format!("{}/v1/checkstate", self.url);
         let res = self
             .client
             .post(&url)
-            .json(&serde_json::json!({ "Ys": ys }))
+            .json(&serde_json::json!({ "Ys": &ys }))
             .send()
             .await
             .context("Failed to check proof state")?;
@@ -898,6 +913,21 @@ impl MintClient {
         let states: Vec<ProofState> =
             serde_json::from_value(body.get("states").cloned().unwrap_or(serde_json::json!([])))
                 .context("Failed to parse proof states")?;
+
+        anyhow::ensure!(
+            states.len() == ys.len(),
+            "Mint returned an incomplete proof-state response"
+        );
+        for (state, expected) in states.iter().zip(&ys) {
+            anyhow::ensure!(
+                state.y.eq_ignore_ascii_case(expected),
+                "Mint returned a mismatched proof-state identifier"
+            );
+            anyhow::ensure!(
+                matches!(state.state.as_str(), "UNSPENT" | "PENDING" | "SPENT"),
+                "Mint returned an unknown proof state"
+            );
+        }
 
         Ok(states)
     }
