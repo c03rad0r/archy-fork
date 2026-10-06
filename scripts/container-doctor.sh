@@ -8,7 +8,7 @@
 #
 # Fixes:
 #   1. Stale podman ps/stats processes (>10 = pileup)
-#   2. Orphaned conmon/crun processes holding ports
+#   Orphaned container cleanup is owned by the backend store-scoped reaper.
 #   3. System tor conflicting with container tor
 #   4. Tor hidden service directory permissions (group/other must have no
 #      access; Tor's own setgid 2700 is fine, restart is backed off)
@@ -113,39 +113,13 @@ fix_stale_podman() {
     return 1
 }
 
-# ── Fix 2: Orphaned conmon holding ports ─────────────────────
-fix_orphaned_conmon() {
-    local fixed=false
-    # Find conmon processes whose containers no longer exist
-    local pids
-    pids=$(pgrep -f "conmon.*--exit-command" 2>/dev/null || true)
-    if [ -z "$pids" ]; then
-        return 1
-    fi
-
-    # Doctor runs as root but containers are rootless under archipelago user.
-    # Must check container existence using the rootless podman database.
-    local PODMANCMD="sudo -u archipelago XDG_RUNTIME_DIR=/run/user/1000 podman"
-
-    for pid in $pids; do
-        # Extract container ID from conmon args
-        local cid
-        cid=$(tr '\0' ' ' < /proc/"$pid"/cmdline 2>/dev/null | grep -oP '(?<=-c )[a-f0-9]{64}' || true)
-        if [ -z "$cid" ]; then
-            continue
-        fi
-        # Check if container still exists in rootless podman
-        if ! $PODMANCMD inspect "$cid" &>/dev/null; then
-            local port_info
-            port_info=$(ss -tlnp 2>/dev/null | grep "pid=$pid" | grep -oP ':\K\d+' | head -3 | tr '\n' ',' | sed 's/,$//')
-            log "Killing orphaned conmon pid=$pid (ports: ${port_info:-none})"
-            kill "$pid" 2>/dev/null || kill -9 "$pid" 2>/dev/null || true
-            fixed=true
-        fi
-    done
-
-    $fixed && return 0 || return 1
-}
+# Orphan cleanup deliberately has one owner: the backend's ghost_reaper,
+# which verifies the process UID, exact Podman storage root, successful complete
+# inventory and container identity before signalling anything. The former doctor
+# loop scanned every conmon on the host and treated any failed default-store
+# inspect as an orphan. It killed healthy containers in other stores (including
+# operator/test workloads), and runtime errors could make it kill managed apps.
+# Do not reintroduce independent process killing here.
 
 # ── Fix 3: Ensure system Tor is running (preferred over container) ──
 fix_system_tor_conflict() {
@@ -651,7 +625,6 @@ fi
 log "Starting container health check"
 
 run_fix "stale-podman"    fix_stale_podman
-run_fix "orphaned-conmon" fix_orphaned_conmon
 run_fix "system-tor"      fix_system_tor_conflict
 run_fix "tor-permissions"  fix_tor_permissions
 run_fix "searxng"         fix_searxng
