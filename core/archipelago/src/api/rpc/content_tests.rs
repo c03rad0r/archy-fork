@@ -1,5 +1,68 @@
 use super::*;
 
+#[tokio::test]
+async fn automatic_ecash_selection_never_spends_another_wallet_after_an_ambiguous_failure() {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    for cashu_available in [true, false] {
+        let cashu_calls = AtomicUsize::new(0);
+        let fedimint_calls = AtomicUsize::new(0);
+        let selected = select_peer_ecash_backend(None, cashu_available).unwrap();
+        let result = spend_peer_ecash(
+            selected,
+            async {
+                cashu_calls.fetch_add(1, Ordering::SeqCst);
+                anyhow::bail!("mint consumed inputs but response was lost")
+            },
+            async {
+                fedimint_calls.fetch_add(1, Ordering::SeqCst);
+                anyhow::bail!("federation operation outcome unknown")
+            },
+        )
+        .await;
+        assert!(result.is_err());
+        assert_eq!(
+            cashu_calls.load(Ordering::SeqCst),
+            usize::from(cashu_available)
+        );
+        assert_eq!(
+            fedimint_calls.load(Ordering::SeqCst),
+            usize::from(!cashu_available)
+        );
+    }
+}
+
+#[tokio::test]
+async fn explicit_ecash_choice_is_preserved_and_unselected_operation_is_not_polled() {
+    for (method, expected) in [("cashu", "cashu-token"), ("fedimint", "fedimint-notes")] {
+        let selected = select_peer_ecash_backend(Some(method), method != "cashu").unwrap();
+        let result = spend_peer_ecash(
+            selected,
+            async {
+                assert_eq!(method, "cashu");
+                Ok("cashu-token".to_owned())
+            },
+            async {
+                assert_eq!(method, "fedimint");
+                Ok("fedimint-notes".to_owned())
+            },
+        )
+        .await
+        .unwrap();
+        assert_eq!(result, (expected.to_owned(), method));
+    }
+    for unknown in ["", "ecash", "invalid", "lightning"] {
+        assert!(select_peer_ecash_backend(Some(unknown), true).is_err());
+    }
+    assert_eq!(
+        select_peer_ecash_backend(Some("auto"), true).unwrap(),
+        PeerEcashBackend::Cashu
+    );
+    assert_eq!(
+        select_peer_ecash_backend(Some("auto"), false).unwrap(),
+        PeerEcashBackend::Fedimint
+    );
+}
+
 #[test]
 fn first_and_cached_paid_downloads_have_the_same_client_payload_contract() {
     use base64::Engine;

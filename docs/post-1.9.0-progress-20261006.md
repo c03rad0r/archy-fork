@@ -697,3 +697,14 @@ companion or actual IndeeHub login acceptance.
 
 Logs: `/tmp/archy-legacy-signer-{dev,yaya}-{deploy,browser}.log`.
 Receipt: `~/.local/state/archipelago/release-qualification/legacy-signer-ui-08c93f4a/receipt.json`.
+
+## Ecash backend selection recovery correction
+
+`content.download-peer-paid` now selects Cashu/Fedimint before spending, preserves
+explicit choices, and does not fall through to a second wallet after an ambiguous
+first attempt. Auto selection reads spendable home-mint balance; wallet-read
+errors fail closed. Unknown method names are rejected. Twelve focused content
+RPC tests and the complete isolated suite (**1,749 pass, zero fail, five existing
+ignores**) pass. No real payment or live wallet mutation was used. This is not yet
+in the running backend. Durable pre-mint purchase journaling and seller receipt
+recovery remain open in [the recovery follow-up](paid-content-recovery-followup.md).

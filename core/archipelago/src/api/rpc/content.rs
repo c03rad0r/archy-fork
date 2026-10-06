@@ -19,6 +19,46 @@ fn is_valid_v3_onion(addr: &str) -> bool {
 
 const FILE_CATALOG_PROTOCOL: &str = "https://archipelago.dev/protocols/file-catalog/v1";
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum PeerEcashBackend {
+    Cashu,
+    Fedimint,
+}
+
+/// Auto-selection happens before spending, never as recovery from an error.
+fn select_peer_ecash_backend(
+    method: Option<&str>,
+    cashu_available: bool,
+) -> Result<PeerEcashBackend> {
+    match method {
+        Some("cashu") => Ok(PeerEcashBackend::Cashu),
+        Some("fedimint") => Ok(PeerEcashBackend::Fedimint),
+        None | Some("auto") => Ok(if cashu_available {
+            PeerEcashBackend::Cashu
+        } else {
+            PeerEcashBackend::Fedimint
+        }),
+        _ => anyhow::bail!("Unsupported ecash payment method"),
+    }
+}
+
+/// A mint can consume inputs before its response is lost. Poll exactly one
+/// selected wallet operation; an error must never initiate another payment.
+async fn spend_peer_ecash<C, F>(
+    backend: PeerEcashBackend,
+    cashu: C,
+    fedimint: F,
+) -> Result<(String, &'static str)>
+where
+    C: std::future::Future<Output = Result<String>>,
+    F: std::future::Future<Output = Result<String>>,
+{
+    match backend {
+        PeerEcashBackend::Cashu => Ok((cashu.await?, "cashu")),
+        PeerEcashBackend::Fedimint => Ok((fedimint.await?, "fedimint")),
+    }
+}
+
 fn parse_content_access(params: &serde_json::Value) -> Result<AccessControl> {
     let access_type = match params.get("access") {
         None => "free",
@@ -715,63 +755,45 @@ impl RpcHandler {
             );
         }
 
-        // `method` pins the backend the user confirmed in the UI ("cashu" |
-        // "fedimint"); absent = auto (Cashu first, then Fedimint). The seller's
-        // verify_payment_token accepts either, so a node whose balance lives in
-        // one system can still pay (#3).
-        let method = params.get("method").and_then(|v| v.as_str());
-
+        // Preserve an explicit choice. Automatic selection uses a read-only
+        // balance check before either wallet operation starts. A failed Cashu
+        // swap can already have consumed proofs, so never fall through to a
+        // second wallet after that operation has been attempted.
+        let method = params
+            .get("method")
+            .map(|value| value.as_str().context("Invalid ecash payment method"))
+            .transpose()?;
+        // Validate before even reading a wallet; unsupported input is not auto.
+        select_peer_ecash_backend(method, false)?;
+        let cashu_available = if matches!(method, None | Some("auto")) {
+            let wallet = ecash::load_wallet(&self.config.data_dir)
+                .await
+                .context("Could not check Cashu balance; no payment was attempted")?;
+            wallet.balance_for_mint(&wallet.mint_url) >= price_sats
+        } else {
+            false
+        };
+        let selected = select_peer_ecash_backend(method, cashu_available)?;
         let (data, _) = self.state_manager.get_snapshot().await;
         let local_did = crate::identity::did_key_from_pubkey_hex(&data.server_info.pubkey)?;
-
-        let mint_cashu = || ecash::send_token(&self.config.data_dir, price_sats);
-        let mint_fedimint =
-            || crate::wallet::fedimint_client::spend_from_any(&self.config.data_dir, price_sats);
-
-        let (token_str, used_backend) = match method {
-            Some("cashu") => match mint_cashu().await {
-                Ok(t) => (t, "cashu"),
-                Err(e) => {
-                    tracing::warn!("paid download: cashu mint failed for {price_sats} sats: {e:#}");
-                    return Ok(serde_json::json!({ "error": format!(
-                        "Couldn't pay {price_sats} sats from your Cashu wallet: {e}. \
-                         Fund it, or choose Fedimint."
-                    ) }));
-                }
+        let payment = spend_peer_ecash(
+            selected,
+            ecash::send_token(&self.config.data_dir, price_sats),
+            async {
+                crate::wallet::fedimint_client::spend_from_any(&self.config.data_dir, price_sats)
+                    .await
+                    .map(|(notes, _federation)| notes)
             },
-            Some("fedimint") => match mint_fedimint().await {
-                Ok((notes, fed)) => {
-                    tracing::info!(
-                        "paid download: spending {price_sats} sats Fedimint notes from {fed}"
-                    );
-                    (notes, "fedimint")
-                }
-                Err(e) => {
-                    tracing::warn!(
-                        "paid download: fedimint spend failed for {price_sats} sats: {e:#}"
-                    );
-                    return Ok(serde_json::json!({ "error": format!(
-                        "Couldn't pay {price_sats} sats from your Fedimint wallet: {e}. \
-                         Fund it, or choose Cashu."
-                    ) }));
-                }
-            },
-            _ => match mint_cashu().await {
-                Ok(t) => (t, "cashu"),
-                Err(cashu_err) => match mint_fedimint().await {
-                    Ok((notes, _fed)) => (notes, "fedimint"),
-                    Err(fedi_err) => {
-                        tracing::warn!(
-                            "paid download: no ecash backend could pay {price_sats} sats \
-                             (cashu: {cashu_err:#}; fedimint: {fedi_err:#})"
-                        );
-                        return Ok(serde_json::json!({ "error": format!(
-                            "Couldn't pay {price_sats} sats from your ecash wallet \
-                             (Cashu or Fedimint). Fund either wallet and try again."
-                        ) }));
-                    }
-                },
-            },
+        )
+        .await;
+        let (token_str, used_backend) = match payment {
+            Ok(value) => value,
+            Err(error) => {
+                tracing::warn!("paid download: selected ecash operation failed: {error:#}");
+                return Ok(serde_json::json!({ "error":
+                    "The wallet could not complete this payment. No other wallet was charged. Check the payment status before retrying or changing wallets."
+                }));
+            }
         };
         tracing::info!(
             "paid download: paying {price_sats} sats to {onion} via {used_backend} ecash"
