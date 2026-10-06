@@ -101,3 +101,23 @@ nodes before further restarts: only Shorty had an affected message store at the
 expected paths; its bytes were verified after backup. No message contents or
 wallet data were exported. Actual candidate build/deployment and store reload
 acceptance still remain; do not equate source-test success with delivery.
+
+## Production storage candidate qualification
+
+The cfd9a596 production binary (SHA256
+3d720c6ddb2622ddef956b5ef0d54ecef64617e4bd16d07327b55ac737d00fe7)
+was exercised in the disposable installed-system VM. Independent Python
+ChaCha20-Poly1305 fixtures used the guest's key locally, without exporting it.
+Encrypted nonces starting with `{` and `[` loaded through the real message RPC,
+retained their exact ciphertext, and survived a second service restart. Legacy
+JSON with leading whitespace migrated to authenticated ciphertext and survived
+another restart with all message fields intact.
+
+Fixture corrections were required: the first root-owned 0600 file was unreadable
+by the service; the next legacy assertion omitted optional fields that serde
+normally emits as null. Both initial failures remain in the qualification logs.
+The corrected run passed all three data cases. SSH disconnected during final
+cleanup, so restoration was completed as a guest systemd job and independently
+checked: original 560aa600 backend, active service, and original absent message
+store restored. The VM was then shut down. This is not live-fleet deployment or
+proof of every corrupt-store recovery path.
