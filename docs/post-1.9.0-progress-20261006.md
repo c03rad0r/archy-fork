@@ -676,3 +676,24 @@ passes **1,293 tests across 161 files**, with production build passing. Logs:
 `/tmp/archy-legacy-signer-production-build.log`.
 The served-browser harness now covers both AppSession and the legacy overlay at
 390/1440px. Deployment/live results will be recorded separately below.
+
+## Legacy overlay signer deployed and browser-qualified
+
+UI source `08c93f4a` is deployed on **dev and Yaya**. Index SHA256:
+`ff7b781b9217e23ea8697a10f8038463ac21cc9346ff9db82126c9ecaab2a329`;
+archive SHA256:
+`5ed17d24a09f95f0e15033d16d565d8f707820af9ce59022f98b02b3f5d3465f`.
+Backend `9fe2eb98...`, session secret and app container IDs/start times remained
+unchanged. No management/app restart was performed. Both authenticated RPC checks
+pass; support-directory rollback scripts are recorded in the artifact receipt.
+
+All **eight served-browser scenarios passed**: AppSession and legacy overlay,
+390/1440px, on each node. Each retained a single iframe and answered the two
+concurrent consent requests exactly once. Signing RPCs used isolated fixtures;
+no real keys, public events or payments were used. The overlay harness opens the
+actual production Pinia launcher and renders its real component. This completes
+the previously open legacy-handler source/browser follow-up, not physical
+companion or actual IndeeHub login acceptance.
+
+Logs: `/tmp/archy-legacy-signer-{dev,yaya}-{deploy,browser}.log`.
+Receipt: `~/.local/state/archipelago/release-qualification/legacy-signer-ui-08c93f4a/receipt.json`.
