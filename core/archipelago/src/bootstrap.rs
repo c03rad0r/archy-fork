@@ -162,6 +162,20 @@ pub async fn ensure_runtime_assets_ready() {
         Ok(_) => debug!("No OTA runtime payload to synchronize"),
         Err(e) => warn!("Runtime asset bootstrap failed (non-fatal): {:#}", e),
     }
+    // Older provisioning/rotation wrote a root-only leaf key. nginx could
+    // read it while the unprivileged app gate silently lost HTTPS. Repair
+    // permissions without replacing node identity, including binary-only OTA.
+    match host_sudo(&[
+        "python3",
+        "-c",
+        include_str!("../../../scripts/repair-app-gate-tls-permissions.py"),
+    ])
+    .await
+    {
+        Ok(status) if status.success() => debug!("App gate TLS key permissions verified"),
+        Ok(status) => warn!("App gate TLS key permissions need attention: {status}"),
+        Err(error) => warn!("App gate TLS permission repair failed: {error}"),
+    }
     // A frontend payload can predate the binary during qualification or rollback.
     // Replace its doctor before starting reconciliation; direct writes cannot
     // escape the management service's ProtectSystem filesystem namespace.

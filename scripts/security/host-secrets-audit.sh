@@ -362,6 +362,10 @@ stage_tls() {
     [ -s "$TLS_STAGE_KEY" ] && [ -s "$TLS_STAGE_CRT" ] || return 1
     tls_pair_matches "$TLS_STAGE_KEY" "$TLS_STAGE_CRT" || return 1
     chmod 600 "$TLS_STAGE_KEY"
+    if getent passwd archipelago >/dev/null 2>&1; then
+        chgrp "$(id -gn archipelago)" "$TLS_STAGE_KEY" || return 1
+        chmod 640 "$TLS_STAGE_KEY" || return 1
+    fi
     return 0
 }
 
@@ -376,7 +380,7 @@ stage_ssh() {
 swap_tls() {
     mv -f "$TLS_STAGE_KEY" "$TLS_KEY" || return 1
     mv -f "$TLS_STAGE_CRT" "$TLS_CRT" || return 1
-    chmod 600 "$TLS_KEY"
+    # Preserve the staged daemon-readable mode through the atomic rename.
     return 0
 }
 

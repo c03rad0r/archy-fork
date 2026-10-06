@@ -306,6 +306,9 @@ grep -q BAKED-SHARED-TLS-KEY "$CASE_ROOT/etc/archipelago/ssl/archipelago.key" &&
 [ -s "$CASE_ROOT/etc/ssh/ssh_host_ed25519_key" ] || c1="$c1 ssh-host-key-missing"
 grep -q BAKED-SHARED-HOST-KEY "$CASE_ROOT/etc/ssh/ssh_host_rsa_key" && c1="$c1 ssh-key-not-replaced"
 ls "$CASE_ROOT"/etc/archipelago/ssl/*.new >/dev/null 2>&1 && c1="$c1 dotnew-leftover"
+if getent passwd archipelago >/dev/null 2>&1; then
+    [ "$(stat -c '%a:%g' "$CASE_ROOT/etc/archipelago/ssl/archipelago.key")" = "640:$(id -g archipelago)" ] || c1="$c1 app-gate-cannot-read-private-key"
+fi
 if [ -z "$c1" ]; then
     ok "both generators succeed -> exit 0, marker set, keys swapped in"
 else

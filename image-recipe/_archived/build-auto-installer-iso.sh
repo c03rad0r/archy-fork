@@ -2117,9 +2117,13 @@ gen_tls() {
         && [ -s "$SSL_DIR/archipelago.crt.new" ] \
         && tls_pair_matches "$SSL_DIR/archipelago.key.new" "$SSL_DIR/archipelago.crt.new"; then
         chmod 600 "$SSL_DIR/archipelago.key.new"
+        if getent passwd archipelago >/dev/null 2>&1; then
+            chgrp "$(id -gn archipelago)" "$SSL_DIR/archipelago.key.new" || return 1
+            chmod 640 "$SSL_DIR/archipelago.key.new" || return 1
+        fi
         mv "$SSL_DIR/archipelago.key.new" "$SSL_DIR/archipelago.key" \
             && mv "$SSL_DIR/archipelago.crt.new" "$SSL_DIR/archipelago.crt" || return 1
-        chmod 600 "$SSL_DIR/archipelago.key"
+        # Keep staged permissions: nginx and the app gate both read this leaf.
         return 0
     fi
     rm -f "$SSL_DIR/archipelago.key.new" "$SSL_DIR/archipelago.crt.new"

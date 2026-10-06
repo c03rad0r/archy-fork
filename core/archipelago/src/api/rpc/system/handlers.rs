@@ -780,6 +780,19 @@ impl TlsMaterial {
             );
         }
 
+        // nginx and the app gate share the leaf. Validate the daemon's read
+        // permission on the staged key before replacing either live file.
+        if self.privileged {
+            let mut repair = self.cmd("/usr/bin/python3");
+            repair.args([
+                "-c",
+                include_str!("../../../../../../scripts/repair-app-gate-tls-permissions.py"),
+                "--key-name",
+                TLS_KEY_STAGING_NAME,
+            ]);
+            run_checked(repair, "repair staged app TLS key permissions").await?;
+        }
+
         // rename(2) within one directory: a reader sees either the whole old
         // file or the whole new one, never a partial write. Two files cannot
         // be swapped in a single atomic step, so there is a sub-millisecond
