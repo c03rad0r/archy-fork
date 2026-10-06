@@ -10,11 +10,44 @@ use tokio::{fs, io::AsyncWriteExt, sync::Mutex};
 
 static WRITES: Mutex<()> = Mutex::const_new(());
 
+#[derive(Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum PaymentMethod {
+    Lightning,
+    Onchain,
+}
+
+impl PaymentMethod {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Lightning => "lightning",
+            Self::Onchain => "onchain",
+        }
+    }
+}
+
 #[derive(Clone, Serialize, Deserialize)]
 struct Entitlement {
     content_id: String,
     price_sats: u64,
     paid: bool,
+    #[serde(default)]
+    method: Option<PaymentMethod>,
+}
+
+impl Entitlement {
+    fn payment_method(&self, token: &str) -> PaymentMethod {
+        self.method.unwrap_or_else(|| {
+            if token
+                .parse::<bitcoin::Address<bitcoin::address::NetworkUnchecked>>()
+                .is_ok()
+            {
+                PaymentMethod::Onchain
+            } else {
+                PaymentMethod::Lightning
+            }
+        })
+    }
 }
 
 fn path(data_dir: &Path, token: &str) -> PathBuf {
@@ -62,10 +95,29 @@ pub async fn record_pending(
     content_id: &str,
     price_sats: u64,
 ) -> Result<()> {
+    record_pending_method(
+        data_dir,
+        token,
+        content_id,
+        price_sats,
+        PaymentMethod::Lightning,
+    )
+    .await
+}
+
+pub async fn record_pending_method(
+    data_dir: &Path,
+    token: &str,
+    content_id: &str,
+    price_sats: u64,
+    method: PaymentMethod,
+) -> Result<()> {
     let _lock = WRITES.lock().await;
     if let Some(existing) = read(data_dir, token).await? {
         anyhow::ensure!(
-            existing.content_id == content_id && existing.price_sats == price_sats,
+            existing.content_id == content_id
+                && existing.price_sats == price_sats
+                && existing.payment_method(token) == method,
             "Payment entitlement mismatch"
         );
         return Ok(());
@@ -77,6 +129,7 @@ pub async fn record_pending(
             content_id: content_id.into(),
             price_sats,
             paid: false,
+            method: Some(method),
         },
     )
     .await
@@ -104,6 +157,16 @@ pub async fn is_paid_for(data_dir: &Path, token: &str, content_id: &str) -> bool
         .flatten()
         .map(|e| e.paid && e.content_id == content_id)
         .unwrap_or(false)
+}
+
+/// Read the method from the seller's durable record, never a buyer header.
+pub async fn paid_method_for(
+    data_dir: &Path,
+    token: &str,
+    content_id: &str,
+) -> Option<PaymentMethod> {
+    let entry = read(data_dir, token).await.ok().flatten()?;
+    (entry.paid && entry.content_id == content_id).then(|| entry.payment_method(token))
 }
 
 #[cfg(test)]
@@ -134,6 +197,26 @@ mod tests {
         assert!(!is_paid_for(other.path(), "hash", "file").await);
         assert!(mark_paid(dir.path(), "unknown").await.is_err());
     }
+    #[tokio::test]
+    async fn payment_method_survives_reload_and_legacy_addresses_remain_onchain() {
+        let dir = tempfile::tempdir().unwrap();
+        record_pending_method(dir.path(), "new", "file", 1, PaymentMethod::Onchain)
+            .await
+            .unwrap();
+        assert!(paid_method_for(dir.path(), "new", "file").await.is_none());
+        mark_paid(dir.path(), "new").await.unwrap();
+        assert!(paid_method_for(dir.path(), "new", "file").await == Some(PaymentMethod::Onchain));
+        assert!(record_pending(dir.path(), "new", "file", 1).await.is_err());
+        assert!(paid_method_for(dir.path(), "new", "other").await.is_none());
+        let address = "1BoatSLRHtKNngkdXEeobR76b53LETtpyT";
+        let legacy = br#"{"content_id":"file","price_sats":1,"paid":true}"#;
+        fs::write(path(dir.path(), address), legacy).await.unwrap();
+        assert!(paid_method_for(dir.path(), address, "file").await == Some(PaymentMethod::Onchain));
+        let hash = "a".repeat(64);
+        fs::write(path(dir.path(), &hash), legacy).await.unwrap();
+        assert!(paid_method_for(dir.path(), &hash, "file").await == Some(PaymentMethod::Lightning));
+    }
+
     #[tokio::test]
     async fn corrupt_or_unwritable_records_fail_closed() {
         let dir = tempfile::tempdir().unwrap();

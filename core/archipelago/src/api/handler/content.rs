@@ -470,11 +470,12 @@ impl ApiHandler {
 
         match self.rpc_handler.new_onchain_address().await {
             Ok(address) if !address.is_empty() => {
-                crate::content_invoice::record_pending(
+                crate::content_invoice::record_pending_method(
                     &self.config.data_dir,
                     &address,
                     content_id,
                     price_sats,
+                    crate::content_invoice::PaymentMethod::Onchain,
                 )
                 .await?;
                 let body = serde_json::json!({
