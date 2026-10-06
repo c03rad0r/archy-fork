@@ -203,6 +203,17 @@ function updateTabBarHeight() {
   }
 }
 
+// Store-driven app sessions do not change the route. Their v-if removes and
+// recreates the navigation, so route/resize listeners alone leave its height
+// unset after closing an app and let the navigation cover the audio controls.
+watch(mobileTabBar, (element, _previous, onCleanup) => {
+  updateTabBarHeight()
+  if (!element || typeof ResizeObserver === 'undefined') return
+  const observer = new ResizeObserver(updateTabBarHeight)
+  observer.observe(element)
+  onCleanup(() => observer.disconnect())
+}, { flush: 'post' })
+
 function onResize() {
   viewportWidth.value = window.innerWidth
   updateTabBarHeight()

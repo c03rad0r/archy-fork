@@ -21,6 +21,7 @@
           <!-- Play/Pause -->
           <button
             class="flex-shrink-0 w-9 h-9 rounded-full bg-white/10 hover:bg-white/20 flex items-center justify-center transition-colors"
+            :aria-label="audioPlayer.playing.value ? 'Pause audio' : 'Play audio'"
             @click="togglePlay"
           >
             <svg v-if="audioPlayer.loading.value" class="w-5 h-5 animate-spin text-white" fill="none" viewBox="0 0 24 24">
@@ -47,6 +48,7 @@
           <!-- Close -->
           <button
             class="flex-shrink-0 w-8 h-8 rounded-full hover:bg-white/10 flex items-center justify-center transition-colors"
+            aria-label="Stop audio"
             @click="audioPlayer.stop()"
           >
             <svg class="w-4 h-4 text-white/60" fill="none" stroke="currentColor" viewBox="0 0 24 24">
