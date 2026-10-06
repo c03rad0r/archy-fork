@@ -45,6 +45,7 @@ mod content_indeehub;
 mod content_invoice;
 mod content_owned;
 mod media_stream;
+mod prepared_media;
 mod content_server;
 mod crash_recovery;
 mod credentials;

@@ -202,26 +202,37 @@ pub async fn set_availability(data_dir: &Path, id: &str, availability: Availabil
 }
 
 /// A byte range request (start, optional end).
-pub struct ByteRange {
-    pub start: u64,
-    pub end: Option<u64>,
+pub enum ByteRange {
+    From { start: u64, end: Option<u64> },
+    Suffix(u64),
 }
 
 /// Parse an HTTP Range header value like "bytes=0-1023".
 pub fn parse_range_header(header: &str) -> Option<ByteRange> {
-    let s = header.strip_prefix("bytes=")?;
-    let mut parts = s.splitn(2, '-');
-    let start_str = parts.next()?.trim();
-    let end_str = parts.next().map(|s| s.trim());
-    let start = start_str.parse::<u64>().ok()?;
-    let end = end_str
-        .filter(|s| !s.is_empty())
-        .and_then(|s| s.parse::<u64>().ok());
-    Some(ByteRange { start, end })
+    let (start, end) = header.strip_prefix("bytes=")?.split_once('-')?;
+    let number = |s: &str| {
+        (!s.is_empty() && s.bytes().all(|b| b.is_ascii_digit()))
+            .then(|| s.parse::<u64>().ok())
+            .flatten()
+    };
+    if start.is_empty() {
+        let count = number(end)?;
+        return (count > 0).then_some(ByteRange::Suffix(count));
+    }
+    Some(ByteRange::From {
+        start: number(start)?,
+        end: if end.is_empty() {
+            None
+        } else {
+            Some(number(end)?)
+        },
+    })
 }
 
 /// Result of attempting to serve content.
 pub enum ServeResult {
+    /// Bounded file-backed response; payment is checked before returning it.
+    Stream(crate::prepared_media::PreparedMedia),
     /// Content served successfully (full body).
     Ok(Vec<u8>, String),
     /// Partial content served (range response).
@@ -265,7 +276,15 @@ pub async fn serve_content(
         peer_did,
         range,
         owner_session,
-        |path, range, mime| prepare_content(data_dir, path, range, mime),
+        |path, range, mime| {
+            prepare_content_mode(
+                data_dir,
+                path,
+                range,
+                mime,
+                payment_token.is_some() && !owner_session,
+            )
+        },
         |token, amount| async move { verify_payment_token(data_dir, &token, amount).await },
     )
     .await
@@ -364,10 +383,16 @@ where
         }
     }
 
+    // Validate response metadata before touching a bearer payment too.
+    if hyper::header::HeaderValue::from_str(&item.mime_type).is_err() {
+        return Ok(ServeResult::Unavailable);
+    }
     // Finish all file I/O before consuming bearer payment. Merely opening then
     // reopening after charging still lost payments on read errors or deletion.
     let prepared = match read(file_path, range, item.mime_type.clone()).await {
-        Ok(result @ (ServeResult::Ok(..) | ServeResult::Partial { .. })) => result,
+        Ok(
+            result @ (ServeResult::Ok(..) | ServeResult::Partial { .. } | ServeResult::Stream(..)),
+        ) => result,
         Ok(other) => return Ok(other),
         Err(error) => {
             warn!(content_id = %id, "Cannot prepare shared content: {error:#}");
@@ -422,13 +447,26 @@ where
     Ok(prepared)
 }
 
+// Preserve a fully readable snapshot before redeeming a bearer token. Free,
+// owner and durable invoice downloads can stream their open file directly.
+#[cfg(test)]
 async fn prepare_content(
     data_dir: &Path,
     path: PathBuf,
     range: Option<ByteRange>,
     mime: String,
 ) -> Result<ServeResult> {
-    use tokio::io::{AsyncReadExt, AsyncSeekExt};
+    prepare_content_mode(data_dir, path, range, mime, true).await
+}
+
+async fn prepare_content_mode(
+    data_dir: &Path,
+    path: PathBuf,
+    range: Option<ByteRange>,
+    mime: String,
+    snapshot: bool,
+) -> Result<ServeResult> {
+    use tokio::io::AsyncSeekExt;
     let mut file = match fs::OpenOptions::new()
         .read(true)
         .custom_flags(libc::O_NONBLOCK)
@@ -437,45 +475,79 @@ async fn prepare_content(
     {
         Ok(file) => file,
         Err(error) if error.kind() == std::io::ErrorKind::PermissionDenied => {
-            let bytes = read_filebrowser_via_userns(data_dir, &path).await?;
-            return slice_prepared_content(bytes, range, mime);
+            return prepare_filebrowser_via_userns(data_dir, &path, range, mime).await;
         }
         Err(error) => return Err(error).context("Opening shared content"),
     };
     let metadata = file.metadata().await?;
     anyhow::ensure!(metadata.is_file(), "Shared content is not a regular file");
     let total = metadata.len();
-    if let Some(range) = range {
-        let Some((start, end)) = checked_range(&range, total) else {
-            return Ok(ServeResult::RangeNotSatisfiable(total));
-        };
-        file.seek(std::io::SeekFrom::Start(start)).await?;
-        let len = usize::try_from(end - start + 1).context("Content range is too large")?;
-        let mut bytes = vec![0; len];
-        file.read_exact(&mut bytes)
-            .await
-            .context("Reading shared content range")?;
-        return Ok(ServeResult::Partial {
+    let selected = match range {
+        Some(range) => match checked_range(&range, total) {
+            Some((start, end)) => Some((start, end, total)),
+            None => return Ok(ServeResult::RangeNotSatisfiable(total)),
+        },
+        None => None,
+    };
+    let (start, length) = selected
+        .map(|(start, end, _)| (start, end - start + 1))
+        .unwrap_or((0, total));
+    file.seek(std::io::SeekFrom::Start(start)).await?;
+    if snapshot || length <= 1024 * 1024 {
+        prepare_reader(data_dir, file, length, mime, selected).await
+    } else {
+        Ok(ServeResult::Stream(
+            crate::prepared_media::PreparedMedia::direct(file, start, length, mime, selected)
+                .await?,
+        ))
+    }
+}
+
+async fn prepare_reader<R: tokio::io::AsyncRead + Unpin>(
+    data_dir: &Path,
+    mut source: R,
+    length: u64,
+    mime: String,
+    selected: Option<(u64, u64, u64)>,
+) -> Result<ServeResult> {
+    use tokio::io::AsyncReadExt;
+    if length > 1024 * 1024 {
+        return Ok(ServeResult::Stream(
+            crate::prepared_media::PreparedMedia::snapshot(
+                data_dir, source, length, mime, selected,
+            )
+            .await?,
+        ));
+    }
+    let mut bytes = vec![0; length as usize];
+    source
+        .read_exact(&mut bytes)
+        .await
+        .context("Preparing shared content")?;
+    Ok(match selected {
+        Some((start, end, total)) => ServeResult::Partial {
             bytes,
             mime_type: mime,
             start,
             end,
             total,
-        });
-    }
-    let mut bytes = Vec::new();
-    file.read_to_end(&mut bytes)
-        .await
-        .context("Reading shared content")?;
-    Ok(ServeResult::Ok(bytes, mime))
+        },
+        None => ServeResult::Ok(bytes, mime),
+    })
 }
 
 fn checked_range(range: &ByteRange, total: u64) -> Option<(u64, u64)> {
     let last = total.checked_sub(1)?;
-    let end = range.end.unwrap_or(last).min(last);
-    (range.start <= end && range.start < total).then_some((range.start, end))
+    match range {
+        ByteRange::Suffix(count) => (*count > 0).then_some((total.saturating_sub(*count), last)),
+        ByteRange::From { start, end } => {
+            let end = end.unwrap_or(last).min(last);
+            (*start <= end && *start < total).then_some((*start, end))
+        }
+    }
 }
 
+#[cfg(test)]
 fn slice_prepared_content(
     bytes: Vec<u8>,
     range: Option<ByteRange>,
@@ -513,37 +585,69 @@ async fn filebrowser_read_path(data_dir: &Path, path: &Path) -> Result<PathBuf> 
     Ok(target)
 }
 
-async fn read_filebrowser_via_userns(data_dir: &Path, path: &Path) -> Result<Vec<u8>> {
+async fn prepare_filebrowser_via_userns(
+    data_dir: &Path,
+    path: &Path,
+    range: Option<ByteRange>,
+    mime: String,
+) -> Result<ServeResult> {
     let path = filebrowser_read_path(data_dir, path).await?;
-    // Tests exercise the boundary explicitly; they never launch the host Podman.
     #[cfg(test)]
     {
-        let _ = path;
+        let _ = (path, range, mime);
         anyhow::bail!("Files namespace read disabled in unit tests")
     }
     #[cfg(not(test))]
     {
-        let output = tokio::time::timeout(
-            std::time::Duration::from_secs(900),
-            tokio::process::Command::new("podman")
-                .args(["unshare", "cat", "--"])
-                .arg(path)
+        let total = fs::metadata(&path).await?.len();
+        let selected = match range {
+            Some(range) => match checked_range(&range, total) {
+                Some((start, end)) => Some((start, end, total)),
+                None => return Ok(ServeResult::RangeNotSatisfiable(total)),
+            },
+            None => None,
+        };
+        let (start, length) = selected
+            .map(|(start, end, _)| (start, end - start + 1))
+            .unwrap_or((0, total));
+        tokio::time::timeout(std::time::Duration::from_secs(900), async {
+            // No shell, no full stdout buffering, and only the selected bytes.
+            let mut input = std::ffi::OsString::from("if=");
+            input.push(&path);
+            let mut child = tokio::process::Command::new("podman")
+                .args([
+                    "unshare",
+                    "dd",
+                    "iflag=skip_bytes,count_bytes,nonblock,nofollow",
+                    "status=none",
+                ])
+                .arg(input)
+                .arg(format!("skip={start}"))
+                .arg(format!("count={length}"))
+                .stdout(std::process::Stdio::piped())
+                .stderr(std::process::Stdio::null())
                 .kill_on_drop(true)
-                .output(),
-        )
+                .spawn()
+                .context("Starting Files namespace read")?;
+            let stdout = child
+                .stdout
+                .take()
+                .context("Missing Files namespace output")?;
+            let result = prepare_reader(data_dir, stdout, length, mime, selected).await?;
+            anyhow::ensure!(
+                child.wait().await?.success(),
+                "Files namespace read failed; no payment was redeemed"
+            );
+            Ok(result)
+        })
         .await
-        .context("Files namespace read timed out")??;
-        anyhow::ensure!(
-            output.status.success(),
-            "Files namespace read failed: {}",
-            output.status
-        );
-        Ok(output.stdout)
+        .context("Files namespace read timed out")?
     }
 }
 
 /// Result of attempting to serve a preview.
 pub enum PreviewResult {
+    Stream(crate::prepared_media::PreparedMedia),
     /// Full publicly shared free content.
     FullContent(Vec<u8>, String),
     /// Small, server-blurred JPEG for a paid image; never the original bytes.
@@ -748,11 +852,14 @@ pub async fn serve_content_preview(data_dir: &Path, id: &str) -> Result<PreviewR
             }
         }
         _ => {
-            // Free or peers-only — serve full content as preview
-            let bytes = fs::read(&file_path)
-                .await
-                .context("Failed to read content file")?;
-            Ok(PreviewResult::FullContent(bytes, item.mime_type.clone()))
+            // Only publicly available free content reaches this branch.
+            match prepare_content_mode(data_dir, file_path, None, item.mime_type.clone(), false)
+                .await?
+            {
+                ServeResult::Ok(bytes, mime) => Ok(PreviewResult::FullContent(bytes, mime)),
+                ServeResult::Stream(body) => Ok(PreviewResult::Stream(body)),
+                _ => Ok(PreviewResult::PreviewUnavailable),
+            }
         }
     }
 }
@@ -979,6 +1086,139 @@ mod paid_read_order_tests {
         }
     }
 
+    #[test]
+    fn peer_ranges_reject_malformed_headers_and_support_suffixes() {
+        for invalid in [
+            "bytes=0-invalid",
+            "bytes=0",
+            "bytes=+0-2",
+            "bytes=0-1,3-4",
+            "bytes=-0",
+            "bytes=0--1",
+            "bytes=18446744073709551616-",
+            "bytes=-",
+            "nope",
+        ] {
+            assert!(parse_range_header(invalid).is_none(), "{invalid}");
+        }
+        for (value, expected) in [
+            ("bytes=-4", Some((6, 9))),
+            ("bytes=-100", Some((0, 9))),
+            ("bytes=2-", Some((2, 9))),
+            ("bytes=2-100", Some((2, 9))),
+            ("bytes=8-3", None),
+            ("bytes=10-", None),
+        ] {
+            assert_eq!(
+                checked_range(&parse_range_header(value).unwrap(), 10),
+                expected,
+                "{value}"
+            );
+        }
+        assert_eq!(
+            checked_range(&parse_range_header("bytes=0-").unwrap(), 0),
+            None
+        );
+    }
+
+    #[tokio::test]
+    async fn large_paid_stream_still_requires_redemption_and_survives_source_deletion() {
+        use hyper::body::HttpBody;
+        let bytes = vec![91; 2 * 1024 * 1024];
+        let dir = fixture(&bytes).await;
+        let charged = std::sync::atomic::AtomicUsize::new(0);
+        let result = serve_content_with(
+            dir.path(),
+            "paid",
+            Some("cashuBtest"),
+            None,
+            None,
+            None,
+            false,
+            |path, range, mime| prepare_content(dir.path(), path, range, mime),
+            |_, amount| async {
+                assert_eq!(amount, 10);
+                charged.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                fs::remove_file(dir.path().join("content/files/test.bin"))
+                    .await
+                    .unwrap();
+                true
+            },
+        )
+        .await
+        .unwrap();
+        assert_eq!(charged.load(std::sync::atomic::Ordering::SeqCst), 1);
+        let ServeResult::Stream(body) = result else {
+            panic!("expected bounded stream")
+        };
+        let mut response = body.into_response().unwrap();
+        let mut received = Vec::new();
+        while let Some(chunk) = response.body_mut().data().await {
+            let chunk = chunk.unwrap();
+            assert!(chunk.len() <= 65536);
+            received.extend_from_slice(&chunk);
+        }
+        assert_eq!(received, bytes);
+    }
+
+    #[tokio::test]
+    async fn rejected_payment_never_returns_the_prepared_large_stream() {
+        let bytes = vec![91; 2 * 1024 * 1024];
+        let dir = fixture(&bytes).await;
+        let checked = std::sync::atomic::AtomicUsize::new(0);
+        let result = serve_content_with(
+            dir.path(),
+            "paid",
+            Some("cashuBinvalid"),
+            None,
+            None,
+            None,
+            false,
+            |path, range, mime| prepare_content(dir.path(), path, range, mime),
+            |_, _| async {
+                checked.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                false
+            },
+        )
+        .await
+        .unwrap();
+        assert!(matches!(result, ServeResult::PaymentRequired(10)));
+        assert_eq!(checked.load(std::sync::atomic::Ordering::SeqCst), 1);
+        assert_eq!(
+            std::fs::read_dir(dir.path().join("content-staging"))
+                .unwrap()
+                .count(),
+            0
+        );
+    }
+
+    #[tokio::test]
+    async fn free_large_preview_uses_bounded_stream_without_private_snapshot() {
+        use hyper::body::HttpBody;
+        let dir = fixture(&[0; 1]).await;
+        let mut catalog = load_catalog(dir.path()).await.unwrap();
+        catalog.items[0].access = AccessControl::Free;
+        save_catalog(dir.path(), &catalog).await.unwrap();
+        let file = fs::OpenOptions::new()
+            .write(true)
+            .open(dir.path().join("content/files/test.bin"))
+            .await
+            .unwrap();
+        file.set_len(4 * 1024 * 1024 * 1024).await.unwrap();
+        let PreviewResult::Stream(body) = serve_content_preview(dir.path(), "paid").await.unwrap()
+        else {
+            panic!("expected bounded preview")
+        };
+        let mut response = body.into_response().unwrap();
+        assert_eq!(response.headers()["content-length"], "4294967296");
+        assert_eq!(
+            response.body_mut().data().await.unwrap().unwrap().len(),
+            65536
+        );
+        drop(response);
+        assert!(!dir.path().join("content-staging").exists());
+    }
+
     #[tokio::test]
     async fn deletion_during_payment_cannot_lose_prepared_bytes() {
         let dir = fixture(b"original").await;
@@ -1020,7 +1260,7 @@ mod paid_read_order_tests {
                 Some("cashuBtest"),
                 None,
                 None,
-                Some(ByteRange { start, end }),
+                Some(ByteRange::From { start, end }),
                 false,
                 |path, range, mime| prepare_content(dir.path(), path, range, mime),
                 |_, _| async { panic!("invalid range reached payment") },
@@ -1042,7 +1282,7 @@ mod paid_read_order_tests {
             Some("cashuBtest"),
             None,
             None,
-            Some(ByteRange {
+            Some(ByteRange::From {
                 start: 2,
                 end: Some(999),
             }),
@@ -1194,7 +1434,7 @@ mod paid_read_order_tests {
         assert!(matches!(
             slice_prepared_content(
                 vec![],
-                Some(ByteRange {
+                Some(ByteRange::From {
                     start: 0,
                     end: None
                 }),
@@ -1204,7 +1444,7 @@ mod paid_read_order_tests {
             ServeResult::RangeNotSatisfiable(0)
         ));
         assert!(
-            matches!(slice_prepared_content(b"abc".to_vec(), Some(ByteRange { start: 1, end: None }), "x".into()).unwrap(), ServeResult::Partial { bytes, start: 1, end: 2, total: 3, .. } if bytes == b"bc")
+            matches!(slice_prepared_content(b"abc".to_vec(), Some(ByteRange::From { start: 1, end: None }), "x".into()).unwrap(), ServeResult::Partial { bytes, start: 1, end: 2, total: 3, .. } if bytes == b"bc")
         );
     }
 }

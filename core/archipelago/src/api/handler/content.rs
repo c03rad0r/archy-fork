@@ -139,10 +139,23 @@ impl ApiHandler {
         }
 
         // Parse Range header for streaming support
-        let range = headers
-            .get("range")
-            .and_then(|v| v.to_str().ok())
-            .and_then(content_server::parse_range_header);
+        let range = match headers.get("range") {
+            None => None,
+            Some(value) => match value
+                .to_str()
+                .ok()
+                .and_then(content_server::parse_range_header)
+            {
+                Some(range) => Some(range),
+                None => {
+                    return Ok(build_response(
+                        StatusCode::BAD_REQUEST,
+                        "text/plain",
+                        hyper::Body::from("Invalid byte range"),
+                    ))
+                }
+            },
+        };
 
         match content_server::serve_content(
             &config.data_dir,
@@ -155,6 +168,7 @@ impl ApiHandler {
         )
         .await
         {
+            Ok(content_server::ServeResult::Stream(body)) => body.into_response(),
             Ok(content_server::ServeResult::Ok(bytes, mime_type)) => {
                 let len = bytes.len();
                 Ok(Response::builder()
@@ -496,6 +510,7 @@ impl ApiHandler {
         }
 
         match content_server::serve_content_preview(&config.data_dir, content_id).await {
+            Ok(content_server::PreviewResult::Stream(body)) => body.into_response(),
             Ok(content_server::PreviewResult::FullContent(bytes, mime_type)) => {
                 let len = bytes.len();
                 Ok(Response::builder()
