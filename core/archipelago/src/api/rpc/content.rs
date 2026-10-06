@@ -180,7 +180,7 @@ async fn cache_peer_response(
 async fn file_cached_purchase_in_files(
     data_dir: &std::path::Path,
     item: &crate::content_owned::OwnedItem,
-) -> Result<()> {
+) -> Result<String> {
     let folder = if item.mime_type.starts_with("image/") || item.mime_type.starts_with("video/") {
         "Photos"
     } else if item.mime_type.starts_with("audio/") {
@@ -201,8 +201,14 @@ async fn file_cached_purchase_in_files(
     let (_, file) = crate::content_owned::open_owned(data_dir, &item.onion, &item.content_id)
         .await?
         .context("Purchase unavailable")?;
-    crate::container::filebrowser::save_new_file_from(&root.join(folder), name, file).await?;
-    Ok(())
+    let path =
+        crate::container::filebrowser::save_new_file_from(&root.join(folder), name, file).await?;
+    Ok(format!(
+        "{folder}/{}",
+        path.file_name()
+            .and_then(|name| name.to_str())
+            .context("Invalid Files name")?
+    ))
 }
 
 impl RpcHandler {

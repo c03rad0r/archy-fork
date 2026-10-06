@@ -31,7 +31,24 @@ async fn files_copy_routes_media_and_sanitizes_the_filename() {
         ("audio/mpeg", "Music"),
         ("text/plain", "Documents"),
     ] {
-        let relative = file_purchase_in_files(dir.path(), "../name #?.bin", mime, b"paid")
+        crate::content_owned::record_purchase(
+            dir.path(),
+            "seller.onion",
+            "id",
+            "../name #?.bin",
+            mime,
+            b"paid",
+            1,
+            "cashu",
+            "now",
+        )
+        .await
+        .unwrap();
+        let item = crate::content_owned::list_owned_checked(dir.path())
+            .await
+            .unwrap()
+            .remove(0);
+        let relative = file_cached_purchase_in_files(dir.path(), &item)
             .await
             .unwrap();
         assert!(relative.starts_with(&format!("{folder}/name #?")));
@@ -47,11 +64,26 @@ async fn files_copy_routes_media_and_sanitizes_the_filename() {
 #[tokio::test]
 async fn unavailable_files_storage_is_reported_without_creating_a_fake_installation() {
     let dir = tempfile::tempdir().unwrap();
-    assert!(
-        file_purchase_in_files(dir.path(), "name", "text/plain", b"bytes")
-            .await
-            .is_err()
-    );
+    crate::content_owned::record_purchase(
+        dir.path(),
+        "seller.onion",
+        "id",
+        "name",
+        "text/plain",
+        b"bytes",
+        1,
+        "cashu",
+        "now",
+    )
+    .await
+    .unwrap();
+    let item = crate::content_owned::list_owned_checked(dir.path())
+        .await
+        .unwrap()
+        .remove(0);
+    assert!(file_cached_purchase_in_files(dir.path(), &item)
+        .await
+        .is_err());
     assert!(!dir.path().join("filebrowser").exists());
 }
 
@@ -76,7 +108,7 @@ fn seller_errors_are_bounded_printable_and_identified_as_peer_text() {
 async fn known_purchase_never_becomes_a_new_spend_when_cache_or_index_is_unavailable() {
     let dir = tempfile::tempdir().unwrap();
     assert!(
-        existing_paid_content(dir.path(), "seller.onion", "id", None)
+        existing_paid_content(dir.path(), "seller.onion", "id", None, false)
             .await
             .unwrap()
             .is_none()
@@ -94,8 +126,8 @@ async fn known_purchase_never_becomes_a_new_spend_when_cache_or_index_is_unavail
     )
     .await
     .unwrap();
-    for (id, filename) in [("id", None), ("duplicate-id", Some("/file.txt"))] {
-        let cached = existing_paid_content(dir.path(), "seller.onion", id, filename)
+    for (id, filename) in [("id", None, false), ("duplicate-id", Some("/file.txt"))] {
+        let cached = existing_paid_content(dir.path(), "seller.onion", id, filename, false)
             .await
             .unwrap()
             .unwrap();
@@ -104,7 +136,7 @@ async fn known_purchase_never_becomes_a_new_spend_when_cache_or_index_is_unavail
         assert_eq!(cached["data"], "cGFpZA==");
     }
     assert!(
-        existing_paid_content(dir.path(), "different.onion", "id", None)
+        existing_paid_content(dir.path(), "different.onion", "id", None, false)
             .await
             .unwrap()
             .is_none()
@@ -113,7 +145,7 @@ async fn known_purchase_never_becomes_a_new_spend_when_cache_or_index_is_unavail
         .await
         .unwrap();
     assert!(
-        existing_paid_content(dir.path(), "seller.onion", "id", None)
+        existing_paid_content(dir.path(), "seller.onion", "id", None, false)
             .await
             .unwrap_err()
             .to_string()
@@ -123,7 +155,7 @@ async fn known_purchase_never_becomes_a_new_spend_when_cache_or_index_is_unavail
         .await
         .unwrap();
     assert!(
-        existing_paid_content(dir.path(), "seller.onion", "other-id", None)
+        existing_paid_content(dir.path(), "seller.onion", "other-id", None, false)
             .await
             .unwrap_err()
             .to_string()
