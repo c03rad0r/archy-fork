@@ -46,7 +46,7 @@ describe('fleet data helpers', () => {
     vi.useRealTimers()
   })
 
-  it('sorts status with online nodes first, then latest report', () => {
+  it('sorts status with online nodes first without shuffling within a status group', () => {
     vi.useFakeTimers()
     vi.setSystemTime(new Date('2026-06-10T12:00:00Z'))
     const nodes = [
@@ -56,8 +56,8 @@ describe('fleet data helpers', () => {
     ]
 
     expect(sortFleetNodes(nodes, 'status').map(n => n.node_id)).toEqual([
-      'online-new',
       'online-old',
+      'online-new',
       'offline',
     ])
 
@@ -133,9 +133,9 @@ describe('fleet missing data and clock boundaries', () => {
       expect(isOnline(value)).toBe(false)
       expect(timeAgo(value)).toBe('Unknown')
     }
-    expect(fleetStatus('2026-06-10T11:30:00Z')).toBe('offline')
+    expect(fleetStatus('2026-06-10T11:30:00Z')).toBe('stale')
     expect(fleetStatus('2026-06-10T12:00:30Z')).toBe('online')
-    expect(sortFleetNodes([node('unknown', ''), node('future', '2027-01-01T00:00:00Z'), node('old', '2026-06-10T10:00:00Z'), node('new', '2026-06-10T11:59:00Z')], 'status').map(n => n.node_id)).toEqual(['new', 'old', 'unknown', 'future'])
+    expect(sortFleetNodes([node('unknown', ''), node('future', '2027-01-01T00:00:00Z'), node('old', '2026-06-10T10:00:00Z'), node('new', '2026-06-10T11:59:00Z')], 'status').map(n => n.node_id)).toEqual(['new', 'unknown', 'future', 'old'])
   })
   it('keeps valid zero separate from unavailable and invalid measurements', () => {
     expect(normalizeFleetNode({cpu_pct: 0}).cpu_pct).toBe(0)

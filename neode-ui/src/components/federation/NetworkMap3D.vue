@@ -12,6 +12,7 @@
       <span class="node-map-legend-item"><span class="node-map-dot" :style="{ background: motionTokens.color.trusted }"></span>Trusted</span>
       <span class="node-map-legend-item"><span class="node-map-dot" :style="{ background: motionTokens.color.observer }"></span>Observer</span>
       <span class="node-map-legend-item"><span class="node-map-dot" :style="{ background: motionTokens.color.untrusted }"></span>Untrusted</span>
+      <span class="node-map-legend-item">Dashed: no recent contact</span>
       <span v-if="requests?.length" class="node-map-legend-item"><span class="node-map-dot" :style="{ background: motionTokens.color.pending }"></span>Request</span>
     </div>
     <!-- 2D/3D projection toggle — tweens the camera between the flat radial
@@ -81,6 +82,7 @@ export interface MapNode {
   label: string
   trust_level: 'trusted' | 'observer' | 'untrusted'
   online: boolean
+  statusLabel?: string
   app_count: number
   is_self: boolean
 }
@@ -162,6 +164,7 @@ interface PeerVis {
   dying: boolean
   el: SVGGElement
   label: SVGTextElement
+  statusText: SVGTextElement
   linkEl: SVGPathElement | null
   dots: GlobeDot[]
   radiusPx: number
@@ -461,9 +464,15 @@ function createPeer(node: MapNode, slot: { angle: number; ringRadius: number }, 
     fill: motionTokens.color.textSecondary, 'font-size': '11px', 'font-family': FONT,
   })
   label.textContent = node.label
+  const statusText = el('text', {
+    dy: String(r + 28), 'text-anchor': 'middle', fill: motionTokens.color.textSecondary,
+    'font-size': '9px', 'font-family': FONT,
+  })
+  statusText.textContent = node.statusLabel || (node.online ? 'Online' : 'Status unknown')
   const title = el('title')
-  title.textContent = `${node.did}\nApps: ${node.app_count}\n${node.online ? 'Online' : 'Offline'}`
-  g.append(label, title)
+  title.textContent = `${node.did}\nApps: ${node.app_count}\n${statusText.textContent}`
+  g.setAttribute('aria-label', `${node.label}: ${statusText.textContent}`)
+  g.append(label, statusText, title)
   g.addEventListener('click', () => emit('select', node.did))
   nodesLayer!.appendChild(g)
 
@@ -483,6 +492,7 @@ function createPeer(node: MapNode, slot: { angle: number; ringRadius: number }, 
     dying: false,
     el: g,
     label,
+    statusText,
     linkEl,
     dots,
     radiusPx: r,
@@ -672,7 +682,9 @@ function applyGraph() {
       existing.node = node
       if (existing.label.textContent !== node.label) existing.label.textContent = node.label
       const title = existing.el.querySelector('title')
-      if (title) title.textContent = `${node.did}\nApps: ${node.app_count}\n${node.online ? 'Online' : 'Offline'}`
+      existing.statusText.textContent = node.statusLabel || (node.online ? 'Online' : 'Status unknown')
+      existing.el.setAttribute('aria-label', `${node.label}: ${existing.statusText.textContent}`)
+      if (title) title.textContent = `${node.did}\nApps: ${node.app_count}\n${existing.statusText.textContent}`
       stylePeerDom(existing)
     }
 
@@ -1249,7 +1261,7 @@ function initialBuild() {
 }
 
 const graphSignature = computed(() => JSON.stringify({
-  nodes: props.nodes.map(n => [n.did, n.label, n.trust_level, n.online, n.app_count, n.is_self]),
+  nodes: props.nodes.map(n => [n.did, n.label, n.trust_level, n.online, n.statusLabel, n.app_count, n.is_self]),
   links: props.links.map(l => [l.source, l.target]),
   requests: (props.requests ?? []).map(r => [r.id, r.label]),
 }))

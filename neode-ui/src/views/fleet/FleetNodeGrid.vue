@@ -84,7 +84,7 @@
         </div>
         <div class="flex flex-wrap gap-x-3 gap-y-1 items-center justify-between text-xs text-white/40 mt-1">
           <span>{{ node.uptime_secs === null ? 'Uptime unavailable' : 'Up ' + formatUptime(node.uptime_secs) }}</span>
-          <span>{{ fleetStatus(node.reported_at) === 'unknown' ? 'Status unknown' : fleetStatus(node.reported_at) === 'offline' ? 'Offline · last seen ' + timeAgo(node.reported_at) : 'Seen ' + timeAgo(node.reported_at) }}</span>
+          <span>{{ fleetStatus(node.reported_at) === 'unknown' ? 'Status unknown' : fleetStatus(node.reported_at) === 'stale' ? 'Not reporting · last seen ' + timeAgo(node.reported_at) : 'Seen ' + timeAgo(node.reported_at) }}</span>
         </div>
       </div>
     </div>

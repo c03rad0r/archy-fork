@@ -70,10 +70,10 @@ export function timeAgo(dateStr: string): string {
   return `${diffDays}d ago`
 }
 
-export function fleetStatus(reportedAt: string): 'online' | 'offline' | 'unknown' {
+export function fleetStatus(reportedAt: string): 'online' | 'stale' | 'unknown' {
   const age = Date.now() - new Date(reportedAt).getTime()
   if (!Number.isFinite(age) || age < -60_000) return 'unknown'
-  return age < 30 * 60 * 1000 ? 'online' : 'offline'
+  return age < 30 * 60 * 1000 ? 'online' : 'stale'
 }
 
 export function isOnline(reportedAt: string): boolean {
@@ -159,10 +159,8 @@ export function sortFleetNodes(nodes: FleetNode[], sortBy: SortOption): FleetNod
   switch (sortBy) {
     case 'status':
       sorted.sort((a, b) => {
-        const aOnline = isOnline(a.reported_at)
-        const bOnline = isOnline(b.reported_at)
-        if (aOnline !== bOnline) return aOnline ? -1 : 1
-        return reportTime(b) - reportTime(a)
+        const rank = { online: 0, unknown: 1, stale: 2 }
+        return rank[fleetStatus(a.reported_at)] - rank[fleetStatus(b.reported_at)]
       })
       break
     case 'last-seen':
@@ -277,7 +275,7 @@ export function useFleetData() {
   // --- Computed ---
 
   const onlineCount = computed(() => nodes.value.filter(n => isOnline(n.reported_at)).length)
-  const offlineCount = computed(() => nodes.value.filter(n => fleetStatus(n.reported_at) === 'offline').length)
+  const offlineCount = computed(() => nodes.value.filter(n => fleetStatus(n.reported_at) === 'stale').length)
   const unknownCount = computed(() => nodes.value.filter(n => fleetStatus(n.reported_at) === 'unknown').length)
   const healthyCount = computed(() => nodes.value.filter(n => isOnline(n.reported_at) && n.cpu_pct !== null && n.mem_pct !== null && n.disk_pct !== null && n.recent_alerts.length === 0).length)
 

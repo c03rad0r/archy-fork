@@ -5,7 +5,7 @@
       <p class="text-2xl font-bold text-white">{{ nodeCount }}</p>
       <p class="text-xs text-white/40">
         <span class="fleet-dot-online"></span> {{ onlineCount }} online
-        <span class="ml-1 fleet-dot-offline"></span> {{ offlineCount }} offline
+        <span class="ml-1 fleet-dot-offline"></span> {{ offlineCount }} not reporting
         <span v-if="unknownCount" class="ml-1">{{ unknownCount }} unknown</span>
       </p>
     </div>

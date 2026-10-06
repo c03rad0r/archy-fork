@@ -6,6 +6,7 @@ import { useWeb5BadgeStore } from '../web5Badge'
 vi.mock('@/api/rpc-client', () => ({
   rpcClient: {
     call: vi.fn(),
+    federationListPendingRequests: vi.fn().mockResolvedValue({ requests: [] }),
   },
 }))
 
@@ -75,4 +76,25 @@ describe('useWeb5BadgeStore', () => {
     await store.refresh()
     expect(store.pendingRequestCount).toBe(2)
   })
+  it('counts incoming Nostr requests while excluding outbound and completed requests', async () => {
+    vi.mocked(rpcClient.call).mockResolvedValueOnce({ requests: [{ id: 'legacy' }] })
+    const common = { from_did: 'did:key:peer', from_nostr_pubkey: 'key', from_nostr_npub: 'npub', from_name: null, message: null, received_at: new Date().toISOString() }
+    vi.mocked(rpcClient.federationListPendingRequests).mockResolvedValueOnce({ requests: [
+      { ...common, id: 'incoming', state: 'pending', outbound: false },
+      { ...common, id: 'outgoing', state: 'sent', outbound: true },
+      { ...common, id: 'approved', state: 'approved', outbound: false },
+    ] })
+    const store = useWeb5BadgeStore()
+    await store.refresh()
+    expect(store.pendingRequestCount).toBe(2)
+  })
+  it('preserves the previous badge when the Nostr source cannot be refreshed', async () => {
+    vi.mocked(rpcClient.call).mockResolvedValueOnce({ requests: [] })
+    vi.mocked(rpcClient.federationListPendingRequests).mockRejectedValueOnce(new Error('offline'))
+    const store = useWeb5BadgeStore()
+    store.pendingRequestCount = 3
+    await store.refresh()
+    expect(store.pendingRequestCount).toBe(3)
+  })
+
 })

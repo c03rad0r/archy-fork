@@ -1,11 +1,13 @@
-import { mount } from '@vue/test-utils'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { mount, enableAutoUnmount } from '@vue/test-utils'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import Web5ConnectedNodes from '../Web5ConnectedNodes.vue'
 
 // Structural pin for UIFIX-02: the connected-nodes card's height must track
 // its row sibling (via grid `align-items: stretch` + a zero-basis flex
 // child), and the tab panes must scroll inside that height rather than
 // growing to fit every row. See:
+
+enableAutoUnmount(afterEach)
 
 vi.mock('vue-router', () => ({
   useRouter: () => ({ push: vi.fn() }),
@@ -19,6 +21,7 @@ vi.mock('@/api/rpc-client', () => ({
   rpcClient: {
     listPeers: vi.fn(() => new Promise(() => {})),
     federationListNodes: vi.fn().mockResolvedValue({ nodes: [] }),
+    federationListPendingRequests: vi.fn().mockResolvedValue({ requests: [] }),
     checkPeerReachable: vi.fn().mockResolvedValue({ reachable: false }),
     call: vi.fn(),
   },
@@ -45,6 +48,7 @@ vi.mock('@/composables/useModalKeyboard', () => ({
 describe('Web5ConnectedNodes scroll contract (UIFIX-02)', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    sessionStorage.clear()
   })
 
   it('gives all three tab panes the bounded, sibling-matched scroll contract', () => {

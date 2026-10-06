@@ -18,7 +18,7 @@ describe('fleet unavailable readings', () => {
     expect(cards).toHaveLength(2)
     expect(cards[0]!.text()).toContain('0%')
     expect(cards[0]!.text()).toContain('—')
-    expect(cards[0]!.text()).toContain('Offline · last seen 2d ago')
+    expect(cards[0]!.text()).toContain('Not reporting · last seen 2d ago')
     expect(cards[1]!.text()).toContain('Status unknown')
     expect(cards[1]!.text()).not.toContain('0%')
     expect(cards[1]!.text()).toContain('Uptime unavailable')
