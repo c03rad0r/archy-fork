@@ -1977,6 +1977,23 @@ impl ProdContainerOrchestrator {
     }
 
     async fn reconcile_all_with_mode(&self, mode: ReconcileMode) -> ReconcileReport {
+        // Resolve exact retained update identities before normal desired-state
+        // reconciliation can recreate or start a member. Keep ownership for pass.
+        let _update_guard = match super::update_transaction::recover(
+            &self.data_dir,
+            &super::update_transaction::Podman,
+        )
+        .await
+        {
+            Ok(guard) => guard,
+            Err(error) => {
+                let mut report = ReconcileReport::default();
+                report
+                    .failures
+                    .push(("update-recovery".into(), format!("{error:#}")));
+                return report;
+            }
+        };
         let user_stopped = crate::crash_recovery::load_user_stopped(&self.data_dir).await;
         // Durable desired-state signal: the container names that were running at
         // the last periodic snapshot. Used below to recreate a previously-running

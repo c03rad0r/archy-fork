@@ -31,3 +31,5 @@ pub use prod_orchestrator::ProdContainerOrchestrator;
 pub use traits::ContainerOrchestrator;
 
 mod staged_update;
+
+pub(crate) mod update_transaction;

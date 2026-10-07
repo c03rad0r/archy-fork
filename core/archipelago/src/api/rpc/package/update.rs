@@ -7,7 +7,6 @@
 use super::config::{all_container_names, get_containers_for_app};
 use super::install::install_log;
 use super::progress::parse_pull_progress;
-use super::runtime::stop_timeout_secs;
 use super::validation::validate_app_id;
 use crate::api::rpc::RpcHandler;
 use crate::container::image_versions;
@@ -32,6 +31,9 @@ impl RpcHandler {
             .and_then(|v| v.as_str())
             .ok_or_else(|| anyhow::anyhow!("Missing package id"))?;
         validate_app_id(package_id)?;
+        let lifecycle_guard =
+            crate::container::update_transaction::Guard::acquire(&self.config.data_dir)?;
+        lifecycle_guard.require_clear()?;
 
         // An Update click must not act on an hourly cache that predates the
         // button. Fetch and verify first; failure leaves running containers alone.
@@ -217,7 +219,7 @@ impl RpcHandler {
         match preflighted_stack_update(
             &images_to_pull,
             |image| async move { self.pull_update_image(package_id, &image).await },
-            || self.execute_update(package_id, &containers, &images_to_pull),
+            || self.execute_update(package_id, &containers, &images_to_pull, &lifecycle_guard),
         )
         .await
         {
@@ -241,10 +243,14 @@ impl RpcHandler {
                     package_id, e
                 ))
                 .await;
-                self.rollback_update(package_id, &containers).await;
+                // Transaction executor already recovered original identities or
+                // returned an explicit unresolved state. Never guess/reinstall.
                 self.clear_install_progress(package_id).await;
                 self.clear_update_state(package_id).await;
-                Err(e.context(format!("Update {} failed, rolled back", package_id)))
+                Err(e.context(format!(
+                    "Update {} failed; see retained-runtime recovery result",
+                    package_id
+                )))
             }
         }
     }
@@ -289,114 +295,28 @@ impl RpcHandler {
         }
     }
 
-    /// Images are prepared first; then stop → remove → recreate → verify.
+    /// Images are prepared first. The transaction preserves original identities,
+    /// creates stopped replacements, and restores the exact old states on failure.
     async fn execute_update(
         &self,
         package_id: &str,
         containers: &[String],
         images_to_pull: &[(String, String)],
+        guard: &crate::container::update_transaction::Guard,
     ) -> Result<()> {
-        // Phase: Preparing — about to stop the running container(s) so
-        // we can swap images. Fast.
+        use crate::container::update_transaction::{self, Podman};
+        let targets = Podman::targets(images_to_pull).await?;
+        let names: HashSet<_> = containers.iter().map(String::as_str).collect();
+        anyhow::ensure!(
+            targets.len() == names.len()
+                && targets
+                    .iter()
+                    .all(|target| names.contains(target.name.as_str())),
+            "Update target membership differs from installed stack; no containers changed"
+        );
         self.set_install_phase(package_id, InstallPhase::Preparing)
             .await;
-
-        // 1. Graceful stop all containers (reverse order for dependencies)
-        info!(
-            "Update {}: stopping {} containers",
-            package_id,
-            containers.len()
-        );
-        for name in containers.iter().rev() {
-            let timeout = stop_timeout_secs(name);
-            info!(
-                "Update {}: stopping {} (timeout: {}s)",
-                package_id, name, timeout
-            );
-            let out = tokio::process::Command::new("podman")
-                .args(["stop", "-t", timeout, name])
-                .output()
-                .await
-                .context(format!("Failed to stop {}", name))?;
-            if !out.status.success() {
-                let stderr = String::from_utf8_lossy(&out.stderr);
-                warn!(
-                    "Update {}: stop {} failed: {}",
-                    package_id,
-                    name,
-                    stderr.trim()
-                );
-                // Continue — container might already be stopped
-            }
-        }
-
-        // 3. Remove old containers
-        info!("Update {}: removing old containers", package_id);
-        for name in containers {
-            let out = tokio::process::Command::new("podman")
-                .args(["rm", name])
-                .output()
-                .await
-                .context(format!("Failed to remove {}", name))?;
-            if !out.status.success() {
-                let stderr = String::from_utf8_lossy(&out.stderr);
-                // Force remove as fallback
-                warn!(
-                    "Update {}: rm {} failed ({}), forcing",
-                    package_id,
-                    name,
-                    stderr.trim()
-                );
-                let _ = tokio::process::Command::new("podman")
-                    .args(["rm", "-f", name])
-                    .output()
-                    .await;
-            }
-        }
-
-        // Phase: CreatingContainer — about to recreate each container.
-        self.set_install_phase(package_id, InstallPhase::CreatingContainer)
-            .await;
-
-        // 4. Recreate containers (orchestrator-first, reconcile fallback)
-        info!("Update {}: recreating containers", package_id);
-        for name in containers {
-            self.recreate_container_for_update(package_id, name).await?;
-            // Brief delay between containers for dependency initialization
-            tokio::time::sleep(std::time::Duration::from_secs(2)).await;
-        }
-
-        // Phase: WaitingHealthy — reconcile has started every container,
-        // now verifying each reached running state.
-        self.set_install_phase(package_id, InstallPhase::WaitingHealthy)
-            .await;
-
-        // 5. Verify containers reached running state
-        tokio::time::sleep(std::time::Duration::from_secs(5)).await;
-        for name in containers {
-            let status = tokio::process::Command::new("podman")
-                .args(["inspect", name, "--format", "{{.State.Status}}"])
-                .output()
-                .await;
-            if let Ok(o) = status {
-                let state = String::from_utf8_lossy(&o.stdout).trim().to_string();
-                anyhow::ensure!(
-                    o.status.success() && state == "running",
-                    "Update {}: container {} is not running after recreate",
-                    package_id,
-                    name
-                );
-            } else {
-                anyhow::bail!(
-                    "Update {}: cannot inspect recreated container {}",
-                    package_id,
-                    name
-                );
-            }
-        }
-
-        verify_update_targets(images_to_pull, &inspect_update_images(package_id).await?)?;
-        Ok(())
+        update_transaction::execute(guard, package_id, &targets, &Podman).await
     }
 
     async fn recreate_container_for_update(
@@ -553,41 +473,6 @@ impl RpcHandler {
             }
         }
         stack_images
-    }
-
-    /// Rollback: restart old containers if they still exist.
-    /// Called when update fails partway through.
-    async fn rollback_update(&self, package_id: &str, containers: &[String]) {
-        warn!("Rolling back update for {}", package_id);
-        for name in containers {
-            // Try to start — works if container still exists (wasn't removed yet)
-            let out = tokio::process::Command::new("podman")
-                .args(["start", name])
-                .output()
-                .await;
-            match out {
-                Ok(o) if o.status.success() => {
-                    info!("Rollback: restarted {}", name);
-                }
-                Ok(o) => {
-                    let stderr = String::from_utf8_lossy(&o.stderr);
-                    warn!("Rollback: could not restart {}: {}", name, stderr.trim());
-                    // Container was already removed (forward path ran `podman rm`).
-                    // Recreate via orchestrator-first path with legacy fallback.
-                    if let Err(recreate_err) =
-                        self.recreate_container_for_update(package_id, name).await
-                    {
-                        error!(
-                            "Rollback: failed to recreate {} during rollback of {}: {}",
-                            name, package_id, recreate_err
-                        );
-                    }
-                }
-                Err(e) => {
-                    error!("Rollback: failed to restart {}: {}", name, e);
-                }
-            }
-        }
     }
 
     /// Clear the Updating state (used on failure/rollback).
