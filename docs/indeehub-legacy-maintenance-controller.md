@@ -1,6 +1,6 @@
 # Legacy IndeeHub maintenance controller
 
-Status: isolated source implementation. Twelve pure Python fake-runtime regressions
+Status: isolated source implementation. Fourteen pure Python fake-runtime regressions
 pass; no live invocation or production qualification. The controller is not part
 of the already signed private app candidate and needs no new app image/API.
 
@@ -55,7 +55,7 @@ prove compatibility with newly changed data. No automatic DB/media restore exist
 
 ## Qualification and remaining integration
 
-`python3 tests/regression/test_indeehub_maintenance_controller.py` passes twelve
+`python3 tests/regression/test_indeehub_maintenance_controller.py` passes fourteen
 fake-runtime cases in temporary directories, without services/network/containers.
 Source nginx template guard coverage also passes its parser check. Production
 adapter compilation, actual Podman event format/systemd clean-exit behavior,
@@ -76,3 +76,11 @@ A pre-acquire snapshot/preflight failure may leave no controller journal. An
 Aborted node journal with target_startup_began=false then permits idempotent
 no-op acknowledgement, without touching any other operation’s admission fence.
 A matching fence without its controller journal requires recovery investigation.
+
+Read-only source evidence from actual old API/ffmpeg shows neither has SIGTERM
+shutdown hooks. The controller permits worker143 only after a paused queue has
+zero active jobs. Legacy API143 additionally requires closed/stopped frontend,
+stopped worker, and a fresh empty projects/contents/payments/shareholders/
+subscriptions/library_items store with no other active DB transaction. This is
+a narrow first-upgrade compatibility path, not evidence populated work completed.
+Populated or ambiguous legacy state remains a refused forward cutover.

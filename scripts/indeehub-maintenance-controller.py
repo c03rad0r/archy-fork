@@ -107,6 +107,20 @@ class Controller:
             original=self.queue('status');self.record['queue_was_paused']=original['paused'];self.record['queue_original_counts']=original['counts'];self.save()
         state=self.queue('pause');require(state['paused'],'Worker admission did not close')
         self.record['queue_pause_confirmed']=True;self.save()
+    def legacy_api_idle(self):
+        # Narrow first-upgrade compatibility for the observed legacy API which
+        # has no SIGTERM hooks. Existing customer/business work is never inferred
+        # completed: this path requires a fresh empty store behind closed ingress.
+        require(self.record.get('stopped',{}).get('indeedhub',{}).get('confirmed'),'Frontend ingress must already be stopped')
+        require(self.record.get('stopped',{}).get('indeedhub-ffmpeg',{}).get('confirmed'),'Transcode worker must already be stopped')
+        require(self.record.get('queue_pause_confirmed') is True and self.record.get('last_queue_counts',{}).get('active')==0,'Worker queue is not proven idle')
+        tables=('projects','contents','payments','shareholders','subscriptions','library_items')
+        fields=','.join("'%s',(SELECT count(*) FROM public.%s)"%(name,name) for name in tables)
+        sql="SELECT json_build_object("+fields+",'other_active_transactions',(SELECT count(*) FROM pg_stat_activity WHERE datname=current_database() AND pid<>pg_backend_pid() AND state<>'idle'))"
+        counts=json.loads(self.run(['podman','exec','indeedhub-postgres','psql','-XAt','-U','indeedhub','-d','indeedhub','-c',sql]))
+        require(set(counts)==set(tables)|{'other_active_transactions'},'Legacy API business-state observation incomplete')
+        require(all(type(value) is int and value==0 for value in counts.values()),'Legacy API has business work or active transactions; completion cannot be inferred')
+        self.record['legacy_api_empty_state']=counts;self.save()
     def graceful_stop(self, name):
         # Save the obligation before systemd can remove an AutoRemove container.
         stopped=self.record.setdefault('stopped',{})
@@ -125,8 +139,11 @@ class Controller:
         matching=[event for event in matching if event.get('ID',event.get('id'))==member['container_id']]
         require(matching,'Original process exit evidence unavailable; hold retained')
         code=matching[-1].get('ContainerExitCode',matching[-1].get('containerExitCode'))
-        require(str(code)=='0','Original process did not exit cleanly; active work is not claimed completed')
-        stopped[name].update(confirmed=True,exit_code=0,confirmed_at=time.time());self.save()
+        idle_worker = name=='indeedhub-ffmpeg' and self.record.get('queue_pause_confirmed') is True and self.record.get('last_queue_counts',{}).get('active')==0
+        empty_api = name=='indeedhub-api' and self.record.get('legacy_api_empty_state') is not None
+        require(str(code)=='0' or (str(code)=='143' and (idle_worker or empty_api)),'Original process did not exit cleanly; active work is not claimed completed')
+        classification=('idle-worker-terminated-after-queue-drain' if idle_worker else 'empty-business-store-legacy-api-terminated') if str(code)=='143' else 'clean-process-exit'
+        stopped[name].update(confirmed=True,exit_code=int(code),classification=classification,confirmed_at=time.time());self.save()
     def volume_sources(self):
         expected=['indeedhub-minio-data','indeedhub-postgres-data','indeedhub-redis-data','indeedhub-relay-data']
         rows=json.loads(self.run(['podman','volume','inspect',*expected]))
@@ -186,7 +203,7 @@ class Controller:
                 if state['counts'].get('active',0)==0:break
                 require(time.monotonic()<deadline,'Transcodes still active; retained job state, no forced completion')
                 time.sleep(1)
-            self.graceful_stop('indeedhub-ffmpeg');self.graceful_stop('indeedhub-api')
+            self.graceful_stop('indeedhub-ffmpeg');self.legacy_api_idle();self.graceful_stop('indeedhub-api')
         self.backup();self.verify();return {'operation_id':self.operation,'state':'drained'}
     def verify(self):
         self.holds();self.fence_matches()

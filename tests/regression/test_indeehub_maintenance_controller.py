@@ -95,4 +95,30 @@ class MaintenanceTests(unittest.TestCase):
   c.fence.parent.mkdir(parents=True);c.fence.write_text(self.operation)
   with self.assertRaisesRegex(RuntimeError,'without journal'):c.release('aborted')
   self.assertTrue(c.fence.exists())
+ def test_legacy_worker_sigterm_requires_proven_paused_idle_queue(self):
+  c=self.controller;c.record={'operation_id':self.operation,'phase':'Prepared','original_members':module.validate_members(members())};c.save()
+  worker=next(m for m in members() if m['name']=='indeedhub-ffmpeg')
+  def command(argv,timeout,output):
+   if argv[:2]==['podman','inspect']:return self.command_runner(argv,timeout,output)
+   if argv[:3]==['systemctl','--user','stop']:return b''
+   if argv[:3]==['systemctl','--user','show']:return b'ActiveState=inactive\nResult=success\n'
+   if argv[:2]==['podman','events']:return json.dumps({'ID':worker['container_id'],'ContainerExitCode':143}).encode()
+   raise AssertionError(argv)
+  c.runner=command
+  with self.assertRaises(RuntimeError):c.graceful_stop(worker['name'])
+  c.record['queue_pause_confirmed']=True;c.record['last_queue_counts']={'active':1}
+  with self.assertRaises(RuntimeError):c.graceful_stop(worker['name'])
+  c.record['last_queue_counts']['active']=0;c.graceful_stop(worker['name'])
+  self.assertEqual(c.record['stopped'][worker['name']]['classification'],'idle-worker-terminated-after-queue-drain')
+ def test_legacy_api_compatibility_requires_fresh_empty_business_state(self):
+  c=self.controller;c.record={'operation_id':self.operation,'phase':'Prepared','stopped':{'indeedhub':{'confirmed':True},'indeedhub-ffmpeg':{'confirmed':True}},'queue_pause_confirmed':True,'last_queue_counts':{'active':0}};c.save()
+  counts={name:0 for name in ('projects','contents','payments','shareholders','subscriptions','library_items','other_active_transactions')}
+  c.runner=lambda argv,timeout,output:json.dumps(counts).encode()
+  counts['payments']=1
+  with self.assertRaisesRegex(RuntimeError,'business work'):c.legacy_api_idle()
+  self.assertNotIn('legacy_api_empty_state',c.record)
+  counts['payments']=0;counts['other_active_transactions']=1
+  with self.assertRaisesRegex(RuntimeError,'business work'):c.legacy_api_idle()
+  counts['other_active_transactions']=0;c.legacy_api_idle()
+  self.assertEqual(c.record['legacy_api_empty_state'],counts)
 if __name__=='__main__':unittest.main()
