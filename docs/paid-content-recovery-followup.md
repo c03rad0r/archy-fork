@@ -290,6 +290,16 @@ zero failures and five existing skips:
 No real payment or deployment was performed. Purchase RPC integration, durable
 seller settlement/receipt recovery and the end-to-end acceptance remain open.
 
+### On-chain purchase recovery qualification
+
+The isolated two-phase on-chain candidate subsequently passed 46 focused backend
+tests with zero failures, including lease recovery, recipient binding, quote
+boundary validation, cancellation and lost-reply reuse of the original
+operation. The candidate remains separate from the release branch pending a
+minimal conflict-reviewed integration and the required authenticated,
+regtest, mobile and live-node acceptance. No real payment or wallet operation
+was performed by this qualification.
+
 Recovery preflight now rejects malformed or unsupported restore responses before
 reserving or spending inputs, and refuses already-issued newly derived outputs.
 Required restore fields cannot silently default to empty. The malformed-response
