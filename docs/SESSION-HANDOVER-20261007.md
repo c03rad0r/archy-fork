@@ -291,7 +291,7 @@ No percentage is inferred from test counts.
 | 17 HTTPS apps | In progress | Exact hostname/trust and companion acceptance |
 | 18 Firewall/tunnel | In progress | Read-only UI done; settings persistence/reboot/rollback qualification |
 | 19 Media guide/Cloud PiP | Nearly finished | PiP operator-accepted; finish reusable contract and remaining edge cases |
-| 20 Native background media | Nearly finished | APK56 and matching UI delivered; real V4V bridge checks passed; physical lifecycle acceptance remains |
+| 20 Native background media | In progress — physical test failed | APK56 stops about five seconds after locking/switching apps; no playback notification. USB unavailable; investigate native bridge/service and retained page. |
 | 21 Public files/folders | Queued, before22 | Shared pricing interface with blue tints, unrelated-node discovery and tiny marker |
 | 22 Mesh file sharing | Queued, final task | Node/computer choice, tree/search picker, retained multi-selection, delivery design and usual paid-file flow |
 
@@ -439,3 +439,24 @@ Evidence (browser scenario deliberately outside the repository):
 `~/.local/state/archipelago/release-qualification/web5-footer-20261007/`.
 This closes task16; it does not close the separate Framework owner-browser
 Monitoring gate or deferred connection UX/removal work.
+
+
+## Companion56 physical background failure — 2026-10-07
+
+- Operator reports audio stops about five seconds **after locking the phone or
+  switching apps**, with no playback notification. Foreground playback works.
+  This is a failed acceptance check, superseding the earlier nearly-finished
+  status; automated browser and Robolectric passes do not close it.
+- USB debugging is unavailable (operator corrected the initial can-connect
+  response). Do not keep requesting USB or claim device logs were inspected.
+- Actual delivered APK manifest includes CompanionAudioService, mediaPlayback
+  foreground type and required foreground-service permissions. This verifies
+  packaging only, not service startup on the phone. No root cause confirmed.
+- Companion retains its dashboard WebView across navigation. Operator was asked
+  to use the existing Restart app action, reconnect to Yaya, play a free demo,
+  and check for the notification before backgrounding, to rule out a retained
+  page from before the matching UI deployment. No result yet; not a fix claim.
+- No replacement APK, real payment, phone reset or wallet change performed.
+- IndeeHub agent committed final dispatch fixes as 2bfa84ef: isolated backend
+  suite 2,004 passed, zero failed, five ignored. VM-only binary preparation and
+  isolated full update/recovery rehearsal are ongoing; no live activation.

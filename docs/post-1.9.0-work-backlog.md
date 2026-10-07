@@ -534,6 +534,13 @@ WebViewFullscreen handles fullscreen; this is not evidence of native PiP support
 
 ## 20. Companion background media for V4V and other apps
 
+**In progress — physical test failed (2026-10-07):** APK0.5.36 plays while
+open, but the operator reports stopping about five seconds after locking or
+switching apps, with no playback notification. Native background acceptance
+remains failed despite automated passes. USB access is unavailable. Investigate
+bridge/service startup and rule out a retained pre-deployment dashboard page;
+no root cause or replacement fix has been verified.
+
 Later media-platform task requested by the operator. When a user closes an
 embedded V4V demo or another authorized media app on the companion, playback
 must continue through the phone's native media session instead of stopping or
