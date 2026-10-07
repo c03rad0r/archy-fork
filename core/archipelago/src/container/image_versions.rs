@@ -361,6 +361,16 @@ pub fn containers_for_stack(app_id: &str) -> Vec<(&'static str, &'static str)> {
             ("immich_redis", "REDIS_IMAGE"),
             ("immich_server", "IMMICH_SERVER_IMAGE"),
         ],
+        // Dependency order is also the supervised startup/rollback order.
+        "indeedhub" => vec![
+            ("indeedhub-postgres", "INDEEDHUB_POSTGRES_IMAGE"),
+            ("indeedhub-redis", "INDEEDHUB_REDIS_IMAGE"),
+            ("indeedhub-minio", "MINIO_IMAGE"),
+            ("indeedhub-relay", "NOSTR_RS_RELAY_IMAGE"),
+            ("indeedhub-api", "INDEEDHUB_API_IMAGE"),
+            ("indeedhub-ffmpeg", "INDEEDHUB_FFMPEG_IMAGE"),
+            ("indeedhub", "INDEEDHUB_IMAGE"),
+        ],
         "netbird" => vec![
             ("netbird", "NETBIRD_PROXY_IMAGE"),
             ("netbird-dashboard", "NETBIRD_DASHBOARD_IMAGE"),

@@ -204,12 +204,36 @@ impl RpcHandler {
         let images_to_pull =
             targets.unwrap_or_else(|| self.resolve_images_to_pull(package_id, &pinned));
 
-        // Get all containers for this app
-        let containers = get_containers_for_app(package_id).await?;
-        if containers.is_empty() {
-            self.clear_update_state(package_id).await;
-            return Err(anyhow::anyhow!("No containers found for {}", package_id));
+        // Managed imports are intentionally private. Resolve the trusted catalog
+        // against the reviewed local digest plan before any registry preparation;
+        // never pull mutable dependency tags over an approved local plan. Every
+        // preparation refusal clears Updating, including inventory/plan failures.
+        let preparation = async {
+            let containers = get_containers_for_app(package_id).await?;
+            anyhow::ensure!(
+                !containers.is_empty(),
+                "No containers found for {}",
+                package_id
+            );
+            let images = self
+                .reviewed_managed_image_references(
+                    package_id,
+                    &containers,
+                    &images_to_pull,
+                    &lifecycle_guard,
+                )
+                .await?;
+            Ok::<_, anyhow::Error>((containers, images))
         }
+        .await;
+        let (containers, images_to_pull) = match preparation {
+            Ok(prepared) => prepared,
+            Err(error) => {
+                self.clear_install_progress(package_id).await;
+                self.clear_update_state(package_id).await;
+                return Err(error);
+            }
+        };
 
         // Resolve every image while the old stack is still available. A
         // registry outage or missing private import must not stop the app or
@@ -348,6 +372,57 @@ impl RpcHandler {
         } else {
             update_transaction::execute(guard, package_id, &targets, &Podman).await
         }
+    }
+
+    async fn reviewed_managed_image_references(
+        &self,
+        package_id: &str,
+        containers: &[String],
+        images: &[(String, String)],
+        guard: &crate::container::update_transaction::Guard,
+    ) -> Result<Vec<(String, String)>> {
+        use crate::container::supervised_runtime::{
+            load_reviewed_plans, LegacyIndeeMaintenance, SystemdSupervisor,
+        };
+        use crate::container::supervised_update::Supervisor;
+        use crate::container::update_transaction::Podman;
+        let mut managed = 0;
+        for name in containers {
+            if crate::container::quadlet::unit_exists(name).await {
+                managed += 1;
+            }
+        }
+        if managed == 0 {
+            return Ok(images.to_vec());
+        }
+        anyhow::ensure!(
+            managed == containers.len() && package_id == "indeedhub",
+            "Managed stack requires its complete qualified maintenance plan; originals unchanged"
+        );
+        let catalog = Podman::targets(images, false).await?;
+        let names: HashSet<_> = containers.iter().map(String::as_str).collect();
+        anyhow::ensure!(
+            catalog.len() == names.len()
+                && catalog
+                    .iter()
+                    .all(|target| names.contains(target.name.as_str())),
+            "Reviewed managed target membership differs from installed stack"
+        );
+        let adapter = SystemdSupervisor::new(
+            self.config.data_dir.clone(),
+            load_reviewed_plans(&self.config.data_dir, package_id)?,
+            LegacyIndeeMaintenance::new(guard)?,
+        )
+        .await?;
+        let targets = adapter.reviewed_targets(&catalog).await?;
+        for target in &targets {
+            let original = adapter.capture(&target.name).await?;
+            adapter.prepare_target(target, &original).await?;
+        }
+        Ok(targets
+            .into_iter()
+            .map(|target| (target.name, target.reference))
+            .collect())
     }
 
     async fn recreate_container_for_update(
@@ -851,6 +926,29 @@ mod tests {
                 .await
                 .unwrap();
         }
+    }
+
+    #[test]
+    fn indeehub_update_resolves_every_member_in_dependency_order() {
+        let members = crate::container::image_versions::containers_for_stack("indeedhub");
+        let expected = super::all_container_names("indeedhub");
+        assert_eq!(
+            members.iter().map(|(name, _)| *name).collect::<Vec<_>>(),
+            expected
+        );
+        let source = include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../scripts/image-versions.sh"
+        ));
+        for (_, variable) in members {
+            assert!(
+                source
+                    .lines()
+                    .any(|line| line.starts_with(&format!("{variable}="))),
+                "Missing image pin {variable}"
+            );
+        }
+        assert!(super::uses_legacy_update_flow("indeedhub"));
     }
 
     #[tokio::test]

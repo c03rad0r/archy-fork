@@ -167,3 +167,26 @@ files, which verifies the intended absence of a fabricated completed transaction
 Evidence: `/tmp/archy-20261007-indeehub-final-backend-recheck.log`; initial failed
 fixture evidence remains in `/tmp/archy-20261007-indeehub-final-backend.log`.
 Optimized artifact build and full real VM adapter acceptance remain pending.
+
+## Full RPC dispatch correction — 2026-10-07
+
+Tracing the actual `package.update` path found that IndeeHub was marked as a stack
+but missing from the pinned stack-image mapping. It therefore resolved only its
+frontend before the seven-member runtime membership check. The mapping now covers
+PostgreSQL, Redis, MinIO, relay, API, worker and frontend in dependency order.
+
+Managed preflight now resolves the signed catalog references locally against the
+reviewed immutable plan and checks original unit hashes/registration pins before
+image preparation. Only verified local digest references reach preparation, so
+unchanged mutable dependency tags cannot trigger a registry pull before the private
+plan is checked. Unmanaged updates retain registry preparation. Inventory and plan
+refusals clear progress and the inner Updating state; the asynchronous RPC wrapper
+also retains its existing failure/scanner cleanup.
+
+The final source passes **2,004 isolated backend tests, zero failures, five ignored**:
+`/tmp/archy-20261007-indeehub-dispatch-final-backend.log`. A prior 2,004-test receipt
+predated the last preparation-state cleanup and is not the final-byte result.
+The optimized build was deliberately interrupted after these integration gaps were
+found. A test-profile application executable is being built solely for the isolated
+full RPC rehearsal; final release optimization/deployment remains pending that
+rehearsal. No live IndeeHub stack or catalog has been changed.
