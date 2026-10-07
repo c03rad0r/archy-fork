@@ -204,6 +204,12 @@ class Controller:
         return {'operation_id':self.operation,'state':'held'}
     def release(self, outcome):
         require(outcome in ('committed','restored','aborted'),'Invalid release outcome')
+        if self.record is None and outcome=='aborted':
+            runtime=json.loads((self.data/'update-transactions'/'supervised'/(self.operation+'.json')).read_text())
+            require(runtime.get('phase')=='Aborted' and runtime.get('target_startup_began') is False,'Untouched abort evidence required')
+            if self.fence.exists():
+                require(not self.fence.is_symlink() and self.fence.read_text()!=self.operation,'Matching fence without journal requires recovery')
+            return {'operation_id':self.operation,'state':'released'}
         require(self.record is not None,'Unknown maintenance operation')
         if self.record['phase']=='Released':
             require(self.record.get('outcome')==outcome,'Maintenance outcome changed')

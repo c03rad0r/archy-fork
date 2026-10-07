@@ -1,6 +1,6 @@
 # Legacy IndeeHub maintenance controller
 
-Status: isolated source implementation. Ten pure Python fake-runtime regressions
+Status: isolated source implementation. Twelve pure Python fake-runtime regressions
 pass; no live invocation or production qualification. The controller is not part
 of the already signed private app candidate and needs no new app image/API.
 
@@ -55,7 +55,7 @@ prove compatibility with newly changed data. No automatic DB/media restore exist
 
 ## Qualification and remaining integration
 
-`python3 tests/regression/test_indeehub_maintenance_controller.py` passes ten
+`python3 tests/regression/test_indeehub_maintenance_controller.py` passes twelve
 fake-runtime cases in temporary directories, without services/network/containers.
 Source nginx template guard coverage also passes its parser check. Production
 adapter compilation, actual Podman event format/systemd clean-exit behavior,
@@ -71,3 +71,8 @@ The backend must refuse missing/mismatched prerequisites before snapshots/stops.
 Native AppGate + nginx guards are separate node source changes owned by the
 supervised updater agent. The signed app catalog/private image receipts remain
 unchanged. Existing live stop/uninstall intent must not be rewritten as maintenance.
+
+A pre-acquire snapshot/preflight failure may leave no controller journal. An
+Aborted node journal with target_startup_began=false then permits idempotent
+no-op acknowledgement, without touching any other operation’s admission fence.
+A matching fence without its controller journal requires recovery investigation.

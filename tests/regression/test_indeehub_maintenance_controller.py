@@ -82,4 +82,17 @@ class MaintenanceTests(unittest.TestCase):
   self.assertEqual(module.validate_nginx_guards('\n'.join(blocks)),3)
   with self.assertRaisesRegex(RuntimeError,'missing its maintenance guard'):module.validate_nginx_guards('\n'.join(blocks).replace(guard,'',1))
   with self.assertRaisesRegex(RuntimeError,'Unrecognized direct'):module.validate_nginx_guards('\n'.join(blocks)+'\nlocation /other/ {\n proxy_pass http://127.0.0.1:7778/;\n}')
+ def test_pre_acquire_abort_acknowledges_without_mutating_foreign_fence(self):
+  c=self.controller;runtime=c.data/'update-transactions'/'supervised'/(self.operation+'.json')
+  module.atomic(runtime,{'phase':'Aborted','target_startup_began':False})
+  self.assertEqual(c.release('aborted')['state'],'released')
+  c.fence.parent.mkdir(parents=True);foreign=str(uuid.uuid4());c.fence.write_text(foreign)
+  self.assertEqual(c.release('aborted')['state'],'released');self.assertEqual(c.fence.read_text(),foreign)
+  module.atomic(runtime,{'phase':'Aborted','target_startup_began':True})
+  with self.assertRaisesRegex(RuntimeError,'Untouched abort'):c.release('aborted')
+ def test_matching_fence_without_journal_is_not_an_untouched_abort(self):
+  c=self.controller;module.atomic(c.data/'update-transactions'/'supervised'/(self.operation+'.json'),{'phase':'Aborted','target_startup_began':False})
+  c.fence.parent.mkdir(parents=True);c.fence.write_text(self.operation)
+  with self.assertRaisesRegex(RuntimeError,'without journal'):c.release('aborted')
+  self.assertTrue(c.fence.exists())
 if __name__=='__main__':unittest.main()
