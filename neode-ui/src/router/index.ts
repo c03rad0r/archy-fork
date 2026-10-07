@@ -191,6 +191,11 @@ const router = createRouter({
           component: () => import('../views/server/OpenWrtGateway.vue'),
         },
         {
+          path: 'server/firewall-tunnels',
+          name: 'firewall-tunnels',
+          component: () => import('../views/server/FirewallTunnelSettings.vue'),
+        },
+        {
           path: 'monitoring',
           name: 'monitoring',
           component: () => import('../views/Monitoring.vue'),
