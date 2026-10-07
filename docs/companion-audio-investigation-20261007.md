@@ -124,10 +124,27 @@ Evidence:
   never produced a thumbnail; corrected composable produced a real JPEG. Browser
   checks also verified no cross-origin cookie, no followed redirect, and playback
   remained active after the optional image error.
-- No native runtime or APK version change. A positive native JPEG/notification/
-  metadata regression is prepared separately and awaits its coordinated test slot.
+- No native runtime or APK version change. The focused positive native JPEG
+  regression passed on SDK 28 and 35 (2 tests, zero failures/errors/skips). It
+  verifies the actual service places a real JPEG in the notification large icon
+  and media-description bitmap, retains it on position-only updates, and clears
+  it for an explicitly artless following song. Initial test compilation used
+  unavailable Java desktop ImageIO APIs; replacing that test-only fixture with a
+  fixed Chromium-generated JPEG resolved the harness issue. Production Kotlin
+  remained unchanged/up-to-date. All owned test JVMs exited after success.
 - This identifies and fixes a real artwork boundary defect, not the operator's
   exact cover URL. Physical notification-artwork acceptance remains open until
   the qualified UI reaches the node and the operator verifies it.
 
 Evidence folder: `~/.local/state/archipelago/release-qualification/companion-artwork-20261007/`.
+
+## Actual app artwork access limitation
+
+A separate read-only Chromium probe retained the managed node-demo-v4v iframe,
+but the actual app required Nostr login before initializing its media catalog.
+With signing and payments blocked, the probe timed out before obtaining a cover
+URL. No image access/CORS policy was bypassed, no credentials were forwarded,
+and no real app artwork was decoded in that probe. The successful browser A/B
+fixture and native JPEG test establish the corrected pipeline, not that the
+operator's particular cover is anonymously accessible. Physical artwork acceptance
+remains pending after the qualified UI deployment; APK 0.5.37 stays unchanged.
