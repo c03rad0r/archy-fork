@@ -19,7 +19,11 @@ format, not payment authorization. The old `content.request-invoice` and
 `content.request-onchain` methods likewise bypassed the durable purchase flows.
 Fresh legacy spending and invoice/address creation now return actionable errors.
 Already-owned exact/alias cache reads, existing invoice/on-chain status and
-original-payment download endpoints remain available. No automatic conversion
+original-payment download endpoints remain available.
+This does not reconstruct missing historical Cashu/Fedimint delivery receipts:
+a legacy spend without a saved file binding/receipt still needs investigation,
+not another purchase. Generic wallet history alone cannot prove which file a
+lost legacy request bought. No automatic conversion
 to another method, payment retry, or bypass of reviewed fee consent was added.
 
 Compatibility impact: current PeerFiles used the legacy spender for Fedimint;
