@@ -42,9 +42,14 @@ the two legacy invoice/address creation methods were found.
   records and no wallet creation. Separate real-handler regression checks
   rejection of all legacy ecash choices and invoice/address creation, then
   exact cached Fedimint bytes and zero-payment repeat access.
-- Backend tests must run through `scripts/test-backend-isolated.sh`. Combined
-  run is queued behind the already-running IndeeHub executable/companion build;
-  the new tests are not yet claimed passed.
+- Backend tests must run through `scripts/test-backend-isolated.sh`. Two
+  compilation attempts were deliberately interrupted before test execution:
+  the first after IndeeHub's final outer guards arrived during source capture,
+  the second after prolonged host page-I/O starvation when the final IndeeHub
+  lifecycle/health correction was ready. Neither is a test failure or a pass.
+  Logs, input hashes and explicit incomplete status are retained. One combined
+  run after the final source freeze remains required; the new backend tests are
+  not yet claimed passed.
 - Current live read-only recheck: dev and Yaya each retain the accepted 20 MiB
   fixture with exact original SHA256 and ownership despite the seller share
   having been removed. Only ownership lookup and cached HTTP GET were used;
