@@ -47,6 +47,8 @@ impl RpcHandler {
             &params.content_id,
         )
         .await?;
+        self.ensure_onchain_allows_other_rail(&buyer, transport.seller_did(), &params.content_id)
+            .await?;
         self.ensure_invoice_allows_other_rail(&buyer, transport.seller_did(), &params.content_id)
             .await?;
 

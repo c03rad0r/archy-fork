@@ -399,8 +399,9 @@
             <!-- Step 1: choose a payment method — only the methods the SELLER
                  accepts for this item are offered -->
             <div v-if="payMode === 'choose'" class="space-y-3">
+              <p v-if="acceptsMethod(payItem.access, 'fedimint')" class="text-xs text-white/60">Fedimint file purchases are temporarily unavailable. Choose another accepted payment method; previously purchased files remain available.</p>
               <button
-                v-if="!hasBlockingLightningReceipt && (acceptsMethod(payItem.access, 'ecash') || acceptsMethod(payItem.access, 'fedimint'))"
+                v-if="!hasBlockingLightningReceipt && acceptsMethod(payItem.access, 'ecash')"
                 class="w-full glass-button px-4 py-3 rounded-xl flex items-center justify-start gap-3 text-left"
                 :disabled="paymentActionBusy"
                 @click="prepareEcashPay"
@@ -410,7 +411,7 @@
                 </svg>
                 <span>
                   <span class="block text-base text-white">{{ ecashPreparing ? 'Checking your wallets…' : 'Pay from this node’s ecash wallet' }}</span>
-                  <span class="block text-sm text-white/50">Instant, using your Cashu or Fedimint balance</span>
+                  <span class="block text-sm text-white/50">Using your Cashu balance</span>
                 </span>
               </button>
 
@@ -481,20 +482,20 @@
                 File: {{ cashuQuote.seller_net_sats }} sats · fees/rounding: {{ cashuQuote.wallet_debit_sats - cashuQuote.seller_net_sats }} sats
               </p>
               <p v-if="hasBlockingCashuPurchase" class="text-xs text-white/60">The original purchase is saved on your node. Retry recovers it without starting another payment.</p>
-              <!-- Backend selector: the chosen one is highlighted; the user can
-                   switch to the other if it has enough balance. -->
+              <!-- Display other balances without offering unsafe payment paths. -->
               <div class="space-y-2">
                 <button
                   v-for="b in (['cashu', 'fedimint'] as const)"
                   :key="b"
                   @click="selectEcashBackend(b)"
-                  :disabled="paymentActionBusy || (b !== 'cashu' && hasBlockingCashuPurchase) || (b !== 'cashu' && ecashBalanceOf(b) < getItemPrice(payItem.access))"
+                  :disabled="paymentActionBusy || b !== 'cashu'"
                   class="w-full px-4 py-3 rounded-xl flex items-center gap-3 text-left border transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
                   :class="ecashPlan.chosen === b ? 'border-green-400/70 bg-green-400/10' : 'border-white/10 bg-white/5 hover:bg-white/10'"
                 >
                   <span class="text-xl shrink-0">{{ b === 'cashu' ? '🥜' : '🤝' }}</span>
                   <span class="flex-1 min-w-0">
                     <span class="block text-base text-white">{{ b === 'cashu' ? 'Cashu' : 'Fedimint' }}</span>
+                    <span v-if="b === 'fedimint'" class="block text-xs text-white/60">File purchases temporarily unavailable</span>
                     <span class="block text-xs text-white/50">Balance: {{ ecashBalanceOf(b).toLocaleString() }} sats<span v-if="ecashBalanceOf(b) < getItemPrice(payItem.access)"> · not enough</span></span>
                   </span>
                   <svg v-if="ecashPlan.chosen === b" class="w-5 h-5 text-green-400 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -1476,9 +1477,8 @@ function ecashBalanceOf(b: EcashBackend): number {
 }
 
 /**
- * Step 1b: look at BOTH ecash balances, pick the backend that covers the price
- * (Cashu preferred, else Fedimint), and show a confirmation screen so the user
- * sees exactly which wallet is spent and can switch before committing (#3).
+ * Read balances and obtain the durable Cashu quote for explicit confirmation.
+ * Other ecash balances are informative and never selected as a fallback.
  */
 async function prepareEcashPay() {
   const item = payItem.value
@@ -1492,7 +1492,6 @@ async function prepareEcashPay() {
   if(onchainAttempt.value || onchainLookupError.value){lnError.value='Recover the original on-chain purchase first.';return}
   const operation = paymentOperations.begin('prepare-ecash', onion, item.id)
   if (!operation) return
-  const price = getItemPrice(item.access)
   ecashPreparing.value = true
   purchaseError.value = null
   try {
@@ -1511,13 +1510,13 @@ async function prepareEcashPay() {
     }
     if (!paymentOperations.selected(operation)) return
     const total = cashu + fedimint
-    // Cashu uses its durable quote; otherwise only supported Fedimint
-    // funds can cover this purchase. Ark is not a peer-file payment rail.
+    // Only Cashu currently has recoverable ecash peer-file payments.
+    // Never fall through to another wallet when its quote cannot be funded.
     const chosen: EcashBackend | null =
-      acceptsMethod(item.access, 'ecash') || hasBlockingCashuPurchase.value ? 'cashu' : fedimint >= price ? 'fedimint' : null
+      acceptsMethod(item.access, 'ecash') || hasBlockingCashuPurchase.value ? 'cashu' : null
     ecashPlan.value = { cashu, fedimint, ark, total, chosen }
     if (!chosen) {
-      purchaseError.value = `Not enough funds: Cashu ${cashu} + Fedimint ${fedimint} sats, need ${price}. Ark cannot pay for peer files yet. Fund a supported wallet, or pay another way.`
+      purchaseError.value = 'Fedimint file purchases are temporarily unavailable. Ark cannot pay for peer files yet. Choose another accepted payment method.'
     }
     payMode.value = 'ecash-confirm'
     if (chosen === 'cashu') await requestCashuPurchase(item, onion, operation, false)
@@ -1604,8 +1603,7 @@ async function requestCashuPurchase(item: CatalogItem, onion: string, operation:
 }
 async function selectEcashBackend(backend: EcashBackend) {
   if (!ecashPlan.value || paymentActionBusy.value) return
-  if (backend !== 'cashu' && backend !== 'fedimint') { purchaseError.value = 'This wallet cannot pay for peer files yet.'; return }
-  if (backend !== 'cashu' && hasBlockingCashuPurchase.value) { purchaseError.value = 'Cancel the original unpaid Cashu quote before selecting another wallet.'; return }
+  if (backend !== 'cashu') { purchaseError.value = 'This wallet cannot pay for peer files yet. Fedimint file purchases are temporarily unavailable.'; return }
   ecashPlan.value.chosen = backend
   if (backend === 'cashu') await prepareEcashPay()
 }
@@ -1633,37 +1631,20 @@ async function cancelCashuPurchase() {
   } finally { paymentOperations.finish(operation) }
 }
 
-/** Confirm the ecash payment with the backend the user selected. */
+/** Confirm the reviewed Cashu quote; other ecash rails are not recoverable yet. */
 async function confirmEcashPay() {
   const item = payItem.value
   const onion = props.peerId || currentPeer.value?.onion
   const method = ecashPlan.value?.chosen
   if (!item || !onion || !method || paymentActionBusy.value || hasBlockingLightningReceipt.value) return
-  if (method !== 'cashu' && method !== 'fedimint') { purchaseError.value = 'This wallet cannot pay for peer files yet.'; return }
-  if (method !== 'cashu' && !await permitFreshOtherRail(item, onion)) return
+  if (method !== 'cashu') { purchaseError.value = 'This wallet cannot pay for peer files yet. Fedimint file purchases are temporarily unavailable.'; return }
   const operation = paymentOperations.begin('ecash-send', onion, item.id)
   if (!operation) return
-  const selected = () => paymentOperations.selected(operation)
-  const price = getItemPrice(item.access)
-
   purchaseError.value = null
   try {
-    if (method === 'cashu') { await requestCashuPurchase(item, onion, operation, true); return }
-    if (hasBlockingCashuPurchase.value) throw new Error('Recover or cancel the saved Cashu purchase first.')
-    const result = await rpcClient.call<{ data?: string; owned?: boolean; owned_content_id?: string; error?: string; ecash_backend?: string; mime_type?: string }>({
-      method: 'content.download-peer-paid',
-      params: { onion, content_id: item.id, price_sats: price, method, filename: item.filename, cache_only: true },
-      timeout: 960000, maxRetries: 1,
-    })
-    if (result?.data !== undefined || result?.owned === true) {
-      // The purchase is now cached + owned by this node (backend persisted it).
-      if (selected()) openPurchased(item, result.data, result.mime_type, onion, result.owned_content_id)
-    } else if (selected() && result?.error) {
-      // Preserve the backend's recovery explanation; an error is not proof of nonpayment.
-      purchaseError.value = result.error
-    }
+    await requestCashuPurchase(item, onion, operation, true)
   } catch (e: unknown) {
-    if (selected()) purchaseError.value = e instanceof Error ? e.message : 'Download failed'
+    if (paymentOperations.selected(operation)) purchaseError.value = e instanceof Error ? e.message : 'Download failed'
   } finally {
     paymentOperations.finish(operation)
   }

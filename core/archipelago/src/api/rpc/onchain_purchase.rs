@@ -469,6 +469,129 @@ mod tests {
         }
     }
     #[tokio::test]
+    async fn unresolved_onchain_operation_blocks_cashu_and_every_lightning_spend_entry() {
+        let data = tempfile::tempdir().unwrap();
+        let identity = crate::identity::NodeIdentity::load_or_create(&data.path().join("identity"))
+            .await
+            .unwrap();
+        let mut binding = binding();
+        binding.buyer_did = identity.did_key().unwrap();
+        let onion = format!("{}.onion", "a".repeat(56));
+        let peer = serde_json::from_value(json!({
+            "did": binding.seller_did, "pubkey": hex::encode([8; 32]),
+            "onion": onion, "trust_level": "trusted", "added_at": "now",
+            "fips_npub": "fixture-no-network"
+        }))
+        .unwrap();
+        crate::federation::save_nodes(data.path(), &[peer])
+            .await
+            .unwrap();
+        let mut config = crate::config::Config::default();
+        config.data_dir = data.path().to_path_buf();
+        let handler = RpcHandler::new(
+            config,
+            std::sync::Arc::new(crate::state::StateManager::new()),
+            std::sync::Arc::new(crate::monitoring::MetricsStore::new()),
+            crate::session::SessionStore::new_for_tests(data.path().join("sessions.json")),
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+        let journal = Journal::open(data.path(), &binding.id).await.unwrap();
+        journal
+            .save(&Record::new(binding.clone(), onion.clone()).unwrap())
+            .unwrap();
+        drop(journal);
+        let original = std::fs::read(
+            data.path()
+                .join("content-onchain")
+                .join(format!("{}.json", binding.id)),
+        )
+        .unwrap();
+
+        // Exercise the real RPC entry points, not just the admission helper.
+        // Each must reject before a Cashu/Lightning journal, offer, invoice or
+        // wallet dispatch is created, including delayed callbacks and retries.
+        for consent in [
+            None,
+            Some(json!({
+                "operation_id": uuid::Uuid::new_v4().to_string(),
+                "envelope_sha256": "ab".repeat(32), "wallet_debit_sats": 546
+            })),
+        ] {
+            let error = handler
+                .handle_content_purchase(Some(json!({
+                    "onion": onion, "content_id": binding.content_id,
+                    "max_wallet_debit": 546, "consent": consent
+                })))
+                .await
+                .unwrap_err();
+            assert!(
+                error.to_string().contains("original on-chain purchase"),
+                "{error:#}"
+            );
+        }
+        for (action, exposure) in [
+            ("create", false),
+            ("pay", false),
+            ("retry", false),
+            ("create", true),
+            ("status", true),
+        ] {
+            let error = handler
+                .handle_lightning_operation(
+                    Some(json!({
+                        "onion": onion, "content_id": binding.content_id,
+                        "price_sats": 546, "external_exposure": exposure
+                    })),
+                    action,
+                )
+                .await
+                .unwrap_err();
+            assert!(
+                error.to_string().contains("original on-chain purchase"),
+                "{action}: {error:#}"
+            );
+        }
+        // Read-only recovery lookup remains available despite the blocked rail.
+        let lookup = handler
+            .handle_lightning_operation(
+                Some(json!({
+                    "onion": onion, "content_id": binding.content_id
+                })),
+                "lookup",
+            )
+            .await
+            .unwrap();
+        assert!(lookup["attempt"].is_null());
+        assert_eq!(
+            std::fs::read(
+                data.path()
+                    .join("content-onchain")
+                    .join(format!("{}.json", binding.id))
+            )
+            .unwrap(),
+            original
+        );
+        assert!(!data.path().join("wallet").exists());
+        // No replacement operation has been persisted by any rejected call.
+        assert!(crate::content_purchase::Journal::open(data.path())
+            .await
+            .unwrap()
+            .find_buyers(&binding.buyer_did, &binding.seller_did, &binding.content_id)
+            .await
+            .unwrap()
+            .is_empty());
+        assert!(crate::content_lightning::Journal::open(data.path())
+            .await
+            .unwrap()
+            .buyer_for(&binding.buyer_did, &binding.seller_did, &binding.content_id)
+            .unwrap()
+            .is_none());
+    }
+
+    #[tokio::test]
     async fn buyer_discovery_retains_unresolved_address_and_rejects_duplicate_operations() {
         let data = tempfile::tempdir().unwrap();
         let binding = binding();

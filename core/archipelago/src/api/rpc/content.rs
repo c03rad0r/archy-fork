@@ -19,46 +19,6 @@ fn is_valid_v3_onion(addr: &str) -> bool {
 
 const FILE_CATALOG_PROTOCOL: &str = "https://archipelago.dev/protocols/file-catalog/v1";
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum PeerEcashBackend {
-    Cashu,
-    Fedimint,
-}
-
-/// Auto-selection happens before spending, never as recovery from an error.
-fn select_peer_ecash_backend(
-    method: Option<&str>,
-    cashu_available: bool,
-) -> Result<PeerEcashBackend> {
-    match method {
-        Some("cashu") => Ok(PeerEcashBackend::Cashu),
-        Some("fedimint") => Ok(PeerEcashBackend::Fedimint),
-        None | Some("auto") => Ok(if cashu_available {
-            PeerEcashBackend::Cashu
-        } else {
-            PeerEcashBackend::Fedimint
-        }),
-        _ => anyhow::bail!("Unsupported ecash payment method"),
-    }
-}
-
-/// A mint can consume inputs before its response is lost. Poll exactly one
-/// selected wallet operation; an error must never initiate another payment.
-async fn spend_peer_ecash<C, F>(
-    backend: PeerEcashBackend,
-    cashu: C,
-    fedimint: F,
-) -> Result<(String, &'static str)>
-where
-    C: std::future::Future<Output = Result<String>>,
-    F: std::future::Future<Output = Result<String>>,
-{
-    match backend {
-        PeerEcashBackend::Cashu => Ok((cashu.await?, "cashu")),
-        PeerEcashBackend::Fedimint => Ok((fedimint.await?, "fedimint")),
-    }
-}
-
 fn parse_content_access(params: &serde_json::Value) -> Result<AccessControl> {
     let access_type = match params.get("access") {
         None => "free",
@@ -698,7 +658,7 @@ impl RpcHandler {
         Ok(body)
     }
 
-    /// Download paid content from a peer: mint ecash token, send with request.
+    /// Legacy entry point: serve already-owned bytes, never start a new payment.
     pub(super) async fn handle_content_download_peer_paid(
         &self,
         params: Option<serde_json::Value>,
@@ -748,152 +708,7 @@ impl RpcHandler {
             return Ok(cached);
         }
 
-        let fips_npub = crate::federation::fips_npub_for_onion(&self.config.data_dir, onion).await;
-        if fips_npub.is_none() {
-            return Ok(
-                serde_json::json!({ "error": "Connect with this node over FIPS before buying its files. No payment was made." }),
-            );
-        }
-
-        // Preserve an explicit choice. Automatic selection uses a read-only
-        // balance check before either wallet operation starts. A failed Cashu
-        // swap can already have consumed proofs, so never fall through to a
-        // second wallet after that operation has been attempted.
-        let method = params
-            .get("method")
-            .map(|value| value.as_str().context("Invalid ecash payment method"))
-            .transpose()?;
-        // Validate before even reading a wallet; unsupported input is not auto.
-        select_peer_ecash_backend(method, false)?;
-        let cashu_available = if matches!(method, None | Some("auto")) {
-            let wallet = ecash::load_wallet(&self.config.data_dir)
-                .await
-                .context("Could not check Cashu balance; no payment was attempted")?;
-            wallet.balance_for_mint(&wallet.mint_url) >= price_sats
-        } else {
-            false
-        };
-        let selected = select_peer_ecash_backend(method, cashu_available)?;
-        let (data, _) = self.state_manager.get_snapshot().await;
-        let local_did = crate::identity::did_key_from_pubkey_hex(&data.server_info.pubkey)?;
-        let payment = spend_peer_ecash(
-            selected,
-            ecash::send_token(&self.config.data_dir, price_sats),
-            async {
-                crate::wallet::fedimint_client::spend_from_any(&self.config.data_dir, price_sats)
-                    .await
-                    .map(|(notes, _federation)| notes)
-            },
-        )
-        .await;
-        let (token_str, used_backend) = match payment {
-            Ok(value) => value,
-            Err(error) => {
-                tracing::warn!("paid download: selected ecash operation failed: {error:#}");
-                return Ok(serde_json::json!({ "error":
-                    "The wallet could not complete this payment. No other wallet was charged. Check the payment status before retrying or changing wallets."
-                }));
-            }
-        };
-        tracing::info!(
-            "paid download: paying {price_sats} sats to {onion} via {used_backend} ecash"
-        );
-
-        let path = format!("/content/{}", content_id);
-        // Surface a real reason instead of the generic sanitized error (#30):
-        // A bearer token must not be replayed after an ambiguous delivery.
-        // A transport error can mean the seller received it without replying.
-        let (response, transport) =
-            match crate::fips::dial::PeerRequest::new(fips_npub.as_deref(), onion, &path)
-                .service(crate::settings::transport::PeerService::PeerFiles)
-                .require_fips()
-                .header("X-Federation-DID", local_did)
-                .header("X-Payment-Token", token_str.clone())
-                .single_delivery()
-                .timeout(std::time::Duration::from_secs(900))
-                .send_content_get(&self.config.data_dir)
-                .await
-            {
-                Ok(v) => v,
-                Err(e) => {
-                    tracing::warn!("paid peer download dial failed for {}: {:#}", onion, e);
-                    // The token was already minted/spent — reclaim it so the buyer
-                    // doesn't lose the value when the seller was simply unreachable.
-                    let refund =
-                        reclaim_spent_ecash(&self.config.data_dir, &token_str, used_backend).await;
-                    return Ok(serde_json::json!({
-                        "error": format!("The purchase could not be completed. {refund}")
-                    }));
-                }
-            };
-        // Record which transport actually reached the peer (B14).
-        if let Err(e) = crate::federation::record_peer_transport(
-            &self.config.data_dir,
-            None,
-            Some(onion),
-            &transport.to_string(),
-        )
-        .await
-        {
-            tracing::warn!("Failed to persist peer transport badge: {e:#}");
-        }
-
-        if response.status() == reqwest::StatusCode::PAYMENT_REQUIRED {
-            // A 402 can mean mint validation, network failure, underpayment,
-            // or an unaccepted mint. Do not invent a mint-mismatch diagnosis.
-            drop(response);
-            tracing::warn!(
-                "paid download: seller rejected {used_backend} payment of {price_sats} sats"
-            );
-            // Reclaim only proofs the mint still considers unspent.
-            let refund = reclaim_spent_ecash(&self.config.data_dir, &token_str, used_backend).await;
-            return Ok(serde_json::json!({
-                "error": format!("The seller could not verify the payment. {refund}")
-            }));
-        }
-
-        if !response.status().is_success() {
-            let status = response.status();
-            let body = bounded_seller_error(response).await;
-            tracing::warn!("paid download: seller {onion} returned {status}");
-            let refund = reclaim_spent_ecash(&self.config.data_dir, &token_str, used_backend).await;
-            return Ok(serde_json::json!({
-                "error": format!("{} {refund}", seller_error_message(status, &body))
-            }));
-        }
-
-        // Capture the content type BEFORE consuming the body so the local cache
-        // can render the right viewer (image vs video) later.
-        let mime_type = response
-            .headers()
-            .get(reqwest::header::CONTENT_TYPE)
-            .and_then(|v| v.to_str().ok())
-            .map(|s| s.split(';').next().unwrap_or(s).trim().to_string())
-            .filter(|s| !s.is_empty())
-            .unwrap_or_else(|| "application/octet-stream".to_string());
-
-        let filename = params
-            .get("filename")
-            .and_then(|v| v.as_str())
-            .unwrap_or(content_id);
-        let item = cache_peer_response(&self.config.data_dir,onion,content_id,filename,&mime_type,price_sats,used_backend,response)
-            .await.context("Paid file delivery could not be saved. Do not send another payment; recover this purchase first")?;
-        if let Err(error) = file_cached_purchase_in_files(&self.config.data_dir, &item).await {
-            tracing::warn!("Purchase cached; optional Files copy failed: {error:#}");
-        }
-        let mut result = cached_purchase_response(
-            &self.config.data_dir,
-            onion,
-            content_id,
-            params
-                .get("cache_only")
-                .and_then(|v| v.as_bool())
-                .unwrap_or(false),
-            price_sats,
-        )
-        .await?;
-        result["ecash_backend"] = serde_json::json!(used_backend);
-        Ok(result)
+        anyhow::bail!("This legacy payment route cannot safely recover interrupted purchases. Open the file in Peers and use Cashu, Lightning or Bitcoin. Fedimint file purchases are unavailable until recoverable payments are supported. No payment was sent.")
     }
 
     /// Owner-authenticated local recovery lookup. No mint, peer request or
@@ -952,64 +767,12 @@ impl RpcHandler {
         }))
     }
 
-    /// Buyer side (#46): ask the selling node to mint a Lightning invoice for a
-    /// paid item so the buyer can pay from any external wallet. Returns the
-    /// bolt11 invoice + payment hash to render as a QR and poll for settlement.
+    /// Retired creation route; existing invoice status and delivery stay available.
     pub(super) async fn handle_content_request_invoice(
         &self,
-        params: Option<serde_json::Value>,
+        _params: Option<serde_json::Value>,
     ) -> Result<serde_json::Value> {
-        let params = params.ok_or_else(|| anyhow::anyhow!("Missing params"))?;
-        let onion = params
-            .get("onion")
-            .and_then(|v| v.as_str())
-            .ok_or_else(|| anyhow::anyhow!("Missing onion address"))?;
-        let content_id = params
-            .get("content_id")
-            .and_then(|v| v.as_str())
-            .ok_or_else(|| anyhow::anyhow!("Missing content_id"))?;
-        if !is_valid_v3_onion(onion) {
-            return Err(anyhow::anyhow!("Invalid v3 onion address"));
-        }
-
-        let (data, _) = self.state_manager.get_snapshot().await;
-        let local_did = crate::identity::did_key_from_pubkey_hex(&data.server_info.pubkey)?;
-        let fips_npub = crate::federation::fips_npub_for_onion(&self.config.data_dir, onion).await;
-
-        // Minting a bolt11 is a tiny request/response — keep it snappy. Cap the
-        // FIPS attempt hard so a cold overlay can't burn the whole budget, and
-        // give Tor a short-but-real window (onion circuits need a few seconds).
-        let path = format!("/content/{}/invoice", content_id);
-        let (response, _transport) =
-            match crate::fips::dial::PeerRequest::new(fips_npub.as_deref(), onion, &path)
-                .service(crate::settings::transport::PeerService::PeerFiles)
-                .header("X-Federation-DID", local_did)
-                .timeout(std::time::Duration::from_secs(25))
-                .fips_timeout(std::time::Duration::from_secs(6))
-                .send_content_get(&self.config.data_dir)
-                .await
-            {
-                Ok(v) => v,
-                Err(e) => {
-                    tracing::warn!("request-invoice dial failed for {}: {:#}", onion, e);
-                    return Ok(serde_json::json!({
-                        "error": "Could not reach the peer over mesh or Tor — it may be offline."
-                    }));
-                }
-            };
-
-        if !response.status().is_success() {
-            let status = response.status();
-            let body = bounded_seller_error(response).await;
-            return Ok(
-                serde_json::json!({ "error": seller_error_message(status, &body), "payment_started": false }),
-            );
-        }
-        let body: serde_json::Value = response
-            .json()
-            .await
-            .context("Failed to parse invoice response")?;
-        Ok(body)
+        anyhow::bail!("Legacy invoice creation is unavailable. Open the file in Peers to use the saved Lightning purchase flow. Recover any existing payment instead of paying again.")
     }
 
     /// Buyer side (#46): poll the selling node for invoice settlement.
@@ -1214,57 +977,9 @@ impl RpcHandler {
     /// Buyer side (#46): ask the seller for a fresh on-chain address to pay.
     pub(super) async fn handle_content_request_onchain(
         &self,
-        params: Option<serde_json::Value>,
+        _params: Option<serde_json::Value>,
     ) -> Result<serde_json::Value> {
-        let params = params.ok_or_else(|| anyhow::anyhow!("Missing params"))?;
-        let onion = params
-            .get("onion")
-            .and_then(|v| v.as_str())
-            .ok_or_else(|| anyhow::anyhow!("Missing onion address"))?;
-        let content_id = params
-            .get("content_id")
-            .and_then(|v| v.as_str())
-            .ok_or_else(|| anyhow::anyhow!("Missing content_id"))?;
-        if !is_valid_v3_onion(onion) {
-            return Err(anyhow::anyhow!("Invalid v3 onion address"));
-        }
-
-        let (data, _) = self.state_manager.get_snapshot().await;
-        let local_did = crate::identity::did_key_from_pubkey_hex(&data.server_info.pubkey)?;
-        let fips_npub = crate::federation::fips_npub_for_onion(&self.config.data_dir, onion).await;
-
-        // Issuing an address is a tiny request/response — fast-fail FIPS, short
-        // Tor window (same budget shape as the invoice path, #6).
-        let path = format!("/content/{}/onchain", content_id);
-        let (response, _transport) =
-            match crate::fips::dial::PeerRequest::new(fips_npub.as_deref(), onion, &path)
-                .service(crate::settings::transport::PeerService::PeerFiles)
-                .header("X-Federation-DID", local_did)
-                .timeout(std::time::Duration::from_secs(25))
-                .fips_timeout(std::time::Duration::from_secs(6))
-                .send_content_get(&self.config.data_dir)
-                .await
-            {
-                Ok(v) => v,
-                Err(e) => {
-                    tracing::warn!("request-onchain dial failed for {}: {:#}", onion, e);
-                    return Ok(serde_json::json!({
-                        "error": "Could not reach the peer over mesh or Tor — it may be offline."
-                    }));
-                }
-            };
-        if !response.status().is_success() {
-            let status = response.status();
-            let body = bounded_seller_error(response).await;
-            return Ok(
-                serde_json::json!({ "error": seller_error_message(status, &body), "payment_started": false }),
-            );
-        }
-        let body: serde_json::Value = response
-            .json()
-            .await
-            .context("Failed to parse onchain response")?;
-        Ok(body)
+        anyhow::bail!("Legacy payment-address creation is unavailable. Open the file in Peers to use the saved Bitcoin purchase flow. Recover any existing payment instead of paying again.")
     }
 
     /// Buyer side (#46): poll the selling node for on-chain payment detection.

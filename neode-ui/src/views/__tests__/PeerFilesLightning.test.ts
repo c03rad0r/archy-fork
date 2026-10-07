@@ -733,6 +733,28 @@ describe('Explicit retry of a confirmed native-only failure',()=>{
 
 
 describe('Supported peer-file ecash choices', () => {
+  it('never selects or spends Fedimint even when funded, including stale callbacks', async () => {
+    vi.mocked(rpcClient.call).mockImplementation(async ({ method }) => {
+      if (method === 'wallet.ecash-balance') return { cashu_sats: 0, fedimint_sats: 1000 }
+      return { items: [], attempts: [], attempt: null }
+    })
+    const { wrapper, vm } = await open()
+    vm.openPayModal({ ...item, access: { paid: { price_sats: 5, accepted: ['fedimint'] } } })
+    await flushPromises()
+    expect(wrapper.text()).toContain('Fedimint file purchases are temporarily unavailable')
+    expect(wrapper.findAll('button').some(button => button.text().includes('Pay from this node’s ecash wallet'))).toBe(false)
+    await vm.prepareEcashPay()
+    expect(vm.ecashPlan.chosen).toBeNull()
+    expect(vm.ecashPlan.fedimint).toBe(1000)
+    await vm.selectEcashBackend('fedimint')
+    expect(vm.ecashPlan.chosen).toBeNull()
+    vm.ecashPlan.chosen = 'fedimint'
+    await vm.confirmEcashPay()
+    expect(vm.purchaseError).toContain('Fedimint file purchases are temporarily unavailable')
+    expect(vi.mocked(rpcClient.call).mock.calls.some(([call]) => ['content.download-peer-paid', 'content.purchase'].includes(call.method))).toBe(false)
+    wrapper.unmount()
+  })
+
   it('does not offer or spend Ark even when its wallet alone covers the file', async () => {
     vi.mocked(rpcClient.call).mockImplementation(async ({ method }) => {
       if (method === 'wallet.ecash-balance') return { cashu_sats: 0, fedimint_sats: 0, ark_sats: 1000 }

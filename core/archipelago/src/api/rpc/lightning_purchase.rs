@@ -41,6 +41,8 @@ impl RpcHandler {
         )
         .await?;
         if matches!(action, "create" | "pay" | "retry") || params.external_exposure {
+            self.ensure_onchain_allows_other_rail(&buyer, &peer.did, &params.content_id)
+                .await?;
             let cashu = crate::content_purchase::Journal::open(&self.config.data_dir).await?;
             anyhow::ensure!(
                 cashu

@@ -1,68 +1,5 @@
 use super::*;
 
-#[tokio::test]
-async fn automatic_ecash_selection_never_spends_another_wallet_after_an_ambiguous_failure() {
-    use std::sync::atomic::{AtomicUsize, Ordering};
-    for cashu_available in [true, false] {
-        let cashu_calls = AtomicUsize::new(0);
-        let fedimint_calls = AtomicUsize::new(0);
-        let selected = select_peer_ecash_backend(None, cashu_available).unwrap();
-        let result = spend_peer_ecash(
-            selected,
-            async {
-                cashu_calls.fetch_add(1, Ordering::SeqCst);
-                anyhow::bail!("mint consumed inputs but response was lost")
-            },
-            async {
-                fedimint_calls.fetch_add(1, Ordering::SeqCst);
-                anyhow::bail!("federation operation outcome unknown")
-            },
-        )
-        .await;
-        assert!(result.is_err());
-        assert_eq!(
-            cashu_calls.load(Ordering::SeqCst),
-            usize::from(cashu_available)
-        );
-        assert_eq!(
-            fedimint_calls.load(Ordering::SeqCst),
-            usize::from(!cashu_available)
-        );
-    }
-}
-
-#[tokio::test]
-async fn explicit_ecash_choice_is_preserved_and_unselected_operation_is_not_polled() {
-    for (method, expected) in [("cashu", "cashu-token"), ("fedimint", "fedimint-notes")] {
-        let selected = select_peer_ecash_backend(Some(method), method != "cashu").unwrap();
-        let result = spend_peer_ecash(
-            selected,
-            async {
-                assert_eq!(method, "cashu");
-                Ok("cashu-token".to_owned())
-            },
-            async {
-                assert_eq!(method, "fedimint");
-                Ok("fedimint-notes".to_owned())
-            },
-        )
-        .await
-        .unwrap();
-        assert_eq!(result, (expected.to_owned(), method));
-    }
-    for unknown in ["", "ecash", "invalid", "lightning"] {
-        assert!(select_peer_ecash_backend(Some(unknown), true).is_err());
-    }
-    assert_eq!(
-        select_peer_ecash_backend(Some("auto"), true).unwrap(),
-        PeerEcashBackend::Cashu
-    );
-    assert_eq!(
-        select_peer_ecash_backend(Some("auto"), false).unwrap(),
-        PeerEcashBackend::Fedimint
-    );
-}
-
 #[test]
 fn first_and_cached_paid_downloads_have_the_same_client_payload_contract() {
     use base64::Engine;
@@ -415,4 +352,84 @@ async fn repeated_share_returns_stable_id_and_complete_policy() {
             .access,
         AccessControl::Paid { price_sats: 2, .. }
     ));
+}
+
+#[tokio::test]
+async fn legacy_payment_routes_refuse_fresh_spending_but_preserve_paid_cache() {
+    let data = tempfile::tempdir().unwrap();
+    let mut config = crate::config::Config::default();
+    config.data_dir = data.path().to_path_buf();
+    let handler = RpcHandler::new(
+        config,
+        std::sync::Arc::new(crate::state::StateManager::new()),
+        std::sync::Arc::new(crate::monitoring::MetricsStore::new()),
+        crate::session::SessionStore::new_for_tests(data.path().join("sessions.json")),
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+    let onion = format!("{}.onion", "a".repeat(56));
+    for method in ["cashu", "fedimint", "auto"] {
+        let error = handler
+            .handle_content_download_peer_paid(Some(serde_json::json!({
+                "onion": onion, "content_id": "file", "price_sats": 1,
+                "method": method, "cache_only": true
+            })))
+            .await
+            .unwrap_err();
+        assert!(
+            error.to_string().contains("No payment was sent"),
+            "{error:#}"
+        );
+    }
+    assert!(handler
+        .handle_content_request_invoice(None)
+        .await
+        .unwrap_err()
+        .to_string()
+        .contains("saved Lightning purchase flow"));
+    assert!(handler
+        .handle_content_request_onchain(None)
+        .await
+        .unwrap_err()
+        .to_string()
+        .contains("saved Bitcoin purchase flow"));
+    assert!(!data.path().join("wallet").exists());
+    crate::content_owned::record_purchase(
+        data.path(),
+        &onion,
+        "file",
+        "paid.txt",
+        "text/plain",
+        b"previously paid",
+        1,
+        "fedimint",
+        "2026-10-01T00:00:00Z",
+    )
+    .await
+    .unwrap();
+    for cache_only in [true, false] {
+        let result = handler
+            .handle_content_download_peer_paid(Some(serde_json::json!({
+                "onion": onion, "content_id": "file", "price_sats": 1,
+                "method": "fedimint", "cache_only": cache_only
+            })))
+            .await
+            .unwrap();
+        assert_eq!(result["paid_sats"], 0);
+        assert_eq!(result["already_owned"], true);
+        if cache_only {
+            assert_eq!(result["owned"], true);
+        } else {
+            use base64::Engine;
+            assert_eq!(
+                base64::engine::general_purpose::STANDARD
+                    .decode(result["data"].as_str().unwrap())
+                    .unwrap(),
+                b"previously paid"
+            );
+        }
+    }
+    assert!(!data.path().join("wallet").exists());
 }
