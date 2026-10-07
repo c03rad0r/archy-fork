@@ -307,6 +307,42 @@ impl<B: DrainBarrier> SystemdSupervisor<B> {
             barrier,
         })
     }
+    /// A reviewed plan may replace a mutable catalog spelling with its exact
+    /// locally verified digest, but never select different image bytes.
+    pub(crate) async fn reviewed_targets(&self, targets: &[Target]) -> Result<Vec<Target>> {
+        let mut refs = Vec::new();
+        for target in targets {
+            let plan = self
+                .plans
+                .get(&target.name)
+                .context("Missing reviewed managed target")?;
+            let reference = plan
+                .prepared
+                .manifest
+                .app
+                .container
+                .image
+                .as_ref()
+                .context("Reviewed image missing")?;
+            anyhow::ensure!(
+                reference.rsplit_once("@sha256:").is_some_and(
+                    |(_, hash)| hash.len() == 64 && hash.bytes().all(|b| b.is_ascii_hexdigit())
+                ),
+                "Managed target must use an immutable digest"
+            );
+            refs.push((target.name.clone(), reference.clone()));
+        }
+        let resolved = Podman::targets(&refs, false).await?;
+        anyhow::ensure!(
+            resolved
+                .iter()
+                .zip(targets)
+                .all(|(reviewed, catalog)| reviewed.name == catalog.name
+                    && reviewed.image == catalog.image),
+            "Reviewed managed image differs from prepared catalog image"
+        );
+        Ok(resolved)
+    }
     fn path(&self, name: &str) -> Result<PathBuf> {
         anyhow::ensure!(
             !name.is_empty()

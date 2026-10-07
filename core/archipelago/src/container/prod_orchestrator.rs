@@ -3055,6 +3055,7 @@ impl ProdContainerOrchestrator {
     }
 
     async fn install_fresh_with_pin(&self, lm: &LoadedManifest, pinned: bool) -> Result<()> {
+        anyhow::ensure!(super::supervised_update::installed_unit(&self.data_dir, &compute_container_name(&lm.manifest))?.is_none(), "Reviewed managed runtime is missing; restore its saved unit/image explicitly instead of recreating from the current catalog");
         self.ensure_app_secrets(&lm.manifest.app.id).await?;
         let mut resolved_manifest = lm.manifest.clone();
         self.resolve_dynamic_env(&mut resolved_manifest).await?;
@@ -3354,6 +3355,9 @@ impl ProdContainerOrchestrator {
         lm: &LoadedManifest,
         name: &str,
     ) -> Result<Option<ReconcileAction>> {
+        if super::supervised_update::installed_unit(&self.data_dir, name)?.is_some() {
+            return Ok(None); // Never remove an original runtime to migrate it from changed catalog data.
+        }
         // Skip companion apps — bitcoin-ui / electrs-ui / lnd-ui have shipped
         // via Quadlet since v1.7.41 (companion.rs renders the unit). Running
         // migration for them races companion rendering: when migration ran
@@ -3455,6 +3459,15 @@ impl ProdContainerOrchestrator {
     async fn sync_quadlet_unit(&self, lm: &LoadedManifest, name: &str) -> Result<()> {
         if super::update_transaction::is_held(&self.data_dir, name)? {
             return Ok(()); // Preserve the recovered unit instead of current catalog drift.
+        }
+        if let Some((body, mode)) = super::supervised_update::installed_unit(&self.data_dir, name)?
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let path = quadlet::unit_dir().await?.join(format!("{name}.container"));
+            let meta = std::fs::symlink_metadata(&path)
+                .context("Saved managed unit is missing; recovery required")?;
+            anyhow::ensure!(meta.is_file() && meta.permissions().mode() & 0o777 == mode && std::fs::read_to_string(&path)? == body, "Reviewed managed unit changed; preserve it for explicit reconciliation instead of overwriting operator configuration");
+            return Ok(());
         }
         // Companions: same reasoning as migrate_to_quadlet_if_needed —
         // companion.rs renders these units with a different shape, syncing
@@ -5363,6 +5376,7 @@ impl ContainerOrchestrator for ProdContainerOrchestrator {
             let _guard = lock.lock().await;
             for name in [app_id.to_string(), format!("archy-{app_id}")] {
                 self.remove_quadlet_unit_if_present(&name).await?;
+                super::supervised_update::forget_installed(&self.data_dir, &name)?;
             }
             self.state.write().await.disabled.insert(app_id.to_string());
             super::staged_update::clear(&self.data_dir, app_id).await?;
@@ -5422,6 +5436,7 @@ impl ContainerOrchestrator for ProdContainerOrchestrator {
         crate::crash_recovery::clear_installed(&self.data_dir, app_id).await;
         super::staged_update::clear(&self.data_dir, app_id).await?;
         super::staged_update::clear_installed(&self.data_dir, app_id).await?;
+        super::supervised_update::forget_installed(&self.data_dir, &name)?;
         Ok(())
     }
 

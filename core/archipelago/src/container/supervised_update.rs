@@ -513,6 +513,91 @@ fn save(guard: &Guard, record: &Journal) -> Result<()> {
     }
     result
 }
+// The committed unit is installation evidence, not a cache of today's catalog.
+// Keep it until explicit uninstall or the next reviewed managed transaction.
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct InstalledUnit {
+    schema: u8,
+    operation: String,
+    name: String,
+    body: String,
+    mode: u32,
+}
+fn installed_path(data: &Path, name: &str) -> Result<PathBuf> {
+    anyhow::ensure!(simple(name), "Invalid managed member name");
+    Ok(data
+        .join("update-transactions/installed-units")
+        .join(format!("{name}.json")))
+}
+fn publish_installed(guard: &Guard, record: &Journal) -> Result<()> {
+    anyhow::ensure!(
+        record.phase == Phase::Committed,
+        "Only committed units may be published"
+    );
+    let dir = guard.directory().join("installed-units");
+    match std::fs::DirBuilder::new().mode(0o700).create(&dir) {
+        Ok(()) => {}
+        Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {}
+        Err(e) => return Err(e.into()),
+    }
+    anyhow::ensure!(
+        std::fs::symlink_metadata(&dir)?.is_dir(),
+        "Invalid installed unit directory"
+    );
+    for member in &record.members {
+        let saved = InstalledUnit {
+            schema: 1,
+            operation: record.id.clone(),
+            name: member.original.name.clone(),
+            body: member.target_body.clone(),
+            mode: member.original.file_mode,
+        };
+        let temporary = dir.join(format!(".{}.tmp", uuid::Uuid::new_v4()));
+        let mut file = std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .mode(0o600)
+            .open(&temporary)?;
+        file.write_all(&serde_json::to_vec(&saved)?)?;
+        file.sync_all()?;
+        std::fs::rename(&temporary, dir.join(format!("{}.json", saved.name)))?;
+    }
+    std::fs::File::open(&dir)?.sync_all()?;
+    std::fs::File::open(guard.directory())?.sync_all()?;
+    Ok(())
+}
+pub(crate) fn installed_unit(data: &Path, name: &str) -> Result<Option<(String, u32)>> {
+    let path = installed_path(data, name)?;
+    let meta = match std::fs::symlink_metadata(&path) {
+        Ok(meta) => meta,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(e) => return Err(e.into()),
+    };
+    anyhow::ensure!(
+        meta.is_file() && meta.len() <= 4 * 1024 * 1024,
+        "Invalid installed managed recipe"
+    );
+    let saved: InstalledUnit = serde_json::from_slice(&std::fs::read(path)?)?;
+    anyhow::ensure!(
+        saved.schema == 1
+            && saved.name == name
+            && uuid::Uuid::parse_str(&saved.operation)?.to_string() == saved.operation
+            && saved.mode & !0o777 == 0
+            && saved.mode & 0o022 == 0,
+        "Invalid installed managed recipe binding"
+    );
+    Ok(Some((saved.body, saved.mode)))
+}
+pub(crate) fn forget_installed(data: &Path, name: &str) -> Result<()> {
+    let path = installed_path(data, name)?;
+    match std::fs::remove_file(&path) {
+        Ok(()) => std::fs::File::open(path.parent().unwrap())?.sync_all()?,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+        Err(e) => return Err(e.into()),
+    };
+    Ok(())
+}
 fn records(guard: &Guard) -> Result<Vec<Journal>> {
     let dir = root(guard)?;
     let mut records = Vec::new();
@@ -673,6 +758,10 @@ async fn apply(guard: &Guard, record: &mut Journal, supervisor: &impl Supervisor
     record.cleanup_done = false;
     save(guard, record)?;
     for member in &record.members {
+        anyhow::ensure!(
+            supervisor.read(&member.original.name).await? == member.target_body,
+            "Reviewed unit changed before target start; recovery required"
+        );
         supervisor.start(&member.original.name).await?;
         supervisor
             .target_hooks(&member.original.name, &member.target_manifest)
@@ -690,6 +779,7 @@ async fn apply(guard: &Guard, record: &mut Journal, supervisor: &impl Supervisor
     }
     record.phase = Phase::Committed;
     save(guard, record)?;
+    publish_installed(guard, record)?;
     supervisor
         .release_barrier(&record.id, Completion::Committed)
         .await?;
@@ -782,6 +872,10 @@ async fn restore(guard: &Guard, record: &mut Journal, supervisor: &impl Supervis
     supervisor.reload().await?;
     for member in &record.members {
         if member.original.running {
+            anyhow::ensure!(
+                supervisor.read(&member.original.name).await? == member.pinned_original_body,
+                "Original recovery unit changed before start"
+            );
             supervisor.start(&member.original.name).await?;
         }
         let observed = supervisor.observed(&member.original.name).await?;
@@ -823,6 +917,9 @@ pub(crate) async fn recover(guard: &Guard, supervisor: &impl Supervisor) -> Resu
         }
         match record.phase {
             Phase::Committed | Phase::Aborted => {
+                if record.phase == Phase::Committed {
+                    publish_installed(guard, &record)?;
+                }
                 let outcome = if record.phase == Phase::Committed {
                     Completion::Committed
                 } else {
@@ -1120,6 +1217,28 @@ mod tests {
         assert!(!super::super::update_transaction::is_held(root.path(), "movie").unwrap());
         recover(&guard, &runtime).await.unwrap();
         assert_eq!(*runtime.calls.lock().unwrap(), ["snapshot-original"]);
+    }
+    #[tokio::test]
+    async fn committed_unit_survives_restart_until_explicit_uninstall() {
+        let root = tempfile::tempdir().unwrap();
+        let guard = Guard::acquire(root.path()).unwrap();
+        let runtime = Mock::new();
+        execute(&guard, "movie", &[Mock::target()], &runtime)
+            .await
+            .unwrap();
+        let saved = installed_unit(root.path(), "movie").unwrap().unwrap();
+        assert_eq!(saved.0, *runtime.body.lock().unwrap());
+        assert!(saved.0.contains("OPERATOR_VALUE=retained"));
+        runtime.calls.lock().unwrap().clear();
+        recover(&guard, &runtime).await.unwrap();
+        assert_eq!(
+            installed_unit(root.path(), "movie").unwrap().unwrap(),
+            saved
+        );
+        assert!(runtime.calls.lock().unwrap().is_empty());
+        forget_installed(root.path(), "movie").unwrap();
+        recover(&guard, &runtime).await.unwrap();
+        assert!(installed_unit(root.path(), "movie").unwrap().is_none());
     }
     #[tokio::test]
     async fn committed_restart_releases_only_its_own_hold_without_runtime_mutation() {

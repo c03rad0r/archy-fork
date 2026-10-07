@@ -342,6 +342,7 @@ impl RpcHandler {
                 LegacyIndeeMaintenance::new(guard)?,
             )
             .await?;
+            let targets = adapter.reviewed_targets(&targets).await?;
             crate::container::supervised_update::execute(guard, package_id, &targets, &adapter)
                 .await
         } else {
