@@ -256,3 +256,24 @@ also includes the deployed Lightning retry compatibility fix; native player and
 banner changes remain present. The current live V4V browser qualification follows
 the first-visit intro and explicit native identity/event consent before checking
 actual login success; earlier click timeouts are retained as failed test evidence.
+
+### Real native login and retained playback qualified
+
+The privately deployed managed app passed real dashboard browser qualification at
+390px and 1440px. Each fresh session completed the app intro, native identity
+selection and explicit consent for one authentication event, then received HTTP
+200 from the app login endpoint. The alpha password field was absent.
+
+Two existing bundled demo tracks were used with muted output and payment requests
+blocked by the qualification harness. Closing the app retained playing audio and
+showed the native bar. Pause/play, next, previous and shuffle controlled the app's
+own player, track artwork matched, and reopening retained the same iframe and
+playback position. No payment or publication was performed.
+
+Evidence: `/tmp/archy-v4v-native-live-390-catalog-ready.log` and
+`/tmp/archy-v4v-native-live-1440.log`. Earlier failures exposed harness assumptions:
+the intro blocked login, outgoing consent controls remained visible during their
+leave animation, and the song catalog loaded after bridge initialization. Hidden
+iframe checks now use interval polling because animation-frame polling stops
+when hidden. Timeouts were not increased. These browser passes do not establish
+physical companion acceptance or replace the remaining lifecycle checks.

@@ -7,6 +7,14 @@ module.exports = async function qualifyPlayback(page, appOrigin, proof) {
   await app.waitForFunction(() => window.PulsewireLegacy?.getReactBridge?.(), undefined, { timeout: 30000 });
   const later = app.getByRole('button', { name: 'Not now', exact: true });
   if (await later.isVisible().catch(() => false)) await later.click();
+  await app.waitForFunction(() => {
+    const bridge = window.PulsewireLegacy.getReactBridge();
+    return bridge.getState().releases.filter(release => {
+      try { const url = new URL(bridge.helpers.releasePlayableUrl(release), location.href);
+        return url.origin === location.origin && url.pathname.startsWith('/media/dev-audio/');
+      } catch { return false; }
+    }).length >= 2;
+  }, undefined, { timeout: 30000 });
   const tracks = await app.evaluate(() => {
     const bridge = window.PulsewireLegacy.getReactBridge();
     return bridge.getState().releases.filter(release => {
@@ -27,21 +35,23 @@ module.exports = async function qualifyPlayback(page, appOrigin, proof) {
   await app.waitForFunction(() => window.__qualificationMedia?.some(audio => !audio.paused && audio.readyState >= 2 && audio.currentTime > 0), undefined, { timeout: 30000 });
   const initial = await app.evaluate(() => window.__qualificationMedia.find(audio => !audio.paused).currentTime);
   await page.getByRole('button', { name: 'Close', exact: true }).click();
+  const backupLater = page.getByRole('button', { name: 'Later', exact: true });
+  if (await backupLater.isVisible().catch(() => false)) await backupLater.click();
   const bar = page.locator('.audio-player-bar');
   await expect(bar).toBeVisible();
   await expect(bar).toContainText(tracks[0].title);
-  await app.waitForFunction(time => window.__qualificationMedia.some(audio => !audio.paused && audio.currentTime > time + 1), initial, { timeout: 15000 });
+  await app.waitForFunction(time => window.__qualificationMedia.some(audio => !audio.paused && audio.currentTime > time + 1), initial, { timeout: 15000, polling: 100 });
   await page.getByRole('button', { name: 'Pause audio', exact: true }).click();
-  await app.waitForFunction(() => window.__qualificationMedia.every(audio => audio.paused));
+  await app.waitForFunction(() => window.__qualificationMedia.every(audio => audio.paused), undefined, { polling: 100 });
   await page.getByRole('button', { name: 'Play audio', exact: true }).click();
-  await app.waitForFunction(() => window.__qualificationMedia.some(audio => !audio.paused));
+  await app.waitForFunction(() => window.__qualificationMedia.some(audio => !audio.paused), undefined, { polling: 100 });
   await page.getByRole('button', { name: 'Next track', exact: true }).click();
-  await app.waitForFunction(id => window.PulsewireLegacy.getReactBridge().helpers.activePlayerRelease()?.id === id, tracks[1].id);
+  await app.waitForFunction(id => window.PulsewireLegacy.getReactBridge().helpers.activePlayerRelease()?.id === id, tracks[1].id, { polling: 100 });
   await expect(bar).toContainText(tracks[1].title);
   // Previous after >3 seconds intentionally restarts the current song in V4V.
-  await app.waitForFunction(() => window.__qualificationMedia.some(audio => !audio.paused && audio.currentTime > 4));
+  await app.waitForFunction(() => window.__qualificationMedia.some(audio => !audio.paused && audio.currentTime > 4), undefined, { polling: 100 });
   await page.getByRole('button', { name: 'Previous track', exact: true }).click();
-  await app.waitForFunction(() => window.__qualificationMedia.some(audio => !audio.paused && audio.currentTime < 3));
+  await app.waitForFunction(() => window.__qualificationMedia.some(audio => !audio.paused && audio.currentTime < 3), undefined, { polling: 100 });
   await page.getByRole('button', { name: 'Shuffle', exact: true }).click();
   await expect(page.getByRole('button', { name: 'Shuffle', exact: true })).toHaveAttribute('aria-pressed', 'true');
   expect(await app.evaluate(() => window.PulsewireLegacy.getReactBridge().getState().ui.shuffleEnabled)).toBe(true);
