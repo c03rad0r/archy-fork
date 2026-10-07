@@ -141,6 +141,30 @@ describe('useAppLauncherStore', () => {
     })
   })
 
+  it.each(['active', 'closed', 'superseded', 'reopened'])('binds late media retention to the original launch: %s', state => {
+    const id = 'late-media-fixture'
+    __setSignedCatalogForTests({apps:{[id]:{version:'1',manifest:{app:{id,metadata:{launch:{media_controls:'archipelago-v1'}}}}}}} as never)
+    const app = useAppStore()
+    app.data = {'package-data':{}} as never
+    const launcher = useAppLauncherStore()
+    launcher.openSession(id, {skipCredentialPrompt:true})
+    expect(launcher.panelAppId).toBe(id)
+    const generation = launcher.mediaSessionGeneration(id)
+    expect(launcher.mediaAppId).toBeNull()
+    app.data = {'package-data':{[id]:{state:'running','ui-ready':true,manifest:{id,version:'1'}}}} as never
+    if (state === 'closed' || state === 'reopened') launcher.closePanel()
+    if (state === 'superseded') launcher.openSession('mempool', {skipCredentialPrompt:true})
+    if (state === 'reopened') { launcher.openSession(id, {skipCredentialPrompt:true}); launcher.mediaAppId=null }
+    expect(launcher.retainMediaSession(id,'1',generation)).toBe(state === 'active')
+    expect(launcher.mediaAppId).toBe(state === 'active' ? id : null)
+    if (state === 'active') {
+      launcher.closePanel()
+      expect(launcher.mediaAppId).toBe(id)
+      launcher.openSession(id)
+      expect(launcher.panelAppId).toBe(id)
+    }
+  })
+
   it.each(['close', 'another-app', 'none'])('waits for node demo launch policy, cancellation: %s', async cancel => {
     const id = `node-demo-delayed-${cancel}`
     const previousFetch = globalThis.fetch

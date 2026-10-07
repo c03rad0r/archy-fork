@@ -20,7 +20,7 @@ vi.mock('vue-router', () => ({
 }))
 
 vi.mock('@/stores/appLauncher', () => ({
-  useAppLauncherStore: () => ({ panelAppId: null }),
+  useAppLauncherStore: () => ({ panelAppId: null, mediaSessionGeneration: () => null, retainMediaSession: () => false }),
 }))
 
 vi.mock('@/stores/app', () => ({

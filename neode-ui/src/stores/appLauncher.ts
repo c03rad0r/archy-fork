@@ -227,6 +227,20 @@ export const useAppLauncherStore = defineStore('appLauncher', () => {
   let launchGeneration = 0
   let mediaVersion: string | null = null
 
+  /** Capture the active launch, so a late frame callback cannot retain a
+   * closed session or a newer launch of the same app. */
+  function mediaSessionGeneration(appId: string): number | null {
+    return panelAppId.value === appId ? launchGeneration : null
+  }
+  function retainMediaSession(appId: string, version: string, generation: number | null): boolean {
+    const installed = useAppStore().data?.['package-data']?.[appId]
+    if (generation === null || generation !== launchGeneration || panelAppId.value !== appId
+      || installed?.manifest.version !== version || !appHasMediaBridge(appId, version)) return false
+    mediaAppId.value = appId
+    mediaVersion = version
+    return true
+  }
+
   function openSessionNow(appId: string, opts: LaunchOptions = {}) {
     const pkg = useAppStore().data?.['package-data']?.[appId]
     if (pkg?.['ui-ready'] === false) {
@@ -632,6 +646,8 @@ export const useAppLauncherStore = defineStore('appLauncher', () => {
     closePanel,
     panelAppId,
     mediaAppId,
+    mediaSessionGeneration,
+    retainMediaSession,
     panelPath,
     credentialPrompt,
     cancelCredentialLaunch,

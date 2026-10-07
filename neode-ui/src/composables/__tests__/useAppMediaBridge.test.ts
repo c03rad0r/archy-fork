@@ -2,18 +2,42 @@ import { mount } from '@vue/test-utils'
 import { defineComponent, nextTick, ref, shallowRef } from 'vue'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 const fixture = vi.hoisted(() => ({
-  allowed: true, version: '1',
+  allowed: true, version: '1', versionState: null as {value: string | undefined} | null,
   player: { updateExternal: vi.fn(), detachExternal: vi.fn(), releaseExternal: vi.fn(), setExternalVisible: vi.fn() },
-  launcher: { mediaAppId: 'node-demo-v4v' as string | null, panelAppId: null as string | null, openSession: vi.fn() },
+  launcher: { mediaAppId: 'node-demo-v4v' as string | null, panelAppId: null as string | null, openSession: vi.fn(), mediaSessionGeneration: vi.fn(() => 1), retainMediaSession: vi.fn(() => true) },
 }))
-vi.mock('@/stores/app', () => ({useAppStore:()=>({data:{'package-data':{'node-demo-v4v':{manifest:{get version(){return fixture.version}}}}}})}))
+vi.mock('@/stores/app', () => ({useAppStore:()=>({data:{'package-data':{'node-demo-v4v':{manifest:{get version(){return fixture.versionState ? fixture.versionState.value : fixture.version}}}}}})}))
 vi.mock('../useAudioPlayer', () => ({ useAudioPlayer: () => fixture.player }))
 vi.mock('@/stores/appLauncher', () => ({ useAppLauncherStore: () => fixture.launcher }))
 vi.mock('@/views/discover/curatedApps', () => ({ appHasMediaBridge: () => fixture.allowed }))
 import { useAppMediaBridge } from '../useAppMediaBridge'
 
 describe('app media session boundary', () => {
-  beforeEach(() => { vi.clearAllMocks(); fixture.version = '1'; fixture.allowed = true; fixture.launcher.mediaAppId = 'node-demo-v4v'; fixture.launcher.panelAppId = null })
+  beforeEach(() => { vi.clearAllMocks(); fixture.version = '1'; fixture.versionState = null; fixture.allowed = true; fixture.launcher.mediaAppId = 'node-demo-v4v'; fixture.launcher.panelAppId = null })
+  it('admits and retains the original active frame when installed state arrives after media-ready', async () => {
+    fixture.versionState = ref<string | undefined>(undefined)
+    fixture.launcher.mediaAppId = null
+    const child = {postMessage: vi.fn()}
+    const visible = ref(true)
+    let bridge!: ReturnType<typeof useAppMediaBridge>
+    const wrapper = mount(defineComponent({setup() {
+      bridge = useAppMediaBridge(ref('node-demo-v4v'), ref('https://node.test:7475/'),
+        shallowRef({contentWindow: child} as unknown as HTMLIFrameElement), visible)
+      return () => null
+    }}))
+    bridge.handle({source:child, origin:'https://node.test:7475', data:{type:'archipelago:media-ready',version:1}} as unknown as MessageEvent)
+    expect(child.postMessage).not.toHaveBeenCalled()
+    fixture.versionState.value = '1'
+    await nextTick()
+    expect(fixture.launcher.retainMediaSession).toHaveBeenCalledWith('node-demo-v4v','1',1)
+    const session = child.postMessage.mock.calls[0]![0].session
+    visible.value = false
+    bridge.handle({source:child, origin:'https://node.test:7475', data:{type:'archipelago:media-state',version:1,
+      session,available:true,title:'Song',artist:'Artist',playing:true,position:4,duration:20}} as unknown as MessageEvent)
+    expect(fixture.player.updateExternal).toHaveBeenCalledWith(expect.anything(),expect.objectContaining({playing:true}),false)
+    wrapper.unmount()
+  })
+
   it('checks frame, origin, nonce and finite state before attaching controls', async () => {
     const child = { postMessage: vi.fn() }
     const visible = ref(false)

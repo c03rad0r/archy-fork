@@ -8,6 +8,8 @@ export function useAppMediaBridge(appId: Ref<string>, url: Ref<string>, frame: R
   const player = useAudioPlayer()
   const launcher = useAppLauncherStore()
   const app = useAppStore()
+  const launchGeneration = launcher.mediaSessionGeneration(appId.value)
+  let everAdmitted = false
   const installedVersion = () => app.data?.['package-data']?.[appId.value]?.manifest?.version
   let admitted: { source: Window; origin: string; appId: string; version: string } | null = null
   const session = Array.from(crypto.getRandomValues(new Uint8Array(16)), byte => byte.toString(16).padStart(2, '0')).join('')
@@ -34,6 +36,10 @@ export function useAppMediaBridge(appId: Ref<string>, url: Ref<string>, frame: R
       const version = installedVersion(), source = frame.value?.contentWindow
       if (!version || !source || !origin() || !appHasMediaBridge(appId.value, version)) return
       admitted = {source,origin:origin(),appId:appId.value,version}
+      everAdmitted = true
+      // Installed state can arrive after iframe load. Retention belongs to this
+      // actual admitted launch, not only the package snapshot at button-click.
+      launcher.retainMediaSession(appId.value, version, launchGeneration)
     }
     admitted.source.postMessage({ type: 'archipelago:media-connect', version: 1, session }, admitted.origin)
   }
@@ -64,7 +70,10 @@ export function useAppMediaBridge(appId: Ref<string>, url: Ref<string>, frame: R
     player.updateExternal(controller, state, visible.value)
   }
   watch(visible, shown => player.setExternalVisible(id, shown))
-  watch([appId, url, frame, installedVersion], () => { if (admitted && !matchesAdmission()) release() }, {flush:'sync'})
+  watch([appId, url, frame, installedVersion], () => {
+    if (admitted && !matchesAdmission()) release()
+    else if (!everAdmitted && installedVersion()) connect()
+  }, {flush:'sync'})
   onBeforeUnmount(release)
   return { connect, handle }
 }

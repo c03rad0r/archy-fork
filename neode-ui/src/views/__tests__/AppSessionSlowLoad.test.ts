@@ -5,7 +5,7 @@ import { beforeEach, afterEach, describe, expect, it, vi } from 'vitest'
 import AppSession from '../AppSession.vue'
 import { useAppStore } from '@/stores/app'
 vi.mock('vue-router', () => ({ useRoute: () => ({ params: { appId: 'indeedhub' }, query: {}, fullPath: '/dashboard/app-session/indeedhub' }), useRouter: () => ({ replace: vi.fn(() => Promise.resolve()), push: vi.fn(() => Promise.resolve()) }) }))
-vi.mock('@/stores/appLauncher', () => ({ useAppLauncherStore: () => ({ panelAppId: null }) }))
+vi.mock('@/stores/appLauncher', () => ({ useAppLauncherStore: () => ({ panelAppId: null, mediaSessionGeneration: () => null, retainMediaSession: () => false }) }))
 vi.mock('@/stores/app', async () => {
   const { reactive } = await import('vue')
   const state = reactive({ data: { 'package-data': {} } })
