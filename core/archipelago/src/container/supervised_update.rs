@@ -46,6 +46,7 @@ enum Phase {
     Aborted,
     Editing,
     Starting,
+    Restoring,
     Committed,
     Restored,
 }
@@ -57,19 +58,39 @@ struct Journal {
     package: String,
     phase: Phase,
     members: Vec<Member>,
+    #[serde(default)]
+    cleanup_done: bool,
+    #[serde(default)]
+    target_startup_began: bool,
+}
+
+#[derive(Clone, Copy, Debug, serde::Serialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum Completion {
+    Committed,
+    Restored,
+    Aborted,
 }
 
 pub(crate) trait Supervisor: Sync {
-    /// Admission must be fenced and in-flight application work drained under
-    /// this durable operation before snapshots. A paused process is not proof.
+    /// Called only after every original writable recovery image is durable.
+    /// Legacy acquisition may gracefully stop AutoRemove writers, so its
+    /// destructive obligation is journaled before entering the controller.
+    /// It must fence/drain writers and finish coherent mounted-data backup;
+    /// image snapshots alone never establish application consistency.
     /// Acquisition/release are idempotent and operation-owned across restart.
     fn begin_barrier(
         &self,
         operation: &str,
         originals: &[Unit],
+        recovery: bool,
     ) -> impl Future<Output = Result<()>> + Send;
     fn verify_barrier(&self, operation: &str) -> impl Future<Output = Result<()>> + Send;
-    fn release_barrier(&self, operation: &str) -> impl Future<Output = Result<()>> + Send;
+    fn release_barrier(
+        &self,
+        operation: &str,
+        outcome: Completion,
+    ) -> impl Future<Output = Result<()>> + Send;
     /// Only an internal reviewed signed-manifest planner may supply this value;
     /// browser parameters must never become a unit body or hook recipe.
     fn prepare_target(
@@ -518,9 +539,8 @@ fn records(guard: &Guard) -> Result<Vec<Journal>> {
 }
 pub(crate) fn require_clear(guard: &Guard) -> Result<()> {
     anyhow::ensure!(
-        records(guard)?
-            .iter()
-            .all(|r| matches!(r.phase, Phase::Committed | Phase::Restored | Phase::Aborted)),
+        records(guard)?.iter().all(|r| r.cleanup_done
+            && matches!(r.phase, Phase::Committed | Phase::Restored | Phase::Aborted)),
         "A supervised update needs recovery first"
     );
     Ok(())
@@ -574,6 +594,8 @@ pub(crate) async fn execute(
         package: package.into(),
         phase: Phase::Prepared,
         members,
+        cleanup_done: false,
+        target_startup_began: false,
     };
     save(guard, &record)?;
     for member in &record.members {
@@ -593,12 +615,6 @@ pub(crate) async fn execute(
     Ok(())
 }
 async fn apply(guard: &Guard, record: &mut Journal, supervisor: &impl Supervisor) -> Result<()> {
-    let originals: Vec<_> = record
-        .members
-        .iter()
-        .map(|member| member.original.clone())
-        .collect();
-    supervisor.begin_barrier(&record.id, &originals).await?;
     for index in 0..record.members.len() {
         let member = &record.members[index];
         supervisor.validate_original_file(&member.original).await?;
@@ -606,7 +622,6 @@ async fn apply(guard: &Guard, record: &mut Journal, supervisor: &impl Supervisor
             supervisor.read(&member.original.name).await? == member.original.body,
             "Unit edited before update; originals retained"
         );
-        supervisor.verify_barrier(&record.id).await?;
         let image = supervisor
             .snapshot(&member.original, &record.id, &member.original_tag)
             .await?;
@@ -626,9 +641,19 @@ async fn apply(guard: &Guard, record: &mut Journal, supervisor: &impl Supervisor
         // The image acknowledgement becomes durable before any original stop.
         save(guard, record)?;
     }
-    supervisor.verify_barrier(&record.id).await?;
     record.phase = Phase::Editing;
     save(guard, record)?;
+    // The legacy controller may stop original writers. Every writable layer
+    // is already recoverable and this obligation survives cancellation.
+    let originals: Vec<_> = record
+        .members
+        .iter()
+        .map(|member| member.original.clone())
+        .collect();
+    supervisor
+        .begin_barrier(&record.id, &originals, false)
+        .await?;
+    supervisor.verify_barrier(&record.id).await?;
     for member in record.members.iter().rev() {
         supervisor.verify_barrier(&record.id).await?;
         supervisor.stop(&member.original.name).await?;
@@ -644,6 +669,8 @@ async fn apply(guard: &Guard, record: &mut Journal, supervisor: &impl Supervisor
     }
     supervisor.reload().await?;
     record.phase = Phase::Starting;
+    record.target_startup_began = true;
+    record.cleanup_done = false;
     save(guard, record)?;
     for member in &record.members {
         supervisor.start(&member.original.name).await?;
@@ -663,11 +690,14 @@ async fn apply(guard: &Guard, record: &mut Journal, supervisor: &impl Supervisor
     }
     record.phase = Phase::Committed;
     save(guard, record)?;
-    supervisor.release_barrier(&record.id).await?;
+    supervisor
+        .release_barrier(&record.id, Completion::Committed)
+        .await?;
     for member in &record.members {
         guard.release_hold(&member.original.name, &record.id)?;
     }
-    Ok(())
+    record.cleanup_done = true;
+    save(guard, record)
 }
 async fn restore(guard: &Guard, record: &mut Journal, supervisor: &impl Supervisor) -> Result<()> {
     if record.phase == Phase::Prepared {
@@ -689,12 +719,25 @@ async fn restore(guard: &Guard, record: &mut Journal, supervisor: &impl Supervis
         }
         record.phase = Phase::Aborted;
         save(guard, record)?;
-        supervisor.release_barrier(&record.id).await?;
+        supervisor
+            .release_barrier(&record.id, Completion::Aborted)
+            .await?;
         for member in &record.members {
             guard.release_hold(&member.original.name, &record.id)?;
         }
-        return Ok(());
+        record.cleanup_done = true;
+        return save(guard, record);
     }
+    let originals: Vec<_> = record
+        .members
+        .iter()
+        .map(|member| member.original.clone())
+        .collect();
+    record.phase = Phase::Restoring;
+    save(guard, record)?;
+    supervisor
+        .begin_barrier(&record.id, &originals, true)
+        .await?;
     supervisor.verify_barrier(&record.id).await?;
     // Refuse to overwrite a foreign edit before stopping any surviving member.
     for member in &record.members {
@@ -767,24 +810,43 @@ async fn restore(guard: &Guard, record: &mut Journal, supervisor: &impl Supervis
     }
     record.phase = Phase::Restored;
     save(guard, record)?;
-    supervisor.release_barrier(&record.id).await
+    supervisor
+        .release_barrier(&record.id, Completion::Restored)
+        .await?;
+    record.cleanup_done = true;
+    save(guard, record)
 }
 pub(crate) async fn recover(guard: &Guard, supervisor: &impl Supervisor) -> Result<()> {
     for mut record in records(guard)? {
+        if record.cleanup_done {
+            continue;
+        }
         match record.phase {
             Phase::Committed | Phase::Aborted => {
-                supervisor.release_barrier(&record.id).await?;
+                let outcome = if record.phase == Phase::Committed {
+                    Completion::Committed
+                } else {
+                    Completion::Aborted
+                };
+                supervisor.release_barrier(&record.id, outcome).await?;
                 for member in &record.members {
                     guard.release_hold(&member.original.name, &record.id)?;
                 }
             }
             Phase::Restored => {
-                supervisor.release_barrier(&record.id).await?;
+                supervisor
+                    .release_barrier(&record.id, Completion::Restored)
+                    .await?;
             } // Never release a newer owner.
             _ => restore(guard, &mut record, supervisor).await?,
         }
+        record.cleanup_done = true;
+        save(guard, &record)?;
     }
     Ok(())
+}
+pub(crate) fn needs_recovery(guard: &Guard) -> Result<bool> {
+    Ok(records(guard)?.iter().any(|record| !record.cleanup_done))
 }
 
 #[cfg(test)]
@@ -837,7 +899,12 @@ mod tests {
         }
     }
     impl Supervisor for Mock {
-        async fn begin_barrier(&self, operation: &str, _originals: &[Unit]) -> Result<()> {
+        async fn begin_barrier(
+            &self,
+            operation: &str,
+            _originals: &[Unit],
+            _recovery: bool,
+        ) -> Result<()> {
             let mut held = self.barrier.lock().unwrap();
             anyhow::ensure!(
                 held.as_deref().is_none_or(|id| id == operation),
@@ -853,7 +920,7 @@ mod tests {
             );
             Ok(())
         }
-        async fn release_barrier(&self, operation: &str) -> Result<()> {
+        async fn release_barrier(&self, operation: &str, _outcome: Completion) -> Result<()> {
             anyhow::ensure!(
                 !self.fail_barrier_release.load(Ordering::SeqCst),
                 "Barrier release unavailable"
@@ -1062,7 +1129,9 @@ mod tests {
         execute(&guard, "movie", &[Mock::target()], &runtime)
             .await
             .unwrap();
-        let record = records(&guard).unwrap().pop().unwrap();
+        let mut record = records(&guard).unwrap().pop().unwrap();
+        record.cleanup_done = false;
+        save(&guard, &record).unwrap();
         guard.hold("movie", &record.id).unwrap();
         runtime.calls.lock().unwrap().clear();
         recover(&guard, &runtime).await.unwrap();
@@ -1125,6 +1194,7 @@ mod tests {
             .unwrap();
         let mut record = records(&guard).unwrap().pop().unwrap();
         record.phase = Phase::Starting;
+        record.cleanup_done = false;
         *runtime.barrier.lock().unwrap() = Some(record.id.clone());
         save(&guard, &record).unwrap();
         runtime.calls.lock().unwrap().clear();
@@ -1150,6 +1220,7 @@ mod tests {
             .unwrap();
         let mut record = records(&guard).unwrap().pop().unwrap();
         record.phase = Phase::Starting;
+        record.cleanup_done = false;
         *runtime.barrier.lock().unwrap() = Some(record.id.clone());
         save(&guard, &record).unwrap();
         *runtime.body.lock().unwrap() = "operator replaced unit".into();

@@ -305,7 +305,22 @@ impl RpcHandler {
         guard: &crate::container::update_transaction::Guard,
     ) -> Result<()> {
         use crate::container::update_transaction::{self, Podman};
-        let targets = Podman::targets(images_to_pull).await?;
+        let mut supervised = 0;
+        for name in containers {
+            if crate::container::quadlet::unit_exists(name).await {
+                supervised += 1;
+            }
+        }
+        anyhow::ensure!(
+            supervised == 0 || supervised == containers.len(),
+            "Mixed managed/unmanaged stack requires an explicit recovery plan; originals unchanged"
+        );
+        let managed = supervised != 0;
+        anyhow::ensure!(
+            !managed || package_id == "indeedhub",
+            "This managed app has no qualified maintenance controller; originals unchanged"
+        );
+        let targets = Podman::targets(images_to_pull, !managed).await?;
         let names: HashSet<_> = containers.iter().map(String::as_str).collect();
         anyhow::ensure!(
             targets.len() == names.len()
@@ -316,7 +331,22 @@ impl RpcHandler {
         );
         self.set_install_phase(package_id, InstallPhase::Preparing)
             .await;
-        update_transaction::execute(guard, package_id, &targets, &Podman).await
+        if managed {
+            use crate::container::supervised_runtime::{
+                load_reviewed_plans, LegacyIndeeMaintenance, SystemdSupervisor,
+            };
+            let plans = load_reviewed_plans(&self.config.data_dir, package_id)?;
+            let adapter = SystemdSupervisor::new(
+                self.config.data_dir.clone(),
+                plans,
+                LegacyIndeeMaintenance::new(guard)?,
+            )
+            .await?;
+            crate::container::supervised_update::execute(guard, package_id, &targets, &adapter)
+                .await
+        } else {
+            update_transaction::execute(guard, package_id, &targets, &Podman).await
+        }
     }
 
     async fn recreate_container_for_update(

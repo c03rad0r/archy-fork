@@ -83,6 +83,32 @@ const RUNTIME_ASSETS_DIR: &str = "/opt/archipelago/web-ui/archipelago-runtime";
 /// Inserted into every server block of the nginx config that lacks the
 /// `/api/app-catalog` proxy. Kept in sync with the canonical block in
 /// image-recipe/configs/nginx-archipelago.conf.
+const INDEEHUB_MAINTENANCE_GUARD: &str =
+    "if (-f /var/lib/archipelago/app-maintenance/indeedhub) { return 503; }";
+/// Patch only recognized literal IndeeHub routes, including asset/WebSocket
+/// sublocations; unknown operator routes are not guessed by this repair.
+fn heal_indeehub_maintenance_guards(content: &str) -> String {
+    let route=regex::Regex::new(r"(?m)^([ \t]*)(location[ \t]+(?:\^~[ \t]+|=[ \t]+)?/app/indeedhub(?:/[^\s{]*)?[ \t]*\{)[ \t]*$").unwrap();
+    let mut result = String::new();
+    let mut previous = 0;
+    for capture in route.captures_iter(content) {
+        let full = capture.get(0).unwrap();
+        result.push_str(&content[previous..full.end()]);
+        if !content[full.end()..]
+            .trim_start()
+            .starts_with(INDEEHUB_MAINTENANCE_GUARD)
+        {
+            result.push_str(&format!(
+                "\n{}    {}",
+                &capture[1], INDEEHUB_MAINTENANCE_GUARD
+            ));
+        }
+        previous = full.end();
+    }
+    result.push_str(&content[previous..]);
+    result
+}
+
 const NGINX_APP_CATALOG_BLOCK: &str = "\n    # App Store catalog proxy — backend fetches from configured registries\n    # so the browser doesn't hit CORS/CSP. Without this block nginx falls\n    # through to the SPA index.html and the frontend gets HTML back instead\n    # of JSON.\n    location ~ ^/api/(?:app-catalog|node-app-catalog)$ {\n        proxy_pass http://127.0.0.1:5678;\n        proxy_http_version 1.1;\n        proxy_set_header Host $host;\n        proxy_set_header X-Real-IP $remote_addr;\n        proxy_set_header Cookie $http_cookie;\n        proxy_connect_timeout 15s;\n        proxy_read_timeout 30s;\n        proxy_send_timeout 15s;\n        error_page 502 503 = @backend_unavailable;\n        error_page 504 = @backend_timeout;\n    }\n\n";
 
 const NGINX_SOURCE_PROXY_BLOCK: &str = "    # GitWorkshop follows the dashboard origin so LAN, Tailscale, FIPS, Tor,\n    # hostnames and reverse proxies all use the connection that already works.\n    location /app/archipelago-source/ {\n        proxy_pass http://127.0.0.2:8337/;\n        proxy_http_version 1.1;\n        proxy_set_header Host $http_host;\n        proxy_set_header Cookie $http_cookie;\n        proxy_set_header X-Real-IP $remote_addr;\n        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;\n        proxy_set_header X-Forwarded-Proto $scheme;\n        proxy_set_header X-Forwarded-Prefix /app/archipelago-source;\n        proxy_hide_header X-Frame-Options;\n        add_header X-Frame-Options \"SAMEORIGIN\" always;\n        add_header X-Content-Type-Options \"nosniff\" always;\n        proxy_read_timeout 300s;\n    }\n";
@@ -2011,8 +2037,10 @@ async fn patch_nginx_conf(path: &str) -> Result<bool> {
     let missing_source_prefix = heal_source_forwarded_prefix(&content).is_some();
     let missing_nostr_signer = heal_missing_nostr_signer(&content).is_some();
     let missing_rental_playback = heal_rental_playback_route(&content) != content;
+    let missing_maintenance = heal_indeehub_maintenance_guards(&content) != content;
     let legacy_catalog_route = content.contains("location /api/app-catalog {");
-    if !missing_rental_playback
+    if !missing_maintenance
+        && !missing_rental_playback
         && !missing_app_catalog
         && !legacy_catalog_route
         && !missing_bitcoin_status
@@ -2031,7 +2059,9 @@ async fn patch_nginx_conf(path: &str) -> Result<bool> {
         return Ok(false);
     }
 
-    let mut patched = heal_rental_playback_route(&heal_node_catalog_route(&content));
+    let mut patched = heal_indeehub_maintenance_guards(&heal_rental_playback_route(
+        &heal_node_catalog_route(&content),
+    ));
 
     if let Some(p) = heal_stale_web_search_block(&patched) {
         patched = p;
@@ -2513,5 +2543,21 @@ pub async fn ensure_restart_policy() {
         }
         Ok(false) => {}
         Err(e) => tracing::warn!(error = %e, "could not repair archipelago.service restart policy"),
+    }
+}
+
+#[cfg(test)]
+mod indeehub_maintenance_tests {
+    #[test]
+    fn legacy_routes_are_fenced_independently_and_repair_is_idempotent() {
+        let source="server {\n    location /app/indeedhub/ {\n        proxy_pass http://127.0.0.1:7778;\n    }\n    location /app/indeedhub/ws/ {\n        proxy_pass http://127.0.0.1:7778;\n    }\n    location /app/other/ {\n        proxy_pass http://127.0.0.1:7777;\n    }\n}\n";
+        let repaired = super::heal_indeehub_maintenance_guards(source);
+        assert_eq!(
+            repaired.matches(super::INDEEHUB_MAINTENANCE_GUARD).count(),
+            2
+        );
+        assert_eq!(super::heal_indeehub_maintenance_guards(&repaired), repaired);
+        assert!(repaired.contains("location /app/other/ {\n        proxy_pass"));
+        assert_eq!(repaired.matches("proxy_pass").count(), 3);
     }
 }

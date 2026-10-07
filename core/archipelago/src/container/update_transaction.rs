@@ -74,6 +74,9 @@ pub(crate) struct Guard {
     root: PathBuf,
 }
 impl Guard {
+    pub(crate) fn clone_lifecycle_lock(&self) -> Result<std::fs::File> {
+        Ok(self._file.try_clone()?)
+    }
     pub(crate) fn directory(&self) -> &Path {
         &self.root
     }
@@ -500,6 +503,7 @@ pub(crate) async fn recover(data: &Path, runtime: &impl Runtime) -> Result<Guard
             }
         }
     }
+    super::supervised_runtime::recover_before_reconcile(data, &guard).await?;
     Ok(guard)
 }
 
@@ -544,10 +548,15 @@ impl Podman {
         );
         Ok(std::str::from_utf8(&output.stdout)?.trim().to_string())
     }
-    pub(crate) async fn targets(images: &[(String, String)]) -> Result<Vec<Target>> {
+    pub(crate) async fn targets(
+        images: &[(String, String)],
+        require_clone: bool,
+    ) -> Result<Vec<Target>> {
         // Confirm clone support before any stop. Never silently switch to a
         // latest-catalog install if this runtime cannot create without running.
-        Self::command(&["container", "clone", "--help"]).await?;
+        if require_clone {
+            Self::command(&["container", "clone", "--help"]).await?;
+        }
         let mut targets = Vec::new();
         for (name, reference) in images {
             let raw = Self::command(&["image", "inspect", reference]).await?;
