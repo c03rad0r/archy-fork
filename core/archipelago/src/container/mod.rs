@@ -34,4 +34,5 @@ mod staged_update;
 
 pub(crate) mod update_transaction;
 
+pub(crate) mod supervised_runtime;
 pub(crate) mod supervised_update;
