@@ -334,13 +334,14 @@ export const useAppLauncherStore = defineStore('appLauncher', () => {
               if(policyGeneration !== launchGeneration) return
               void ensureAppLaunchPolicy().then(recovered=>{
                 if(policyGeneration !== launchGeneration) return
-                if(recovered) useToast().info('Integration settings ready for the next app launch.')
-                else useToast().error('Integration settings remain unavailable. The app is still open.')
+                if(!recovered) useToast().error('Integration settings remain unavailable. The app is still open.')
               })
             }}, {variant:'error'})
           return
         }
-        useToast().info('Integration settings ready for the next app launch.')
+        // Successful background policy discovery needs no user-facing toast.
+        // The app is already open; the policy is available for later launches
+        // and media admission can still converge through its own bridge.
       })
       return
     }
