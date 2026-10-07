@@ -11,8 +11,8 @@ android {
         applicationId = "com.archipelago.app"
         minSdk = 26
         targetSdk = 35
-        versionCode = 54
-        versionName = "0.5.34"
+        versionCode = 55
+        versionName = "0.5.35"
 
         vectorDrawables {
             useSupportLibrary = true

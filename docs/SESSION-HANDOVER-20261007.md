@@ -165,3 +165,61 @@ payments, bump transactions, wallet recovery, catalog publication, firewall
 changes, broad compose down/up, volume deletion or wallet recreation while
 qualifying. Keep raw node logs and credentials private. Treat any failure in a
 release receipt or preservation check as a stop-and-investigate condition.
+
+## Resumed qualification — 2026-10-07
+
+- Current source at `a9a19751` passed the complete dashboard suite: **1,435
+  tests / 174 files**, zero failures. All 14 BalanceAmount cases passed in
+  411 ms; the historical 20-second timeout did not reproduce. No balance
+  implementation change was made to obtain this result.
+- Production UI build passed, with all 768 captured tracked UI/catalog inputs
+  unchanged. Archive SHA256:
+  `c62591d8c761bbac7701c1f7264ebdcd822e38276f68b4d5b86d0006c7a8d124`.
+  Served index SHA256:
+  `8e36064a7357c20ddcc3f1e7118d13f81d68e3d35a7724ef22cbea16303683c0`.
+- Deployed that UI to **development only**. Backend digest, session key,
+  container IDs/start times and four catalog files were unchanged; health and
+  served index checks passed. Actual authenticated browser smoke passed at
+  390/1440px with no page errors, horizontal overflow or payment operations.
+- Durable qualification artifacts:
+  `~/.local/state/archipelago/release-qualification/ui-resumed-8e36064a7357/`.
+  Dev rollback:
+  `/var/lib/archipelago/support/reliability-ui-20261007T161407Z-427000/rollback.sh`.
+- Retained updater work was found on `work/stopped-update-recovery` at
+  `2512a9f6`: twelve commits, not integrated in this candidate. Its own
+  `docs/managed-update-recovery-implementation.md` explicitly requires Rust
+  compilation and disposable Podman/systemd/PostgreSQL qualification. Do not
+  recreate this work or activate IndeeHub based solely on its fake-runtime tests.
+- The private activation notes require a coherent fresh database/media backup,
+  operation-owned admission hold and verified runtime rollback. The older
+  isolated migration fixture is not a cutover backup.
+- Operator requested delivery of an APK before physical checks; USB debugging
+  is not required. Companion **0.5.35/build55** is reserved for the integrated
+  Cloud PiP candidate. Packaging and current Android qualification are underway;
+  this does not establish native background-audio acceptance.
+
+## Companion APK delivered — 2026-10-07
+
+- Canonical clean package/sign/verify completed for **0.5.35/build55**, package
+  `com.archipelago.app.debug`. v1/v2/v3 and the existing signing certificate pass.
+  APK SHA256: `f4b8337889e8dcc95f32e531abbb23b05ec003c7e34b0c1ba4f7c197dffc99b9`.
+- Corrected a Kotlin expression-return compilation error in CloudVideoPip. The
+  prior failed build is retained as failed evidence, not acceptance.
+- Current Android suite: **17 tests**, zero failures/errors/skips (3 origin
+  checks, 6 download checks and 8 fullscreen lifecycle cases).
+- At the operator's request, the exact signed APK is served from archi-dev-box
+  at `/packages/archipelago-companion-0.5.35.apk`; HTTP bytes verified against
+  the build. No standard fleet download, dashboard, service or catalog changed
+  in this delivery step. Test Cloud PiP against the matching dev dashboard.
+- Physical install/PiP acceptance remains pending. This APK does **not** implement
+  a dedicated native background-audio service; that V4V requirement remains open.
+- Yaya SSH access restored using an ephemeral control connection. No password
+  was stored on disk. Yaya's dashboard and IndeeHub have not been changed here.
+- Current session permits reviewed escalations again; the prior permissions
+  blocker is superseded. Packaging logs, Android XML and delivery receipt are
+  retained under `~/.local/state/archipelago/release-qualification/companion-055/`.
+- Retained updater source now has complete-backup inventory/hash validation
+  with 19 pure tests passing. Its disposable PostgreSQL commitment fixture
+  passes unchanged/additive schema and rejects four data/schema/history
+  mutations. Full Rust and real supervised Podman/systemd qualification remain
+  required before integration or IndeeHub activation.

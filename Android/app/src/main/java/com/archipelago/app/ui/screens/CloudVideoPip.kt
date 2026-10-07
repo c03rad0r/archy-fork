@@ -147,6 +147,7 @@ internal class CloudVideoPip(private val activity: MainActivity?, private val fu
                 }
                 else -> error("Unsupported Cloud video action.")
             }
+            Unit
         }.onFailure { response.put("error", it.message ?: "Picture-in-picture is unavailable.") }
         proxy.postMessage(response.toString())
     }
