@@ -646,3 +646,92 @@ on-chain amount matches the backend. These checks do not establish complete
 durable recovery for every payment method. Full purchase integration and live
 acceptance remain open; Framework dashboard verification still needs normal TOTP.
 No new real payment was made.
+
+## Next integrated caller batch — qualification in progress
+
+The owner Cloud purchase RPC, registered video rental RPC and FIPS seller routes
+are now connected to the durable purchase journal. Fresh spending requires the
+original operation UUID, envelope hash and exact wallet debit returned for owner
+confirmation. Reopening a title checks its existing operation first. Cancellation
+must obtain the seller's unspent acknowledgement before a replacement quote.
+External Lightning QR invoices expose authoritative lifecycle state; a local timer
+alone cannot authorize another payment method.
+
+The native IndeeHub rental broker and player are now implemented in source. The
+browser receives a session-bound local playback handle, not the seller receipt
+capability. Handle creation/status do not start the viewing period; the actual
+video GET does. The app uses `preload="none"` and no autoplay. Closing or changing
+content invalidates asynchronous UI results, and status polling cannot initiate
+a purchase. Native origin, app lifecycle and HTTP/HTTPS route review are ongoing.
+
+This is **not deployed or accepted**. The combined Rust source is undergoing its
+isolated compile/test run. Focused registration tests passed 54 backend, seven
+app caller and six host bridge tests; the app rental player passed eight mounted
+lifecycle/status cases and frontend typecheck. Host rental tests initially passed
+five cases before cancellation/status additions and further independent review;
+final host qualification remains pending. Two preexisting backend test/mock type
+omissions remain recorded separately from the passing production typecheck.
+
+The original Framework paid-file recovery, real Yaya↔Framework/dev method-switch
+acceptance, app image deployment, complete published-title playback and physical
+companion checks remain open. No new real payment or public announcement was made.
+
+### Integrated purchase qualification and seller policy correction
+
+The integrated caller, immutable offers, durable acceptance/cancellation, fee-plan
+execution, retained Cloud delivery and registered rental plumbing are now in the
+candidate source. These are not yet accepted as a live payment flow. The first
+combined compile failed before tests; subsequent isolated runs reported 1,884
+passed/3 failed/5 ignored, then 1,886 passed/1 failed/5 ignored. The latter run
+verified all 406 captured source inputs unchanged. Logs are retained at
+`/tmp/archy-purchase-integrated-backend-rerun.log` and
+`/tmp/archy-purchase-integrated-backend-final.log`.
+
+The remaining caller test exposed missing explicit mint acceptance in its seller
+fixture. Production review also found that a configured default mint could be
+quoted without checking the seller's redemption allowlist. The candidate now
+checks network and mint policy before new offers/acceptance and before reporting
+an unresolved accepted operation ready for fresh buyer spending. Wallet policy
+changes cannot remove a mint or switch networks while an accepted seller
+liability remains unresolved. Acceptance and policy updates use the same wallet
+then purchase lock order. Settlement and cancellation release that policy pin;
+already-settled receipts remain recoverable after policy changes. No generic
+redemption allowlist bypass was added. New tests cover these transitions and the
+original lost acceptance/settlement sequence; this correction awaits the next
+isolated run.
+
+Confirmation responses additionally carry the original saved offer's Cashu
+network and mint for display. They are not derived from later wallet settings.
+No new real payments were made for these checks.
+
+Remaining protocol work is explicit: authenticated server-owned creation and
+cancellation of external Lightning invoices across browser-state loss; durable
+on-chain address/dispatch/transaction recovery; and explicit rental renewal only
+after seller-authoritative expiry evidence. Existing paid receipts and ambiguous
+legacy attempts must retain recovery access. A local timeout, missing browser
+record or clock expiry must never authorize a second payment.
+
+Qualification update: the corrected combined isolated backend run passed **1,889
+tests, zero failures, five existing skips**. Compilation took 4m22s; isolated
+execution took 14.60s. All 406 captured inputs remained unchanged. Evidence:
+`/tmp/archy-purchase-policy-backend-tests.log` and
+`/tmp/archy-purchase-policy-green-provenance.json`. This includes the complete
+caller lost-acceptance/lost-settlement regression, seller policy transitions,
+immutable-content first-use integrity, and explicit application license metadata.
+Production build, deployment and live payment acceptance are separate gates.
+
+### Integrated native purchase dashboard qualification — 7 October
+
+The matching dashboard passed 1,375 tests across 170 files, the actual project
+TypeScript check, and its production build with 500 source/build inputs unchanged.
+Twenty-one local browser cases passed at 320, 390 and 1440px, including long mint
+URLs, Cashu network labels, busy/error states and reachable mobile actions. These
+are local fixtures, not live payment acceptance. The earlier full-suite loading
+notice timeout is retained in its log; its unchanged-timeout focused rerun and
+the subsequent complete suite passed.
+
+The deployable UI and evidence are preserved under
+`~/.local/state/archipelago/release-qualification/ui-purchase-6fd81faf0d05/`.
+Its index SHA256 is `6fd81faf0d057b1c689610ebfbd04193071e282d85e27ec07b34f927525be1f5`.
+It requires the matching purchase backend and is not yet deployed. The prior
+qualified backend and dashboard remain live on dev, Yaya and Framework.

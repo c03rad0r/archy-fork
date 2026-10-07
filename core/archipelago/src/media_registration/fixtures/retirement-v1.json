@@ -1,0 +1,41 @@
+{
+  "description": "Public deterministic test vector only. Seed 07 repeated 32 times is never a node or user key.",
+  "testSeedHex": "0707070707070707070707070707070707070707070707070707070707070707",
+  "pin": {
+    "publicKey": "ea4a6c63e29c520abef5507b132ec5f9954776aebebe7b92421eea691446d22c",
+    "nodeDid": "did:key:z6MkvDqGT54cXesYGvABpF1UapVNwjCqRcafi4Px6Thv5T3Z",
+    "appAudience": "fixture-indeehub"
+  },
+  "intent": {
+    "version": 1,
+    "requestId": "00000000-0000-4000-8000-000000000001",
+    "nonce": "abababababababababababababababababababababababababababababababab",
+    "appAudience": "fixture-indeehub",
+    "nodeDid": "did:key:z6MkvDqGT54cXesYGvABpF1UapVNwjCqRcafi4Px6Thv5T3Z",
+    "producer": "cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd",
+    "projectId": "fixture-project",
+    "priceSats": 15,
+    "viewingSeconds": 3600,
+    "createdAt": 1000,
+    "expiresAt": 1600
+  },
+  "preimageUtf8": "[\"archipelago.indeehub.media-retirement.v1\",\"00000000-0000-4000-8000-000000000001\",\"abababababababababababababababababababababababababababababababab\",\"fixture-indeehub\",\"did:key:z6MkvDqGT54cXesYGvABpF1UapVNwjCqRcafi4Px6Thv5T3Z\",\"cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd\",\"fixture-project\",15,3600,1000,1600,1610]",
+  "retirement": {
+    "version": 1,
+    "intent": {
+      "version": 1,
+      "requestId": "00000000-0000-4000-8000-000000000001",
+      "nonce": "abababababababababababababababababababababababababababababababab",
+      "appAudience": "fixture-indeehub",
+      "nodeDid": "did:key:z6MkvDqGT54cXesYGvABpF1UapVNwjCqRcafi4Px6Thv5T3Z",
+      "producer": "cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd",
+      "projectId": "fixture-project",
+      "priceSats": 15,
+      "viewingSeconds": 3600,
+      "createdAt": 1000,
+      "expiresAt": 1600
+    },
+    "retiredAt": 1610,
+    "signature": "1ee7c8de044b4bb254a8a659d322958c332aa3a6bfe3f1432c234448996d97b2b1f3827e3d10114a50bf84f13a12edfcb9346bd119593c3e0463a65eea8a5e02"
+  }
+}

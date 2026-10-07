@@ -70,6 +70,7 @@ pub(crate) async fn settle_seller_token(
         match record.phase {
             SellerPhase::ReceiptSaved(receipt) => return Ok(receipt),
             SellerPhase::Settled { .. } => return journal.issue_receipt(contract).await,
+            SellerPhase::Cancelled => anyhow::bail!("Seller cancelled this purchase"),
             SellerPhase::Intent => (),
         }
     }
@@ -86,4 +87,37 @@ pub(crate) async fn settle_seller_token(
     let journal = Journal::open(data_dir).await?;
     journal.record_settlement(contract, received).await?;
     journal.issue_receipt(contract).await
+}
+
+pub(crate) async fn prepare_buyer_token_planned(
+    data_dir: &Path,
+    contract: &Contract,
+    plan: &crate::wallet::purchase_fee_plan::FeePlan,
+) -> Result<String> {
+    contract.validate()?;
+    {
+        let journal = Journal::open(data_dir).await?;
+        let record = journal
+            .buyer(&contract.id)
+            .await?
+            .context("Buyer intent is not durable")?;
+        anyhow::ensure!(&record.contract == contract, "Buyer purchase terms changed");
+        if let Some(token) = record.token() {
+            return Ok(token.to_owned());
+        }
+        anyhow::ensure!(
+            record.phase == BuyerPhase::AcceptanceSaved,
+            "Authenticated seller acceptance is not durable"
+        );
+    }
+    // Deadline is enforced inside the wallet after recovering original results,
+    // immediately before a fresh exact send or mint POST. Do not pre-reject an
+    // expired contract here: a previous wallet commit may need to be recovered.
+    let token = ecash::send_token_preplanned_before(data_dir, contract, plan).await?;
+    let journal = Journal::open(data_dir).await?;
+    let record = journal.record_token(contract, &token).await?;
+    Ok(record
+        .token()
+        .context("Prepared buyer token is missing")?
+        .to_owned())
 }

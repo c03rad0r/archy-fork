@@ -290,6 +290,10 @@ pub async fn load_network(data_dir: &Path) -> Result<EcashNetwork> {
 /// disk untouched, so switching is reversible and loses nothing.
 pub async fn save_network(data_dir: &Path, network: EcashNetwork) -> Result<()> {
     let _mutation = super::mutation::guard(data_dir).await?;
+    crate::content_purchase::Journal::open(data_dir)
+        .await?
+        .ensure_seller_policy_change(network, None)
+        .await?;
     let dir = data_dir.join("wallet");
     fs::create_dir_all(&dir)
         .await
@@ -443,6 +447,10 @@ pub async fn load_accepted_mints(data_dir: &Path) -> Result<AcceptedMints> {
 /// Save accepted mints list.
 pub async fn save_accepted_mints(data_dir: &Path, mints: &AcceptedMints) -> Result<()> {
     let _mutation = super::mutation::guard(data_dir).await?;
+    crate::content_purchase::Journal::open(data_dir)
+        .await?
+        .ensure_seller_policy_change(load_network(data_dir).await?, Some(&mints.mints))
+        .await?;
     let dir = data_dir.join("wallet");
     fs::create_dir_all(&dir)
         .await
@@ -823,6 +831,7 @@ pub async fn send_token_recoverable(
         context_hash,
         None,
         || chrono::Utc::now().timestamp(),
+        None,
     )
     .await
 }
@@ -849,6 +858,7 @@ pub async fn send_token_recoverable_before(
         context_hash,
         Some(expires_at),
         || chrono::Utc::now().timestamp(),
+        None,
     )
     .await
 }
@@ -868,6 +878,7 @@ async fn send_token_recoverable_with_deadline(
     context_hash: &str,
     expires_at: Option<i64>,
     now: impl Fn() -> i64 + Send + Sync,
+    plan: Option<&super::purchase_fee_plan::FeePlan>,
 ) -> Result<String> {
     use super::send_journal::{Binding, Journal, Outcome, Phase, Request};
     let held = super::mutation::guard(data_dir).await?;
@@ -884,6 +895,17 @@ async fn send_token_recoverable_with_deadline(
     };
     let journal = Journal::new(&held);
     let previous = journal.load(operation_id).await?;
+    if let Some(plan) = plan {
+        plan.validate()?;
+        anyhow::ensure!(
+            previous.is_some(),
+            "Original planned inputs are missing; no new proof selection allowed"
+        );
+        anyhow::ensure!(
+            plan.mint_url == mint_url && plan.gross_sats == amount_sats,
+            "Planned amount or mint changed"
+        );
+    }
     let recovering = previous.is_some();
     let record = if let Some(record) = previous {
         anyhow::ensure!(
@@ -927,12 +949,26 @@ async fn send_token_recoverable_with_deadline(
         ensure_fresh_payment_allowed(expires_at, now())?;
         journal.prepare(binding.clone(), request).await?
     };
+    anyhow::ensure!(
+        !matches!(record.phase, Phase::Cancelled),
+        "Payment operation was cancelled"
+    );
     if matches!(record.phase, Phase::Result(_) | Phase::Committed(_)) {
         return journal.commit_wallet(&binding).await;
+    }
+    // An exact Prepared record has never exposed a token: result durability
+    // precedes both wallet commit and return. Do not reserve fresh inputs merely
+    // to reject an already-expired accepted plan.
+    if matches!(&record.request, Request::Exact { .. }) {
+        ensure_fresh_payment_allowed(expires_at, now())?;
     }
     journal.reserve_wallet(&binding).await?;
     let (send, change) = match &record.request {
         Request::Exact { proofs } => {
+            if let Some(plan) = plan {
+                plan.validate_proofs(proofs)?;
+                plan.verify_mint_keysets(&MintClient::new(mint_url)?.get_keysets().await?, false)?;
+            }
             ensure_fresh_payment_allowed(expires_at, now())?;
             (proofs.clone(), vec![])
         }
@@ -961,7 +997,11 @@ async fn send_token_recoverable_with_deadline(
                         "This payment is still pending at the mint; do not pay again"
                     );
                 }
+                if let Some(plan) = plan {
+                    plan.verify_mint_keysets(&client.get_keysets().await?, true)?;
+                }
                 ensure_fresh_payment_allowed(expires_at, now())?;
+                journal.mark_dispatched(&binding).await?;
                 client.execute_prepared_swap(prepared).await.map_err(|_| anyhow::anyhow!(
                     "The mint did not confirm this payment; retry this same operation to recover it"))?
             };
@@ -985,6 +1025,9 @@ async fn send_token_recoverable_with_deadline(
     };
     let token = CashuToken::new(&binding.mint_url, send);
     let encoded = token.serialize_v4().or_else(|_| token.serialize())?;
+    if let Some(plan) = plan {
+        plan.validate_token(&encoded)?;
+    }
     journal
         .record_result(
             &binding,
@@ -995,6 +1038,27 @@ async fn send_token_recoverable_with_deadline(
         )
         .await?;
     journal.commit_wallet(&binding).await
+}
+
+/// Executes only a previously pinned private wallet plan. A missing send record
+/// rejects instead of silently selecting another set of inputs.
+pub(crate) async fn send_token_preplanned_before(
+    data_dir: &Path,
+    contract: &crate::content_purchase::Contract,
+    plan: &super::purchase_fee_plan::FeePlan,
+) -> Result<String> {
+    send_token_recoverable_with_deadline(
+        data_dir,
+        &contract.id,
+        contract.network,
+        &contract.mint_url,
+        contract.gross_token_sats,
+        &contract.context_hash()?,
+        Some(contract.expires_at),
+        || chrono::Utc::now().timestamp(),
+        Some(plan),
+    )
+    .await
 }
 
 async fn send_token_at_locked(data_dir: &Path, mint_url: &str, amount_sats: u64) -> Result<String> {

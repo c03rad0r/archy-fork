@@ -91,6 +91,10 @@
 
       <!-- Host-owned signer stays inside the active app surface. This keeps
            the context visible and works unchanged in the companion WebView. -->
+      <RentalPurchaseConsent v-if="!nostrBridge.showConsent.value && !showIdentityPicker && !registrationBridge.request.value" :request="rentalBridge.request.value" :quote="rentalBridge.quote.value" :phase="rentalBridge.phase.value" :error="rentalBridge.error.value" @cancel-unpaid="rentalBridge.cancelUnpaid" @review="rentalBridge.review" @approve="rentalBridge.approve" @cancel="rentalBridge.cancel" />
+      <MediaRegistrationConsent v-if="!nostrBridge.showConsent.value"
+        :request="registrationBridge.request.value" :phase="registrationBridge.phase.value"
+        :error="registrationBridge.error.value" @approve="registrationBridge.approve" @resolve="registrationBridge.approveResolution" @cancel="registrationBridge.cancel" />
       <NostrSignConsent
         :show="nostrBridge.showConsent.value"
         :app-name="nostrBridge.consentRequest.value?.appName ?? appTitle"
@@ -123,6 +127,10 @@ import { useAppStore } from '@/stores/app'
 import { useScreensaverStore } from '@/stores/screensaver'
 import NostrIdentityPicker from '@/components/NostrIdentityPicker.vue'
 import NostrSignConsent from '@/components/NostrSignConsent.vue'
+import MediaRegistrationConsent from '@/components/MediaRegistrationConsent.vue'
+import RentalPurchaseConsent from '@/components/RentalPurchaseConsent.vue'
+import { useMediaRegistrationBridge } from '@/composables/useMediaRegistrationBridge'
+import { useRentalPurchaseBridge } from '@/composables/useRentalPurchaseBridge'
 import { isAutoTabApp, rememberAutoTabApp, forgetAutoTabApp } from '@/utils/autoTabApps'
 import AppSessionHeader from './appSession/AppSessionHeader.vue'
 import AppSessionFrame from './appSession/AppSessionFrame.vue'
@@ -293,20 +301,33 @@ function closeRouteSession() {
 const iframeRef = computed(() => frameRef.value?.iframeRef ?? null)
 const mediaBridge = useAppMediaBridge(appId, appUrl, iframeRef, computed(() => !props.suspended))
 
+const registrationBridge = useMediaRegistrationBridge({
+  consentBusy: (): boolean => rentalBridge.isBusy(),
+  appId: () => appId.value, appUrl: () => appUrl.value,
+  frameWindow: () => props.suspended ? null : iframeRef.value?.contentWindow ?? null,
+})
+const rentalBridge = useRentalPurchaseBridge({
+  consentBusy: (): boolean => nostrBridge.showConsent.value || showIdentityPicker.value || registrationBridge.isBusy(),
+  appId: () => appId.value, appUrl: () => appUrl.value,
+  frameWindow: () => props.suspended ? null : iframeRef.value?.contentWindow ?? null,
+})
 const identity = useAppIdentity(appId, iframeRef, showIdentityPicker)
 const nostrBridge = useNostrBridge(identity.getStoredIdentity, {
   appId: () => appId.value,
   appName: () => appTitle.value,
   appUrl: () => appUrl.value,
-  frameWindow: () => iframeRef.value?.contentWindow ?? null,
+  frameWindow: () => props.suspended ? null : iframeRef.value?.contentWindow ?? null,
 })
 
 // An actual destination change invalidates consent queued for the previous app page.
+watch(() => props.suspended, suspended => { if (suspended) { nostrBridge.cancelPending(); registrationBridge.cancel(); rentalBridge.cancel() } }, { flush: 'sync' })
+
 watch(appUrl, () => {
   loadedAppUrl.value = ''
   slowLoad.value = false
   nostrBridge.cancelPending()
-})
+  registrationBridge.cancel(); rentalBridge.cancel()
+}, { flush: 'sync' })
 
 // --- Display mode ---
 
@@ -514,6 +535,7 @@ function handleBackdropClick() {
 
 function closeSession() {
   nostrBridge.cancelPending()
+  registrationBridge.cancel(); rentalBridge.cancel()
   if (document.fullscreenElement) document.exitFullscreen().catch(() => {})
   if (isInlinePanel.value) emit('close')
   else closeRouteSession()
@@ -543,6 +565,8 @@ function onFullscreenChange() {
 function onMessage(e: MessageEvent) {
   if (e.source !== iframeRef.value?.contentWindow) return
   mediaBridge.handle(e)
+  if (props.suspended) return
+  void registrationBridge.handle(e); void rentalBridge.handle(e)
   if (e.data?.type === 'nostr-request') nostrBridge.handleNostrRequest(e)
   if (e.data?.type === 'archipelago:identity:request') identity.handleIdentityRequest(e.data?.force === true)
   if (e.data?.type === 'archipelago:media:playing') screensaverStore.suppress(screensaverReason.value)
@@ -605,6 +629,7 @@ onMounted(() => {
 
 onBeforeUnmount(() => {
   nostrBridge.dispose()
+  registrationBridge.dispose(); rentalBridge.dispose()
   if (loadTimeoutId) clearTimeout(loadTimeoutId)
   if (autoRetryId) clearTimeout(autoRetryId)
   if (iframeCheckId) clearTimeout(iframeCheckId)

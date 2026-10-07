@@ -1,7 +1,10 @@
+mod purchase;
+mod cloud_purchase;
 mod blob;
 mod cdp;
 mod content;
 mod registered_media;
+mod rental_playback;
 mod dwn;
 mod model_proxy;
 mod node_message;
@@ -385,6 +388,10 @@ impl ApiHandler {
         let path = req.uri().path().to_string();
         let method = req.method().clone();
 
+        if path.starts_with("/api/rental-playback/") {
+            return self.handle_local_rental_request(&method, &path, req.headers()).await;
+        }
+
         // Handle CORS preflight for all routes
         if method == Method::OPTIONS {
             let mut builder = Response::builder()
@@ -443,6 +450,14 @@ impl ApiHandler {
                 self.cdp_bridge.clone(),
             )
             .await;
+        }
+
+        // Purchase routes bound the original body before the generic buffer.
+        if method == Method::POST && matches!(path.as_str(),
+            crate::content_purchase_protocol::OFFER_ROUTE | crate::content_purchase_protocol::ACCEPT_ROUTE
+            | crate::content_purchase_protocol::SETTLE_ROUTE | crate::content_purchase_protocol::STATUS_ROUTE
+            | crate::content_purchase_protocol::CANCEL_ROUTE) {
+            return self.handle_purchase_request(req).await;
         }
 
         // Convert body to bytes for non-WS routes
@@ -587,6 +602,9 @@ impl ApiHandler {
 
             // Immutable registered rentals use durable seller receipts and their
             // first-open window, never legacy mutable filename shares.
+            (Method::GET, p) if p.starts_with("/content/") && p.contains("/purchase/") => {
+                self.handle_cloud_purchase(p, &headers).await
+            }
             (Method::GET, p) if p.starts_with("/content/registered_") && p.contains("/rental/") => {
                 self.handle_registered_rental(p, &headers).await
             }

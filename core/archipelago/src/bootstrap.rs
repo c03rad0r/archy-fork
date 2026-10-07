@@ -109,6 +109,24 @@ const NGINX_LND_PROXY_BLOCK: &str = "\n    # LND REST proxy — backend handles 
 /// and peer media won't play (B3). Forwards Cookie (session auth) + Range and
 /// disables buffering so streaming works. Kept in sync with the canonical
 /// block in image-recipe/configs/nginx-archipelago.conf.
+const NGINX_RENTAL_PLAYBACK_BLOCK: &str = r#"
+    # Session-bound rental playback: never cache opaque handles or capabilities.
+    location /api/rental-playback/ {
+        proxy_pass http://127.0.0.1:5678;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header Cookie $http_cookie;
+        proxy_set_header Origin $http_origin;
+        proxy_set_header Range $http_range;
+        proxy_buffering off;
+        proxy_cache off;
+        proxy_connect_timeout 10s;
+        proxy_read_timeout 40s;
+        error_page 502 503 = @backend_unavailable;
+        error_page 504 = @backend_timeout;
+    }
+"#;
+
 const NGINX_PEER_CONTENT_BLOCK: &str = "\n    # Peer content streaming proxy (B3) — Range-streams a peer's media file.\n    # Long read timeout: this path also serves full-file downloads of large\n    # media (#38), which can take minutes over Tor; 120s aborted them.\n    location /api/peer-content/ {\n        proxy_pass http://127.0.0.1:5678;\n        proxy_http_version 1.1;\n        proxy_set_header Host $host;\n        proxy_set_header Cookie $http_cookie;\n        proxy_set_header Range $http_range;\n        proxy_buffering off;\n        proxy_connect_timeout 10s;\n        proxy_read_timeout 900s;\n        error_page 502 503 = @backend_unavailable;\n        error_page 504 = @backend_timeout;\n    }\n";
 
 /// Inserted into every server block lacking the Pine node-status proxy.
@@ -1784,6 +1802,24 @@ fn heal_missing_nostr_signer(content: &str) -> Option<String> {
 }
 
 /// Keep both authenticated catalog endpoints on the backend in every vhost.
+fn heal_rental_playback_route(content: &str) -> String {
+    let anchor = "    location /lnd-connect-info {";
+    let mut output = String::new();
+    for part in content.split_inclusive(anchor) {
+        if let Some(prefix) = part.strip_suffix(anchor) {
+            let current_server = prefix.rsplit("server {").next().unwrap_or(prefix);
+            output.push_str(prefix);
+            if !current_server.contains("location /api/rental-playback/ {") {
+                output.push_str(NGINX_RENTAL_PLAYBACK_BLOCK);
+            }
+            output.push_str(anchor);
+        } else {
+            output.push_str(part);
+        }
+    }
+    output
+}
+
 fn heal_node_catalog_route(content: &str) -> String {
     content.replace(
         "location /api/app-catalog {",
@@ -1825,8 +1861,10 @@ async fn patch_nginx_conf(path: &str) -> Result<bool> {
     let missing_source_proxy = heal_missing_source_proxy(&content).is_some();
     let missing_source_prefix = heal_source_forwarded_prefix(&content).is_some();
     let missing_nostr_signer = heal_missing_nostr_signer(&content).is_some();
+    let missing_rental_playback = heal_rental_playback_route(&content) != content;
     let legacy_catalog_route = content.contains("location /api/app-catalog {");
-    if !missing_app_catalog
+    if !missing_rental_playback
+        && !missing_app_catalog
         && !legacy_catalog_route
         && !missing_bitcoin_status
         && !missing_lnd_proxy
@@ -1844,7 +1882,7 @@ async fn patch_nginx_conf(path: &str) -> Result<bool> {
         return Ok(false);
     }
 
-    let mut patched = heal_node_catalog_route(&content);
+    let mut patched = heal_rental_playback_route(&heal_node_catalog_route(&content));
 
     if let Some(p) = heal_stale_web_search_block(&patched) {
         patched = p;
@@ -2023,6 +2061,19 @@ async fn patch_nginx_conf(path: &str) -> Result<bool> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn rental_playback_route_repairs_each_vhost_without_enabling_cache() {
+        let original = "server {\n    location /lnd-connect-info { proxy_pass http://127.0.0.1:5678; }\n}\nserver {\n    location /lnd-connect-info { proxy_pass http://127.0.0.1:5678; }\n}";
+        let fixed = super::heal_rental_playback_route(original);
+        assert_eq!(fixed.matches("location /api/rental-playback/ {").count(), 2);
+        assert_eq!(super::heal_rental_playback_route(&fixed), fixed);
+        assert_eq!(fixed.matches("proxy_cache off;").count(), 2);
+        assert_eq!(fixed.matches("proxy_set_header Range $http_range;").count(), 2);
+        let partial = fixed.replacen(super::NGINX_RENTAL_PLAYBACK_BLOCK, "", 1);
+        assert_eq!(super::heal_rental_playback_route(&partial), fixed);
+    }
+
+
     #[test]
     fn catalog_routes_upgrade_both_vhosts_without_changing_access_guards() {
         let old = "server { if ($guard) { return 404; } location /api/app-catalog { proxy_pass http://127.0.0.1:5678; } }\nserver { location /api/app-catalog { proxy_set_header Cookie $http_cookie; } }";

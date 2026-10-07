@@ -27,6 +27,81 @@ pub struct RegistrationPin {
     pub node_did: String,
     pub app_audience: String,
 }
+/// Fixed installed app context used by native media selection and local playback
+/// handles. Caller must still authenticate owner session/CSRF or its scoped handle.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct InstalledAppContext {
+    pub app_id: String,
+    pub backend_id: String,
+    pub app_audience: String,
+    pub node_did: String,
+    pub node_public_key: String,
+    pub app_origins: Vec<String>,
+}
+
+/// Blocking lookup; never provisions a new identity/audience. No request chooses
+/// app scope. Revalidate fresh installation state before using a playback handle.
+pub(crate) fn installed_context(
+    data_dir: &Path,
+    identity: &crate::identity::NodeIdentity,
+    state: &crate::data_model::DataModel,
+) -> Result<InstalledAppContext> {
+    for id in ["indeedhub", "indeedhub-api"] {
+        let entry = state
+            .package_data
+            .get(id)
+            .context("IndeeHub is not installed")?;
+        anyhow::ensure!(
+            matches!(entry.state, crate::data_model::PackageState::Running)
+                && entry.installed.is_some(),
+            "IndeeHub installation is not running"
+        );
+    }
+    let app = state.package_data.get("indeedhub").unwrap();
+    let installed = app.installed.as_ref().unwrap();
+    let mut origins = Vec::new();
+    for address in installed.interface_addresses.values() {
+        for text in
+            std::iter::once(address.tor_address.as_str()).chain(address.lan_address.as_deref())
+        {
+            let onion_url = text
+                .strip_suffix(".onion")
+                .filter(|host| {
+                    host.len() == 56
+                        && host
+                            .bytes()
+                            .all(|b| b.is_ascii_lowercase() || (b'2'..=b'7').contains(&b))
+                })
+                .map(|_| format!("http://{text}"));
+            if let Ok(url) = reqwest::Url::parse(onion_url.as_deref().unwrap_or(text)) {
+                if matches!(url.scheme(), "http" | "https")
+                    && url.host_str().is_some()
+                    && url.username().is_empty()
+                    && url.password().is_none()
+                {
+                    origins.push(url.origin().ascii_serialization());
+                }
+            }
+        }
+    }
+    origins.sort();
+    origins.dedup();
+    anyhow::ensure!(
+        !origins.is_empty(),
+        "IndeeHub has no installed browser origin"
+    );
+    let pin = load_existing(data_dir, "indeedhub-api", identity)?;
+    Ok(InstalledAppContext {
+        app_id: "indeedhub".into(),
+        backend_id: "indeedhub-api".into(),
+        app_audience: pin.app_audience,
+        node_did: pin.node_did,
+        node_public_key: pin.node_public_key,
+        app_origins: origins,
+    })
+}
+
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Marker {
@@ -370,5 +445,49 @@ mod tests {
         assert!(!first.iter().any(|entry| entry.contains("_ENABLED=")));
         manifest.app.container.media_registration_identity = false;
         assert!(apply_environment(&mut manifest, &pin).is_err());
+    }
+    #[tokio::test]
+    async fn installed_media_context_requires_both_apps_and_existing_pin_and_tracks_origin_changes()
+    {
+        let (root, identity) = fixture().await;
+        let mut state = crate::data_model::DataModel::default();
+        for id in ["indeedhub", "indeedhub-api"] {
+            let entry = serde_json::from_value(serde_json::json!({
+                "state":"running", "static-files":{"license":"","instructions":"","icon":""},
+                "manifest":{"id":id,"title":id,"version":"fixture",
+                    "description":{"short":"fixture","long":""},"release-notes":"","license":"",
+                    "wrapper-repo":"","upstream-repo":"","support-site":"","marketing-site":""},
+                "installed":{"current-dependents":{},"current-dependencies":{},"last-backup":null,"status":"running",
+                    "interface-addresses":{"main":{"tor-address":"","lan-address":"https://localhost:7778/browse"}}}
+            })).unwrap();
+            state.package_data.insert(id.into(), entry);
+        }
+        assert!(installed_context(root.path(), &identity, &state).is_err());
+        let pin = ensure_for_installation(root.path(), "indeedhub-api", &identity).unwrap();
+        let first = installed_context(root.path(), &identity, &state).unwrap();
+        assert_eq!(first.app_audience, pin.app_audience);
+        assert_eq!(first.app_origins, vec!["https://localhost:7778"]);
+        state.package_data.get_mut("indeedhub-api").unwrap().state =
+            crate::data_model::PackageState::Stopped;
+        assert!(installed_context(root.path(), &identity, &state).is_err());
+        state.package_data.get_mut("indeedhub-api").unwrap().state =
+            crate::data_model::PackageState::Running;
+        state
+            .package_data
+            .get_mut("indeedhub")
+            .unwrap()
+            .installed
+            .as_mut()
+            .unwrap()
+            .interface_addresses
+            .get_mut("main")
+            .unwrap()
+            .lan_address = Some("https://localhost:7779".into());
+        assert_ne!(
+            installed_context(root.path(), &identity, &state).unwrap(),
+            first
+        );
+        state.package_data.remove("indeedhub");
+        assert!(installed_context(root.path(), &identity, &state).is_err());
     }
 }

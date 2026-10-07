@@ -317,9 +317,18 @@ fn persist_verified(held: &Held, record: &Registered) -> Result<()> {
     Ok(())
 }
 fn ensure_verified(data_dir: &Path, record: &Registered, file: &mut File) -> Result<()> {
+    ensure_verified_for_use(data_dir, record, file, false)
+}
+fn ensure_verified_for_use(
+    data_dir: &Path,
+    record: &Registered,
+    file: &mut File,
+    first_use: bool,
+) -> Result<()> {
     // This per-registration lock does not hold the mapping/global directory or
-    // any buyer lease lock while hashing. Normally registration already saved
-    // the verified stamp, so first-open needs no second read of a large movie.
+    // any buyer lease lock while hashing. Range opens can reuse the saved
+    // verification, but a new lease always checks bytes before starting its clock:
+    // same-size writes within a filesystem timestamp tick can share a stamp.
     let held = keyed(data_dir, "verify", &record.receipt.request_id)?;
     let path = held
         .path
@@ -330,10 +339,13 @@ fn ensure_verified(data_dir: &Path, record: &Registered, file: &mut File) -> Res
             saved == expected && Stamp::from_file(file)? == record.stamp,
             "Immutable snapshot verification binding changed"
         );
-        return Ok(());
+        if !first_use {
+            return Ok(());
+        }
     }
-    // Recover a missing cache by streaming the original signed hash. Never
+    // A new lease or missing cache requires the original signed byte hash. Never
     // manufacture a positive cache entry from metadata alone after restart.
+    file.seek(SeekFrom::Start(0))?;
     let mut digest = Sha256::new();
     let mut buffer = [0u8; 64 * 1024];
     loop {
@@ -462,6 +474,16 @@ pub(crate) fn register_approved_selection(
         limits,
         progress,
     )?;
+    commit_prepared(data_dir, identity, &pin, prepared, mime_type)
+}
+
+fn commit_prepared(
+    data_dir: &Path,
+    identity: &NodeIdentity,
+    pin: &registration_pin::RegistrationPin,
+    prepared: media_registration::PreparedRegistration,
+    mime_type: String,
+) -> Result<Receipt> {
     let record = Registered {
         version: 1,
         terms_sha256: terms(&prepared.receipt)?,
@@ -485,6 +507,57 @@ pub(crate) fn register_approved_selection(
     Ok(record.receipt)
 }
 
+/// Intent-only resolution preserves original file selection; the request cannot
+/// choose a new path. Serving metadata is durable before recovered receipt return.
+pub(crate) fn resolve_registration(
+    data_dir: &Path,
+    identity: &NodeIdentity,
+    intent: &Intent,
+    authenticated_producer: &str,
+    now: u64,
+    limits: &Limits<'_>,
+) -> Result<serde_json::Value> {
+    anyhow::ensure!(
+        authenticated_producer == intent.producer,
+        "Resolution producer changed"
+    );
+    let pin = registration_pin::load_existing(data_dir, APP_ID, identity)?;
+    match media_registration::resolve(
+        data_dir,
+        identity,
+        &media_registration::InstallationPin {
+            node_did: pin.node_did.clone(),
+            app_audience: pin.app_audience.clone(),
+        },
+        intent,
+        now,
+        limits,
+    )? {
+        media_registration::Resolution::Prepared {
+            prepared,
+            selection,
+        } => {
+            let receipt = commit_prepared(
+                data_dir,
+                identity,
+                &pin,
+                prepared,
+                selected_mime(&selection)?.into(),
+            )?;
+            Ok(serde_json::json!({"phase":"completed", "receipt":receipt}))
+        }
+        media_registration::Resolution::Retired(retirement) => {
+            Ok(serde_json::json!({"phase":"retired", "retirement":retirement}))
+        }
+        media_registration::Resolution::Pending {
+            request_id,
+            expires_at,
+        } => Ok(
+            serde_json::json!({"phase":"pending", "requestId":request_id, "expiresAt":expires_at}),
+        ),
+    }
+}
+
 /// No request chooses app scope or storage path. This is an offer prerequisite,
 /// not advertisement: the future offer creator must authenticate the peer and
 /// bind all returned terms into the purchase contract before seller acceptance.
@@ -498,8 +571,12 @@ pub(crate) fn registered_terms(
     let held = held(data_dir, false)?;
     let record: Registered = read(&held.path.join(format!("{id}.json")))?
         .context("Registered content is unavailable")?;
+    drop(held);
     verify(&record, &pin, identity)?;
-    let _file = open_snapshot(data_dir, &record)?;
+    let mut file = open_snapshot(data_dir, &record)?;
+    // A quote must not invite payment for altered bytes, including a same-tick
+    // metadata collision. This scan completes before any offer is accepted.
+    ensure_verified_for_use(data_dir, &record, &mut file, true)?;
     Ok((record.receipt, record.terms_sha256))
 }
 
@@ -579,7 +656,11 @@ fn open_settled(
     // Open before recording a first use: unreadable or altered media does not
     // start a rental. No bytes leave this descriptor until the lease is durable.
     let mut file = open_snapshot(data_dir, &record)?;
-    ensure_verified(data_dir, &record, &mut file)?;
+    let lease_path = data_dir
+        .join(STORE)
+        .join(format!("lease-{}.json", contract.id));
+    let first_use = read::<Lease>(&lease_path)?.is_none();
+    ensure_verified_for_use(data_dir, &record, &mut file, first_use)?;
     let held = keyed(data_dir, "lease", &contract.id)?;
     let path = held.path.join(format!("lease-{}.json", contract.id));
     let contract_hash = contract.context_hash()?;
@@ -1008,6 +1089,32 @@ mod tests {
             .join(format!("{}.json", receipt.request_id));
         let mut record: Registered = read(&mapping).unwrap().unwrap();
         record.stamp = Stamp::from_file(&File::open(&media).unwrap()).unwrap();
+        // Model an indistinguishable metadata stamp deterministically: both
+        // unsigned cache/mapping stamps match, while signed bytes do not. A
+        // positive metadata cache must not authorize an offer or first lease.
+        std::fs::write(&mapping, serde_json::to_vec(&record).unwrap()).unwrap();
+        let verified = fixture
+            .root
+            .path()
+            .join(STORE)
+            .join(format!("verified-{}.json", receipt.request_id));
+        std::fs::write(
+            &verified,
+            serde_json::to_vec(&verification(&record).unwrap()).unwrap(),
+        )
+        .unwrap();
+        assert!(
+            registered_terms(fixture.root.path(), &fixture.identity, &receipt.content_id).is_err()
+        );
+        assert!(open_settled(
+            fixture.root.path(),
+            &fixture.identity,
+            &contract,
+            &"ab".repeat(32),
+            || Ok(2000)
+        )
+        .is_err());
+        assert!(!lease.exists());
         std::fs::remove_file(
             fixture
                 .root
@@ -1140,5 +1247,35 @@ mod tests {
             .join(STORE)
             .join(format!("lease-{}.json", contract.id))
             .exists());
+    }
+    #[tokio::test]
+    async fn offer_preflight_rebuilds_verified_cache_without_creating_rental_and_rejects_corruption(
+    ) {
+        let fixture = Fixture::new().await;
+        let receipt = fixture.register(1100).unwrap();
+        let path = fixture
+            .root
+            .path()
+            .join(STORE)
+            .join(format!("verified-{}.json", receipt.request_id));
+        let original = std::fs::read(&path).unwrap();
+        std::fs::remove_file(&path).unwrap();
+        let (terms, _) =
+            registered_terms(fixture.root.path(), &fixture.identity, &receipt.content_id).unwrap();
+        assert_eq!(terms, receipt);
+        assert_eq!(std::fs::read(&path).unwrap(), original);
+        assert!(std::fs::read_dir(fixture.root.path().join(STORE))
+            .unwrap()
+            .all(|entry| !entry
+                .unwrap()
+                .file_name()
+                .to_string_lossy()
+                .starts_with("lease-")));
+        let mut cache: VerifiedSnapshot = read(&path).unwrap().unwrap();
+        cache.sha256 = "ff".repeat(32);
+        std::fs::write(&path, serde_json::to_vec(&cache).unwrap()).unwrap();
+        assert!(
+            registered_terms(fixture.root.path(), &fixture.identity, &receipt.content_id).is_err()
+        );
     }
 }

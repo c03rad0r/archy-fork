@@ -47,12 +47,8 @@ mod content_invoice;
 mod content_owned;
 mod content_purchase;
 mod content_purchase_executor;
-mod content_snapshot;
-mod media_stream;
-mod media_registration;
-mod registered_media;
-mod prepared_media;
 mod content_server;
+mod content_snapshot;
 mod crash_recovery;
 mod credentials;
 mod data_model;
@@ -68,6 +64,8 @@ mod host_ip;
 mod identity;
 mod identity_manager;
 mod marketplace;
+mod media_registration;
+mod media_stream;
 mod mesh;
 mod mesh_ports;
 mod monitoring;
@@ -82,11 +80,14 @@ mod nostr_relays;
 mod nostr_security_tests;
 mod peers;
 mod port_allocator;
+mod prepared_media;
 mod rate_limit;
+mod registered_media;
 pub mod seed;
 mod server;
 mod session;
 mod settings;
+mod snapshot_budget;
 mod state;
 mod storage_crypto;
 mod streaming;
@@ -584,3 +585,15 @@ async fn main() -> Result<()> {
     // crash in `systemctl status`.
     std::process::exit(0);
 }
+
+mod content_purchase_protocol;
+
+mod content_purchase_caller;
+
+mod content_purchase_transport;
+
+mod content_purchase_download;
+
+mod content_cloud_offer;
+
+mod playback_handles;

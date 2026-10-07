@@ -106,7 +106,7 @@ describe('PeerFiles', () => {
     }
     vi.mocked(rpcClient.call).mockImplementation((async (req: { method: string }) => {
       if (req.method === 'content.browse-peer') return { items: [freeImage] }
-      if (req.method === 'content.owned-list') return { items: [] }
+      if (req.method === 'content.owned-list') return { items: [], attempts: [] }
       return {}
     }) as never)
 

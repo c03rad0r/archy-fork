@@ -14,6 +14,8 @@ import { IS_DEMO, isDemoApp, isDemoExternal, demoAppUrl } from '@/composables/us
 import type { AppCredential, AppCredentialsResponse } from '@/types/api'
 import { resolveAppCredentials } from '@/views/apps/appCredentials'
 import { useNostrBridge } from '@/views/appSession/useNostrBridge'
+import { useMediaRegistrationBridge } from '@/composables/useMediaRegistrationBridge'
+import { useRentalPurchaseBridge } from '@/composables/useRentalPurchaseBridge'
 import type { SelectedIdentity } from '@/views/appSession/useAppIdentity'
 
 /**
@@ -507,6 +509,7 @@ export const useAppLauncherStore = defineStore('appLauncher', () => {
 
   function close() {
     bridge.cancelPending()
+    registrationBridge.cancel(); rentalBridge.cancel()
     const toRestore = previousActiveElement
     previousActiveElement = null
     isOpen.value = false
@@ -514,7 +517,7 @@ export const useAppLauncherStore = defineStore('appLauncher', () => {
     title.value = ''
     // Explicitly remove NIP-07 listener as safety net — if user navigates away
     // without close() triggering the isOpen watcher, the listener would leak
-    window.removeEventListener('message', handleNostrRequest)
+    window.removeEventListener('message', handleNativeRequest)
     if (toRestore && typeof toRestore.focus === 'function') {
       requestAnimationFrame(() => {
         toRestore.focus()
@@ -533,6 +536,17 @@ export const useAppLauncherStore = defineStore('appLauncher', () => {
       return { ...stored, name: typeof stored.name === 'string' ? stored.name : stored.id }
     } catch { return null }
   }
+  const nativeIdentityBusy = ref(false)
+  const registrationBridge = useMediaRegistrationBridge({
+    consentBusy: (): boolean => rentalBridge.isBusy(),
+    appId: () => resolveAppIdFromUrl(url.value) || inferAppIdFromTitle(title.value) || 'unknown-app',
+    appUrl: () => url.value, frameWindow: () => isOpen.value ? nostrFrame : null,
+  })
+  const rentalBridge = useRentalPurchaseBridge({
+    consentBusy: (): boolean => bridge.showConsent.value || nativeIdentityBusy.value || registrationBridge.isBusy(),
+    appId: () => resolveAppIdFromUrl(url.value) || inferAppIdFromTitle(title.value) || 'unknown-app',
+    appUrl: () => url.value, frameWindow: () => isOpen.value ? nostrFrame : null,
+  })
   const bridge = useNostrBridge(overlayIdentity, {
     appId: () => resolveAppIdFromUrl(url.value) || inferAppIdFromTitle(title.value) || 'unknown-app',
     appName: () => title.value || 'App',
@@ -542,25 +556,33 @@ export const useAppLauncherStore = defineStore('appLauncher', () => {
   const { handleNostrRequest, showConsent, consentRequest, consentPhase,
     consentError, approveConsent, denyConsent } = bridge
 
+  function handleNativeRequest(event: MessageEvent) {
+    handleNostrRequest(event)
+    void registrationBridge.handle(event); void rentalBridge.handle(event)
+  }
+
   function setNostrFrame(frame: Window | null) {
     if (frame === nostrFrame) return
     bridge.cancelPending()
+    registrationBridge.cancel(); rentalBridge.cancel()
     nostrFrame = frame
   }
-  watch(url, () => bridge.cancelPending(), { flush: 'sync' })
+  watch(url, () => { bridge.cancelPending(); registrationBridge.cancel(); rentalBridge.cancel() }, { flush: 'sync' })
   onScopeDispose(() => {
-    window.removeEventListener('message', handleNostrRequest)
+    window.removeEventListener('message', handleNativeRequest)
     bridge.dispose()
+    registrationBridge.dispose(); rentalBridge.dispose()
     nostrFrame = null
   })
 
   // Listen for NIP-07 requests only while an app is open
   watch(isOpen, (open) => {
     if (open) {
-      window.addEventListener('message', handleNostrRequest)
+      window.addEventListener('message', handleNativeRequest)
     } else {
-      window.removeEventListener('message', handleNostrRequest)
+      window.removeEventListener('message', handleNativeRequest)
       bridge.cancelPending()
+    registrationBridge.cancel(); rentalBridge.cancel()
     }
   }, { flush: 'sync' })
 
@@ -585,6 +607,15 @@ export const useAppLauncherStore = defineStore('appLauncher', () => {
     consentError,
     approveConsent,
     denyConsent,
+    setNativeIdentityBusy: (busy: boolean) => { nativeIdentityBusy.value = busy },
+    rentalRequest: rentalBridge.request, rentalQuote: rentalBridge.quote, rentalPhase: rentalBridge.phase,
+    cancelUnpaidRental: rentalBridge.cancelUnpaid, rentalError: rentalBridge.error, reviewRental: rentalBridge.review, approveRental: rentalBridge.approve, cancelRental: rentalBridge.cancel,
+    registrationRequest: registrationBridge.request,
+    registrationPhase: registrationBridge.phase,
+    registrationError: registrationBridge.error,
+    approveRegistration: registrationBridge.approve,
+    approveRegistrationResolution: registrationBridge.approveResolution,
+    cancelRegistration: registrationBridge.cancel,
     setNostrFrame,
   }
 })

@@ -105,6 +105,7 @@ pub(crate) fn prepare(
         "Shared snapshot version budget is full; retain existing purchases"
     );
     let version = io::private_directory(&root, &key)?;
+    let budget_operation = format!("shared:{key}");
     if let Some(record) = read_manifest(&version)? {
         anyhow::ensure!(
             record.version == 1 && record.content_id == content_id && record.source == source_stamp,
@@ -117,6 +118,7 @@ pub(crate) fn prepare(
                 && file.metadata()?.len() == record.size,
             "Retained shared snapshot changed; preserve accepted purchases"
         );
+        crate::snapshot_budget::finish_completed(data_dir, &budget_operation, record.size, limits)?;
         return Ok(Snapshot {
             file,
             key,
@@ -158,6 +160,7 @@ pub(crate) fn prepare(
             io::save_record(&version, "snapshot.json", &Envelope { record, checksum })?;
             use std::io::{Seek, SeekFrom};
             file.seek(SeekFrom::Start(0))?;
+            crate::snapshot_budget::finish_completed(data_dir, &budget_operation, size, limits)?;
             return Ok(Snapshot {
                 file,
                 key,
@@ -174,24 +177,14 @@ pub(crate) fn prepare(
         }
         Err(error) => return Err(error),
     }
-    let used = storage_bytes(&root)?;
-    anyhow::ensure!(
-        used.checked_add(size)
-            .and_then(|v| v.checked_add(128 * 1024))
-            .is_some_and(|total| total <= max_total_bytes),
-        "Shared snapshot storage budget is full; no new purchase accepted"
-    );
-    let mut stat = std::mem::MaybeUninit::<libc::statvfs>::uninit();
-    anyhow::ensure!(
-        unsafe { libc::fstatvfs(root.as_raw_fd(), stat.as_mut_ptr()) } == 0,
-        "Could not verify snapshot disk space"
-    );
-    let stat = unsafe { stat.assume_init() };
-    let free = (stat.f_bavail as u64).saturating_mul(stat.f_frsize as u64);
-    anyhow::ensure!(
-        free >= size.saturating_add(minimum_free_bytes),
-        "Not enough free storage for a retained purchase snapshot"
-    );
+    let reservation = crate::snapshot_budget::reserve(
+        data_dir,
+        &budget_operation,
+        size,
+        max_total_bytes,
+        minimum_free_bytes,
+        limits,
+    )?;
     let (name, mut destination) = io::temporary(&version)?;
     let mut temporary = Temporary {
         directory: &version,
@@ -218,6 +211,7 @@ pub(crate) fn prepare(
     };
     let checksum = hash(&serde_json::to_vec(&record)?);
     io::save_record(&version, "snapshot.json", &Envelope { record, checksum })?;
+    reservation.finish(limits)?;
     Ok(Snapshot {
         file,
         key,
@@ -277,35 +271,6 @@ pub(crate) fn open_matching(
         });
     }
     anyhow::bail!("Accepted content snapshot is unavailable; retain purchase for recovery")
-}
-
-fn storage_bytes(directory: &File) -> Result<u64> {
-    let mut total = 0u64;
-    for entry in std::fs::read_dir(format!("/proc/self/fd/{}", directory.as_raw_fd()))? {
-        let entry = entry?;
-        let name = entry.file_name();
-        let name = name.to_str().context("Invalid snapshot filename")?;
-        let metadata = std::fs::symlink_metadata(entry.path())?;
-        anyhow::ensure!(
-            !metadata.file_type().is_symlink(),
-            "Snapshot storage contains an unexpected symlink"
-        );
-        let size = if metadata.is_dir() {
-            storage_bytes(&io::open_at(
-                directory,
-                name,
-                libc::O_RDONLY | libc::O_DIRECTORY,
-                0,
-            )?)?
-        } else {
-            anyhow::ensure!(metadata.is_file(), "Unexpected snapshot storage entry");
-            metadata.len()
-        };
-        total = total
-            .checked_add(size)
-            .context("Snapshot storage accounting overflow")?;
-    }
-    Ok(total)
 }
 
 struct Temporary<'a> {

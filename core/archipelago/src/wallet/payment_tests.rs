@@ -1849,6 +1849,7 @@ async fn purchase_expiring_during_mint_preflight_never_reserves_or_posts_swap() 
         &"ab".repeat(32),
         Some(2000),
         || clock.load(Ordering::SeqCst),
+        None,
     )
     .await
     .unwrap_err();
@@ -1931,5 +1932,787 @@ async fn stale_planned_inputs_do_not_reselect_wallet_coins_or_post_to_mint() {
         std::fs::read(root.path().join("wallet/ecash.json")).unwrap(),
         before
     );
+    assert!(mint.requests.lock().unwrap().is_empty());
+}
+
+// Add within wallet payment_tests, using its existing fake proof fixtures.
+#[tokio::test]
+async fn expired_saved_exact_plan_never_reserves_spendable_inputs() {
+    let root = tempfile::tempdir().unwrap();
+    let mint = "https://unused-mint.invalid";
+    let mut wallet = WalletState::default();
+    wallet.mint_url = mint.into();
+    wallet.add_proofs(mint, vec![proof(ACTIVE, 8)]);
+    save_wallet(root.path(), &wallet).await.unwrap();
+    let original = std::fs::read(root.path().join("wallet/ecash.json")).unwrap();
+    let id = uuid::Uuid::new_v4().to_string();
+    let context = "ab".repeat(32);
+    {
+        let guard = crate::wallet::mutation::guard(root.path()).await.unwrap();
+        let binding = crate::wallet::send_journal::Binding {
+            id: id.clone(),
+            network: EcashNetwork::Mainnet,
+            mint_url: mint.into(),
+            amount_sats: 8,
+            context_hash: context.clone(),
+        };
+        crate::wallet::send_journal::Journal::new(&guard)
+            .prepare(
+                binding,
+                crate::wallet::send_journal::Request::Exact {
+                    proofs: vec![proof(ACTIVE, 8)],
+                },
+            )
+            .await
+            .unwrap();
+    }
+    assert!(send_token_recoverable_before(
+        root.path(),
+        &id,
+        EcashNetwork::Mainnet,
+        mint,
+        8,
+        &context,
+        chrono::Utc::now().timestamp() - 1
+    )
+    .await
+    .is_err());
+    assert_eq!(
+        std::fs::read(root.path().join("wallet/ecash.json")).unwrap(),
+        original
+    );
+    assert_eq!(load_wallet(root.path()).await.unwrap().balance(), 8);
+}
+
+// Append to wallet/payment_tests.rs after integrating dispatch/cancellation APIs.
+#[tokio::test]
+async fn cancelled_exact_plan_cannot_later_send_and_releases_only_its_reservation() {
+    use crate::wallet::{
+        mutation,
+        send_journal::{Binding, Journal, Request},
+    };
+    let root = tempfile::tempdir().unwrap();
+    let mint = "https://unused-mint.invalid";
+    let mut wallet = WalletState::default();
+    wallet.mint_url = mint.into();
+    wallet.add_proofs(mint, vec![proof(ACTIVE, 8), proof(ACTIVE, 4)]);
+    save_wallet(root.path(), &wallet).await.unwrap();
+    let binding = Binding {
+        id: uuid::Uuid::new_v4().to_string(),
+        network: EcashNetwork::Mainnet,
+        mint_url: mint.into(),
+        amount_sats: 8,
+        context_hash: "ab".repeat(32),
+    };
+    {
+        let guard = mutation::guard(root.path()).await.unwrap();
+        let journal = Journal::new(&guard);
+        journal
+            .prepare(
+                binding.clone(),
+                Request::Exact {
+                    proofs: vec![proof(ACTIVE, 8)],
+                },
+            )
+            .await
+            .unwrap();
+        journal.reserve_wallet(&binding).await.unwrap();
+        assert_eq!(load_wallet(root.path()).await.unwrap().balance(), 4);
+        journal.cancel_unspent(&binding).await.unwrap();
+        journal.cancel_unspent(&binding).await.unwrap();
+    }
+    assert_eq!(load_wallet(root.path()).await.unwrap().balance(), 12);
+    assert!(send_token_recoverable(
+        root.path(),
+        &binding.id,
+        binding.network,
+        mint,
+        8,
+        &binding.context_hash
+    )
+    .await
+    .is_err());
+    assert_eq!(load_wallet(root.path()).await.unwrap().balance(), 12);
+    assert!(load_wallet(root.path())
+        .await
+        .unwrap()
+        .transactions
+        .is_empty());
+}
+#[tokio::test]
+async fn dispatched_or_legacy_unknown_swap_cannot_cancel_despite_unspent_mint_inputs() {
+    use crate::wallet::{
+        mutation,
+        send_journal::{Binding, Journal, Request},
+    };
+    use sha2::{Digest, Sha256};
+    for legacy in [false, true] {
+        let mint = Mint::start(0, None).await;
+        let root = tempfile::tempdir().unwrap();
+        let mut wallet = WalletState::default();
+        wallet.mint_url = mint.url.clone();
+        wallet.add_proofs(&mint.url, vec![proof(ACTIVE, 8)]);
+        save_wallet(root.path(), &wallet).await.unwrap();
+        let binding = Binding {
+            id: uuid::Uuid::new_v4().to_string(),
+            network: EcashNetwork::Mainnet,
+            mint_url: mint.url.clone(),
+            amount_sats: 4,
+            context_hash: "ab".repeat(32),
+        };
+        let prepared = MintClient::new(&mint.url)
+            .unwrap()
+            .prepare_swap_at_least(&[proof(ACTIVE, 8)], &[4, 4], 4)
+            .await
+            .unwrap();
+        {
+            let guard = mutation::guard(root.path()).await.unwrap();
+            let journal = Journal::new(&guard);
+            journal
+                .prepare(binding.clone(), Request::Swap(prepared))
+                .await
+                .unwrap();
+            journal.reserve_wallet(&binding).await.unwrap();
+            if !legacy {
+                journal.mark_dispatched(&binding).await.unwrap();
+            }
+        }
+        if legacy {
+            let path = root
+                .path()
+                .join("wallet/send-operations")
+                .join(format!("{}.json", binding.id));
+            let mut envelope: serde_json::Value =
+                serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+            let mut payload: serde_json::Value =
+                serde_json::from_str(envelope["payload"].as_str().unwrap()).unwrap();
+            payload.as_object_mut().unwrap().remove("dispatch");
+            let payload = serde_json::to_string(&payload).unwrap();
+            envelope["checksum"] = json!(hex::encode(Sha256::digest(payload.as_bytes())));
+            envelope["payload"] = json!(payload);
+            std::fs::write(path, serde_json::to_vec(&envelope).unwrap()).unwrap();
+        }
+        let guard = mutation::guard(root.path()).await.unwrap();
+        assert!(Journal::new(&guard).cancel_unspent(&binding).await.is_err());
+        assert_eq!(load_wallet(root.path()).await.unwrap().balance(), 0);
+        assert!(mint.requests.lock().unwrap().is_empty());
+    }
+}
+#[tokio::test]
+async fn planner_rejects_wrong_network_before_creating_intent_or_reservation() {
+    let root = tempfile::tempdir().unwrap();
+    let mut wallet = WalletState::default();
+    wallet.mint_url = "http://127.0.0.1:1".into();
+    wallet.add_proofs("http://127.0.0.1:1", vec![proof(ACTIVE, 8)]);
+    save_wallet(root.path(), &wallet).await.unwrap();
+    let original = std::fs::read(root.path().join("wallet/ecash.json")).unwrap();
+    let error = crate::wallet::purchase_plan::prepare(
+        root.path(),
+        "http://127.0.0.1:1",
+        EcashNetwork::Testnet,
+        4,
+        8,
+    )
+    .await
+    .err()
+    .unwrap();
+    assert!(error.to_string().contains("another wallet network"));
+    assert_eq!(
+        std::fs::read(root.path().join("wallet/ecash.json")).unwrap(),
+        original
+    );
+    assert!(!root.path().join("content-purchases").exists());
+    assert!(!root.path().join("wallet/send-operations").exists());
+}
+#[tokio::test]
+async fn planner_skips_unfundable_swaps_and_finds_later_exact_shape_within_budget() {
+    let mint = Mint::start(2000, None).await;
+    let root = tempfile::tempdir().unwrap();
+    let mut wallet = WalletState::default();
+    wallet.mint_url = mint.url.clone();
+    wallet.add_proofs(&mint.url, vec![proof(ACTIVE, 8), proof(ACTIVE, 4)]);
+    save_wallet(root.path(), &wallet).await.unwrap();
+    let plan =
+        crate::wallet::purchase_plan::prepare(root.path(), &mint.url, EcashNetwork::Mainnet, 7, 12)
+            .await
+            .unwrap();
+    assert_eq!(plan.fee_plan.gross_sats, 12);
+    assert_eq!(plan.fee_plan.fee_sats, 4);
+    assert_eq!(plan.fee_plan.net_sats, 8);
+    assert_eq!(plan.wallet_debit_sats, 12);
+    assert_eq!(load_wallet(root.path()).await.unwrap().balance(), 12);
+    assert!(mint.requests.lock().unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn cancellation_seal_wins_against_an_already_waiting_fresh_swap_executor() {
+    use crate::wallet::{
+        mutation,
+        send_journal::{Binding, Journal, Request},
+    };
+    let mint = Mint::start(0, None).await;
+    let root = tempfile::tempdir().unwrap();
+    let mut wallet = WalletState::default();
+    wallet.mint_url = mint.url.clone();
+    wallet.add_proofs(&mint.url, vec![proof(ACTIVE, 8)]);
+    save_wallet(root.path(), &wallet).await.unwrap();
+    let binding = Binding {
+        id: uuid::Uuid::new_v4().to_string(),
+        network: EcashNetwork::Mainnet,
+        mint_url: mint.url.clone(),
+        amount_sats: 4,
+        context_hash: "ab".repeat(32),
+    };
+    let prepared = MintClient::new(&mint.url)
+        .unwrap()
+        .prepare_swap_at_least(&[proof(ACTIVE, 8)], &[4, 4], 4)
+        .await
+        .unwrap();
+    let guard = mutation::guard(root.path()).await.unwrap();
+    let journal = Journal::new(&guard);
+    journal
+        .prepare(binding.clone(), Request::Swap(prepared))
+        .await
+        .unwrap();
+    journal.reserve_wallet(&binding).await.unwrap();
+    let waiting = send_token_recoverable(
+        root.path(),
+        &binding.id,
+        binding.network,
+        &binding.mint_url,
+        binding.amount_sats,
+        &binding.context_hash,
+    );
+    tokio::pin!(waiting);
+    assert!(futures_util::poll!(&mut waiting).is_pending());
+    journal.cancel_unspent(&binding).await.unwrap();
+    drop(journal);
+    drop(guard);
+    assert!(waiting.await.is_err());
+    assert!(mint.requests.lock().unwrap().is_empty());
+    assert_eq!(load_wallet(root.path()).await.unwrap().balance(), 8);
+    assert!(load_wallet(root.path())
+        .await
+        .unwrap()
+        .transactions
+        .is_empty());
+}
+
+// Append under wallet/payment_tests.rs: real local journals + fake mint, no real funds.
+struct PurchaseTestTransport {
+    seller_root: std::path::PathBuf,
+    template: crate::content_purchase_protocol::Offer,
+    lose_offer: std::sync::atomic::AtomicBool,
+    lose_accept: std::sync::atomic::AtomicBool,
+    lose_settle: std::sync::atomic::AtomicBool,
+    offers: std::sync::Mutex<Vec<String>>,
+}
+impl crate::content_purchase_caller::PurchaseTransport for PurchaseTestTransport {
+    fn seller_did(&self) -> &str {
+        &self.template.seller_did
+    }
+    fn seller_onion(&self) -> &str {
+        "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.onion"
+    }
+    async fn offer(
+        &self,
+        id: &str,
+        content_id: &str,
+    ) -> anyhow::Result<crate::content_purchase_protocol::Offer> {
+        self.offers.lock().unwrap().push(id.into());
+        let mut offer = self.template.clone();
+        offer.id = id.into();
+        offer.content_id = content_id.into();
+        let saved = crate::content_purchase_protocol::save_offer(
+            &self.seller_root,
+            &offer,
+            &offer.buyer_did,
+            chrono::Utc::now().timestamp(),
+        )
+        .await?;
+        anyhow::ensure!(
+            !self
+                .lose_offer
+                .swap(false, std::sync::atomic::Ordering::SeqCst),
+            "Lost offer response"
+        );
+        Ok(saved)
+    }
+    async fn accept(
+        &self,
+        envelope: &crate::content_purchase_protocol::Envelope,
+    ) -> anyhow::Result<crate::content_purchase_protocol::Accepted> {
+        let reply = crate::content_purchase_protocol::accept(
+            &self.seller_root,
+            envelope,
+            &envelope.offer.buyer_did,
+            || chrono::Utc::now().timestamp(),
+        )
+        .await?;
+        anyhow::ensure!(
+            !self
+                .lose_accept
+                .swap(false, std::sync::atomic::Ordering::SeqCst),
+            "Lost acceptance response"
+        );
+        Ok(reply)
+    }
+    async fn status(
+        &self,
+        envelope: &crate::content_purchase_protocol::Envelope,
+    ) -> anyhow::Result<crate::content_purchase_protocol::SellerStatus> {
+        crate::content_purchase_protocol::status(
+            &self.seller_root,
+            envelope,
+            &envelope.offer.buyer_did,
+        )
+        .await
+    }
+    async fn cancel(
+        &self,
+        envelope: &crate::content_purchase_protocol::Envelope,
+    ) -> anyhow::Result<crate::content_purchase_protocol::Cancelled> {
+        crate::content_purchase_protocol::cancel(
+            &self.seller_root,
+            envelope,
+            &envelope.offer.buyer_did,
+        )
+        .await
+    }
+    async fn settle(
+        &self,
+        request: &crate::content_purchase_protocol::Settlement,
+    ) -> anyhow::Result<crate::content_purchase::Receipt> {
+        let reply = crate::content_purchase_protocol::settle(
+            &self.seller_root,
+            request,
+            &request.envelope.offer.buyer_did,
+        )
+        .await?;
+        anyhow::ensure!(
+            !self
+                .lose_settle
+                .swap(false, std::sync::atomic::Ordering::SeqCst),
+            "Invalid purchase response after settlement"
+        );
+        Ok(reply)
+    }
+}
+#[tokio::test]
+async fn full_caller_recovers_lost_acceptance_and_settlement_without_another_payment() {
+    use crate::content_purchase_caller::{purchase, PurchaseConsent, ReadyPurchase};
+    use std::sync::atomic::{AtomicBool, Ordering};
+    let mint = Mint::start(0, None).await;
+    let buyer = tempfile::tempdir().unwrap();
+    let seller = mint.wallet().await;
+    let buyer_did = crate::identity::did_key_from_pubkey_hex(&hex::encode([1u8; 32])).unwrap();
+    let seller_did = crate::identity::did_key_from_pubkey_hex(&hex::encode([2u8; 32])).unwrap();
+    let mut wallet = WalletState::default();
+    wallet.mint_url = mint.url.clone();
+    wallet.add_proofs(&mint.url, vec![proof(ACTIVE, 8)]);
+    save_wallet(buyer.path(), &wallet).await.unwrap();
+    let mut wallet = WalletState::default();
+    wallet.mint_url = mint.url.clone();
+    save_wallet(seller.path(), &wallet).await.unwrap();
+    let now = chrono::Utc::now().timestamp();
+    let transport = PurchaseTestTransport {
+        seller_root: seller.path().into(),
+        template: crate::content_purchase_protocol::Offer {
+            id: uuid::Uuid::new_v4().to_string(),
+            buyer_did: buyer_did.clone(),
+            seller_did,
+            content_id: "paid-film".into(),
+            filename: "film.mp4".into(),
+            mime_type: "video/mp4".into(),
+            content_sha256: "ab".repeat(32),
+            content_size: 16,
+            viewing_seconds: None,
+            terms_sha256: "cd".repeat(32),
+            network: EcashNetwork::Mainnet,
+            mint_url: mint.url.clone(),
+            seller_net_sats: 8,
+            offered_at: now,
+            expires_at: now + 300,
+        },
+        lose_offer: AtomicBool::new(true),
+        lose_accept: AtomicBool::new(true),
+        lose_settle: AtomicBool::new(true),
+        offers: Default::default(),
+    };
+    assert!(purchase(
+        buyer.path(),
+        &buyer_did,
+        "paid-film",
+        Some("film.mp4"),
+        8,
+        None,
+        &transport
+    )
+    .await
+    .is_err());
+    assert!(mint.requests.lock().unwrap().is_empty());
+    assert_eq!(load_wallet(buyer.path()).await.unwrap().balance(), 8);
+    let quote = purchase(
+        buyer.path(),
+        &buyer_did,
+        "paid-film",
+        Some("film.mp4"),
+        8,
+        None,
+        &transport,
+    )
+    .await
+    .unwrap();
+    let consent = match quote {
+        ReadyPurchase::AwaitingConfirmation {
+            operation_id,
+            envelope_sha256,
+            wallet_debit_sats,
+            ..
+        } => PurchaseConsent {
+            operation_id,
+            envelope_sha256,
+            wallet_debit_sats,
+        },
+        _ => panic!("Fresh purchase spent before confirmation"),
+    };
+    let reopened = purchase(
+        buyer.path(),
+        &buyer_did,
+        "paid-film",
+        Some("film.mp4"),
+        9_007_199_254_740_991,
+        None,
+        &transport,
+    )
+    .await
+    .unwrap();
+    match reopened {
+        ReadyPurchase::AwaitingConfirmation {
+            operation_id,
+            wallet_debit_sats,
+            ..
+        } => {
+            assert_eq!(operation_id, consent.operation_id);
+            assert_eq!(wallet_debit_sats, consent.wallet_debit_sats);
+        }
+        _ => panic!("A broad quote budget initiated spending without consent"),
+    }
+    assert!(mint.requests.lock().unwrap().is_empty());
+    assert_eq!(load_wallet(buyer.path()).await.unwrap().balance(), 8);
+    // A quote alone does not pin seller policy. Removing acceptance must stop
+    // the buyer before any token is exposed; the same quote can resume later.
+    save_accepted_mints(seller.path(), &AcceptedMints { mints: vec![] })
+        .await
+        .unwrap();
+    let rejected = purchase(
+        buyer.path(),
+        &buyer_did,
+        "paid-film",
+        Some("film.mp4"),
+        8,
+        Some(&consent),
+        &transport,
+    )
+    .await
+    .err()
+    .unwrap();
+    assert!(rejected
+        .to_string()
+        .contains("does not accept the quoted mint"));
+    assert_eq!(load_wallet(buyer.path()).await.unwrap().balance(), 8);
+    assert!(mint.requests.lock().unwrap().is_empty());
+    save_accepted_mints(
+        seller.path(),
+        &AcceptedMints {
+            mints: vec![mint.url.clone()],
+        },
+    )
+    .await
+    .unwrap();
+    let error = purchase(
+        buyer.path(),
+        &buyer_did,
+        "paid-film",
+        Some("film.mp4"),
+        8,
+        Some(&consent),
+        &transport,
+    )
+    .await
+    .err()
+    .expect("The simulated lost response must surface");
+    assert!(
+        error.to_string().contains("Lost acceptance response"),
+        "unexpected purchase failure: {error:#}"
+    );
+    assert!(mint.requests.lock().unwrap().is_empty());
+    assert_eq!(load_wallet(buyer.path()).await.unwrap().balance(), 8);
+    // Durable acceptance now pins redemption policy until cancellation or
+    // settlement, including when the acceptance reply was lost.
+    assert!(
+        save_accepted_mints(seller.path(), &AcceptedMints { mints: vec![] })
+            .await
+            .is_err()
+    );
+    assert!(save_network(seller.path(), EcashNetwork::Testnet)
+        .await
+        .is_err());
+    assert_eq!(
+        load_network(seller.path()).await.unwrap(),
+        EcashNetwork::Mainnet
+    );
+    let error = purchase(
+        buyer.path(),
+        &buyer_did,
+        "paid-film",
+        Some("film.mp4"),
+        8,
+        Some(&consent),
+        &transport,
+    )
+    .await
+    .err()
+    .expect("The simulated lost response must surface");
+    assert!(
+        error
+            .to_string()
+            .contains("Invalid purchase response after settlement"),
+        "unexpected purchase failure: {error:#}"
+    );
+    assert_eq!(mint.requests.lock().unwrap().len(), 1);
+    let recovered = purchase(
+        buyer.path(),
+        &buyer_did,
+        "paid-film",
+        Some("film.mp4"),
+        8,
+        None,
+        &transport,
+    )
+    .await
+    .unwrap();
+    let original = match recovered {
+        ReadyPurchase::Entitlement { contract, receipt } => {
+            assert_eq!(contract.id, consent.operation_id);
+            receipt
+        }
+        _ => panic!("Original entitlement was not recovered"),
+    };
+    let again = purchase(
+        buyer.path(),
+        &buyer_did,
+        "paid-film",
+        Some("film.mp4"),
+        8,
+        None,
+        &transport,
+    )
+    .await
+    .unwrap();
+    match again {
+        ReadyPurchase::Entitlement { receipt, .. } => assert!(receipt == original),
+        _ => panic!("Receipt replay changed"),
+    }
+    assert_eq!(transport.offers.lock().unwrap().len(), 2);
+    assert_ne!(transport.offers.lock().unwrap()[0], consent.operation_id);
+    assert_eq!(transport.offers.lock().unwrap()[1], consent.operation_id);
+    assert_eq!(mint.requests.lock().unwrap().len(), 1);
+    assert_eq!(load_wallet(buyer.path()).await.unwrap().balance(), 0);
+    assert_eq!(load_wallet(seller.path()).await.unwrap().balance(), 8);
+    assert_eq!(
+        load_wallet(buyer.path()).await.unwrap().transactions.len(),
+        1
+    );
+    assert_eq!(
+        load_wallet(seller.path()).await.unwrap().transactions.len(),
+        1
+    );
+    assert!(!transport.lose_accept.load(Ordering::SeqCst));
+}
+
+#[tokio::test]
+async fn rental_catalog_term_mismatch_never_plans_or_creates_buyer_intent() {
+    use crate::content_purchase_caller::{purchase_bound, ExpectedRental};
+    use std::sync::atomic::AtomicBool;
+    let buyer = tempfile::tempdir().unwrap();
+    let seller = tempfile::tempdir().unwrap();
+    save_accepted_mints(
+        seller.path(),
+        &AcceptedMints {
+            mints: vec!["http://127.0.0.1:1".into()],
+        },
+    )
+    .await
+    .unwrap();
+    let buyer_did = crate::identity::did_key_from_pubkey_hex(&hex::encode([1u8; 32])).unwrap();
+    let seller_did = crate::identity::did_key_from_pubkey_hex(&hex::encode([2u8; 32])).unwrap();
+    let now = chrono::Utc::now().timestamp();
+    let transport = PurchaseTestTransport {
+        seller_root: seller.path().into(),
+        template: crate::content_purchase_protocol::Offer {
+            id: uuid::Uuid::new_v4().to_string(),
+            buyer_did: buyer_did.clone(),
+            seller_did: seller_did.clone(),
+            content_id: "registered_film".into(),
+            filename: "film.mp4".into(),
+            mime_type: "video/mp4".into(),
+            content_sha256: "ab".repeat(32),
+            content_size: 16,
+            viewing_seconds: Some(60),
+            terms_sha256: "cd".repeat(32),
+            network: EcashNetwork::Mainnet,
+            mint_url: "http://127.0.0.1:1".into(),
+            seller_net_sats: 8,
+            offered_at: now,
+            expires_at: now + 300,
+        },
+        lose_offer: AtomicBool::new(false),
+        lose_accept: AtomicBool::new(false),
+        lose_settle: AtomicBool::new(false),
+        offers: Default::default(),
+    };
+    let expected = ExpectedRental {
+        seller_did,
+        content_id: "registered_film".into(),
+        sha256: "ab".repeat(32),
+        price_sats: 8,
+        viewing_seconds: 60,
+    };
+    let mut changed_hash = expected.clone();
+    changed_hash.sha256 = "ef".repeat(32);
+    let mut changed_price = expected.clone();
+    changed_price.price_sats = 9;
+    let mut changed_duration = expected.clone();
+    changed_duration.viewing_seconds = 120;
+    for wrong in [changed_hash, changed_price, changed_duration] {
+        let error = purchase_bound(
+            buyer.path(),
+            &buyer_did,
+            "registered_film",
+            None,
+            20,
+            None,
+            &transport,
+            Some(&wrong),
+        )
+        .await
+        .err()
+        .unwrap();
+        assert!(error.to_string().contains("Published rental"), "{error:#}");
+        assert!(!buyer.path().join("wallet/ecash.json").exists());
+        assert!(!buyer.path().join("wallet/send-operations").exists());
+        assert!(crate::content_purchase::Journal::open(buyer.path())
+            .await
+            .unwrap()
+            .find_buyers(&buyer_did, &expected.seller_did, "registered_film")
+            .await
+            .unwrap()
+            .is_empty());
+    }
+}
+
+#[tokio::test]
+async fn unconfirmed_quote_can_cancel_and_requote_without_exposing_wallet_funds() {
+    use crate::content_purchase_caller::{purchase, ReadyPurchase};
+    use std::sync::atomic::{AtomicBool, Ordering};
+    let mint = Mint::start(0, None).await;
+    let buyer = tempfile::tempdir().unwrap();
+    let seller = mint.wallet().await;
+    let buyer_did = crate::identity::did_key_from_pubkey_hex(&hex::encode([1u8; 32])).unwrap();
+    let seller_did = crate::identity::did_key_from_pubkey_hex(&hex::encode([2u8; 32])).unwrap();
+    let mut wallet = WalletState::default();
+    wallet.mint_url = mint.url.clone();
+    wallet.add_proofs(&mint.url, vec![proof(ACTIVE, 8)]);
+    save_wallet(buyer.path(), &wallet).await.unwrap();
+    let mut wallet = WalletState::default();
+    wallet.mint_url = mint.url.clone();
+    save_wallet(seller.path(), &wallet).await.unwrap();
+    let now = chrono::Utc::now().timestamp();
+    let transport = PurchaseTestTransport {
+        seller_root: seller.path().into(),
+        template: crate::content_purchase_protocol::Offer {
+            id: uuid::Uuid::new_v4().to_string(),
+            buyer_did: buyer_did.clone(),
+            seller_did,
+            content_id: "paid-film".into(),
+            filename: "film.mp4".into(),
+            mime_type: "video/mp4".into(),
+            content_sha256: "ab".repeat(32),
+            content_size: 16,
+            viewing_seconds: None,
+            terms_sha256: "cd".repeat(32),
+            network: EcashNetwork::Mainnet,
+            mint_url: mint.url.clone(),
+            seller_net_sats: 8,
+            offered_at: now,
+            expires_at: now + 300,
+        },
+        lose_offer: AtomicBool::new(false),
+        lose_accept: AtomicBool::new(false),
+        lose_settle: AtomicBool::new(false),
+        offers: Default::default(),
+    };
+    let quote = purchase(
+        buyer.path(),
+        &buyer_did,
+        "paid-film",
+        Some("film.mp4"),
+        8,
+        None,
+        &transport,
+    )
+    .await
+    .unwrap();
+    let id = match quote {
+        ReadyPurchase::AwaitingConfirmation { operation_id, .. } => operation_id,
+        _ => panic!("Quote spent funds"),
+    };
+    assert!(!buyer
+        .path()
+        .join("wallet/send-operations")
+        .join(format!("{id}.json"))
+        .exists());
+    let (envelope, plan) = {
+        let journal = crate::content_purchase::Journal::open(buyer.path())
+            .await
+            .unwrap();
+        (
+            journal
+                .protocol_envelope("buyer", &id)
+                .await
+                .unwrap()
+                .unwrap(),
+            journal.buyer_plan(&id).await.unwrap().unwrap(),
+        )
+    };
+    crate::content_purchase_caller::cancel_purchase(buyer.path(), &envelope, &plan, &transport)
+        .await
+        .unwrap();
+    crate::content_purchase_caller::cancel_purchase(buyer.path(), &envelope, &plan, &transport)
+        .await
+        .unwrap();
+    assert_eq!(load_wallet(buyer.path()).await.unwrap().balance(), 8);
+    assert!(load_wallet(buyer.path())
+        .await
+        .unwrap()
+        .transactions
+        .is_empty());
+    assert!(mint.requests.lock().unwrap().is_empty());
+    let next = purchase(
+        buyer.path(),
+        &buyer_did,
+        "paid-film",
+        Some("film.mp4"),
+        8,
+        None,
+        &transport,
+    )
+    .await
+    .unwrap();
+    match next {
+        ReadyPurchase::AwaitingConfirmation { operation_id, .. } => assert_ne!(operation_id, id),
+        _ => panic!("Replacement quote spent funds"),
+    }
     assert!(mint.requests.lock().unwrap().is_empty());
 }

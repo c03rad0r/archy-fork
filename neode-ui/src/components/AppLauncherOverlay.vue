@@ -181,6 +181,10 @@
               </div>
             </Transition>
 
+            <RentalPurchaseConsent v-if="!store.showConsent && !showIdentityPicker && !store.registrationRequest" :request="store.rentalRequest" :quote="store.rentalQuote" :phase="store.rentalPhase" :error="store.rentalError" @cancel-unpaid="store.cancelUnpaidRental" @review="store.reviewRental" @approve="store.approveRental" @cancel="store.cancelRental" />
+            <MediaRegistrationConsent v-if="!store.showConsent"
+              :request="store.registrationRequest" :phase="store.registrationPhase" :error="store.registrationError"
+              @approve="store.approveRegistration" @resolve="store.approveRegistrationResolution" @cancel="store.cancelRegistration" />
             <NostrSignConsent
               :show="store.showConsent"
               :app-name="store.consentRequest?.appName ?? ''"
@@ -211,6 +215,8 @@
 import { ref, computed, watch, onMounted, onBeforeUnmount } from 'vue'
 import { useAppLauncherStore } from '@/stores/appLauncher'
 import NostrSignConsent from '@/components/NostrSignConsent.vue'
+import MediaRegistrationConsent from '@/components/MediaRegistrationConsent.vue'
+import RentalPurchaseConsent from '@/components/RentalPurchaseConsent.vue'
 import NostrIdentityPicker from '@/components/NostrIdentityPicker.vue'
 import AppLoadingScreen from '@/components/AppLoadingScreen.vue'
 import AppSlowLoadNotice from '@/components/AppSlowLoadNotice.vue'
@@ -275,6 +281,7 @@ watch(iframeLoading, (loading) => {
 
 // Nostr identity picker state
 const showIdentityPicker = ref(false)
+watch(showIdentityPicker, value => store.setNativeIdentityBusy(value), { flush: 'sync' })
 const IDENTITY_STORAGE_KEY = 'archipelago_app_identity_'
 
 interface SelectedIdentity {

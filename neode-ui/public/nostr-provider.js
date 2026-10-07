@@ -14,7 +14,7 @@
   var providerScript = document.currentScript;
   var autoNip98 = !(providerScript && providerScript.hasAttribute('data-no-nip98'));
   var embedded = window !== window.top;
-  var pending = {}, nextId = 1, queuedMessages = [];
+  var pending = {}, rentalPending = {}, mediaPending = {}, nextId = 1, queuedMessages = [];
   var identitySelection = null;
   var selectedIdentity = null, identitySubscribers = [];
   var selectedPublicKey = null, selectedPublicKeyTimer = null;
@@ -288,6 +288,21 @@
       cancelIdentitySelection();
       return;
     }
+    if (e.data.type === 'archipelago-rental-response') {
+      var rental = rentalPending[e.data.id];
+      if (!rental) return;
+      delete rentalPending[e.data.id]; clearTimeout(rental.timer);
+      e.data.error ? rental.reject(new Error(e.data.error)) : rental.resolve(e.data.result);
+      return;
+    }
+    if (e.data.type === 'archipelago-media-registration-response') {
+      var media = mediaPending[e.data.id];
+      if (!media) return;
+      delete mediaPending[e.data.id];
+      clearTimeout(media.timer);
+      e.data.error ? media.reject(new Error(e.data.error)) : media.resolve(e.data.result);
+      return;
+    }
     if (e.data.type !== 'nostr-response') return;
     var handler = pending[e.data.id];
     if (!handler) return;
@@ -307,6 +322,58 @@
     nip44: {
       encrypt: function (pubkey, plaintext) { return request('nip44.encrypt', { pubkey: pubkey, plaintext: plaintext }); },
       decrypt: function (pubkey, ciphertext) { return request('nip44.decrypt', { pubkey: pubkey, ciphertext: ciphertext }); },
+    },
+  };
+
+  // Exact owner-approved Cloud registration. The dashboard checks the installed
+  // app origin/audience and displays the native picker before any preparation.
+  function nativeRequestId() {
+    if (typeof crypto.randomUUID === 'function') return crypto.randomUUID();
+    // Secure randomness remains available on ordinary HTTP node/LAN origins.
+    var bytes = new Uint8Array(16); crypto.getRandomValues(bytes);
+    bytes[6] = (bytes[6] & 15) | 64; bytes[8] = (bytes[8] & 63) | 128;
+    var hex = Array.from(bytes, function (value) { return value.toString(16).padStart(2, '0'); }).join('');
+    return hex.slice(0,8)+'-'+hex.slice(8,12)+'-'+hex.slice(12,16)+'-'+hex.slice(16,20)+'-'+hex.slice(20);
+  }
+
+  window.archipelagoRental = {
+    status: function (handle) {
+      return new Promise(function (resolve, reject) {
+        var id = nativeRequestId();
+        rentalPending[id] = { resolve: resolve, reject: reject, timer: setTimeout(function () {
+          delete rentalPending[id]; reject(new Error('Playback status unavailable.'));
+        }, 15000) };
+        postToSigner({ type: 'archipelago-rental-request', id: id, action: 'status', handle: handle });
+      });
+    },
+    request: function (offer) {
+      return new Promise(function (resolve, reject) {
+        var id = nativeRequestId();
+        rentalPending[id] = { resolve: resolve, reject: reject, timer: setTimeout(function () {
+          delete rentalPending[id]; reject(new Error('Rental response unavailable. Reopen this title to recover the same purchase.'));
+        }, 600000) };
+        postToSigner({ type: 'archipelago-rental-request', id: id, offer: offer });
+      });
+    }
+  };
+
+  window.archipelagoMediaRegistration = {
+    request: function (action, payload) {
+      if (['select', 'resume', 'submit', 'complete', 'resolve', 'resolve-submit'].indexOf(action) === -1 || !payload || typeof payload !== 'object') {
+        return Promise.reject(new Error('Invalid native media registration request'));
+      }
+      return new Promise(function (resolve, reject) {
+        var id = nativeRequestId();
+        mediaPending[id] = { resolve: resolve, reject: reject, timer: setTimeout(function () {
+          var item = mediaPending[id];
+          if (!item) return;
+          delete mediaPending[id];
+          item.reject(new Error('Registration was not confirmed. Resume the same saved operation.'));
+        }, 600000) };
+        postToSigner({ type: 'archipelago-media-registration-request', id: id, action: action,
+          intent: payload.intent, selection: payload.selection, approvalId: payload.approvalId,
+          producerEvent: payload.producerEvent });
+      });
     },
   };
 

@@ -39,7 +39,7 @@ fn validate_id(id: &str) -> Result<()> {
     );
     Ok(())
 }
-fn canonical_mint(value: &str) -> Result<String> {
+pub(crate) fn canonical_mint(value: &str) -> Result<String> {
     let url = reqwest::Url::parse(value).context("Invalid purchase mint")?;
     anyhow::ensure!(
         matches!(url.scheme(), "http" | "https")
@@ -228,6 +228,8 @@ impl PreparedToken {
 pub(crate) enum BuyerPhase {
     Intent,
     AcceptanceSaved,
+    CancellationPending,
+    Cancelled,
     TokenPrepared,
     ReceiptSaved,
     Delivered,
@@ -245,6 +247,8 @@ impl BuyerRecord {
     pub fn public_status(&self) -> serde_json::Value {
         let (state, settlement_confirmed, delivered) = match self.phase {
             BuyerPhase::Intent => ("intent", false, false),
+            BuyerPhase::CancellationPending => ("cancellation_pending_seller", false, false),
+            BuyerPhase::Cancelled => ("cancelled_unspent", false, false),
             BuyerPhase::AcceptanceSaved => ("accepted_payment_unconfirmed", false, false),
             BuyerPhase::TokenPrepared => ("token_prepared_settlement_unconfirmed", false, false),
             BuyerPhase::ReceiptSaved => ("settled_delivery_pending", true, false),
@@ -260,8 +264,8 @@ impl BuyerRecord {
             "settlement_confirmed": settlement_confirmed,
             "amount_received": self.receipt().map(|receipt| receipt.amount_received),
             "delivered": delivered,
-            "recovery_required": !delivered,
-            "can_start_new_payment": false,
+            "recovery_required": !delivered && self.phase != BuyerPhase::Cancelled,
+            "can_start_new_payment": self.phase == BuyerPhase::Cancelled,
         })
     }
 
@@ -284,6 +288,8 @@ impl BuyerRecord {
         }
         anyhow::ensure!(
             match self.phase {
+                BuyerPhase::CancellationPending | BuyerPhase::Cancelled =>
+                    self.token.is_none() && self.receipt.is_none(),
                 BuyerPhase::Intent =>
                     self.acceptance.is_none() && self.token.is_none() && self.receipt.is_none(),
                 BuyerPhase::AcceptanceSaved =>
@@ -302,6 +308,7 @@ impl BuyerRecord {
 #[serde(deny_unknown_fields)]
 pub(crate) enum SellerPhase {
     Intent,
+    Cancelled,
     Settled { amount_received: u64 },
     ReceiptSaved(Receipt),
 }
@@ -315,6 +322,10 @@ pub(crate) struct SellerRecord {
 }
 impl SellerRecord {
     pub fn acceptance(&self) -> Result<Acceptance> {
+        anyhow::ensure!(
+            !matches!(self.phase, SellerPhase::Cancelled),
+            "Seller cancelled this operation"
+        );
         Ok(Acceptance {
             contract_hash: self.contract.context_hash()?,
             accepted_at: self.accepted_at,
@@ -322,15 +333,22 @@ impl SellerRecord {
     }
     fn validate(&self) -> Result<()> {
         self.contract.validate()?;
-        self.acceptance()?.validate(&self.contract)?;
+        if !matches!(self.phase, SellerPhase::Cancelled) {
+            self.acceptance()?.validate(&self.contract)?;
+        }
         if let Some(token_hash) = &self.token_hash {
             anyhow::ensure!(valid_hash(token_hash), "Invalid seller token hash");
         }
         anyhow::ensure!(
-            matches!(self.phase, SellerPhase::Intent) || self.token_hash.is_some(),
+            matches!(self.phase, SellerPhase::Intent | SellerPhase::Cancelled)
+                || self.token_hash.is_some(),
             "Seller token was not durably bound"
         );
         match &self.phase {
+            SellerPhase::Cancelled => anyhow::ensure!(
+                self.token_hash.is_none(),
+                "Cancelled seller already has a token"
+            ),
             SellerPhase::Intent => (),
             SellerPhase::Settled { amount_received } => {
                 anyhow::ensure!(
@@ -355,6 +373,13 @@ struct Envelope {
 /// Exclusive journal access across tasks and processes. Hold this only while
 /// changing local purchase state; release it before transport/wallet calls.
 /// A later caller reopens and revalidates the immutable contract before advancing.
+#[derive(Serialize, Deserialize)]
+struct RetiredOffer {
+    id: String,
+    buyer_did: String,
+    offer_sha256: String,
+}
+
 pub(crate) struct Journal {
     directory: PathBuf,
     _lock: std::fs::File,
@@ -423,7 +448,16 @@ impl Journal {
     fn path(&self, role: &str, id: &str) -> Result<PathBuf> {
         validate_id(id)?;
         anyhow::ensure!(
-            matches!(role, "buyer" | "seller"),
+            matches!(
+                role,
+                "buyer"
+                    | "seller"
+                    | "protocol-offer"
+                    | "offer-retired"
+                    | "envelope-buyer"
+                    | "envelope-seller"
+                    | "plan-buyer"
+            ),
             "Invalid purchase journal role"
         );
         Ok(self.directory.join(format!("{role}-{id}.json")))
@@ -511,6 +545,280 @@ impl Journal {
         .sync_all()?;
         Ok(())
     }
+    /// Caller sealed the wallet first under its mutation guard. This phase
+    /// still blocks replacement until authenticated seller acknowledgement.
+    pub async fn begin_cancellation(&self, contract: &Contract) -> Result<()> {
+        let mut record = self.bound_buyer(contract).await?;
+        anyhow::ensure!(
+            matches!(
+                record.phase,
+                BuyerPhase::Intent
+                    | BuyerPhase::AcceptanceSaved
+                    | BuyerPhase::CancellationPending
+                    | BuyerPhase::Cancelled
+            ),
+            "Funded purchase cannot cancel as unspent"
+        );
+        if record.phase == BuyerPhase::Cancelled {
+            return Ok(());
+        }
+        record.phase = BuyerPhase::CancellationPending;
+        record.validate()?;
+        self.write("buyer", &contract.id, &record).await
+    }
+    pub async fn finish_cancellation(
+        &self,
+        contract: &Contract,
+        verified_seller: &str,
+    ) -> Result<()> {
+        anyhow::ensure!(
+            verified_seller == contract.seller_did,
+            "Cancellation acknowledgement seller changed"
+        );
+        let mut record = self.bound_buyer(contract).await?;
+        anyhow::ensure!(
+            matches!(
+                record.phase,
+                BuyerPhase::CancellationPending | BuyerPhase::Cancelled
+            ),
+            "Cancellation was not sealed locally"
+        );
+        record.phase = BuyerPhase::Cancelled;
+        record.validate()?;
+        self.write("buyer", &contract.id, &record).await
+    }
+    /// Runs under the same journal flock as accept/token binding. A token bound
+    /// before this lock wins and prevents cancellation, even before settlement.
+    pub async fn cancel_seller(&self, contract: &Contract) -> Result<()> {
+        let mut record = if let Some(record) = self.seller(&contract.id).await? {
+            anyhow::ensure!(
+                record.contract == *contract,
+                "Seller cancellation terms changed"
+            );
+            record
+        } else {
+            SellerRecord {
+                contract: contract.clone(),
+                accepted_at: 0,
+                token_hash: None,
+                phase: SellerPhase::Cancelled,
+            }
+        };
+        anyhow::ensure!(
+            record.token_hash.is_none()
+                && matches!(record.phase, SellerPhase::Intent | SellerPhase::Cancelled),
+            "Seller already received this payment; recover settlement"
+        );
+        record.phase = SellerPhase::Cancelled;
+        record.validate()?;
+        self.write("seller", &contract.id, &record).await
+    }
+
+    // Add these methods inside content_purchase::Journal; extend path role allowlist
+    // with "protocol-offer" | "envelope-buyer" | "envelope-seller" | "plan-buyer".
+    // The existing same flock/checksum/private permissions/synchronous commit apply.
+    pub async fn protocol_offer(
+        &self,
+        id: &str,
+    ) -> Result<Option<crate::content_purchase_protocol::Offer>> {
+        let value: Option<crate::content_purchase_protocol::Offer> =
+            self.read("protocol-offer", id).await?;
+        if let Some(offer) = &value {
+            anyhow::ensure!(offer.id == id, "Offer identifier changed");
+            offer.validate()?;
+        }
+        Ok(value)
+    }
+    pub async fn save_protocol_offer(
+        &self,
+        offer: &crate::content_purchase_protocol::Offer,
+    ) -> Result<()> {
+        offer.validate()?;
+        let retired: Option<RetiredOffer> = self.read("offer-retired", &offer.id).await?;
+        anyhow::ensure!(
+            retired.is_none(),
+            "Original offer expired without acceptance; recover cancellation before replacing it"
+        );
+        if let Some(old) = self.protocol_offer(&offer.id).await? {
+            anyhow::ensure!(old == *offer, "Original offer changed");
+            return Ok(());
+        }
+        self.retire_unaccepted_offers(chrono::Utc::now().timestamp())
+            .await?;
+        // Bound unaffiliated authenticated peers' quote storage. Existing IDs
+        // replay above without consuming another slot; no accepted liability GC.
+        let mut entries = fs::read_dir(&self.directory).await?;
+        let mut total = 0usize;
+        let mut buyer = 0usize;
+        while let Some(entry) = entries.next_entry().await? {
+            let name = entry.file_name();
+            let Some(name) = name.to_str() else {
+                continue;
+            };
+            let Some(id) = name
+                .strip_prefix("protocol-offer-")
+                .and_then(|v| v.strip_suffix(".json"))
+            else {
+                continue;
+            };
+            // Accepted obligations are retained, but do not consume the quota
+            // for new, never-accepted quotes.
+            if self.seller(id).await?.is_some() {
+                continue;
+            }
+            total += 1;
+            anyhow::ensure!(
+                total < 4096,
+                "Purchase offer storage limit reached; existing operations remain recoverable"
+            );
+            if self
+                .protocol_offer(id)
+                .await?
+                .is_some_and(|value| value.buyer_did == offer.buyer_did)
+            {
+                buyer += 1;
+                anyhow::ensure!(
+                    buyer < 128,
+                    "Buyer offer storage limit reached; recover an existing operation"
+                );
+            }
+        }
+        self.write("protocol-offer", &offer.id, offer).await
+    }
+    /// Retire only provably unaccepted quotes under the same journal flock as
+    /// acceptance/cancellation. The immutable commitment survives forever;
+    /// absence of history is never interpreted as permission to pay again.
+    pub async fn retire_unaccepted_offers(&self, now: i64) -> Result<()> {
+        let mut entries = fs::read_dir(&self.directory).await?;
+        let mut bytes = 0u64;
+        while let Some(entry) = entries.next_entry().await? {
+            if entry
+                .file_name()
+                .to_string_lossy()
+                .starts_with("offer-retired-")
+            {
+                bytes = bytes
+                    .checked_add(entry.metadata().await?.len())
+                    .context("Offer retirement size overflow")?;
+            }
+        }
+        let mut entries = fs::read_dir(&self.directory).await?;
+        while let Some(entry) = entries.next_entry().await? {
+            let name = entry.file_name();
+            let Some(id) = name
+                .to_str()
+                .and_then(|name| name.strip_prefix("protocol-offer-"))
+                .and_then(|name| name.strip_suffix(".json"))
+            else {
+                continue;
+            };
+            let Some(offer) = self.protocol_offer(id).await? else {
+                continue;
+            };
+            if offer.expires_at > now
+                || self.seller(id).await?.is_some()
+                || self.protocol_envelope("seller", id).await?.is_some()
+            {
+                continue;
+            }
+            let commitment = hash(&serde_json::to_vec(&offer)?);
+            let previous: Option<RetiredOffer> = self.read("offer-retired", id).await?;
+            if let Some(previous) = previous {
+                anyhow::ensure!(
+                    previous.id == id
+                        && previous.buyer_did == offer.buyer_did
+                        && previous.offer_sha256 == commitment,
+                    "Retired offer binding changed"
+                );
+            } else {
+                // Bound compact terminal metadata separately from accepted liability.
+                anyhow::ensure!(bytes < 64 * 1024 * 1024, "Quote retirement storage needs maintenance; existing purchases remain recoverable");
+                self.write(
+                    "offer-retired",
+                    id,
+                    &RetiredOffer {
+                        id: id.into(),
+                        buyer_did: offer.buyer_did,
+                        offer_sha256: commitment,
+                    },
+                )
+                .await?;
+                bytes = bytes
+                    .checked_add(std::fs::metadata(self.path("offer-retired", id)?)?.len())
+                    .context("Retirement size overflow")?;
+            }
+            // Synchronous commit point: cancellation cannot leave an asynchronous
+            // deletion running after this flock is released.
+            std::fs::remove_file(self.path("protocol-offer", id)?)?;
+            std::fs::File::open(&self.directory)?.sync_all()?;
+        }
+        Ok(())
+    }
+    pub async fn retired_offer_matches(
+        &self,
+        offer: &crate::content_purchase_protocol::Offer,
+    ) -> Result<bool> {
+        let value: Option<RetiredOffer> = self.read("offer-retired", &offer.id).await?;
+        let commitment = hash(&serde_json::to_vec(offer)?);
+        Ok(value.is_some_and(|value| {
+            value.id == offer.id
+                && value.buyer_did == offer.buyer_did
+                && value.offer_sha256 == commitment
+        }))
+    }
+    pub async fn protocol_envelope(
+        &self,
+        role: &str,
+        id: &str,
+    ) -> Result<Option<crate::content_purchase_protocol::Envelope>> {
+        let role = match role {
+            "buyer" => "envelope-buyer",
+            "seller" => "envelope-seller",
+            _ => anyhow::bail!("Invalid envelope role"),
+        };
+        let value: Option<crate::content_purchase_protocol::Envelope> = self.read(role, id).await?;
+        if let Some(value) = &value {
+            anyhow::ensure!(value.contract()?.id == id, "Envelope identifier changed");
+        }
+        Ok(value)
+    }
+    pub async fn save_protocol_envelope(
+        &self,
+        role: &str,
+        value: &crate::content_purchase_protocol::Envelope,
+    ) -> Result<()> {
+        let contract = value.contract()?;
+        if let Some(old) = self.protocol_envelope(role, &contract.id).await? {
+            anyhow::ensure!(old == *value, "Original payment shape changed");
+            return Ok(());
+        }
+        let role = match role {
+            "buyer" => "envelope-buyer",
+            "seller" => "envelope-seller",
+            _ => anyhow::bail!("Invalid envelope role"),
+        };
+        self.write(role, &contract.id, value).await
+    }
+    pub async fn buyer_plan(
+        &self,
+        id: &str,
+    ) -> Result<Option<crate::wallet::purchase_plan::PreparedPayment>> {
+        self.read("plan-buyer", id).await
+    }
+    pub async fn save_buyer_plan(
+        &self,
+        id: &str,
+        plan: &crate::wallet::purchase_plan::PreparedPayment,
+    ) -> Result<()> {
+        if let Some(old) = self.buyer_plan(id).await? {
+            anyhow::ensure!(
+                serde_json::to_value(&old)? == serde_json::to_value(plan)?,
+                "Original wallet plan changed"
+            );
+            return Ok(());
+        }
+        self.write("plan-buyer", id, plan).await
+    }
     pub async fn buyer(&self, id: &str) -> Result<Option<BuyerRecord>> {
         let result: Option<BuyerRecord> = self.read("buyer", id).await?;
         if let Some(record) = &result {
@@ -526,6 +834,44 @@ impl Journal {
             anyhow::ensure!(record.contract.id == id, "Seller journal identity changed");
         }
         Ok(result)
+    }
+    /// Caller holds the wallet mutation guard. Keep accepted seller liabilities
+    /// redeemable until settlement or authenticated cancellation is durable.
+    pub(crate) async fn ensure_seller_policy_change(
+        &self,
+        network: EcashNetwork,
+        accepted_mints: Option<&[String]>,
+    ) -> Result<()> {
+        let mut entries = fs::read_dir(&self.directory).await?;
+        while let Some(entry) = entries.next_entry().await? {
+            let name = entry.file_name();
+            let Some(id) = name
+                .to_str()
+                .and_then(|v| v.strip_prefix("seller-"))
+                .and_then(|v| v.strip_suffix(".json"))
+            else {
+                continue;
+            };
+            let record = self
+                .seller(id)
+                .await?
+                .context("Seller liability disappeared")?;
+            if !matches!(record.phase, SellerPhase::Intent) {
+                continue;
+            }
+            anyhow::ensure!(
+                record.contract.network == network,
+                "A pending accepted sale requires its original wallet network"
+            );
+            if let Some(mints) = accepted_mints {
+                anyhow::ensure!(
+                    mints.iter().any(|mint| canonical_mint(mint).ok().as_deref()
+                        == Some(record.contract.mint_url.as_str())),
+                    "A pending accepted sale requires its original accepted mint"
+                );
+            }
+        }
+        Ok(())
     }
     /// Discover existing node-owned intent after browser storage loss. The
     /// journal lock makes this lookup and prepare_buyer's duplicate guard one
@@ -584,9 +930,10 @@ impl Journal {
             )
             .await?;
         anyhow::ensure!(
-            pending
-                .iter()
-                .all(|record| record.phase == BuyerPhase::Delivered),
+            pending.iter().all(|record| matches!(
+                record.phase,
+                BuyerPhase::Delivered | BuyerPhase::Cancelled
+            )),
             "An existing purchase must be recovered before a new operation is created"
         );
         contract.validate_new_at(now)?;
@@ -606,6 +953,10 @@ impl Journal {
             anyhow::ensure!(
                 &record.contract == contract,
                 "Seller purchase terms changed"
+            );
+            anyhow::ensure!(
+                !matches!(record.phase, SellerPhase::Cancelled),
+                "Seller cancelled this operation"
             );
             return Ok(record);
         }
@@ -651,6 +1002,13 @@ impl Journal {
             "Acceptance is from another seller"
         );
         let mut record = self.bound_buyer(contract).await?;
+        anyhow::ensure!(
+            !matches!(
+                record.phase,
+                BuyerPhase::CancellationPending | BuyerPhase::Cancelled
+            ),
+            "Buyer cancellation is sealed"
+        );
         acceptance.validate(contract)?;
         if let Some(previous) = &record.acceptance {
             anyhow::ensure!(previous == acceptance, "Seller acceptance changed");
@@ -718,6 +1076,7 @@ impl Journal {
     ) -> Result<SellerRecord> {
         let mut record = self.bound_seller(contract).await?;
         match &record.phase {
+            SellerPhase::Cancelled => anyhow::bail!("Seller cancelled this operation"),
             SellerPhase::Intent => record.phase = SellerPhase::Settled { amount_received },
             SellerPhase::Settled {
                 amount_received: saved,
@@ -744,6 +1103,7 @@ impl Journal {
     pub async fn issue_receipt(&self, contract: &Contract) -> Result<Receipt> {
         let mut record = self.bound_seller(contract).await?;
         let amount_received = match &record.phase {
+            SellerPhase::Cancelled => anyhow::bail!("Seller cancelled this operation"),
             SellerPhase::Intent => anyhow::bail!("Seller settlement is not durable"),
             SellerPhase::Settled { amount_received } => *amount_received,
             SellerPhase::ReceiptSaved(receipt) => return Ok(receipt.clone()),

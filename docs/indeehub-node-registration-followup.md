@@ -180,10 +180,12 @@ Seven registered-media tests and three route/stream tests passed in
 `/tmp/archy-registration-rental-batch-tests.log`; its overall result was 1,834
 passed, one failed legacy missing-file expectation, and five existing skips.
 All 383 captured source/build/fixture hashes remained unchanged. The expectation
-was corrected separately and awaits the next full run. Do not describe that batch
+was corrected separately; the later full run passed 1,848 tests, zero failures
+and five existing skips with all 385 captured hashes unchanged. Do not describe that earlier batch
 as a clean combined suite or live playback acceptance.
 
-The subsequent, not-yet-tested performance refinement persists the already
+The subsequent performance refinement, qualified in the later clean 1,848-test
+backend run, persists the already
 verified snapshot's signed hash and inode/device/ctime/size attestation during
 registration. Ordinary first-open/range requests reuse it. A missing cache streams
 the original signed hash under a per-registration lock; buyer leases use separate
@@ -197,3 +199,52 @@ picker/consent bridge, app receipt consumption, and player reconnect/expiry UI a
 being connected next. Their source is not yet deployed; app registration and
 publication flags remain disabled pending complete qualification. No real payment,
 announcement, media publication or node deployment was performed by this work.
+
+
+## Applied native caller and terminal recovery — 7 October UTC
+
+The next source batch now connects the dashboard Cloud picker, exact producer
+signature, owner-session/CSRF RPC, shared snapshot reservation budget and Backstage
+receipt consumption. It is local and uncommitted; the deployed b52214f7 backend
+candidate does not contain these caller changes. Registration/publication flags
+remain disabled.
+
+An interrupted operation can now be resolved under its original operation lock:
+return and verify its completed receipt, or durably retire an expired incomplete
+request. Retirement is node-signed against the entire original intent. It prevents
+late preparation and cannot replace a completed receipt. App pending lookup and
+retirement consumption authenticate the current producer/project owner and pinned
+installation; an expired unknown intent cannot silently become a fresh one.
+Backstage retains signatures/receipts across lost replies and offers explicit
+resume/resolve actions. Completed media remains available without the Cloud source.
+
+Focused qualification: PostgreSQL registration/retirement and migrations plus
+HTTP identity routes passed 54 tests in two suites; app caller passed seven tests;
+dashboard native bridge passed six tests. App frontend typecheck passed. Logs:
+`/tmp/indeehub-terminal-registration-focused.log`,
+`/tmp/indeehub-terminal-registration-client-rerun.log`,
+`/tmp/archy-native-registration-bridge-tests.log`, and
+`/tmp/indeehub-terminal-registration-typecheck.log`.
+The first client test command found zero tests because the new file was outside
+the repository include pattern; it was moved to `tests/backstage-registration.test.ts`
+and the rerun passed. No zero-test run is counted as qualification.
+
+The backend all-source noEmit check reports two unchanged legacy test-mock errors:
+missing Subscription.flashId and User.libraryItems. Its production-config noEmit
+check passed; the all-source failure remains recorded separately. Combined new Rust primitive/RPC/caller tests and
+real native registration/rental acceptance remain pending. No new payment,
+announcement, media publication or deployment was performed by this batch.
+
+
+The connected app rental player passed eight mounted-Vue lifecycle/status tests
+and frontend typecheck. Opening the dialog creates no purchase or media request;
+video uses preload=none and does not autoplay. Native response generations reject
+late close/reopen or changed-offer results. The actual playing event starts a
+read-only status(handle) request and non-overlapping five-second checks; pause,
+ended, error and close stop polling. Only the server expires_at is displayed;
+null never starts a local rental clock. A status error retains the original
+purchase handle and offers recovery without another payment. Logs:
+`/tmp/indeehub-rental-player-status-tests.log` and
+`/tmp/indeehub-rental-player-status-typecheck.log`.
+Host broker and Rust proxy/caller qualification are tracked separately; these app
+tests do not claim a live paid-stream acceptance.

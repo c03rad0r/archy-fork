@@ -332,7 +332,24 @@ impl RpcHandler {
             "content.download-peer-paid" => self.handle_content_download_peer_paid(params).await,
             "content.indeehub-projects" => self.handle_content_indeehub_projects().await,
             "content.browse-all-peers" => self.handle_content_browse_all_peers().await,
+            "content.playback-handle" => self.handle_playback_handle(params, session_token).await,
+            "content.playback-status" => self.handle_playback_status(params, session_token).await,
+            "content.rental-purchase" => self.handle_content_rental_purchase(params).await,
+            "content.purchase" => self.handle_content_purchase(params).await,
+            "content.cancel-purchase" => self.handle_content_cancel_purchase(params).await,
             "content.payment-status" => self.handle_content_payment_status(params).await,
+            "media.registration.context" => {
+                self.handle_media_registration_context(params.unwrap_or_default())
+                    .await
+            }
+            "media.registration.prepare" => {
+                self.handle_media_registration_prepare(params.unwrap_or_default())
+                    .await
+            }
+            "media.registration.resolve" => {
+                self.handle_media_registration_resolve(params.unwrap_or_default())
+                    .await
+            }
             "content.owned-list" => self.handle_content_owned_list().await,
             "content.owned-get" => self.handle_content_owned_get(params).await,
             "content.request-invoice" => self.handle_content_request_invoice(params).await,

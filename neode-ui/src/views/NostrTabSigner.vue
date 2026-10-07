@@ -6,6 +6,10 @@
       @select="onIdentitySelected"
       @cancel="cancelIdentitySelection"
     />
+    <RentalPurchaseConsent v-if="!bridge.showConsent.value && !showIdentityPicker && !registrationBridge.request.value" :request="rentalBridge.request.value" :quote="rentalBridge.quote.value" :phase="rentalBridge.phase.value" :error="rentalBridge.error.value" @cancel-unpaid="rentalBridge.cancelUnpaid" @review="rentalBridge.review" @approve="rentalBridge.approve" @cancel="rentalBridge.cancel" />
+      <MediaRegistrationConsent v-if="!bridge.showConsent.value && !showIdentityPicker"
+      :request="registrationBridge.request.value" :phase="registrationBridge.phase.value"
+      :error="registrationBridge.error.value" @approve="registrationBridge.approve" @resolve="registrationBridge.approveResolution" @cancel="registrationBridge.cancel" />
     <NostrSignConsent
       :show="bridge.showConsent.value"
       :app-name="bridge.consentRequest.value?.appName ?? appName"
@@ -25,6 +29,10 @@
 import { nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import NostrIdentityPicker from '@/components/NostrIdentityPicker.vue'
 import NostrSignConsent from '@/components/NostrSignConsent.vue'
+import MediaRegistrationConsent from '@/components/MediaRegistrationConsent.vue'
+import RentalPurchaseConsent from '@/components/RentalPurchaseConsent.vue'
+import { useMediaRegistrationBridge } from '@/composables/useMediaRegistrationBridge'
+import { useRentalPurchaseBridge } from '@/composables/useRentalPurchaseBridge'
 import { useNostrBridge } from '@/views/appSession/useNostrBridge'
 import type { SelectedIdentity } from '@/views/appSession/useAppIdentity'
 
@@ -65,7 +73,7 @@ function hideSigner(delay = 0) {
   if (hideTimer !== null) clearTimeout(hideTimer)
   const hide = () => {
     hideTimer = null
-    if (!showIdentityPicker.value && !bridge.showConsent.value) {
+    if (!showIdentityPicker.value && !bridge.showConsent.value && !registrationBridge.request.value && !rentalBridge.request.value) {
       parentPost({ type: 'archipelago:signer-hide' })
     }
   }
@@ -89,6 +97,17 @@ function sendIdentity(identity: SelectedIdentity) {
   parentPost({ type: 'archipelago:signer-identity', identity: publicIdentity })
 }
 
+const registrationBridge = useMediaRegistrationBridge({
+  consentBusy: (): boolean => rentalBridge.isBusy(),
+  appId: () => appId.value, appUrl: () => appOrigin.value, frameWindow: () => window.parent,
+})
+const rentalBridge = useRentalPurchaseBridge({
+  consentBusy: (): boolean => bridge.showConsent.value || showIdentityPicker.value || registrationBridge.isBusy(),
+  appId: () => appId.value, appUrl: () => appOrigin.value, frameWindow: () => window.parent,
+})
+watch(rentalBridge.request, request => { if (request) showSigner(); else hideSigner() })
+watch(registrationBridge.request, request => { if (request) showSigner(); else hideSigner() })
+watch([appId, appOrigin], () => { registrationBridge.cancel(); rentalBridge.cancel() }, { flush: 'sync' })
 const bridge = useNostrBridge(getStoredIdentity, {
   appId: () => appId.value,
   appName: () => appName.value,
@@ -185,6 +204,13 @@ function onMessage(event: MessageEvent) {
     return
   }
 
+  if (data.type === 'archipelago-rental-request' && appId.value && event.origin === appOrigin.value) {
+    void rentalBridge.handle(event); return
+  }
+  if (data.type === 'archipelago-media-registration-request' && appId.value && event.origin === appOrigin.value) {
+    void registrationBridge.handle(event)
+    return
+  }
   if (data.type !== 'nostr-request' || !appId.value || event.origin !== appOrigin.value) return
   if (!getStoredIdentity()) {
     queuedRequests.push(event)
@@ -208,6 +234,7 @@ onMounted(() => {
   window.parent.postMessage({ type: 'archipelago:signer-ready' }, '*')
 })
 onBeforeUnmount(() => {
+  registrationBridge.dispose(); rentalBridge.dispose()
   if (hideTimer !== null) clearTimeout(hideTimer)
   window.removeEventListener('message', onMessage)
   document.documentElement.classList.remove('nostr-signer-route')

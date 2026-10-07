@@ -5,7 +5,7 @@ import AppLauncherOverlay from '../AppLauncherOverlay.vue'
 import { useAppLauncherStore } from '@/stores/appLauncher'
 vi.mock('@/stores/appLauncher', async () => {
   const { reactive } = await import('vue')
-  const state = reactive({ isOpen: false, url: '', title: 'Custom app', showConsent: false, setNostrFrame: vi.fn(), close: vi.fn(), consentPhase: 'review' })
+  const state = reactive({ isOpen: false, url: '', title: 'Custom app', showConsent: false, setNostrFrame: vi.fn(), close: vi.fn(), consentPhase: 'review', setNativeIdentityBusy: vi.fn(), registrationRequest: null, registrationPhase: 'select', registrationError: '', rentalRequest: null, rentalQuote: null, rentalPhase: 'review', rentalError: '' })
   return { useAppLauncherStore: () => state }
 })
 vi.mock('@/composables/useLightningRequired', () => ({ useLightningRequired: () => ({}) }))

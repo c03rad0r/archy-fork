@@ -1897,3 +1897,29 @@ mod payment_source_tests {
         }
     }
 }
+
+// Make existing content_file_path pub(crate). Add this method in content_server.
+pub(crate) async fn publish_snapshot_offer(
+    data_dir: &Path,
+    original: &ContentItem,
+    offer: &crate::content_purchase_protocol::Offer,
+) -> Result<crate::content_purchase_protocol::Offer> {
+    let _held = CATALOG_WRITES.lock().await;
+    let current = load_catalog(data_dir).await?;
+    let item = current
+        .items
+        .iter()
+        .find(|item| item.id == original.id)
+        .context("Content was unshared before this offer")?;
+    anyhow::ensure!(
+        serde_json::to_value(item)? == serde_json::to_value(original)?,
+        "Shared content terms changed before offer publication"
+    );
+    crate::content_purchase_protocol::save_offer(
+        data_dir,
+        offer,
+        &offer.buyer_did,
+        chrono::Utc::now().timestamp(),
+    )
+    .await
+}

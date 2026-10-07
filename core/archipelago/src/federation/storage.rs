@@ -101,6 +101,41 @@ pub(crate) async fn load_unique_payment_peer(
     Ok(peer)
 }
 
+/// Resolve a purchase seller by raw identity before any display deduplication.
+pub(crate) async fn load_unique_payment_peer_by_did(
+    data_dir: &Path,
+    did: &str,
+) -> Result<FederatedNode> {
+    let _guard = FEDERATION_STORE_LOCK.lock().await;
+    let content = fs::read(data_dir.join(FEDERATION_DIR).join(NODES_FILE))
+        .await
+        .context("Could not read payment peer bindings")?;
+    let file: NodesFile =
+        serde_json::from_slice(&content).context("Invalid payment peer bindings")?;
+    let matching: Vec<_> = file.nodes.iter().filter(|peer| peer.did == did).collect();
+    anyhow::ensure!(
+        matching.len() == 1,
+        "Payment seller identity binding is missing or ambiguous"
+    );
+    let peer = matching[0];
+    let onion = peer.onion.strip_suffix(".onion").unwrap_or(&peer.onion);
+    anyhow::ensure!(
+        !onion.is_empty()
+            && file
+                .nodes
+                .iter()
+                .filter(|node| node.onion.strip_suffix(".onion").unwrap_or(&node.onion) == onion)
+                .count()
+                == 1,
+        "Payment seller address binding is missing or ambiguous"
+    );
+    anyhow::ensure!(
+        crate::identity::did_key_from_pubkey_hex(&peer.pubkey)? == peer.did,
+        "Payment seller identity does not match its public key"
+    );
+    Ok(peer.clone())
+}
+
 /// Lock-free body of `load_nodes`. Callers that already hold
 /// `FEDERATION_STORE_LOCK` (i.e. other functions in this module composing a
 /// multi-step critical section) must call this instead of `load_nodes` to
@@ -545,6 +580,41 @@ mod tests {
             last_sync_error: None,
             last_sync_error_at: None,
         }
+    }
+
+    #[tokio::test]
+    async fn payment_did_resolution_rejects_duplicates_hidden_by_display_merging() {
+        let dir = tempfile::tempdir().unwrap();
+        let key = hex::encode([1u8; 32]);
+        let did = crate::identity::did_key_from_pubkey_hex(&key).unwrap();
+        let mut original = make_node(&did, "a.onion");
+        original.pubkey = key;
+        save_nodes(dir.path(), &[original.clone()]).await.unwrap();
+        assert_eq!(
+            load_unique_payment_peer_by_did(dir.path(), &did)
+                .await
+                .unwrap()
+                .onion,
+            "a.onion"
+        );
+        let mut alternate = original.clone();
+        alternate.onion = "b.onion".into();
+        save_nodes(dir.path(), &[original.clone(), alternate])
+            .await
+            .unwrap();
+        assert!(load_unique_payment_peer_by_did(dir.path(), &did)
+            .await
+            .is_err());
+        let mut collision = original.clone();
+        collision.did = crate::identity::did_key_from_pubkey_hex(&hex::encode([2u8; 32])).unwrap();
+        collision.pubkey = hex::encode([2u8; 32]);
+        save_nodes(dir.path(), &[collision, original])
+            .await
+            .unwrap();
+        assert_eq!(load_nodes(dir.path()).await.unwrap().len(), 1);
+        assert!(load_unique_payment_peer_by_did(dir.path(), &did)
+            .await
+            .is_err());
     }
 
     #[test]

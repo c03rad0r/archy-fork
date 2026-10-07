@@ -377,9 +377,10 @@
           class="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-4"
           @click.self="closePayModal"
         >
-          <div class="glass-card w-full max-w-md p-5 rounded-2xl relative">
+          <div class="glass-card w-full max-w-md max-h-[calc(100dvh-2rem)] overflow-y-auto p-5 rounded-2xl relative">
             <button
-              class="absolute top-3 right-3 text-white/50 hover:text-white transition-colors"
+              class="absolute top-1 right-1 min-h-11 min-w-11 flex items-center justify-center text-white/50 hover:text-white transition-colors"
+              aria-label="Close payment"
               @click="closePayModal"
             >
               <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -461,18 +462,24 @@
             <!-- Step 1b: ecash confirmation — show which wallet will be spent -->
             <div v-else-if="payMode === 'ecash-confirm' && ecashPlan" class="space-y-4">
               <div class="text-center py-2">
-                <div class="text-3xl font-bold text-white">{{ getItemPrice(payItem.access) }} <span class="text-lg text-white/50">sats</span></div>
+                <div class="text-3xl font-bold text-white">{{ ecashPlan.chosen === 'cashu' && cashuQuote ? cashuQuote.wallet_debit_sats : getItemPrice(payItem.access) }} <span class="text-lg text-white/50">sats</span></div>
                 <div class="text-xs text-white/50 mt-1">from your node’s ecash wallet</div>
               </div>
 
+              <p v-if="ecashPlan.chosen === 'cashu' && cashuQuote" class="text-sm text-white/70 text-center">
+                <span class="block">Cashu · {{ cashuQuote.network === 'testnet' ? 'Testnet' : 'Mainnet' }}</span>
+                <span class="block break-all">Mint: {{ cashuQuote.mint_url }}</span>
+                File: {{ cashuQuote.seller_net_sats }} sats · fees/rounding: {{ cashuQuote.wallet_debit_sats - cashuQuote.seller_net_sats }} sats
+              </p>
+              <p v-if="hasBlockingCashuPurchase" class="text-xs text-white/60">The original purchase is saved on your node. Retry recovers it without starting another payment.</p>
               <!-- Backend selector: the chosen one is highlighted; the user can
                    switch to the other if it has enough balance. -->
               <div class="space-y-2">
                 <button
                   v-for="b in (['cashu', 'fedimint', 'ark'] as const)"
                   :key="b"
-                  @click="ecashPlan.chosen = b"
-                  :disabled="ecashBalanceOf(b) < getItemPrice(payItem.access)"
+                  @click="selectEcashBackend(b)"
+                  :disabled="paymentActionBusy || (b !== 'cashu' && hasBlockingCashuPurchase) || (b !== 'cashu' && ecashBalanceOf(b) < getItemPrice(payItem.access))"
                   class="w-full px-4 py-3 rounded-xl flex items-center gap-3 text-left border transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
                   :class="ecashPlan.chosen === b ? 'border-green-400/70 bg-green-400/10' : 'border-white/10 bg-white/5 hover:bg-white/10'"
                 >
@@ -489,6 +496,7 @@
 
               <p v-if="purchaseError" class="text-sm text-red-400">{{ purchaseError }}</p>
 
+              <button v-if="cashuQuote" class="w-full glass-button px-4 py-2.5 rounded-xl text-sm text-white/70" :disabled="paymentActionBusy" @click="cancelCashuPurchase">Cancel unpaid quote</button>
               <div class="flex gap-2 pt-1">
                 <button
                   class="flex-1 glass-button px-4 py-2.5 rounded-xl text-sm text-white/70"
@@ -499,7 +507,7 @@
                   class="flex-1 px-4 py-2.5 rounded-xl text-sm font-semibold text-black bg-green-400 hover:bg-green-300 transition-colors disabled:opacity-50"
                   :disabled="!ecashPlan.chosen || paymentActionBusy"
                   @click="confirmEcashPay"
-                >{{ paymentActionBusy ? 'Paying…' : 'Pay' }}</button>
+                >{{ paymentActionBusy ? 'Working…' : ecashPlan.chosen === 'cashu' && !cashuQuote ? 'Check original purchase' : 'Pay' }}</button>
               </div>
             </div>
 
@@ -595,6 +603,7 @@
 </template>
 
 <script setup lang="ts">
+import { parseCashuQuote, readCashuAttempt, keepCashuAttempt, keepAuthoritativeCashuQuote, archiveMalformedCashuAttempt, clearCashuAttempt, type CashuQuote } from '@/composables/peerCashuPurchase'
 import { usePeerPaymentOperations } from '@/composables/peerPaymentOperations'
 import { ref, computed, reactive, watch, onMounted, onUnmounted } from 'vue'
 import { useRouter } from 'vue-router'
@@ -835,6 +844,33 @@ const ecashPlan = ref<{
   chosen: EcashBackend | null
 } | null>(null)
 const ecashPreparing = ref(false)
+const cashuQuote = ref<CashuQuote | null>(null)
+const cashuRecoveryRequired = ref(false)
+const cashuRecoveryError = ref(false)
+const hasBlockingCashuPurchase = computed(() => cashuRecoveryRequired.value || cashuRecoveryError.value)
+let cashuLookup: Promise<void> = Promise.resolve()
+async function lookupCashuPurchase(onion: string, item: CatalogItem, generation: number) {
+  const selected = () => paymentGeneration.value === generation && activePaymentMatches(onion, item.id)
+  try {
+    const state = await rpcClient.call<{attempts?: Array<{operation_id?: string;state?: string}>}>({method:'content.payment-status',params:{onion,content_id:item.id},timeout:15000})
+    if (!Array.isArray(state?.attempts)) throw new Error('Could not verify saved purchases; recover the original payment before choosing another method.')
+    if (selected() && state.attempts.some(attempt => attempt.state !== 'cancelled_unspent')) {
+      cashuRecoveryRequired.value=true
+      lnError.value='A Cashu purchase is saved on this node. Choose ecash to recover or cancel that operation.'
+    }
+  } catch (error) {
+    if (selected()) { cashuRecoveryError.value=true;lnError.value=error instanceof Error?error.message:'Could not verify saved purchases' }
+  }
+}
+async function permitFreshOtherRail(item: CatalogItem, onion: string) {
+  const generation=paymentGeneration.value
+  await cashuLookup
+  if (paymentGeneration.value!==generation || !activePaymentMatches(onion,item.id)) return false
+  if (hasBlockingCashuPurchase.value) { lnError.value='Recover or cancel the saved Cashu purchase before choosing another method.'; return false }
+  return true
+}
+
+
 // Pay-from-another-wallet QR view: tabbed like the wallet's Send/Receive modal,
 // on-chain first (the default).
 const qrTab = ref<'onchain' | 'lightning'>('onchain')
@@ -877,6 +913,13 @@ function keepFailedLightningAttempt(onion: string, id: string, receipt: Lightnin
   keepReceipt(onion, id, { ...receipt, state: 'failed', failure_reason: reason }, selected)
   if (selected()) lnError.value = `Lightning attempt failed: ${reason}. No sats were sent by this attempt. You can choose another payment method.`
 }
+type InvoiceLifecycle = { paid?: boolean; state?: string; can_switch_method?: boolean }
+function keepCanceledInvoice(onion: string, id: string, receipt: LightningReceipt, result: InvoiceLifecycle | undefined, selected: () => boolean) {
+  if (receipt.state === 'succeeded' || result?.paid !== false || result.state !== 'canceled' || result.can_switch_method !== true) return false
+  keepReceipt(onion, id, { ...receipt, state: 'failed', failure_reason: 'Seller confirmed the invoice is canceled and unpaid' }, selected)
+  if (selected()) lnError.value = 'The seller confirmed this invoice is canceled and unpaid. You can choose another payment method.'
+  return true
+}
 async function recoverFailedLightningAttempt(onion: string, id: string, receipt: LightningReceipt, selected = () => activePaymentMatches(onion, id)): Promise<'failed' | 'pending' | 'other'> {
   // Old backends throw for terminal failures. Only LND's matching payment status
   // can distinguish that from a lost reply; never infer failure from error text.
@@ -890,6 +933,14 @@ async function recoverFailedLightningAttempt(onion: string, id: string, receipt:
     }
     if (result?.status === 'pending' || result?.status === 'in_flight') return 'pending'
   } catch { /* unavailable/unknown is still recoverable, never permission to pay again */ }
+  try {
+    const result = await rpcClient.call<InvoiceLifecycle>({
+      method: 'content.invoice-status', params: { onion, content_id: id, payment_hash: receipt.payment_hash }, timeout: 15000,
+    })
+    if (keepCanceledInvoice(onion, id, receipt, result, selected)) return 'failed'
+    if (result?.paid === true) keepReceipt(onion, id, { ...receipt, state: 'succeeded' }, selected)
+    else if (result?.state === 'open' || result?.state === 'accepted') return 'pending'
+  } catch { /* Seller outage or old boolean-only response cannot authorize another payment. */ }
   return 'other'
 }
 const onchainPaying = ref(false)
@@ -1130,6 +1181,13 @@ async function downloadFile(item: CatalogItem) {
 
 function openPayModal(item: CatalogItem) {
   paymentGeneration.value++
+  cashuQuote.value = null
+  cashuRecoveryRequired.value = false
+  cashuRecoveryError.value = false
+  try {
+    const saved = readCashuAttempt(props.peerId || currentPeer.value?.onion || '', item.id)
+    if (saved) { cashuQuote.value = saved.quote; cashuRecoveryRequired.value = true }
+  } catch { cashuRecoveryError.value = true }
   payItem.value = item
   payMode.value = 'choose'
   qrTab.value = 'onchain'
@@ -1152,6 +1210,7 @@ function openPayModal(item: CatalogItem) {
     if (lnReceipt.value?.state === 'failed') lnError.value = `Previous Lightning attempt failed: ${lnReceipt.value.failure_reason || 'Payment failed'}. You can choose another method.`
   } catch { lnReceiptReadError.value = true; lnError.value = 'Saved payment could not be read. Do not pay again.' }
   onchainPaying.value = false
+  cashuLookup = lookupCashuPurchase(props.peerId || currentPeer.value?.onion || '', item, paymentGeneration.value)
 }
 
 function closePayModal() {
@@ -1161,6 +1220,9 @@ function closePayModal() {
   payItem.value = null
   payMode.value = 'choose'
   ecashPlan.value = null
+  cashuQuote.value = null
+  cashuRecoveryRequired.value = false
+  cashuRecoveryError.value = false
   ecashPreparing.value = false
   invoiceWaiting.value = false
   onchainWaiting.value = false
@@ -1232,6 +1294,7 @@ async function loadOnchainQr() {
   const item = payItem.value
   const onion = props.peerId || currentPeer.value?.onion
   if (!item || !onion) return
+  if (!await permitFreshOtherRail(item, onion)) return
   if (getItemPrice(item.access) < 546) { onchainError.value = 'On-chain payment requires at least 546 sats. Choose Lightning or ecash for this file.'; return }
   const operation = paymentOperations.begin('onchain-qr', onion, item.id)
   if (!operation) return
@@ -1280,6 +1343,7 @@ async function payOnchain() {
   const item = payItem.value
   const onion = props.peerId || currentPeer.value?.onion
   if (!item || !onion || paymentActionBusy.value) return
+  if (!await permitFreshOtherRail(item, onion)) return
   if (hasBlockingLightningReceipt.value) { lnError.value = 'Check the saved Lightning attempt before choosing another method.'; return }
   if (getItemPrice(item.access) < 546) { lnError.value = 'On-chain payment requires at least 546 sats. Choose Lightning or ecash for this file.'; return }
   const operation = paymentOperations.begin('onchain-send', onion, item.id)
@@ -1348,6 +1412,9 @@ async function prepareEcashPay() {
   const onion = props.peerId || currentPeer.value?.onion
   if (!item || !onion || paymentActionBusy.value) return
   if (hasBlockingLightningReceipt.value) { lnError.value = 'Check the saved Lightning attempt before choosing another method.'; return }
+  const generation = paymentGeneration.value
+  await cashuLookup
+  if (paymentGeneration.value !== generation || !activePaymentMatches(onion, item.id)) return
   const operation = paymentOperations.begin('prepare-ecash', onion, item.id)
   if (!operation) return
   const price = getItemPrice(item.access)
@@ -1372,12 +1439,15 @@ async function prepareEcashPay() {
     // Prefer Cashu when it covers the price, else Fedimint, else Ark, else
     // leave null (insufficient — shown in the confirm screen, Confirm disabled).
     const chosen: EcashBackend | null =
-      cashu >= price ? 'cashu' : fedimint >= price ? 'fedimint' : ark >= price ? 'ark' : null
+      acceptsMethod(item.access, 'ecash') || hasBlockingCashuPurchase.value ? 'cashu' : fedimint >= price ? 'fedimint' : ark >= price ? 'ark' : null
     ecashPlan.value = { cashu, fedimint, ark, total, chosen }
     if (!chosen) {
       purchaseError.value = `Not enough funds: Cashu ${cashu} + Fedimint ${fedimint} + Ark ${ark} sats, need ${price}. Fund a wallet, or pay another way.`
     }
     payMode.value = 'ecash-confirm'
+    if (chosen === 'cashu') await requestCashuPurchase(item, onion, operation, false)
+  } catch (error) {
+    if (paymentOperations.selected(operation)) purchaseError.value = error instanceof Error ? error.message : 'Could not recover the Cashu purchase'
   } finally {
     if (paymentOperations.finish(operation)) ecashPreparing.value = false
   }
@@ -1420,12 +1490,80 @@ function openPurchased(item: CatalogItem, base64Data: string | undefined, mimeTy
   void loadOwned()
 }
 
+type CashuPurchaseReply = Partial<Omit<CashuQuote, 'state'>> & { state?: string; owned?: boolean; owned_content_id?: string; mime_type?: string; error?: string }
+async function requestCashuPurchase(item: CatalogItem, onion: string, operation: NonNullable<ReturnType<typeof paymentOperations.begin>>, confirm: boolean) {
+  const selected = () => paymentOperations.selected(operation)
+  let saved: ReturnType<typeof readCashuAttempt> = null
+  let unreadable = false
+  try { saved = readCashuAttempt(onion, item.id) } catch { unreadable = true }
+  // A corrupt browser marker may query/recover node-owned state, but cannot
+  // supply consent or authorize a newly selected payment.
+  const quote = unreadable ? null : saved?.quote || (selected() ? cashuQuote.value : null)
+  if (confirm && quote) keepCashuAttempt(onion, item.id, quote, true)
+  const result = await rpcClient.call<CashuPurchaseReply>({
+    method: 'content.purchase',
+    params: { onion, content_id: item.id, filename: item.filename,
+      max_wallet_debit: confirm && quote ? quote.wallet_debit_sats : Number.MAX_SAFE_INTEGER,
+      ...(confirm && quote ? { consent: { operation_id: quote.operation_id, envelope_sha256: quote.envelope_sha256, wallet_debit_sats: quote.wallet_debit_sats } } : {}) },
+    timeout: 960000, maxRetries: 1,
+  })
+  if (result?.state === 'confirmation_required') {
+    const next = parseCashuQuote(result)
+    keepAuthoritativeCashuQuote(onion, item.id, next)
+    if (selected()) { cashuQuote.value = next; cashuRecoveryRequired.value = true; cashuRecoveryError.value = false }
+    return
+  }
+  if (result?.state === 'delivered' && result.owned === true && result.owned_content_id) {
+    archiveMalformedCashuAttempt(onion, item.id)
+    clearCashuAttempt(onion, item.id)
+    if (selected()) openPurchased(item, undefined, result.mime_type, onion, result.owned_content_id)
+    return
+  }
+  if (result?.state === 'cancelled_unspent') {
+    archiveMalformedCashuAttempt(onion, item.id)
+    clearCashuAttempt(onion, item.id)
+    if (selected()) { cashuQuote.value = null; cashuRecoveryRequired.value = false; cashuRecoveryError.value = false; payMode.value = 'choose' }
+    return
+  }
+  throw new Error(result?.error || 'The original Cashu purchase is not confirmed yet. Retry recovers it; do not pay using another method.')
+}
+async function selectEcashBackend(backend: EcashBackend) {
+  if (!ecashPlan.value || paymentActionBusy.value) return
+  if (backend !== 'cashu' && hasBlockingCashuPurchase.value) { purchaseError.value = 'Cancel the original unpaid Cashu quote before selecting another wallet.'; return }
+  ecashPlan.value.chosen = backend
+  if (backend === 'cashu') await prepareEcashPay()
+}
+async function cancelCashuPurchase() {
+  const item = payItem.value
+  const onion = props.peerId || currentPeer.value?.onion
+  const quote = cashuQuote.value
+  if (!item || !onion || !quote || paymentActionBusy.value) return
+  const generation = paymentGeneration.value
+  await cashuLookup
+  if (paymentGeneration.value !== generation || !activePaymentMatches(onion,item.id)) return
+  const operation = paymentOperations.begin('cashu-cancel', onion, item.id)
+  if (!operation) return
+  try {
+    const result = await rpcClient.call<{state?: string;operation_id?: string}>({ method:'content.cancel-purchase',
+      params:{onion,operation_id:quote.operation_id}, timeout:60000,maxRetries:1 })
+    if (result?.state !== 'cancelled_unspent' || result.operation_id !== quote.operation_id) throw new Error('Cancellation is not confirmed. Recover the original purchase before paying another way.')
+    clearCashuAttempt(onion,item.id)
+    if (paymentOperations.selected(operation)) {
+      cashuQuote.value=null;cashuRecoveryRequired.value=false;cashuRecoveryError.value=false
+      purchaseError.value=null;payMode.value='choose'
+    }
+  } catch (error) {
+    if (paymentOperations.selected(operation)) purchaseError.value=error instanceof Error?error.message:'Could not confirm cancellation'
+  } finally { paymentOperations.finish(operation) }
+}
+
 /** Confirm the ecash payment with the backend the user selected. */
 async function confirmEcashPay() {
   const item = payItem.value
   const onion = props.peerId || currentPeer.value?.onion
   const method = ecashPlan.value?.chosen
   if (!item || !onion || !method || paymentActionBusy.value || hasBlockingLightningReceipt.value) return
+  if (method !== 'cashu' && !await permitFreshOtherRail(item, onion)) return
   const operation = paymentOperations.begin('ecash-send', onion, item.id)
   if (!operation) return
   const selected = () => paymentOperations.selected(operation)
@@ -1433,6 +1571,8 @@ async function confirmEcashPay() {
 
   purchaseError.value = null
   try {
+    if (method === 'cashu') { await requestCashuPurchase(item, onion, operation, true); return }
+    if (hasBlockingCashuPurchase.value) throw new Error('Recover or cancel the saved Cashu purchase first.')
     const result = await rpcClient.call<{ data?: string; owned?: boolean; owned_content_id?: string; error?: string; ecash_backend?: string; mime_type?: string }>({
       method: 'content.download-peer-paid',
       params: { onion, content_id: item.id, price_sats: price, method, filename: item.filename, cache_only: true },
@@ -1457,6 +1597,7 @@ async function payWithInvoice() {
   const item = payItem.value
   const onion = props.peerId || currentPeer.value?.onion
   if (!item || !onion) return
+  if (!await permitFreshOtherRail(item, onion)) return
   const operation = paymentOperations.begin('invoice', onion, item.id)
   if (!operation) return
   payMode.value = 'qr'
@@ -1495,6 +1636,7 @@ async function payWithLightning() {
   const item = payItem.value
   const onion = props.peerId || currentPeer.value?.onion
   if (!item || !onion || paymentActionBusy.value || lnReceiptReadError.value) return
+  if (!await permitFreshOtherRail(item, onion)) return
   const operation = paymentOperations.begin('lightning', onion, item.id)
   if (!operation) return
   const selected = () => paymentOperations.selected(operation)
@@ -1568,11 +1710,18 @@ async function pollInvoice(scope: InvoicePollScope) {
   if (!invoiceScopeSelected(scope)) return
   const { item, onion, invoice: inv } = scope
   try {
-    const res = await rpcClient.call<{ paid?: boolean }>({
+    const res = await rpcClient.call<InvoiceLifecycle>({
       method: 'content.invoice-status',
       params: { onion, content_id: item.id, payment_hash: inv.payment_hash, filename: item.filename, price_sats: inv.price_sats, cache_only: true }, timeout: 30000,
     })
     if (!invoiceScopeSelected(scope)) return
+    if (keepCanceledInvoice(onion, item.id, inv, res, () => invoiceScopeSelected(scope))) {
+      invoiceWaiting.value = false
+      invoiceData.value = null
+      invoiceQr.value = ''
+      payMode.value = 'choose'
+      return
+    }
     if (res?.paid === true) {
       localStorage.setItem(receiptKey(onion, item.id), JSON.stringify({ ...inv, state: 'succeeded' }))
       const dl = await rpcClient.call<{ data?: string; owned?: boolean; owned_content_id?: string; mime_type?: string; error?: string }>({

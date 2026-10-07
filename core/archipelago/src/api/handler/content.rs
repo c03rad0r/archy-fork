@@ -416,7 +416,7 @@ impl ApiHandler {
         path: &str,
     ) -> Result<Response<hyper::Body>> {
         Ok(invoice_status_response(path, |hash, id| async move {
-            self.rpc_handler.settle_content_invoice(&hash, &id).await
+            self.rpc_handler.content_invoice_lifecycle(&hash, &id).await
         })
         .await)
     }
@@ -663,7 +663,7 @@ impl ApiHandler {
 async fn invoice_status_response<F, Fut>(path: &str, settle: F) -> Response<hyper::Body>
 where
     F: FnOnce(String, String) -> Fut,
-    Fut: std::future::Future<Output = Result<bool>>,
+    Fut: std::future::Future<Output = Result<serde_json::Value>>,
 {
     let parsed = path
         .strip_prefix("/content/")
@@ -682,10 +682,10 @@ where
         );
     };
     match settle(hash.to_ascii_lowercase(), id.to_owned()).await {
-        Ok(paid) => build_response(
+        Ok(body) => build_response(
             StatusCode::OK,
             "application/json",
-            hyper::Body::from(serde_json::json!({"paid": paid}).to_string()),
+            hyper::Body::from(body.to_string()),
         ),
         Err(_) => {
             tracing::warn!("Peer-file payment status verification is temporarily unavailable");
@@ -721,7 +721,7 @@ mod invoice_status_tests {
             let response = invoice_status_response(path, |_, _| async {
                 panic!("Invalid request reached wallet");
                 #[allow(unreachable_code)]
-                Ok(false)
+                Ok(serde_json::json!({"paid":false}))
             })
             .await;
             assert_eq!(response.status(), StatusCode::BAD_REQUEST);
@@ -741,7 +741,7 @@ mod invoice_status_tests {
             let response = invoice_status_response(&path, |hash, id| async move {
                 assert_eq!(hash, "ab".repeat(32));
                 assert_eq!(id, "file");
-                Ok(paid)
+                Ok(serde_json::json!({"paid":paid}))
             })
             .await;
             assert_eq!(response.status(), StatusCode::OK);

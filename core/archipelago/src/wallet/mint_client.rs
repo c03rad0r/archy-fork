@@ -83,6 +83,14 @@ impl std::fmt::Debug for PreparedSwap {
 }
 
 impl PreparedSwap {
+// Add inside impl PreparedSwap; no mutability or proof/output secrets exposed.
+pub(super) fn payment_keyset_id(&self) -> &str { &self.keyset.id }
+pub(super) fn input_fee_sats(&self) -> Result<u64> {
+    let inputs = self.inputs.iter().try_fold(0u64, |sum, proof| sum.checked_add(proof.amount)).context("Prepared input sum overflow")?;
+    let outputs = self.outputs.iter().try_fold(0u64, |sum, output| sum.checked_add(output.amount)).context("Prepared output sum overflow")?;
+    inputs.checked_sub(outputs).context("Prepared outputs exceed input value")
+}
+
     pub(super) fn inputs(&self) -> &[Proof] {
         &self.inputs
     }

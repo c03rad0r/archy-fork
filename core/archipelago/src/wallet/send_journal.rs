@@ -450,16 +450,26 @@ pub(super) struct Outcome {
 #[derive(Clone, Serialize, Deserialize)]
 pub(super) enum Phase {
     Prepared,
+    Cancelled,
     Result(Outcome),
     Committed(Outcome),
 }
 
+#[derive(Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub(super) enum DispatchState {
+    #[default]
+    Unknown,
+    NotDispatched,
+    Started,
+}
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(super) struct Record {
     pub binding: Binding,
     pub request: Request,
     pub phase: Phase,
+    #[serde(default)]
+    pub dispatch: DispatchState,
 }
 
 impl std::fmt::Debug for Record {
@@ -526,6 +536,9 @@ impl<'a> Journal<'a> {
             if record.binding.network != network
                 || record.binding.mint_url.trim_end_matches('/') != mint_url.trim_end_matches('/')
             {
+                continue;
+            }
+            if matches!(record.phase, Phase::Cancelled) {
                 continue;
             }
             let Phase::Committed(outcome) = record.phase else {
@@ -634,6 +647,7 @@ impl<'a> Journal<'a> {
         use super::ecash::TransactionType;
         let record = self.bound_record(binding).await?;
         let (outcome, committed) = match &record.phase {
+            Phase::Cancelled => anyhow::bail!("Payment operation was cancelled"),
             Phase::Prepared => anyhow::bail!("Payment result is not durable yet"),
             Phase::Result(outcome) => (outcome, false),
             Phase::Committed(outcome) => (outcome, true),
@@ -867,7 +881,7 @@ impl<'a> Journal<'a> {
         Self::validate_binding(&record.binding)?;
         Self::validate_request(&record.binding, &record.request)?;
         match &record.phase {
-            Phase::Prepared => (),
+            Phase::Prepared | Phase::Cancelled => (),
             Phase::Result(outcome) | Phase::Committed(outcome) => {
                 Self::validate_outcome(&record, outcome)?
             }
@@ -895,6 +909,7 @@ impl<'a> Journal<'a> {
             binding,
             request,
             phase: Phase::Prepared,
+            dispatch: DispatchState::NotDispatched,
         };
         self.write(&record).await?;
         Ok(record)
@@ -911,6 +926,7 @@ impl<'a> Journal<'a> {
         );
         Self::validate_outcome(&record, &outcome)?;
         match &record.phase {
+            Phase::Cancelled => anyhow::bail!("Payment operation was cancelled"),
             Phase::Prepared => record.phase = Phase::Result(outcome),
             Phase::Result(previous) | Phase::Committed(previous) => {
                 anyhow::ensure!(
@@ -935,11 +951,66 @@ impl<'a> Journal<'a> {
             "Payment operation terms changed"
         );
         record.phase = match record.phase {
+            Phase::Cancelled => anyhow::bail!("Payment operation was cancelled"),
             Phase::Prepared => anyhow::bail!("Payment result is not durable yet"),
             Phase::Result(outcome) | Phase::Committed(outcome) => Phase::Committed(outcome),
         };
         self.write(&record).await?;
         Ok(record)
+    }
+
+    /// Must finish durably immediately before every fresh mint POST, under the
+    /// same wallet mutation guard as cancellation and input reservation.
+    pub async fn mark_dispatched(&self, binding: &Binding) -> Result<()> {
+        let mut record = self.bound_record(binding).await?;
+        anyhow::ensure!(
+            matches!(record.phase, Phase::Prepared),
+            "Payment cannot be dispatched in this phase"
+        );
+        record.dispatch = DispatchState::Started;
+        self.write(&record).await
+    }
+    /// A terminal local seal precedes release. No mint state query can prove an
+    /// ambiguous old POST will not finish later, so such swaps are never released.
+    pub async fn cancel_unspent(&self, binding: &Binding) -> Result<()> {
+        let mut record = self.bound_record(binding).await?;
+        if !matches!(record.phase, Phase::Cancelled) {
+            anyhow::ensure!(
+                matches!(record.phase, Phase::Prepared),
+                "A prepared token/result cannot be cancelled as unspent"
+            );
+            anyhow::ensure!(
+                matches!(record.request, Request::Exact { .. })
+                    || record.dispatch == DispatchState::NotDispatched,
+                "Mint dispatch is possible; recover original results instead of cancelling"
+            );
+            record.phase = Phase::Cancelled;
+            self.write(&record).await?;
+        }
+        let mut wallet = super::ecash::load_wallet(&self.guard.data_dir).await?;
+        let mut changed = false;
+        for stored in &mut wallet.proofs {
+            if stored.reserved_by.as_deref() != Some(binding.id.as_str()) {
+                continue;
+            }
+            anyhow::ensure!(
+                Self::inputs(&record.request)
+                    .iter()
+                    .any(|input| input.secret == stored.proof.secret
+                        && input.amount == stored.proof.amount
+                        && input.id == stored.proof.id
+                        && input.c == stored.proof.c),
+                "Cancellation reservation differs from original inputs"
+            );
+            anyhow::ensure!(!stored.spent, "Cancellation cannot restore spent inputs");
+            stored.reserved = false;
+            stored.reserved_by = None;
+            changed = true;
+        }
+        if changed {
+            super::ecash::save_wallet(&self.guard.data_dir, &wallet).await?;
+        }
+        Ok(())
     }
 
     async fn write(&self, record: &Record) -> Result<()> {

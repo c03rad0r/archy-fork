@@ -19,6 +19,9 @@ mod identity;
 mod interfaces;
 pub(crate) mod lnd;
 mod marketplace;
+mod media_registration;
+mod purchase;
+mod playback;
 // pub(crate): 13-10's `assistant::backends::select_backend` reuses
 // `mesh::assistant::detect_ollama()` (D-04) rather than re-probing —
 // matches the existing `pub(crate) mod bitcoin_relay;`/`pub(crate) mod
@@ -97,6 +100,22 @@ fn nostr_signing_origin_allowed(headers: &hyper::HeaderMap, dev_mode: bool) -> b
     matches!(url.port_or_known_default(), Some(80 | 443))
 }
 
+fn native_consent_origin_allowed(method: &str, headers: &hyper::HeaderMap, dev_mode: bool) -> bool {
+    !matches!(
+        method,
+        "node.nostr-sign"
+            | "identity.nostr-sign"
+            | "media.registration.prepare"
+            | "media.registration.context"
+            | "media.registration.resolve"
+            | "content.rental-purchase"
+            | "content.purchase"
+            | "content.cancel-purchase"
+            | "content.playback-handle"
+            | "content.playback-status"
+    ) || nostr_signing_origin_allowed(headers, dev_mode)
+}
+
 /// Read-only authenticated methods may skip CSRF, but they must still exist in
 /// the dispatcher. The tab signer uses `system.get-hostname` as its lightweight
 /// session probe, so keeping the policy in one testable function protects that
@@ -148,6 +167,7 @@ pub struct RpcHandler {
     pub(crate) app_gate: Arc<crate::appgate::AppGate>,
     endpoint_rate_limiter: EndpointRateLimiter,
     response_cache: ResponseCache,
+    playback_handles: crate::playback_handles::PlaybackHandles,
     mesh_service: Arc<tokio::sync::RwLock<Option<crate::mesh::MeshService>>>,
     /// LoRa radio firmware-flash job state, sibling to `mesh_service` — one
     /// job at a time, since flashing needs exclusive access to the port.
@@ -172,6 +192,10 @@ pub struct RpcHandler {
 }
 
 impl RpcHandler {
+    pub(crate) fn playback_handles(&self) -> &crate::playback_handles::PlaybackHandles {
+        &self.playback_handles
+    }
+
     pub async fn new(
         config: Config,
         state_manager: Arc<StateManager>,
@@ -231,6 +255,7 @@ impl RpcHandler {
             app_gate,
             endpoint_rate_limiter,
             response_cache: ResponseCache::new(5),
+            playback_handles: Default::default(),
             mesh_service: Arc::new(tokio::sync::RwLock::new(None)),
             flash_job: crate::mesh::flash::new_job_handle(),
             transport_router: Arc::new(tokio::sync::RwLock::new(None)),
@@ -333,14 +358,10 @@ impl RpcHandler {
 
         debug!("RPC method: {}", rpc_req.method);
 
-        if matches!(
-            rpc_req.method.as_str(),
-            "node.nostr-sign" | "identity.nostr-sign"
-        ) && !nostr_signing_origin_allowed(&parts.headers, self.config.dev_mode)
-        {
+        if !native_consent_origin_allowed(&rpc_req.method, &parts.headers, self.config.dev_mode) {
             return Ok(self.error_response(
                 403,
-                "Nostr signing from app origins requires the dashboard consent bridge",
+                "Native signing and Cloud registration from app origins require the dashboard consent bridge",
                 StatusCode::FORBIDDEN,
             ));
         }
@@ -797,6 +818,33 @@ mod nostr_signing_origin_tests {
             headers.insert(ORIGIN, HeaderValue::from_str(origin).unwrap());
         }
         headers
+    }
+
+    #[test]
+    fn native_registration_and_purchase_use_dashboard_origin_and_keep_authentication_and_csrf() {
+        for method in [
+            "media.registration.prepare",
+            "media.registration.context",
+            "media.registration.resolve",
+            "content.rental-purchase",
+            "content.purchase",
+            "content.cancel-purchase",
+            "content.playback-handle",
+            "content.playback-status",
+        ] {
+            assert!(!native_consent_origin_allowed(
+                method,
+                &headers(Some("http://node.local:7778")),
+                false
+            ));
+            assert!(native_consent_origin_allowed(
+                method,
+                &headers(Some("https://node.local")),
+                false
+            ));
+            assert!(!UNAUTHENTICATED_METHODS.contains(&method));
+            assert!(!csrf_exempt_method(method));
+        }
     }
 
     #[test]

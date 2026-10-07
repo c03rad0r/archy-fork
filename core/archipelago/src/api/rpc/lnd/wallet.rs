@@ -7,6 +7,57 @@ use zeroize::Zeroize;
 use super::LND_REST_BASE_URL;
 
 impl RpcHandler {
+    // Add inside api/rpc/lnd/wallet.rs RpcHandler impl; seller owns this lookup.
+    // Wire invoice-status response to this Value instead of reducing it to paid bool.
+    pub(crate) async fn content_invoice_lifecycle(
+        &self,
+        hash: &str,
+        content_id: &str,
+    ) -> Result<serde_json::Value> {
+        anyhow::ensure!(
+            hash.len() == 64 && hash.bytes().all(|c| c.is_ascii_hexdigit()),
+            "Invalid payment hash"
+        );
+        let hash = hash.to_ascii_lowercase();
+        let existing = crate::content_invoice::lookup(&self.config.data_dir, &hash).await?;
+        anyhow::ensure!(
+            existing.as_ref().is_none_or(|(id, _)| id == content_id),
+            "Invoice belongs to another content item"
+        );
+        if crate::content_invoice::is_paid_for(&self.config.data_dir, &hash, content_id).await {
+            return Ok(
+                serde_json::json!({"paid":true,"state":"settled","can_switch_method":false}),
+            );
+        }
+        let (client, macaroon_hex) = self.lnd_client().await?;
+        let response = client
+            .get(format!("{LND_REST_BASE_URL}/v1/invoice/{hash}"))
+            .header("Grpc-Metadata-macaroon", &macaroon_hex)
+            .send()
+            .await?;
+        if response.status() == reqwest::StatusCode::NOT_FOUND {
+            return Ok(
+                serde_json::json!({"paid":false,"state":"unknown","can_switch_method":false}),
+            );
+        }
+        let body: serde_json::Value = response.error_for_status()?.json().await?;
+        let price = content_invoice_amount(&body, content_id)
+            .context("Invoice content binding is unavailable")?;
+        anyhow::ensure!(
+            existing
+                .as_ref()
+                .is_none_or(|(_, expected)| *expected == price),
+            "Invoice price binding changed"
+        );
+        crate::content_invoice::record_pending(&self.config.data_dir, &hash, content_id, price)
+            .await?;
+        let result = content_invoice_lifecycle_body(&body, price);
+        if result["paid"] == true {
+            crate::content_invoice::mark_paid(&self.config.data_dir, &hash).await?;
+        }
+        Ok(result)
+    }
+
     /// Generate a new on-chain Bitcoin address.
     pub(in crate::api::rpc) async fn handle_lnd_newaddress(&self) -> Result<serde_json::Value> {
         let (client, macaroon_hex) = self.lnd_client().await.map_err(|e| {
@@ -1559,5 +1610,79 @@ mod peer_file_invoice_tests {
             invalid["value"] = value;
             assert_eq!(content_invoice_amount(&invalid, "file-1"), None);
         }
+    }
+}
+
+fn content_invoice_lifecycle_body(body: &serde_json::Value, price: u64) -> serde_json::Value {
+    let settled = content_invoice_fully_settled(body, price);
+    let cancelled = !settled
+        && body["state"] == "CANCELED"
+        && body.get("settled").and_then(|value| value.as_bool()) != Some(true)
+        && body.get("amt_paid_sat").and_then(json_u64) == Some(0)
+        && body
+            .get("amt_paid_msat")
+            .is_none_or(|value| json_u64(value) == Some(0));
+    let state = if settled {
+        "settled"
+    } else if cancelled {
+        "canceled"
+    } else {
+        match body.get("state").and_then(|value| value.as_str()) {
+            Some("OPEN") => "open",
+            Some("ACCEPTED") => "accepted",
+            _ => "unknown",
+        }
+    };
+    let expires_at = body
+        .get("creation_date")
+        .and_then(json_u64)
+        .zip(body.get("expiry").and_then(json_u64))
+        .and_then(|(created, expiry)| created.checked_add(expiry));
+    // Expiry is informational. Only LND's terminal canceled state releases the
+    // cross-method block; wall-clock passage or lookup failure never does.
+    serde_json::json!({"paid":settled,"state":state,"can_switch_method":cancelled,
+        "expires_at":expires_at,"cancel_supported":false})
+}
+
+#[cfg(test)]
+mod invoice_lifecycle_tests {
+    use super::*;
+    #[test]
+    fn only_authoritative_zero_paid_cancel_unlocks_and_settlement_survives_expiry() {
+        for state in ["OPEN", "ACCEPTED", "UNKNOWN", "CANCELED"] {
+            for paid in [0u64, 1] {
+                let result = content_invoice_lifecycle_body(
+                    &serde_json::json!({
+                    "state":state,"settled":false,"amt_paid_sat":paid.to_string(),
+                    "creation_date":"1","expiry":"1"}),
+                    8,
+                );
+                assert_eq!(
+                    result["can_switch_method"],
+                    state == "CANCELED" && paid == 0
+                );
+                assert_eq!(result["paid"], false);
+            }
+        }
+        assert_eq!(
+            content_invoice_lifecycle_body(&serde_json::json!({"state":"CANCELED"}), 8)
+                ["can_switch_method"],
+            false
+        );
+        assert_eq!(
+            content_invoice_lifecycle_body(
+                &serde_json::json!({"state":"CANCELED", "amt_paid_sat":"0", "amt_paid_msat":"1"}),
+                8
+            )["can_switch_method"],
+            false
+        );
+        let paid = content_invoice_lifecycle_body(
+            &serde_json::json!({
+            "state":"SETTLED","settled":true,"amt_paid_sat":"8","value":"8",
+            "creation_date":"1","expiry":"1"}),
+            8,
+        );
+        assert_eq!(paid["paid"], true);
+        assert_eq!(paid["can_switch_method"], false);
     }
 }

@@ -218,7 +218,7 @@ impl DockerPackageScanner {
                     None
                 },
                 static_files: StaticFiles {
-                    license: "MIT".to_string(),
+                    license: String::new(),
                     instructions: metadata.description.clone(),
                     icon: manifest_icon.unwrap_or_else(|| metadata.icon.clone()),
                 },
@@ -231,7 +231,7 @@ impl DockerPackageScanner {
                         long: metadata.description.clone(),
                     },
                     release_notes: "Docker container".to_string(),
-                    license: "MIT".to_string(),
+                    license: String::new(),
                     wrapper_repo: metadata.repo.clone(),
                     upstream_repo: metadata.repo.clone(),
                     support_site: metadata.repo.clone(),
@@ -510,6 +510,32 @@ mod lifecycle_regression_tests {
         assert_eq!(main.ui, None);
         assert_eq!(main.tor_config.as_deref(), Some("kept.onion"));
         assert_eq!(main.lan_config.as_deref(), Some("kept"));
+    }
+
+    #[test]
+    fn manifest_presentation_only_reports_declared_licenses() {
+        let mut entry = installing_fixture();
+        for (metadata, expected) in [
+            (serde_json::json!({"license":"MIT"}), "MIT"),
+            (
+                serde_json::json!({"license":" BSD-3-Clause "}),
+                "BSD-3-Clause",
+            ),
+            (serde_json::json!({}), ""),
+            (serde_json::json!({"license":null}), ""),
+            (serde_json::json!({"license":true}), ""),
+            (serde_json::json!({"license":"  "}), ""),
+        ] {
+            apply_manifest_value(
+                &serde_json::json!({"app":{"metadata":metadata}}),
+                &mut entry,
+            );
+            assert_eq!(entry.manifest.license, expected);
+            assert_eq!(entry.static_files.license, expected);
+        }
+        apply_manifest_value(&serde_json::json!({"app":{}}), &mut entry);
+        assert_eq!(entry.manifest.license, "");
+        assert_eq!(entry.static_files.license, "");
     }
 
     #[test]
@@ -821,6 +847,14 @@ fn apply_manifest_value(value: &serde_json::Value, entry: &mut PackageDataEntry)
             .filter(|s| !s.is_empty())
             .map(str::to_owned)
     };
+    // Absence is not a license grant. Empty strings are omitted by the UI.
+    let license = text(
+        app.get("metadata")
+            .and_then(|metadata| metadata.get("license")),
+    )
+    .unwrap_or_default();
+    entry.manifest.license = license.clone();
+    entry.static_files.license = license;
     if let Some(name) = text(app.get("name")) {
         entry.manifest.title = name;
     }

@@ -12,7 +12,7 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::ffi::CString;
 use std::fs::File;
-use std::io::{Read, Write};
+use std::io::{Read, Seek, SeekFrom, Write};
 use std::os::fd::{AsRawFd, FromRawFd};
 use std::os::unix::ffi::OsStrExt;
 use std::os::unix::fs::{MetadataExt, PermissionsExt};
@@ -184,9 +184,8 @@ fn lower_hex(value: &str, length: usize) -> bool {
             .bytes()
             .all(|v| v.is_ascii_digit() || (b'a'..=b'f').contains(&v))
 }
-fn validate(
+fn validate_intent(
     intent: &Intent,
-    selection: &AuthorizedSelection,
     pin: &InstallationPin,
     identity: &crate::identity::NodeIdentity,
     now: u64,
@@ -221,6 +220,16 @@ fn validate(
             && intent.expires_at - intent.created_at <= 600,
         "Invalid registration terms or timestamps"
     );
+    Ok(())
+}
+fn validate(
+    intent: &Intent,
+    selection: &AuthorizedSelection,
+    pin: &InstallationPin,
+    identity: &crate::identity::NodeIdentity,
+    now: u64,
+) -> Result<()> {
+    validate_intent(intent, pin, identity, now)?;
     anyhow::ensure!(
         !selection.relative_path.as_os_str().is_empty()
             && selection
@@ -507,6 +516,206 @@ fn receipt_for(operation: &Operation, hash: String, size: u64) -> Receipt {
     }
 }
 
+const RETIREMENT_DOMAIN: &str = "archipelago.indeehub.media-retirement.v1";
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct Retirement {
+    pub version: u8,
+    pub intent: Intent,
+    pub retired_at: u64,
+    pub signature: String,
+}
+impl Retirement {
+    pub fn preimage(&self) -> Result<Vec<u8>> {
+        let i = &self.intent;
+        Ok(serde_json::to_vec(&serde_json::json!([
+            RETIREMENT_DOMAIN,
+            i.request_id,
+            i.nonce,
+            i.app_audience,
+            i.node_did,
+            i.producer,
+            i.project_id,
+            i.price_sats,
+            i.viewing_seconds,
+            i.created_at,
+            i.expires_at,
+            self.retired_at
+        ]))?)
+    }
+    fn verify(&self, intent: &Intent, identity: &crate::identity::NodeIdentity) -> Result<()> {
+        anyhow::ensure!(
+            self.version == 1
+                && self.intent == *intent
+                && self.retired_at >= intent.expires_at
+                && self.retired_at <= MAX_SAFE_INTEGER
+                && lower_hex(&self.signature, 128),
+            "Registration retirement terms changed"
+        );
+        identity.signing_key().verifying_key().verify_strict(
+            &self.preimage()?,
+            &Signature::from_slice(&hex::decode(&self.signature)?)?,
+        )?;
+        Ok(())
+    }
+}
+pub enum Resolution {
+    Prepared {
+        prepared: PreparedRegistration,
+        selection: AuthorizedSelection,
+    },
+    Retired(Retirement),
+    Pending {
+        request_id: String,
+        expires_at: u64,
+    },
+}
+/// Caller authenticates the producer's intent-only recovery/retirement consent.
+/// Under the original operation lock, either verify the completed bytes/receipt,
+/// or commit retirement. No source path from this request is opened or copied.
+pub fn resolve(
+    data_dir: &Path,
+    identity: &crate::identity::NodeIdentity,
+    pin: &InstallationPin,
+    intent: &Intent,
+    now: u64,
+    limits: &Limits<'_>,
+) -> Result<Resolution> {
+    validate_intent(intent, pin, identity, now)?;
+    let data_dir = data_dir.canonicalize()?;
+    let data = open_directory(&data_dir)?;
+    let root = private_directory(&data, PRIVATE_DIRECTORY)?;
+    let dir = private_directory(&root, &intent.request_id)?;
+    lock_operation(&dir, limits, Instant::now() + Duration::from_secs(30))?;
+    if let Some(retired) = read_record::<Retirement>(&dir, "retirement.json")? {
+        retired.verify(intent, identity)?;
+        dir.sync_all()?;
+        if let Some(operation) = read_record::<Operation>(&dir, "operation.json")? {
+            anyhow::ensure!(
+                operation.version == 1 && operation.binding.intent == *intent,
+                "Retired operation terms changed"
+            );
+            crate::snapshot_budget::finish_completed(
+                &data_dir,
+                &format!("registered:{}", intent.request_id),
+                operation.source.size,
+                limits,
+            )?;
+        }
+        return Ok(Resolution::Retired(retired));
+    }
+    let operation: Option<Operation> = read_record(&dir, "operation.json")?;
+    if let Some(operation) = &operation {
+        anyhow::ensure!(
+            operation.version == 1 && operation.binding.intent == *intent,
+            "Original registration intent changed"
+        );
+        validate(intent, &operation.binding.selection, pin, identity, now)?;
+    }
+    if let Some(receipt) = read_record::<Receipt>(&dir, "receipt.json")? {
+        let operation =
+            operation.context("Receipt has no original operation; preserve recovery data")?;
+        let saved: SnapshotRecord =
+            read_record(&dir, "snapshot.json")?.context("Snapshot commitment missing")?;
+        let mut snapshot = open_at(&dir, "media", libc::O_RDONLY | libc::O_NONBLOCK, 0)?;
+        anyhow::ensure!(
+            snapshot.metadata()?.mode() & 0o7777 == 0o400,
+            "Snapshot permissions changed"
+        );
+        let before = SourceStamp::read(&snapshot)?;
+        let (sha256, size) = hash_file(&mut snapshot, None, limits, &mut |_| Ok(()))?;
+        anyhow::ensure!(
+            SourceStamp::read(&snapshot)? == before
+                && size == operation.source.size
+                && sha256 == saved.sha256
+                && size == saved.size,
+            "Completed registration bytes changed"
+        );
+        let mut expected = receipt_for(&operation, sha256, size);
+        anyhow::ensure!(
+            lower_hex(&receipt.signature, 128),
+            "Invalid completed signature"
+        );
+        identity.signing_key().verifying_key().verify_strict(
+            &receipt.preimage()?,
+            &Signature::from_slice(&hex::decode(&receipt.signature)?)?,
+        )?;
+        expected.signature = receipt.signature.clone();
+        anyhow::ensure!(
+            expected == receipt,
+            "Completed registration receipt changed"
+        );
+        snapshot.seek(SeekFrom::Start(0))?;
+        dir.sync_all()?;
+        crate::snapshot_budget::finish_completed(
+            &data_dir,
+            &format!("registered:{}", intent.request_id),
+            operation.source.size,
+            limits,
+        )?;
+        return Ok(Resolution::Prepared {
+            prepared: PreparedRegistration {
+                receipt,
+                snapshot,
+                snapshot_path: data_dir
+                    .join(PRIVATE_DIRECTORY)
+                    .join(&intent.request_id)
+                    .join("media"),
+            },
+            selection: operation.binding.selection,
+        });
+    }
+    if now < intent.expires_at {
+        return Ok(Resolution::Pending {
+            request_id: intent.request_id.clone(),
+            expires_at: intent.expires_at,
+        });
+    }
+    // Missing operation metadata alongside media is damaged state, not proof
+    // that an earlier completion never happened. Preserve it for investigation.
+    if operation.is_none() {
+        anyhow::ensure!(
+            read_record::<SnapshotRecord>(&dir, "snapshot.json")?.is_none(),
+            "Snapshot exists without original intent; preserve recovery data"
+        );
+        match open_at(&dir, "media", libc::O_RDONLY | libc::O_NONBLOCK, 0) {
+            Ok(_) => anyhow::bail!("Media exists without original intent; preserve recovery data"),
+            Err(error)
+                if error
+                    .downcast_ref::<std::io::Error>()
+                    .is_some_and(|e| e.kind() == std::io::ErrorKind::NotFound) =>
+            {
+                ()
+            }
+            Err(error) => return Err(error),
+        }
+    }
+    let mut retirement = Retirement {
+        version: 1,
+        intent: intent.clone(),
+        retired_at: now,
+        signature: String::new(),
+    };
+    retirement.signature = hex::encode(
+        identity
+            .signing_key()
+            .sign(&retirement.preimage()?)
+            .to_bytes(),
+    );
+    save_record(&dir, "retirement.json", &retirement)?;
+    if let Some(operation) = operation {
+        // Tombstone is durable under the copy lock: no writer can resume. Any
+        // retained partial bytes stay counted; no media or source is deleted.
+        crate::snapshot_budget::finish_completed(
+            &data_dir,
+            &format!("registered:{}", intent.request_id),
+            operation.source.size,
+            limits,
+        )?;
+    }
+    Ok(Resolution::Retired(retirement))
+}
+
 /// Performs disk I/O and cross-process locking; run on a blocking worker.
 /// `now` is caller-supplied trusted UTC seconds, never a request-body timestamp.
 /// `progress` may return an error to cancel; it must not change authorized terms.
@@ -554,6 +763,10 @@ pub fn prepare(
         limits,
         started + Duration::from_secs(wait_seconds),
     )?;
+    if let Some(retired) = read_record::<Retirement>(&operation_dir, "retirement.json")? {
+        retired.verify(intent, identity)?;
+        anyhow::bail!("Registration was authoritatively retired; recover that result before starting a new intent");
+    }
     let operation: Operation =
         if let Some(saved) = read_record::<Operation>(&operation_dir, "operation.json")? {
             anyhow::ensure!(
@@ -610,6 +823,19 @@ pub fn prepare(
             anyhow::ensure!(
                 SourceStamp::read(&source)? == operation.source,
                 "Selected Cloud file changed; use a new reviewed intent"
+            );
+            let _reservation = crate::snapshot_budget::reserve_until(
+                &data_dir,
+                &format!("registered:{}", intent.request_id),
+                operation.source.size,
+                crate::snapshot_budget::DEFAULT_MAX_TOTAL_BYTES,
+                crate::snapshot_budget::DEFAULT_MIN_FREE_BYTES,
+                limits,
+                started + Duration::from_secs(intent.expires_at.saturating_sub(now).min(30)),
+            )?;
+            anyhow::ensure!(
+                now.saturating_add(started.elapsed().as_secs()) < intent.expires_at,
+                "Registration expired while awaiting snapshot capacity"
             );
             let (name, mut destination) = temporary(&operation_dir)?;
             let (hash, size) =
@@ -690,6 +916,12 @@ pub fn prepare(
         save_record(&operation_dir, "receipt.json", &receipt)?;
     }
     operation_dir.sync_all()?;
+    crate::snapshot_budget::finish_completed(
+        &data_dir,
+        &format!("registered:{}", intent.request_id),
+        operation.source.size,
+        limits,
+    )?;
     // Reopen from the held directory to return a descriptor positioned at zero.
     let snapshot = open_at(
         &operation_dir,
@@ -830,6 +1062,51 @@ mod tests {
         )
         .unwrap());
         assert_eq!(fixture.run(1000).unwrap().receipt, expected);
+    }
+
+    #[tokio::test]
+    async fn independent_nodejs_retirement_wire_matches_terminal_record() {
+        let vector: serde_json::Value = serde_json::from_str(include_str!(
+            "media_registration/fixtures/retirement-v1.json"
+        ))
+        .unwrap();
+        let mut fixture = Fixture::new().await;
+        std::fs::write(
+            fixture.root.path().join("identity/node_key"),
+            hex::decode(vector["testSeedHex"].as_str().unwrap()).unwrap(),
+        )
+        .unwrap();
+        fixture.identity =
+            crate::identity::NodeIdentity::load_existing(&fixture.root.path().join("identity"))
+                .await
+                .unwrap();
+        fixture.pin = InstallationPin {
+            node_did: vector["pin"]["nodeDid"].as_str().unwrap().into(),
+            app_audience: vector["pin"]["appAudience"].as_str().unwrap().into(),
+        };
+        fixture.intent = serde_json::from_value(vector["intent"].clone()).unwrap();
+        let expected: Retirement = serde_json::from_value(vector["retirement"].clone()).unwrap();
+        assert_eq!(
+            expected.preimage().unwrap(),
+            vector["preimageUtf8"].as_str().unwrap().as_bytes()
+        );
+        expected.verify(&fixture.intent, &fixture.identity).unwrap();
+        let result = resolve(
+            fixture.root.path(),
+            &fixture.identity,
+            &fixture.pin,
+            &fixture.intent,
+            expected.retired_at,
+            &Limits {
+                max_bytes: 1024,
+                cancelled: &fixture.cancelled,
+            },
+        )
+        .unwrap();
+        match result {
+            Resolution::Retired(actual) => assert_eq!(actual, expected),
+            _ => panic!("expected retirement"),
+        }
     }
 
     #[test]
@@ -1084,5 +1361,181 @@ mod tests {
             std::fs::read(fixture.operation_dir().join("operation.json")).unwrap(),
             b"damaged fixture"
         );
+    }
+    #[tokio::test]
+    async fn completed_registration_releases_crashed_reservation_without_source_or_new_admission() {
+        let fixture = Fixture::new().await;
+        let original = fixture.run(1100).unwrap();
+        let operation = format!("registered:{}", fixture.intent.request_id);
+        let limits = Limits {
+            max_bytes: 1_000_000,
+            cancelled: &fixture.cancelled,
+        };
+        let reservation = crate::snapshot_budget::reserve(
+            fixture.root.path(),
+            &operation,
+            150_000,
+            4 * 1024 * 1024,
+            0,
+            &limits,
+        )
+        .unwrap();
+        drop(reservation); // Crash after durable receipt, before reservation cleanup.
+        let name = format!("{}.json", hex::encode(Sha256::digest(operation.as_bytes())));
+        let ledger = fixture.root.path().join("snapshot-reservations").join(name);
+        assert!(ledger.exists());
+        std::fs::remove_file(fixture.root.path().join("cloud/film.mp4")).unwrap();
+        let recovered = fixture.run(1700).unwrap();
+        assert_eq!(recovered.receipt, original.receipt);
+        assert!(!ledger.exists());
+    }
+    #[tokio::test]
+    async fn retirement_is_durable_exact_and_prevents_clock_rollback_or_late_prepare_resurrection()
+    {
+        let fixture = Fixture::new().await;
+        let limits = Limits {
+            max_bytes: 1_000_000,
+            cancelled: &fixture.cancelled,
+        };
+        assert!(matches!(
+            resolve(
+                fixture.root.path(),
+                &fixture.identity,
+                &fixture.pin,
+                &fixture.intent,
+                1100,
+                &limits
+            )
+            .unwrap(),
+            Resolution::Pending { .. }
+        ));
+        let first = match resolve(
+            fixture.root.path(),
+            &fixture.identity,
+            &fixture.pin,
+            &fixture.intent,
+            1700,
+            &limits,
+        )
+        .unwrap()
+        {
+            Resolution::Retired(v) => v,
+            _ => panic!("expected retirement"),
+        };
+        first.verify(&fixture.intent, &fixture.identity).unwrap();
+        let again = match resolve(
+            fixture.root.path(),
+            &fixture.identity,
+            &fixture.pin,
+            &fixture.intent,
+            1800,
+            &limits,
+        )
+        .unwrap()
+        {
+            Resolution::Retired(v) => v,
+            _ => panic!("expected original retirement"),
+        };
+        assert_eq!(first, again);
+        assert!(fixture.run(1100).is_err()); // even a later clock rollback cannot reopen it
+        assert!(!fixture.operation_dir().join("media").exists());
+        let mut changed = fixture.intent.clone();
+        changed.price_sats += 1;
+        assert!(resolve(
+            fixture.root.path(),
+            &fixture.identity,
+            &fixture.pin,
+            &changed,
+            1800,
+            &limits
+        )
+        .is_err());
+    }
+    #[tokio::test]
+    async fn completed_resolution_after_expiry_never_retires_or_copies_removed_source() {
+        let fixture = Fixture::new().await;
+        let original = fixture.run(1100).unwrap();
+        std::fs::remove_file(fixture.root.path().join("cloud/film.mp4")).unwrap();
+        for now in [1700, 1800] {
+            let resolved = resolve(
+                fixture.root.path(),
+                &fixture.identity,
+                &fixture.pin,
+                &fixture.intent,
+                now,
+                &Limits {
+                    max_bytes: 1_000_000,
+                    cancelled: &fixture.cancelled,
+                },
+            )
+            .unwrap();
+            match resolved {
+                Resolution::Prepared {
+                    prepared,
+                    selection,
+                } => {
+                    assert_eq!(prepared.receipt, original.receipt);
+                    assert_eq!(selection, fixture.selection);
+                }
+                _ => panic!("completed registration must not be retired"),
+            }
+        }
+        assert!(!fixture.operation_dir().join("retirement.json").exists());
+    }
+    #[tokio::test]
+    async fn concurrent_prepare_and_retire_choose_completed_receipt_or_one_durable_retirement() {
+        use std::sync::mpsc;
+        for abort_copy in [false, true] {
+            let fixture = Arc::new(Fixture::new().await);
+            let (entered_tx, entered_rx) = mpsc::channel();
+            let (release_tx, release_rx) = mpsc::channel();
+            let copying = fixture.clone();
+            let worker = std::thread::spawn(move || {
+                let mut entered = false;
+                copying.with_progress(1100, |_| {
+                    if !entered {
+                        entered = true;
+                        entered_tx.send(()).unwrap();
+                        release_rx.recv().unwrap();
+                    }
+                    anyhow::ensure!(!abort_copy, "fixture interrupted copy");
+                    Ok(())
+                })
+            });
+            entered_rx.recv().unwrap();
+            let resolving = fixture.clone();
+            let (resolving_tx, resolving_rx) = mpsc::channel();
+            let resolver = std::thread::spawn(move || {
+                resolving_tx.send(()).unwrap();
+                resolve(
+                    resolving.root.path(),
+                    &resolving.identity,
+                    &resolving.pin,
+                    &resolving.intent,
+                    1700,
+                    &Limits {
+                        max_bytes: 1_000_000,
+                        cancelled: &resolving.cancelled,
+                    },
+                )
+            });
+            resolving_rx.recv().unwrap();
+            release_tx.send(()).unwrap();
+            let prepared = worker.join().unwrap();
+            let result = resolver.join().unwrap().unwrap();
+            if abort_copy {
+                assert!(prepared.is_err());
+                assert!(matches!(result, Resolution::Retired(_)));
+                assert!(fixture.run(1100).is_err());
+                assert!(!fixture.operation_dir().join("receipt.json").exists());
+            } else {
+                let expected = prepared.unwrap().receipt;
+                match result {
+                    Resolution::Prepared { prepared, .. } => assert_eq!(prepared.receipt, expected),
+                    _ => panic!("completion must win"),
+                }
+                assert!(!fixture.operation_dir().join("retirement.json").exists());
+            }
+        }
     }
 }

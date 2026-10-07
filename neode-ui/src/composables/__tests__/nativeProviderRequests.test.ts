@@ -1,0 +1,23 @@
+import { readFileSync } from 'node:fs'
+import { runInNewContext } from 'node:vm'
+import { describe, expect, it, vi } from 'vitest'
+const source=readFileSync('public/nostr-provider.js','utf8')
+describe('native provider on ordinary HTTP node origins',()=>{
+ it('uses secure randomness without randomUUID for both rental and registration requests',async()=>{
+  const listeners:((event:unknown)=>void)[]=[]
+  const parent={postMessage:vi.fn()}
+  const window:any={top:{},parent,location:{href:'http://node.local:7778/browse',pathname:'/browse',port:'7778',origin:'http://node.local:7778'},addEventListener:(_name:string,handler:(event:unknown)=>void)=>listeners.push(handler)}
+  const timers=new Set<unknown>();let count=0
+  runInNewContext(source,{window,document:{currentScript:{hasAttribute:()=>true},readyState:'complete'},crypto:{getRandomValues:(bytes:Uint8Array)=>{bytes.fill(++count);return bytes}},Uint8Array,URL,console,
+    setTimeout:(fn:unknown)=>{timers.add(fn);return fn},clearTimeout:(fn:unknown)=>timers.delete(fn)})
+  const rental=window.archipelagoRental.request({title:'Film'})
+  const registration=window.archipelagoMediaRegistration.request('resume',{intent:{requestId:'existing'}})
+  const requests=parent.postMessage.mock.calls.map(([message])=>message)
+  expect(requests).toHaveLength(2)
+  expect(requests[0].id).toMatch(/^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/)
+  expect(requests[1].id).not.toBe(requests[0].id)
+  for(const message of requests) for(const receive of listeners) receive({source:parent,origin:'http://node.local',data:{type:message.type.replace('-request','-response'),id:message.id,result:{ok:true}}})
+  await expect(rental).resolves.toEqual({ok:true});await expect(registration).resolves.toEqual({ok:true})
+  expect(timers.size).toBe(0)
+ })
+})

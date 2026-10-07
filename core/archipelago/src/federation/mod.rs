@@ -20,7 +20,7 @@ pub(crate) use invites::notify_join;
 // Crate-internal: peer-joined resolves the granted trust level by matching
 // the acceptor's invite_token against our stored outgoing invites.
 pub(crate) use storage::load_invites;
-pub(crate) use storage::load_unique_payment_peer;
+pub(crate) use storage::{load_unique_payment_peer, load_unique_payment_peer_by_did};
 #[allow(unused_imports)]
 pub use storage::{
     add_node, fips_npub_for_onion, load_nodes, load_removed_dids, record_peer_transport,

@@ -30,12 +30,12 @@ async fn canonical_lock(data_dir: &Path) -> Result<(PathBuf, Arc<Mutex<()>>)> {
     Ok((canonical, lock))
 }
 
-pub(super) struct WalletMutation {
+pub(crate) struct WalletMutation {
     pub(super) data_dir: PathBuf,
     _held: OwnedMutexGuard<()>,
 }
 
-pub(super) async fn guard(data_dir: &Path) -> Result<WalletMutation> {
+pub(crate) async fn guard(data_dir: &Path) -> Result<WalletMutation> {
     let (data_dir, lock) = canonical_lock(data_dir).await?;
     Ok(WalletMutation {
         data_dir,
