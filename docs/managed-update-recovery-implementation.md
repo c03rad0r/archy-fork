@@ -190,3 +190,43 @@ The optimized build was deliberately interrupted after these integration gaps we
 found. A test-profile application executable is being built solely for the isolated
 full RPC rehearsal; final release optimization/deployment remains pending that
 rehearsal. No live IndeeHub stack or catalog has been changed.
+
+## Manager startup guard found by real VM rehearsal — 2026-10-07
+
+The isolated VM imported all seven public baseline images and started a fresh
+synthetic stack with generated credentials, internal-only networking and retained
+unit recipes. Offline original-recipe preparation succeeded. Starting the real
+manager then exposed a destructive ordering bug before the first update RPC:
+ordinary environment-drift reconciliation stopped/removed original members before
+`install_fresh` reached its existing managed-recipe refusal. The journal records
+this sequence for worker, API, PostgreSQL and MinIO. This was not a demonstrated
+OOM: guest kernel records showed no OOM and its disk-backed swap was available.
+
+The new guard precedes staged stops, secrets, hooks, dynamic configuration, drift
+repair and generic recreate paths. It preserves explicit stop/uninstall markers,
+validates saved unit bytes/mode, and observes an already-running managed runtime.
+Missing or stopped managed runtimes refuse automatic repair; explicit owner
+Start/Stop/Restart uses the exact saved systemd unit after validation. Restart
+preflights all member units/images before reverse dependency stop and dependency
+start order. Managed members skip legacy network, catalog-port repair and raw
+Podman fallback. Held update records refuse these owner lifecycle mutations. The
+outer ownership sweep also excludes saved/held members, and generic staged cleanup
+refuses a saved member before disabling/removing its unit. Regression scenarios
+verify unchanged runtime inventory and observation-only calls for running,
+stopped, missing and modified-unit cases, plus durable stop/uninstall choices.
+The health monitor also refuses automatic restart for saved, held or damaged
+recovery evidence and reports the unhealthy app without mutating it. Updating
+packages are excluded from health recovery. Combined isolated validation is
+pending: the superseded compile was deliberately stopped before any tests ran
+so these final lifecycle/health changes can share one full suite.
+
+The VM is now off. SSH shutdown attempts timed out and ACPI powerdown did not
+complete; QMP quit terminated only this transaction-idle synthetic fixture to
+release its RAM during compilation. The next dedicated 4 GB boot must mask the
+old manager in GRUB, check guest filesystem recovery, install the corrected binary
+and recapture baseline before acceptance. Failed-run identities are retained in the VM's
+`indeehub-fixture/startup-drift-failure-evidence`; all seven exact saved units were
+verified and a new synthetic baseline explicitly recaptured. This recapture is
+not rollback acceptance. The first RPC script stopped at its seven-running
+precondition, so no missing-plan, rollback or successful update RPC acceptance
+has yet completed. No live Yaya stack, catalog, wallet or payment was changed.

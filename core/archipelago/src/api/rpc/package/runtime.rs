@@ -111,7 +111,7 @@ impl RpcHandler {
             let _lifecycle_guard = lifecycle_guard;
             let _op_guard = op_lock.lock().await;
             let result = if let Some(orchestrator) = orchestrator.as_ref() {
-                do_orchestrator_package_start(orchestrator.as_ref(), &to_start).await
+                do_orchestrator_package_start(orchestrator.as_ref(), &to_start, &data_dir).await
             } else {
                 do_package_start(&to_start).await
             };
@@ -239,11 +239,12 @@ impl RpcHandler {
         .await;
 
         let op_lock = app_op_lock(package_id);
+        let data_dir = self.config.data_dir.clone();
         tokio::spawn(async move {
             let _lifecycle_guard = lifecycle_guard;
             let _op_guard = op_lock.lock().await;
             let result = if let Some(orchestrator) = orchestrator.as_ref() {
-                do_orchestrator_package_stop(orchestrator.as_ref(), &to_stop).await
+                do_orchestrator_package_stop(orchestrator.as_ref(), &to_stop, &data_dir).await
             } else {
                 do_package_stop(&containers).await
             };
@@ -348,7 +349,7 @@ impl RpcHandler {
             let _lifecycle_guard = lifecycle_guard;
             let _op_guard = op_lock.lock().await;
             let result = if let Some(orchestrator) = orchestrator.as_ref() {
-                do_orchestrator_package_restart(orchestrator.as_ref(), &to_restart).await
+                do_orchestrator_package_restart(orchestrator.as_ref(), &to_restart, &data_dir).await
             } else {
                 do_package_restart(&containers).await
             };
@@ -872,17 +873,24 @@ async fn do_package_start(to_start: &[String]) -> Result<()> {
 async fn do_orchestrator_package_start(
     orchestrator: &dyn crate::container::traits::ContainerOrchestrator,
     to_start: &[String],
+    data_dir: &std::path::Path,
 ) -> Result<()> {
+    for name in to_start {
+        orchestrator.validate_start(name).await?;
+    }
     let mut errors = Vec::new();
     for (i, name) in to_start.iter().enumerate() {
         if i > 0 {
             tokio::time::sleep(std::time::Duration::from_secs(2)).await;
         }
-        repair_before_package_start(name).await;
-        wait_before_package_start(name).await;
+        let managed = crate::container::supervised_update::installed_unit(data_dir, name)?.is_some();
+        if !managed {
+            repair_before_package_start(name).await;
+            wait_before_package_start(name).await;
+        }
         match orchestrator.start(name).await {
             Ok(()) => wait_after_orchestrator_start(name).await,
-            Err(e) if is_unknown_app_id_error(&e) => {
+            Err(e) if !managed && is_unknown_app_id_error(&e) => {
                 // Collect instead of `?`: aborting here skipped every later
                 // stack member (mempool gate flakes #73/#74 — see
                 // order_present_containers).
@@ -902,7 +910,9 @@ async fn do_orchestrator_package_start(
         Err(anyhow::anyhow!("Start failed: {}", errors.join("; ")))
     } else {
         for name in to_start {
-            ensure_runtime_host_port_listener(name).await?;
+            if crate::container::supervised_update::installed_unit(data_dir, name)?.is_none() {
+                ensure_runtime_host_port_listener(name).await?;
+            }
         }
         Ok(())
     }
@@ -1131,12 +1141,14 @@ async fn podman_start_container(container_name: &str) -> Result<Output> {
 async fn do_orchestrator_package_stop(
     orchestrator: &dyn crate::container::traits::ContainerOrchestrator,
     containers: &[String],
+    data_dir: &std::path::Path,
 ) -> Result<()> {
     let mut errors = Vec::new();
     for name in containers {
+        let managed = crate::container::supervised_update::installed_unit(data_dir, name)?.is_some();
         match orchestrator.stop(name).await {
             Ok(()) => {}
-            Err(e) if is_unknown_app_id_error(&e) => {
+            Err(e) if !managed && is_unknown_app_id_error(&e) => {
                 if let Err(e) = do_package_stop(&[name.clone()]).await {
                     errors.push(format!("{}: {:#}", name, e));
                 }
@@ -1145,7 +1157,7 @@ async fn do_orchestrator_package_stop(
             // stop removes the --rm container before the orchestrator's
             // defensive `podman stop` fallback probes it, and a stack member
             // can be absent outright (stopped earlier, or never revived).
-            Err(e) if is_missing_container_error(&format!("{:#}", e)) => {
+            Err(e) if !managed && is_missing_container_error(&format!("{:#}", e)) => {
                 tracing::debug!(container = %name, error = %e, "stop: container already absent — treating as stopped");
             }
             Err(e) => {
@@ -1231,7 +1243,7 @@ async fn cascade_restart_address_caching_dependents(
         let prev = flip_package_state(state_manager, dep, PackageState::Restarting).await;
         let target = vec![dep.to_string()];
         let result = if let Some(orch) = orchestrator {
-            do_orchestrator_package_restart(orch.as_ref(), &target).await
+            do_orchestrator_package_restart(orch.as_ref(), &target, data_dir).await
         } else {
             do_package_restart(&target).await
         };
@@ -1299,9 +1311,14 @@ fn uses_single_orchestrator_app(package_id: &str) -> bool {
 async fn do_orchestrator_package_restart(
     orchestrator: &dyn crate::container::traits::ContainerOrchestrator,
     to_restart: &[String],
+    data_dir: &std::path::Path,
 ) -> Result<()> {
-    do_orchestrator_package_stop(orchestrator, to_restart).await?;
-    do_orchestrator_package_start(orchestrator, to_restart).await
+    for name in to_restart {
+        orchestrator.validate_start(name).await?;
+    }
+    let stop_order: Vec<String> = to_restart.iter().rev().cloned().collect();
+    do_orchestrator_package_stop(orchestrator, &stop_order, data_dir).await?;
+    do_orchestrator_package_start(orchestrator, to_restart, data_dir).await
 }
 
 /// Stop all containers with their per-container graceful-shutdown timeout.

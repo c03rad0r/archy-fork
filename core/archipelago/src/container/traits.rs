@@ -45,6 +45,12 @@ pub trait ContainerOrchestrator: Send + Sync {
         Ok(0)
     }
 
+    /// Read-only admission for explicit start/restart. Managed implementations
+    /// validate saved units and locally available images before any stack stop.
+    async fn validate_start(&self, _app_id: &str) -> Result<()> {
+        Ok(())
+    }
+
     /// Start an already-created container.
     async fn start(&self, app_id: &str) -> Result<()>;
 

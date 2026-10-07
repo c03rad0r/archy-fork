@@ -2248,6 +2248,17 @@ impl ProdContainerOrchestrator {
                 if crate::app_ops::lifecycle_op_in_flight(&c.name) {
                     continue;
                 }
+                // Reviewed managed data and units belong to the supervised
+                // transaction, including ownership changes and restarts. A bad
+                // record must fail closed rather than permit generic repair.
+                match super::supervised_update::installed_unit(&self.data_dir, &c.name) {
+                    Ok(None) if !held_names.contains(&c.name) => {}
+                    Ok(_) => continue,
+                    Err(error) => {
+                        report.failures.push((c.name.clone(), error.to_string()));
+                        continue;
+                    }
+                }
                 // Throttled: first pass after the container appears, then
                 // hourly — not on every 30s tick (see ownership_sweep_due).
                 if !ownership_sweep_due(&c.name) {
@@ -2376,6 +2387,27 @@ impl ProdContainerOrchestrator {
         // every member — frontend included — flows through the generic path here.
         let lock = self.app_lock(&app_id).await;
         let _guard = lock.lock().await;
+
+        let managed_name = compute_container_name(&lm.manifest);
+        if super::supervised_update::installed_unit(&self.data_dir, &managed_name)?.is_some() {
+            // A reviewed recipe owns this runtime, including its original writable
+            // layer. Guard BEFORE staged stops, secret/config hooks and every drift
+            // repair: install_fresh's later refusal cannot undo a prior removal.
+            let stopped = crate::crash_recovery::load_user_stopped(&self.data_dir).await;
+            let removed = crate::crash_recovery::load_user_uninstalled(&self.data_dir).await;
+            if stopped.contains(&app_id) || stopped.contains(&managed_name) {
+                return Ok(ReconcileAction::Left("user-stopped".into()));
+            }
+            if removed.contains(&app_id) || removed.contains(&managed_name) {
+                return Ok(ReconcileAction::Left("user-uninstalled".into()));
+            }
+            self.sync_quadlet_unit(lm, &managed_name).await?;
+            let status = self.runtime.get_container_status(&managed_name).await
+                .context("Reviewed managed runtime is missing; explicit recovery required")?;
+            anyhow::ensure!(matches!(status.state, ContainerState::Running),
+                "Reviewed managed runtime is not running; recover its saved systemd unit explicitly instead of recreating from the catalog");
+            return Ok(ReconcileAction::NoOp);
+        }
 
         if let Some(record) = super::staged_update::load(&self.data_dir, &app_id).await? {
             let name = compute_container_name(&record.manifest);
@@ -2935,6 +2967,10 @@ impl ProdContainerOrchestrator {
     }
 
     async fn stop_staged_runtime(&self, name: &str) -> Result<()> {
+        anyhow::ensure!(
+            super::supervised_update::installed_unit(&self.data_dir, name)?.is_none(),
+            "Reviewed managed runtime cannot be stopped by generic staged cleanup"
+        );
         let mut errors = Vec::new();
         if let Err(e) = self.remove_quadlet_unit_if_present(name).await {
             errors.push(format!("could not disable staged unit: {e:#}"));
@@ -5178,7 +5214,46 @@ impl ContainerOrchestrator for ProdContainerOrchestrator {
         result
     }
 
+    async fn validate_start(&self, app_id: &str) -> Result<()> {
+        let lm = match self.loaded(app_id).await {
+            Ok(lm) => lm,
+            Err(error) => {
+                anyhow::ensure!(
+                    super::supervised_update::installed_unit(&self.data_dir, app_id)?.is_none(),
+                    "Reviewed managed manifest is unavailable: {error}"
+                );
+                return Ok(());
+            }
+        };
+        let name = compute_container_name(&lm.manifest);
+        if super::supervised_update::installed_unit(&self.data_dir, &name)?.is_some() {
+            anyhow::ensure!(!super::update_transaction::is_held(&self.data_dir, &name)?,
+                "Reviewed managed runtime is held for update recovery");
+            self.sync_quadlet_unit(&lm, &name).await?;
+            self.ensure_resolved_source_available(&lm).await?;
+        }
+        Ok(())
+    }
+
     async fn start(&self, app_id: &str) -> Result<()> {
+        if let Ok(lm) = self.loaded(app_id).await {
+            let name = compute_container_name(&lm.manifest);
+            if super::supervised_update::installed_unit(&self.data_dir, &name)?.is_some() {
+                let lock = self.app_lock(app_id).await;
+                let _guard = lock.lock().await;
+                self.validate_start(app_id).await?;
+                // Explicit owner start is allowed, but only systemd may use the
+                // exact retained recipe. Never render the current catalog here.
+                quadlet::enable_now(&format!("{name}.service")).await?;
+                wait_for_container_stable_running(self.runtime.as_ref(), &name, 3, 90).await?;
+                self.state.write().await.disabled.remove(app_id);
+                crate::crash_recovery::clear_user_stopped(&self.data_dir, app_id).await;
+                crate::crash_recovery::clear_user_stopped(&self.data_dir, &name).await;
+                crate::crash_recovery::clear_user_uninstalled(&self.data_dir, app_id).await;
+                crate::crash_recovery::mark_installed(&self.data_dir, app_id).await;
+                return Ok(());
+            }
+        }
         if self.start_staged_update(app_id).await? {
             return Ok(());
         }
@@ -5252,6 +5327,19 @@ impl ContainerOrchestrator for ProdContainerOrchestrator {
         let lock = self.app_lock(app_id).await;
         let _guard = lock.lock().await;
         let name = compute_container_name(&lm.manifest);
+        if super::supervised_update::installed_unit(&self.data_dir, &name)?.is_some() {
+            anyhow::ensure!(!super::update_transaction::is_held(&self.data_dir, &name)?,
+                "Reviewed managed runtime is held for update recovery");
+            self.sync_quadlet_unit(&lm, &name).await?;
+            quadlet::stop_service(&format!("{name}.service")).await?;
+            if let Ok(status) = self.runtime.get_container_status(&name).await {
+                anyhow::ensure!(
+                    matches!(status.state, ContainerState::Stopped | ContainerState::Exited | ContainerState::Created),
+                    "Reviewed managed runtime is still active after systemd stop"
+                );
+            }
+            return Ok(());
+        }
         // Per-app graceful-stop grace: manifest `stop_grace_secs` if declared,
         // else the historical per-app table. Slow-to-SIGTERM apps (bitcoin-core
         // 600s, lnd 330s, electrumx 300s, fedimint 60s…) otherwise get a too-short
@@ -5302,6 +5390,13 @@ impl ContainerOrchestrator for ProdContainerOrchestrator {
     }
 
     async fn restart(&self, app_id: &str) -> Result<()> {
+        if let Ok(lm) = self.loaded(app_id).await {
+            if super::supervised_update::installed_unit(&self.data_dir, &compute_container_name(&lm.manifest))?.is_some() {
+                self.validate_start(app_id).await?;
+                self.stop(app_id).await?;
+                return self.start(app_id).await;
+            }
+        }
         if let Some(members) = self.mempool_umbrella_members(app_id).await {
             tracing::info!(
                 app_id,
@@ -7866,6 +7961,86 @@ app:
 
         let config = std::fs::read_to_string(config_path).unwrap();
         assert_eq!(config, "key: new\n");
+    }
+
+    #[tokio::test]
+    async fn reviewed_runtime_survives_catalog_drift_and_refuses_repairs_before_mutation() {
+        use std::os::unix::fs::PermissionsExt;
+        for case in ["running", "stopped", "missing", "changed-unit", "missing-unit", "user-stopped", "user-uninstalled"] {
+            let rt = Arc::new(MockRuntime::default());
+            let orch = orch_with(rt.clone()).await;
+            let name = format!("managed-{}", uuid::Uuid::new_v4().simple());
+            let mut manifest = pull_manifest(&name, "catalog:new");
+            manifest.app.environment = vec!["NEW_CATALOG_ENV=changed".into()];
+            orch.insert_manifest_for_test(manifest, PathBuf::from("/tmp/catalog-drift")).await;
+            let body = "[Container]\nImage=original:retained\nEnvironment=OLD_ENV=preserved\nPublishPort=127.0.0.1:1234:80\n";
+            let records = orch.data_dir.join("update-transactions/installed-units");
+            std::fs::create_dir_all(&records).unwrap();
+            std::fs::write(records.join(format!("{name}.json")), serde_json::to_vec(&serde_json::json!({
+                "schema": 1, "operation": uuid::Uuid::new_v4().to_string(),
+                "name": name, "body": body, "mode": 0o600
+            })).unwrap()).unwrap();
+            let unit = quadlet::unit_dir().await.unwrap().join(format!("{name}.container"));
+            if case != "missing-unit" {
+                std::fs::write(&unit, if case == "changed-unit" { "operator changed" } else { body }).unwrap();
+                std::fs::set_permissions(&unit, std::fs::Permissions::from_mode(0o600)).unwrap();
+            }
+            if case != "missing" {
+                rt.set_state(&name, if case == "stopped" { ContainerState::Stopped } else { ContainerState::Running });
+            }
+            if case == "user-stopped" {
+                crate::crash_recovery::mark_user_stopped(&orch.data_dir, &name).await;
+            }
+            if case == "user-uninstalled" {
+                crate::crash_recovery::mark_user_uninstalled(&orch.data_dir, &name).await;
+            }
+            // Even a conflicting generic staged record may not tear down the
+            // admitted runtime before ensure_running gets a chance to protect it.
+            assert!(orch.stop_staged_runtime(&name).await.is_err());
+            assert!(rt.calls().is_empty());
+            let before = rt.containers.lock().unwrap().clone();
+            let lm = orch.loaded(&name).await.unwrap();
+            let result = orch.ensure_running(&lm).await;
+            if case == "running" {
+                assert_eq!(result.unwrap(), ReconcileAction::NoOp);
+            } else if case.starts_with("user-") {
+                assert_eq!(result.unwrap(), ReconcileAction::Left(case.into()));
+                assert!(rt.calls().is_empty());
+            } else {
+                assert!(result.is_err(), "{case} must refuse before mutation");
+            }
+            assert_eq!(*rt.containers.lock().unwrap(), before, "{case}");
+            assert!(rt.calls().iter().all(|call| call.starts_with("get_container_status:")), "{case}: {:?}", rt.calls());
+            if case == "running" {
+                assert_eq!(std::fs::read_to_string(&unit).unwrap(), body);
+            }
+            if case == "running" || case.starts_with("user-") {
+                rt.mark_image_present("original:retained");
+                let holds = orch.data_dir.join("update-transactions/holds");
+                std::fs::create_dir_all(&holds).unwrap();
+                std::fs::write(holds.join(&name), uuid::Uuid::new_v4().to_string()).unwrap();
+                assert!(orch.validate_start(&name).await.is_err());
+                assert!(orch.start(&name).await.is_err());
+                assert!(orch.stop(&name).await.is_err());
+                std::fs::remove_file(holds.join(&name)).unwrap();
+                orch.validate_start(&name).await.unwrap();
+                orch.start(&name).await.unwrap();
+                assert_eq!(std::fs::read_to_string(&unit).unwrap(), body);
+                assert!(!crate::crash_recovery::load_user_stopped(&orch.data_dir).await.contains(&name));
+                assert!(!crate::crash_recovery::load_user_uninstalled(&orch.data_dir).await.contains(&name));
+            } else {
+                // Missing images/units and modified units refuse an explicit
+                // start before service mutation; no catalog pull is attempted.
+                assert!(orch.validate_start(&name).await.is_err());
+                assert!(orch.start(&name).await.is_err());
+                if case == "missing-unit" || case == "changed-unit" {
+                    assert!(orch.stop(&name).await.is_err());
+                }
+            }
+            assert!(rt.calls().iter().all(|call| call.starts_with("get_container_status:") || call.starts_with("image_exists:")), "{case}: {:?}", rt.calls());
+            assert_eq!(*rt.containers.lock().unwrap(), before, "{case}");
+            let _ = std::fs::remove_file(unit);
+        }
     }
 
     #[tokio::test]

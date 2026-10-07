@@ -728,7 +728,21 @@ fn parse_health_from_status(status: &str) -> Option<String> {
 /// Try to recover a container. Running containers need a real restart so
 /// rootless network helpers such as pasta are recreated; `podman start` is a
 /// no-op for a running container with a missing host listener.
-async fn restart_container(name: &str, state: &str) -> bool {
+fn automatic_recovery_allowed(data_dir: &Path, name: &str) -> bool {
+    match (
+        crate::container::supervised_update::installed_unit(data_dir, name),
+        crate::container::update_transaction::is_held(data_dir, name),
+    ) {
+        (Ok(None), Ok(false)) => true,
+        _ => false, // Saved, held, or unreadable recovery evidence fails closed.
+    }
+}
+
+async fn restart_container(name: &str, state: &str, data_dir: &Path) -> bool {
+    if !automatic_recovery_allowed(data_dir, name) {
+        warn!(container = %name, "Automatic restart refused: reviewed managed runtime needs explicit recovery");
+        return false;
+    }
     let action = if state == "running" {
         "restart"
     } else {
@@ -927,7 +941,7 @@ pub fn spawn_health_monitor(state: Arc<StateManager>, data_dir: PathBuf) {
                     }
                     if matches!(
                         pkg.state,
-                        PackageState::Starting | PackageState::Stopping | PackageState::Restarting
+                        PackageState::Starting | PackageState::Stopping | PackageState::Restarting | PackageState::Updating
                     ) {
                         debug!(
                             "Skipping container during package lifecycle transition: {} ({:?})",
@@ -1038,6 +1052,24 @@ pub fn spawn_health_monitor(state: Arc<StateManager>, data_dir: PathBuf) {
 
             let mut prev_tier: Option<StartupTier> = None;
             for container in &unhealthy {
+                if !automatic_recovery_allowed(&data_dir, &container.name) {
+                    let id = format!("health-managed-{}", container.name);
+                    if !data.notifications.iter().any(|n| n.id == id) {
+                        data.notifications.push(Notification {
+                            id,
+                            level: NotificationLevel::Error,
+                            title: format!("{} is unhealthy", container.app_id),
+                            message: "Automatic restart is paused to preserve the installed configuration. Check the app before using its Start or Restart controls.".into(),
+                            timestamp: chrono::Utc::now().to_rfc3339(),
+                            app_id: Some(container.app_id.clone()),
+                        });
+                        if data.notifications.len() > 20 {
+                            data.notifications = data.notifications.split_off(data.notifications.len() - 20);
+                        }
+                        state_changed = true;
+                    }
+                    continue;
+                }
                 let tier = container_tier(&container.name);
 
                 // Reset counter after 1 hour for permanently failed containers
@@ -1127,7 +1159,7 @@ pub fn spawn_health_monitor(state: Arc<StateManager>, data_dir: PathBuf) {
                     // the restart resyncs cleanly instead of crash-looping.
                     maybe_recover_corrupt_electrumx(&container.name, attempt).await;
 
-                    let restarted = restart_container(&container.name, &container.state).await;
+                    let restarted = restart_container(&container.name, &container.state, &data_dir).await;
 
                     if !restarted || attempt >= MAX_RESTART_ATTEMPTS {
                         let notification = Notification {
@@ -1196,6 +1228,33 @@ pub fn spawn_health_monitor(state: Arc<StateManager>, data_dir: PathBuf) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn automatic_recovery_never_restarts_saved_held_or_damaged_managed_runtime() {
+        let root = tempfile::tempdir().unwrap();
+        let name = "indeedhub-api";
+        assert!(automatic_recovery_allowed(root.path(), name));
+        let installed = root.path().join("update-transactions/installed-units");
+        std::fs::create_dir_all(&installed).unwrap();
+        let record = installed.join(format!("{name}.json"));
+        std::fs::write(&record, serde_json::to_vec(&serde_json::json!({
+            "schema": 1, "operation": uuid::Uuid::new_v4().to_string(),
+            "name": name, "body": "[Container]\nImage=original:retained\n", "mode": 0o600
+        })).unwrap()).unwrap();
+        assert!(!automatic_recovery_allowed(root.path(), name));
+        assert!(!restart_container(name, "running", root.path()).await);
+        std::fs::write(&record, b"damaged").unwrap();
+        assert!(!automatic_recovery_allowed(root.path(), name));
+        assert!(!restart_container(name, "stopped", root.path()).await);
+        std::fs::remove_file(record).unwrap();
+        let holds = root.path().join("update-transactions/holds");
+        std::fs::create_dir_all(&holds).unwrap();
+        std::fs::write(holds.join(name), uuid::Uuid::new_v4().to_string()).unwrap();
+        assert!(!automatic_recovery_allowed(root.path(), name));
+        assert!(!restart_container(name, "running", root.path()).await);
+        std::fs::write(holds.join(name), b"damaged").unwrap();
+        assert!(!automatic_recovery_allowed(root.path(), name));
+    }
 
     #[test]
     fn test_restart_tracker_new_is_empty() {
