@@ -79,12 +79,18 @@ const { chromium, expect } = require(process.env.PLAYWRIGHT_MODULE || '../../neo
       const introPlay = frame.getByRole('button', { name: 'Play intro', exact: true });
       const introSkip = frame.getByRole('button', { name: 'Skip intro', exact: true });
       step = 'wait for app introduction';
-      await expect(introPlay).toBeVisible();
-      step = 'play app introduction';
-      await introPlay.click();
-      step = 'skip app introduction';
-      await expect(introSkip).toBeVisible();
-      await introSkip.click();
+      // The app deliberately reveals authentication after a four-second intro
+      // boot fallback. Qualify that real path too, without requiring hidden intro controls.
+      await expect.poll(async () => await introPlay.isVisible()
+        || await frame.locator('html').getAttribute('data-alpha-boot') === 'fallback').toBe(true);
+      proof.introBoot = await frame.locator('html').getAttribute('data-alpha-boot');
+      if (await introPlay.isVisible()) {
+        step = 'play app introduction';
+        await introPlay.click();
+        step = 'skip app introduction';
+        await expect(introSkip).toBeVisible();
+        await introSkip.click();
+      }
       step = 'click native Nostr sign-in';
       await signIn.click();
       const deadline = Date.now() + 45000; let approvals = 0;

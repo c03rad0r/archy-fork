@@ -63,3 +63,26 @@ served candidate, not live V4V queue controls or Yaya playback. Logs:
 `/tmp/archy-native-player-dev-browser{,-retry}.log`.
 
 Resumed Yaya dashboard deployment passed using the same qualified UI archive as dev. Served index SHA256 is `a03f3e7a366613f82dd9fe014dc04301f223b9896f6684bf2ee5aa06aa59b2de`; backend binary, node session key and all app container identities/start times were unchanged. Evidence: `/tmp/archy-native-player-yaya-deploy.log`. Rollback: `/var/lib/archipelago/support/native-player-ui-20261006T232200Z-3529899/rollback.sh`. The private native-login app image is being staged separately; this dashboard deployment alone does not establish real app/companion playback acceptance.
+
+## Full live Browse and playback requalification
+
+After the generic installed-app entry-path fix was deployed, the actual Yaya
+managed V4V app passed at 390px and 1440px. The iframe initially opens `/browse`
+and authentication returns to Browse. Each fresh browser session made one
+approved native Nostr authentication signature and received login HTTP 200.
+The app used its documented four-second intro boot fallback; the harness now
+accepts either its visible intro controls or that explicit fallback state,
+without increasing timeouts. The initial unconditional intro-control failure is
+retained at `/tmp/archy-v4v-native-browse-final-390.log`.
+
+Both complete checks played existing bundled songs, closed into the native bar,
+confirmed continuing audio, operated pause/play/previous/next/shuffle against
+the app's queue, and reopened the same iframe without losing playback. Artwork
+was decoded with nonzero natural dimensions, visibly covered the bar, and the
+controls stayed within it. Actual screenshots were inspected at both widths;
+the mobile bar does not overlap bottom navigation. Playback was muted; no payment
+or relay publication occurred. Physical companion acceptance remains open.
+
+Evidence: `/tmp/archy-v4v-native-browse-final-390-recheck.log`,
+`/tmp/archy-v4v-native-browse-final-1440.log`, and private screenshots
+`/tmp/archy-v4v-live-player-{390,1440}.png`.
