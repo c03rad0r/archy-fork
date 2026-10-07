@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<!-- Deployment-owned configuration: replace with the exact approved dashboard origin.
+     Never fill this value from a URL parameter or an unverified incoming message. -->
+<meta name="dashboard-origin" content="https://node.example">
+<title>Public audio bridge example</title>
+<style>body{max-width:42rem;margin:2rem auto;padding:1rem;font:18px system-ui}button,input,audio{margin:.5rem 0;max-width:100%}button{min-height:44px;padding:0 1rem}</style>
+<h1>Audio bridge example</h1><p>Select your own audio files. This example uploads nothing and contains no demo catalog, private app source or bundled recordings.</p>
+<input id="files" type="file" accept="audio/*" multiple aria-label="Choose audio files">
+<p id="track" aria-live="polite">No track selected</p><audio id="audio" controls></audio>
+<div><button id="previous">Previous</button> <button id="next">Next</button> <button id="shuffle" aria-pressed="false">Shuffle</button></div>
+<script type="module">
+import { attachAudioBridge } from './archipelago-audio.mjs'
+const audio=document.querySelector('#audio'), label=document.querySelector('#track'), shuffleButton=document.querySelector('#shuffle')
+let files=[], urls=[], index=0, shuffled=false
+function select(next){if(!files.length)return;index=(next+files.length)%files.length;audio.src=urls[index];label.textContent=files[index].name;bridge.publish()}
+async function advance(){select(shuffled?Math.floor(Math.random()*files.length):index+1);if(files.length)await audio.play()}
+const actions={play:()=>audio.play(),pause:()=>audio.pause(),seek:seconds=>{audio.currentTime=seconds},next:advance,
+ previous:async()=>{if(audio.currentTime>3)audio.currentTime=0;else select(index-1);if(files.length)await audio.play()},
+ shuffle:()=>{shuffled=!shuffled;shuffleButton.setAttribute('aria-pressed',String(shuffled))}}
+const bridge=attachAudioBridge({parentOrigin:document.querySelector('meta[name="dashboard-origin"]').content,actions,
+ snapshot:()=>files.length?{title:files[index].name,artist:'Local file',playing:!audio.paused,shuffle:shuffled,position:audio.currentTime,duration:audio.duration}:null})
+document.querySelector('#files').onchange=event=>{audio.pause();urls.forEach(URL.revokeObjectURL);files=Array.from(event.target.files);urls=files.map(file=>URL.createObjectURL(file));select(0)}
+for(const name of ['previous','next','shuffle'])document.querySelector('#'+name).onclick=async()=>{try{await actions[name]()}finally{bridge.publish()}}
+for(const name of ['play','pause','timeupdate','durationchange','loadedmetadata','error'])audio.addEventListener(name,bridge.publish)
+audio.addEventListener('ended',()=>advance().catch(()=>bridge.publish()))
+window.addEventListener('pagehide',event=>{if(!event.persisted){bridge.dispose();urls.forEach(URL.revokeObjectURL)}})
+</script></html>

@@ -6,6 +6,7 @@ const fixture = vi.hoisted(() => ({
   player: { updateExternal: vi.fn(), detachExternal: vi.fn(), releaseExternal: vi.fn(), setExternalVisible: vi.fn() },
   launcher: { mediaAppId: 'node-demo-v4v' as string | null, panelAppId: null as string | null, openSession: vi.fn() },
 }))
+vi.mock('@/stores/app', () => ({useAppStore:()=>({data:{'package-data':{'node-demo-v4v':{manifest:{version:'1'}}}}})}))
 vi.mock('../useAudioPlayer', () => ({ useAudioPlayer: () => fixture.player }))
 vi.mock('@/stores/appLauncher', () => ({ useAppLauncherStore: () => fixture.launcher }))
 vi.mock('@/views/discover/curatedApps', () => ({ appHasMediaBridge: () => fixture.allowed }))
@@ -48,4 +49,16 @@ describe('app media session boundary', () => {
     expect(fixture.player.releaseExternal).toHaveBeenCalledWith(controller.id)
     expect(child.postMessage.mock.calls[child.postMessage.mock.calls.length - 1]![0]).toMatchObject({ command: 'pause' })
   })
+})
+
+it('retains controls and cleanup after catalog expiry but does not admit a new session',()=>{
+ const child={postMessage:vi.fn()};let bridge!:ReturnType<typeof useAppMediaBridge>
+ const wrapper=mount(defineComponent({setup(){bridge=useAppMediaBridge(ref('node-demo-v4v'),ref('https://node.test:7475/'),shallowRef({contentWindow:child} as unknown as HTMLIFrameElement),ref(false));return()=>null}}))
+ fixture.allowed=true;bridge.connect();const session=child.postMessage.mock.calls[0]![0].session
+ fixture.allowed=false
+ bridge.handle({source:child,origin:'https://node.test:7475',data:{type:'archipelago:media-state',version:1,session,available:true,title:'Song',artist:'Artist',playing:true,position:1,duration:10}} as unknown as MessageEvent)
+ const controller=fixture.player.updateExternal.mock.lastCall![0];controller.pause();expect(child.postMessage.mock.lastCall![0].command).toBe('pause')
+ wrapper.unmount();expect(child.postMessage.mock.lastCall![0].command).toBe('pause')
+ const outsider={postMessage:vi.fn()};const denied=mount(defineComponent({setup(){const b=useAppMediaBridge(ref('node-demo-v4v'),ref('https://node.test:7475/'),shallowRef({contentWindow:outsider} as unknown as HTMLIFrameElement),ref(false));b.connect();return()=>null}}))
+ expect(outsider.postMessage).not.toHaveBeenCalled();denied.unmount()
 })

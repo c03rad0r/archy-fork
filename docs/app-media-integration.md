@@ -36,6 +36,29 @@ Audio controls do not require Nostr signing. Apps needing Nostr login must follo
 selection, scoped consent, server-verified authentication and cancellation. Never
 put signer permissions, wallet operations or signing keys into the media bridge.
 
+## Public adapter and independent example
+
+[`examples/audio-app`](../examples/audio-app/) contains an independently authored
+adapter and a small player using files the user selects locally. It includes no
+V4V code, assets, recordings or authentication implementation. Serve the example
+as an authenticated app; configure the exact dashboard origin in its deployment
+owned `dashboard-origin` metadata. Do not derive trust from a query parameter.
+
+Import `attachAudioBridge` from `archipelago-audio.mjs` and supply your actual
+player's `snapshot`, `actions` and `unlocked` callbacks. Call `publish()` when
+playback changes and `dispose()` when the player is destroyed. The sample uses
+one queue for both in-app and dashboard actions, and never passes stream URLs or
+credentials to the host. Its Node tests run with
+`node --test examples/audio-app/archipelago-audio.test.mjs`.
+
+The generic eligibility change is under qualification: new sessions require the
+authenticated daemon's verified catalog, matching app identity and installed
+version, plus an unambiguous iframe-compatible manifest. Community storefront
+fallbacks cannot grant this integration. An already admitted session retains its
+original frame/origin/nonce solely so its existing controls and cleanup remain
+usable if catalog freshness expires. App removal, version or frame replacement
+releases that admission; a new session must qualify again.
+
 ## Keep a single player and queue
 
 The app continues to own its audio element, queue, authorization and playback

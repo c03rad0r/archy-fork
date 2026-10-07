@@ -68,7 +68,7 @@ export interface SignedAppEntry {
       description?: string
       category?: string
       container?: { image?: string }
-      metadata?: { icon?: string; author?: string; repo?: string; launch?: { media_controls?: string } }
+      metadata?: { icon?: string; author?: string; repo?: string; launch?: { media_controls?: string; requires_host_frame?: boolean; open_in_new_tab?: boolean } }
       ports?: { host?: number | string; container?: number | string; auth?: string }[]
     }
   }
@@ -110,8 +110,41 @@ let nodeCatalogRequest: Promise<SignedAppCatalog | null> | null = null
 export function nodeAppIsAvailable(id: string): boolean {
   return nodeCatalogExpires > Date.now() && Boolean(nodeCatalogCache?.apps[id])
 }
-export function appHasMediaBridge(id: string): boolean {
-  return nodeAppIsAvailable(id) && nodeCatalogCache?.apps[id]?.manifest?.app?.metadata?.launch?.media_controls === 'archipelago-v1'
+function verifiedLaunchEntry(id: string): SignedAppEntry | undefined {
+  // Node-only app names never acquire authority from the public catalog.
+  const entry = id.startsWith('node-demo-')
+    ? (nodeAppIsAvailable(id) ? nodeCatalogCache?.apps[id] : undefined)
+    : signedCatalogCache?.apps[id]
+  return entry?.manifest?.app?.id === id ? entry : undefined
+}
+export function appHasMediaBridge(id: string, installedVersion?: string): boolean {
+  const entry = verifiedLaunchEntry(id)
+  if (!entry || (installedVersion !== undefined && entry.version !== installedVersion)) return false
+  const launch = entry.manifest?.app?.metadata?.launch
+  return launch?.media_controls === 'archipelago-v1' && launch.open_in_new_tab !== true
+}
+export function appRequiresHostFrame(id: string, installedVersion?: string): boolean {
+  const entry = verifiedLaunchEntry(id)
+  return Boolean(entry && (installedVersion === undefined || entry.version === installedVersion)
+    && entry.manifest?.app?.metadata?.launch?.requires_host_frame === true
+    && entry.manifest.app.metadata.launch.open_in_new_tab !== true)
+}
+let launchPolicyRequest: Promise<void> | null = null
+export function appLaunchPolicyLoaded(): boolean { return signedCatalogCache !== null }
+/** Read only the authenticated daemon-verified catalog; community fallback
+ * metadata must never grant a native integration. */
+export async function ensureAppLaunchPolicy(): Promise<void> {
+  if (signedCatalogCache) return
+  if (!launchPolicyRequest) launchPolicyRequest = (async () => {
+    try {
+      const response = await fetch('/api/app-catalog', {credentials:'include',signal:AbortSignal.timeout(5000)})
+      if (!response.ok) return
+      const value = await response.json() as SignedAppCatalog
+      if (value.apps && !Array.isArray(value.apps)) signedCatalogCache = value
+    } catch { /* Unavailable policy cannot authorize a new integration. */ }
+    finally { launchPolicyRequest = null }
+  })()
+  await launchPolicyRequest
 }
 
 /** Resolve node-owned launch policy independently of the public storefront.

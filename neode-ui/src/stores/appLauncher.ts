@@ -1,4 +1,4 @@
-import { appHasMediaBridge, ensureNodeAppAvailable, nodeAppIsAvailable } from '@/views/discover/curatedApps'
+import { appHasMediaBridge, appRequiresHostFrame, appLaunchPolicyLoaded, ensureAppLaunchPolicy, ensureNodeAppAvailable, nodeAppIsAvailable } from '@/views/discover/curatedApps'
 import { defineStore } from 'pinia'
 import { ref, watch, onScopeDispose } from 'vue'
 import { rpcClient } from '@/api/rpc-client'
@@ -237,7 +237,7 @@ export const useAppLauncherStore = defineStore('appLauncher', () => {
     // phone controls and better performance. Apps with manifest-declared host
     // integrations stay in the dashboard frame so their parent bridge remains
     // connected (for example GitWorkshop's consent-gated NIP-07 provider).
-    if (!IS_DEMO && isCompanionApp() && !HOST_FRAME_APPS.has(appId) && !appHasMediaBridge(appId)) {
+    if (!IS_DEMO && isCompanionApp() && !HOST_FRAME_APPS.has(appId) && !appRequiresHostFrame(appId, pkg?.manifest.version) && !appHasMediaBridge(appId, pkg?.manifest.version)) {
       const runtimeUrl = useAppStore().data?.['package-data']?.[appId]?.installed?.['interface-addresses']?.main?.['lan-address'] || undefined
       const launchUrl = directAppUrl(appId) || resolveAppUrl(appId, opts.path, runtimeUrl)
       if (launchUrl) {
@@ -274,7 +274,7 @@ export const useAppLauncherStore = defineStore('appLauncher', () => {
     // page never changes: panel mode renders beside the page, overlay and
     // fullscreen modes render above it (AppSession styles per display mode).
     // Closing always returns the user exactly where they launched from.
-    if (appHasMediaBridge(appId)) mediaAppId.value = appId
+    if (pkg && appHasMediaBridge(appId, pkg.manifest.version)) mediaAppId.value = appId
     panelPath.value = opts.path ?? null
     panelAppId.value = appId
   }
@@ -282,7 +282,7 @@ export const useAppLauncherStore = defineStore('appLauncher', () => {
   /** One launch gate for Home, My Apps, Discover, Spotlight and details.
    * Previously each Apps view owned a private modal, so Home skipped the
    * Portainer first-run token entirely. */
-  function openSession(appId: string, opts: LaunchOptions = {}) {
+  function openSession(appId: string, opts: LaunchOptions = {}, checkedPolicy = false) {
     const generation = ++launchGeneration
     if (appId.startsWith('node-demo-') && !nodeAppIsAvailable(appId)) {
       useToast().info('Loading this node’s demo app…')
@@ -294,6 +294,10 @@ export const useAppLauncherStore = defineStore('appLauncher', () => {
         }
         openSession(appId, opts)
       })
+      return
+    }
+    if (!IS_DEMO && !appId.startsWith('node-demo-') && !checkedPolicy && !appLaunchPolicyLoaded()) {
+      void ensureAppLaunchPolicy().then(() => { if (generation === launchGeneration) openSession(appId, opts, true) })
       return
     }
     // Home/goal/deep-link launchers do not pass through AppCard.canLaunch.
