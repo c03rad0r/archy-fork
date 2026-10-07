@@ -74,6 +74,7 @@ import androidx.compose.ui.unit.sp
 import com.archipelago.app.R
 import com.archipelago.app.data.ServerEntry
 import com.archipelago.app.ui.screens.restartCompanionApp
+import com.archipelago.app.ui.screens.CompanionAudioDiagnostics
 import com.archipelago.app.ui.theme.BitcoinOrange
 import com.archipelago.app.ui.theme.SurfaceDark
 import com.archipelago.app.ui.theme.TextMuted
@@ -252,6 +253,7 @@ private fun MenuPanel(
                             HubPage.FIPS -> "FIPS Mesh"
                             HubPage.BACKUP -> "Backup & Restore"
                             HubPage.SIGNER -> "Remote Signer"
+                            HubPage.AUDIO -> "Playback diagnostics"
                             HubPage.HUB -> "Menu"
                         },
                         color = TextPrimary, fontSize = 20.sp, fontWeight = FontWeight.SemiBold, letterSpacing = 1.sp,
@@ -307,6 +309,7 @@ private fun MenuPanel(
                     onDismiss()
                     restartCompanionApp(hubContext)
                 }
+                HubCard(Icons.Default.Dashboard, "Playback diagnostics", "Local background audio status") { page = HubPage.AUDIO }
                 val versionLabel = remember {
                     runCatching {
                         hubContext.packageManager
@@ -451,6 +454,17 @@ private fun MenuPanel(
                 }
             }
 
+            HubPage.AUDIO -> {
+                val context = LocalContext.current
+                val clipboard = LocalClipboardManager.current
+                var report by remember { mutableStateOf(CompanionAudioDiagnostics.report(context)) }
+                var copied by remember { mutableStateOf(false) }
+                Text("Local status only. No track names, addresses, credentials, or automatic uploads.", color = TextMuted, fontSize = 12.sp)
+                Text(report, color = TextPrimary, fontSize = 12.sp)
+                MenuItem(label = "Refresh", onClick = { report = CompanionAudioDiagnostics.report(context); copied = false })
+                MenuItem(label = if (copied) "Copied" else "Copy report", onClick = { clipboard.setText(AnnotatedString(report)); copied = true })
+            }
+
             HubPage.FIPS -> {
                 FipsSection(embedded = true)
             }
@@ -470,7 +484,7 @@ private fun MenuPanel(
     }
 }
 
-private enum class HubPage { HUB, NODES, FIPS, BACKUP, SIGNER }
+private enum class HubPage { HUB, NODES, FIPS, BACKUP, SIGNER, AUDIO }
 
 /** Big tappable destination card for the hub page: icon + title + subtitle. */
 @Composable

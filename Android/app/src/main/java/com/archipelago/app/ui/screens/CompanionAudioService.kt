@@ -23,6 +23,7 @@ import android.os.SystemClock
 import android.util.Base64
 import androidx.core.content.ContextCompat
 import com.archipelago.app.MainActivity
+import com.archipelago.app.ui.screens.CompanionAudioDiagnostics.Event
 
 /** Foreground ownership of the existing authenticated WebView player. No stream
  * URL, auth token or cookie is copied into native playback or notifications. */
@@ -46,7 +47,7 @@ class CompanionAudioService : Service() {
         override fun run() {
             val state = CompanionAudioBridge.state ?: return
             val age = SystemClock.elapsedRealtime() - CompanionAudioBridge.updatedAt
-            if (age > 90000) CompanionAudioBridge.stop()
+            if (age > 90000) { CompanionAudioDiagnostics.record(Event.HEARTBEAT_EXPIRED); CompanionAudioBridge.stop() }
             else {
                 if (age > 15000) CompanionAudioBridge.command("sync")
                 handler.postDelayed(this, 5000)
@@ -55,6 +56,7 @@ class CompanionAudioService : Service() {
     }
     override fun onCreate() {
         super.onCreate(); instance = this
+        CompanionAudioDiagnostics.record(Event.SERVICE_CREATED)
         getSystemService(NotificationManager::class.java).createNotificationChannel(
             NotificationChannel(CHANNEL, "Audio playback", NotificationManager.IMPORTANCE_LOW))
         media = MediaSession(this, "Archipelago audio")
@@ -80,6 +82,7 @@ class CompanionAudioService : Service() {
     }
     override fun onBind(intent: Intent?): IBinder? = null
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        CompanionAudioDiagnostics.record(Event.SERVICE_STARTED)
         val state = CompanionAudioBridge.state
         if (state == null) { finishPlayback(); return START_NOT_STICKY }
         finishing = false; instance = this
@@ -140,6 +143,7 @@ class CompanionAudioService : Service() {
             .setActions(*controls.toTypedArray())
         bitmap?.let { notification.setLargeIcon(it) }
         startForeground(NOTIFICATION, notification.build())
+        CompanionAudioDiagnostics.record(Event.FOREGROUND_ACTIVE)
     }
     override fun onTaskRemoved(rootIntent: Intent?) {
         if (CompanionAudioBridge.state?.playing != true) CompanionAudioBridge.stop()
@@ -148,10 +152,12 @@ class CompanionAudioService : Service() {
     internal fun finishPlayback() {
         if (finishing) return
         finishing = true
+        CompanionAudioDiagnostics.record(Event.SERVICE_FINISHED)
         if (instance === this) instance = null
         stopForeground(STOP_FOREGROUND_REMOVE); stopSelf()
     }
     override fun onDestroy() {
+        CompanionAudioDiagnostics.record(Event.SERVICE_DESTROYED)
         handler.removeCallbacksAndMessages(null)
         runCatching { unregisterReceiver(noisy) }
         media.isActive = false; media.release(); bitmap = null

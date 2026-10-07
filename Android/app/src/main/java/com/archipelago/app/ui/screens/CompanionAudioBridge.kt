@@ -11,6 +11,7 @@ import androidx.webkit.WebMessageCompat
 import androidx.webkit.WebViewCompat
 import androidx.webkit.WebViewFeature
 import org.json.JSONObject
+import com.archipelago.app.ui.screens.CompanionAudioDiagnostics.Event
 
 /** Metadata/control only: the authorized WebView owns the stream and queue. */
 internal data class CompanionAudioState(
@@ -50,12 +51,12 @@ internal object CompanionAudioBridge {
         private set
     fun retains(web: WebView?) = web != null && view === web && state != null
     fun attach(web: WebView, urls: List<String>) {
-        if (!WebViewFeature.isFeatureSupported(WebViewFeature.WEB_MESSAGE_LISTENER)) return
+        if (!WebViewFeature.isFeatureSupported(WebViewFeature.WEB_MESSAGE_LISTENER)) { CompanionAudioDiagnostics.record(Event.BRIDGE_UNSUPPORTED); return }
         val origins = urls.mapNotNull(::cloudVideoOrigin).toSet()
-        if (origins.isEmpty()) return
+        if (origins.isEmpty()) { CompanionAudioDiagnostics.record(Event.NO_APPROVED_ORIGIN); return }
         val existing = bindings[web]
         if (existing != null) {
-            if (existing != origins) { bindings[web] = emptySet(); release(web) }
+            if (existing != origins) { CompanionAudioDiagnostics.record(Event.ORIGIN_CHANGED); bindings[web] = emptySet(); release(web) }
             return
         }
         bindings[web] = origins
@@ -67,34 +68,45 @@ internal object CompanionAudioBridge {
                     receive(web, raw, source.toString(), main, origins) { proxy.postMessage(it) }
                 }
             })
+        CompanionAudioDiagnostics.record(Event.BRIDGE_ATTACHED)
     }
     internal fun receive(web: WebView, raw: String, source: String, main: Boolean,
                          origins: Set<String>, proxy: (String) -> Unit) {
-        if (!cloudVideoSenderAllowed(web.url, source, origins, main)) return
-        if (raw.length > 96000) return
-        val data = runCatching { JSONObject(raw) }.getOrNull() ?: return
+        CompanionAudioDiagnostics.record(Event.MESSAGE_RECEIVED)
+        if (!cloudVideoSenderAllowed(web.url, source, origins, main)) { CompanionAudioDiagnostics.record(Event.SENDER_REJECTED); return }
+        if (raw.length > 96000) { CompanionAudioDiagnostics.record(Event.MESSAGE_TOO_LARGE); return }
+        val data = runCatching { JSONObject(raw) }.getOrNull() ?: run { CompanionAudioDiagnostics.record(Event.INVALID_JSON); return }
         val session = data.optString("session")
         if (data.optString("action") == "release") {
-            if (web === view && session == state?.session) terminate()
+            if (web === view && session == state?.session) { CompanionAudioDiagnostics.record(Event.SESSION_RELEASED); terminate() }
             return
         }
-        val incoming = runCatching { CompanionAudioState.parse(data) }.getOrNull() ?: return
-        if (session in retired) return
+        val incoming = runCatching { CompanionAudioState.parse(data) }.getOrNull() ?: run { CompanionAudioDiagnostics.record(Event.INVALID_STATE); return }
+        if (session in retired) { CompanionAudioDiagnostics.record(Event.RETIRED_SESSION); return }
         val old = state
         if (old != null && old.session == session) {
-            if (view !== web || incoming.sequence <= old.sequence) return
+            if (view !== web || incoming.sequence <= old.sequence) { CompanionAudioDiagnostics.record(Event.STALE_STATE); return }
         } else {
-            if (!incoming.playing) return // Do not start a service for idle metadata.
+            if (!incoming.playing) { CompanionAudioDiagnostics.record(Event.IDLE_STATE); return } // Do not start a service for idle metadata.
             if (old != null) { command("pause"); retire(old.session) }
         }
+        CompanionAudioDiagnostics.record(Event.STATE_ACCEPTED)
         view = web; origin = cloudVideoOrigin(source); reply = proxy
         state = if (old != null && old.session == session && !data.has("artwork")) incoming.copy(artwork = old.artwork) else incoming; updatedAt = SystemClock.elapsedRealtime()
         runCatching {
             val service = CompanionAudioService.instance
             if (service != null) service.refresh()
-            else ContextCompat.startForegroundService(web.context.applicationContext,
-                Intent(web.context.applicationContext, CompanionAudioService::class.java))
+            else {
+                CompanionAudioDiagnostics.record(Event.SERVICE_REQUESTED)
+                ContextCompat.startForegroundService(web.context.applicationContext,
+                    Intent(web.context.applicationContext, CompanionAudioService::class.java))
+            }
         }.onFailure {
+            CompanionAudioDiagnostics.record(when {
+                it is SecurityException -> Event.SERVICE_PERMISSION_DENIED
+                it.javaClass.simpleName == "ForegroundServiceStartNotAllowedException" -> Event.SERVICE_BACKGROUND_START_DENIED
+                else -> Event.SERVICE_REQUEST_FAILED
+            })
             event("error", "Background playback could not start. Reopen the companion and press Play.")
             command("pause"); terminate()
         }
@@ -112,7 +124,7 @@ internal object CompanionAudioBridge {
         runCatching { reply?.invoke(message.toString()) }
     }
     fun command(name: String, position: Double? = null) = event("command", name, position)
-    fun release(web: WebView) { if (view === web) { command("stop"); terminate() } }
+    fun release(web: WebView) { if (view === web) { CompanionAudioDiagnostics.record(Event.PAGE_RELEASED); command("stop"); terminate() } }
     fun terminate() {
         state?.session?.let(::retire)
         state = null; view = null; origin = null; reply = null

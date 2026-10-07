@@ -58,6 +58,34 @@ class CompanionAudioTest {
         } finally { CompanionAudioBridge.release(web); lifecycle.destroy(); web.destroy() }
     }
 
+    @Test fun diagnosticReportExcludesPrivateMessagesAndRecordsRejectionStage() {
+        val app = RuntimeEnvironment.getApplication()
+        val web = android.webkit.WebView(app)
+        web.loadUrl("https://private-node.test/cloud?token=private-token")
+        try {
+            CompanionAudioBridge.receive(web, "private-invalid-payload", "https://private-node.test", true,
+                setOf("https://private-node.test")) {}
+            CompanionAudioBridge.receive(web, state().put("title", "PRIVATE SONG").put("duration", -1).toString(),
+                "https://private-node.test", true, setOf("https://private-node.test")) {}
+            val report = CompanionAudioDiagnostics.report(app)
+            assertTrue(report.contains("INVALID_JSON:"))
+            assertTrue(report.contains("INVALID_STATE:"))
+            for (privateValue in listOf("private-node", "private-token", "private-invalid-payload", "PRIVATE SONG", "12345678")) {
+                assertFalse(report.contains(privateValue))
+            }
+        } finally { web.destroy() }
+    }
+    @Test fun diagnosticHistoryIsBoundedWithoutDroppingStageCounts() {
+        repeat(100) {
+            CompanionAudioDiagnostics.record(CompanionAudioDiagnostics.Event.SERVICE_CREATED)
+            CompanionAudioDiagnostics.record(CompanionAudioDiagnostics.Event.SERVICE_DESTROYED)
+        }
+        val report = CompanionAudioDiagnostics.events()
+        val history = report.substringAfter("Recent transitions (seconds since boot):\n")
+        assertEquals(12, history.lines().count { it.isNotBlank() })
+        assertTrue(report.contains("SERVICE_CREATED:"))
+    }
+
     private fun state() = JSONObject("""{"version":1,"action":"state","session":"12345678-1234-1234-1234-123456789abc","sequence":1,"title":"Current song","playing":true,"position":10,"duration":120,"previous":true,"next":true,"shuffle":true,"shuffled":false}""")
     @Test fun malformedOrUnboundedMetadataCannotBecomeNativePlayback() {
         for ((key, value) in listOf("version" to 2, "session" to "foreign", "sequence" to -1,
