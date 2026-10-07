@@ -43,13 +43,13 @@ describe('app media session boundary', () => {
     visible.value = true; await nextTick()
     expect(fixture.player.setExternalVisible).toHaveBeenCalledWith(controller.id, true)
     fixture.allowed = false; message()
-    expect(fixture.player.updateExternal).toHaveBeenCalledOnce()
+    // Expiry blocks new admissions, not this already admitted live frame.
+    expect(fixture.player.updateExternal).toHaveBeenCalledTimes(2)
     fixture.allowed = true
     wrapper.unmount()
     expect(fixture.player.releaseExternal).toHaveBeenCalledWith(controller.id)
     expect(child.postMessage.mock.calls[child.postMessage.mock.calls.length - 1]![0]).toMatchObject({ command: 'pause' })
   })
-})
 
 it('retains controls and cleanup after catalog expiry but does not admit a new session',()=>{
  const child={postMessage:vi.fn()};let bridge!:ReturnType<typeof useAppMediaBridge>
@@ -72,4 +72,6 @@ it('rejects state and commands from the admitted frame after installed version c
  bridge.handle({source:child,origin:'https://node.test:7475',data:{type:'archipelago:media-state',version:1,session,available:true,title:'Old',artist:'Artist',playing:true,position:1,duration:10}} as unknown as MessageEvent)
  expect(fixture.player.updateExternal).not.toHaveBeenCalled()
  wrapper.unmount();expect(child.postMessage.mock.lastCall![0].command).toBe('pause');fixture.version='1'
+})
+
 })
