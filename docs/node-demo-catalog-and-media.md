@@ -201,3 +201,58 @@ The prior temporary SSH control connection no longer authenticates. Operator was
 asked to restore access; dashboard RPC remains available. IndeeHub, V4V and wallet
 recovery work have been reassigned to three active agents. Incomplete test runs are
 being resumed, with heavy qualification staggered to avoid disk-pressure timeouts.
+
+## Resumed private native-login deployment
+
+The private candidate is now running on Yaya with image ID
+`6ca1fe42d357ffa6a76abbb29db190e27953d647096391783baf57da4ad22366`
+and pinned manifest digest
+`sha256:4f28702e4f85368e4ad886f06d58b38f869c560c90ca40487bfaebe69090a870`.
+The image was copied privately over SSH and loaded locally; it was not published
+to a registry. The corrected operator-signed catalog canonical payload hash is
+`9abadc9f535cb36d2d722b731b0b1088bd4dda0d30ced2e7fd0ab0b0a86d43e3`.
+
+The first prepared catalog had a changelog string where the typed schema requires
+an array. The live parser rejected it before updating the app. The previous signed
+catalog/image were restored and the managed app returned to healthy/running.
+Typed preflight also caught an unsupported provider bind source. Both errors were
+corrected before requesting a new signature; a standalone validator using the
+actual Rust catalog types and compiled canonical AppManifest parser now accepts
+the corrected catalog and rejects the malformed original. Cryptographic signature
+verification alone was insufficient as a schema preflight.
+
+The provider is a byte-verified copy of the installed dashboard provider at
+`/var/lib/archipelago/app-support/node-demo-v4v/nostr-provider.js`, mounted read-only
+at `/app/vendor/archipelago-nostr-provider.js`. Refresh this copy from the qualified
+dashboard provider during subsequent demo updates; it is not an automatic OTA hook.
+The app can read it and its SHA256 matches the dashboard source.
+
+Fresh consistent CURRENT managed data/media backups, app secrets/configuration,
+and the old image were preserved at
+`/home/archipelago/.local/state/archipelago/private-artifacts/v4v-managed-backups/20261006-resumed-private-update-fixed`
+on Yaya. These are not copies of the original Portainer demo. An image export can
+preserve the exact config/layers while changing manifest compression/digest: the
+old signed pin remains cached for immediate rollback, and restoring an exported
+image with a different manifest digest requires a separately signed private ref.
+
+The normal update path exposed another lifecycle gap: after normal stop removes a
+Quadlet container, update fails with "No containers found" during image inspection.
+After the corrected signed manifest had been loaded, normal package.start created
+the new managed container from that manifest and cleared the stopped marker. This
+stopped-app update error remains a source regression to fix; successful start is
+not evidence that the update RPC itself passed.
+
+Final runtime checks verify exact candidate image ID, original named managed
+volumes, unchanged session/receipt secrets, node session key/backend binary and
+all unrelated app container identities/start times. Password/operator login is
+off, native signer and Nostr registration are on, payments remain mock. Health
+returns 200. Evidence: `/tmp/archy-v4v-private-running-verified.log`. Real native
+login/playback/Companion acceptance remains open until browser/device results are
+recorded. The original demo remains running unchanged.
+
+The SSH access interruption described above is superseded: authenticated access
+to Yaya and the actual Framework is restored. The latest dev/Yaya dashboard UI
+also includes the deployed Lightning retry compatibility fix; native player and
+banner changes remain present. The current live V4V browser qualification follows
+the first-visit intro and explicit native identity/event consent before checking
+actual login success; earlier click timeouts are retained as failed test evidence.

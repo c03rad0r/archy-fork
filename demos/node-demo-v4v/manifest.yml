@@ -1,21 +1,20 @@
 # Intentionally outside apps/: this demo must never enter the public catalog.
-# Publish only inside a release-signed single-node-demo catalog.
+# Use only a release-signed single-node-demo catalog and privately preloaded image.
+# Never publish the private application image to a public registry.
 app:
   id: node-demo-v4v
   name: V4V · Sovereign Music
-  version: 0.6.7-alpha-archy1
+  version: 0.6.7-alpha-archy2-private
   description: Listen to the original V4V demo catalog and explore sovereign music on this node.
   category: media
   container:
-    image: source.archipelago-foundation.org/chaum/v4v-demo:0.6.7-alpha-archy1@sha256:13044ecbeae9eb17bc98cc531ca202db9e9a0db8dc2ce01bb9f8cb789248d020
+    image: localhost/v4v-demo:0.6.7-alpha-archy2-private@sha256:4f28702e4f85368e4ad886f06d58b38f869c560c90ca40487bfaebe69090a870
     generated_secrets:
       - name: node-demo-v4v-session
         kind: hex32
       - name: node-demo-v4v-receipts
         kind: hex32
     secret_env:
-      - key: ALPHA_PASSWORD_HASH
-        secret_file: node-demo-v4v-password-hash
       - key: SESSION_SECRET
         secret_file: node-demo-v4v-session
       - key: RECEIPT_SIGNING_SECRET
@@ -35,6 +34,10 @@ app:
       bind: 127.0.0.1
       auth: gated
   volumes:
+    - type: bind
+      source: /var/lib/archipelago/app-support/node-demo-v4v/nostr-provider.js
+      target: /app/vendor/archipelago-nostr-provider.js
+      options: [ro]
     - type: volume
       source: node-demo-v4v-data
       target: /app/data
@@ -48,11 +51,12 @@ app:
     - NODE_ENV=production
     - HOST=0.0.0.0
     - PORT=5181
-    - PULSEWIRE_COMMIT=5bc5f61b
-    - PULSEWIRE_PASSWORD_LOGIN=on
-    - PULSEWIRE_PASSWORD_OPERATOR=on
+    - PULSEWIRE_COMMIT=5a86558e
+    - PULSEWIRE_PASSWORD_LOGIN=off
+    - PULSEWIRE_PASSWORD_OPERATOR=off
+    - PULSEWIRE_ARCHIPELAGO_SIGNER=on
     - PULSEWIRE_SECURE_COOKIES=off
-    - PULSEWIRE_NOSTR_REGISTRATION=closed
+    - PULSEWIRE_NOSTR_REGISTRATION=open
     - PULSEWIRE_STORE=json
     - PULSEWIRE_STATE_BACKUP_DIR=data/backups
     - PULSEWIRE_RATE_LIMIT_DB_FILE=data/rate-limits.db
@@ -77,7 +81,7 @@ app:
       type: ui
       port: 7475
       protocol: http
-      path: /
+      path: /browse
   metadata:
     icon: /assets/img/app-icons/v4v-demo.svg
     author: V4V contributors
