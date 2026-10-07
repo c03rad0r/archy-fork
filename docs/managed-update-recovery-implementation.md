@@ -230,3 +230,34 @@ verified and a new synthetic baseline explicitly recaptured. This recapture is
 not rollback acceptance. The first RPC script stopped at its seven-running
 precondition, so no missing-plan, rollback or successful update RPC acceptance
 has yet completed. No live Yaya stack, catalog, wallet or payment was changed.
+
+### Hardened-controller context correction (2026-10-07)
+
+The final lifecycle/payment isolated suite passed 2,006 tests (zero failures,
+five existing ignores), with all 532 captured inputs unchanged. Receipt:
+`/tmp/archy-paid-indee-lifecycle-backend-20261007.log`. This result predates the
+controller-launch change described below; it is not a current-source full pass.
+
+An isolated VM probe reproduced another actual integration defect before rebuilding
+its executable. Plain system-service `podman exec /bin/true` passed, but matching
+the manager's `ProtectSystem=strict`, `Delegate=yes` and writable-path policy made
+API and PostgreSQL exec fail with exit126. Both commands passed in a user systemd
+scope. The scope retained the same inherited flock open description: inode check
+and nonblocking exclusive re-lock both passed while the parent held the lock.
+All seven container IDs remained unchanged by these probes. Private guest receipt:
+`/home/archipelago/indeehub-fixture/context-probe.receipt.json`; bounded probe source:
+`/tmp/indeehub-vm-context-probe.py` on the development host.
+
+The controller now launches through `systemd-run --user --scope --quiet --collect`
+before the pinned Python helper. This preserves synchronous pipes and inherited
+lifecycle locking while executing rootless Podman from the user unit context.
+Rust syntax and diff checks pass. Corrected executable and actual full transaction
+qualification are still required; no live IndeeHub activation is claimed.
+
+The fixture's earlier forced shutdown required root journal recovery and rebuilding
+seven stale synthetic Podman runtime records from their byte-verified saved units;
+their private pre-recovery inspection was retained. These recreated IDs must be
+recaptured as a new baseline, never described as preserved across that shutdown.
+A direct-kernel initramfs-only recovery boot installed an absent-marker manager
+startup condition before normal boot, and `ConditionResult=no` verified the old
+manager never started. The subsequent diagnostic boot shut down gracefully.

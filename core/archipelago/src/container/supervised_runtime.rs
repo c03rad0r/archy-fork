@@ -82,8 +82,13 @@ impl LegacyIndeeMaintenance {
         // lock. This task and the child retain the same flock open description.
         tokio::spawn(async move {
             let fd = lock.as_raw_fd();
-            let mut command = tokio::process::Command::new("/usr/bin/python3");
+            // The manager's ProtectSystem=strict mount namespace prevents rootless
+            // Podman exec from entering retained user-unit cgroups. A user scope
+            // executes the controller in that unit context while preserving pipes
+            // and the inherited flock open description (unlike a detached service).
+            let mut command = tokio::process::Command::new("/usr/bin/systemd-run");
             command
+                .args(["--user", "--scope", "--quiet", "--collect", "--", "/usr/bin/python3"])
                 .arg(path)
                 .arg(action)
                 .env("ARCHY_UPDATE_LOCK_FD", fd.to_string())
