@@ -148,3 +148,47 @@ and no real app artwork was decoded in that probe. The successful browser A/B
 fixture and native JPEG test establish the corrected pipeline, not that the
 operator's particular cover is anonymously accessible. Physical artwork acceptance
 remains pending after the qualified UI deployment; APK 0.5.37 stays unchanged.
+
+## Artwork UI delivery completed (7 October, after APK57 feedback)
+
+The UI correction is now deployed to **dev (192.168.63.240) and Yaya
+(192.168.63.169)**. Both serve index SHA256
+`92050cbda69954f57f4b0bdd73d89623f6aae9fc66e4c074ee4f46bdcb9c3b2a`.
+The archive SHA256 is
+`66473241eb43aab979a010db62046eb1eba3814d369aef147ded4bce0ba06a6e`.
+APK 0.5.37 and native runtime remain unchanged; no APK replacement is needed
+for this UI correction. Actual notification artwork on the phone still needs
+operator acceptance after the updated dashboard loads.
+
+Qualification was a frozen 707-input production build, with all input hashes
+unchanged before/after. Evidence combines the preceding 1,448-test/176-file full
+UI baseline with the 26 focused artwork tests, app-project typecheck, browser A/B
+fixture and two positive native JPEG tests. It does **not** claim a full UI-suite
+rerun at this updated source.
+
+The frozen production artifact passed at 390/1440 using actual Yaya session,
+verified catalog and installed app identity with an isolated synthetic media
+iframe. It emitted a real JPEG to the mocked native bridge, omitted cross-origin
+credentials from thumbnail fetches, rejected redirects and retained playback.
+Initial intercepted-main-document attempts caused Chromium network failures and
+login redirects; another attempt on dev could not admit the absent demo package.
+Those failed harness logs are retained. Navigating to an actual Yaya document
+before inserting frozen HTML resolved the harness boundary without disabling
+browser security or changing authentication.
+
+Guarded UI-only delivery preserved backend bytes, catalogs, session secret,
+stopped/uninstalled intent, every package download and AIUI file. Dev checked
+178 preservation paths and 32 containers; Yaya checked 174 paths and 30 containers.
+IDs/start times remained unchanged, including a delayed 15-second check. Both
+nodes have protected backups and automatic rollback scripts. No node service,
+wallet, catalog, payment or signing operation changed.
+
+Post-deployment live browser checks passed at 390/1440: dev dashboard/Fleet
+recovery smoke and Yaya's synthetic artwork-to-native-bridge pipeline. The latter
+still uses a mock native bridge and fixture cover; it does not establish that the
+operator's actual cover passes its server's anonymous/CORS policy or appears on
+the phone. Served index hashes were verified again after those checks.
+
+Build, failed/successful browser logs, source manifest, protected preflight data,
+qualification archive and `delivery-receipt.json` are in
+`~/.local/state/archipelago/release-qualification/artwork-ui-20261007/`.
