@@ -5,6 +5,7 @@ must already be durable. Never unlock ARCHY_UPDATE_LOCK_FD or release another ho
 """
 import datetime, hashlib, json, os, pathlib, re, shutil, subprocess, sys, time, uuid
 NAMES = ('indeedhub','indeedhub-api','indeedhub-ffmpeg','indeedhub-minio','indeedhub-postgres','indeedhub-redis','indeedhub-relay')
+VOLUMES = ('indeedhub-minio-data','indeedhub-postgres-data','indeedhub-redis-data','indeedhub-relay-data')
 DATA = pathlib.Path('/var/lib/archipelago')
 QUEUE_SCRIPT = r'''const {Queue}=require('bullmq');
 (async()=>{const q=new Queue('transcode',{connection:{host:process.env.QUEUE_HOST,port:Number(process.env.QUEUE_PORT||6379),password:process.env.QUEUE_PASSWORD,maxRetriesPerRequest:1}});
@@ -192,7 +193,7 @@ class Controller:
         classification=('idle-worker-terminated-after-queue-drain' if idle_worker else 'empty-business-store-legacy-api-terminated') if str(code)=='143' else 'clean-process-exit'
         stopped[name].update(confirmed=True,exit_code=int(code),classification=classification,confirmed_at=time.time());self.save()
     def volume_sources(self):
-        expected=['indeedhub-minio-data','indeedhub-postgres-data','indeedhub-redis-data','indeedhub-relay-data']
+        expected=VOLUMES
         rows=json.loads(self.run(['podman','volume','inspect',*expected]))
         require({row['Name'] for row in rows}==set(expected),'Persistent volume scope changed')
         return {row['Name']:row['Mountpoint'] for row in rows}
@@ -282,8 +283,11 @@ class Controller:
         # Verification remains possible when API/storage endpoints are stopped.
         # The native adapter separately validates target/original runtime identity.
         for name in NAMES:require(self.record.get('stopped',{}).get(name,{}).get('confirmed'),'Original writer stop evidence missing')
+        expected_artifacts={'database.dump',*(volume+'.tar' for volume in VOLUMES)}
+        require(set(self.record.get('artifacts',{}))==expected_artifacts,'Backup artifact inventory incomplete or unexpected')
         for name,record in self.record['artifacts'].items():
             path=self.root/'backup'/name;require(path.is_file() and not path.is_symlink() and path.stat().st_size==record['bytes'],'Backup artifact missing or changed')
+            require(sha(path)==record['sha256'],'Backup artifact checksum changed')
         return {'operation_id':self.operation,'state':'held'}
     def release(self, outcome):
         require(outcome in ('committed','restored','aborted'),'Invalid release outcome')

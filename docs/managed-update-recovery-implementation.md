@@ -54,3 +54,24 @@ Qualification required before integration/activation:
 - Disk-capacity and recovery-image retention checks, backup integrity and a
   documented recovery path for missing runtime artifacts.
 - Actual-node controlled deployment and acceptance, preserving persistent data.
+
+## Resumed qualification — 2026-10-07
+
+Backup verification now requires the full database/four-volume artifact set and
+rechecks SHA256, including same-size corruption. Nineteen pure controller tests
+pass. The owned, network-none PostgreSQL fixture passes unchanged/additive
+commitments, rejects four data/schema/history mutations, restores a real custom
+dump with matching original commitments, and rejects a truncated dump. It mounts
+no live volume and removes only its own container. This does not qualify actual
+application writer drain or the complete supervised systemd cutover.
+
+The updater compiled and its full isolated suite ran: 1,958 passed, one failed,
+five ignored. The failure is the old snake_case rental receipt JSON fixture;
+`c2c4d915` already corrects that exact test on the release candidate branch.
+Do not duplicate or suppress it here. Integrate and rerun the complete candidate
+suite before claiming a green backend gate. The earlier interrupted compile
+and PostgreSQL timeout remain failed/incomplete attempts, not acceptance.
+
+Evidence: `/tmp/archy-resumed-20261007-updater-full-backend.log`,
+`/tmp/archy-resumed-20261007-indeehub-controller-tests-final.log`, and
+`/tmp/archy-resumed-20261007-indeehub-postgres-restore.log`.

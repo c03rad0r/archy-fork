@@ -47,6 +47,30 @@ class MaintenanceTests(unittest.TestCase):
   c.fence.parent.mkdir(parents=True);c.fence.write_text(self.operation)
   (c.root/'backup').mkdir();(c.root/'backup'/'database.dump').write_bytes(b'not evidence')
   with self.assertRaisesRegex(RuntimeError,'Drain not complete'):c.verify()
+ def completed_backup(self):
+  c=self.controller
+  c.record={'operation_id':self.operation,'phase':'Drained','backup_complete':True,
+            'stopped':{name:{'confirmed':True} for name in module.NAMES},'artifacts':{}}
+  c.save();c.fence.parent.mkdir(parents=True);c.fence.write_text(self.operation)
+  (c.root/'backup').mkdir()
+  for name in ['database.dump',*(v+'.tar' for v in module.VOLUMES)]:
+   path=c.root/'backup'/name;path.write_bytes(b'original')
+   c.record['artifacts'][name]={'bytes':path.stat().st_size,'sha256':module.sha(path)}
+  c.save()
+  return c
+ def test_complete_backup_checksums_allow_verification(self):
+  self.assertEqual(self.completed_backup().verify()['state'],'held')
+ def test_same_size_corruption_keeps_admission_closed(self):
+  c=self.completed_backup();(c.root/'backup'/'database.dump').write_bytes(b'corrupt!')
+  with self.assertRaisesRegex(RuntimeError,'checksum changed'):c.verify()
+  self.assertEqual(c.fence.read_text(),self.operation);self.assertEqual(self.calls,[])
+ def test_incomplete_or_unexpected_artifact_inventory_cannot_pass(self):
+  c=self.completed_backup();original=dict(c.record['artifacts'])
+  for artifacts in [{}, {k:v for k,v in original.items() if k!='database.dump'},
+                    {**original,'../foreign':original['database.dump']}]:
+   c.record['artifacts']=artifacts
+   with self.assertRaisesRegex(RuntimeError,'inventory'):c.verify()
+   self.assertEqual(c.fence.read_text(),self.operation)
  def test_forced_original_exit_never_marks_writer_completed(self):
   c=self.controller;c.record={'operation_id':self.operation,'phase':'Prepared','original_members':module.validate_members(members())};c.save()
   def command(argv,timeout,output):
