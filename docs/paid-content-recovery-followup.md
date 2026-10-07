@@ -627,3 +627,22 @@ This deployment includes file availability and minimum on-chain amount checks
 and the tested recovery primitives. The complete new purchase caller and
 IndeeHub publication/playback integration remain under development; these are
 not claimed accepted. No new real payment or public publication was performed.
+
+## Payment dialog ownership fixes deployed to all three nodes
+
+Source `47cd915e` passed 31 focused UI tests and the production typecheck/build;
+all 492 recorded inputs remained unchanged. The identical UI is deployed on dev,
+Yaya and Framework (index SHA256
+`ad690dba7744ae1c70489576a2f9ff91ad73a993533d72107e59933fd24da485`).
+Each rollout preserved the qualified backend, session key and app containers;
+served-index and health checks passed. Per-node rollback scripts are recorded in
+the deployment receipts. Artifacts, test logs and receipts are preserved under
+`~/.local/state/archipelago/release-qualification/ui-47cd915e/`.
+
+The changes bind asynchronous results to their original payment screen, guard
+late clipboard/timer callbacks, prevent a new send after navigation before
+dispatch, and preserve an already-dispatched Lightning receipt. The minimum
+on-chain amount matches the backend. These checks do not establish complete
+durable recovery for every payment method. Full purchase integration and live
+acceptance remain open; Framework dashboard verification still needs normal TOTP.
+No new real payment was made.
