@@ -978,3 +978,41 @@ and companion0.5.34 APK all passed full download byte-count and SHA256 checks:
 locally verified pinned-root signatures. Promote those exact bytes to the live
 metadata paths; no artifact or signature changed. ISO upload and demo deployment
 are separate ongoing operations, not inferred passed from OTA asset publication.
+
+
+### Missing ngit ISO release entry published — 7 October 2026
+
+The operator correctly identified that the1.9.0 tag existed on ngit, but its
+software release entry did not. Gitea already contained the original ISO and both
+checksum assets. Published the missing [ngit1.9.0-alpha release](https://gitworkshop.dev/nevent1qqsfy0xpwnn9y423x6vnxxqtfrplm0n3fyfz9fzcheru2a42gj368sqzyp6xqpkcw7daqn3jry69t99yfzdyy3h8gqv0zhjhte8azny4v6746qcyqqq82mc22hxen) using the
+existing Archipelago application/publisher, original tag commit7abd04a7 and alpha
+channel. This adds release metadata; no ISO, signature, source ref or OTA/catalog
+bytes were replaced.
+
+Release event:`923cc174e6525551369933180b48c3fdbe71491222a458be47c576aa44a3a3c0`.
+Both `wss://relay.ngit.dev` and `wss://gitnostr.com` acknowledged the three asset
+records and release publication. Independent online `ngit release view` resolves
+all three files with exact hashes/sizes and no unresolved asset IDs:
+
+- ISO:2,695,954,432 bytes, SHA256`aad5f0350428976969043079a63b0e7a8264dcee2574526bd34719c798c750af`.
+- Plain checksum:121 bytes; exact existing public/local bytes.
+- Signed checksum:405 bytes; exact existing public/local bytes, pinned-root
+  signature verified again.
+
+The direct URL-backed ngit attempt failed its built-in1800-second acquisition
+timeout and published no release result. Retained that failure. Reused the
+established1.8.22 workflow: freshly hash the complete local ISO, verify its signed
+checksum, sign its public asset records using the existing configured identity,
+and attach those records with ngit's supported `--asset-event` interface. The
+previous complete public-download hash receipt remains separate from today's
+successful public range/sidecar checks; today's full URL attempt did not pass.
+
+Publication used an isolated repository whose local main and annotated release
+tag match both remote mirrors. Existing development main/candidate refs were
+not rewritten. The complete advertised audit inventories12 unrelated branch
+differences; main/release-tag parity does not establish full historical parity.
+
+Durable public receipts and failed-attempt evidence:
+`~/.local/state/archipelago/release-qualification/ngit-iso-190-20261007/`.
+Existing known limitations are retained in the release notes. Current IndeeHub,
+artwork and payment follow-ups are not included in this original ISO.

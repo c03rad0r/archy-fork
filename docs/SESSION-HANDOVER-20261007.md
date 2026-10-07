@@ -530,3 +530,24 @@ and original paths retained as symlinks. This released496,544,104 tmpfs bytes;
 no build inputs, running services or wallet files changed. Indee's owned VM is
 being shut down at its transaction-idle boundary to relieve compilation pressure;
 its disk/evidence are retained for a dedicated4GB qualification window later.
+
+
+## Original1.9.0 ISO added to ngit release records
+
+Operator correctly reported missing ngit software release (Git tag alone was
+already mirrored). Published [1.9.0-alpha](https://gitworkshop.dev/nevent1qqsfy0xpwnn9y423x6vnxxqtfrplm0n3fyfz9fzcheru2a42gj368sqzyp6xqpkcw7daqn3jry69t99yfzdyy3h8gqv0zhjhte8azny4v6746qcyqqq82mc22hxen) with the original ISO and both
+checksums; both relays acknowledged, online readback resolves exact three assets.
+No new build, source ref, OTA/catalog or Gitea asset changed. Full local ISO hash
+and pinned signature pass. Direct URL attempt hit1800-second timeout; retained
+failure and used the established verified-asset-event workflow. Full receipts:
+`~/.local/state/archipelago/release-qualification/ngit-iso-190-20261007/`.
+
+Other latest checkpoints: artwork UI0c1d1b57 passes26 focused tests, app-project
+typecheck and Chromium A/B; native test60bd728a passesSDK28/35. APK57 unchanged;
+production UI build/physical artwork acceptance remain. Frozen707-input snapshot
+and build script:/tmp/archy-artwork-ui-build.py. HTTPS task17 evidence51694119
+retains22/24 full-navigation cases and12/12 response-only follow-up; normal trust
+and LAN-IP certificate match fail. Indee final lifecycle/health guard b0b95810 is
+under the combined isolated backend run, log
+`/tmp/archy-paid-indee-lifecycle-backend-20261007.log`; VM is off. Before its next
+boot, apply the documented GRUB manager mask and validate read-only exec context.
