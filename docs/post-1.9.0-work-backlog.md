@@ -470,6 +470,12 @@ functional/UX review. These are additions to existing groups, not closed work.
 - Update relationship, request, availability and operation states automatically
   across screens without routine manual sync. Handle reconnect, missed events,
   out-of-order replies and failed refreshes without invented success states.
+- Federated Nodes sync is currently reported as unreliable and slow. Diagnose
+  the actual transport, queue and reconciliation path; prevent indefinite
+  waits; show a loader with a useful phase/status message and elapsed progress;
+  provide bounded retry and a truthful success, partial-success or failure
+  result. Preserve the last known state while a refresh is in flight and make
+  the next retry safe and idempotent.
 - When a request changes the 3D map layout, rotate its node to the front, top
   centre and clearly expose the request action. Cover multiple requests,
   completion, user camera interaction, reduced motion and mobile viewports.
