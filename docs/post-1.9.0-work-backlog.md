@@ -482,9 +482,12 @@ remain open. See `docs/https-app-gate-followup-20261006.md`.
 
 ## 18. Firewall and tunnel UI/settings
 
-Status: handover read and acknowledged on6October; implementation pending.
-The private handover and acknowledgement live in the separate mining review
-checkout. Do not commit its deployment addresses or operational details here.
+Status: in progress. The central read-only Firewall & tunnels screen, local
+network entry points, independent status/error handling and responsive route
+tests are implemented (ef6c10f0, 3f96be2c). Scoped configuration, persistence,
+reboot and rollback acceptance remain open. The private handover and
+acknowledgement live in the separate mining review checkout; do not commit its
+deployment addresses or operational details here.
 
 - Keep this task after the previously deferred MeshCore work. The subsequent
   connection UX additions below follow all other tasks and their acceptance.

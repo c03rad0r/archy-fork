@@ -5,7 +5,7 @@ candidate worktree is `/home/archipelago/Projects/archy-session-key` on branch
 `work/post-190-session-key`. Do not use credentials from chat or print private
 node, wallet, session or registry data.
 
-Latest active checkpoint: see **Companion56 native-audio qualification** at the end. Earlier receipts below are historical and apply only to their named source/artifacts.
+Latest active checkpoint: see **Corrected maintenance scope and artwork delivery** at the end. Earlier receipts below are historical and apply only to their named source/artifacts.
 
 ## Current candidate
 
@@ -576,3 +576,36 @@ boot, apply the documented GRUB manager mask and validate read-only exec context
   three sources are historical GitWorkshop, ngit-review190 and companion-PiP
   snapshots, not current build inputs. Never remove unverified originals.
 - Exact operator HTTPS hostname requested asynchronously; no reply yet.
+
+
+## Corrected maintenance scope and artwork delivery
+
+- Combined isolated backend qualification completed: 2,006 passed, zero failed,
+  five ignored, with all 532 input hashes stable. This qualifies b0b95810 plus
+  the payment guards, not the subsequent maintenance launch change 01a55d2d.
+- The actual hardened synthetic VM reproduced direct Podman exec failure (126)
+  from the manager context. User-scope execution passed for API/PostgreSQL and
+  preserved the inherited lifecycle flock. Commit 01a55d2d launches the pinned
+  maintenance helper through that scope. The VM then shut down cleanly. Corrected
+  executable and full transaction/rollback/lifecycle acceptance remain pending.
+- Frozen artwork production UI passed with 707 unchanged source inputs. Browser
+  checks at 390/1440px verified JPEG delivery using actual Yaya admission with
+  synthetic cover data, without signing/payment. Dev UI deployment succeeded:
+  index 92050cbda69954f57f4b0bdd73d89623f6aae9fc66e4c074ee4f46bdcb9c3b2a,
+  178 retained-path checks and 32 unchanged container IDs/start times, including
+  delayed verification. Live dev browser checks and Yaya delivery are next.
+  The earlier failed/rolled-back UI attempt remains historical evidence.
+- APK 0.5.37 is unchanged; operator-confirmed background playback remains accepted.
+  Physical notification artwork and the full controls/recovery matrix remain open.
+- Paid-file qualification scripts are retained under
+  `release-qualification/paid-file-recovery-20261007/`: readiness/provenance audit,
+  synthetic isolated runner and next-stage gate. No new or repeat payment occurred.
+- Paid-file agent resumed the verified historical snapshot relocation helper
+  PID1347627 after VM shutdown; Indee's next compiler waits for this bounded slot.
+  Do not restart a second copy process or remove unverified originals.
+- Root corrected stale guide/backlog claims in 2ccc0381. Cloud PiP's reported
+  operator flow is accepted; the broader physical edge matrix remains open.
+- Indee app discovery/publication and timed-viewing source exist, but live
+  two-node acceptance is pending. Producer wallet binding and rental payment
+  method coverage are still substantive gaps; seven-service migration alone
+  cannot close the complete IndeeHub task.
