@@ -4,6 +4,11 @@ const { expect } = require(process.env.PLAYWRIGHT_MODULE || '../../neode-ui/node
 module.exports = async function qualifyPlayback(page, appOrigin, proof) {
   const app = page.frames().find(frame => frame.url().startsWith(appOrigin + '/'));
   if (!app) throw Error('Managed V4V iframe missing after login');
+  proof.initialBrowse = new URL(app.url()).pathname === '/browse';
+  if (process.env.QUALIFY_ARTWORK_ONLY !== '1') {
+    await expect.poll(() => new URL(app.url()).pathname).toBe('/browse');
+    proof.initialBrowse = true;
+  }
   await app.waitForFunction(() => window.PulsewireLegacy?.getReactBridge?.(), undefined, { timeout: 30000 });
   const later = app.getByRole('button', { name: 'Not now', exact: true });
   if (await later.isVisible().catch(() => false)) await later.click();
@@ -56,7 +61,31 @@ module.exports = async function qualifyPlayback(page, appOrigin, proof) {
   await expect(page.getByRole('button', { name: 'Shuffle', exact: true })).toHaveAttribute('aria-pressed', 'true');
   expect(await app.evaluate(() => window.PulsewireLegacy.getReactBridge().getState().ui.shuffleEnabled)).toBe(true);
   const artwork = await app.evaluate(() => window.PulsewireLegacy.getReactBridge().helpers.activePlayerRelease()?.cover || '');
-  if (artwork) await expect(bar.locator('img')).toHaveAttribute('src', new URL(artwork, appOrigin).href);
+  if (artwork) {
+    const background = bar.locator('img.player-artwork');
+    await expect(background).toHaveAttribute('src', new URL(artwork, appOrigin).href);
+    await expect.poll(() => background.evaluate(img => img.complete && img.naturalWidth > 0)).toBe(true);
+    const geometry = await background.evaluate(img => {
+      const image = img.getBoundingClientRect(); const bar = img.parentElement.getBoundingClientRect();
+      const style = getComputedStyle(img);
+      return { image: { x: image.x, y: image.y, width: image.width, height: image.height }, bar: { x: bar.x, y: bar.y, width: bar.width, height: bar.height }, opacity: Number(style.opacity), fit: style.objectFit };
+    });
+    expect(geometry.opacity).toBeGreaterThan(0); expect(geometry.fit).toBe('cover');
+    for (const axis of ['x', 'y', 'width', 'height']) expect(Math.abs(geometry.image[axis] - geometry.bar[axis])).toBeLessThanOrEqual(2);
+    proof.renderedArtwork = true;
+  }
+  const barBounds = await bar.boundingBox();
+  for (const name of ['Previous track', 'Next track', 'Open playing app']) {
+    const control = bar.getByRole('button', { name, exact: true });
+    await expect(control).toBeVisible(); const bounds = await control.boundingBox();
+    expect(bounds.x).toBeGreaterThanOrEqual(barBounds.x);
+    expect(bounds.x + bounds.width).toBeLessThanOrEqual(barBounds.x + barBounds.width);
+    expect(bounds.y).toBeGreaterThanOrEqual(barBounds.y);
+    expect(bounds.y + bounds.height).toBeLessThanOrEqual(barBounds.y + barBounds.height);
+  }
+  const screenshot = '/tmp/archy-v4v-live-player-' + proof.width + '.png';
+  await page.screenshot({ path: screenshot }); require('node:fs').chmodSync(screenshot, 0o600);
+
   const beforeReopen = await app.evaluate(() => window.__qualificationMedia.find(audio => !audio.paused).currentTime);
   await page.getByRole('button', { name: 'Open playing app', exact: true }).click();
   if (!page.frames().includes(app)) throw Error('Reopening recreated the playback iframe');

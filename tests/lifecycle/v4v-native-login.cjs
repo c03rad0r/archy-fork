@@ -72,6 +72,7 @@ const { chromium, expect } = require(process.env.PLAYWRIGHT_MODULE || '../../neo
       const frame = page.frameLocator('iframe[src*="7475"]');
       const signIn = frame.getByRole('button', { name: 'Sign in with Nostr', exact: true });
       await expect(signIn).toBeVisible({ timeout: 45000 });
+      proof.initialLaunchPath = await page.locator('iframe[src*="7475"]').evaluate(frame => new URL(frame.src).pathname);
       await expect(frame.locator('input[type=password]')).toHaveCount(0);
       // A fresh browser gets the real app introduction before authentication.
       // Drive its visible controls instead of clicking through the overlay.
@@ -99,7 +100,7 @@ const { chromium, expect } = require(process.env.PLAYWRIGHT_MODULE || '../../neo
       await expect(signIn).toHaveCount(0, { timeout: 15000 });
       step = 'native playback controls';
       if (process.env.QUALIFY_PLAYBACK === '1') await require('./v4v-native-playback.cjs')(page, appOrigin, proof);
-      console.log(JSON.stringify({ ...proof, result: 'PASS', scope: process.env.QUALIFY_PLAYBACK === '1' ? 'real managed V4V native login and bundled-song playback' : 'real managed V4V native authentication only; playback remains separately qualified' }));
+      console.log(JSON.stringify({ ...proof, result: proof.initialBrowse === false ? 'PARTIAL_PASS_BROWSE_OPEN' : 'PASS', scope: process.env.QUALIFY_PLAYBACK === '1' ? 'real managed V4V native login and bundled-song playback' : 'real managed V4V native authentication only; playback remains separately qualified' }));
     } catch (error) {
       const prefix = '/tmp/archy-v4v-native-failure-' + width;
       fs.writeFileSync(prefix + '.private.txt', String(error.stack || error), { mode: 0o600 });
