@@ -813,3 +813,40 @@ closing, aborting or timing out cancels only its own pending prompt. A payment
 already dispatched remains journaled and is recovered using its original ID.
 The host rejects malformed states, changed observed windows and playback URLs in
 non-started replies. The focused host/provider run passed 29 tests across two files; actual `vue-tsc -b` passed, with all 542 captured host inputs unchanged. Logs are `/tmp/archy-rental-protocol2-host-tests.log` and `/tmp/archy-rental-protocol2-host-typecheck.log`; provenance is `/tmp/archy-rental-protocol2-host-provenance.json`. The rental Rust remains uncompiled pending the combined backend candidate.
+
+### Isolated on-chain attribution and Fedimint fallback correction
+
+Next candidate, based on `fba3273c`; not yet compiled or deployed. On-chain
+verification counts only confirmed output values for the original address, with
+integer satoshi arithmetic and transaction/outpoint deduplication. It no longer
+uses the wallet-wide transaction amount or mere address presence. Malformed or
+missing output evidence cannot authorize delivery. Read-only inspection of the
+dev node's LND `0.21.2-beta` confirmed `output_details`, with string `amount` and
+`output_index` fields and integer confirmation counts; no private wallet rows
+were included in the schema receipt. Field meanings were checked against the
+[LND protocol schema](https://github.com/lightningnetwork/lnd/blob/v0.21.2-beta/lnrpc/lightning.proto).
+
+Fedimint balance selection may skip insufficient/unavailable federations, but
+once a spend is attempted its error cannot trigger a spend in another federation.
+Loopback mock cases cover lost body, malformed response, missing notes and server
+failure after the mock records a debit. Ark is removed from peer-file payment
+choices because this endpoint supports only Cashu/Fedimint; stale unsupported
+selections also fail before an RPC.
+
+These changes do **not** complete on-chain or legacy token recovery. A durable
+buyer-bound address/transaction operation, cross-rail admission for these older
+paths, seller snapshot/receipt retention, and original Fedimint spend lookup are
+still required. A Bitcoin address already shown to an external payer remains
+payable; a timeout or empty transaction lookup cannot cancel it. Legacy token
+redemption followed by lost delivery still needs a durable seller receipt.
+
+Missing output evidence or an unavailable wallet now propagates as an explicit
+unknown verification result with a retain-address/no-repayment message. The
+buyer also preserves unknown status on transport/HTTP failure and displays it
+while read-only polling continues. This does not add cancellation or method
+switching authority to a Bitcoin address.
+
+Written regression coverage: four output-attribution cases, two mocked sidecar
+spend cases, and two mounted UI cases (unsupported Ark and unknown on-chain
+verification). No test execution is claimed until the queued isolated backend
+and focused UI runs complete.

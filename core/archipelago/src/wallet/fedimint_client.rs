@@ -226,10 +226,28 @@ pub async fn spend_from_any(data_dir: &Path, amount_sats: u64) -> Result<(String
         anyhow::bail!("No Fedimint federation joined to spend from");
     }
 
+    let (notes, federation) = spend_from_candidates(&client, &fed_ids, amount_sats).await?;
+    record_fedimint_tx(
+        data_dir,
+        crate::wallet::ecash::TransactionType::Send,
+        amount_sats,
+        &federation,
+        "Sent Fedimint ecash",
+    )
+    .await;
+    Ok((notes, federation))
+}
+
+/// Balance lookup may try another federation; a dispatched spend never may.
+/// A sidecar error (including missing notes or a lost response) can follow a
+/// successful debit. Without its original operation receipt it is ambiguous.
+async fn spend_from_candidates(
+    client: &FedimintClient,
+    fed_ids: &[String],
+    amount_sats: u64,
+) -> Result<(String, String)> {
     let mut last_err = None;
-    for fed_id in &fed_ids {
-        // Skip federations that can't cover the amount so we don't mint a
-        // partial/failed spend and leave dangling reserved notes.
+    for fed_id in fed_ids {
         match client.federation_balance_sats(fed_id).await {
             Ok(bal) if bal >= amount_sats => {}
             Ok(_) => continue,
@@ -238,23 +256,13 @@ pub async fn spend_from_any(data_dir: &Path, amount_sats: u64) -> Result<(String
                 continue;
             }
         }
-        match client.spend(fed_id, amount_sats).await {
-            Ok(notes) => {
-                record_fedimint_tx(
-                    data_dir,
-                    crate::wallet::ecash::TransactionType::Send,
-                    amount_sats,
-                    fed_id,
-                    "Sent Fedimint ecash",
-                )
-                .await;
-                return Ok((notes, fed_id.clone()));
-            }
-            Err(e) => last_err = Some(e),
-        }
+        let notes = client.spend(fed_id, amount_sats).await.context(
+            "The selected federation did not confirm the spend; no other federation was charged. Recover its original operation before retrying"
+        )?;
+        return Ok((notes, fed_id.clone()));
     }
     Err(last_err
-        .map(|e| anyhow::anyhow!("Fedimint spend failed across all federations: {e}"))
+        .map(|e| anyhow::anyhow!("Could not check federation balances: {e}"))
         .unwrap_or_else(|| {
             anyhow::anyhow!("No joined Fedimint federation has {amount_sats} sats available")
         }))
@@ -552,4 +560,116 @@ fn sum_msat(info: &serde_json::Value) -> u64 {
     info.as_object()
         .map(|m| m.values().filter_map(federation_msat).sum())
         .unwrap_or(0)
+}
+
+#[cfg(test)]
+mod payment_edge_tests {
+    use super::*;
+    use hyper::{
+        service::{make_service_fn, service_fn},
+        Body, Response, Server, StatusCode,
+    };
+    use std::{
+        convert::Infallible,
+        sync::{Arc, Mutex},
+    };
+
+    // The mock records a completed sidecar spend BEFORE producing each fault.
+    // No environment override, installed sidecar, wallet or live service is used.
+    async fn sidecar(
+        first_balance: u64,
+        reply: &'static str,
+        status: StatusCode,
+    ) -> (
+        FedimintClient,
+        Arc<Mutex<Vec<String>>>,
+        tokio::task::JoinHandle<()>,
+    ) {
+        let spent = Arc::new(Mutex::new(Vec::new()));
+        let recorded = spent.clone();
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        listener.set_nonblocking(true).unwrap();
+        let address = listener.local_addr().unwrap();
+        let service = make_service_fn(move |_| {
+            let spent = recorded.clone();
+            async move {
+                Ok::<_, Infallible>(service_fn(move |request: hyper::Request<Body>| {
+                    let spent = spent.clone();
+                    async move {
+                        if request.uri().path() == "/v2/admin/info" {
+                            return Ok::<_, Infallible>(Response::new(Body::from(
+                                serde_json::json!({
+                                    "first":{"totalAmountMsat":first_balance * 1000},
+                                    "second":{"totalAmountMsat":100000}
+                                })
+                                .to_string(),
+                            )));
+                        }
+                        assert_eq!(request.uri().path(), "/v2/mint/spend");
+                        let body = hyper::body::to_bytes(request.into_body()).await.unwrap();
+                        let body: serde_json::Value = serde_json::from_slice(&body).unwrap();
+                        spent
+                            .lock()
+                            .unwrap()
+                            .push(body["federationId"].as_str().unwrap().to_owned());
+                        let response_body = if reply == "disconnect" {
+                            Body::wrap_stream(futures_util::stream::once(async {
+                                Err::<hyper::body::Bytes, _>(std::io::Error::new(
+                                    std::io::ErrorKind::UnexpectedEof,
+                                    "lost response after debit",
+                                ))
+                            }))
+                        } else {
+                            Body::from(reply)
+                        };
+                        Ok(Response::builder()
+                            .status(status)
+                            .body(response_body)
+                            .unwrap())
+                    }
+                }))
+            }
+        });
+        let server = Server::from_tcp(listener).unwrap().serve(service);
+        let task = tokio::spawn(async move {
+            server.await.unwrap();
+        });
+        (
+            FedimintClient::new(&format!("http://{address}"), "test").unwrap(),
+            spent,
+            task,
+        )
+    }
+
+    #[tokio::test]
+    async fn dispatched_fedimint_spend_never_falls_through_after_ambiguous_reply() {
+        for (reply, status) in [
+            ("disconnect", StatusCode::OK),
+            ("not-json", StatusCode::OK),
+            ("{}", StatusCode::OK),
+            ("unavailable", StatusCode::SERVICE_UNAVAILABLE),
+        ] {
+            let (client, spent, task) = sidecar(100, reply, status).await;
+            let result =
+                spend_from_candidates(&client, &["first".into(), "second".into()], 50).await;
+            assert!(result
+                .unwrap_err()
+                .to_string()
+                .contains("no other federation was charged"));
+            assert_eq!(*spent.lock().unwrap(), vec!["first".to_string()]);
+            task.abort();
+        }
+    }
+
+    #[tokio::test]
+    async fn fedimint_selection_skips_insufficient_balance_before_dispatch() {
+        let (client, spent, task) =
+            sidecar(1, r#"{"notes":"original-notes"}"#, StatusCode::OK).await;
+        let result = spend_from_candidates(&client, &["first".into(), "second".into()], 50)
+            .await
+            .unwrap();
+        assert_eq!(result, ("original-notes".into(), "second".into()));
+        assert_eq!(*spent.lock().unwrap(), vec!["second".to_string()]);
+        task.abort();
+    }
 }

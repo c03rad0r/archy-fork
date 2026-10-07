@@ -1307,10 +1307,10 @@ impl RpcHandler {
                 .await
             {
                 Ok(v) => v,
-                Err(_) => return Ok(serde_json::json!({ "paid": false, "unreachable": true })),
+                Err(_) => return Ok(serde_json::json!({ "paid": false, "unreachable": true, "status": "unknown", "error": "Payment verification is unavailable. Keep the original address and do not pay again." })),
             };
         if !response.status().is_success() {
-            return Ok(serde_json::json!({ "paid": false }));
+            return Ok(serde_json::json!({ "paid": false, "status": "unknown", "error": "The seller could not verify this payment. Keep the original address and do not pay again." }));
         }
         let body: serde_json::Value = response
             .json()

@@ -577,9 +577,21 @@ impl ApiHandler {
         let mut paid =
             crate::content_invoice::is_paid_for(&self.config.data_dir, address, content_id).await;
         if !paid {
-            if let Ok(true) = self.rpc_handler.onchain_received(address, price).await {
-                crate::content_invoice::mark_paid(&self.config.data_dir, address).await?;
-                paid = true;
+            match self.rpc_handler.onchain_received(address, price).await {
+                Ok(true) => {
+                    crate::content_invoice::mark_paid(&self.config.data_dir, address).await?;
+                    paid = true;
+                }
+                Ok(false) => {}
+                Err(_) => return Ok(build_response(
+                    StatusCode::OK,
+                    "application/json",
+                    hyper::Body::from(serde_json::to_vec(&serde_json::json!({
+                        "paid": false,
+                        "status": "unknown",
+                        "error": "Exact on-chain outputs could not be verified. Keep the original payment address and do not pay again."
+                    }))?),
+                )),
             }
         }
         let body = serde_json::json!({ "paid": paid });

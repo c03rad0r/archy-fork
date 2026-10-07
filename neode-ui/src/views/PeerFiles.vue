@@ -479,16 +479,16 @@
                    switch to the other if it has enough balance. -->
               <div class="space-y-2">
                 <button
-                  v-for="b in (['cashu', 'fedimint', 'ark'] as const)"
+                  v-for="b in (['cashu', 'fedimint'] as const)"
                   :key="b"
                   @click="selectEcashBackend(b)"
                   :disabled="paymentActionBusy || (b !== 'cashu' && hasBlockingCashuPurchase) || (b !== 'cashu' && ecashBalanceOf(b) < getItemPrice(payItem.access))"
                   class="w-full px-4 py-3 rounded-xl flex items-center gap-3 text-left border transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
                   :class="ecashPlan.chosen === b ? 'border-green-400/70 bg-green-400/10' : 'border-white/10 bg-white/5 hover:bg-white/10'"
                 >
-                  <span class="text-xl shrink-0">{{ b === 'cashu' ? '🥜' : b === 'fedimint' ? '🤝' : '⚓' }}</span>
+                  <span class="text-xl shrink-0">{{ b === 'cashu' ? '🥜' : '🤝' }}</span>
                   <span class="flex-1 min-w-0">
-                    <span class="block text-base text-white">{{ b === 'cashu' ? 'Cashu' : b === 'fedimint' ? 'Fedimint' : 'Ark' }}</span>
+                    <span class="block text-base text-white">{{ b === 'cashu' ? 'Cashu' : 'Fedimint' }}</span>
                     <span class="block text-xs text-white/50">Balance: {{ ecashBalanceOf(b).toLocaleString() }} sats<span v-if="ecashBalanceOf(b) < getItemPrice(payItem.access)"> · not enough</span></span>
                   </span>
                   <svg v-if="ecashPlan.chosen === b" class="w-5 h-5 text-green-400 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -840,7 +840,7 @@ const payMode = ref<'choose' | 'ecash-confirm' | 'qr'>('choose')
 // Ecash confirmation step: after the user picks "pay from this node's ecash",
 // we look at both balances, decide which backend covers the price, and show a
 // confirm screen so they see (and can switch) which ecash is spent (#3).
-type EcashBackend = 'cashu' | 'fedimint' | 'ark'
+type EcashBackend = 'cashu' | 'fedimint'
 const ecashPlan = ref<{
   cashu: number
   fedimint: number
@@ -1428,8 +1428,9 @@ async function pollOnchain(address: string, original?: OnchainPollScope) {
   const scope = original || { item, onion, address, generation: paymentGeneration.value }
   if (!onchainScopeSelected(scope)) return
   try {
-    const res = await rpcClient.call<{ paid?: boolean }>({ method: 'content.onchain-status', params: { onion, content_id: item.id, address: scope.address }, timeout: 30000 })
+    const res = await rpcClient.call<{ paid?: boolean; status?: string; error?: string }>({ method: 'content.onchain-status', params: { onion, content_id: item.id, address: scope.address }, timeout: 30000 })
     if (!onchainScopeSelected(scope)) return
+    if (res?.error) lnError.value = res.error
     if (res?.paid === true) {
       const dl = await rpcClient.call<{ data?: string; owned?: boolean; owned_content_id?: string; mime_type?: string; error?: string }>({
         method: 'content.download-peer-onchain', params: { onion, content_id: item.id, address: scope.address, filename: item.filename, price_sats: getItemPrice(item.access), cache_only: true }, timeout: 960000, maxRetries: 1,
@@ -1441,14 +1442,17 @@ async function pollOnchain(address: string, original?: OnchainPollScope) {
       } else lnError.value = dl?.error || 'Payment is confirmed; delivery is still recoverable with this address.'
       return
     }
-  } catch { /* Retry read-only status for the original item only. */ }
+  } catch {
+    if (onchainScopeSelected(scope)) lnError.value = 'Payment verification is unavailable. Keep the original address and do not pay again.'
+    // Retry read-only status for the original item only.
+  }
   if (onchainScopeSelected(scope) && onchainPaying.value) onchainPollTimer = setTimeout(() => pollOnchain(scope.address, scope), 5000)
 }
 
 /** Spendable balance for a given ecash backend in the current plan. */
 function ecashBalanceOf(b: EcashBackend): number {
   if (!ecashPlan.value) return 0
-  return b === 'cashu' ? ecashPlan.value.cashu : b === 'fedimint' ? ecashPlan.value.fedimint : ecashPlan.value.ark
+  return b === 'cashu' ? ecashPlan.value.cashu : ecashPlan.value.fedimint
 }
 
 /**
@@ -1485,14 +1489,14 @@ async function prepareEcashPay() {
       // Couldn't read balances — let the user try anyway (auto backend).
     }
     if (!paymentOperations.selected(operation)) return
-    const total = cashu + fedimint + ark
-    // Prefer Cashu when it covers the price, else Fedimint, else Ark, else
-    // leave null (insufficient — shown in the confirm screen, Confirm disabled).
+    const total = cashu + fedimint
+    // Cashu uses its durable quote; otherwise only supported Fedimint
+    // funds can cover this purchase. Ark is not a peer-file payment rail.
     const chosen: EcashBackend | null =
-      acceptsMethod(item.access, 'ecash') || hasBlockingCashuPurchase.value ? 'cashu' : fedimint >= price ? 'fedimint' : ark >= price ? 'ark' : null
+      acceptsMethod(item.access, 'ecash') || hasBlockingCashuPurchase.value ? 'cashu' : fedimint >= price ? 'fedimint' : null
     ecashPlan.value = { cashu, fedimint, ark, total, chosen }
     if (!chosen) {
-      purchaseError.value = `Not enough funds: Cashu ${cashu} + Fedimint ${fedimint} + Ark ${ark} sats, need ${price}. Fund a wallet, or pay another way.`
+      purchaseError.value = `Not enough funds: Cashu ${cashu} + Fedimint ${fedimint} sats, need ${price}. Ark cannot pay for peer files yet. Fund a supported wallet, or pay another way.`
     }
     payMode.value = 'ecash-confirm'
     if (chosen === 'cashu') await requestCashuPurchase(item, onion, operation, false)
@@ -1579,6 +1583,7 @@ async function requestCashuPurchase(item: CatalogItem, onion: string, operation:
 }
 async function selectEcashBackend(backend: EcashBackend) {
   if (!ecashPlan.value || paymentActionBusy.value) return
+  if (backend !== 'cashu' && backend !== 'fedimint') { purchaseError.value = 'This wallet cannot pay for peer files yet.'; return }
   if (backend !== 'cashu' && hasBlockingCashuPurchase.value) { purchaseError.value = 'Cancel the original unpaid Cashu quote before selecting another wallet.'; return }
   ecashPlan.value.chosen = backend
   if (backend === 'cashu') await prepareEcashPay()
@@ -1613,6 +1618,7 @@ async function confirmEcashPay() {
   const onion = props.peerId || currentPeer.value?.onion
   const method = ecashPlan.value?.chosen
   if (!item || !onion || !method || paymentActionBusy.value || hasBlockingLightningReceipt.value) return
+  if (method !== 'cashu' && method !== 'fedimint') { purchaseError.value = 'This wallet cannot pay for peer files yet.'; return }
   if (method !== 'cashu' && !await permitFreshOtherRail(item, onion)) return
   const operation = paymentOperations.begin('ecash-send', onion, item.id)
   if (!operation) return

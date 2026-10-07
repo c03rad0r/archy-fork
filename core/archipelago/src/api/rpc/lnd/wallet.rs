@@ -569,50 +569,15 @@ impl RpcHandler {
             .send()
             .await
             .context("Failed to list transactions")?;
-        if !resp.status().is_success() {
-            return Ok(false);
-        }
+        anyhow::ensure!(
+            resp.status().is_success(),
+            "Wallet transaction verification is unavailable"
+        );
         let body: serde_json::Value = resp
             .json()
             .await
             .context("Failed to parse transactions response")?;
-        let i64_field = |tx: &serde_json::Value, k: &str| -> i64 {
-            tx.get(k)
-                .and_then(|v| v.as_str())
-                .and_then(|s| s.parse::<i64>().ok())
-                .or_else(|| tx.get(k).and_then(|v| v.as_i64()))
-                .unwrap_or(0)
-        };
-        let txs = body
-            .get("transactions")
-            .and_then(|v| v.as_array())
-            .cloned()
-            .unwrap_or_default();
-        for tx in &txs {
-            if i64_field(tx, "num_confirmations") < 1 {
-                continue;
-            }
-            if i64_field(tx, "amount") < min_sats as i64 {
-                continue;
-            }
-            let pays_addr = tx
-                .get("dest_addresses")
-                .and_then(|v| v.as_array())
-                .map(|arr| arr.iter().any(|a| a.as_str() == Some(address)))
-                .unwrap_or(false)
-                || tx
-                    .get("output_details")
-                    .and_then(|v| v.as_array())
-                    .map(|arr| {
-                        arr.iter()
-                            .any(|o| o.get("address").and_then(|a| a.as_str()) == Some(address))
-                    })
-                    .unwrap_or(false);
-            if pays_addr {
-                return Ok(true);
-            }
-        }
-        Ok(false)
+        Ok(confirmed_address_sats(&body, address)? >= min_sats)
     }
 
     pub(in crate::api::rpc) async fn handle_lnd_createinvoice(
@@ -1379,9 +1344,206 @@ fn psbt_key_origin_report(psbt_base64: &str) -> Result<PsbtKeyOriginReport> {
     })
 }
 
+/// LND's transaction `amount` is the wallet-wide net amount, not the value
+/// paid to a purchase address. Attribute only confirmed output values, once
+/// per outpoint. Missing/malformed evidence is unknown, never proof of payment.
+fn confirmed_address_sats(body: &serde_json::Value, address: &str) -> Result<u64> {
+    use std::collections::{HashMap, HashSet};
+    const MAX_SATS: u64 = 21_000_000 * 100_000_000;
+    fn integer(value: &serde_json::Value) -> Result<u64> {
+        match value {
+            serde_json::Value::String(s)
+                if !s.is_empty() && s.bytes().all(|c| c.is_ascii_digit()) =>
+            {
+                s.parse().context("Invalid on-chain output integer")
+            }
+            value => value
+                .as_u64()
+                .context("Missing or invalid on-chain output integer"),
+        }
+    }
+    anyhow::ensure!(!address.is_empty(), "Missing purchase address");
+    let transactions = body
+        .get("transactions")
+        .and_then(|v| v.as_array())
+        .context("Wallet omitted transaction evidence")?;
+    let mut seen = HashMap::new();
+    let mut total = 0u64;
+    for tx in transactions {
+        let confirmations = match &tx["num_confirmations"] {
+            serde_json::Value::String(s) => {
+                s.parse::<i64>().context("Invalid confirmation count")?
+            }
+            value => value.as_i64().context("Missing confirmation count")?,
+        };
+        if confirmations < 1 {
+            continue;
+        }
+        let hash = tx["tx_hash"]
+            .as_str()
+            .context("Missing transaction identifier")?;
+        anyhow::ensure!(
+            hash.len() == 64 && hash.bytes().all(|c| c.is_ascii_hexdigit()),
+            "Invalid transaction identifier"
+        );
+        if let Some(previous) = seen.insert(hash.to_ascii_lowercase(), tx) {
+            anyhow::ensure!(previous == tx, "Conflicting duplicate transaction evidence");
+            continue;
+        }
+        let outputs = tx["output_details"]
+            .as_array()
+            .context("Wallet omitted output values")?;
+        let mut indices = HashSet::new();
+        for output in outputs {
+            let index =
+                u32::try_from(integer(&output["output_index"])?).context("Invalid output index")?;
+            anyhow::ensure!(indices.insert(index), "Duplicate transaction output");
+            let amount = integer(&output["amount"])?;
+            anyhow::ensure!(amount <= MAX_SATS, "Invalid output amount");
+            // A non-address script (e.g. OP_RETURN) has no receiving address.
+            if output["address"].as_str() != Some(address) {
+                continue;
+            }
+            total = total
+                .checked_add(amount)
+                .filter(|sum| *sum <= MAX_SATS)
+                .context("Invalid total received amount")?;
+        }
+    }
+    Ok(total)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn payment_tx(hash: &str, confirmations: i64, outputs: serde_json::Value) -> serde_json::Value {
+        serde_json::json!({"tx_hash":hash.repeat(64),"num_confirmations":confirmations,
+            "amount":"999999","dest_addresses":["purchase"],"output_details":outputs})
+    }
+
+    #[test]
+    fn onchain_purchase_counts_only_its_outputs_not_wallet_total() {
+        let tx = payment_tx(
+            "a",
+            1,
+            serde_json::json!([
+                {"output_index":"0","amount":"1","address":"purchase"},
+                {"output_index":"1","amount":"999998","address":"other"}
+            ]),
+        );
+        assert_eq!(
+            confirmed_address_sats(&serde_json::json!({"transactions":[tx]}), "purchase").unwrap(),
+            1
+        );
+    }
+
+    #[test]
+    fn onchain_purchase_sums_confirmed_partial_outputs_once() {
+        let mut first = payment_tx(
+            "a",
+            1,
+            serde_json::json!([
+                {"output_index":0,"amount":"300","address":"purchase"},
+                {"output_index":"1","amount":46,"address":"purchase"}
+            ]),
+        );
+        first["amount"] = serde_json::json!("-9999"); // net wallet debit is irrelevant
+        let second = payment_tx(
+            "b",
+            2,
+            serde_json::json!([
+                {"output_index":"2","amount":"200","address":"purchase"}
+            ]),
+        );
+        let unconfirmed = payment_tx(
+            "c",
+            0,
+            serde_json::json!([
+                {"output_index":0,"amount":"10000","address":"purchase"}
+            ]),
+        );
+        let conflicted = payment_tx(
+            "d",
+            -1,
+            serde_json::json!([
+                {"output_index":0,"amount":"10000","address":"purchase"}
+            ]),
+        );
+        assert_eq!(confirmed_address_sats(&serde_json::json!({"transactions":[first.clone(),first,second,unconfirmed,conflicted]}), "purchase").unwrap(), 546);
+    }
+
+    #[test]
+    fn onchain_purchase_rejects_missing_values_and_ambiguous_outpoints() {
+        let good = payment_tx(
+            "a",
+            1,
+            serde_json::json!([
+                {"output_index":"0","amount":"546","address":"purchase"}
+            ]),
+        );
+        let mut no_values = good.clone();
+        no_values.as_object_mut().unwrap().remove("output_details");
+        let mut duplicate = good.clone();
+        duplicate["output_details"] = serde_json::json!([
+            {"output_index":0,"amount":300,"address":"purchase"},
+            {"output_index":0,"amount":300,"address":"purchase"}
+        ]);
+        let mut conflicting = good.clone();
+        conflicting["output_details"][0]["amount"] = serde_json::json!(1000);
+        for body in [
+            serde_json::json!({}),
+            serde_json::json!({"transactions":[no_values]}),
+            serde_json::json!({"transactions":[duplicate]}),
+            serde_json::json!({"transactions":[good.clone(),conflicting]}),
+        ] {
+            assert!(confirmed_address_sats(&body, "purchase").is_err());
+        }
+        for amount in [
+            serde_json::json!(-1),
+            serde_json::json!("0.00000546"),
+            serde_json::json!(546.5),
+            serde_json::json!(null),
+            serde_json::json!("18446744073709551616"),
+            serde_json::json!("2100000000000001"),
+        ] {
+            let mut invalid = good.clone();
+            invalid["output_details"][0]["amount"] = amount;
+            assert!(confirmed_address_sats(
+                &serde_json::json!({"transactions":[invalid]}),
+                "purchase"
+            )
+            .is_err());
+        }
+    }
+
+    #[test]
+    fn onchain_purchase_has_no_rounding_or_accumulation_overflow() {
+        let max = "2100000000000000";
+        let first = payment_tx(
+            "a",
+            1,
+            serde_json::json!([{"output_index":0,"amount":max,"address":"purchase"}]),
+        );
+        assert_eq!(
+            confirmed_address_sats(
+                &serde_json::json!({"transactions":[first.clone()]}),
+                "purchase"
+            )
+            .unwrap(),
+            2_100_000_000_000_000
+        );
+        let second = payment_tx(
+            "b",
+            1,
+            serde_json::json!([{"output_index":0,"amount":"1","address":"purchase"}]),
+        );
+        assert!(confirmed_address_sats(
+            &serde_json::json!({"transactions":[first,second]}),
+            "purchase"
+        )
+        .is_err());
+    }
 
     /// Build a minimal, genuinely unsigned one-input PSBT with no key origin on
     /// any input. Built programmatically rather than pasted as opaque base64 so

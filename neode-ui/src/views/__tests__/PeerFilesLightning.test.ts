@@ -729,3 +729,46 @@ describe('Explicit retry of a confirmed native-only failure',()=>{
     wrapper.unmount()
   })
 })
+
+
+describe('Supported peer-file ecash choices', () => {
+  it('does not offer or spend Ark even when its wallet alone covers the file', async () => {
+    vi.mocked(rpcClient.call).mockImplementation(async ({ method }) => {
+      if (method === 'wallet.ecash-balance') return { cashu_sats: 0, fedimint_sats: 0, ark_sats: 1000 }
+      return { items: [], attempts: [], attempt: null }
+    })
+    const { wrapper, vm } = await open()
+    vm.openPayModal({ ...item, access: { paid: { price_sats: 5, accepted: ['fedimint'] } } })
+    await flushPromises()
+    await vm.prepareEcashPay()
+    expect(vm.ecashPlan.chosen).toBeNull()
+    expect(vm.ecashPlan.total).toBe(0)
+    expect(vm.purchaseError).toContain('Ark cannot pay for peer files yet')
+    expect(wrapper.findAll('button').some(button => button.text().includes('Ark'))).toBe(false)
+    await vm.selectEcashBackend('ark')
+    expect(vm.ecashPlan.chosen).toBeNull()
+    // A stale or injected unsupported selection must also fail before RPC.
+    vm.ecashPlan.chosen = 'ark'
+    await vm.confirmEcashPay()
+    expect(vi.mocked(rpcClient.call).mock.calls.some(([call]) => call.method === 'content.download-peer-paid')).toBe(false)
+    wrapper.unmount()
+  })
+})
+
+
+describe('Unknown on-chain verification', () => {
+  it('shows verification errors without downloading, paying or creating another address', async () => {
+    vi.mocked(rpcClient.call).mockImplementation(async ({ method }) => {
+      if (method === 'content.onchain-status') return { paid: false, status: 'unknown', error: 'Exact outputs unavailable; do not pay again.' }
+      return { items: [], attempts: [], attempt: null }
+    })
+    const { wrapper, vm } = await open()
+    await vm.pollOnchain('original-address')
+    expect(vm.lnError).toContain('do not pay again')
+    const calls = vi.mocked(rpcClient.call).mock.calls.map(([call]) => call.method)
+    expect(calls).not.toContain('content.download-peer-onchain')
+    expect(calls).not.toContain('content.request-onchain')
+    expect(calls).not.toContain('lnd.sendcoins')
+    wrapper.unmount()
+  })
+})
