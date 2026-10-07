@@ -547,3 +547,37 @@ Subsequent read-only route checks by the coordinating agent returned Yaya→dev
 health 200 twice (2.57s and 0.49s total), with no restart or configuration change.
 The earlier four-second connect timeout remains valid evidence of an intermittent
 mesh route problem, not a claim of permanent loss of connectivity.
+
+### Resumed live qualification and incremental UI deployment
+
+The `d94ff097` compatibility fix passed 110 focused frontend tests and the
+production UI build. Yaya now serves UI index SHA256
+`df53b2cae3e8c26c5899fa34a688d1a09dbb250cc7922020301250195cd54a83`.
+Deployment verified the backend binary, session key and every app container's
+identity/start time remained unchanged. Evidence:
+`/tmp/archy-payment-switch-yaya-deploy.log`; rollback:
+`/var/lib/archipelago/support/payment-switch-ui-20261007T000429Z-3702073/rollback.sh`.
+This is the failed-Lightning compatibility fix, not acceptance of every payment
+method or deployment of the new durable purchase backend. No payment was sent by
+these checks.
+
+Yaya-to-dev FIPS health probes subsequently recovered without a configuration
+change or restart. Five further requests returned HTTP 200, taking 0.49–1.14
+seconds (`/tmp/archy-payment-route-health-samples.json`). Earlier 4-second
+connection timeouts and the delivery failure remain valid evidence of an
+intermittent path; this does not establish sustained media-route reliability.
+
+The next combined isolated backend run passed 1,821 tests with one failure and
+five ignored tests. All 377 captured source/build inputs were unchanged. The
+failure exposed a purchase binding check using a federation display loader that
+deduplicates onion records. The correction reads the original records under the
+store lock and rejects ambiguous bindings or mismatched DID/public-key pairs;
+its rerun is pending. Installer, settlement executor and LND status tests passed
+within this failed combined run; the full batch is not qualified yet.
+
+Dev subsequently completed the same UI deployment with matching served index,
+unchanged backend/session/app containers and rollback at
+`/var/lib/archipelago/support/payment-switch-ui-20261007T000454Z-2324163/rollback.sh`.
+Evidence: `/tmp/archy-payment-switch-dev-deploy.log`. Framework is reachable and
+healthy but runs a different backend/UI revision; this incremental deployment
+has not changed it.
