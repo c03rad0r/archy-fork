@@ -62,6 +62,7 @@
         :invite-type="inviteType"
         :invite-code="inviteCode"
         :syncing="syncing"
+        :sync-node-count="syncableNodeCount"
         @generate-invite="handleGenerateInvite"
         @show-join="showJoinModal = true"
         @sync="syncAll"
@@ -313,6 +314,7 @@ const joinSuccess = ref(false)
 
 const syncing = ref(false)
 const syncResults = ref<SyncResult[]>([])
+const syncableNodeCount = computed(() => nodes.value.filter(node => node.trust_level !== 'untrusted').length)
 
 const deploying = ref(false)
 const deployResult = ref('')

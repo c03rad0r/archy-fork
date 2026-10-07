@@ -311,6 +311,20 @@ must use a qualified private delivery path; do not republish the demo image.
 - Keep catalog and player integration within the Yaya-only demo scope until
   separately approved for general release.
 
+## Federated Nodes state sync reliability and progress
+
+- Federated Nodes sync currently gives too little feedback and can take a long
+  time when one peer is unreachable. Show an accessible spinner, the number of
+  eligible nodes, current phase and a clear success/partial-failure result.
+- Bound concurrent peer syncs so one slow or dead peer cannot serialize the
+  entire federation refresh. Prefer the authenticated FIPS route when
+  available, preserve the existing bounded fallback, and keep per-peer errors
+  visible without discarding successful results.
+- Keep sync state convergent across retries and reconnects; prevent duplicate
+  clicks, stale responses or an incomplete refresh from looking like success.
+  Qualify healthy, slow, offline, mixed-transport, large-federation and mobile
+  layouts before acceptance.
+
 ## 14. FIPS media transport requirement
 
 - Operator explicitly requires FIPS for streaming peer files and distributed
