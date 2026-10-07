@@ -44,6 +44,26 @@ result: `/tmp/archy-fleet-recovery-browser.log`. The owned server was stopped.
 This is local component/composable evidence, not a live-node outage test.
 No node service, peer relationship, wallet or payment was changed.
 
+Combined frontend regression suite subsequently passed **1,448 tests in 176 files**,
+zero failures, using one worker. Log:`/tmp/archy-combined-ui-20261007-full.log`.
+Input hashes:`/tmp/archy-combined-ui-20261007-inputs.json`.
+
+Production build passed from a separate frozen copy of all 701 qualified inputs;
+all hashes were verified again after build. Real Chromium loaded this production
+dist at 390px and1440px, with synthetic Fleet outage/recovery replies: retained
+reports, keyboard Retry, genuine zero, layout and error checks passed. Payment
+and signing were blocked. This is artifact qualification, not a real outage.
+
+Durable artifact and evidence:
+`~/.local/state/archipelago/release-qualification/combined-ui-20261007/`.
+Archive SHA256:`16523c80ecebbb4ba1f6d289ead81ab86d59daf67093ce1d8d68d5bce3ffaae5`.
+Index SHA256:`65e5a09eb736f73650ef5ac52bdebf66d1c877e69511edd7bd3095847f6734de`.
+
+The initial dev deployment preservation gate refused before any writes because
+three container start times changed independently after preflight. Failed log
+retained at `/tmp/archy-combined-ui-dev-deploy.log`; actual deployed-node
+acceptance remains separate until the retry and browser checks pass.
+
 ## Remaining acceptance matrix
 
 | Area | Established evidence | Remaining |
@@ -59,3 +79,22 @@ No node service, peer relationship, wallet or payment was changed.
 
 No current-node restart or deliberate network outage was performed. Live fault
 qualification must preserve wallets, installed applications and operator intent.
+
+
+## Dev deployment attempt and verified rollback
+
+The immediate retry passed preflight but failed the final container-preservation
+check because `botfights` was independently replaced during the deployment. The
+helper automatically restored the prior UI. A subsequent HTTP fetch verified
+index SHA256 `4d9424a4ad7548221a07e2c4f14019029ac5fc4e3f1d27ff5eca72b5ff0f6a56`,
+matching the preflight baseline. Do not claim the new UI is deployed.
+
+Read-only systemd and management journal checks show pre-existing health-monitor
+restarts of datum, gashboard and angor-relay, and later botfights recovery from a
+stuck stopping state. These checks explain the inventory change; they do not
+establish why the health checks failed. No live app was stopped by this UI task.
+Keep the preservation gate, leave the prior UI in place, and retry only after
+qualification conditions are stable. Yaya was not changed.
+
+Logs: `/tmp/archy-combined-ui-dev-deploy-retry.log` and the private preflight
+receipt `/tmp/archy-combined-ui-dev-preflight-retry.json`.

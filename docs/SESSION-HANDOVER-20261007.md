@@ -291,7 +291,7 @@ No percentage is inferred from test counts.
 | 17 HTTPS apps | In progress | Exact hostname/trust and companion acceptance |
 | 18 Firewall/tunnel | In progress | Read-only UI done; settings persistence/reboot/rollback qualification |
 | 19 Media guide/Cloud PiP | Nearly finished | PiP operator-accepted; finish reusable contract and remaining edge cases |
-| 20 Native background media | In progress — physical test failed | APK56 stops about five seconds after locking/switching apps; no playback notification. USB unavailable; investigate native bridge/service and retained page. |
+| 20 Native background media | In progress | Operator confirms APK57 background playback works; notification artwork missing. Full controls/queue/recovery matrix remains. |
 | 21 Public files/folders | Queued, before22 | Shared pricing interface with blue tints, unrelated-node discovery and tiny marker |
 | 22 Mesh file sharing | Queued, final task | Node/computer choice, tree/search picker, retained multi-selection, delivery design and usual paid-file flow |
 
@@ -486,3 +486,47 @@ Monitoring gate or deferred connection UX/removal work.
 - Wrong-window PWA request was inspection only and was withdrawn; no PWA change.
 - Heavy builds are serialized around the constrained host; no live wallet/app
   shutdown was used to free resources. No OTA/ISO/catalog publication occurred.
+
+
+## Latest resumed checkpoint — APK57 and combined qualification
+
+- Operator reports APK0.5.37 background playback now works; notification exists
+  but song artwork is missing. Do not keep asking for the failed-flow diagnostic
+  report or USB. Audio agent is correcting the admitted-app-origin artwork path;
+  earlier physical failure remains historical, with no definitive root cause.
+- Diagnostic APK source committed7383d47b. Download:
+  http://192.168.63.240/packages/archipelago-companion-0.5.37.apk
+  SHA2569b63bd928ab396278791ab3b514dbb53daaf4b7de9311e8e4f505acc02594a2c.
+  33 Android tests, canonical clean packaging and existing signer passed.
+- Combined UI:1,448 tests/176 files pass; production build and390/1440 Chromium
+  Fleet outage/recovery fixture pass. Frozen701-input artifact/evidence resides
+  in `~/.local/state/archipelago/release-qualification/combined-ui-20261007/`.
+  Source subsequently reopened for artwork changes; they are not in that artifact.
+- IndeeHub VM caught real manager-startup replacement of saved containers in
+  generic environment-drift repair. Early saved-recipe guards and outer sweep
+  exclusions are under combined isolated backend qualification. The seven-service
+  fixture was restored/rebaselined with failed evidence retained; this is not
+  rollback acceptance. Normal saved-unit Start/Stop/Restart also needs correction
+  before activation. Lifecycle patch prepared separately during source freeze.
+- Paid-file agent owns the one active Rust compile; it is progressing but page-I/O
+  bound. IndeeHub owns next source/build slot. No live wallet/app teardown is used
+  to free memory. Current guard tests do not qualify the pending lifecycle patch.
+- Public sharing read-only assessment checkpoint is `/tmp/archy-public-sharing-plan.md`.
+  Implementation remains queued. Public paid delivery still needs authenticated
+  identity/transport independent of federation; do not bypass payment journals.
+- No new OTA/ISO/catalog publication. Yaya UI/backend/IndeeHub remain unchanged
+  during this checkpoint. Dev-only combined UI deployment is being qualified.
+
+
+Dev combined UI attempt rolled back automatically when independent botfights
+replacement changed the post-deployment inventory. HTTP verified the old index
+hash matches the preflight baseline. The new artifact remains qualified but is
+not deployed. Existing health-monitor restarts were confirmed read-only; retain
+this new qualification issue rather than weakening the preservation gate.
+
+Five completed historical UI release archives were moved from RAM-backed `/tmp`
+to durable `release-qualification/retained-tmp-archives`, with exact SHA256 checks
+and original paths retained as symlinks. This released496,544,104 tmpfs bytes;
+no build inputs, running services or wallet files changed. Indee's owned VM is
+being shut down at its transaction-idle boundary to relieve compilation pressure;
+its disk/evidence are retained for a dedicated4GB qualification window later.

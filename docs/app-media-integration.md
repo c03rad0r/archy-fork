@@ -181,7 +181,16 @@ bearer token or second player crosses the channel. The entire dashboard must
 never be used as the PiP surface. This is currently a Cloud-host contract, not
 permission for arbitrary embedded apps to call native PiP directly.
 
-## Companion native audio: build56 candidate
+## Companion native audio: build57 background playback operator-confirmed
+
+On 7 October APK0.5.36 failed after locking or switching apps, without a native
+notification. Restarting did not resolve it. Build57 added local diagnostics;
+the operator subsequently reports that background playback now works and the
+notification is present, but song artwork is missing. This accepts the reported
+background flow only; the complete controls, queue and recovery matrix below
+remains open. No definitive cause of the earlier failure is established. USB
+access is unavailable. Artwork handling is under investigation/correction.
+
 
 Apps continue using the existing version1 app audio protocol above. They do not
 need a second Android stream or a separate queue implementation. The dashboard
