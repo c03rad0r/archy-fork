@@ -551,7 +551,7 @@ and video, with video using picture-in-picture where the device supports it.
   from browser-only tests.
 
 
-## 21. Public files and folders — final task
+## 21. Public files and folders — deferred end-of-list task
 
 Added by the operator on 2026-10-07. Perform after the existing tasks, including
 previously deferred work. Status: queued; no public visibility has been changed.
@@ -578,3 +578,41 @@ previously deferred work. Status: queued; no public visibility has been changed.
   unrelated-node discovery, paid access, withdrawal and mobile/desktop layouts.
   No live file publication or real payment is authorized merely by adding this
   task to the backlog.
+
+
+## 22. Mesh Share file: node/computer picker and paid delivery — final task
+
+Added by the operator after task21 on 2026-10-07. Append after public sharing;
+status: queued. Plan the node-to-node sharing design before implementation.
+
+- Clicking **Share file** in Mesh opens a source-choice modal with **From node**
+  and **From computer**. From computer opens the local device file picker;
+  plan upload/staging and delivery within the same send flow.
+- **From node** opens a polished file-browser modal using the existing design
+  system, with folder-tree navigation and search across **all of the user's own
+  files**, not just the currently open folder. Preserve ownership/permissions;
+  show useful paths for matching names and truthful loading/empty/error states.
+- Allow multiple file selections. Retain selections across tree navigation and
+  searches, collect them in a selection area at the bottom, allow individual
+  removal, and provide a clear **Send** action with a selected-file count.
+  Keep the browser and selection area usable on mobile and desktop.
+- Plan and compare the supported node-to-node delivery paths before choosing
+  the implementation: reuse existing authenticated file sharing, discovery and
+  FIPS transports where suitable. Determine what the Mesh message carries,
+  how recipient identity/access is checked, where file bytes reside, and how
+  local-computer files become available without duplicate uploads or exposing
+  unrelated/private files. Distinguish Mesh messaging from bulk-file transport;
+  cover sender offline, recipient offline, reconnect, expiry and resumable
+  delivery with explicit progress and failure/retry behaviour.
+- Support sharing an existing paid file and configuring a paid share through
+  the existing pricing flow. When a recipient opens a paid file, present the
+  **usual purchase/payment interface** and supported payment methods; verify
+  settlement/entitlement before releasing paid content. Reuse ownership and
+  recovery logic so repeat opens, retries and lost replies do not charge again.
+- Define mixed free/paid multi-file messages, recipient previews, per-file price
+  and delivery states, existing entitlements and source deletion/withdrawal.
+  Selecting or sending a file must not silently make it globally public;
+  preserve the distinction from task21 public discovery.
+- Qualify both source choices, tree navigation, whole-library search, retained
+  multi-selection/removal, Send, cross-node receipt/open/download, free and paid
+  access, duplicate/reconnect recovery and responsive/accessibility behaviour.

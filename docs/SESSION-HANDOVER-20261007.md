@@ -126,10 +126,16 @@ Private backup and artifacts are under
    should continue on the phone after app close, with native controls, queue,
    artwork, authorization and video PiP. Physical V4V acceptance is open.
 
-21. **Public files/folders — queued, perform last:** Make public in both More
+21. **Public files/folders — queued, after prior tasks:** Make public in both More
     menus, discovery by non-peered/non-federated nodes, the same peer-sharing
     pricing interface with blue tints instead of orange, optional charging and
     a tiny blue marker at the icon's top-left. Full scope is backlog task21.
+
+22. **Mesh file sharing — queued, final task after21:** Share file opens From node
+    / From computer; node picker has tree navigation, search across all own files,
+    retained multiple selections at the bottom and Send. Plan node-to-node
+    delivery and support paid files using the usual recipient payment interface.
+    Full scope is backlog task22.
 
 ## Additional release-regression items
 
@@ -284,7 +290,8 @@ No percentage is inferred from test counts.
 | 18 Firewall/tunnel | In progress | Read-only UI done; settings persistence/reboot/rollback qualification |
 | 19 Media guide/Cloud PiP | Nearly finished | PiP operator-accepted; finish reusable contract and remaining edge cases |
 | 20 Native background media | In progress | Cloud PiP done; native audio service/controls and device checks remain |
-| 21 Public files/folders | Queued, final task | Shared pricing interface with blue tints, unrelated-node discovery and tiny marker |
+| 21 Public files/folders | Queued, before22 | Shared pricing interface with blue tints, unrelated-node discovery and tiny marker |
+| 22 Mesh file sharing | Queued, final task | Node/computer choice, tree/search picker, retained multi-selection, delivery design and usual paid-file flow |
 
 Completed subitems: Framework LND startup incident, companion download/viewer
 acceptance, physical upload acceptance, APK55 delivery and reported Cloud PiP
@@ -312,3 +319,11 @@ fleet/device qualification, mirror review/parity and final artifact gates remain
   `~/.local/state/archipelago/release-qualification/indeehub-backup-restore-20261007/`.
 - No live app/container, database, wallet, catalog, payment or public file was
   changed. Disposable fixtures used network-none and no live volumes.
+
+
+### Mesh sharing addition — operator request
+
+Task22 now follows task21 at the end. Its detailed scope is in
+`post-1.9.0-work-backlog.md`. This is a recorded requirement/design task, not a
+claim that the picker or transport/payment flow has been implemented. Existing
+public-sharing blue pricing and marker requirements are retained unchanged.
