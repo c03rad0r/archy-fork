@@ -524,3 +524,28 @@ review; this new media task is part of that preceding work.
 Source inspection so far: MainActivity declares no supportsPictureInPicture flag,
 and the native sources contain no PiP entry/controller implementation. Existing
 WebViewFullscreen handles fullscreen; this is not evidence of native PiP support.
+
+## 20. Companion background media for V4V and other apps
+
+Later media-platform task requested by the operator. When a user closes an
+embedded V4V demo or another authorized media app on the companion, playback
+must continue through the phone's native media session instead of stopping or
+playing invisibly without controls. Apply the same lifecycle contract to audio
+and video, with video using picture-in-picture where the device supports it.
+
+- Keep the current track/video, position, queue, artwork and authorization when
+  the app surface closes; reopening resumes the same session without a second
+  stream or duplicate payment.
+- Expose native notification/lock-screen/headset controls for play/pause,
+  previous/next, seek where supported, shuffle and stop, with controls kept in
+  sync with the app and the dashboard bottom player.
+- For video, move to a native PiP surface on close or explicit PiP request when
+  supported, preserve aspect/orientation and return to the same WebView session;
+  fall back to audio-only/background rules when PiP is unavailable.
+- Enforce origin, session, entitlement and transport boundaries during
+  background playback; expiry, logout, network loss and user stop must halt or
+  degrade truthfully and release media resources.
+- Qualify V4V on physical Android at phone, lock-screen, background, rotation,
+  reconnect, completion and reopen states, then publish the reusable contract
+  for other audio/video apps. No live app deployment or payment is accepted
+  from browser-only tests.
