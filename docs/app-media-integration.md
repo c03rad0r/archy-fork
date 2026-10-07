@@ -9,10 +9,12 @@ proof that a particular deployed app or companion version supports every feature
 
 Cloud video PiP is implemented in companion0.5.35/build55; the operator accepted
 the delivered Cloud PiP flow on2026-10-07. Audio and video use separate channels.
-Native background audio is a companion0.5.36/build56 candidate:29 Android tests
-and six companion-bridge dashboard tests pass; physical background/lock-screen/task
-removal acceptance remains required. Do not infer those phone results from
-browser or Robolectric tests.
+Native background audio is operator-confirmed on companion 0.5.37/build57 for
+the reported background playback and notification flow. The full physical
+controls, queue, task-removal and recovery matrix remains open. Notification
+artwork has a qualified dashboard correction awaiting guarded deployment and
+physical confirmation; it does not require another APK. Browser and Robolectric
+results do not establish phone acceptance.
 
 ## Declare the audio integration
 
@@ -107,7 +109,7 @@ Example state:
 window.parent.postMessage({
   type: 'archipelago:media-state', version: 1, session,
   available: true,
-  title: track.title, artist: track.artist,
+  title: track.title, artist: track.artist ?? '',
   artwork: track.cover, shuffle: player.shuffleEnabled,
   playing: player.playing,
   position: player.currentTime, duration: track.duration,
@@ -189,7 +191,10 @@ the operator subsequently reports that background playback now works and the
 notification is present, but song artwork is missing. This accepts the reported
 background flow only; the complete controls, queue and recovery matrix below
 remains open. No definitive cause of the earlier failure is established. USB
-access is unavailable. Artwork handling is under investigation/correction.
+access is unavailable. The artwork origin correction passes 26 focused dashboard
+tests, production browser checks at 390/1440px and two native JPEG tests on API
+28/35. Guarded dashboard deployment and physical artwork confirmation remain
+pending; these checks do not prove the cover from a particular live track.
 
 
 Apps continue using the existing version1 app audio protocol above. They do not
@@ -205,8 +210,11 @@ Dashboard→native messages contain version1, a random session, monotonically
 increasing sequence, bounded title/position/duration, playback/control flags and
 optional JPEG thumbnail bytes. Artwork is fetched by the already authenticated
 page with same-origin credentials only, capped at512KiB, resized to192px and sent
-as a bounded data URL. Native code does not fetch artwork URLs or receive auth
-credentials. Cross-origin images without CORS may have no notification thumbnail;
+as a bounded data URL. The qualified correction admits HTTP covers on the
+verified app origin, including its distinct port, while rejecting arbitrary HTTP
+origins and URL credentials. Cross-origin requests omit cookies and require CORS;
+redirects are rejected and no referrer is sent. Native code does not fetch artwork
+URLs or receive auth credentials. Cross-origin images without CORS may have no notification thumbnail;
 missing artwork never blocks playback. Native image decoding bounds dimensions.
 
 Native→dashboard controls carry the same session. Retired sessions, stale sequence

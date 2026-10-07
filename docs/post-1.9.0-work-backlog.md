@@ -583,9 +583,12 @@ review; this new media task is part of that preceding work.
   Document the supported video/PiP contract for other apps after qualification;
   do not claim the audio postMessage bridge already implements video PiP.
 
-Source inspection so far: MainActivity declares no supportsPictureInPicture flag,
-and the native sources contain no PiP entry/controller implementation. Existing
-WebViewFullscreen handles fullscreen; this is not evidence of native PiP support.
+**Nearly finished:** Cloud PiP is implemented and was delivered in companion
+0.5.35/build55; the operator accepted the reported Cloud PiP flow on 2026-10-07.
+The reusable audio adapter and developer guide are implemented in
+[app-media-integration.md](app-media-integration.md). Remaining physical edge
+checks include disabled/unsupported PiP, session expiry, FIPS interruption and
+process recreation. The accepted flow does not establish that complete matrix.
 
 ## 20. Companion background media for V4V and other apps
 
