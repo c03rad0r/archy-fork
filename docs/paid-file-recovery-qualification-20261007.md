@@ -1,6 +1,6 @@
 # Paid-file recovery qualification — 2026-10-07
 
-Status: **OPEN — safety fixes in source; final combined validation and actual-node initial-payment interruption acceptance remain required.**
+Status: **OPEN — safety fixes and combined isolated validation pass; corrected-artifact deployment and actual-node initial-payment interruption acceptance remain required.**
 
 ## Findings repaired
 
@@ -47,9 +47,16 @@ the two legacy invoice/address creation methods were found.
   the first after IndeeHub's final outer guards arrived during source capture,
   the second after prolonged host page-I/O starvation when the final IndeeHub
   lifecycle/health correction was ready. Neither is a test failure or a pass.
-  Logs, input hashes and explicit incomplete status are retained. One combined
-  run after the final source freeze remains required; the new backend tests are
-  not yet claimed passed.
+  Logs, input hashes and explicit incomplete status are retained.
+- Final combined isolated backend suite: **2,006 passed, zero failed, five
+  ignored**. Both new actual-RPC regressions pass. All **532 captured backend,
+  helper and catalog inputs** remained unchanged. This includes payment fix
+  `18b08720` and complete IndeeHub lifecycle/health fix `b0b95810`. Compilation
+  took 36m19s under host disk contention; isolated execution took 23.74s with
+  325.1 MiB peak memory and no swap. No source or wallet pass is inferred from
+  the earlier interrupted attempts.
+  `/tmp/archy-paid-indee-lifecycle-backend-20261007.log` and
+  `/tmp/archy-paid-indee-lifecycle-provenance-20261007.log`.
 - Current live read-only recheck: dev and Yaya each retain the accepted 20 MiB
   fixture with exact original SHA256 and ownership despite the seller share
   having been removed. Only ownership lookup and cached HTTP GET were used;
@@ -88,3 +95,12 @@ persistence across restart. Never send a new payment to recover the historical
 sales. The original missing-file incident was individually accepted by the
 operator; broader release acceptance remains separate. Timed IndeeHub rental
 and producer payout acceptance belongs to the independent IndeeHub workstream.
+
+## Durable evidence
+
+Logs, the final input manifest and earlier interrupted-attempt evidence are
+retained under
+`~/.local/state/archipelago/release-qualification/paid-file-recovery-20261007/`.
+The combined run qualifies source/isolated behavior. It does not claim a new
+production payment, initial-payment outage/restart acceptance or deployment of
+this backend to either node.
