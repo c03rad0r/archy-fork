@@ -74,11 +74,16 @@
             </div>
           </div>
           <button
+            data-testid="federation-sync-button"
             @click="$emit('sync')"
             class="w-full sm:w-fit px-3 py-1.5 glass-button glass-button-sm rounded text-xs font-medium text-white/90 hover:text-white transition-colors disabled:opacity-50"
             :disabled="syncing"
           >
-            {{ syncing ? 'Syncing...' : 'Sync Now' }}
+            <span v-if="syncing" class="inline-flex items-center gap-2" role="status" aria-live="polite">
+              <span class="w-3 h-3 border-2 border-white/30 border-t-white rounded-full animate-spin" aria-hidden="true"></span>
+              Syncing {{ syncNodeCount }} node{{ syncNodeCount === 1 ? '' : 's' }}…
+            </span>
+            <span v-else>Sync Now</span>
           </button>
         </div>
       </div>
@@ -121,6 +126,7 @@ const props = defineProps<{
   inviteType: 'trusted' | 'observer'
   inviteCode: string
   syncing: boolean
+  syncNodeCount: number
 }>()
 
 defineEmits<{
