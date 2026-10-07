@@ -151,3 +151,49 @@ subsequent combined isolated Rust run also passed its independent golden fixture
 test, establishing agreement across both implementations. Node caller/serving
 integration and live acceptance remain open. No fixture or Rust source changed
 between the frozen compilation inputs and the successful run.
+
+## Immutable serving and rental caller work
+
+The next local source connects explicit producer/project approval to the fixed
+`indeedhub-api` installation pin and stores a separate immutable serving mapping
+before returning the signed registration receipt. It does not insert filenames
+into the legacy mutable share catalog. Its canonical ordered-array terms hash has
+an independently generated Node.js fixture. Original Cloud source deletion does
+not change the saved snapshot, registration receipt or rental terms.
+
+A peer GET to `/content/{registered_id}/rental/{purchase_uuid}` now requires the
+existing node proof signed for that exact path and the original
+`X-Content-Capability`. The node verifies its own durable seller `ReceiptSaved`
+record, authenticated buyer, immutable content/hash/size/terms and settlement
+amount. Invalid ranges reject before a rental starts. First successful durable
+stream authorization records one rental window; reopen and range requests keep
+that same deadline. Stream reads use bounded 64 KiB buffers, reject clock rollback
+and stop new reads at expiry. HEAD and preflight do not start a window.
+
+This is a server access window, not DRM. Bytes already delivered cannot be
+revoked. A crash after the lease is fsynced but before the first network byte still
+consumes elapsed time: local persistence and remote byte delivery are not one
+atomic operation. The player must display the persisted expiry and reuse the
+original purchase/capability on reconnect, not create another payment.
+
+Seven registered-media tests and three route/stream tests passed in
+`/tmp/archy-registration-rental-batch-tests.log`; its overall result was 1,834
+passed, one failed legacy missing-file expectation, and five existing skips.
+All 383 captured source/build/fixture hashes remained unchanged. The expectation
+was corrected separately and awaits the next full run. Do not describe that batch
+as a clean combined suite or live playback acceptance.
+
+The subsequent, not-yet-tested performance refinement persists the already
+verified snapshot's signed hash and inode/device/ctime/size attestation during
+registration. Ordinary first-open/range requests reuse it. A missing cache streams
+the original signed hash under a per-registration lock; buyer leases use separate
+per-purchase locks. Large verification reads do not hold the global metadata lock
+or start a rental while queued. An identical concurrent cache writer is accepted
+only after exact readback and file/directory fsync. Three additional tests cover
+lock independence, cache reconstruction and mismatched-cache refusal.
+
+Owner-session/CSRF approval RPC, producer-signed exact selection, native Cloud
+picker/consent bridge, app receipt consumption, and player reconnect/expiry UI are
+being connected next. Their source is not yet deployed; app registration and
+publication flags remain disabled pending complete qualification. No real payment,
+announcement, media publication or node deployment was performed by this work.

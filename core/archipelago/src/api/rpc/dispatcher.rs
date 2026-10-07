@@ -332,6 +332,7 @@ impl RpcHandler {
             "content.download-peer-paid" => self.handle_content_download_peer_paid(params).await,
             "content.indeehub-projects" => self.handle_content_indeehub_projects().await,
             "content.browse-all-peers" => self.handle_content_browse_all_peers().await,
+            "content.payment-status" => self.handle_content_payment_status(params).await,
             "content.owned-list" => self.handle_content_owned_list().await,
             "content.owned-get" => self.handle_content_owned_get(params).await,
             "content.request-invoice" => self.handle_content_request_invoice(params).await,

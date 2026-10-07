@@ -71,6 +71,36 @@ pub async fn load_nodes(data_dir: &Path) -> Result<Vec<FederatedNode>> {
     load_nodes_inner(data_dir).await
 }
 
+/// Resolve payment identity from persisted records before display deduplication
+/// can merge fields from different identities sharing an address.
+pub(crate) async fn load_unique_payment_peer(
+    data_dir: &Path,
+    onion: &str,
+) -> Result<FederatedNode> {
+    let _guard = FEDERATION_STORE_LOCK.lock().await;
+    let content = fs::read(data_dir.join(FEDERATION_DIR).join(NODES_FILE))
+        .await
+        .context("Could not read payment peer bindings")?;
+    let file: NodesFile =
+        serde_json::from_slice(&content).context("Invalid payment peer bindings")?;
+    let target = onion.strip_suffix(".onion").unwrap_or(onion);
+    anyhow::ensure!(!target.is_empty(), "Missing payment peer address");
+    let mut matches = file
+        .nodes
+        .into_iter()
+        .filter(|peer| peer.onion.strip_suffix(".onion").unwrap_or(&peer.onion) == target);
+    let peer = matches.next().context("Payment peer binding is missing")?;
+    anyhow::ensure!(
+        matches.next().is_none(),
+        "Payment peer binding is ambiguous"
+    );
+    anyhow::ensure!(
+        crate::identity::did_key_from_pubkey_hex(&peer.pubkey)? == peer.did,
+        "Payment peer identity does not match its public key"
+    );
+    Ok(peer)
+}
+
 /// Lock-free body of `load_nodes`. Callers that already hold
 /// `FEDERATION_STORE_LOCK` (i.e. other functions in this module composing a
 /// multi-step critical section) must call this instead of `load_nodes` to

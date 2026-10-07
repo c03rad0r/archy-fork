@@ -1,6 +1,7 @@
 mod blob;
 mod cdp;
 mod content;
+mod registered_media;
 mod dwn;
 mod model_proxy;
 mod node_message;
@@ -582,6 +583,12 @@ impl ApiHandler {
             // by HMAC capability token signed when the blob ref was shared.
             (Method::GET, p) if p.starts_with("/blob/") => {
                 Self::handle_blob_download(&self.blob_store, p, &query_string).await
+            }
+
+            // Immutable registered rentals use durable seller receipts and their
+            // first-open window, never legacy mutable filename shares.
+            (Method::GET, p) if p.starts_with("/content/registered_") && p.contains("/rental/") => {
+                self.handle_registered_rental(p, &headers).await
             }
 
             // Content preview — degraded previews for paid content (no auth, no payment)

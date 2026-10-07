@@ -141,6 +141,12 @@ impl HookStep {
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct ContainerConfig {
+    /// Opt in to installer-provisioned public node identity and stable app audience
+    /// for the reviewed media-registration bridge. Does not enable registration,
+    /// publication or signing permissions. Missing/corrupt existing pins fail.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub media_registration_identity: bool,
+
     /// Pull source. Mutually exclusive with `build`. Exactly one of the two must be present.
     #[serde(default)]
     pub image: Option<String>,
@@ -1982,6 +1988,24 @@ app:
     }
 
     #[test]
+    fn media_registration_identity_is_explicit_and_preserved() {
+        let ordinary = AppManifest::parse("app:\n  id: fixture\n  name: Fixture\n  version: '1'\n  container:\n    image: fixture:1\n").unwrap();
+        assert!(!ordinary.app.container.media_registration_identity);
+        assert!(!serde_yaml::to_string(&ordinary)
+            .unwrap()
+            .contains("media_registration_identity"));
+        let opted_in = AppManifest::parse("app:\n  id: fixture\n  name: Fixture\n  version: '1'\n  container:\n    image: fixture:1\n    media_registration_identity: true\n").unwrap();
+        assert!(opted_in.app.container.media_registration_identity);
+        assert!(
+            AppManifest::parse(&serde_yaml::to_string(&opted_in).unwrap())
+                .unwrap()
+                .app
+                .container
+                .media_registration_identity
+        );
+    }
+
+    #[test]
     fn test_manifest_parse() {
         let yaml = r#"
 app:
@@ -2473,6 +2497,7 @@ app:
     #[test]
     fn resolve_derived_env_renders_host_facts() {
         let c = ContainerConfig {
+            media_registration_identity: false,
             image: Some("x:latest".to_string()),
             image_signature: None,
             pull_policy: "if-not-present".to_string(),
@@ -2532,6 +2557,7 @@ app:
     #[test]
     fn resolve_secret_env_reads_from_provider() {
         let c = ContainerConfig {
+            media_registration_identity: false,
             image: Some("x:latest".to_string()),
             image_signature: None,
             pull_policy: "if-not-present".to_string(),
@@ -2580,6 +2606,7 @@ app:
     #[test]
     fn resolve_secret_env_rejects_empty_value() {
         let c = ContainerConfig {
+            media_registration_identity: false,
             image: Some("x:latest".to_string()),
             image_signature: None,
             pull_policy: "if-not-present".to_string(),
@@ -2616,6 +2643,7 @@ app:
     #[test]
     fn resolve_secret_env_skips_missing_or_empty_optional_entries() {
         let c = ContainerConfig {
+            media_registration_identity: false,
             image: Some("x:latest".to_string()),
             image_signature: None,
             pull_policy: "if-not-present".to_string(),

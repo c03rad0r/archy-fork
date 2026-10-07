@@ -18,6 +18,7 @@ pub mod npm;
 pub mod prod_orchestrator;
 pub mod quadlet;
 pub mod registry;
+pub mod registration_pin;
 pub mod secrets;
 pub mod traits;
 pub mod ui_detection;

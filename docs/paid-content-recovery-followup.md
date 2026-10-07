@@ -581,3 +581,23 @@ unchanged backend/session/app containers and rollback at
 Evidence: `/tmp/archy-payment-switch-dev-deploy.log`. Framework is reachable and
 healthy but runs a different backend/UI revision; this incremental deployment
 has not changed it.
+
+Read-only real-attempt validation: Yaya's existing `lnd.paymentstatus` RPC returns
+`failed`, `Insufficient channel balance`, and 2 sats for the operator's reported
+Lightning attempt. This verifies the deployed compatibility UI's recovery lookup
+against the actual existing backend, rather than only fixtures. Private evidence:
+`/tmp/archy-payment-switch-incident/yaya-failed-lightning-rpc-result.private.json`.
+The check did not pay, retry a payment, change a receipt, or infer seller invoice
+cancellation. Browser interaction with the operator's own saved attempt remains
+separate from this read-only RPC verification.
+
+## Combined qualification after resumed integration
+
+The full isolated backend rerun passed 1,848 tests with zero failures and five
+existing skips. All 385 recorded source, build and fixture hashes remained
+unchanged. Evidence: `/tmp/archy-qualified-candidate-backend-rerun-tests.log` and
+`/tmp/archy-qualified-candidate-backend-rerun-provenance.json`. Earlier failed
+runs remain recorded. This qualifies the current backend primitives and Browse
+path repair locally; production build and live deployment checks are next.
+Complete purchase callers, app registration/publication and timed playback
+acceptance remain open. No real payment or public publication was performed.

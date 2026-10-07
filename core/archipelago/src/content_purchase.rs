@@ -130,6 +130,27 @@ impl Contract {
     }
 }
 
+/// Accepted seller liability has no automatic expiry or garbage collection.
+/// The seller must retain immutable snapshot eligibility until settlement or an
+/// explicit future cancellation/refund protocol resolves this commitment.
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct Acceptance {
+    pub contract_hash: String,
+    pub accepted_at: i64,
+}
+impl Acceptance {
+    fn validate(&self, contract: &Contract) -> Result<()> {
+        anyhow::ensure!(
+            self.contract_hash == contract.context_hash()?
+                && self.accepted_at >= contract.offered_at
+                && self.accepted_at < contract.expires_at,
+            "Seller acceptance does not match the offer"
+        );
+        Ok(())
+    }
+}
+
 /// Private delivery capability; do not log or expose it to another buyer.
 /// The wire layer must authenticate this receipt before a buyer stores it.
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -206,6 +227,7 @@ impl PreparedToken {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) enum BuyerPhase {
     Intent,
+    AcceptanceSaved,
     TokenPrepared,
     ReceiptSaved,
     Delivered,
@@ -215,10 +237,34 @@ pub(crate) enum BuyerPhase {
 pub(crate) struct BuyerRecord {
     pub contract: Contract,
     pub phase: BuyerPhase,
+    acceptance: Option<Acceptance>,
     token: Option<PreparedToken>,
     receipt: Option<Receipt>,
 }
 impl BuyerRecord {
+    pub fn public_status(&self) -> serde_json::Value {
+        let (state, settlement_confirmed, delivered) = match self.phase {
+            BuyerPhase::Intent => ("intent", false, false),
+            BuyerPhase::AcceptanceSaved => ("accepted_payment_unconfirmed", false, false),
+            BuyerPhase::TokenPrepared => ("token_prepared_settlement_unconfirmed", false, false),
+            BuyerPhase::ReceiptSaved => ("settled_delivery_pending", true, false),
+            BuyerPhase::Delivered => ("delivered", true, true),
+        };
+        serde_json::json!({
+            "operation_id": self.contract.id,
+            "content_id": self.contract.content_id,
+            "seller_did": self.contract.seller_did,
+            "state": state,
+            "gross_sats": self.contract.gross_token_sats,
+            "minimum_net_sats": self.contract.minimum_net_sats,
+            "settlement_confirmed": settlement_confirmed,
+            "amount_received": self.receipt().map(|receipt| receipt.amount_received),
+            "delivered": delivered,
+            "recovery_required": !delivered,
+            "can_start_new_payment": false,
+        })
+    }
+
     pub fn token(&self) -> Option<&str> {
         self.token.as_ref().map(|token| token.encoded.as_str())
     }
@@ -227,6 +273,9 @@ impl BuyerRecord {
     }
     fn validate(&self) -> Result<()> {
         self.contract.validate()?;
+        if let Some(acceptance) = &self.acceptance {
+            acceptance.validate(&self.contract)?;
+        }
         if let Some(token) = &self.token {
             token.validate(&self.contract)?;
         }
@@ -235,10 +284,14 @@ impl BuyerRecord {
         }
         anyhow::ensure!(
             match self.phase {
-                BuyerPhase::Intent => self.token.is_none() && self.receipt.is_none(),
-                BuyerPhase::TokenPrepared => self.token.is_some() && self.receipt.is_none(),
+                BuyerPhase::Intent =>
+                    self.acceptance.is_none() && self.token.is_none() && self.receipt.is_none(),
+                BuyerPhase::AcceptanceSaved =>
+                    self.acceptance.is_some() && self.token.is_none() && self.receipt.is_none(),
+                BuyerPhase::TokenPrepared =>
+                    self.acceptance.is_some() && self.token.is_some() && self.receipt.is_none(),
                 BuyerPhase::ReceiptSaved | BuyerPhase::Delivered =>
-                    self.token.is_some() && self.receipt.is_some(),
+                    self.acceptance.is_some() && self.token.is_some() && self.receipt.is_some(),
             },
             "Invalid buyer purchase transition"
         );
@@ -256,11 +309,27 @@ pub(crate) enum SellerPhase {
 #[serde(deny_unknown_fields)]
 pub(crate) struct SellerRecord {
     pub contract: Contract,
+    pub accepted_at: i64,
+    token_hash: Option<String>,
     pub phase: SellerPhase,
 }
 impl SellerRecord {
+    pub fn acceptance(&self) -> Result<Acceptance> {
+        Ok(Acceptance {
+            contract_hash: self.contract.context_hash()?,
+            accepted_at: self.accepted_at,
+        })
+    }
     fn validate(&self) -> Result<()> {
         self.contract.validate()?;
+        self.acceptance()?.validate(&self.contract)?;
+        if let Some(token_hash) = &self.token_hash {
+            anyhow::ensure!(valid_hash(token_hash), "Invalid seller token hash");
+        }
+        anyhow::ensure!(
+            matches!(self.phase, SellerPhase::Intent) || self.token_hash.is_some(),
+            "Seller token was not durably bound"
+        );
         match &self.phase {
             SellerPhase::Intent => (),
             SellerPhase::Settled { amount_received } => {
@@ -458,16 +527,73 @@ impl Journal {
         }
         Ok(result)
     }
+    /// Discover existing node-owned intent after browser storage loss. The
+    /// journal lock makes this lookup and prepare_buyer's duplicate guard one
+    /// serialized decision; caller-supplied fresh UUIDs cannot bypass it.
+    pub async fn find_buyers(
+        &self,
+        buyer_did: &str,
+        seller_did: &str,
+        content_id: &str,
+    ) -> Result<Vec<BuyerRecord>> {
+        crate::identity::pubkey_bytes_from_did_key(buyer_did)?;
+        crate::identity::pubkey_bytes_from_did_key(seller_did)?;
+        let mut entries = fs::read_dir(&self.directory).await?;
+        let mut result = Vec::new();
+        let mut count = 0usize;
+        while let Some(entry) = entries.next_entry().await? {
+            let name = entry.file_name();
+            let Some(name) = name.to_str() else { continue };
+            let Some(id) = name
+                .strip_prefix("buyer-")
+                .and_then(|v| v.strip_suffix(".json"))
+            else {
+                continue;
+            };
+            count += 1;
+            anyhow::ensure!(
+                count <= 10000,
+                "Purchase recovery index requires maintenance; do not pay again"
+            );
+            let record = self
+                .buyer(id)
+                .await?
+                .context("Purchase recovery disappeared")?;
+            if record.contract.buyer_did == buyer_did
+                && record.contract.seller_did == seller_did
+                && record.contract.content_id == content_id
+            {
+                result.push(record);
+            }
+        }
+        result.sort_by(|a, b| a.contract.id.cmp(&b.contract.id));
+        Ok(result)
+    }
+
     pub async fn prepare_buyer(&self, contract: &Contract, now: i64) -> Result<BuyerRecord> {
         contract.validate()?;
         if let Some(record) = self.buyer(&contract.id).await? {
             anyhow::ensure!(&record.contract == contract, "Buyer purchase terms changed");
             return Ok(record);
         }
+        let pending = self
+            .find_buyers(
+                &contract.buyer_did,
+                &contract.seller_did,
+                &contract.content_id,
+            )
+            .await?;
+        anyhow::ensure!(
+            pending
+                .iter()
+                .all(|record| record.phase == BuyerPhase::Delivered),
+            "An existing purchase must be recovered before a new operation is created"
+        );
         contract.validate_new_at(now)?;
         let record = BuyerRecord {
             contract: contract.clone(),
             phase: BuyerPhase::Intent,
+            acceptance: None,
             token: None,
             receipt: None,
         };
@@ -486,6 +612,8 @@ impl Journal {
         contract.validate_new_at(now)?;
         let record = SellerRecord {
             contract: contract.clone(),
+            accepted_at: now,
+            token_hash: None,
             phase: SellerPhase::Intent,
         };
         self.write("seller", &contract.id, &record).await?;
@@ -510,6 +638,56 @@ impl Journal {
         );
         Ok(record)
     }
+    /// The transport layer must verify response provenance before passing the
+    /// verified seller DID. A claimed DID or client mint timestamp is insufficient.
+    pub async fn record_acceptance(
+        &self,
+        contract: &Contract,
+        acceptance: &Acceptance,
+        verified_seller_did: &str,
+    ) -> Result<BuyerRecord> {
+        anyhow::ensure!(
+            verified_seller_did == contract.seller_did,
+            "Acceptance is from another seller"
+        );
+        let mut record = self.bound_buyer(contract).await?;
+        acceptance.validate(contract)?;
+        if let Some(previous) = &record.acceptance {
+            anyhow::ensure!(previous == acceptance, "Seller acceptance changed");
+            return Ok(record);
+        }
+        anyhow::ensure!(
+            record.phase == BuyerPhase::Intent,
+            "Buyer acceptance phase changed"
+        );
+        record.acceptance = Some(acceptance.clone());
+        record.phase = BuyerPhase::AcceptanceSaved;
+        record.validate()?;
+        self.write("buyer", &contract.id, &record).await?;
+        Ok(record)
+    }
+    /// Bind exact incoming bytes before wallet settlement. Receipt/status replay
+    /// remains possible without bearer token bytes, but settlement cannot change them.
+    pub async fn record_incoming_token(
+        &self,
+        contract: &Contract,
+        encoded: &str,
+    ) -> Result<SellerRecord> {
+        let mut record = self.bound_seller(contract).await?;
+        let token = PreparedToken::new(contract, encoded.into())?;
+        if let Some(previous) = &record.token_hash {
+            anyhow::ensure!(previous == &token.sha256, "Seller incoming token changed");
+            return Ok(record);
+        }
+        anyhow::ensure!(
+            matches!(record.phase, SellerPhase::Intent),
+            "Seller settlement phase changed"
+        );
+        record.token_hash = Some(token.sha256);
+        record.validate()?;
+        self.write("seller", &contract.id, &record).await?;
+        Ok(record)
+    }
     /// Call only with the original correlated recoverable-send result.
     pub async fn record_token(&self, contract: &Contract, encoded: &str) -> Result<BuyerRecord> {
         let mut record = self.bound_buyer(contract).await?;
@@ -522,8 +700,8 @@ impl Journal {
             return Ok(record);
         }
         anyhow::ensure!(
-            record.phase == BuyerPhase::Intent,
-            "Cannot prepare token in this phase"
+            record.phase == BuyerPhase::AcceptanceSaved,
+            "Authenticated seller acceptance is not durable"
         );
         record.token = Some(token);
         record.phase = BuyerPhase::TokenPrepared;
@@ -710,7 +888,19 @@ mod tests {
         assert!(journal.record_token(&contract, &encoded).await.is_err());
         assert!(journal.record_settlement(&contract, 7).await.is_err());
         journal.prepare_buyer(&contract, 1500).await.unwrap();
-        journal.prepare_seller(&contract, 1500).await.unwrap();
+        let seller = journal.prepare_seller(&contract, 1500).await.unwrap();
+        journal
+            .record_acceptance(
+                &contract,
+                &&seller.acceptance().unwrap(),
+                &contract.seller_did,
+            )
+            .await
+            .unwrap();
+        journal
+            .record_incoming_token(&contract, &token(&contract, "seller-original"))
+            .await
+            .unwrap();
         assert!(journal.issue_receipt(&contract).await.is_err());
         journal.record_token(&contract, &encoded).await.unwrap();
         journal.record_settlement(&contract, 7).await.unwrap();
@@ -769,7 +959,19 @@ mod tests {
         let contract = contract();
         let journal = Journal::open(root.path()).await.unwrap();
         journal.prepare_buyer(&contract, 1500).await.unwrap();
-        journal.prepare_seller(&contract, 1500).await.unwrap();
+        let seller = journal.prepare_seller(&contract, 1500).await.unwrap();
+        journal
+            .record_acceptance(
+                &contract,
+                &&seller.acceptance().unwrap(),
+                &contract.seller_did,
+            )
+            .await
+            .unwrap();
+        journal
+            .record_incoming_token(&contract, &token(&contract, "seller-original"))
+            .await
+            .unwrap();
         journal
             .record_token(&contract, &token(&contract, "first"))
             .await
@@ -870,6 +1072,15 @@ mod tests {
         let contract = contract();
         let mut journal = Journal::open(root.path()).await.unwrap();
         journal.prepare_buyer(&contract, 1500).await.unwrap();
+        let seller = journal.prepare_seller(&contract, 1500).await.unwrap();
+        journal
+            .record_acceptance(
+                &contract,
+                &&seller.acceptance().unwrap(),
+                &contract.seller_did,
+            )
+            .await
+            .unwrap();
         let reached = std::sync::Arc::new(tokio::sync::Notify::new());
         let resume = std::sync::Arc::new(tokio::sync::Notify::new());
         journal.before_commit = Some((reached.clone(), resume.clone()));
@@ -886,7 +1097,7 @@ mod tests {
         let journal = Journal::open(root.path()).await.unwrap();
         assert_eq!(
             journal.buyer(&contract.id).await.unwrap().unwrap().phase,
-            BuyerPhase::Intent
+            BuyerPhase::AcceptanceSaved
         );
         let current_token = token(&contract, "current");
         journal
@@ -905,5 +1116,75 @@ mod tests {
         while let Some(entry) = directory.next_entry().await.unwrap() {
             assert!(!entry.file_name().to_string_lossy().ends_with(".tmp"));
         }
+    }
+    #[tokio::test]
+    async fn node_lookup_retains_pending_purchase_when_client_generates_a_fresh_id() {
+        let root = tempfile::tempdir().unwrap();
+        let first = contract();
+        let journal = Journal::open(root.path()).await.unwrap();
+        journal.prepare_buyer(&first, 1100).await.unwrap();
+        let mut duplicate = first.clone();
+        duplicate.id = uuid::Uuid::new_v4().to_string();
+        assert!(journal.prepare_buyer(&duplicate, 1100).await.is_err());
+        assert!(journal.buyer(&duplicate.id).await.unwrap().is_none());
+        let records = journal
+            .find_buyers(&first.buyer_did, &first.seller_did, &first.content_id)
+            .await
+            .unwrap();
+        assert_eq!(records.len(), 1);
+        assert_eq!(records[0].contract, first);
+        duplicate.content_id = "other-file".into();
+        journal.prepare_buyer(&duplicate, 1100).await.unwrap();
+        let records = journal
+            .find_buyers(&first.buyer_did, &first.seller_did, &first.content_id)
+            .await
+            .unwrap();
+        assert_eq!(records.len(), 1);
+        let mut bytes = fs::read(journal.path("buyer", &first.id).unwrap())
+            .await
+            .unwrap();
+        bytes[0] = b'!';
+        fs::write(journal.path("buyer", &first.id).unwrap(), bytes)
+            .await
+            .unwrap();
+        assert!(journal
+            .find_buyers(&first.buyer_did, &first.seller_did, &first.content_id)
+            .await
+            .is_err());
+    }
+    #[tokio::test]
+    async fn public_purchase_status_never_exposes_token_or_delivery_capability() {
+        let root = tempfile::tempdir().unwrap();
+        let contract = contract();
+        let journal = Journal::open(root.path()).await.unwrap();
+        let buyer = journal.prepare_buyer(&contract, 1100).await.unwrap();
+        assert_eq!(buyer.public_status()["state"], "intent");
+        let seller = journal.prepare_seller(&contract, 1100).await.unwrap();
+        journal
+            .record_acceptance(
+                &contract,
+                &seller.acceptance().unwrap(),
+                &contract.seller_did,
+            )
+            .await
+            .unwrap();
+        let encoded = token(&contract, "private-status-proof");
+        let buyer = journal.record_token(&contract, &encoded).await.unwrap();
+        let status = buyer.public_status();
+        assert_eq!(status["state"], "token_prepared_settlement_unconfirmed");
+        assert_eq!(status["settlement_confirmed"], false);
+        assert!(!status.to_string().contains(&encoded));
+        journal
+            .record_incoming_token(&contract, &encoded)
+            .await
+            .unwrap();
+        journal.record_settlement(&contract, 8).await.unwrap();
+        let receipt = journal.issue_receipt(&contract).await.unwrap();
+        let buyer = journal.record_receipt(&contract, &receipt).await.unwrap();
+        let status = buyer.public_status();
+        assert_eq!(status["state"], "settled_delivery_pending");
+        assert_eq!(status["amount_received"], 8);
+        assert_eq!(status["can_start_new_payment"], false);
+        assert!(!status.to_string().contains(&receipt.capability));
     }
 }

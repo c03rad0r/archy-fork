@@ -896,6 +896,62 @@ impl RpcHandler {
         Ok(result)
     }
 
+    /// Owner-authenticated local recovery lookup. No mint, peer request or
+    /// wallet mutation occurs here, and private tokens/capabilities are omitted.
+    pub(super) async fn handle_content_payment_status(
+        &self,
+        params: Option<serde_json::Value>,
+    ) -> Result<serde_json::Value> {
+        let params = params.context("Missing payment lookup parameters")?;
+        let onion = params
+            .get("onion")
+            .and_then(|v| v.as_str())
+            .context("Missing seller address")?;
+        let content_id = params
+            .get("content_id")
+            .and_then(|v| v.as_str())
+            .context("Missing content identifier")?;
+        anyhow::ensure!(is_valid_v3_onion(onion), "Invalid seller address");
+        crate::content_owned::validate_identity(onion, content_id)?;
+        let peer =
+            crate::federation::load_unique_payment_peer(&self.config.data_dir, onion).await?;
+        let (data, _) = self.state_manager.get_snapshot().await;
+        let buyer_did = crate::identity::did_key_from_pubkey_hex(&data.server_info.pubkey)?;
+        let journal = crate::content_purchase::Journal::open(&self.config.data_dir).await?;
+        let records = if let Some(id) = params.get("operation_id") {
+            let id = id
+                .as_str()
+                .context("Invalid purchase operation identifier")?;
+            match journal.buyer(id).await? {
+                Some(record) => {
+                    anyhow::ensure!(
+                        record.contract.buyer_did == buyer_did
+                            && record.contract.seller_did == peer.did
+                            && record.contract.content_id == content_id,
+                        "Purchase belongs to another buyer, seller or content item"
+                    );
+                    vec![record]
+                }
+                None => Vec::new(),
+            }
+        } else {
+            journal
+                .find_buyers(&buyer_did, &peer.did, content_id)
+                .await?
+        };
+        let attempts: Vec<_> = records
+            .iter()
+            .map(|record| record.public_status())
+            .collect();
+        Ok(serde_json::json!({
+            "state": if attempts.is_empty() { "unknown" } else { "recorded" },
+            "attempts": attempts,
+            // Absence is not evidence that a legacy payment failed/reclaimed.
+            "can_start_new_payment": false,
+            "legacy_recovery_unresolved": attempts.is_empty(),
+        }))
+    }
+
     /// Buyer side (#46): ask the selling node to mint a Lightning invoice for a
     /// paid item so the buyer can pay from any external wallet. Returns the
     /// bolt11 invoice + payment hash to render as a QR and poll for settlement.
@@ -943,9 +999,11 @@ impl RpcHandler {
             };
 
         if !response.status().is_success() {
-            return Ok(serde_json::json!({
-                "error": format!("Seller could not create an invoice ({}).", response.status())
-            }));
+            let status = response.status();
+            let body = bounded_seller_error(response).await;
+            return Ok(
+                serde_json::json!({ "error": seller_error_message(status, &body), "payment_started": false }),
+            );
         }
         let body: serde_json::Value = response
             .json()
@@ -1196,9 +1254,11 @@ impl RpcHandler {
                 }
             };
         if !response.status().is_success() {
-            return Ok(serde_json::json!({
-                "error": format!("Seller could not provide an address ({}).", response.status())
-            }));
+            let status = response.status();
+            let body = bounded_seller_error(response).await;
+            return Ok(
+                serde_json::json!({ "error": seller_error_message(status, &body), "payment_started": false }),
+            );
         }
         let body: serde_json::Value = response
             .json()

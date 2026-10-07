@@ -1,0 +1,27 @@
+{
+  "plan": {
+    "mint_url": "https://mint.invalid",
+    "keysets": [
+      {
+        "keyset_id": "0011223344556677",
+        "denominations": [
+          4,
+          4
+        ],
+        "input_fee_ppk": 400
+      },
+      {
+        "keyset_id": "008899aabbccddee",
+        "denominations": [
+          2
+        ],
+        "input_fee_ppk": 100
+      }
+    ],
+    "gross_sats": 10,
+    "fee_sats": 1,
+    "net_sats": 9
+  },
+  "preimage": "[\"content-payment-fee-plan-v1\",\"https://mint.invalid\",10,1,9,[[\"0011223344556677\",400,[4,4]],[\"008899aabbccddee\",100,[2]]]]",
+  "sha256": "ae9985299ee707ac4a7ce6b1a5d358c64ac2a69e2481e587b1e66dbcb9a27b0a"
+}

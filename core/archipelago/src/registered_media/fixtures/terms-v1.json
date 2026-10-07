@@ -1,0 +1,26 @@
+{
+  "description": "Independent Node.js ordered-array SHA256 fixture using the public registration test vector.",
+  "receipt": {
+    "version": 1,
+    "requestId": "00000000-0000-4000-8000-000000000001",
+    "nonce": "abababababababababababababababababababababababababababababababab",
+    "appAudience": "fixture-indeehub",
+    "nodeDid": "did:key:z6MkvDqGT54cXesYGvABpF1UapVNwjCqRcafi4Px6Thv5T3Z",
+    "producer": "cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd",
+    "projectId": "fixture-project",
+    "priceSats": 15,
+    "viewingSeconds": 3600,
+    "expiresAt": 1600,
+    "contentId": "registered_00000000-0000-4000-8000-000000000001",
+    "sha256": "bbe573fdac96c464b67257a97c8667713c124c80927c01bab75b7178f4c0a661",
+    "sizeBytes": "23",
+    "paymentMethods": [
+      "cashu",
+      "lightning-cashu"
+    ],
+    "issuedAt": 1000,
+    "signature": "9cb11fca6a946b38049402e8833992130922140f6bb5f5cc3b0806bc9865657be084c3b6fcfa1e2aa31f78f81ba44df5f32d824caa1c9f926f8d90f6578a350e"
+  },
+  "preimageUtf8": "[\"archipelago.registered-media.terms.v1\",\"did:key:z6MkvDqGT54cXesYGvABpF1UapVNwjCqRcafi4Px6Thv5T3Z\",\"fixture-indeehub\",\"cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd\",\"fixture-project\",\"registered_00000000-0000-4000-8000-000000000001\",\"bbe573fdac96c464b67257a97c8667713c124c80927c01bab75b7178f4c0a661\",\"23\",15,3600,[\"cashu\",\"lightning-cashu\"]]",
+  "sha256": "a0d104ece82fd9d2094dbe4e6fd8285889ccb030407c42d9098d3c74faf02608"
+}

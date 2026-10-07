@@ -115,23 +115,6 @@ async fn save_catalog_unlocked(data_dir: &Path, catalog: &ContentCatalog) -> Res
     Ok(())
 }
 
-/// Removes `id` from the on-disk catalog. Best-effort: a failure here just
-/// means the entry gets pruned again next time it's requested, so errors are
-/// logged rather than propagated.
-async fn prune_missing_content_entry(data_dir: &Path, id: &str) {
-    let _lock = CATALOG_WRITES.lock().await;
-    let Ok(mut catalog) = load_catalog(data_dir).await else {
-        return;
-    };
-    let before = catalog.items.len();
-    catalog.items.retain(|i| i.id != id);
-    if catalog.items.len() != before {
-        if let Err(e) = save_catalog_unlocked(data_dir, &catalog).await {
-            warn!(error = %e, content_id = %id, "failed to save catalog after pruning missing content entry");
-        }
-    }
-}
-
 /// Get the full filesystem path for a content item.
 /// Checks the dedicated content/files/ directory first, then falls back to the
 /// FileBrowser data directory (where users manage files via the web UI).
@@ -153,6 +136,46 @@ pub fn content_file_path(data_dir: &Path, item: &ContentItem) -> PathBuf {
 
     // Return primary path even if it doesn't exist (caller checks existence)
     primary
+}
+
+pub(crate) fn validate_onchain_payment_price(price_sats: u64) -> Result<()> {
+    anyhow::ensure!(
+        price_sats >= 546,
+        "On-chain payment requires at least 546 sats. Choose Lightning or ecash for this file."
+    );
+    Ok(())
+}
+
+/// Read-only preflight before issuing a payable invoice/address. This catches
+/// missing/replaced files but does not substitute for an immutable purchase
+/// snapshot: later delivery must still preserve the original accepted contract.
+pub(crate) async fn ensure_payment_source_available(
+    data_dir: &Path,
+    item: &ContentItem,
+) -> Result<()> {
+    let path = content_file_path(data_dir, item);
+    let canonical = fs::canonicalize(&path)
+        .await
+        .context("The shared file is currently unavailable; no payment request was created")?;
+    let mut inside_root = false;
+    for root in [data_dir.join(CONTENT_DIR), data_dir.join("filebrowser")] {
+        if let Ok(root) = fs::canonicalize(root).await {
+            inside_root |= canonical.starts_with(root);
+        }
+    }
+    anyhow::ensure!(inside_root, "The shared file is outside the content roots");
+    let mut options = fs::OpenOptions::new();
+    options.read(true);
+    #[cfg(unix)]
+    options.custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK);
+    let file = options
+        .open(&canonical)
+        .await
+        .context("The shared file cannot be opened; no payment request was created")?;
+    let metadata = file.metadata().await?;
+    anyhow::ensure!(metadata.is_file() && metadata.len() > 0 && metadata.len() == item.size_bytes,
+        "The shared file has changed or is unavailable; refresh its catalog before accepting payment");
+    Ok(())
 }
 
 /// Add a content item to the catalog.
@@ -404,20 +427,10 @@ where
 
     let file_path = content_file_path(data_dir, item);
     if !file_path.exists() {
-        // The catalog entry survived (it's a separate JSON file) but its
-        // backing file is gone — most likely lost in an unrelated data-dir
-        // reset (a shared filebrowser file, 2026-07-01: two catalog entries
-        // outlived a filebrowser reinstall that wiped the files themselves).
-        // Leaving the entry in place would keep advertising it as available
-        // to every peer forever, each hitting the exact same dead end this
-        // one just did. Prune it so it stops being offered.
-        warn!(
-            content_id = %id,
-            filename = %item.filename,
-            "content catalog entry's file is missing on disk — pruning the stale entry"
-        );
-        prune_missing_content_entry(data_dir, id).await;
-        return Ok(ServeResult::NotFound);
+        // A disconnected mount, moved file or permission failure is not an
+        // instruction to unshare content or erase its purchase metadata.
+        warn!(content_id = %id, "Shared content is temporarily unavailable; catalog retained");
+        return Ok(ServeResult::Unavailable);
     }
 
     // Refuse unauthorized viewers before opening or reading any bytes.
@@ -981,11 +994,11 @@ mod faststart_tests {
 }
 
 #[cfg(test)]
-mod prune_missing_content_tests {
+mod unavailable_content_tests {
     use super::*;
 
     #[tokio::test]
-    async fn serve_content_prunes_catalog_entry_whose_file_is_missing() {
+    async fn unavailable_file_retains_identity_and_recovers_when_storage_returns() {
         // Simulates a catalog entry that outlived its backing file (a shared
         // filebrowser file lost in an unrelated data-dir reset, 2026-07-01) —
         // every peer request for it would otherwise 404 forever with no way
@@ -1010,17 +1023,24 @@ mod prune_missing_content_tests {
         let result = serve_content(data_dir, "missing-item", None, None, None, None, false)
             .await
             .unwrap();
-        assert!(matches!(result, ServeResult::NotFound));
-
+        assert!(matches!(result, ServeResult::Unavailable));
         let reloaded = load_catalog(data_dir).await.unwrap();
-        assert!(
-            reloaded.items.is_empty(),
-            "stale entry should have been pruned after the 404"
-        );
+        assert_eq!(reloaded.items.len(), 1);
+        assert_eq!(reloaded.items[0].id, "missing-item");
+        fs::create_dir_all(data_dir.join("filebrowser"))
+            .await
+            .unwrap();
+        fs::write(data_dir.join("filebrowser/gone.mp4"), b"recovered")
+            .await
+            .unwrap();
+        let result = serve_content(data_dir, "missing-item", None, None, None, None, false)
+            .await
+            .unwrap();
+        assert!(matches!(result, ServeResult::Ok(bytes, _) if bytes == b"recovered"));
     }
 
     #[tokio::test]
-    async fn serve_content_leaves_other_entries_untouched_when_pruning() {
+    async fn unavailable_file_does_not_rewrite_any_catalog_entries() {
         let dir = tempfile::tempdir().unwrap();
         let data_dir = dir.path();
         let missing = ContentItem {
@@ -1062,8 +1082,9 @@ mod prune_missing_content_tests {
             .unwrap();
 
         let reloaded = load_catalog(data_dir).await.unwrap();
-        assert_eq!(reloaded.items.len(), 1);
-        assert_eq!(reloaded.items[0].id, "present-item");
+        assert_eq!(reloaded.items.len(), 2);
+        assert_eq!(reloaded.items[0].id, "missing-item");
+        assert_eq!(reloaded.items[1].id, "present-item");
     }
 }
 
@@ -1815,5 +1836,64 @@ mod preview_boundary_tests {
         assert!(
             matches!(serve_content_preview(dir.path(), "preview-test").await.unwrap(), PreviewResult::FullContent(bytes, _) if bytes == b"public")
         );
+    }
+}
+
+#[cfg(test)]
+mod payment_source_tests {
+    use super::*;
+    #[test]
+    fn onchain_quote_preserves_wallet_minimum_boundary() {
+        assert!(validate_onchain_payment_price(545).is_err());
+        assert!(validate_onchain_payment_price(546).is_ok());
+    }
+
+    #[tokio::test]
+    async fn payment_preflight_rejects_missing_changed_directory_and_escaped_sources() {
+        let root = tempfile::tempdir().unwrap();
+        let item = ContentItem {
+            id: "paid".into(),
+            filename: "Photos/clip.mp4".into(),
+            mime_type: "video/mp4".into(),
+            size_bytes: 4,
+            description: String::new(),
+            access: AccessControl::Paid {
+                price_sats: 2,
+                accepted: vec![],
+            },
+            availability: Availability::AllPeers,
+            added_at: String::new(),
+        };
+        assert!(ensure_payment_source_available(root.path(), &item)
+            .await
+            .is_err());
+        fs::create_dir_all(root.path().join("filebrowser/Photos"))
+            .await
+            .unwrap();
+        let path = root.path().join("filebrowser/Photos/clip.mp4");
+        fs::write(&path, b"film").await.unwrap();
+        ensure_payment_source_available(root.path(), &item)
+            .await
+            .unwrap();
+        fs::write(&path, b"changed").await.unwrap();
+        assert!(ensure_payment_source_available(root.path(), &item)
+            .await
+            .is_err());
+        fs::remove_file(&path).await.unwrap();
+        fs::create_dir(&path).await.unwrap();
+        assert!(ensure_payment_source_available(root.path(), &item)
+            .await
+            .is_err());
+        fs::remove_dir(&path).await.unwrap();
+        let outside = tempfile::tempdir().unwrap();
+        let outside_file = outside.path().join("film");
+        fs::write(&outside_file, b"film").await.unwrap();
+        #[cfg(unix)]
+        {
+            std::os::unix::fs::symlink(&outside_file, &path).unwrap();
+            assert!(ensure_payment_source_available(root.path(), &item)
+                .await
+                .is_err());
+        }
     }
 }

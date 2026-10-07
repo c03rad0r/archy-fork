@@ -120,7 +120,7 @@ pub struct PreparedRegistration {
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-struct SourceStamp {
+pub(crate) struct SourceStamp {
     device: u64,
     inode: u64,
     size: u64,
@@ -130,7 +130,7 @@ struct SourceStamp {
     changed_nanos: i64,
 }
 impl SourceStamp {
-    fn read(file: &File) -> Result<Self> {
+    pub(crate) fn read(file: &File) -> Result<Self> {
         let m = file.metadata()?;
         anyhow::ensure!(
             m.is_file(),
@@ -254,7 +254,12 @@ fn fd_result(fd: libc::c_int) -> Result<File> {
     // SAFETY: the successful syscall returned a newly owned descriptor.
     Ok(unsafe { File::from_raw_fd(fd) })
 }
-fn open_at(dir: &File, name: &str, flags: libc::c_int, mode: libc::mode_t) -> Result<File> {
+pub(crate) fn open_at(
+    dir: &File,
+    name: &str,
+    flags: libc::c_int,
+    mode: libc::mode_t,
+) -> Result<File> {
     let name = CString::new(name)?;
     // SAFETY: descriptor and NUL-terminated name remain alive through the call.
     fd_result(unsafe {
@@ -266,7 +271,7 @@ fn open_at(dir: &File, name: &str, flags: libc::c_int, mode: libc::mode_t) -> Re
         )
     })
 }
-fn open_directory(path: &Path) -> Result<File> {
+pub(crate) fn open_directory(path: &Path) -> Result<File> {
     let path = c_path(path)?;
     // SAFETY: path is a valid NUL-terminated string.
     fd_result(unsafe {
@@ -276,7 +281,7 @@ fn open_directory(path: &Path) -> Result<File> {
         )
     })
 }
-fn private_directory(parent: &File, name: &str) -> Result<File> {
+pub(crate) fn private_directory(parent: &File, name: &str) -> Result<File> {
     let c_name = CString::new(name)?;
     // SAFETY: valid directory descriptor and string; no existing data is replaced.
     let result = unsafe { libc::mkdirat(parent.as_raw_fd(), c_name.as_ptr(), 0o700) };
@@ -298,7 +303,7 @@ fn private_directory(parent: &File, name: &str) -> Result<File> {
 }
 
 #[cfg(target_os = "linux")]
-fn open_cloud_file(root: &File, relative: &Path) -> Result<File> {
+pub(crate) fn open_cloud_file(root: &File, relative: &Path) -> Result<File> {
     #[repr(C)]
     struct OpenHow {
         flags: u64,
@@ -340,7 +345,7 @@ fn open_cloud_file(root: &File, relative: &Path) -> Result<File> {
     Ok(file)
 }
 #[cfg(not(target_os = "linux"))]
-fn open_cloud_file(_root: &File, _relative: &Path) -> Result<File> {
+pub(crate) fn open_cloud_file(_root: &File, _relative: &Path) -> Result<File> {
     anyhow::bail!("Safe Cloud registration currently requires Linux openat2")
 }
 
@@ -351,7 +356,7 @@ fn cancelled(limits: &Limits<'_>) -> Result<()> {
     );
     Ok(())
 }
-fn lock_operation(dir: &File, limits: &Limits<'_>, deadline: Instant) -> Result<()> {
+pub(crate) fn lock_operation(dir: &File, limits: &Limits<'_>, deadline: Instant) -> Result<()> {
     loop {
         cancelled(limits)?;
         anyhow::ensure!(
@@ -371,7 +376,10 @@ fn lock_operation(dir: &File, limits: &Limits<'_>, deadline: Instant) -> Result<
         std::thread::sleep(Duration::from_millis(20));
     }
 }
-fn read_record<T: serde::de::DeserializeOwned>(dir: &File, name: &str) -> Result<Option<T>> {
+pub(crate) fn read_record<T: serde::de::DeserializeOwned>(
+    dir: &File,
+    name: &str,
+) -> Result<Option<T>> {
     let file = match open_at(dir, name, libc::O_RDONLY | libc::O_NONBLOCK, 0) {
         Ok(file) => file,
         Err(error)
@@ -398,7 +406,7 @@ fn read_record<T: serde::de::DeserializeOwned>(dir: &File, name: &str) -> Result
         "Damaged registration record; preserve it for recovery",
     )?))
 }
-fn temporary(dir: &File) -> Result<(String, File)> {
+pub(crate) fn temporary(dir: &File) -> Result<(String, File)> {
     let name = format!("pending-{}", uuid::Uuid::new_v4());
     Ok((
         name.clone(),
@@ -410,7 +418,7 @@ fn temporary(dir: &File) -> Result<(String, File)> {
         )?,
     ))
 }
-fn publish_file(dir: &File, temporary: &str, final_name: &str) -> Result<()> {
+pub(crate) fn publish_file(dir: &File, temporary: &str, final_name: &str) -> Result<()> {
     let from = CString::new(temporary)?;
     let to = CString::new(final_name)?;
     // linkat publishes without replacing an existing destination. Both names
@@ -434,7 +442,7 @@ fn publish_file(dir: &File, temporary: &str, final_name: &str) -> Result<()> {
     dir.sync_all()?;
     Ok(())
 }
-fn save_record<T: Serialize>(dir: &File, name: &str, value: &T) -> Result<()> {
+pub(crate) fn save_record<T: Serialize>(dir: &File, name: &str, value: &T) -> Result<()> {
     let bytes = serde_json::to_vec(value)?;
     anyhow::ensure!(
         bytes.len() as u64 <= MAX_RECORD_BYTES,
@@ -446,7 +454,7 @@ fn save_record<T: Serialize>(dir: &File, name: &str, value: &T) -> Result<()> {
     publish_file(dir, &temporary, name)
 }
 
-fn hash_file(
+pub(crate) fn hash_file(
     file: &mut File,
     mut output: Option<&mut File>,
     limits: &Limits<'_>,

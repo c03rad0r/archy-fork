@@ -511,6 +511,66 @@ impl<'a> PeerRequest<'a> {
         self.authenticate_content(data_dir).await?.send_get().await
     }
 
+    /// Send a purchase request with the exact serialized bytes bound to its peer
+    /// proof. The expected seller must match the existing authenticated binding.
+    /// An ambiguous reply is recovered by the purchase journal, never by this
+    /// transport replaying a token through another route.
+    pub(crate) async fn send_content_json<B: serde::Serialize>(
+        self,
+        data_dir: &std::path::Path,
+        expected_seller: &str,
+        body: &B,
+    ) -> Result<(reqwest::Response, crate::transport::TransportKind)> {
+        let (request, encoded) = self
+            .prepare_content_json(data_dir, expected_seller, body)
+            .await?;
+        request.send_encoded_json(&encoded).await
+    }
+
+    async fn prepare_content_json<B: serde::Serialize>(
+        mut self,
+        data_dir: &std::path::Path,
+        expected_seller: &str,
+        body: &B,
+    ) -> Result<(Self, Vec<u8>)> {
+        anyhow::ensure!(
+            self.path.starts_with("/content/purchase/"),
+            "Not a purchase route"
+        );
+        let peer = crate::federation::load_unique_payment_peer(data_dir, self.onion_host).await?;
+        anyhow::ensure!(
+            peer.did == expected_seller,
+            "Purchase seller does not match the authenticated peer binding"
+        );
+        anyhow::ensure!(
+            self.fips_npub.is_some_and(|npub| !npub.is_empty())
+                && peer.fips_npub.as_deref() == self.fips_npub,
+            "Purchase mesh route does not match the authenticated peer binding"
+        );
+        let identity =
+            crate::identity::NodeIdentity::load_existing(&data_dir.join("identity")).await?;
+        let encoded = serde_json::to_vec(body).context("Encode purchase request")?;
+        anyhow::ensure!(
+            encoded.len() <= 1024 * 1024,
+            "Purchase request is too large"
+        );
+        let proof = crate::content_auth::sign_request(
+            &identity,
+            expected_seller,
+            &hyper::Method::POST,
+            self.path,
+            &encoded,
+            chrono::Utc::now().timestamp(),
+        )?;
+        self.headers
+            .retain(|(name, _)| !name.eq_ignore_ascii_case(crate::content_auth::REQUEST_HEADER));
+        self.headers
+            .push((crate::content_auth::REQUEST_HEADER, proof));
+        self.single_delivery = true;
+        self.require_fips = true;
+        Ok((self, encoded))
+    }
+
     pub fn header(mut self, name: &'a str, value: impl Into<String>) -> Self {
         self.headers.push((name, value.into()));
         self
@@ -538,11 +598,20 @@ impl<'a> PeerRequest<'a> {
         &self,
         body: &B,
     ) -> Result<(reqwest::Response, crate::transport::TransportKind)> {
+        let encoded = serde_json::to_vec(body).context("Encode peer JSON request")?;
+        self.send_encoded_json(&encoded).await
+    }
+
+    // Serialize once: FIPS attempts and any permitted fallback use identical bytes.
+    async fn send_encoded_json(
+        &self,
+        body: &[u8],
+    ) -> Result<(reqwest::Response, crate::transport::TransportKind)> {
         use crate::settings::transport::TransportPref;
         let pref = self.preference().await;
         // FIPS-only or Auto: try FIPS first.
         if matches!(pref, TransportPref::Auto | TransportPref::Fips) {
-            match self.try_fips_post_json(body).await? {
+            match self.try_fips_post_bytes(body).await? {
                 Some(resp) => {
                     // Use the FIPS reply unless it's one a Tor retry could
                     // fix (404 path-not-served / 5xx) and we're allowed to
@@ -574,7 +643,7 @@ impl<'a> PeerRequest<'a> {
                 }
             }
         }
-        let resp = self.send_tor_post_json(body).await?;
+        let resp = self.send_tor_post_bytes(body).await?;
         self.spawn_record(crate::transport::TransportKind::Tor);
         Ok((resp, crate::transport::TransportKind::Tor))
     }
@@ -618,10 +687,7 @@ impl<'a> PeerRequest<'a> {
         Ok((resp, crate::transport::TransportKind::Tor))
     }
 
-    async fn try_fips_post_json<B: serde::Serialize>(
-        &self,
-        body: &B,
-    ) -> Result<Option<reqwest::Response>> {
+    async fn try_fips_post_bytes(&self, body: &[u8]) -> Result<Option<reqwest::Response>> {
         let Some(npub) = self.fips_npub else {
             telemetry::record_fallback(FallbackReason::NoNpub);
             return Ok(None);
@@ -657,7 +723,10 @@ impl<'a> PeerRequest<'a> {
             budget
         };
         let c = client_with_delivery_policy(per_attempt, self.single_delivery || self.require_fips);
-        let mut rb = c.post(&url).json(body);
+        let mut rb = c
+            .post(&url)
+            .header(reqwest::header::CONTENT_TYPE, "application/json")
+            .body(body.to_vec());
         for (k, v) in &self.headers {
             rb = rb.header(*k, v);
         }
@@ -770,10 +839,13 @@ impl<'a> PeerRequest<'a> {
         }
     }
 
-    async fn send_tor_post_json<B: serde::Serialize>(&self, body: &B) -> Result<reqwest::Response> {
+    async fn send_tor_post_bytes(&self, body: &[u8]) -> Result<reqwest::Response> {
         let url = self.tor_url();
         let client = self.tor_client()?;
-        let mut rb = client.post(&url).json(body);
+        let mut rb = client
+            .post(&url)
+            .header(reqwest::header::CONTENT_TYPE, "application/json")
+            .body(body.to_vec());
         for (k, v) in &self.headers {
             rb = rb.header(*k, v);
         }
@@ -814,6 +886,120 @@ impl<'a> PeerRequest<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn purchase_post_serializes_once_and_binds_the_actual_bytes_to_the_peer() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        struct Counted(AtomicUsize);
+        impl serde::Serialize for Counted {
+            fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+                serializer.serialize_u64(self.0.fetch_add(1, Ordering::SeqCst) as u64)
+            }
+        }
+        let dir = tempfile::tempdir().unwrap();
+        let identity = crate::identity::NodeIdentity::load_or_create(&dir.path().join("identity"))
+            .await
+            .unwrap();
+        let seller = crate::identity::did_key_from_pubkey_hex(&hex::encode([7; 32])).unwrap();
+        tokio::fs::create_dir(dir.path().join("federation"))
+            .await
+            .unwrap();
+        let peer = serde_json::json!({"did":seller,"pubkey":hex::encode([7;32]),"onion":"seller.onion",
+            "trust_level":"trusted","added_at":"2026-10-06T00:00:00Z","fips_npub":"npub-test-seller"});
+        tokio::fs::write(
+            dir.path().join("federation/nodes.json"),
+            serde_json::to_vec(&serde_json::json!({"nodes":[peer.clone()]})).unwrap(),
+        )
+        .await
+        .unwrap();
+        let body = Counted(AtomicUsize::new(0));
+        let path = "/content/purchase/settle";
+        let (request, bytes) = PeerRequest::new(Some("npub-test-seller"), "seller.onion", path)
+            .prepare_content_json(dir.path(), &seller, &body)
+            .await
+            .unwrap();
+        assert_eq!(body.0.load(Ordering::SeqCst), 1);
+        assert_eq!(bytes, b"0");
+        assert!(request.require_fips && request.single_delivery);
+        let mut headers = hyper::HeaderMap::new();
+        for (key, value) in request.headers {
+            headers.insert(
+                hyper::header::HeaderName::from_bytes(key.as_bytes()).unwrap(),
+                value.parse().unwrap(),
+            );
+        }
+        assert_eq!(
+            crate::content_auth::authenticate_request(
+                &headers,
+                &seller,
+                &hyper::Method::POST,
+                path,
+                &bytes,
+                chrono::Utc::now().timestamp()
+            )
+            .unwrap(),
+            identity.did_key().unwrap()
+        );
+        assert!(crate::content_auth::authenticate_request(
+            &headers,
+            &seller,
+            &hyper::Method::POST,
+            path,
+            b"1",
+            chrono::Utc::now().timestamp()
+        )
+        .is_err());
+        for (npub, did) in [
+            (Some("wrong-route"), seller.as_str()),
+            (None, seller.as_str()),
+            (Some("npub-test-seller"), "wrong-seller"),
+        ] {
+            assert!(PeerRequest::new(npub, "seller.onion", path)
+                .prepare_content_json(dir.path(), did, &body)
+                .await
+                .is_err());
+        }
+        assert_eq!(body.0.load(Ordering::SeqCst), 1);
+        tokio::fs::write(
+            dir.path().join("federation/nodes.json"),
+            serde_json::to_vec(&serde_json::json!({"nodes":[peer.clone(),peer.clone()]})).unwrap(),
+        )
+        .await
+        .unwrap();
+        assert!(
+            PeerRequest::new(Some("npub-test-seller"), "seller.onion", path)
+                .prepare_content_json(dir.path(), &seller, &body)
+                .await
+                .is_err()
+        );
+        let mut conflicting = peer.clone();
+        conflicting["did"] = serde_json::json!(crate::identity::did_key_from_pubkey_hex(
+            &hex::encode([8; 32])
+        )
+        .unwrap());
+        conflicting["pubkey"] = serde_json::json!(hex::encode([8; 32]));
+        conflicting["onion"] = serde_json::json!("seller");
+        let mut wrong_key = peer.clone();
+        wrong_key["pubkey"] = serde_json::json!(hex::encode([8; 32]));
+        for nodes in [
+            serde_json::json!([peer, conflicting]),
+            serde_json::json!([wrong_key]),
+        ] {
+            tokio::fs::write(
+                dir.path().join("federation/nodes.json"),
+                serde_json::to_vec(&serde_json::json!({"nodes": nodes})).unwrap(),
+            )
+            .await
+            .unwrap();
+            assert!(
+                PeerRequest::new(Some("npub-test-seller"), "seller.onion", path)
+                    .prepare_content_json(dir.path(), &seller, &body)
+                    .await
+                    .is_err()
+            );
+        }
+        assert_eq!(body.0.load(Ordering::SeqCst), 1);
+    }
 
     #[tokio::test]
     async fn required_media_never_falls_back_when_peer_has_no_fips_identity() {

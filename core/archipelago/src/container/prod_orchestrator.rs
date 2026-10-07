@@ -3915,6 +3915,27 @@ impl ProdContainerOrchestrator {
     }
 
     async fn resolve_dynamic_env(&self, manifest: &mut AppManifest) -> Result<()> {
+        if manifest.app.container.media_registration_identity {
+            // Only opted-in manifests read the existing appliance identity. A
+            // missing key/public-key mismatch is an error, never key generation.
+            let identity =
+                crate::identity::NodeIdentity::load_existing(&self.data_dir.join("identity"))
+                    .await?;
+            anyhow::ensure!(
+                self.node_pubkey_hex().await? == identity.pubkey_hex(),
+                "Existing node public key disagrees with its signing identity"
+            );
+            let data_dir = self.data_dir.clone();
+            let app_id = manifest.app.id.clone();
+            let pin = tokio::task::spawn_blocking(move || {
+                crate::container::registration_pin::ensure_for_installation(
+                    &data_dir, &app_id, &identity,
+                )
+            })
+            .await
+            .context("Application registration pin worker failed")??;
+            crate::container::registration_pin::apply_environment(manifest, &pin)?;
+        }
         if manifest.app.id == "nginx-proxy-manager" {
             crate::container::npm::resolve_storage()
                 .await?
@@ -6431,6 +6452,100 @@ app:
         tokio::fs::write(dir.join("node_key.pub"), hex::decode(pubkey_hex).unwrap())
             .await
             .unwrap();
+    }
+
+    #[tokio::test]
+    async fn opted_in_media_registration_pins_preserve_audience_through_env_reconciliation() {
+        let rt = Arc::new(MockRuntime::default());
+        let root = tempfile::tempdir().unwrap();
+        let mut orch =
+            ProdContainerOrchestrator::with_runtime(rt, PathBuf::from("/nonexistent-for-tests"));
+        orch.set_data_dir(root.path().to_owned());
+        orch.set_secrets_dir(root.path().join("secrets"));
+        let identity = crate::identity::NodeIdentity::load_or_create(&root.path().join("identity"))
+            .await
+            .unwrap();
+        let key_before = tokio::fs::read(root.path().join("identity/node_key"))
+            .await
+            .unwrap();
+        let mut app = pull_manifest("indeedhub-api", "fixture:1");
+        app.app.container.media_registration_identity = true;
+        app.app
+            .environment
+            .push("ARCHIPELAGO_REGISTRATION_AUDIENCE=untrusted-manifest-value".into());
+        orch.resolve_dynamic_env(&mut app).await.unwrap();
+        let first = app.app.environment.clone();
+        orch.resolve_dynamic_env(&mut app).await.unwrap();
+        assert_eq!(app.app.environment, first);
+        let pin = crate::container::registration_pin::load_existing(
+            root.path(),
+            "indeedhub-api",
+            &identity,
+        )
+        .unwrap();
+        assert!(first.contains(&format!(
+            "ARCHIPELAGO_REGISTRATION_NODE_PUBLIC_KEY={}",
+            identity.pubkey_hex()
+        )));
+        assert!(first.contains(&format!(
+            "ARCHIPELAGO_REGISTRATION_NODE_DID={}",
+            identity.did_key().unwrap()
+        )));
+        assert!(first.contains(&format!(
+            "ARCHIPELAGO_REGISTRATION_AUDIENCE={}",
+            pin.app_audience
+        )));
+        assert!(!first.iter().any(|entry| entry.contains("_ENABLED=")));
+        assert_eq!(
+            tokio::fs::read(root.path().join("identity/node_key"))
+                .await
+                .unwrap(),
+            key_before
+        );
+    }
+
+    #[tokio::test]
+    async fn unrelated_apps_do_not_require_identity_or_get_registration_pins() {
+        let rt = Arc::new(MockRuntime::default());
+        let root = tempfile::tempdir().unwrap();
+        let mut orch =
+            ProdContainerOrchestrator::with_runtime(rt, PathBuf::from("/nonexistent-for-tests"));
+        orch.set_data_dir(root.path().to_owned());
+        orch.set_secrets_dir(root.path().join("secrets"));
+        let mut app = pull_manifest("ordinary-app", "fixture:1");
+        orch.resolve_dynamic_env(&mut app).await.unwrap();
+        assert!(!root.path().join("identity").exists());
+        assert!(!root.path().join("app-registration-pins").exists());
+        assert!(!app
+            .app
+            .environment
+            .iter()
+            .any(|entry| entry.starts_with("ARCHIPELAGO_REGISTRATION_")));
+    }
+
+    #[tokio::test]
+    async fn registration_pins_require_existing_matching_node_keys() {
+        let rt = Arc::new(MockRuntime::default());
+        let root = tempfile::tempdir().unwrap();
+        let mut orch = ProdContainerOrchestrator::with_runtime(
+            rt.clone(),
+            PathBuf::from("/nonexistent-for-tests"),
+        );
+        orch.set_data_dir(root.path().to_owned());
+        orch.set_secrets_dir(root.path().join("secrets"));
+        let mut app = pull_manifest("indeedhub-api", "fixture:1");
+        app.app.container.media_registration_identity = true;
+        assert!(orch.resolve_dynamic_env(&mut app).await.is_err());
+        assert!(!root.path().join("identity").exists());
+        crate::identity::NodeIdentity::load_or_create(&root.path().join("identity"))
+            .await
+            .unwrap();
+        tokio::fs::write(root.path().join("identity/node_key.pub"), [3u8; 32])
+            .await
+            .unwrap();
+        assert!(orch.resolve_dynamic_env(&mut app).await.is_err());
+        assert!(!root.path().join("app-registration-pins").exists());
+        assert!(rt.calls().is_empty());
     }
 
     #[tokio::test]

@@ -349,6 +349,18 @@ impl ApiHandler {
             ));
         }
 
+        if let Err(error) =
+            content_server::ensure_payment_source_available(&self.config.data_dir, item).await
+        {
+            return Ok(build_response(
+                StatusCode::CONFLICT,
+                "application/json",
+                hyper::Body::from(serde_json::to_vec(
+                    &serde_json::json!({ "error": error.to_string(), "payment_started": false }),
+                )?),
+            ));
+        }
+
         let memo = format!("Archipelago peer file {content_id}");
         match self
             .rpc_handler
@@ -467,6 +479,30 @@ impl ApiHandler {
                 ))
             }
         };
+
+        // Match the node wallet's existing sendcoins minimum before exposing a
+        // payable address for an amount its own payment flow cannot broadcast.
+        if let Err(error) = content_server::validate_onchain_payment_price(price_sats) {
+            return Ok(build_response(
+                StatusCode::BAD_REQUEST,
+                "application/json",
+                hyper::Body::from(serde_json::to_vec(
+                    &serde_json::json!({ "error": error.to_string(), "payment_started": false }),
+                )?),
+            ));
+        }
+
+        if let Err(error) =
+            content_server::ensure_payment_source_available(&self.config.data_dir, item).await
+        {
+            return Ok(build_response(
+                StatusCode::CONFLICT,
+                "application/json",
+                hyper::Body::from(serde_json::to_vec(
+                    &serde_json::json!({ "error": error.to_string(), "payment_started": false }),
+                )?),
+            ));
+        }
 
         match self.rpc_handler.new_onchain_address().await {
             Ok(address) if !address.is_empty() => {

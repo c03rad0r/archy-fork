@@ -277,3 +277,22 @@ leave animation, and the song catalog loaded after bridge initialization. Hidden
 iframe checks now use interval polling because animation-frame polling stops
 when hidden. Timeouts were not increased. These browser passes do not establish
 physical companion acceptance or replace the remaining lifecycle checks.
+
+Publication review must also inventory the Yaya demo's visual assets in local
+platform commits. A node-restricted promotion does not make a tracked asset or
+Git commit private after publication. This worktree is not authorization to push
+private demo source or derived private assets to either public mirror; retain
+private delivery and prepare a separately reviewed public-safe contribution if
+those assets are not approved for public distribution. No source publication was
+performed during the resumed deployment and qualification work.
+
+## Combined qualification after resumed integration
+
+The full isolated backend rerun passed 1,848 tests with zero failures and five
+existing skips. All 385 recorded source, build and fixture hashes remained
+unchanged. Evidence: `/tmp/archy-qualified-candidate-backend-rerun-tests.log` and
+`/tmp/archy-qualified-candidate-backend-rerun-provenance.json`. Earlier failed
+runs remain recorded. This qualifies the current backend primitives and Browse
+path repair locally; production build and live deployment checks are next.
+Complete purchase callers, app registration/publication and timed playback
+acceptance remain open. No real payment or public publication was performed.

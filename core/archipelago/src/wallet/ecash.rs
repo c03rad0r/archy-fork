@@ -814,6 +814,61 @@ pub async fn send_token_recoverable(
     amount_sats: u64,
     context_hash: &str,
 ) -> Result<String> {
+    send_token_recoverable_with_deadline(
+        data_dir,
+        operation_id,
+        network,
+        mint_url,
+        amount_sats,
+        context_hash,
+        None,
+        || chrono::Utc::now().timestamp(),
+    )
+    .await
+}
+
+/// Recover original results after expiry, but never initiate a fresh exact send
+/// or swap POST after the immutable purchase deadline. The caller binds this
+/// deadline into context_hash and must already have seller acceptance saved.
+pub async fn send_token_recoverable_before(
+    data_dir: &Path,
+    operation_id: &str,
+    network: EcashNetwork,
+    mint_url: &str,
+    amount_sats: u64,
+    context_hash: &str,
+    expires_at: i64,
+) -> Result<String> {
+    anyhow::ensure!(expires_at > 0, "Invalid purchase spend deadline");
+    send_token_recoverable_with_deadline(
+        data_dir,
+        operation_id,
+        network,
+        mint_url,
+        amount_sats,
+        context_hash,
+        Some(expires_at),
+        || chrono::Utc::now().timestamp(),
+    )
+    .await
+}
+fn ensure_fresh_payment_allowed(expires_at: Option<i64>, now: i64) -> Result<()> {
+    anyhow::ensure!(
+        expires_at.is_none_or(|deadline| now < deadline),
+        "The offer expired; recover the original purchase instead of starting another payment"
+    );
+    Ok(())
+}
+async fn send_token_recoverable_with_deadline(
+    data_dir: &Path,
+    operation_id: &str,
+    network: EcashNetwork,
+    mint_url: &str,
+    amount_sats: u64,
+    context_hash: &str,
+    expires_at: Option<i64>,
+    now: impl Fn() -> i64 + Send + Sync,
+) -> Result<String> {
     use super::send_journal::{Binding, Journal, Outcome, Phase, Request};
     let held = super::mutation::guard(data_dir).await?;
     anyhow::ensure!(
@@ -837,6 +892,7 @@ pub async fn send_token_recoverable(
         );
         record
     } else {
+        ensure_fresh_payment_allowed(expires_at, now())?;
         anyhow::ensure!(amount_sats > 0, "Payment amount must be positive");
         let wallet = load_wallet(data_dir).await?;
         let (indices, excess) = wallet
@@ -868,6 +924,7 @@ pub async fn send_token_recoverable(
             );
             Request::Swap(prepared)
         };
+        ensure_fresh_payment_allowed(expires_at, now())?;
         journal.prepare(binding.clone(), request).await?
     };
     if matches!(record.phase, Phase::Result(_) | Phase::Committed(_)) {
@@ -875,7 +932,10 @@ pub async fn send_token_recoverable(
     }
     journal.reserve_wallet(&binding).await?;
     let (send, change) = match &record.request {
-        Request::Exact { proofs } => (proofs.clone(), vec![]),
+        Request::Exact { proofs } => {
+            ensure_fresh_payment_allowed(expires_at, now())?;
+            (proofs.clone(), vec![])
+        }
         Request::Swap(prepared) => {
             // All recovery material is already durable. Do not derive new
             // outputs or release reservations after an ambiguous response.
@@ -901,6 +961,7 @@ pub async fn send_token_recoverable(
                         "This payment is still pending at the mint; do not pay again"
                     );
                 }
+                ensure_fresh_payment_allowed(expires_at, now())?;
                 client.execute_prepared_swap(prepared).await.map_err(|_| anyhow::anyhow!(
                     "The mint did not confirm this payment; retry this same operation to recover it"))?
             };

@@ -23,6 +23,9 @@ struct Mint {
     lose_swap_reply: Arc<std::sync::atomic::AtomicBool>,
     restore_reply: Arc<Mutex<Option<Value>>>,
     state_reply: Arc<Mutex<Option<Value>>>,
+    // Per-fixture clock advancement proves the spend deadline is checked after
+    // mint preflight; no process-global clock or timing-sensitive sleep.
+    restore_clock: Arc<Mutex<Option<(Arc<std::sync::atomic::AtomicI64>, i64)>>>,
 }
 impl Drop for Mint {
     fn drop(&mut self) {
@@ -65,6 +68,8 @@ impl Mint {
         let restore_override = restore_reply.clone();
         let state_reply = Arc::new(Mutex::new(None::<Value>));
         let state_override = state_reply.clone();
+        let restore_clock = Arc::new(Mutex::new(None::<(Arc<std::sync::atomic::AtomicI64>, i64)>));
+        let advance_clock = restore_clock.clone();
         let service = make_service_fn(move |_| {
             let seen = seen.clone();
             let rejection = rejection.clone();
@@ -73,6 +78,7 @@ impl Mint {
             let lose_reply = lose_reply.clone();
             let restore_override = restore_override.clone();
             let state_override = state_override.clone();
+            let advance_clock = advance_clock.clone();
             async move {
                 Ok::<_, Infallible>(service_fn(move |req: Request<Body>| {
                     let seen = seen.clone();
@@ -82,6 +88,7 @@ impl Mint {
                     let lose_reply = lose_reply.clone();
                     let restore_override = restore_override.clone();
                     let state_override = state_override.clone();
+                    let advance_clock = advance_clock.clone();
                     async move {
                         let mut status = 200;
                         let body = match req.uri().path() {
@@ -164,6 +171,11 @@ impl Mint {
                                 })
                             }
                             "/v1/restore" => {
+                                if let Some((clock, deadline)) =
+                                    advance_clock.lock().unwrap().as_ref()
+                                {
+                                    clock.store(*deadline, std::sync::atomic::Ordering::SeqCst);
+                                }
                                 let body: Value = serde_json::from_slice(
                                     &hyper::body::to_bytes(req.into_body()).await.unwrap(),
                                 )
@@ -219,6 +231,7 @@ impl Mint {
             lose_swap_reply,
             restore_reply,
             state_reply,
+            restore_clock,
         }
     }
     async fn wallet(&self) -> tempfile::TempDir {
@@ -486,10 +499,17 @@ async fn paid_file_gate_delivers_bytes_only_after_payment_and_does_not_charge_mi
             }
             assert_eq!(load_wallet(seller.path()).await.unwrap().balance(), 128);
         } else {
-            assert!(matches!(
-                result,
-                ServeResult::NotFound | ServeResult::PaymentRequired(_)
-            ));
+            if !exists {
+                assert!(matches!(result, ServeResult::Unavailable));
+                assert!(content_server::load_catalog(seller.path())
+                    .await
+                    .unwrap()
+                    .items
+                    .iter()
+                    .any(|item| item.id == "paid-test"));
+            } else {
+                assert!(matches!(result, ServeResult::PaymentRequired(_)));
+            }
             assert_eq!(load_wallet(seller.path()).await.unwrap().balance(), 0);
             assert!(mint.requests.lock().unwrap().is_empty());
         }
@@ -1573,4 +1593,343 @@ async fn recoverable_receive_unspent_retry_reuses_exact_request_and_waits_for_ve
     assert_eq!(wallet.balance(), 8);
     assert_eq!(wallet.transactions.len(), 1);
     assert_eq!(wallet.receive_commits.len(), 1);
+}
+
+#[tokio::test]
+async fn purchase_deadline_rejects_fresh_exact_send_but_recovers_prior_committed_token() {
+    let root = tempfile::tempdir().unwrap();
+    let mint = "https://unused-mint.invalid";
+    let mut wallet = WalletState::default();
+    wallet.mint_url = mint.into();
+    wallet.add_proofs(mint, vec![proof(ACTIVE, 8)]);
+    save_wallet(root.path(), &wallet).await.unwrap();
+    let id = uuid::Uuid::new_v4().to_string();
+    let context = "ab".repeat(32);
+    assert!(send_token_recoverable_before(
+        root.path(),
+        &id,
+        EcashNetwork::Mainnet,
+        mint,
+        8,
+        &context,
+        1
+    )
+    .await
+    .is_err());
+    assert_eq!(load_wallet(root.path()).await.unwrap().balance(), 8);
+    // Fixture a prior completed send; an expired caller must recover its result,
+    // not require another payment or credit the old proofs back to the purse.
+    let original =
+        send_token_recoverable(root.path(), &id, EcashNetwork::Mainnet, mint, 8, &context)
+            .await
+            .unwrap();
+    assert_eq!(
+        send_token_recoverable_before(
+            root.path(),
+            &id,
+            EcashNetwork::Mainnet,
+            mint,
+            8,
+            &context,
+            1
+        )
+        .await
+        .unwrap(),
+        original
+    );
+    assert_eq!(load_wallet(root.path()).await.unwrap().balance(), 0);
+}
+
+#[tokio::test]
+async fn expired_purchase_recovers_issued_swap_but_never_posts_still_unspent_inputs() {
+    for issued in [false, true] {
+        let mint = Mint::start(0, if issued { None } else { Some(503) }).await;
+        let root = mint.wallet().await;
+        let mut wallet = load_wallet(root.path()).await.unwrap();
+        wallet.add_proofs(&mint.url, vec![proof(ACTIVE, 8)]);
+        save_wallet(root.path(), &wallet).await.unwrap();
+        let id = uuid::Uuid::new_v4().to_string();
+        let context = "ab".repeat(32);
+        mint.lose_swap_reply
+            .store(issued, std::sync::atomic::Ordering::SeqCst);
+        assert!(send_token_recoverable(
+            root.path(),
+            &id,
+            EcashNetwork::Mainnet,
+            &mint.url,
+            4,
+            &context
+        )
+        .await
+        .is_err());
+        mint.failure.store(0, std::sync::atomic::Ordering::SeqCst);
+        let result = send_token_recoverable_before(
+            root.path(),
+            &id,
+            EcashNetwork::Mainnet,
+            &mint.url,
+            4,
+            &context,
+            1,
+        )
+        .await;
+        if issued {
+            assert_eq!(
+                CashuToken::deserialize(&result.unwrap())
+                    .unwrap()
+                    .total_amount(),
+                4
+            );
+            assert_eq!(load_wallet(root.path()).await.unwrap().balance(), 4);
+        } else {
+            assert!(result.unwrap_err().to_string().contains("expired"));
+            assert_eq!(load_wallet(root.path()).await.unwrap().balance(), 0);
+            assert!(load_wallet(root.path())
+                .await
+                .unwrap()
+                .proofs
+                .iter()
+                .any(|p| p.reserved));
+        }
+        assert_eq!(mint.requests.lock().unwrap().len(), 1);
+    }
+}
+
+#[tokio::test]
+async fn purchase_executor_recovers_prior_buyer_spend_and_delayed_accepted_seller_settlement() {
+    use crate::content_purchase::{BuyerPhase, Contract, Journal};
+    use crate::content_purchase_executor::{prepare_buyer_token, settle_seller_token};
+    let mint = Mint::start(0, None).await;
+    let buyer = mint.wallet().await;
+    let seller = mint.wallet().await;
+    let contract = Contract {
+        version: 1,
+        id: uuid::Uuid::new_v4().to_string(),
+        buyer_did: crate::identity::did_key_from_pubkey_hex(&hex::encode([1; 32])).unwrap(),
+        seller_did: crate::identity::did_key_from_pubkey_hex(&hex::encode([2; 32])).unwrap(),
+        content_id: "film-1".into(),
+        content_sha256: "ab".repeat(32),
+        content_size: 1024,
+        terms_sha256: "cd".repeat(32),
+        network: EcashNetwork::Mainnet,
+        mint_url: mint.url.clone(),
+        gross_token_sats: 8,
+        minimum_net_sats: 8,
+        offered_at: 1000,
+        expires_at: 2000,
+    };
+    let mut wallet = load_wallet(buyer.path()).await.unwrap();
+    wallet.add_proofs(&mint.url, vec![proof(ACTIVE, 8)]);
+    save_wallet(buyer.path(), &wallet).await.unwrap();
+    // An expired offer without durable seller acceptance cannot redeem a token
+    // or create settlement state, even when the token and buyer are otherwise valid.
+    let unaccepted_token = CashuToken::new(&mint.url, vec![proof(ACTIVE, 8)])
+        .serialize()
+        .unwrap();
+    let seller_wallet_before = std::fs::read(seller.path().join("wallet/ecash.json")).ok();
+    let rejected = settle_seller_token(
+        seller.path(),
+        &contract,
+        &unaccepted_token,
+        &contract.buyer_did,
+    )
+    .await
+    .err()
+    .unwrap();
+    assert!(rejected
+        .to_string()
+        .contains("Seller intent is not durable"));
+    assert!(mint.requests.lock().unwrap().is_empty());
+    assert_eq!(
+        std::fs::read(seller.path().join("wallet/ecash.json")).ok(),
+        seller_wallet_before
+    );
+    {
+        let journal = Journal::open(seller.path()).await.unwrap();
+        assert!(journal.seller(&contract.id).await.unwrap().is_none());
+    }
+    // Deterministically fixture durable acceptance before the historical deadline.
+    let accepted = {
+        let journal = Journal::open(seller.path()).await.unwrap();
+        journal
+            .prepare_seller(&contract, 1500)
+            .await
+            .unwrap()
+            .acceptance()
+            .unwrap()
+    };
+    {
+        let journal = Journal::open(buyer.path()).await.unwrap();
+        journal.prepare_buyer(&contract, 1500).await.unwrap();
+        assert!(journal
+            .record_acceptance(&contract, &accepted, &contract.buyer_did)
+            .await
+            .is_err());
+        journal
+            .record_acceptance(&contract, &accepted, &contract.seller_did)
+            .await
+            .unwrap();
+    }
+    // Fixture a prior wallet commit, interrupted before the buyer journal saved
+    // its token. The actual executor must recover that result after expiry.
+    let original = send_token_recoverable(
+        buyer.path(),
+        &contract.id,
+        contract.network,
+        &mint.url,
+        8,
+        &contract.context_hash().unwrap(),
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        prepare_buyer_token(buyer.path(), &contract).await.unwrap(),
+        original
+    );
+    assert!(mint.requests.lock().unwrap().is_empty());
+    mint.lose_swap_reply
+        .store(true, std::sync::atomic::Ordering::SeqCst);
+    assert!(
+        settle_seller_token(seller.path(), &contract, &original, &contract.buyer_did)
+            .await
+            .is_err()
+    );
+    assert_eq!(mint.requests.lock().unwrap().len(), 1);
+    let receipt = settle_seller_token(seller.path(), &contract, &original, &contract.buyer_did)
+        .await
+        .unwrap();
+    assert!(
+        settle_seller_token(seller.path(), &contract, &original, &contract.buyer_did)
+            .await
+            .unwrap()
+            == receipt
+    );
+    assert!(
+        settle_seller_token(seller.path(), &contract, &original, &contract.seller_did)
+            .await
+            .is_err()
+    );
+    let altered = CashuToken::new(&mint.url, vec![proof(V2, 8)])
+        .serialize()
+        .unwrap();
+    assert!(
+        settle_seller_token(seller.path(), &contract, &altered, &contract.buyer_did)
+            .await
+            .is_err()
+    );
+    assert_eq!(mint.requests.lock().unwrap().len(), 1);
+    assert_eq!(load_wallet(buyer.path()).await.unwrap().balance(), 0);
+    assert_eq!(load_wallet(seller.path()).await.unwrap().balance(), 8);
+    let journal = Journal::open(buyer.path()).await.unwrap();
+    journal.record_receipt(&contract, &receipt).await.unwrap();
+    assert_eq!(
+        journal.buyer(&contract.id).await.unwrap().unwrap().phase,
+        BuyerPhase::ReceiptSaved
+    );
+}
+
+#[tokio::test]
+async fn purchase_expiring_during_mint_preflight_never_reserves_or_posts_swap() {
+    use std::sync::atomic::{AtomicI64, Ordering};
+    let mint = Mint::start(0, None).await;
+    let root = mint.wallet().await;
+    let mut wallet = load_wallet(root.path()).await.unwrap();
+    wallet.add_proofs(&mint.url, vec![proof(ACTIVE, 8)]);
+    save_wallet(root.path(), &wallet).await.unwrap();
+    let wallet_before = std::fs::read(root.path().join("wallet/ecash.json")).unwrap();
+    let clock = Arc::new(AtomicI64::new(1000));
+    *mint.restore_clock.lock().unwrap() = Some((clock.clone(), 2000));
+    let id = uuid::Uuid::new_v4().to_string();
+    let error = send_token_recoverable_with_deadline(
+        root.path(),
+        &id,
+        EcashNetwork::Mainnet,
+        &mint.url,
+        4,
+        &"ab".repeat(32),
+        Some(2000),
+        || clock.load(Ordering::SeqCst),
+    )
+    .await
+    .unwrap_err();
+    assert_eq!(
+        clock.load(Ordering::SeqCst),
+        2000,
+        "preflight must have completed"
+    );
+    assert!(error.to_string().contains("expired"));
+    assert!(
+        mint.requests.lock().unwrap().is_empty(),
+        "no swap POST after expiry"
+    );
+    assert_eq!(
+        std::fs::read(root.path().join("wallet/ecash.json")).unwrap(),
+        wallet_before
+    );
+    assert_eq!(load_wallet(root.path()).await.unwrap().balance(), 8);
+    let held = crate::wallet::mutation::guard(root.path()).await.unwrap();
+    assert!(crate::wallet::send_journal::Journal::new(&held)
+        .load(&id)
+        .await
+        .unwrap()
+        .is_none());
+}
+
+// Append to wallet/payment_tests.rs when the next payment-plan batch is applied.
+#[tokio::test]
+async fn stale_planned_inputs_do_not_reselect_wallet_coins_or_post_to_mint() {
+    use crate::wallet::{mutation, send_journal};
+    let mint = Mint::start(0, None).await;
+    let root = tempfile::tempdir().unwrap();
+    let mut wallet = WalletState::default();
+    wallet.mint_url = mint.url.clone();
+    let original = proof(ACTIVE, 8);
+    wallet.add_proofs(&mint.url, vec![original.clone()]);
+    save_wallet(root.path(), &wallet).await.unwrap();
+    let id = uuid::Uuid::new_v4().to_string();
+    let context = "ab".repeat(32);
+    let prepared = MintClient::new(&mint.url)
+        .unwrap()
+        .prepare_swap_at_least(&[original], &[4, 4], 4)
+        .await
+        .unwrap();
+    {
+        let guard = mutation::guard(root.path()).await.unwrap();
+        send_journal::Journal::new(&guard)
+            .prepare(
+                send_journal::Binding {
+                    id: id.clone(),
+                    network: EcashNetwork::Mainnet,
+                    mint_url: mint.url.clone(),
+                    amount_sats: 4,
+                    context_hash: context.clone(),
+                },
+                send_journal::Request::Swap(prepared),
+            )
+            .await
+            .unwrap();
+    }
+    // Simulate a selected proof becoming unavailable before reservation. Other
+    // sufficient coins exist, but the accepted immutable plan cannot select them.
+    wallet.proofs.clear();
+    let mut replacement = proof(ACTIVE, 8);
+    replacement.secret = "replacement-not-in-plan".into();
+    wallet.add_proofs(&mint.url, vec![replacement]);
+    save_wallet(root.path(), &wallet).await.unwrap();
+    let before = std::fs::read(root.path().join("wallet/ecash.json")).unwrap();
+    assert!(send_token_recoverable(
+        root.path(),
+        &id,
+        EcashNetwork::Mainnet,
+        &mint.url,
+        4,
+        &context
+    )
+    .await
+    .is_err());
+    assert_eq!(
+        std::fs::read(root.path().join("wallet/ecash.json")).unwrap(),
+        before
+    );
+    assert!(mint.requests.lock().unwrap().is_empty());
 }

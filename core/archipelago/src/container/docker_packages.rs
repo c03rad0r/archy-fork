@@ -513,6 +513,82 @@ mod lifecycle_regression_tests {
     }
 
     #[test]
+    fn installed_manifest_entry_path_survives_scans_without_changing_runtime_origin() {
+        let mut entry = installing_fixture();
+        entry.state = PackageState::Stopped;
+        entry.installed = Some(InstalledPackageDataEntry {
+            current_dependents: HashMap::new(),
+            current_dependencies: HashMap::new(),
+            last_backup: None,
+            interface_addresses: HashMap::from([(
+                "main".into(),
+                InterfaceAddress {
+                    lan_address: Some("https://localhost:7443/old?gate=retained#position".into()),
+                    tor_address: "existing.onion".into(),
+                },
+            )]),
+            status: ServiceStatus::Stopped,
+        });
+        let manifest = serde_json::json!({"app":{"interfaces":{"main":{
+            "type":"ui", "port":80, "protocol":"http", "path":"/browse"
+        }}}});
+        for _ in 0..2 {
+            apply_manifest_value(&manifest, &mut entry);
+            let main = &entry.installed.as_ref().unwrap().interface_addresses["main"];
+            assert_eq!(
+                main.lan_address.as_deref(),
+                Some("https://localhost:7443/browse?gate=retained#position")
+            );
+            assert_eq!(main.tor_address, "existing.onion");
+            assert_eq!(entry.state, PackageState::Stopped);
+            assert_eq!(entry.ui_ready, Some(false));
+        }
+        entry
+            .installed
+            .as_mut()
+            .unwrap()
+            .interface_addresses
+            .get_mut("main")
+            .unwrap()
+            .lan_address = None;
+        apply_manifest_value(&manifest, &mut entry);
+        assert!(
+            entry.installed.as_ref().unwrap().interface_addresses["main"]
+                .lan_address
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn manifest_entry_path_preserves_authority_and_optional_query() {
+        assert_eq!(
+            manifest_launch_path("http://localhost:7475", "/browse"),
+            Some("http://localhost:7475/browse".into())
+        );
+        assert_eq!(
+            manifest_launch_path(
+                "https://localhost:7443/old?keep=1#old",
+                "/browse?view=all#new"
+            ),
+            Some("https://localhost:7443/browse?view=all#new".into())
+        );
+        for path in [
+            "https://foreign.invalid/",
+            "//foreign.invalid/",
+            "/\\foreign.invalid/",
+            "browse",
+            "/bad\npath",
+        ] {
+            assert!(
+                manifest_launch_path("https://localhost:7443", path).is_none(),
+                "{path:?}"
+            );
+        }
+        assert!(manifest_launch_path("", "/browse").is_none());
+        assert!(manifest_launch_path("file:///tmp/local", "/browse").is_none());
+    }
+
+    #[test]
     fn btcpay_aliases_share_one_package_without_promoting_dependencies() {
         for name in ["btcpay", "btcpayserver", "btcpay-server", "archy-btcpay"] {
             assert_eq!(canonical_package_id(name), "btcpay-server");
@@ -761,6 +837,38 @@ fn apply_manifest_value(value: &serde_json::Value, entry: &mut PackageDataEntry)
             entry.manifest.tier = Some(tier);
         }
     }
+    // Runtime discovery owns origins, ports and availability; the reviewed
+    // manifest owns the UI's entry path. Otherwise every scan resets a declared
+    // /browse or /admin entry point to the container root.
+    if let (Some(installed), Some(interfaces)) = (
+        entry.installed.as_mut(),
+        app.get("interfaces").and_then(|v| v.as_object()),
+    ) {
+        for (id, address) in &mut installed.interface_addresses {
+            let Some(interface) = interfaces.get(id) else {
+                continue;
+            };
+            if interface
+                .get("type")
+                .and_then(|v| v.as_str())
+                .unwrap_or("ui")
+                != "ui"
+            {
+                continue;
+            }
+            let Some(path) = interface.get("path").and_then(|v| v.as_str()) else {
+                continue;
+            };
+            if let Some(lan) = address.lan_address.as_mut() {
+                if let Some(updated) = manifest_launch_path(lan, path) {
+                    *lan = updated;
+                }
+            }
+            if let Some(updated) = manifest_launch_path(&address.tor_address, path) {
+                address.tor_address = updated;
+            }
+        }
+    }
     // Once installed, the scanner owns UI detection (including companion UIs).
     // Only seed classification while there is no observed runtime package.
     if entry.installed.is_some() {
@@ -788,6 +896,33 @@ fn apply_manifest_value(value: &serde_json::Value, entry: &mut PackageDataEntry)
             main.ui = has_ui.then(|| "true".to_owned());
         }
     }
+}
+
+/// Apply a local entry path without changing the scanner-confirmed authority.
+fn manifest_launch_path(address: &str, path: &str) -> Option<String> {
+    if !path.starts_with('/')
+        || path.starts_with("//")
+        || path.contains('\\')
+        || path.chars().any(char::is_control)
+    {
+        return None;
+    }
+    let base = reqwest::Url::parse(address).ok()?;
+    if !matches!(base.scheme(), "http" | "https") {
+        return None;
+    }
+    let mut updated = base.join(path).ok()?;
+    if updated.origin() != base.origin() {
+        return None;
+    }
+    // A plain path must not discard an existing gate/deep-link query.
+    if !path.contains('?') {
+        updated.set_query(base.query());
+    }
+    if !path.contains('#') {
+        updated.set_fragment(base.fragment());
+    }
+    Some(updated.into())
 }
 
 fn get_app_metadata(app_id: &str) -> AppMetadata {
