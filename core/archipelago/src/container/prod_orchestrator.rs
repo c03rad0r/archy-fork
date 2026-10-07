@@ -1422,6 +1422,17 @@ fn host_port_collisions<'m>(
     out
 }
 
+/// A staged start failed and its runtime could not be proven stopped. Callers
+/// must not restore a cached Stopped state; the scanner/reconciler owns recovery.
+#[derive(Debug)]
+pub(crate) struct StagedCleanupFailure(String);
+impl std::fmt::Display for StagedCleanupFailure {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        std::fmt::Display::fmt(&self.0, f)
+    }
+}
+impl std::error::Error for StagedCleanupFailure {}
+
 /// Internal: track a manifest together with the absolute directory it was loaded
 /// from, so Build sources can resolve relative `context:` paths.
 #[derive(Debug, Clone)]
@@ -2043,7 +2054,9 @@ impl ProdContainerOrchestrator {
                 }
             }
         }
-        let mut report = ReconcileReport::default();
+        // Stopped/disabled apps are excluded from ordinary start reconciliation.
+        // Pending cleanup must still run for them, including after a restart.
+        let mut report = self.reconcile_staged_updates().await;
         let disk_gb = self.disk_gb().await;
         let bitcoin_pruned = disk_gb < ARCHIVAL_BITCOIN_DISK_GB
             || crate::settings::bitcoin_storage::load(&self.data_dir)
@@ -2335,6 +2348,12 @@ impl ProdContainerOrchestrator {
         // every member — frontend included — flows through the generic path here.
         let lock = self.app_lock(&app_id).await;
         let _guard = lock.lock().await;
+
+        if let Some(record) = super::staged_update::load(&self.data_dir, &app_id).await? {
+            let name = compute_container_name(&record.manifest);
+            self.stop_staged_runtime(&name).await?;
+            return Ok(ReconcileAction::Left("staged-update-awaiting-start".into()));
+        }
 
         self.ensure_app_secrets(&app_id).await?;
 
@@ -2849,11 +2868,171 @@ impl ProdContainerOrchestrator {
     }
 
     /// Build-or-pull, create, start. Assumes the per-app mutex is already held.
+    async fn reconcile_staged_updates(&self) -> ReconcileReport {
+        let mut report = ReconcileReport::default();
+        let ids = match super::staged_update::pending_ids(&self.data_dir).await {
+            Ok(ids) => ids,
+            Err(error) => {
+                report
+                    .failures
+                    .push(("staged-updates".into(), error.to_string()));
+                return report;
+            }
+        };
+        for app_id in ids {
+            if crate::app_ops::lifecycle_op_in_flight(&app_id) {
+                continue;
+            }
+            let lock = self.app_lock(&app_id).await;
+            let _guard = lock.lock().await;
+            // Re-read after acquiring the lock: a successful explicit start
+            // may have completed and cleared the stage while this pass waited.
+            let result = async {
+                if let Some(record) = super::staged_update::load(&self.data_dir, &app_id).await? {
+                    self.stop_staged_runtime(&compute_container_name(&record.manifest))
+                        .await?;
+                    report.record(
+                        &app_id,
+                        ReconcileAction::Left("staged-update-awaiting-start".into()),
+                    );
+                }
+                Ok::<_, anyhow::Error>(())
+            }
+            .await;
+            if let Err(error) = result {
+                report.failures.push((app_id, error.to_string()));
+            }
+        }
+        report
+    }
+
+    async fn stop_staged_runtime(&self, name: &str) -> Result<()> {
+        let mut errors = Vec::new();
+        if let Err(e) = self.remove_quadlet_unit_if_present(name).await {
+            errors.push(format!("could not disable staged unit: {e:#}"));
+        }
+        let inventory = self
+            .runtime
+            .list_containers()
+            .await
+            .context("Cannot verify staged runtime inventory")?;
+        if inventory.iter().any(|c| {
+            c.name.trim_start_matches('/') == name
+                && !matches!(
+                    c.state,
+                    ContainerState::Stopped | ContainerState::Exited | ContainerState::Created
+                )
+        }) {
+            if let Err(e) = self.runtime.stop_container(name).await {
+                errors.push(format!("could not stop staged container: {e:#}"));
+            }
+        }
+        let inventory = self
+            .runtime
+            .list_containers()
+            .await
+            .context("Cannot verify staged runtime stopped")?;
+        if inventory.iter().any(|c| {
+            c.name.trim_start_matches('/') == name
+                && !matches!(
+                    c.state,
+                    ContainerState::Stopped | ContainerState::Exited | ContainerState::Created
+                )
+        }) {
+            errors.push("staged container is still active".into());
+        }
+        anyhow::ensure!(errors.is_empty(), "{}", errors.join("; "));
+        Ok(())
+    }
+
+    async fn start_staged_update(&self, app_id: &str) -> Result<bool> {
+        use super::staged_update;
+        if staged_update::load(&self.data_dir, app_id).await?.is_none() {
+            return Ok(false);
+        }
+        let lock = self.app_lock(app_id).await;
+        let _guard = lock.lock().await;
+        let record = staged_update::load(&self.data_dir, app_id)
+            .await?
+            .context("Staged update changed; retry start")?;
+        let name = compute_container_name(&record.manifest);
+        anyhow::ensure!(
+            !staged_update::marked(&self.data_dir, "user-uninstalled.json", app_id, &name).await?,
+            "App was uninstalled; staged update cannot reinstall it"
+        );
+        anyhow::ensure!(
+            record.ready,
+            "Update preparation was interrupted; retry update before start"
+        );
+        anyhow::ensure!(
+            self.runtime.image_exists(record.image()?).await?,
+            "Staged image is unavailable; refusing to start another version"
+        );
+        // Clear only this explicit start's stopped intent. The pending manifest
+        // remains durable until all creation, hooks and readiness checks succeed.
+        crate::crash_recovery::clear_user_stopped(&self.data_dir, app_id).await;
+        crate::crash_recovery::clear_user_stopped(&self.data_dir, &name).await;
+        crate::crash_recovery::clear_user_stopped(&self.data_dir, &format!("archy-{app_id}")).await;
+        self.state.write().await.disabled.remove(app_id);
+        let lm = LoadedManifest {
+            manifest: record.manifest.clone(),
+            manifest_dir: record.manifest_dir.clone(),
+        };
+        let result = async {
+            self.remove_quadlet_unit_if_present(&name).await?;
+            if self
+                .runtime
+                .list_containers()
+                .await?
+                .iter()
+                .any(|c| c.name.trim_start_matches('/') == name)
+            {
+                self.runtime.stop_container(&name).await?;
+                self.runtime.remove_container(&name).await?;
+            }
+            self.install_fresh_with_pin(&lm, true).await?;
+            let observed = self.runtime.get_container_status(&name).await?;
+            anyhow::ensure!(
+                observed.state == ContainerState::Running,
+                "Pinned start did not become running"
+            );
+            anyhow::ensure!(
+                staged_update::matches_image(record.image()?, &observed.image),
+                "Pinned start produced a different image"
+            );
+            // Installed presentation is durable before pending intent disappears.
+            // A crash on either side of clear cannot fall back to a later catalog.
+            staged_update::save_installed(&self.data_dir, &record).await?;
+            staged_update::clear(&self.data_dir, app_id).await
+        }
+        .await;
+        if let Err(error) = result {
+            crate::crash_recovery::mark_user_stopped(&self.data_dir, app_id).await;
+            self.state.write().await.disabled.insert(app_id.into());
+            let retained = staged_update::save(&self.data_dir, &record).await;
+            let cleanup = self.stop_staged_runtime(&name).await;
+            if let Err(cleanup) = cleanup {
+                return Err(StagedCleanupFailure(format!(
+                    "Staged start failed: {error:#}; cleanup failed: {cleanup:#}; pin persistence: {:?}", retained.err()
+                )).into());
+            }
+            retained.context("Could not retain failed staged start pin")?;
+            return Err(error);
+        }
+        Ok(true)
+    }
+
     async fn install_fresh(&self, lm: &LoadedManifest) -> Result<()> {
+        self.install_fresh_with_pin(lm, false).await
+    }
+
+    async fn install_fresh_with_pin(&self, lm: &LoadedManifest, pinned: bool) -> Result<()> {
         self.ensure_app_secrets(&lm.manifest.app.id).await?;
         let mut resolved_manifest = lm.manifest.clone();
         self.resolve_dynamic_env(&mut resolved_manifest).await?;
-        resolve_catalog_image(&mut resolved_manifest);
+        if !pinned {
+            resolve_catalog_image(&mut resolved_manifest);
+        }
 
         let resolved = resolved_manifest.app.container.resolve().ok_or_else(|| {
             anyhow::anyhow!(
@@ -3008,7 +3187,17 @@ impl ProdContainerOrchestrator {
         // freshly created container — exactly when container mutations (e.g.
         // indeedhub's nginx X-Frame-Options strip + nostr-provider injection) must
         // be re-applied. Best-effort + idempotent: never fails the install.
-        crate::container::hooks::run_post_install(&resolved_manifest, &name, &self.data_dir).await;
+        if pinned {
+            crate::container::hooks::run_post_install_strict(
+                &resolved_manifest,
+                &name,
+                &self.data_dir,
+            )
+            .await?;
+        } else {
+            crate::container::hooks::run_post_install(&resolved_manifest, &name, &self.data_dir)
+                .await;
+        }
         if uses_pasta_network(&resolved_manifest) {
             if let Err(err) = wait_for_manifest_host_ports(
                 &resolved_manifest,
@@ -4825,6 +5014,8 @@ impl ContainerOrchestrator for ProdContainerOrchestrator {
     }
 
     async fn install(&self, app_id: &str) -> Result<String> {
+        anyhow::ensure!(super::staged_update::load(&self.data_dir, app_id).await?.is_none(),
+            "An update is staged; use explicit start, or uninstall before selecting another installation");
         let lm = self.loaded(app_id).await?;
         // Optional shared-service preconditions are checked before recording
         // installation or creating anything. A headless adapter must not claim
@@ -4896,7 +5087,7 @@ impl ContainerOrchestrator for ProdContainerOrchestrator {
         // point). Just delegate.
         self.prepare_for_start(&lm.manifest).await?;
         let action = self.ensure_running(&lm).await?;
-        match action {
+        let result = match action {
             ReconcileAction::NoOp | ReconcileAction::Started | ReconcileAction::Installed => {
                 Ok(name)
             }
@@ -4915,10 +5106,17 @@ impl ContainerOrchestrator for ProdContainerOrchestrator {
                 self.install_fresh(&lm).await?;
                 Ok(name)
             }
+        };
+        if result.is_ok() {
+            super::staged_update::clear_installed(&self.data_dir, app_id).await?;
         }
+        result
     }
 
     async fn start(&self, app_id: &str) -> Result<()> {
+        if self.start_staged_update(app_id).await? {
+            return Ok(());
+        }
         if let Some(members) = self.mempool_umbrella_members(app_id).await {
             tracing::info!(
                 app_id,
@@ -5136,6 +5334,8 @@ impl ContainerOrchestrator for ProdContainerOrchestrator {
                 self.remove_quadlet_unit_if_present(&name).await?;
             }
             self.state.write().await.disabled.insert(app_id.to_string());
+            super::staged_update::clear(&self.data_dir, app_id).await?;
+            super::staged_update::clear_installed(&self.data_dir, app_id).await?;
             return Ok(());
         }
         let lm = self.loaded(app_id).await?;
@@ -5189,15 +5389,83 @@ impl ContainerOrchestrator for ProdContainerOrchestrator {
         // stale claim behind would let desired-state recovery recreate the very
         // app that was just uninstalled.
         crate::crash_recovery::clear_installed(&self.data_dir, app_id).await;
+        super::staged_update::clear(&self.data_dir, app_id).await?;
+        super::staged_update::clear_installed(&self.data_dir, app_id).await?;
         Ok(())
     }
 
     /// Upgrade: stop-remove-reinstall (re-pulls or rebuilds as required).
     async fn upgrade(&self, app_id: &str) -> Result<()> {
-        let lm = self.loaded(app_id).await?;
+        use super::staged_update;
         let lock = self.app_lock(app_id).await;
         let _guard = lock.lock().await;
+        let existing = staged_update::load(&self.data_dir, app_id).await?;
+        let lm = if let Some(record) = &existing {
+            LoadedManifest {
+                manifest: record.manifest.clone(),
+                manifest_dir: record.manifest_dir.clone(),
+            }
+        } else {
+            self.loaded(app_id).await?
+        };
         let name = compute_container_name(&lm.manifest);
+        anyhow::ensure!(
+            !staged_update::marked(&self.data_dir, "user-uninstalled.json", app_id, &name).await?,
+            "App was uninstalled; update cannot reinstall it"
+        );
+        let stopped =
+            staged_update::marked(&self.data_dir, "user-stopped.json", app_id, &name).await?;
+        if stopped || existing.is_some() {
+            anyhow::ensure!(
+                staged_update::marked(&self.data_dir, "installed-apps.json", app_id, &name).await?,
+                "Stopped update needs durable installation evidence"
+            );
+            let mut record = match existing {
+                Some(record) => record,
+                None => {
+                    let mut manifest = lm.manifest.clone();
+                    resolve_catalog_image(&mut manifest);
+                    staged_update::StagedUpdate {
+                        manifest,
+                        manifest_dir: lm.manifest_dir.clone(),
+                        ready: false,
+                    }
+                }
+            };
+            record.image()?;
+            crate::crash_recovery::mark_user_stopped(&self.data_dir, app_id).await;
+            anyhow::ensure!(
+                staged_update::marked(&self.data_dir, "user-stopped.json", app_id, &name).await?,
+                "Could not persist stopped update intent"
+            );
+            // Freeze the approved manifest before any pull. Retries cannot
+            // silently switch to another catalog revision after an interruption.
+            record.ready = false;
+            staged_update::save(&self.data_dir, &record).await?;
+            self.remove_quadlet_unit_if_present(&name).await?;
+            if self
+                .runtime
+                .list_containers()
+                .await?
+                .iter()
+                .any(|c| c.name.trim_start_matches('/') == name)
+            {
+                self.runtime.stop_container(&name).await?;
+                self.runtime.remove_container(&name).await?;
+            }
+            let pinned = LoadedManifest {
+                manifest: record.manifest.clone(),
+                manifest_dir: record.manifest_dir.clone(),
+            };
+            self.ensure_resolved_source_available(&pinned).await?;
+            anyhow::ensure!(
+                self.runtime.image_exists(record.image()?).await?,
+                "Staged image unavailable after preparation"
+            );
+            record.ready = true;
+            staged_update::save(&self.data_dir, &record).await?;
+            return Ok(());
+        }
         let mut resolved = lm.manifest.clone();
         resolve_catalog_image(&mut resolved);
         if resolved.app.container.build.is_none() {
@@ -5213,7 +5481,10 @@ impl ContainerOrchestrator for ProdContainerOrchestrator {
                             running.image,
                             target
                         ),
-                        Some(std::cmp::Ordering::Equal) => return Ok(()),
+                        Some(std::cmp::Ordering::Equal) => {
+                            staged_update::clear_installed(&self.data_dir, app_id).await?;
+                            return Ok(());
+                        }
                         _ => {}
                     }
                 }
@@ -5221,7 +5492,22 @@ impl ContainerOrchestrator for ProdContainerOrchestrator {
         }
         let _ = self.runtime.stop_container(&name).await;
         let _ = self.runtime.remove_container(&name).await;
-        self.install_fresh(&lm).await
+        self.install_fresh(&lm).await?;
+        staged_update::clear_installed(&self.data_dir, app_id).await
+    }
+
+    async fn staged_upgrade_image(&self, app_id: &str) -> Result<Option<String>> {
+        match super::staged_update::load(&self.data_dir, app_id).await? {
+            Some(record) => {
+                anyhow::ensure!(record.ready, "Staged update is not ready");
+                anyhow::ensure!(
+                    self.runtime.image_exists(record.image()?).await?,
+                    "Staged image unavailable"
+                );
+                Ok(Some(record.image()?.to_string()))
+            }
+            None => Ok(None),
+        }
     }
 
     async fn status(&self, app_id: &str) -> Result<ContainerStatus> {
@@ -5778,6 +6064,7 @@ mod tests {
         fail_image_exists: StdMutex<HashMap<String, String>>,
         /// If set, `start_container` for this container fails with this message.
         fail_start: StdMutex<HashMap<String, String>>,
+        fail_stop: StdMutex<HashMap<String, String>>,
     }
 
     impl MockRuntime {
@@ -5841,6 +6128,12 @@ mod tests {
         ) -> Result<String> {
             self.record(format!("create_container:{name}:offset={port_offset}"));
             self.set_state(name, ContainerState::Created);
+            if let Some(image) = manifest.app.container.image_ref() {
+                self.running_images
+                    .lock()
+                    .unwrap()
+                    .insert(name.into(), image);
+            }
             self.created_env
                 .lock()
                 .unwrap()
@@ -5862,6 +6155,9 @@ mod tests {
         }
         async fn stop_container(&self, name: &str) -> Result<()> {
             self.record(format!("stop_container:{name}"));
+            if let Some(error) = self.fail_stop.lock().unwrap().remove(name) {
+                return Err(anyhow::anyhow!(error));
+            }
             self.set_state(name, ContainerState::Stopped);
             Ok(())
         }
@@ -6308,6 +6604,333 @@ app:
             data_dir: dir.path().join("filebrowser-data"),
             config_path: dir.path().join("filebrowser-data/.filebrowser.json"),
         }
+    }
+
+    async fn stopped_update_fixture() -> (Arc<MockRuntime>, ProdContainerOrchestrator, String) {
+        let rt = Arc::new(MockRuntime::default());
+        let orch = orch_with(rt.clone()).await;
+        let image = format!("docker.io/library/alpine@sha256:{}", "a".repeat(64));
+        let mut manifest = pull_manifest("staged-music", &image);
+        manifest
+            .app
+            .environment
+            .push("STAGED_VERSION=original".into());
+        orch.insert_manifest_for_test(manifest, PathBuf::from("/tmp"))
+            .await;
+        crate::crash_recovery::mark_installed(&orch.data_dir, "staged-music").await;
+        crate::crash_recovery::mark_user_stopped(&orch.data_dir, "staged-music").await;
+        (rt, orch, image)
+    }
+
+    #[tokio::test]
+    async fn stopped_upgrade_stages_without_start_then_starts_pinned_manifest() {
+        let (rt, orch, image) = stopped_update_fixture().await;
+        let sentinel = orch.data_dir.join("persistent-song-and-secret-fixture");
+        tokio::fs::write(&sentinel, b"preserved").await.unwrap();
+        orch.upgrade("staged-music").await.unwrap();
+        assert_eq!(
+            orch.staged_upgrade_image("staged-music").await.unwrap(),
+            Some(image)
+        );
+        assert!(!rt
+            .calls()
+            .iter()
+            .any(|c| c.starts_with("create_container:") || c.starts_with("start_container:")));
+        let replacement = pull_manifest(
+            "staged-music",
+            &format!("docker.io/library/alpine@sha256:{}", "b".repeat(64)),
+        );
+        orch.insert_manifest_for_test(replacement, PathBuf::from("/tmp/new-catalog"))
+            .await;
+        let lm = orch.loaded("staged-music").await.unwrap();
+        assert_eq!(
+            orch.ensure_running(&lm).await.unwrap(),
+            ReconcileAction::Left("staged-update-awaiting-start".into())
+        );
+        orch.start("staged-music").await.unwrap();
+        assert!(rt
+            .created_env_for("staged-music")
+            .contains(&"STAGED_VERSION=original".into()));
+        assert_eq!(
+            rt.get_container_status("staged-music").await.unwrap().state,
+            ContainerState::Running
+        );
+        assert!(orch
+            .staged_upgrade_image("staged-music")
+            .await
+            .unwrap()
+            .is_none());
+        assert!(!crate::crash_recovery::load_user_stopped(&orch.data_dir)
+            .await
+            .contains("staged-music"));
+        assert_eq!(tokio::fs::read(sentinel).await.unwrap(), b"preserved");
+    }
+
+    #[tokio::test]
+    async fn interrupted_stopped_pull_retains_original_pin_and_requires_retry() {
+        let (rt, orch, image) = stopped_update_fixture().await;
+        *rt.fail_pull.lock().unwrap() = Some("interrupted pull".into());
+        assert!(orch.upgrade("staged-music").await.is_err());
+        assert!(orch
+            .start("staged-music")
+            .await
+            .unwrap_err()
+            .to_string()
+            .contains("interrupted"));
+        let record = super::super::staged_update::load(&orch.data_dir, "staged-music")
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(!record.ready);
+        assert_eq!(record.image().unwrap(), image);
+        *rt.fail_pull.lock().unwrap() = None;
+        orch.insert_manifest_for_test(
+            pull_manifest("staged-music", "docker.io/library/alpine:latest"),
+            PathBuf::from("/tmp"),
+        )
+        .await;
+        orch.upgrade("staged-music").await.unwrap();
+        assert_eq!(
+            orch.staged_upgrade_image("staged-music").await.unwrap(),
+            Some(image)
+        );
+        assert!(!rt.calls().iter().any(|c| c.starts_with("start_container:")));
+    }
+
+    #[tokio::test]
+    async fn failed_staged_start_preserves_pin_and_stop_until_retry_succeeds() {
+        let (rt, orch, _) = stopped_update_fixture().await;
+        orch.upgrade("staged-music").await.unwrap();
+        rt.fail_start
+            .lock()
+            .unwrap()
+            .insert("staged-music".into(), "injected start failure".into());
+        assert!(orch.start("staged-music").await.is_err());
+        assert!(orch
+            .staged_upgrade_image("staged-music")
+            .await
+            .unwrap()
+            .is_some());
+        assert!(crate::crash_recovery::load_user_stopped(&orch.data_dir)
+            .await
+            .contains("staged-music"));
+        assert!(matches!(
+            rt.get_container_status("staged-music").await.unwrap().state,
+            ContainerState::Stopped | ContainerState::Created
+        ));
+        orch.start("staged-music").await.unwrap();
+        assert!(orch
+            .staged_upgrade_image("staged-music")
+            .await
+            .unwrap()
+            .is_none());
+    }
+
+    #[tokio::test]
+    async fn staged_missing_image_uninstall_and_damaged_record_refuse_start() {
+        let (rt, orch, image) = stopped_update_fixture().await;
+        orch.upgrade("staged-music").await.unwrap();
+        rt.images.lock().unwrap().remove(&image);
+        assert!(orch
+            .start("staged-music")
+            .await
+            .unwrap_err()
+            .to_string()
+            .contains("unavailable"));
+        rt.mark_image_present(&image);
+        crate::crash_recovery::mark_user_uninstalled(&orch.data_dir, "staged-music").await;
+        assert!(orch
+            .start("staged-music")
+            .await
+            .unwrap_err()
+            .to_string()
+            .contains("uninstalled"));
+        assert!(orch.upgrade("staged-music").await.is_err());
+        tokio::fs::write(
+            orch.data_dir.join("staged-updates/staged-music.json"),
+            b"damaged",
+        )
+        .await
+        .unwrap();
+        assert!(orch.start("staged-music").await.is_err());
+        assert!(!rt.calls().iter().any(|c| c.starts_with("start_container:")));
+    }
+
+    #[tokio::test]
+    async fn staged_failed_post_install_hook_keeps_pin_and_stops_container() {
+        let (rt, orch, _) = stopped_update_fixture().await;
+        let mut lm = orch.loaded("staged-music").await.unwrap();
+        lm.manifest.app.hooks.post_install = serde_yaml::from_str(
+            "- copy_from_host:\n    src: nonexistent-staged-hook-file\n    dest: /tmp/test\n",
+        )
+        .unwrap();
+        orch.insert_manifest_for_test(lm.manifest, lm.manifest_dir)
+            .await;
+        orch.upgrade("staged-music").await.unwrap();
+        assert!(orch.start("staged-music").await.is_err());
+        assert!(orch
+            .staged_upgrade_image("staged-music")
+            .await
+            .unwrap()
+            .is_some());
+        assert_eq!(
+            rt.get_container_status("staged-music").await.unwrap().state,
+            ContainerState::Stopped
+        );
+        assert!(crate::crash_recovery::load_user_stopped(&orch.data_dir)
+            .await
+            .contains("staged-music"));
+    }
+
+    #[tokio::test]
+    async fn failed_staged_cleanup_reports_active_runtime_and_reconcile_retries_stop() {
+        let (rt, orch, _) = stopped_update_fixture().await;
+        let mut lm = orch.loaded("staged-music").await.unwrap();
+        lm.manifest.app.hooks.post_install = serde_yaml::from_str(
+            "- copy_from_host:\n    src: nonexistent-staged-hook-file\n    dest: /tmp/test\n",
+        )
+        .unwrap();
+        orch.insert_manifest_for_test(lm.manifest, lm.manifest_dir)
+            .await;
+        orch.upgrade("staged-music").await.unwrap();
+        rt.fail_stop
+            .lock()
+            .unwrap()
+            .insert("staged-music".into(), "stop refused".into());
+        let error = orch.start("staged-music").await.unwrap_err();
+        assert!(error.downcast_ref::<StagedCleanupFailure>().is_some());
+        assert_eq!(
+            rt.get_container_status("staged-music").await.unwrap().state,
+            ContainerState::Running
+        );
+        let report = orch.reconcile_all().await;
+        assert!(report.failures.is_empty());
+        assert!(report
+            .actions
+            .iter()
+            .any(|(app, action)| app == "staged-music"
+                && action == &ReconcileAction::Left("staged-update-awaiting-start".into())));
+        assert_eq!(
+            rt.get_container_status("staged-music").await.unwrap().state,
+            ContainerState::Stopped
+        );
+        assert!(orch
+            .staged_upgrade_image("staged-music")
+            .await
+            .unwrap()
+            .is_some());
+    }
+
+    #[tokio::test]
+    async fn pending_stage_enforces_stop_after_restart_when_stop_marker_cannot_be_saved() {
+        let (rt, orch, _) = stopped_update_fixture().await;
+        let mut lm = orch.loaded("staged-music").await.unwrap();
+        lm.manifest.app.hooks.post_install = serde_yaml::from_str(
+            "- copy_from_host:\n    src: nonexistent-staged-hook-file\n    dest: /tmp/test\n",
+        )
+        .unwrap();
+        orch.insert_manifest_for_test(lm.manifest.clone(), lm.manifest_dir.clone())
+            .await;
+        orch.upgrade("staged-music").await.unwrap();
+        let marker = orch.data_dir.join("user-stopped.json");
+        tokio::fs::remove_file(&marker).await.unwrap();
+        tokio::fs::create_dir(&marker).await.unwrap();
+        rt.fail_stop
+            .lock()
+            .unwrap()
+            .insert("staged-music".into(), "stop interrupted".into());
+        let failure = orch.start("staged-music").await.unwrap_err();
+        assert!(failure.downcast_ref::<StagedCleanupFailure>().is_some());
+        assert_eq!(
+            rt.get_container_status("staged-music").await.unwrap().state,
+            ContainerState::Running
+        );
+        let starts = rt
+            .calls()
+            .iter()
+            .filter(|c| c.starts_with("start_container:"))
+            .count();
+        let mut resumed = orch_with(rt.clone()).await;
+        resumed.set_data_dir(orch.data_dir.clone());
+        resumed
+            .insert_manifest_for_test(lm.manifest, lm.manifest_dir)
+            .await;
+        let report = resumed.reconcile_all().await;
+        assert!(report.failures.is_empty());
+        assert_eq!(
+            rt.get_container_status("staged-music").await.unwrap().state,
+            ContainerState::Stopped
+        );
+        assert_eq!(
+            rt.calls()
+                .iter()
+                .filter(|c| c.starts_with("start_container:"))
+                .count(),
+            starts
+        );
+        assert!(resumed
+            .staged_upgrade_image("staged-music")
+            .await
+            .unwrap()
+            .is_some());
+    }
+
+    #[tokio::test]
+    async fn staged_configuration_failure_keeps_stop_and_pin_before_create() {
+        let (rt, mut orch, _) = stopped_update_fixture().await;
+        orch.secrets_dir = orch.data_dir.join("fixture-secrets");
+        let mut lm = orch.loaded("staged-music").await.unwrap();
+        lm.manifest.app.container.secret_env =
+            serde_yaml::from_str("- key: REQUIRED_SECRET\n  secret_file: missing-staged-secret\n")
+                .unwrap();
+        orch.insert_manifest_for_test(lm.manifest, lm.manifest_dir)
+            .await;
+        orch.upgrade("staged-music").await.unwrap();
+        assert!(orch.start("staged-music").await.is_err());
+        assert!(orch
+            .staged_upgrade_image("staged-music")
+            .await
+            .unwrap()
+            .is_some());
+        assert!(crate::crash_recovery::load_user_stopped(&orch.data_dir)
+            .await
+            .contains("staged-music"));
+        assert!(!rt
+            .calls()
+            .iter()
+            .any(|c| c.starts_with("create_container:")));
+    }
+
+    #[tokio::test]
+    async fn staged_record_persistence_failure_precedes_runtime_changes() {
+        let (rt, orch, _) = stopped_update_fixture().await;
+        tokio::fs::write(orch.data_dir.join("staged-updates"), b"blocked directory")
+            .await
+            .unwrap();
+        assert!(orch.upgrade("staged-music").await.is_err());
+        assert!(!rt.calls().iter().any(|c| c.starts_with("pull_image:")
+            || c.starts_with("stop_container:")
+            || c.starts_with("remove_container:")
+            || c.starts_with("create_container:")));
+    }
+
+    #[tokio::test]
+    async fn stopped_unpinned_update_refuses_without_starting() {
+        let (rt, orch, _) = stopped_update_fixture().await;
+        orch.insert_manifest_for_test(
+            pull_manifest("staged-music", "docker.io/library/alpine:3.20"),
+            PathBuf::from("/tmp"),
+        )
+        .await;
+        assert!(orch
+            .upgrade("staged-music")
+            .await
+            .unwrap_err()
+            .to_string()
+            .contains("digest-pinned"));
+        assert!(!rt.calls().iter().any(|c| c.starts_with("pull_image:")
+            || c.starts_with("create_container:")
+            || c.starts_with("start_container:")));
     }
 
     #[tokio::test]

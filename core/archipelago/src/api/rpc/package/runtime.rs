@@ -126,7 +126,19 @@ impl RpcHandler {
                 Err(e) => {
                     tracing::error!("package.start {} failed: {:#}", package_id_owned, e);
                     install_log(&format!("START FAIL: {} — {:#}", package_id_owned, e)).await;
-                    if let Some(prev) = pre_state {
+                    if e.downcast_ref::<crate::container::prod_orchestrator::StagedCleanupFailure>()
+                        .is_some()
+                    {
+                        // Installed is neutral and scanner-owned. Restoring the
+                        // prior Stopped state would conceal a failed cleanup;
+                        // keeping Starting would prevent scanner convergence.
+                        set_package_state(
+                            &state_manager,
+                            &package_id_owned,
+                            PackageState::Installed,
+                        )
+                        .await;
+                    } else if let Some(prev) = pre_state {
                         set_package_state(&state_manager, &package_id_owned, prev).await;
                     } else {
                         warn!(

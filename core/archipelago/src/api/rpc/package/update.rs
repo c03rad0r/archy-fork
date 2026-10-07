@@ -4,7 +4,7 @@
 //! remove old container(s) → recreate (orchestrator-first, legacy fallback) → verify running.
 //! Data volumes are preserved (bind mounts, not stored in container).
 
-use super::config::get_containers_for_app;
+use super::config::{all_container_names, get_containers_for_app};
 use super::install::install_log;
 use super::progress::parse_pull_progress;
 use super::runtime::stop_timeout_secs;
@@ -13,6 +13,7 @@ use crate::api::rpc::RpcHandler;
 use crate::container::image_versions;
 use crate::data_model::{InstallPhase, PackageState};
 use anyhow::{Context, Result};
+use std::{collections::HashSet, path::Path};
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tracing::{error, info, warn};
 
@@ -60,9 +61,24 @@ impl RpcHandler {
         let targets = pinned
             .as_ref()
             .map(|target| self.resolve_images_to_pull(package_id, target));
+        // A stopped Quadlet normally removes its --rm container. Absence is
+        // not an install decision: only a known single managed app with durable
+        // installed AND stopped evidence may enter the recreate path.
+        let known_managed =
+            if should_try_orchestrator_update(package_id, self.orchestrator.is_some()) {
+                self.orchestrator
+                    .as_ref()
+                    .expect("orchestrator presence checked")
+                    .knows_app(orchestrator_update_app_id(package_id))
+                    .await
+            } else {
+                false
+            };
+        let markers = UpdateMarkers::load(&self.config.data_dir, package_id).await?;
+        let installed = inspect_update_images(package_id).await?;
+        validate_update_presence(package_id, known_managed, !installed.is_empty(), &markers)?;
         if let Some(targets) = &targets {
-            let installed = inspect_update_images(package_id).await?;
-            if !update_targets_need_change(targets, &installed)? {
+            if !update_targets_need_change(targets, &installed)? && !markers.stopped {
                 install_log(&format!(
                     "UPDATE SKIP: {} — target versions already installed",
                     package_id
@@ -111,6 +127,19 @@ impl RpcHandler {
             if let Some(orchestrator) = self.orchestrator.as_ref() {
                 match orchestrator.upgrade(orchestrator_app_id).await {
                     Ok(()) => {
+                        if let Some(image) = orchestrator
+                            .staged_upgrade_image(orchestrator_app_id)
+                            .await?
+                        {
+                            // The orchestrator proved the pinned image exists and
+                            // persisted its reviewed manifest. No running container
+                            // or healthy service is claimed for a stopped update.
+                            self.clear_install_progress(package_id).await;
+                            return Ok(serde_json::json!({
+                                "status": "staged", "state": "stopped",
+                                "package_id": package_id, "image": image,
+                            }));
+                        }
                         if let Some(targets) = &targets {
                             verify_update_targets(
                                 targets,
@@ -574,13 +603,69 @@ impl RpcHandler {
     }
 }
 
-async fn inspect_update_images(package_id: &str) -> Result<Vec<(String, String)>> {
-    let containers = get_containers_for_app(package_id).await?;
+#[derive(Default)]
+struct UpdateMarkers {
+    installed: bool,
+    stopped: bool,
+    uninstalled: bool,
+}
+
+impl UpdateMarkers {
+    async fn load(data_dir: &Path, package_id: &str) -> Result<Self> {
+        let mut names = all_container_names(package_id);
+        names.push(package_id.to_string());
+        names.push(orchestrator_update_app_id(package_id).to_string());
+        let installed = read_update_markers(data_dir, "installed-apps.json").await?;
+        let stopped = read_update_markers(data_dir, "user-stopped.json").await?;
+        let uninstalled = read_update_markers(data_dir, "user-uninstalled.json").await?;
+        Ok(Self {
+            installed: names.iter().any(|name| installed.contains(name)),
+            stopped: names.iter().any(|name| stopped.contains(name)),
+            uninstalled: names.iter().any(|name| uninstalled.contains(name)),
+        })
+    }
+}
+
+// The recovery loaders intentionally return empty on malformed state. An update
+// must instead distinguish unavailable evidence from a proven absence of an
+// uninstall decision before it can recreate a removed Quadlet container.
+async fn read_update_markers(data_dir: &Path, filename: &str) -> Result<HashSet<String>> {
+    match tokio::fs::read(data_dir.join(filename)).await {
+        Ok(bytes) => serde_json::from_slice(&bytes)
+            .with_context(|| format!("Cannot read {filename}; update cancelled")),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(HashSet::new()),
+        Err(error) => {
+            Err(error).with_context(|| format!("Cannot read {filename}; update cancelled"))
+        }
+    }
+}
+
+fn validate_update_presence(
+    package_id: &str,
+    known_managed: bool,
+    has_containers: bool,
+    markers: &UpdateMarkers,
+) -> Result<()> {
     anyhow::ensure!(
-        !containers.is_empty(),
-        "No containers found for {}",
+        !markers.uninstalled,
+        "{} was uninstalled; use an explicit install instead of update",
         package_id
     );
+    anyhow::ensure!(
+        has_containers || (known_managed && markers.installed && markers.stopped),
+        "No containers or durable stopped installation found for {}",
+        package_id
+    );
+    Ok(())
+}
+
+async fn inspect_update_images(package_id: &str) -> Result<Vec<(String, String)>> {
+    let containers = get_containers_for_app(package_id).await?;
+    if containers.is_empty() {
+        // The caller decides whether durable installation evidence authorizes
+        // a missing runtime. Never invoke bare `podman inspect` here.
+        return Ok(Vec::new());
+    }
     let mut command = tokio::process::Command::new("podman");
     command.arg("inspect").args(&containers).kill_on_drop(true);
     let output = tokio::time::timeout(std::time::Duration::from_secs(30), command.output())
@@ -626,6 +711,7 @@ fn verify_update_targets(
     targets: &[(String, String)],
     installed: &[(String, String)],
 ) -> Result<()> {
+    anyhow::ensure!(!targets.is_empty(), "No update targets resolved");
     for (app_id, target) in targets {
         let running = installed_image_for_target(app_id, installed).ok_or_else(|| {
             anyhow::anyhow!("Update {}: target container missing after recreate", app_id)
@@ -651,6 +737,7 @@ fn update_targets_need_change(
     installed: &[(String, String)],
 ) -> Result<bool> {
     use std::cmp::Ordering;
+    anyhow::ensure!(!targets.is_empty(), "No update targets resolved");
     let mut changed = false;
     for (app_id, target) in targets {
         let running = installed_image_for_target(app_id, installed);
@@ -771,8 +858,82 @@ mod tests {
     use super::{
         candidate_app_ids_for_container, immutable_update_image, orchestrator_update_app_id,
         should_try_orchestrator_update, update_targets_need_change, uses_legacy_update_flow,
-        verify_update_targets,
+        validate_update_presence, verify_update_targets, UpdateMarkers,
     };
+
+    #[tokio::test]
+    async fn stopped_installed_managed_app_updates_after_quadlet_container_disappears() {
+        let root = tempfile::tempdir().unwrap();
+        crate::crash_recovery::mark_installed(root.path(), "node-demo-music").await;
+        crate::crash_recovery::mark_user_stopped(root.path(), "node-demo-music").await;
+        let markers = UpdateMarkers::load(root.path(), "node-demo-music")
+            .await
+            .unwrap();
+        validate_update_presence("node-demo-music", true, false, &markers).unwrap();
+        let target = vec![("node-demo-music".into(), "localhost/music:2".into())];
+        assert!(super::update_targets_need_change(&target, &[]).unwrap());
+        // Success must still prove that upgrade actually created the target.
+        assert!(verify_update_targets(&target, &[]).is_err());
+        assert!(verify_update_targets(&target, &target).is_ok());
+        assert!(crate::crash_recovery::load_user_stopped(root.path())
+            .await
+            .contains("node-demo-music"));
+    }
+
+    #[test]
+    fn absent_catalog_app_or_unmanaged_runtime_is_not_an_update_installation() {
+        for (managed, installed, stopped) in [
+            (true, false, false),
+            (true, false, true),
+            (true, true, false),
+            (false, true, true),
+        ] {
+            let markers = UpdateMarkers {
+                installed,
+                stopped,
+                uninstalled: false,
+            };
+            assert!(validate_update_presence("optional", managed, false, &markers).is_err());
+        }
+        // Existing legacy containers remain updateable without modern markers.
+        assert!(validate_update_presence("legacy", false, true, &UpdateMarkers::default()).is_ok());
+        assert!(super::update_targets_need_change(&[], &[]).is_err());
+        assert!(verify_update_targets(&[], &[]).is_err());
+    }
+
+    #[tokio::test]
+    async fn uninstall_tombstone_beats_stale_installed_and_stopped_markers() {
+        let root = tempfile::tempdir().unwrap();
+        crate::crash_recovery::mark_installed(root.path(), "node-demo-music").await;
+        crate::crash_recovery::mark_user_stopped(root.path(), "node-demo-music").await;
+        crate::crash_recovery::mark_user_uninstalled(root.path(), "archy-node-demo-music").await;
+        let markers = UpdateMarkers::load(root.path(), "node-demo-music")
+            .await
+            .unwrap();
+        for present in [false, true] {
+            assert!(validate_update_presence("node-demo-music", true, present, &markers).is_err());
+        }
+    }
+
+    #[tokio::test]
+    async fn damaged_lifecycle_markers_cannot_authorize_recreation() {
+        let root = tempfile::tempdir().unwrap();
+        let absent = UpdateMarkers::load(root.path(), "optional").await.unwrap();
+        assert!(validate_update_presence("optional", true, false, &absent).is_err());
+        for name in [
+            "installed-apps.json",
+            "user-stopped.json",
+            "user-uninstalled.json",
+        ] {
+            tokio::fs::write(root.path().join(name), b"not-json")
+                .await
+                .unwrap();
+            assert!(UpdateMarkers::load(root.path(), "optional").await.is_err());
+            tokio::fs::remove_file(root.path().join(name))
+                .await
+                .unwrap();
+        }
+    }
 
     #[tokio::test]
     async fn stack_image_failure_precedes_every_lifecycle_action() {

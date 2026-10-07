@@ -298,7 +298,22 @@ impl DockerPackageScanner {
                 uninstall_stage: None,
             };
 
-            apply_manifest_presentation(&app_id, &mut package);
+            match super::staged_update::installed_manifest(data_dir, &app_id, &container.image)
+                .await
+            {
+                Ok(Some(manifest)) => {
+                    apply_manifest_value(&serde_json::to_value(manifest)?, &mut package)
+                }
+                Ok(None) => apply_manifest_presentation(&app_id, &mut package),
+                Err(error) => {
+                    tracing::warn!(app_id, error = %error, "Cannot verify retained installed manifest entry point");
+                    // Do not invent a launch path from a later catalog when its
+                    // binding to the running version cannot be established.
+                    if let Some(installed) = package.installed.as_mut() {
+                        installed.interface_addresses.clear();
+                    }
+                }
+            }
             packages.insert(app_id.clone(), package);
             info!(
                 "Detected container: {} ({})",

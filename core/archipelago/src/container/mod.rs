@@ -1,5 +1,4 @@
 pub mod app_catalog;
-pub mod node_catalog;
 pub mod app_gate_config;
 pub mod bitcoin_ui;
 pub mod boot_reconciler;
@@ -14,11 +13,12 @@ pub mod image_policy;
 pub mod image_versions;
 pub mod lnd;
 pub mod migration_backup;
+pub mod node_catalog;
 pub mod npm;
 pub mod prod_orchestrator;
 pub mod quadlet;
-pub mod registry;
 pub mod registration_pin;
+pub mod registry;
 pub mod secrets;
 pub mod traits;
 pub mod ui_detection;
@@ -29,3 +29,5 @@ pub use dev_orchestrator::DevContainerOrchestrator;
 pub use docker_packages::DockerPackageScanner;
 pub use prod_orchestrator::ProdContainerOrchestrator;
 pub use traits::ContainerOrchestrator;
+
+mod staged_update;

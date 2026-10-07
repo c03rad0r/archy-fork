@@ -362,7 +362,11 @@ impl RpcHandler {
                     set_package_state(
                         &handler.state_manager,
                         &package_id_spawn,
-                        if result.get("status").and_then(|v| v.as_str()) == Some("up-to-date") {
+                        if result.get("status").and_then(|v| v.as_str()) == Some("staged") {
+                            PackageState::Stopped
+                        } else if result.get("status").and_then(|v| v.as_str())
+                            == Some("up-to-date")
+                        {
                             pre_state.clone().unwrap_or(PackageState::Running)
                         } else {
                             PackageState::Running
