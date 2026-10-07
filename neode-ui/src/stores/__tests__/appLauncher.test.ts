@@ -170,9 +170,9 @@ describe('useAppLauncherStore', () => {
     const launcher=useAppLauncherStore();launcher.openSession('mempool')
     expect(launcher.panelAppId).toBe('mempool')
     expect(launcher.mediaAppId).toBeNull()
-    expect(useToast().toasts.value.at(-1)?.message).toContain('Checking')
+    expect(useToast().toasts.value[useToast().toasts.value.length - 1]?.message).toContain('Checking')
     await new Promise(resolve=>setTimeout(resolve,0))
-    const failure=useToast().toasts.value.at(-1)
+    const failure=useToast().toasts.value[useToast().toasts.value.length - 1]
     expect(failure?.message).toContain('unavailable');expect(failure?.action?.label).toBe('Retry settings');expect(launcher.panelAppId).toBe('mempool');expect(launcher.mediaAppId).toBeNull()
     launcher.closePanel();const calls=vi.mocked(fetch).mock.calls.length;failure?.action?.onClick();expect(fetch).toHaveBeenCalledTimes(calls)
     vi.stubGlobal('fetch',previousFetch)
