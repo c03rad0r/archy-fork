@@ -27,6 +27,31 @@ describe('node-scoped demo catalog', () => {
     expect(await ensureNodeAppAvailable('node-demo-v4v')).toBe(true)
     expect(fetcher).toHaveBeenCalledTimes(1)
   })
+  it('admits the exact digest-version reported by the installed private demo', async () => {
+    vi.resetModules()
+    const digest = '4f28702e4f85368e4ad886f06d58b38f869c560c90ca40487bfaebe69090a870'
+    const image = `localhost/node-demo:0.6.7-alpha-private@sha256:${digest}`
+    const payload = { ...demo(), apps: { 'node-demo-v4v': {
+      version: '0.6.7-alpha-private', digest: `sha256:${digest}`, image,
+      manifest: { app: { id: 'node-demo-v4v', version: '0.6.7-alpha-private',
+        container: { image }, metadata: { launch: { media_controls: 'archipelago-v1', requires_host_frame: true } } } },
+    } } }
+    vi.stubGlobal('fetch', vi.fn(async () => ({ ok: true, json: async () => payload })))
+    const { ensureNodeAppAvailable, appHasMediaBridge, appRequiresHostFrame } = await import('../curatedApps')
+    expect(await ensureNodeAppAvailable('node-demo-v4v')).toBe(true)
+    expect(appHasMediaBridge('node-demo-v4v', digest)).toBe(true)
+    expect(appRequiresHostFrame('node-demo-v4v', digest)).toBe(true)
+    expect(appHasMediaBridge('node-demo-v4v', 'a'.repeat(64))).toBe(false)
+    expect(appHasMediaBridge('node-demo-v4v', digest.slice(0, 12))).toBe(false)
+    payload.apps['node-demo-v4v'].digest = `sha256:${'b'.repeat(64)}`
+    expect(appHasMediaBridge('node-demo-v4v', digest)).toBe(false)
+    payload.apps['node-demo-v4v'].digest = `sha256:${digest}`
+    payload.apps['node-demo-v4v'].manifest.app.container.image = `${image.slice(0, image.indexOf('@'))}@sha256:${'c'.repeat(64)}`
+    expect(appHasMediaBridge('node-demo-v4v', digest)).toBe(false)
+    payload.apps['node-demo-v4v'].manifest.app.container.image = image
+    payload.apps['node-demo-v4v'].image = 'localhost/node-demo:mutable'
+    expect(appHasMediaBridge('node-demo-v4v', digest)).toBe(false)
+  })
   it('fails closed for unavailable and expired launch policy', async () => {
     vi.resetModules()
     const fetcher = vi.fn(async () => ({ ok: true, json: async () => ({ ...demo(), expires_at: '2000-01-01T00:00:00Z' }) }))

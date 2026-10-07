@@ -59,6 +59,7 @@ export interface SignedAppCatalog {
 
 export interface SignedAppEntry {
   version: string
+  digest?: string
   image?: string
   manifest?: {
     app?: {
@@ -117,15 +118,28 @@ function verifiedLaunchEntry(id: string): SignedAppEntry | undefined {
     : signedCatalogCache?.apps[id]
   return entry?.manifest?.app?.id === id ? entry : undefined
 }
+/** Older package scanners expose the inspected image digest as manifest.version.
+ * Accept that identity only when it matches the verified immutable image pin;
+ * a tag, abbreviated digest or conflicting catalog field cannot substitute. */
+function installedEntryMatches(entry: SignedAppEntry, installedVersion?: string): boolean {
+  if (installedVersion === undefined || entry.version === installedVersion) return true
+  if (!/^[a-f0-9]{64}$/i.test(installedVersion)) return false
+  const image = entry.image ?? entry.manifest?.app?.container?.image
+  const pin = image?.match(/@sha256:([a-f0-9]{64})$/i)?.[1]?.toLowerCase()
+  if (!pin || pin !== installedVersion.toLowerCase()) return false
+  if (entry.digest !== undefined && entry.digest.toLowerCase() !== `sha256:${pin}`) return false
+  const manifestImage = entry.manifest?.app?.container?.image
+  return manifestImage === undefined || manifestImage.match(/@sha256:([a-f0-9]{64})$/i)?.[1]?.toLowerCase() === pin
+}
 export function appHasMediaBridge(id: string, installedVersion?: string): boolean {
   const entry = verifiedLaunchEntry(id)
-  if (!entry || (installedVersion !== undefined && entry.version !== installedVersion)) return false
+  if (!entry || !installedEntryMatches(entry, installedVersion)) return false
   const launch = entry.manifest?.app?.metadata?.launch
   return launch?.media_controls === 'archipelago-v1' && launch.open_in_new_tab !== true
 }
 export function appRequiresHostFrame(id: string, installedVersion?: string): boolean {
   const entry = verifiedLaunchEntry(id)
-  return Boolean(entry && (installedVersion === undefined || entry.version === installedVersion)
+  return Boolean(entry && installedEntryMatches(entry, installedVersion)
     && entry.manifest?.app?.metadata?.launch?.requires_host_frame === true
     && entry.manifest.app.metadata.launch.open_in_new_tab !== true)
 }
