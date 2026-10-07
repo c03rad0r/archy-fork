@@ -180,6 +180,7 @@ impl Manager {
             touched: Instant::now(),
         });
         jobs.insert(key, job.clone());
+        let total_bytes = binding.size;
         tokio::task::spawn_blocking(move || {
             let _permit = permit;
             let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| work(progress)))
@@ -202,7 +203,7 @@ impl Manager {
         });
         Ok(Status::Preparing {
             completed_bytes: 0,
-            total_bytes: binding.size,
+            total_bytes,
         })
     }
     /// Explicit retry clears only a failed preparation, never a running job or
