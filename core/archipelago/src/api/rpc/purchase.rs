@@ -40,6 +40,16 @@ impl RpcHandler {
             crate::identity::NodeIdentity::load_existing(&self.config.data_dir.join("identity"))
                 .await?;
         let buyer = identity.did_key()?;
+        let _rail = crate::content_payment_admission::lock(
+            &self.config.data_dir,
+            &buyer,
+            transport.seller_did(),
+            &params.content_id,
+        )
+        .await?;
+        self.ensure_invoice_allows_other_rail(&buyer, transport.seller_did(), &params.content_id)
+            .await?;
+
         let result = caller::purchase(
             &self.config.data_dir,
             &buyer,

@@ -1,4 +1,5 @@
 mod channels;
+pub(super) mod external_invoice;
 mod fee_bump;
 mod fee_policy;
 mod info;

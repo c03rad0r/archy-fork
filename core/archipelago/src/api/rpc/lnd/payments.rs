@@ -36,7 +36,7 @@ fn payment_failure_reason(reason: &str) -> &'static str {
 
 /// Preserve terminal LND state as structured data. An RPC exception is an
 /// ambiguous outcome to callers and must not hide a verified unpaid failure.
-fn router_payment_outcome(
+pub(super) fn router_payment_outcome(
     payment: &serde_json::Value,
     hash: &str,
     decoded_amt: i64,

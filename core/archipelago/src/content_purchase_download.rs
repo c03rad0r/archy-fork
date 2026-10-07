@@ -79,7 +79,7 @@ pub(crate) async fn cache(
     Ok(owned)
 }
 
-fn verified_stream<S, E>(
+pub(crate) fn verified_stream<S, E>(
     stream: S,
     expected_hash: String,
     expected_size: u64,

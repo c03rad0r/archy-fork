@@ -337,6 +337,15 @@ impl RpcHandler {
             "content.playback-start" => self.handle_playback_start(params, session_token).await,
             "content.playback-status" => self.handle_playback_status(params, session_token).await,
             "content.rental-purchase" => self.handle_content_rental_purchase(params).await,
+            "content.invoice-pay" => self.handle_lightning_operation(params, "pay").await,
+            "content.invoice-download" => self.handle_lightning_operation(params, "download").await,
+            "content.invoice-attempt" => self.handle_lightning_operation(params, "lookup").await,
+            "content.invoice-retry-native" => {
+                self.handle_lightning_operation(params, "retry").await
+            }
+            "content.invoice-create" => self.handle_lightning_operation(params, "create").await,
+            "content.invoice-recover" => self.handle_lightning_operation(params, "status").await,
+            "content.invoice-cancel" => self.handle_lightning_operation(params, "cancel").await,
             "content.purchase" => self.handle_content_purchase(params).await,
             "content.cancel-purchase" => self.handle_content_cancel_purchase(params).await,
             "content.payment-status" => self.handle_content_payment_status(params).await,

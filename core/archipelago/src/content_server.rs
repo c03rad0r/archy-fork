@@ -1923,3 +1923,41 @@ pub(crate) async fn publish_snapshot_offer(
     )
     .await
 }
+
+/// Commit a new invoice only while its exact selected share remains current.
+/// Caller holds the invoice journal; catalog writers do not acquire that journal.
+pub(crate) async fn publish_snapshot_invoice(
+    data_dir: &Path,
+    original: &ContentItem,
+    journal: &crate::content_lightning::Journal,
+    binding: crate::content_lightning::Binding,
+    retained: crate::content_lightning::RetainedFile,
+) -> Result<crate::content_lightning::SellerRecord> {
+    let _held = CATALOG_WRITES.lock().await;
+    let catalog = load_catalog(data_dir).await?;
+    let current = catalog
+        .items
+        .iter()
+        .find(|item| item.id == original.id)
+        .context("Content was unshared before invoice preparation")?;
+    anyhow::ensure!(
+        serde_json::to_value(current)? == serde_json::to_value(original)?,
+        "Shared content terms changed before invoice preparation"
+    );
+    anyhow::ensure!(
+        binding.content_id == original.id
+            && retained.filename == original.filename
+            && retained.mime_type == original.mime_type
+            && retained.size == original.size_bytes
+            && matches!(&original.access, AccessControl::Paid { price_sats, .. } if *price_sats == binding.price_sats)
+            && method_accepted(&original.access, "lightning"),
+        "Invoice snapshot terms changed"
+    );
+    let visible = match &original.availability {
+        Availability::Nobody => false,
+        Availability::AllPeers => true,
+        Availability::Specific { peers } => peers.contains(&binding.buyer_did),
+    };
+    anyhow::ensure!(visible, "Item is not shared with this invoice buyer");
+    journal.prepare_seller_source(binding, Some(retained))
+}

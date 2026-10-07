@@ -3,6 +3,7 @@ mod cdp;
 mod cloud_purchase;
 mod content;
 mod dwn;
+pub(crate) mod lightning_purchase;
 mod model_proxy;
 mod node_message;
 mod proxy;
@@ -454,6 +455,9 @@ impl ApiHandler {
             .await;
         }
 
+        if method == Method::POST && path == lightning_purchase::ROUTE {
+            return self.handle_lightning_purchase(req).await;
+        }
         // Purchase routes bound the original body before the generic buffer.
         if method == Method::POST
             && matches!(

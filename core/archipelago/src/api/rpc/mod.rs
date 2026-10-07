@@ -17,6 +17,7 @@ mod fips;
 mod handshake;
 mod identity;
 mod interfaces;
+mod lightning_purchase;
 pub(crate) mod lnd;
 mod marketplace;
 mod media_registration;
@@ -109,6 +110,13 @@ fn native_consent_origin_allowed(method: &str, headers: &hyper::HeaderMap, dev_m
             | "media.registration.context"
             | "media.registration.resolve"
             | "content.rental-purchase"
+            | "content.invoice-pay"
+            | "content.invoice-download"
+            | "content.invoice-attempt"
+            | "content.invoice-retry-native"
+            | "content.invoice-create"
+            | "content.invoice-recover"
+            | "content.invoice-cancel"
             | "content.purchase"
             | "content.cancel-purchase"
             | "content.playback-handle"

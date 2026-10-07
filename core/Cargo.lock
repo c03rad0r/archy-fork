@@ -141,6 +141,7 @@ dependencies = [
  "iroh",
  "iroh-blobs",
  "libc",
+ "lightning-invoice",
  "lofty",
  "mainline",
  "mdns-sd",

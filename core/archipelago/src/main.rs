@@ -44,6 +44,8 @@ mod content_auth;
 mod content_hash;
 mod content_indeehub;
 mod content_invoice;
+mod content_lightning;
+mod content_payment_admission;
 mod content_owned;
 mod content_purchase;
 mod content_purchase_executor;
