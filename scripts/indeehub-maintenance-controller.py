@@ -108,11 +108,11 @@ class Controller:
         self.record=json.loads(self.path.read_text()) if self.path.exists() else None
         if self.record:require(self.record['operation_id']==operation,'Maintenance journal changed')
     def save(self): atomic(self.path,self.record)
-    def run(self, argv, timeout=30, output=None, input_bytes=None):
+    def run(self, argv, timeout=30, output=None, input_bytes=None, input_file=None):
         if self.runner:return self.runner(argv,timeout,output)
         self.root.mkdir(mode=0o700,parents=True,exist_ok=True)
         with (self.root/'commands.private.log').open('ab') as errors:
-            result=subprocess.run(argv,stdout=output or subprocess.PIPE,stderr=errors,timeout=timeout,check=True,pass_fds=(self.lock_fd,),input=input_bytes)
+            result=subprocess.run(argv,stdout=output or subprocess.PIPE,stderr=errors,timeout=timeout,check=True,pass_fds=(self.lock_fd,),input=input_bytes,stdin=input_file)
         if output:return b''
         require(len(result.stdout)<=2*1024*1024,'Command response exceeds bound')
         return result.stdout
@@ -197,8 +197,8 @@ class Controller:
         rows=json.loads(self.run(['podman','volume','inspect',*expected]))
         require({row['Name'] for row in rows}==set(expected),'Persistent volume scope changed')
         return {row['Name']:row['Mountpoint'] for row in rows}
-    def database_commitments(self):
-        raw=self.run(['podman','exec','-i','indeedhub-postgres','psql','-XqAt','--set=ON_ERROR_STOP=1','-U','indeedhub','-d','indeedhub'],timeout=300,input_bytes=DB_COMMITMENTS_SQL.encode())
+    def database_commitments(self, container="indeedhub-postgres"):
+        raw=self.run(['podman','exec','-i',container,'psql','-XqAt','--set=ON_ERROR_STOP=1','-U','indeedhub','-d','indeedhub'],timeout=300,input_bytes=DB_COMMITMENTS_SQL.encode())
         rows=[json.loads(line) for line in raw.decode().splitlines() if line.strip()]
         tables={};migrations=None
         for row in rows:
@@ -271,7 +271,76 @@ class Controller:
                 require(time.monotonic()<deadline,'Transcodes still active; retained job state, no forced completion')
                 time.sleep(1)
             self.graceful_stop('indeedhub-ffmpeg');self.legacy_api_idle();self.graceful_stop('indeedhub-api')
-        self.backup();self.verify();return {'operation_id':self.operation,'state':'drained'}
+        self.backup();self.verify_database_backup();self.verify();return {'operation_id':self.operation,'state':'drained'}
+    def backup_restore_terms(self):
+        baseline=self.record.get('database_before')
+        require(baseline and baseline.get('operation_id')==self.operation,'Backup database baseline missing')
+        postgres=next(m for m in validate_members(self.record['original_members']) if m['name']=='indeedhub-postgres')
+        return {'operation_id':self.operation,'dump_sha256':self.record['artifacts']['database.dump']['sha256'],
+                'baseline_sha256':hashlib.sha256(json.dumps(baseline,sort_keys=True).encode()).hexdigest(),
+                'image_id':postgres['image_id']}
+    def cleanup_restore_fixture(self):
+        fixture=self.record.get('restore_fixture')
+        if not fixture:return
+        name=fixture['name']
+        require(bool(re.fullmatch('archy-backup-restore-[0-9a-f]{32}',name)),'Invalid restore fixture name')
+        ids=self.run(['podman','ps','--all','--no-trunc','--filter','name=^'+name+'$','--format','{{.ID}}']).decode().split()
+        require(len(ids)<=1,'Ambiguous restore fixture')
+        if ids:
+            actual=self.inspect(ids[0])
+            require(actual['Name']==name and actual['Image'].removeprefix('sha256:')==fixture['image_id'] and
+                    actual['Config'].get('Labels',{}).get('io.archipelago.backup.operation')==self.operation,
+                    'Restore fixture ownership changed')
+            require(not actual.get('Mounts'),'Restore fixture unexpectedly mounts external storage')
+            self.run(['podman','rm','--force',actual['Id']],timeout=90)
+        del self.record['restore_fixture'];self.save()
+    def verify_database_backup(self):
+        # A valid digest only proves unchanged bytes, not a usable PostgreSQL
+        # backup. Restore the exact fresh dump before allowing target startup.
+        self.holds();self.fence_matches();self.verify_artifacts()
+        terms=self.backup_restore_terms()
+        self.cleanup_restore_fixture()
+        if self.record.get('backup_restore_verified'):
+            require(self.record['backup_restore_verified']==terms,'Backup restore proof changed')
+            return
+        name='archy-backup-restore-'+uuid.uuid4().hex
+        self.record['restore_fixture']={'name':name,'image_id':terms['image_id']};self.save()
+        try:
+            # No published ports, network, mounted volumes, or registry access.
+            # PGDATA is private disposable container storage, not RAM or live data.
+            identifier=self.run(['podman','create','--pull=never','--network=none','--image-volume=ignore',
+                '--name',name,'--label','io.archipelago.backup.operation='+self.operation,
+                '-e','POSTGRES_HOST_AUTH_METHOD=trust','-e','POSTGRES_USER=indeedhub',
+                '-e','POSTGRES_DB=indeedhub','-e','PGDATA=/var/lib/postgresql/data/restore-check',
+                'sha256:'+terms['image_id']]).decode().strip()
+            require(bool(re.fullmatch('[0-9a-f]{64}',identifier)),'Invalid restore fixture identity')
+            actual=self.inspect(identifier)
+            require(not actual.get('Mounts'),'Restore fixture unexpectedly mounts external storage')
+            self.run(['podman','start',identifier])
+            # The image bootstrap server accepts Unix sockets before it exits;
+            # TCP readiness waits for the final server, avoiding interrupted restore.
+            deadline=time.monotonic()+90
+            while True:
+                try:
+                    self.run(['podman','exec',identifier,'pg_isready','-h','127.0.0.1','-U','indeedhub','-d','indeedhub'],timeout=10)
+                    break
+                except subprocess.CalledProcessError:
+                    require(time.monotonic()<deadline,'Backup restore database did not become ready')
+                    time.sleep(0.5)
+            with (self.root/'backup'/'database.dump').open('rb') as source:
+                self.run(['podman','exec','-i',identifier,'pg_restore','--exit-on-error','--no-owner','--no-acl',
+                          '-U','indeedhub','-d','indeedhub'],timeout=1800,input_file=source)
+            restored=self.database_commitments(identifier)
+            require(restored==self.record['database_before'],'Backup restore differs from captured database')
+        finally:
+            self.cleanup_restore_fixture()
+        self.record['backup_restore_verified']=terms;self.save()
+    def verify_artifacts(self):
+        expected_artifacts={'database.dump',*(volume+'.tar' for volume in VOLUMES)}
+        require(set(self.record.get('artifacts',{}))==expected_artifacts,'Backup artifact inventory incomplete or unexpected')
+        for name,record in self.record['artifacts'].items():
+            path=self.root/'backup'/name;require(path.is_file() and not path.is_symlink() and path.stat().st_size==record['bytes'],'Backup artifact missing or changed')
+            require(sha(path)==record['sha256'],'Backup artifact checksum changed')
     def verify(self):
         self.holds();self.fence_matches()
         if self.record and self.record.get('phase')=='Recovering':
@@ -283,11 +352,8 @@ class Controller:
         # Verification remains possible when API/storage endpoints are stopped.
         # The native adapter separately validates target/original runtime identity.
         for name in NAMES:require(self.record.get('stopped',{}).get(name,{}).get('confirmed'),'Original writer stop evidence missing')
-        expected_artifacts={'database.dump',*(volume+'.tar' for volume in VOLUMES)}
-        require(set(self.record.get('artifacts',{}))==expected_artifacts,'Backup artifact inventory incomplete or unexpected')
-        for name,record in self.record['artifacts'].items():
-            path=self.root/'backup'/name;require(path.is_file() and not path.is_symlink() and path.stat().st_size==record['bytes'],'Backup artifact missing or changed')
-            require(sha(path)==record['sha256'],'Backup artifact checksum changed')
+        self.verify_artifacts()
+        require(self.record.get('backup_restore_verified')==self.backup_restore_terms(),'Fresh database backup restore is not verified')
         return {'operation_id':self.operation,'state':'held'}
     def release(self, outcome):
         require(outcome in ('committed','restored','aborted'),'Invalid release outcome')

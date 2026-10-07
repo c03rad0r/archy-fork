@@ -56,10 +56,31 @@ class MaintenanceTests(unittest.TestCase):
   for name in ['database.dump',*(v+'.tar' for v in module.VOLUMES)]:
    path=c.root/'backup'/name;path.write_bytes(b'original')
    c.record['artifacts'][name]={'bytes':path.stat().st_size,'sha256':module.sha(path)}
+  c.record['original_members']=members()
+  c.record['database_before']={'operation_id':self.operation,'tables':{},'migrations':[]}
+  c.record['backup_restore_verified']=c.backup_restore_terms()
   c.save()
   return c
  def test_complete_backup_checksums_allow_verification(self):
   self.assertEqual(self.completed_backup().verify()['state'],'held')
+ def test_restore_proof_must_match_fresh_dump_baseline_image_and_operation(self):
+  c=self.completed_backup();proof=dict(c.record['backup_restore_verified'])
+  for field in proof:
+   c.record['backup_restore_verified']={**proof,field:'changed'}
+   with self.assertRaisesRegex(RuntimeError,'restore is not verified'):c.verify()
+   self.assertEqual(c.fence.read_text(),self.operation)
+  c.record.pop('backup_restore_verified')
+  with self.assertRaisesRegex(RuntimeError,'restore is not verified'):c.verify()
+ def test_foreign_restore_fixture_is_never_removed(self):
+  c=self.completed_backup();name='archy-backup-restore-'+'a'*32
+  c.record['restore_fixture']={'name':name,'image_id':'a'*64}
+  def command(argv,timeout,output):
+   if argv[:2]==['podman','ps']:return b'container-id'
+   if argv[:2]==['podman','inspect']:return json.dumps([{'Name':name,'Image':'a'*64,'Config':{'Labels':{'io.archipelago.backup.operation':str(uuid.uuid4())}}}]).encode()
+   raise AssertionError('Unexpected mutation '+str(argv))
+  c.runner=command
+  with self.assertRaisesRegex(RuntimeError,'ownership changed'):c.cleanup_restore_fixture()
+  self.assertIn('restore_fixture',c.record)
  def test_same_size_corruption_keeps_admission_closed(self):
   c=self.completed_backup();(c.root/'backup'/'database.dump').write_bytes(b'corrupt!')
   with self.assertRaisesRegex(RuntimeError,'checksum changed'):c.verify()

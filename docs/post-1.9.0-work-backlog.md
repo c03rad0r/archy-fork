@@ -549,3 +549,32 @@ and video, with video using picture-in-picture where the device supports it.
   reconnect, completion and reopen states, then publish the reusable contract
   for other audio/video apps. No live app deployment or payment is accepted
   from browser-only tests.
+
+
+## 21. Public files and folders — final task
+
+Added by the operator on 2026-10-07. Perform after the existing tasks, including
+previously deferred work. Status: queued; no public visibility has been changed.
+
+- Add **Make public** to the More menus for both files and folders. Public means
+  discoverable by any node, including nodes with no peering or federation
+  relationship to the owner. Relationship approval must not be required merely
+  to discover a public item.
+- Reuse the existing **Share with peers pricing interface**, including optional
+  charging and its supported pricing/payment choices. Use the existing brand
+  **blue tints instead of orange** for this public-sharing variant; do not create
+  a separate pricing interaction or change the peer-sharing colour treatment.
+- Place a very small blue public-state marker at the **top-left of the file or
+  folder icon**. Keep the marker readable and accessible without covering the
+  thumbnail or replacing the existing icon.
+- Separate public discoverability from paid access: listed paid content must
+  still enforce its price/entitlement. Reuse settlement and recovery protections
+  so retries do not charge twice.
+- Make folder scope explicit in the reused flow, including existing/new children,
+  nested items and individual visibility/pricing overrides. Preserve private
+  items until the owner actually applies the action; provide a way to withdraw
+  public sharing and reflect that state in menus, listings and markers.
+- Qualify file/folder menus, shared pricing UI with blue styling, tiny marker,
+  unrelated-node discovery, paid access, withdrawal and mobile/desktop layouts.
+  No live file publication or real payment is authorized merely by adding this
+  task to the backlog.

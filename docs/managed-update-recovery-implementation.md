@@ -1,7 +1,7 @@
 # Managed update runtime recovery
 
-Status: isolated source implementation; Rust and real Podman/systemd qualification
-pending. No live update, snapshot, stop, backup or rollback has been performed by
+Status: integrated candidate; combined Rust suite and real Podman/systemd
+recovery primitives pass. Full application cutover qualification is pending. No live update, snapshot, stop, backup or rollback has been performed by
 this work. Active deployed source is unchanged.
 
 The managed path captures original source Quadlet bytes, mode, immutable image,
@@ -75,3 +75,38 @@ and PostgreSQL timeout remain failed/incomplete attempts, not acceptance.
 Evidence: `/tmp/archy-resumed-20261007-updater-full-backend.log`,
 `/tmp/archy-resumed-20261007-indeehub-controller-tests-final.log`, and
 `/tmp/archy-resumed-20261007-indeehub-postgres-restore.log`.
+
+
+## Integrated candidate checkpoint — 2026-10-07
+
+Local integration at `7fb7ee80` passes the complete isolated backend suite:
+2,000 passed, zero failed, five ignored. The stale receipt fixture failure above
+is resolved by the already-integrated correction. Disposable real Quadlet
+AutoRemove recovery primitives pass with injected target failure, original
+writable-layer/configuration restoration and unchanged persistent fixture bytes.
+Repeatable fixture: `tests/lifecycle/supervised-runtime-primitives.py`.
+This does not qualify the complete seven-member app drain/cutover adapter.
+
+The fresh-backup restore barrier is being added after this checkpoint; its
+qualification and new embedded-controller build remain separate from these
+previously passing results. No live IndeeHub deployment has been changed.
+
+
+Fresh database backup restoration now runs through the controller's production
+method in a disposable network-none PostgreSQL with no external mounts or
+published ports. The original local image is pinned, dump restore must exactly
+match captured database commitments, and durable proof binds the operation,
+image, dump hash and baseline. Ownership-checked cleanup survives retry and
+refuses foreign fixtures. Verification rejects a missing/stale restore proof.
+
+All21 pure controller tests pass. The real PostgreSQL fixture passes valid
+restoration, rejects truncated and wrong-database dumps, checks cleanup and
+retained admission on failure, and retains the four prior mutation rejection
+checks. Evidence: `/tmp/archy-20261007-fresh-backup-restore.log`.
+Final real restore-barrier checks pass on PostgreSQL15.17 and16.13 after waiting
+for the final TCP server instead of the temporary Unix-socket bootstrap server.
+The initial PG15 restore failure is retained as failed evidence; its private
+command stderr was removed by fixture cleanup, so no exact cause is claimed.
+The stale backend compile was interrupted after the readiness edit; a fresh
+backend build/suite remains required for the final embedded controller.
+Volume-archive restore and the full supervised app cutover remain open gates.

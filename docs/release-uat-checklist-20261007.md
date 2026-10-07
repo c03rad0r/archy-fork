@@ -128,9 +128,11 @@ does not close a release gate.
 ## Known release blockers
 
 1. IndeeHub distributed paid playback and supervised cutover rollback.
-2. Physical companion background media and video PiP.
-3. Framework owner-browser Receive/balance confirmation still documented as
-   pending in the incident record.
+2. Companion native background audio/media; operator accepted delivered Cloud
+   PiP on 2026-10-07. Detailed interruption/expiry cases remain distinct.
+3. Framework Monitoring owner-browser acceptance. The earlier LND startup,
+   Receive and false-zero incident is closed with operator acceptance; it is
+   not a release blocker. Paid-file settlement/recovery is a separate open gate.
 4. Fleet-wide offline/reconnect and FIPS acceptance.
 5. Firewall/tunnel persistence and reboot qualification.
 6. HTTPS hostname/trust and companion acceptance.

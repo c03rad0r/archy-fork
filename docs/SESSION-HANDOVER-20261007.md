@@ -126,6 +126,11 @@ Private backup and artifacts are under
    should continue on the phone after app close, with native controls, queue,
    artwork, authorization and video PiP. Physical V4V acceptance is open.
 
+21. **Public files/folders — queued, perform last:** Make public in both More
+    menus, discovery by non-peered/non-federated nodes, the same peer-sharing
+    pricing interface with blue tints instead of orange, optional charging and
+    a tiny blue marker at the icon's top-left. Full scope is backlog task21.
+
 ## Additional release-regression items
 
 - Paid-file recovery must never issue a second payment; source protections and
@@ -223,3 +228,87 @@ release receipt or preservation check as a stop-and-investigate condition.
   passes unchanged/additive schema and rejects four data/schema/history
   mutations. Full Rust and real supervised Podman/systemd qualification remain
   required before integration or IndeeHub activation.
+
+
+## Operator PiP acceptance and continued release work — 2026-10-07
+
+- Operator confirmed the delivered companion PiP works (“works great”). Record
+  this as operator acceptance of the reported PiP flow, not independent proof
+  of every rotation/network/expiry case or native V4V background-audio support.
+- Retained updater is now integrated locally at `7fb7ee80`. The combined isolated
+  backend suite passed **2,000 tests, zero failures, five ignored**. Prior notes
+  saying integration/Rust qualification are pending are historical.
+- Real disposable Quadlet/Podman AutoRemove primitive qualification passed:
+  injected target failure, restoration from the original writable-layer image,
+  preserved volume bytes and original configuration. The full seven-member
+  application drain/cutover adapter is still not qualified by this primitive test.
+- Evidence: `/tmp/archy-resumed-20261007-integrated-full-backend.log` and
+  `/tmp/archy-resumed-20261007-runtime-primitives-recheck.log`.
+- Active work: require restoration of each fresh database backup in an owned,
+  network-isolated PostgreSQL before IndeeHub target startup. Hash verification
+  alone is insufficient. All 21 controller tests pass; real restore/fault checks
+  passed, including the actual production restore method, rejection of truncated
+  and wrong-database dumps, owned fixture cleanup and retained admission fences.
+  Evidence: `/tmp/archy-20261007-fresh-backup-restore.log`.
+  This script change needs a fresh embedded-controller backend
+  build; do not call the older 2,000-test result evidence for this new change.
+- Task21 is appended at the end, including the operator's explicit requirement
+  to reuse peer-sharing pricing with blue tints. It is not implemented yet.
+
+
+### Current status overview requested by the operator
+
+“Nearly finished” means implemented with a bounded acceptance/review step left;
+“In progress” still includes substantive implementation or distributed testing.
+No percentage is inferred from test counts.
+
+| Task | Status | Remaining work |
+| --- | --- | --- |
+| 1 IndeeHub publishing/paid viewing | In progress | Full supervised cutover, distributed publication/payment/timed playback |
+| 2 Native signer/companion grey screen | Nearly finished | Physical login/resume/session recovery acceptance |
+| 3 Peering/discovery | In progress | Reciprocal offline/reconnect and expanded connection UX |
+| 4 Framework Monitoring | Nearly finished | Owner-browser Monitoring check |
+| 5 Immich/Nextcloud | Slightly started | Design assessment exists; connectors unimplemented |
+| 6 Web5 connection journey | In progress | Deferred final flow review and expanded UX |
+| 7 Companion launch speed | In progress | Actual device measurements and remaining latency work |
+| 8 Fleet acceptance | In progress | Full supported-function/fault matrix |
+| 9 AIUI/provider/funding | In progress | Provider/funding and companion acceptance |
+| 10 Offline/network map | In progress | Real outage and recovery qualification |
+| 11 Web5/Cloud/tab speed | In progress | Complete performance evidence |
+| 12 Fleet metrics/FIPS | In progress | Fleet failure and transport qualification |
+| 13 V4V Yaya demo | In progress | Browser demo live; native phone background playback remains |
+| 14 Peer files/Indee streaming | In progress | Distributed timed playback |
+| 15 MeshCore | Queued | Two-radio work and acceptance |
+| 16 Web5 cards/footer | Nearly finished | Final visual/functional review |
+| 17 HTTPS apps | In progress | Exact hostname/trust and companion acceptance |
+| 18 Firewall/tunnel | In progress | Read-only UI done; settings persistence/reboot/rollback qualification |
+| 19 Media guide/Cloud PiP | Nearly finished | PiP operator-accepted; finish reusable contract and remaining edge cases |
+| 20 Native background media | In progress | Cloud PiP done; native audio service/controls and device checks remain |
+| 21 Public files/folders | Queued, final task | Shared pricing interface with blue tints, unrelated-node discovery and tiny marker |
+
+Completed subitems: Framework LND startup incident, companion download/viewer
+acceptance, physical upload acceptance, APK55 delivery and reported Cloud PiP
+flow. Earlier complete UI/Android suites pass; a fresh backend rebuild is required
+for the final restore barrier. OTA/ISO is not ready: payment/recovery, IndeeHub,
+fleet/device qualification, mirror review/parity and final artifact gates remain.
+
+
+### Fresh backup barrier qualification result
+
+- Final controller:21 pure tests pass. Real production restore-barrier tests
+  pass on PostgreSQL15.17 and16.13, including valid restoration, wrong-database
+  and truncated-dump refusal, retained admission, owned fixture cleanup, and
+  four original data/schema/history mutation rejections.
+- The first PG15 attempt failed during pg_restore. That attempt's command error
+  log was in an automatically removed fixture directory, so its exact cause is
+  not proven. Readiness inspection found the bootstrap Unix-socket server could
+  be mistaken for the final server. The controller/fixture now wait for TCP
+  readiness; both final version runs pass. Do not erase the failed attempt.
+- The backend rebuild begun before the readiness edit was interrupted deliberately
+  because its embedded source was stale and it competed with restore tests.
+  **Final embedded-controller backend rebuild/suite and deployment remain pending.**
+  The prior 2,000-pass receipt applies to `7fb7ee80`, not this changed controller.
+- Durable logs:
+  `~/.local/state/archipelago/release-qualification/indeehub-backup-restore-20261007/`.
+- No live app/container, database, wallet, catalog, payment or public file was
+  changed. Disposable fixtures used network-none and no live volumes.
