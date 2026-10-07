@@ -1070,6 +1070,15 @@ fn is_cgnat(addr: &str) -> bool {
     (64..=127).contains(&second)
 }
 
+fn has_tailnet_https_listener(sockets: &str) -> bool {
+    sockets.lines().any(|line| {
+        line.split_whitespace()
+            .nth(3)
+            .and_then(|local| local.rsplit_once(':'))
+            .is_some_and(|(address, port)| port == "443" && is_cgnat(address))
+    })
+}
+
 /// Rewrite the `listen <ip>:443 ssl;` set for one config's text. Returns the
 /// new text when it differs. Lines for absent addresses are dropped and one
 /// line per present address is kept, preserving the file's indentation.
@@ -1219,6 +1228,16 @@ async fn run_nginx_listener_repair() -> Result<bool> {
     if present.is_empty() {
         return Ok(false); // no network yet; a later boot pass will do it
     }
+    // Preserve wildcard/IPv6 service on nodes without a competing tailnet
+    // listener. Only the observed address-specific bind conflict warrants
+    // migrating the managed wildcard profile to LAN-only IPv4 listeners.
+    let repair_wildcards = tokio::process::Command::new("ss")
+        .args(["-H", "-4", "-ltn"])
+        .output()
+        .await
+        .ok()
+        .filter(|output| output.status.success())
+        .is_some_and(|output| has_tailnet_https_listener(&String::from_utf8_lossy(&output.stdout)));
     let mut changed = false;
     let mut seen = std::collections::HashSet::new();
     let repair_id = std::time::SystemTime::now()
@@ -1234,7 +1253,12 @@ async fn run_nginx_listener_repair() -> Result<bool> {
         let Ok(text) = tokio::fs::read_to_string(&target).await else {
             continue;
         };
-        let Some(healed) = retarget_https_listeners(&text, &present) else {
+        let healed = if repair_wildcards {
+            retarget_https_listeners(&text, &present)
+        } else {
+            retarget_pinned_https_listeners(&text, &present)
+        };
+        let Some(healed) = healed else {
             continue;
         };
         let staged = "/var/lib/archipelago/nginx-listeners.staged";
@@ -2365,6 +2389,21 @@ mod tests {
         assert!(healed.contains("listen 80 default_server;"));
         assert!(healed.contains("ssl_certificate /x;"));
         assert!(retarget_https_listeners(&healed, &present).is_none());
+    }
+
+    #[test]
+    fn tailnet_https_conflict_requires_an_actual_specific_socket() {
+        assert!(has_tailnet_https_listener(
+            "LISTEN 0 4096 100.72.136.7:443 0.0.0.0:*\n"
+        ));
+        for sockets in [
+            "LISTEN 0 511 0.0.0.0:443 0.0.0.0:*\n",
+            "LISTEN 0 4096 100.72.136.7:8443 0.0.0.0:*\n",
+            "LISTEN 0 511 192.168.1.50:443 0.0.0.0:*\n",
+            "",
+        ] {
+            assert!(!has_tailnet_https_listener(sockets));
+        }
     }
 
     #[test]

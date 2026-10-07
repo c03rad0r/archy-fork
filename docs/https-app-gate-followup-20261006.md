@@ -150,3 +150,9 @@ These run the exact embedded shell against fake service commands; they do not
 reload a real node. Added Rust profile-migration tests and the integrated backend
 compile remain pending the shared qualification slot. The live repaired nodes
 still run the previously qualified 49703d7e binary.
+
+Review refinement: wildcard conversion additionally requires an actual IPv4
+CGNAT-address port-443 listener, observed through read-only socket inspection.
+Nodes without that competing tailnet bind retain their existing wildcard and
+IPv6 HTTPS service. A configured Tailscale interface alone is not sufficient.
+The added socket-profile cases are pending the same backend qualification run.
