@@ -3283,6 +3283,16 @@ impl ProdContainerOrchestrator {
     }
 
     async fn prepare_for_start(&self, manifest: &AppManifest) -> Result<()> {
+        if super::supervised_update::installed_unit(
+            &self.data_dir,
+            &compute_container_name(manifest),
+        )?
+        .is_some()
+        {
+            // Already-reviewed managed configuration is authoritative. Applying
+            // today's catalog files/mount preparation could mutate restored data.
+            return Ok(());
+        }
         self.run_pre_start_hooks(&manifest.app.id).await?;
         self.ensure_bind_mount_sockets(manifest).await?;
         self.ensure_bind_mount_dirs(manifest).await?;
@@ -3585,6 +3595,17 @@ impl ProdContainerOrchestrator {
     }
 
     async fn ensure_resolved_source_available(&self, lm: &LoadedManifest) -> Result<()> {
+        if let Some((body, _)) = super::supervised_update::installed_unit(
+            &self.data_dir,
+            &compute_container_name(&lm.manifest),
+        )? {
+            let image = body
+                .lines()
+                .find_map(|line| line.trim().strip_prefix("Image="))
+                .context("Saved managed image missing")?;
+            anyhow::ensure!(self.runtime.image_exists(image).await?, "Saved managed image is unavailable; refusing to pull or recreate from a changed catalog");
+            return Ok(());
+        }
         let resolved = lm.manifest.app.container.resolve().ok_or_else(|| {
             anyhow::anyhow!(
                 "manifest for {} has invalid container source (neither image nor build)",

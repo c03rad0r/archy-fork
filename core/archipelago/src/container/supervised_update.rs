@@ -532,8 +532,8 @@ fn installed_path(data: &Path, name: &str) -> Result<PathBuf> {
 }
 fn publish_installed(guard: &Guard, record: &Journal) -> Result<()> {
     anyhow::ensure!(
-        record.phase == Phase::Committed,
-        "Only committed units may be published"
+        matches!(record.phase, Phase::Committed | Phase::Restored),
+        "Only verified terminal units may be published"
     );
     let dir = guard.directory().join("installed-units");
     match std::fs::DirBuilder::new().mode(0o700).create(&dir) {
@@ -550,7 +550,11 @@ fn publish_installed(guard: &Guard, record: &Journal) -> Result<()> {
             schema: 1,
             operation: record.id.clone(),
             name: member.original.name.clone(),
-            body: member.target_body.clone(),
+            body: if record.phase == Phase::Restored {
+                member.pinned_original_body.clone()
+            } else {
+                member.target_body.clone()
+            },
             mode: member.original.file_mode,
         };
         let temporary = dir.join(format!(".{}.tmp", uuid::Uuid::new_v4()));
@@ -904,9 +908,13 @@ async fn restore(guard: &Guard, record: &mut Journal, supervisor: &impl Supervis
     }
     record.phase = Phase::Restored;
     save(guard, record)?;
+    publish_installed(guard, record)?;
     supervisor
         .release_barrier(&record.id, Completion::Restored)
         .await?;
+    for member in &record.members {
+        guard.release_hold(&member.original.name, &record.id)?;
+    }
     record.cleanup_done = true;
     save(guard, record)
 }
@@ -931,9 +939,13 @@ pub(crate) async fn recover(guard: &Guard, supervisor: &impl Supervisor) -> Resu
                 }
             }
             Phase::Restored => {
+                publish_installed(guard, &record)?;
                 supervisor
                     .release_barrier(&record.id, Completion::Restored)
                     .await?;
+                for member in &record.members {
+                    guard.release_hold(&member.original.name, &record.id)?;
+                }
             } // Never release a newer owner.
             _ => restore(guard, &mut record, supervisor).await?,
         }
@@ -1300,7 +1312,11 @@ mod tests {
         assert_eq!(restored.image, "e".repeat(64));
         assert_eq!(restored.config_sha256, runtime.original.config_sha256);
         assert_ne!(restored.id, format!("{:064x}", 1));
-        assert!(super::super::update_transaction::is_held(root.path(), "movie").unwrap());
+        assert!(!super::super::update_transaction::is_held(root.path(), "movie").unwrap());
+        assert_eq!(
+            installed_unit(root.path(), "movie").unwrap().unwrap().0,
+            *runtime.body.lock().unwrap()
+        );
         assert_eq!(records(&guard).unwrap()[0].phase, Phase::Restored);
     }
     #[tokio::test]

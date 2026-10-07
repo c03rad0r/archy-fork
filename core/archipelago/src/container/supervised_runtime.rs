@@ -434,6 +434,58 @@ impl<B: DrainBarrier> Supervisor for SystemdSupervisor<B> {
                     == target.name,
             "Original unit or reviewed immutable target changed before update"
         );
+        if plan
+            .prepared
+            .manifest
+            .app
+            .container
+            .media_registration_identity
+        {
+            let identity =
+                crate::identity::NodeIdentity::load_existing(&self.data_dir.join("identity"))
+                    .await?;
+            let pin = super::registration_pin::load_existing(
+                &self.data_dir,
+                &plan.prepared.manifest.app.id,
+                &identity,
+            )?;
+            let mut expected = plan.prepared.manifest.clone();
+            super::registration_pin::apply_environment(&mut expected, &pin)?;
+            for entry in expected
+                .app
+                .environment
+                .iter()
+                .filter(|entry| entry.starts_with("ARCHIPELAGO_REGISTRATION_"))
+            {
+                let key = entry
+                    .split_once('=')
+                    .context("Malformed registration binding")?
+                    .0;
+                let in_manifest: Vec<_> = plan
+                    .prepared
+                    .manifest
+                    .app
+                    .environment
+                    .iter()
+                    .filter(|value| value.split_once('=').is_some_and(|(name, _)| name == key))
+                    .collect();
+                let in_unit: Vec<_> = plan
+                    .prepared
+                    .body
+                    .lines()
+                    .filter_map(|line| line.trim().strip_prefix("Environment="))
+                    .map(|value| value.trim_matches('"'))
+                    .filter(|value| value.split_once('=').is_some_and(|(name, _)| name == key))
+                    .collect();
+                anyhow::ensure!(
+                    in_manifest.len() == 1
+                        && in_manifest[0] == entry
+                        && in_unit.len() == 1
+                        && in_unit[0] == entry,
+                    "Reviewed registration identity does not match the existing installer pin"
+                );
+            }
+        }
         Ok(plan.prepared.clone())
     }
     async fn target_hooks(
