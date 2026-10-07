@@ -109,3 +109,28 @@ staging/rollback before using it as repair. Preserve existing CA identities and
 custom certificates; do not blindly regenerate trust. A client must explicitly
 trust the node's public CA for normal browser validation. Keep normal-trust
 acceptance open pending a tested provisioning repair and the operator's access URL.
+
+### Dev nginx reload mismatch found during the integrated purchase rollout
+
+On 7 October UTC, the new backend wrote its playback proxy route but requests
+still reached the old SPA. `nginx -t` and `systemctl reload nginx` both reported
+success; the master error log showed wildcard IPv4/IPv6 port 443 bind failures.
+Tailscale owned its tailnet port 443, while the old nginx workers still served the
+original address-specific LAN/WireGuard listeners. The wildcard disk configuration
+was already present in the pre-deployment backup.
+
+`sites-available/archipelago` and `sites-enabled/archipelago` were separate regular
+files. Both were backed up, and only their canonical wildcard HTTPS listeners
+were changed to the two addresses already served by nginx: 192.168.63.240 and
+10.44.0.1. Validation and reload then succeeded in practice: the new proxy returned
+401 for unauthenticated GET and 405 for HEAD/POST, and owner RPC access passed.
+Tailscale was not restarted or reconfigured. Original configs are in the dev
+`support/integrated-purchase-backend-20261007T030942Z-2791483` backup directory.
+
+Durable source/upgrade handling remains required before release: preserve the
+recognized address-specific node-HTTPS profile when a template is installed,
+account for enabled files that are not symlinks, and verify effective route/listener
+behavior rather than treating a successful reload command as proof that nginx
+accepted the new configuration. The existing per-address retarget helper ignores
+wildcard-only configs. This live repair is not a claim that the general migration
+or IPv6 HTTPS/companion trust acceptance is complete.

@@ -735,3 +735,40 @@ The deployable UI and evidence are preserved under
 Its index SHA256 is `6fd81faf0d057b1c689610ebfbd04193071e282d85e27ec07b34f927525be1f5`.
 It requires the matching purchase backend and is not yet deployed. The prior
 qualified backend and dashboard remain live on dev, Yaya and Framework.
+
+### Integrated purchase candidate deployed — 7 October UTC
+
+Local source commit `49703d7e` passed 1,889 isolated backend tests with zero
+failures and five existing skips; 406 inputs remained unchanged through the
+22m24s production build. Binary SHA256:
+`f150ffd6007639a672844a8d450c9564dc41d820440655319d67d3df2a332250`.
+The matching dashboard's 1,375 tests, typecheck, build and 21 local responsive
+cases are recorded above.
+
+Both layers are now deployed to dev, Yaya and the actual Framework. Health,
+node identity, remembered session key, private node catalog, app container IDs
+and start times, and stopped/uninstalled decisions were preserved on all three.
+Each layer has its own rollback receipt. The new route returns 401 to anonymous
+GET and 405 to HEAD/POST on all three nodes. Owner RPC passed on dev/Yaya;
+Framework's normal authenticated browser acceptance still needs TOTP.
+
+Actual Apps screens passed at 390px and 1440px on dev and Yaya, with no JavaScript
+page errors or horizontal overflow. Initial smoke failures were harness selectors
+for hidden responsive tabs/images; screenshots showed the rendered app grid.
+Visible selectors were corrected without extending timeouts; earlier logs remain.
+Dev also required the pre-existing nginx/Tailscale listener correction documented
+in `https-app-gate-followup-20261006.md`. Yaya's V4V remained running and its
+private signed catalog was byte-for-byte preserved.
+
+All deployment scripts, receipts and browser/endpoint evidence are retained at
+`~/.local/state/archipelago/release-qualification/deployed-purchase-49703d7e/`.
+No new real payment, OTA, public catalog or source publication occurred.
+
+This is incremental deployment, not complete payment/rental acceptance. Durable
+external-invoice and on-chain recovery remain unfinished. Large-film rental
+activation remains off: the current integrity guard can scan the whole film on
+every range request, exceed the header deadline and commit a lease after timeout.
+The separate readiness/index work must remove those scans from request paths,
+verify chunks and start the original clock only after explicit ready/start.
+IndeeHub private app packaging, distributed announcement delivery and actual
+registration/payment/playback acceptance remain open.
