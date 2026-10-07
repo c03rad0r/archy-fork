@@ -45,6 +45,13 @@ the two legacy invoice/address creation methods were found.
 - Backend tests must run through `scripts/test-backend-isolated.sh`. Combined
   run is queued behind the already-running IndeeHub executable/companion build;
   the new tests are not yet claimed passed.
+- Current live read-only recheck: dev and Yaya each retain the accepted 20 MiB
+  fixture with exact original SHA256 and ownership despite the seller share
+  having been removed. Only ownership lookup and cached HTTP GET were used;
+  the cumulative payment ledger remained byte-identical. Initial harness
+  rejected JSON-RPC `error:null`; corrected rerun passed both nodes. Both logs
+  are retained; this is not initial-payment response-loss acceptance.
+  `/tmp/archy-paid-cache-readonly-20261007-rerun.log`.
 - No actual funds, wallet state, live services, files or peer policies were
   changed by this qualification. No deployment or publication has occurred.
 
