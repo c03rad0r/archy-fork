@@ -156,3 +156,33 @@ CGNAT-address port-443 listener, observed through read-only socket inspection.
 Nodes without that competing tailnet bind retain their existing wildcard and
 IPv6 HTTPS service. A configured Tailscale interface alone is not sufficient.
 The added socket-profile cases are pending the same backend qualification run.
+
+### Read-only Yaya iframe/tab follow-up (7 October)
+
+Disposable Chromium contexts used the existing diagnostic session and mapped
+`archipelago.local` to Yaya only within the test browser. Authenticated File
+Browser (:8083) iframe, frame reload and separate-tab requests returned 200 on
+HTTP and HTTPS at 390/1440 widths. Removing cookies in those disposable contexts
+made iframe/tab reloads return 401; invalid sessions were also denied. All
+non-GET/HEAD/OPTIONS requests were blocked. No signing, payment, shared-session
+logout, service mutation or trust-store change was performed.
+
+The full matrix passed 22/24 checks; two mobile invalid-session iframe navigations
+timed out waiting for DOMContentLoaded. A bounded mobile follow-up passed 12/12
+checks after those invalid-session checks waited only for response commit. That
+proves the 401 response boundary, not successful page completion or a diagnosed
+cause for the earlier timeouts. An initial frame-selection harness failure is
+also retained separately.
+
+Normal Chromium trust still rejects Yaya's leaf as an untrusted authority. Public
+certificate inspection confirms `archipelago.local` matches its SAN, while
+`192.168.63.169` does not. The matrix therefore used an explicit certificate
+exception only in its isolated contexts; it is not trusted-TLS acceptance. The
+test name is not claimed to be the operator's exact hostname.
+
+Cookie removal is not actual logout, and an invalid token is not a naturally
+expired session. Shared-session revocation, expiry/renewal, remember-me, interactive
+gate exchange, physical companion and the exact reported hostname/app remain
+open. No new source correction is justified by these checks. Evidence and scripts
+are preserved in
+`~/.local/state/archipelago/release-qualification/https-task17-20261007/`.
