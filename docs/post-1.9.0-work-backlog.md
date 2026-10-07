@@ -654,6 +654,8 @@ previously deferred work. Status: queued; no public visibility has been changed.
 
 Added by the operator after task21 on 2026-10-07. Append after public sharing;
 status: queued. Plan the node-to-node sharing design before implementation.
+Preparation: [source-grounded sharing plan](mesh-node-file-sharing-plan-20261007.md);
+no implementation or public visibility change is enabled.
 
 - Clicking **Share file** in Mesh opens a source-choice modal with **From node**
   and **From computer**. From computer opens the local device file picker;
