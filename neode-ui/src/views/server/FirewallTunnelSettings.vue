@@ -7,7 +7,7 @@ interface TunnelStatus {
   connected?: boolean
   provider?: string
   ip_address?: string
-  wg_ip?: string
+  wg_ip?: string | null
 }
 
 interface FipsStatus {
