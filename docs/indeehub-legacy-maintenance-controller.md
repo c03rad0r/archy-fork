@@ -84,3 +84,31 @@ stopped worker, and a fresh empty projects/contents/payments/shareholders/
 subscriptions/library_items store with no other active DB transaction. This is
 a narrow first-upgrade compatibility path, not evidence populated work completed.
 Populated or ambiguous legacy state remains a refused forward cutover.
+
+### Operation-bound rollback data verification
+
+Restored release after any target startup now performs its own PostgreSQL
+compatibility check; it does not accept a manually asserted verification boolean.
+Before the coherent backup, the controller captures a read-only, repeatable-read
+transaction containing every original public table's columns, constraints,
+indexes, triggers, row-security policies, row count and canonical row SHA-256,
+plus the exact migration history. The private operation journal binds this
+baseline to the original operation UUID.
+
+After original runtime recovery, while ingress and worker admission remain
+closed, the controller captures the same observations again. It requires original
+tables and definitions unchanged, original non-migration rows unchanged and the
+original migration-history prefix intact. Additional migration records must be
+the exact ordered three migrations qualified for API commit `3b09b81`, and only
+their five named new tables may appear, all empty. Any unexpected data or schema
+change keeps ingress closed. Successful proof records before/after commitment
+hashes and the operation UUID before release. No down migration or automatic
+volume restoration is performed.
+
+Sixteen pure Python regressions pass, including altered rows/schema/history,
+foreign operation, nonempty added tables and durable proof before fence release.
+The SQL transaction and Podman lifecycle still require isolated integration
+qualification. These are table-level compatibility checks, not a claim that
+arbitrary database extensions/functions, other writers, or changed application
+code are safe. The candidate images, migration scope and admission barrier must
+also match the reviewed operation.
