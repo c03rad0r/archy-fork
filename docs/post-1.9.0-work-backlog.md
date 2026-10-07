@@ -394,6 +394,13 @@ as a substitute for repairing the standard public-channel experience.
 
 ## 16. Web5 card footer alignment
 
+**Done — 2026-10-07 browser/deployment acceptance:** Monitoring, Identities and
+Federation cards passed on dev/Yaya at390px/1440px, including tall/shrinking
+neighbours, long action labels, bottom geometry, no overlap/overflow, keyboard
+focus and Monitoring navigation. Stress content existed only in the disposable
+browser DOM. Evidence:`~/.local/state/archipelago/release-qualification/web5-footer-20261007/`.
+The separate Framework Monitoring owner-browser check remains open.
+
 - Keep Monitoring buttons anchored to the bottom of their card when adjacent
   cards grow, including search/loading/results changes. Apply the same footer
   behaviour to matching cards without changing the design system or adding

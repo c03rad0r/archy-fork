@@ -287,11 +287,11 @@ No percentage is inferred from test counts.
 | 13 V4V Yaya demo | In progress | Browser demo live; native phone background playback remains |
 | 14 Peer files/Indee streaming | In progress | Distributed timed playback |
 | 15 MeshCore | Queued | Two-radio work and acceptance |
-| 16 Web5 cards/footer | Nearly finished | Final visual/functional review |
+| 16 Web5 cards/footer | Done | Dev/Yaya mobile and desktop geometry, long labels and keyboard navigation passed |
 | 17 HTTPS apps | In progress | Exact hostname/trust and companion acceptance |
 | 18 Firewall/tunnel | In progress | Read-only UI done; settings persistence/reboot/rollback qualification |
 | 19 Media guide/Cloud PiP | Nearly finished | PiP operator-accepted; finish reusable contract and remaining edge cases |
-| 20 Native background media | In progress | Native service/controls implemented and APK56 delivered; matching LAN HTTP UI qualification and physical device checks remain |
+| 20 Native background media | Nearly finished | APK56 and matching UI delivered; real V4V bridge checks passed; physical lifecycle acceptance remains |
 | 21 Public files/folders | Queued, before22 | Shared pricing interface with blue tints, unrelated-node discovery and tiny marker |
 | 22 Mesh file sharing | Queued, final task | Node/computer choice, tree/search picker, retained multi-selection, delivery design and usual paid-file flow |
 
@@ -376,3 +376,66 @@ public-sharing blue pricing and marker requirements are retained unchanged.
   transport while using the actual authenticated iframe and bundled free demo
   media. It checks native command routing and JPEG thumbnail delivery; no
   physical Android result is implied. The new end-to-end run remains pending.
+
+
+### Companion56 dashboard delivered and live V4V qualification
+
+- Final full dashboard suite passed **1,441 tests /175files**, zero failures,
+  with the LAN HTTP UUID fix. Production build passed. All770 recorded UI and
+  catalog inputs matched. Source checkpoint:`235f6d04`.
+- Exact UI archive SHA256:
+  `31b5370351511072c01f71915881e3fb2becf01a621ad725aa13ad89b48b60e1`.
+  Served index SHA256:
+  `4d9424a4ad7548221a07e2c4f14019029ac5fc4e3f1d27ff5eca72b5ff0f6a56`.
+- Deployed on **dev192.168.63.240 and Yaya192.168.63.169**, with rollback
+  backups. Backend, catalog/session/stopped/uninstalled hashes and container
+  IDs/start times were unchanged on both. Authenticated dashboard browser
+  checks passed at390/1440 widths on each node; no overflow or page errors.
+- Actual Yaya V4V native Nostr login, bundled free demo playback, companion
+  command routing (pause/play/next/previous/shuffle), JPEG thumbnail delivery
+  and same-iframe reopening passed at390/1440. Android transport was simulated
+  for these browser checks; physical lock-screen/background acceptance is
+  still open. No payment occurred.
+- Operator was given APK56 URL and **Yaya http://192.168.63.169** as the test
+  server, with background/lock-screen/notification-control checks. Durable
+  artifacts and all failed/successful test receipts:
+  `~/.local/state/archipelago/release-qualification/companion-056/ui/`.
+- New operator request:hide control bar during fullscreen “What is Web5.”
+  Asked whether dashboard bar or video's own controls; pending reply. Current
+  stated assumption is dashboard bar. Narrow fullscreen entry/exit suppression
+  is being checked separately; it is not yet in the above deployed artifact.
+- IndeeHub optimized build is now running against the reusable release cache;
+  VM remains off until that finishes. Exact existing catalog-signing request
+  was recovered; no duplicate request sent. Private safe helper and receipt
+  are in `indeehub-yaya-private-staging-5d0ea64/`; no signature yet.
+
+
+### Fullscreen prompt withdrawn
+
+Operator replied “wrong window ignore” to the fullscreen-control question.
+Reverted only that request's uncommitted player, test and optional browser-check
+changes to the accepted native-audio source checkpoint. The temporary fullscreen
+UI reached dev only; Yaya only received staged bytes, never activation. Dev is
+being restored to the previously qualified companion-audio archive/index above.
+Native audio/APK56 and the release work remain in scope. Do not resume this
+withdrawn request or the earlier withdrawn screensaver/Play/Skip requests.
+
+- Withdrawal completed:dev again serves qualified index
+  `4d9424a4ad7548221a07e2c4f14019029ac5fc4e3f1d27ff5eca72b5ff0f6a56`;
+  backend/catalog/session/intent/container preservation and390/1440 dashboard
+  checks passed. All770 UI/catalog source hashes again match the qualified
+  native-audio baseline. Yaya never activated the withdrawn fullscreen build.
+
+### Task16 complete — actual Web5 footer acceptance
+
+Monitoring, Identities and Federation footer placement passed on dev and Yaya
+with the deployed qualified UI at390px and1440px. Browser-only stress content
+covered tall neighbours, shrinking content and long action labels; footer
+geometry remained in normal flow, at the card bottom, with space above and no
+horizontal overflow. Keyboard focus and Monitoring navigation also passed.
+No server state, identity, wallet or relationship was changed.
+
+Evidence (browser scenario deliberately outside the repository):
+`~/.local/state/archipelago/release-qualification/web5-footer-20261007/`.
+This closes task16; it does not close the separate Framework owner-browser
+Monitoring gate or deferred connection UX/removal work.
