@@ -296,3 +296,29 @@ runs remain recorded. This qualifies the current backend primitives and Browse
 path repair locally; production build and live deployment checks are next.
 Complete purchase callers, app registration/publication and timed playback
 acceptance remain open. No real payment or public publication was performed.
+
+## Qualified backend deployed to all three working nodes
+
+Local commit `b52214f7` passed 1,848 isolated backend tests (zero failures, five
+existing skips); all 385 source/build/fixture hashes stayed unchanged. The release
+build completed successfully. Backend SHA256:
+`697f71af4eb1d7160f16ce97bb21d2238a4adf477990888d9877ba943691d1e4`.
+
+The same binary is now installed on dev, Yaya and the actual Framework node.
+Each deployment preserved node identity, session key, signed node catalog, UI,
+stopped/uninstalled choices and all app container IDs/start times. Health passed
+on all three; authenticated owner RPC passed on dev/Yaya. Framework's password
+was accepted, but its normal dashboard login still requires the operator's TOTP
+code, so that authenticated dashboard check remains open. Rollback scripts and
+receipts are retained under each node's support directory and locally in
+`~/.local/state/archipelago/release-qualification/backend-b52214f7/`.
+
+Yaya now advertises the installed V4V `/browse` route. Real mobile (390px) and
+desktop (1440px) checks passed Browse, native Nostr login, same-frame playback,
+previous/next/shuffle and decoded artwork. Evidence is in the native-player
+follow-up. The native private app image/catalog were not changed.
+
+This deployment includes file availability and minimum on-chain amount checks
+and the tested recovery primitives. The complete new purchase caller and
+IndeeHub publication/playback integration remain under development; these are
+not claimed accepted. No new real payment or public publication was performed.
