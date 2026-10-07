@@ -146,6 +146,16 @@ impl AppGate {
         // snapshot when the port momentarily leaves the map mid-refresh.
         let live = self.port_map.read().await.gated(app.port).cloned();
         let app = live.as_ref().unwrap_or(app);
+        if maintenance_active(&self.data_dir, &app.app_id) {
+            return Response::builder()
+                .status(StatusCode::SERVICE_UNAVAILABLE)
+                .header(header::CACHE_CONTROL, "no-store")
+                .header(header::RETRY_AFTER, "60")
+                .body(Body::from(
+                    "This app is temporarily unavailable while its update is recovered.",
+                ))
+                .unwrap();
+        }
 
         let path = req.uri().path().to_string();
         // A dashboard same-origin proxy strips `/app/<id>/` before this gate
@@ -836,6 +846,16 @@ dashboard and check {name} under My Apps.</p>"#,
     resp.headers_mut()
         .insert("Refresh", header::HeaderValue::from_static("5"));
     resp
+}
+
+fn maintenance_active(data_dir: &std::path::Path, app_id: &str) -> bool {
+    if app_id != "indeedhub" && !app_id.starts_with("indeedhub-") {
+        return false;
+    }
+    match std::fs::symlink_metadata(data_dir.join("app-maintenance/indeedhub")) {
+        Ok(_) => true,
+        Err(error) => error.kind() != std::io::ErrorKind::NotFound,
+    }
 }
 
 fn not_found() -> Response<Body> {
@@ -1855,5 +1875,25 @@ mod tests {
             LoginRateLimiter::new(),
             dir,
         )
+    }
+}
+
+#[cfg(test)]
+mod maintenance_tests {
+    #[test]
+    fn held_indee_ingress_never_reaches_upstream_or_another_app() {
+        let root = tempfile::tempdir().unwrap();
+        assert!(!super::maintenance_active(root.path(), "indeedhub"));
+        std::fs::create_dir(root.path().join("app-maintenance")).unwrap();
+        std::fs::write(
+            root.path().join("app-maintenance/indeedhub"),
+            uuid::Uuid::new_v4().to_string(),
+        )
+        .unwrap();
+        assert!(super::maintenance_active(root.path(), "indeedhub"));
+        assert!(super::maintenance_active(root.path(), "indeedhub-api"));
+        assert!(!super::maintenance_active(root.path(), "node-demo-v4v"));
+        std::fs::remove_file(root.path().join("app-maintenance/indeedhub")).unwrap();
+        assert!(!super::maintenance_active(root.path(), "indeedhub"));
     }
 }

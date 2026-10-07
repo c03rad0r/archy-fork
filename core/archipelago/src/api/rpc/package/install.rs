@@ -280,6 +280,10 @@ impl RpcHandler {
             .and_then(|v| v.as_str())
             .ok_or_else(|| anyhow::anyhow!("Missing package id"))?;
         validate_app_id(package_id)?;
+        let lifecycle_guard =
+            crate::container::update_transaction::Guard::acquire(&self.config.data_dir)?;
+        lifecycle_guard.require_clear()?;
+        lifecycle_guard.require_unheld(&super::config::all_container_names(package_id))?;
 
         let docker_image = params
             .get("dockerImage")
@@ -1901,7 +1905,10 @@ autopilot.active=false\n",
             .await
             .context("DATUM credentials are not available yet; wait for installation to finish")?;
             let password = password.trim();
-            anyhow::ensure!(!password.is_empty(), "DATUM administrator password is empty");
+            anyhow::ensure!(
+                !password.is_empty(),
+                "DATUM administrator password is empty"
+            );
             return Ok(serde_json::json!({
                 "title": "DATUM Gateway login",
                 "description": "Use this password when DATUM asks you to unlock configuration. In Config, set your Bitcoin payout address. Point miners at this node's IP address on Stratum port 23334 (stratum+tcp://NODE-IP:23334). Gashboard connects automatically.",

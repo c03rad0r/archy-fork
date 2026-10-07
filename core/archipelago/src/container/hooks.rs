@@ -85,6 +85,18 @@ pub async fn run_post_install(manifest: &AppManifest, container_name: &str, data
     }
 }
 
+/// Strict completion for an explicitly staged update. Keep the durable pin on failure.
+pub(super) async fn run_post_install_strict(
+    manifest: &AppManifest,
+    container: &str,
+    data_dir: &Path,
+) -> Result<()> {
+    for step in &manifest.app.hooks.post_install {
+        run_step(step, container, &manifest.app.id, data_dir).await?;
+    }
+    Ok(())
+}
+
 async fn run_step(step: &HookStep, container: &str, app_id: &str, data_dir: &Path) -> Result<()> {
     match step {
         HookStep::Exec { exec } => {

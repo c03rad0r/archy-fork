@@ -60,6 +60,10 @@ impl RpcHandler {
             .and_then(|v| v.as_str())
             .ok_or_else(|| anyhow::anyhow!("Missing package id"))?;
         validate_app_id(package_id)?;
+        let lifecycle_guard =
+            crate::container::update_transaction::Guard::acquire(&self.config.data_dir)?;
+        lifecycle_guard.require_clear()?;
+        lifecycle_guard.require_unheld(&super::config::all_container_names(package_id))?;
         // A cuprate node that starts on a too-small disk fills it and takes
         // Archipelago down with it (no upstream pruning — see
         // dependencies::check_cuprate_disk_compatibility). Fail the start
@@ -104,6 +108,7 @@ impl RpcHandler {
         let op_lock = app_op_lock(package_id);
         let data_dir = self.config.data_dir.clone();
         tokio::spawn(async move {
+            let _lifecycle_guard = lifecycle_guard;
             let _op_guard = op_lock.lock().await;
             let result = if let Some(orchestrator) = orchestrator.as_ref() {
                 do_orchestrator_package_start(orchestrator.as_ref(), &to_start).await
@@ -126,7 +131,19 @@ impl RpcHandler {
                 Err(e) => {
                     tracing::error!("package.start {} failed: {:#}", package_id_owned, e);
                     install_log(&format!("START FAIL: {} — {:#}", package_id_owned, e)).await;
-                    if let Some(prev) = pre_state {
+                    if e.downcast_ref::<crate::container::prod_orchestrator::StagedCleanupFailure>()
+                        .is_some()
+                    {
+                        // Installed is neutral and scanner-owned. Restoring the
+                        // prior Stopped state would conceal a failed cleanup;
+                        // keeping Starting would prevent scanner convergence.
+                        set_package_state(
+                            &state_manager,
+                            &package_id_owned,
+                            PackageState::Installed,
+                        )
+                        .await;
+                    } else if let Some(prev) = pre_state {
                         set_package_state(&state_manager, &package_id_owned, prev).await;
                     } else {
                         warn!(
@@ -155,6 +172,10 @@ impl RpcHandler {
             .and_then(|v| v.as_str())
             .ok_or_else(|| anyhow::anyhow!("Missing package id"))?;
         validate_app_id(package_id)?;
+        let lifecycle_guard =
+            crate::container::update_transaction::Guard::acquire(&self.config.data_dir)?;
+        lifecycle_guard.require_clear()?;
+        lifecycle_guard.require_unheld(&super::config::all_container_names(package_id))?;
 
         let single_orchestrator_app =
             self.orchestrator.is_some() && uses_single_orchestrator_app(package_id);
@@ -219,6 +240,7 @@ impl RpcHandler {
 
         let op_lock = app_op_lock(package_id);
         tokio::spawn(async move {
+            let _lifecycle_guard = lifecycle_guard;
             let _op_guard = op_lock.lock().await;
             let result = if let Some(orchestrator) = orchestrator.as_ref() {
                 do_orchestrator_package_stop(orchestrator.as_ref(), &to_stop).await
@@ -257,6 +279,10 @@ impl RpcHandler {
             .and_then(|v| v.as_str())
             .ok_or_else(|| anyhow::anyhow!("Missing package id"))?;
         validate_app_id(package_id)?;
+        let lifecycle_guard =
+            crate::container::update_transaction::Guard::acquire(&self.config.data_dir)?;
+        lifecycle_guard.require_clear()?;
+        lifecycle_guard.require_unheld(&super::config::all_container_names(package_id))?;
         // Restart is stop + recreate, so on a disk that shrank below the cuprate
         // minimum after install it resumes the doomed unprunable sync just like
         // start would — same gate, same "fail before clearing user-stopped /
@@ -319,6 +345,7 @@ impl RpcHandler {
         let op_lock = app_op_lock(package_id);
         let data_dir = self.config.data_dir.clone();
         tokio::spawn(async move {
+            let _lifecycle_guard = lifecycle_guard;
             let _op_guard = op_lock.lock().await;
             let result = if let Some(orchestrator) = orchestrator.as_ref() {
                 do_orchestrator_package_restart(orchestrator.as_ref(), &to_restart).await
@@ -362,6 +389,10 @@ impl RpcHandler {
             .and_then(|v| v.as_str())
             .ok_or_else(|| anyhow::anyhow!("Missing package id"))?;
         validate_app_id(package_id)?;
+        let lifecycle_guard =
+            crate::container::update_transaction::Guard::acquire(&self.config.data_dir)?;
+        lifecycle_guard.require_clear()?;
+        lifecycle_guard.require_unheld(&super::config::all_container_names(package_id))?;
         let preserve_data = params
             .get("preserve_data")
             .and_then(|v| v.as_bool())
