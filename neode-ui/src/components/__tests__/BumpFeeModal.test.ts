@@ -47,6 +47,18 @@ describe('Bump review', () => {
     expect(rpcClient.call).toHaveBeenLastCalledWith(expect.objectContaining({ method: 'lnd.bump-quote', params: { txid: quote.txid, sat_per_vbyte: 10 } }))
     wrapper.unmount()
   })
+  it('shows an actionable wallet-change shortfall without offering submit', async () => {
+    vi.mocked(rpcClient.call).mockImplementation(async ({ method }) => {
+      if (method === 'lnd.bump-status') return { status: 'none' } as never
+      throw new Error('Not enough wallet change for 5000 sat/vB: at most 20126 sats is spendable for this bump. Try 79 sat/vB or lower.')
+    })
+    const { wrapper } = open(); await flushPromises()
+    expect(wrapper.text()).toContain('at most 20126 sats is spendable')
+    expect(wrapper.text()).toContain('Try 79 sat/vB or lower')
+    expect(wrapper.text()).not.toContain('Confirm bump')
+    expect(vi.mocked(rpcClient.call).mock.calls.some(([request]) => request.method === 'lnd.bump-submit')).toBe(false)
+    wrapper.unmount()
+  })
   it('blocks expired quotes and duplicate clicks; never retries a mutation', async () => {
     const { wrapper, vm } = open(); await flushPromises()
     vm.quote.expires_at = 1; await vm.submit()

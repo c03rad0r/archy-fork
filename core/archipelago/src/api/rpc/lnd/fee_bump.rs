@@ -120,6 +120,63 @@ fn fee_budget(
     Ok(budget)
 }
 
+/// Find the highest rate that fits the already selected wallet output. This is
+/// only a quote-time calculation: it never asks LND to reserve or spend the
+/// output. Keeping it here lets the caller give an actionable answer when the
+/// requested target is too expensive.
+fn highest_affordable_rate(
+    requested: u64,
+    parent_size: u64,
+    parent_fee: u64,
+    size: u64,
+    old_fee: u64,
+    relay: u64,
+    input: u64,
+) -> Option<u64> {
+    if requested <= 1 {
+        return None;
+    }
+    let mut low = 1;
+    let mut high = requested.saturating_sub(1);
+    let mut best = None;
+    while low <= high {
+        let mid = low + (high - low) / 2;
+        if fee_budget(mid, parent_size, parent_fee, size, old_fee, relay, input).is_ok() {
+            best = Some(mid);
+            low = mid.saturating_add(1);
+        } else {
+            high = mid.saturating_sub(1);
+        }
+    }
+    best
+}
+
+fn quote_budget_error(
+    requested: u64,
+    parent_size: u64,
+    parent_fee: u64,
+    size: u64,
+    old_fee: u64,
+    relay: u64,
+    input: u64,
+) -> anyhow::Error {
+    let available = input.saturating_sub(1000);
+    let suggestion = highest_affordable_rate(
+        requested,
+        parent_size,
+        parent_fee,
+        size,
+        old_fee,
+        relay,
+        input,
+    )
+    .map(|rate| format!(" Try {rate} sat/vB or lower."))
+    .unwrap_or_else(|| " No fee rate can currently fit this output.".into());
+    anyhow::anyhow!(
+        "Not enough wallet change for {requested} sat/vB: at most {available} sats is spendable for this bump.{suggestion}"
+    )
+}
+
 async fn lnd(
     client: &reqwest::Client,
     macaroon: &str,
@@ -501,7 +558,22 @@ impl RpcHandler {
             old_fee,
             relay.max(floor),
             input_sats,
-        )?;
+        )
+        .map_err(|error| {
+            if error.to_string().contains("Not enough wallet change") {
+                quote_budget_error(
+                    rate,
+                    parent_size,
+                    parent_fee,
+                    size,
+                    old_fee,
+                    relay.max(floor),
+                    input_sats,
+                )
+            } else {
+                error
+            }
+        })?;
         let tip: String = self
             .bitcoin_rpc_call(&client, "getbestblockhash", &[])
             .await?;
@@ -795,6 +867,20 @@ mod tests {
         assert_eq!(fee_budget(3, 142, 144, 112, 0, 1, 21126).unwrap(), 618);
         assert!(fee_budget(5000, 142, 144, 112, 0, 1, 21126).is_err());
         assert!(fee_budget(0, 142, 144, 112, 0, 1, 21126).is_err());
+    }
+    #[test]
+    fn unaffordable_quote_explains_spendable_change_and_viable_rate() {
+        let suggested = highest_affordable_rate(5000, 142, 144, 112, 0, 1, 21126);
+        assert_eq!(suggested, Some(79));
+        let error = quote_budget_error(5000, 142, 144, 112, 0, 1, 21126).to_string();
+        assert!(error.contains("at most 20126 sats is spendable"));
+        assert!(error.contains("Try 79 sat/vB or lower"));
+    }
+    #[test]
+    fn no_affordable_rate_is_reported_without_mutating_the_output() {
+        let error = quote_budget_error(10, 142, 144, 112, 9_000, 1, 10_000).to_string();
+        assert!(error.contains("at most 9000 sats is spendable"));
+        assert!(error.contains("No fee rate can currently fit this output"));
     }
     #[test]
     fn rbf_pays_incremental_relay_cost_and_counts_only_extra_cost() {
