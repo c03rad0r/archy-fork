@@ -74,6 +74,9 @@ pub(crate) struct Guard {
     root: PathBuf,
 }
 impl Guard {
+    pub(crate) fn directory(&self) -> &Path {
+        &self.root
+    }
     pub(crate) fn acquire(data: &Path) -> Result<Self> {
         let root = data.join("update-transactions");
         match std::fs::DirBuilder::new().mode(0o700).create(&root) {
@@ -153,7 +156,76 @@ impl Guard {
         }
         Ok(records)
     }
+    pub(crate) fn hold(&self, name: &str, operation: &str) -> Result<()> {
+        anyhow::ensure!(name_ok(name), "Invalid held container name");
+        uuid::Uuid::parse_str(operation)?;
+        let directory = self.root.join("holds");
+        match std::fs::DirBuilder::new().mode(0o700).create(&directory) {
+            Ok(()) => {}
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {}
+            Err(e) => return Err(e.into()),
+        }
+        let temporary = directory.join(format!(".{}.tmp", uuid::Uuid::new_v4()));
+        let mut file = std::fs::OpenOptions::new()
+            .create_new(true)
+            .write(true)
+            .mode(0o600)
+            .open(&temporary)?;
+        file.write_all(operation.as_bytes())?;
+        file.sync_all()?;
+        std::fs::rename(temporary, directory.join(name))?;
+        std::fs::File::open(&directory)?.sync_all()?;
+        std::fs::File::open(&self.root)?.sync_all()?;
+        Ok(())
+    }
+    pub(crate) fn release_hold(&self, name: &str, operation: &str) -> Result<()> {
+        anyhow::ensure!(name_ok(name), "Invalid held container name");
+        let path = self.root.join("holds").join(name);
+        match std::fs::read_to_string(&path) {
+            Ok(owner) if owner == operation => {
+                std::fs::remove_file(&path)?;
+                std::fs::File::open(path.parent().unwrap())?.sync_all()?;
+            }
+            Ok(_) => {}
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+            Err(e) => return Err(e.into()),
+        }
+        Ok(())
+    }
+    pub(crate) fn held_names(&self) -> Result<HashSet<String>> {
+        let directory = self.root.join("holds");
+        let mut held = HashSet::new();
+        let entries = match std::fs::read_dir(directory) {
+            Ok(entries) => entries,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(held),
+            Err(e) => return Err(e.into()),
+        };
+        for entry in entries {
+            let entry = entry?;
+            let name = entry
+                .file_name()
+                .into_string()
+                .map_err(|_| anyhow::anyhow!("Invalid recovery hold name"))?;
+            if name.starts_with('.') {
+                continue;
+            }
+            anyhow::ensure!(
+                name_ok(&name) && entry.file_type()?.is_file() && entry.metadata()?.len() == 36,
+                "Damaged recovery hold"
+            );
+            uuid::Uuid::parse_str(&std::fs::read_to_string(entry.path())?)?;
+            held.insert(name);
+        }
+        Ok(held)
+    }
+    pub(crate) fn require_unheld(&self, names: &[String]) -> Result<()> {
+        let held = self.held_names()?;
+        anyhow::ensure!(!names.iter().any(|name|held.contains(name)),
+            "Original app runtime is retained after rollback; retry its update before changing lifecycle");
+        Ok(())
+    }
     pub(crate) fn require_clear(&self) -> Result<()> {
+        super::supervised_update::require_clear(self)?;
         anyhow::ensure!(
             self.records()?
                 .iter()
@@ -260,6 +332,9 @@ pub(crate) async fn execute(
         members,
     };
     guard.save(&record)?;
+    for member in &record.members {
+        guard.hold(&member.original.name, &record.operation)?;
+    }
     match replace(&guard,&mut record,runtime).await {
         Ok(())=>Ok(()),
         Err(error)=>match restore(&guard,&mut record,runtime).await {
@@ -342,7 +417,11 @@ async fn replace(guard: &Guard, record: &mut Record, runtime: &impl Runtime) -> 
     // Original backups are retained. Committing does not remove volumes or
     // silently discard the only recoverable original after a schema migration.
     record.phase = Phase::Committed;
-    guard.save(record)
+    guard.save(record)?;
+    for member in &record.members {
+        guard.release_hold(&member.original.name, &record.operation)?;
+    }
+    Ok(())
 }
 async fn restore(guard: &Guard, record: &mut Record, runtime: &impl Runtime) -> Result<()> {
     // Preflight every original before mutating any replacement. Never infer
@@ -401,8 +480,12 @@ async fn restore(guard: &Guard, record: &mut Record, runtime: &impl Runtime) -> 
             "Original state was not restored"
         );
     }
+    for member in &record.members {
+        guard.hold(&member.original.name, &record.operation)?;
+    }
     record.phase = Phase::Restored;
-    guard.save(record)
+    guard.save(record)?;
+    Ok(())
 }
 /// Called before ordinary reconciliation. An unresolved recovery must prevent
 /// reconciliation from guessing a replacement or starting stopped originals.
@@ -411,9 +494,30 @@ pub(crate) async fn recover(data: &Path, runtime: &impl Runtime) -> Result<Guard
     for mut record in guard.records()? {
         if !matches!(record.phase, Phase::Committed | Phase::Restored) {
             restore(&guard, &mut record, runtime).await?;
+        } else if record.phase == Phase::Committed {
+            for member in &record.members {
+                guard.release_hold(&member.original.name, &record.operation)?;
+            }
         }
     }
     Ok(guard)
+}
+
+pub(crate) fn is_held(data: &Path, name: &str) -> Result<bool> {
+    anyhow::ensure!(name_ok(name), "Invalid recovery name");
+    let path = data.join("update-transactions/holds").join(name);
+    match std::fs::symlink_metadata(&path) {
+        Ok(meta) => {
+            anyhow::ensure!(
+                meta.is_file() && meta.len() == 36,
+                "Damaged update recovery hold"
+            );
+            uuid::Uuid::parse_str(&std::fs::read_to_string(path)?)?;
+            Ok(true)
+        }
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(false),
+        Err(e) => Err(e.into()),
+    }
 }
 
 pub(crate) struct Podman;
@@ -867,6 +971,27 @@ mod tests {
         drop(guard);
         assert!(recover(root.path(), &runtime).await.is_err());
         assert!(runtime.calls.lock().unwrap().is_empty());
+    }
+    #[tokio::test]
+    async fn restored_original_remains_held_until_explicit_successful_update() {
+        let root = tempfile::tempdir().unwrap();
+        let runtime = Mock::new();
+        runtime.fail_health.store(true, Ordering::SeqCst);
+        let guard = Guard::acquire(root.path()).unwrap();
+        assert!(execute(&guard, "stack", &Mock::targets(), &runtime)
+            .await
+            .is_err());
+        assert!(is_held(root.path(), "db").unwrap());
+        assert!(guard.require_unheld(&["db".into()]).is_err());
+        drop(guard);
+        let guard = recover(root.path(), &runtime).await.unwrap();
+        assert!(is_held(root.path(), "db").unwrap());
+        runtime.fail_health.store(false, Ordering::SeqCst);
+        execute(&guard, "stack", &Mock::targets(), &runtime)
+            .await
+            .unwrap();
+        assert!(!is_held(root.path(), "db").unwrap());
+        guard.require_unheld(&["db".into(), "web".into()]).unwrap();
     }
     #[test]
     fn lifecycle_lock_excludes_competing_commands() {

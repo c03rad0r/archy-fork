@@ -377,12 +377,34 @@ impl RpcHandler {
                 Err(e) => {
                     error!("package.update {} failed: {:#}", package_id_spawn, e);
                     install_log(&format!("UPDATE FAIL: {} — {:#}", package_id_spawn, e)).await;
-                    // Inner handler already ran rollback_update + cleared
-                    // update state, but be defensive: revert to pre-state
-                    // in case the inner flow died before its cleanup.
-                    if let Some(prev) = pre_state {
-                        set_package_state(&handler.state_manager, &package_id_spawn, prev).await;
-                    }
+                    // Release the transitional overlay before asking the scanner
+                    // for real state. Prior Running is not proof of successful
+                    // rollback, and a failed preflight is not proof of Stopped.
+                    handler
+                        .state_manager
+                        .mutate_data(|data| {
+                            if let Some(entry) = data.package_data.get_mut(&package_id_spawn) {
+                                finish_failed_update(entry);
+                            }
+                            data.notifications.retain(|item| {
+                                item.id != format!("update-failed-{package_id_spawn}")
+                            });
+                            data.notifications.push(crate::data_model::Notification {
+                                id: format!("update-failed-{package_id_spawn}"),
+                                level: crate::data_model::NotificationLevel::Error,
+                                title: format!("Could not update {package_id_spawn}"),
+                                message: format!(
+                                    "{e}. Runtime recovery does not roll back database changes."
+                                ),
+                                timestamp: chrono::Utc::now().to_rfc3339(),
+                                app_id: Some(package_id_spawn.clone()),
+                            });
+                            while data.notifications.len() > 20 {
+                                data.notifications.remove(0);
+                            }
+                        })
+                        .await;
+                    kick_scanner_and_wait(&handler).await;
                 }
             }
         });
@@ -584,4 +606,35 @@ async fn kick_scanner_and_wait(handler: &RpcHandler) {
         }
     })
     .await;
+}
+
+fn finish_failed_update(entry: &mut crate::data_model::PackageDataEntry) {
+    if entry.state == PackageState::Updating {
+        entry.state = PackageState::Installed;
+    }
+    entry.install_progress = None;
+}
+#[cfg(test)]
+mod update_completion_tests {
+    use super::*;
+    #[test]
+    fn failure_releases_spinner_without_inventing_stopped_or_restored_runtime() {
+        let mut entry = super::super::progress::create_installing_entry("movie");
+        entry.state = PackageState::Updating;
+        finish_failed_update(&mut entry);
+        assert_eq!(entry.state, PackageState::Installed);
+        assert!(entry.install_progress.is_none());
+        for actual in [
+            PackageState::Running,
+            PackageState::Stopped,
+            PackageState::Exited,
+        ] {
+            entry.state = actual.clone();
+            finish_failed_update(&mut entry);
+            assert_eq!(
+                entry.state, actual,
+                "Fresh scanner evidence must win over old pre-update intent"
+            );
+        }
+    }
 }

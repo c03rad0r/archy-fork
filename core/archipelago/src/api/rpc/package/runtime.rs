@@ -63,6 +63,7 @@ impl RpcHandler {
         let lifecycle_guard =
             crate::container::update_transaction::Guard::acquire(&self.config.data_dir)?;
         lifecycle_guard.require_clear()?;
+        lifecycle_guard.require_unheld(&super::config::all_container_names(package_id))?;
         // A cuprate node that starts on a too-small disk fills it and takes
         // Archipelago down with it (no upstream pruning — see
         // dependencies::check_cuprate_disk_compatibility). Fail the start
@@ -174,6 +175,7 @@ impl RpcHandler {
         let lifecycle_guard =
             crate::container::update_transaction::Guard::acquire(&self.config.data_dir)?;
         lifecycle_guard.require_clear()?;
+        lifecycle_guard.require_unheld(&super::config::all_container_names(package_id))?;
 
         let single_orchestrator_app =
             self.orchestrator.is_some() && uses_single_orchestrator_app(package_id);
@@ -280,6 +282,7 @@ impl RpcHandler {
         let lifecycle_guard =
             crate::container::update_transaction::Guard::acquire(&self.config.data_dir)?;
         lifecycle_guard.require_clear()?;
+        lifecycle_guard.require_unheld(&super::config::all_container_names(package_id))?;
         // Restart is stop + recreate, so on a disk that shrank below the cuprate
         // minimum after install it resumes the doomed unprunable sync just like
         // start would — same gate, same "fail before clearing user-stopped /
@@ -389,6 +392,7 @@ impl RpcHandler {
         let lifecycle_guard =
             crate::container::update_transaction::Guard::acquire(&self.config.data_dir)?;
         lifecycle_guard.require_clear()?;
+        lifecycle_guard.require_unheld(&super::config::all_container_names(package_id))?;
         let preserve_data = params
             .get("preserve_data")
             .and_then(|v| v.as_bool())

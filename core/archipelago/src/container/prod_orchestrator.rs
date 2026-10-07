@@ -1994,6 +1994,16 @@ impl ProdContainerOrchestrator {
                 return report;
             }
         };
+        let held_names = match _update_guard.held_names() {
+            Ok(names) => names,
+            Err(error) => {
+                let mut report = ReconcileReport::default();
+                report
+                    .failures
+                    .push(("update-recovery".into(), format!("{error:#}")));
+                return report;
+            }
+        };
         let user_stopped = crate::crash_recovery::load_user_stopped(&self.data_dir).await;
         // Durable desired-state signal: the container names that were running at
         // the last periodic snapshot. Used below to recreate a previously-running
@@ -2015,6 +2025,7 @@ impl ProdContainerOrchestrator {
             let filtered = state
                 .manifests
                 .iter()
+                .filter(|(_, lm)| !held_names.contains(&compute_container_name(&lm.manifest)))
                 .filter(|(app_id, _)| !state.disabled.contains(*app_id))
                 .filter(|(app_id, lm)| {
                     dependency_required.contains(*app_id)
@@ -3442,6 +3453,9 @@ impl ProdContainerOrchestrator {
     /// changes restart the service and retain a durable pending marker until
     /// that succeeds, including across daemon restarts and failed reloads.
     async fn sync_quadlet_unit(&self, lm: &LoadedManifest, name: &str) -> Result<()> {
+        if super::update_transaction::is_held(&self.data_dir, name)? {
+            return Ok(()); // Preserve the recovered unit instead of current catalog drift.
+        }
         // Companions: same reasoning as migrate_to_quadlet_if_needed —
         // companion.rs renders these units with a different shape, syncing
         // here would clobber them.

@@ -481,7 +481,9 @@ impl RpcHandler {
         if let Some(entry) = data.package_data.get_mut(package_id) {
             // Don't overwrite state from scanner — just clear if still Updating
             if entry.state == PackageState::Updating {
-                entry.state = PackageState::Stopped;
+                // Unknown is not stopped: the authoritative scanner will
+                // refresh actual retained runtime immediately in the wrapper.
+                entry.state = PackageState::Installed;
             }
         }
         self.state_manager.update_data(data).await;

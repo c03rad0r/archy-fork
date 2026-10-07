@@ -283,6 +283,7 @@ impl RpcHandler {
         let lifecycle_guard =
             crate::container::update_transaction::Guard::acquire(&self.config.data_dir)?;
         lifecycle_guard.require_clear()?;
+        lifecycle_guard.require_unheld(&super::config::all_container_names(package_id))?;
 
         let docker_image = params
             .get("dockerImage")
