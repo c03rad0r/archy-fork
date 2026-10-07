@@ -91,23 +91,8 @@
         </div>
       </div>
 
-      <!-- Panel mode app session — renders alongside current page content -->
-      <Transition name="panel-slide">
-        <div v-if="appLauncher.panelAppId && appLauncher.panelAppId !== appLauncher.mediaAppId" class="app-panel-container">
-          <AppSession
-            v-if="appLauncher.panelAppId !== appLauncher.mediaAppId"
-            :key="appLauncher.panelAppId"
-            :app-id-prop="appLauncher.panelAppId"
-            :path-prop="appLauncher.panelPath ?? undefined"
-            @close="appLauncher.closePanel()"
-          />
-        </div>
-      </Transition>
-      <Transition name="panel-slide">
-      <div v-if="appLauncher.mediaAppId" v-show="appLauncher.panelAppId === appLauncher.mediaAppId" class="app-panel-container">
-        <AppSession :key="appLauncher.mediaAppId" :app-id-prop="appLauncher.mediaAppId" :suspended="appLauncher.panelAppId !== appLauncher.mediaAppId" @close="appLauncher.closePanel()" />
-      </div>
-      </Transition>
+      <!-- Stable keyed frames retain playback across late media admission. -->
+      <DashboardAppSessions />
     </main>
 
     <!-- Persistent Mobile Tabs + Bottom Tab Bar — outside <main> so position:fixed isn't broken by will-change:transform -->
@@ -127,7 +112,7 @@ import { useRouter, useRoute } from 'vue-router'
 import { useAppStore } from '../stores/app'
 import { useAppLauncherStore } from '../stores/appLauncher'
 import { appConfirm } from '@/composables/useAppConfirm'
-import AppSession from '@/views/AppSession.vue'
+import DashboardAppSessions from '@/views/dashboard/DashboardAppSessions.vue'
 import { useLoginTransitionStore } from '../stores/loginTransition'
 import { playDashboardLoadOomph } from '@/composables/useLoginSounds'
 
