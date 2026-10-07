@@ -1961,3 +1961,88 @@ pub(crate) async fn publish_snapshot_invoice(
     anyhow::ensure!(visible, "Item is not shared with this invoice buyer");
     journal.prepare_seller_source(binding, Some(retained))
 }
+
+pub(crate) async fn publish_snapshot_onchain(
+    data_dir: &Path,
+    original: &ContentItem,
+    journal: &crate::content_onchain_seller::Journal,
+    binding: crate::content_lightning::Binding,
+    retained: crate::content_lightning::RetainedFile,
+    network: crate::content_onchain::ChainNetwork,
+) -> Result<crate::content_onchain_seller::Record> {
+    let _held = CATALOG_WRITES.lock().await;
+    let catalog = load_catalog(data_dir).await?;
+    let current = catalog
+        .items
+        .iter()
+        .find(|item| item.id == original.id)
+        .context("Content was unshared before invoice preparation")?;
+    anyhow::ensure!(
+        serde_json::to_value(current)? == serde_json::to_value(original)?,
+        "Shared content terms changed before invoice preparation"
+    );
+    anyhow::ensure!(
+        binding.content_id == original.id
+            && retained.filename == original.filename
+            && retained.mime_type == original.mime_type
+            && retained.size == original.size_bytes
+            && matches!(&original.access, AccessControl::Paid { price_sats, .. } if *price_sats == binding.price_sats)
+            && method_accepted(&original.access, "onchain"),
+        "Invoice snapshot terms changed"
+    );
+    let visible = match &original.availability {
+        Availability::Nobody => false,
+        Availability::AllPeers => true,
+        Availability::Specific { peers } => peers.contains(&binding.buyer_did),
+    };
+    anyhow::ensure!(visible, "Item is not shared with this invoice buyer");
+    journal.prepare(binding, retained, network)
+}
+
+/// Serialize the first allocation with catalog changes. Previously allocated
+/// operations recover their original terms even if sharing changes afterwards.
+pub(crate) async fn allocate_onchain_offer<W: crate::content_onchain_seller::Wallet>(
+    data_dir: &Path,
+    journal: &crate::content_onchain_seller::Journal,
+    binding: &crate::content_lightning::Binding,
+    wallet: &W,
+) -> Result<crate::content_onchain_seller::Record> {
+    let saved = journal.load(binding)?.context("Original offer missing")?;
+    if saved.allocation != crate::content_onchain_seller::Allocation::Prepared {
+        return crate::content_onchain_seller::drive(journal, binding, true, wallet).await;
+    }
+    let source_data = data_dir.to_path_buf();
+    let source_id = binding.content_id.clone();
+    let source = saved.source.clone();
+    tokio::task::spawn_blocking(move || {
+        crate::content_snapshot::open_matching(
+            &source_data,
+            &source_id,
+            &source.sha256,
+            source.size,
+        )
+    })
+    .await??;
+    let _held = CATALOG_WRITES.lock().await;
+    let catalog = load_catalog(data_dir).await?;
+    let item = catalog
+        .items
+        .iter()
+        .find(|item| item.id == binding.content_id)
+        .context("Original offer is no longer shared; cancel before allocation")?;
+    let visible = match &item.availability {
+        Availability::Nobody => false,
+        Availability::AllPeers => true,
+        Availability::Specific { peers } => peers.contains(&binding.buyer_did),
+    };
+    anyhow::ensure!(
+        visible
+            && item.filename == saved.source.filename
+            && item.mime_type == saved.source.mime_type
+            && item.size_bytes == saved.source.size
+            && matches!(&item.access,AccessControl::Paid {price_sats,..} if *price_sats==binding.price_sats)
+            && method_accepted(&item.access, "onchain"),
+        "Original offer terms changed; no seller address allocated"
+    );
+    crate::content_onchain_seller::drive(journal, binding, true, wallet).await
+}

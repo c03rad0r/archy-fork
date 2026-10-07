@@ -18,6 +18,7 @@ mod handshake;
 mod identity;
 mod interfaces;
 mod lightning_purchase;
+mod onchain_purchase;
 pub(crate) mod lnd;
 mod marketplace;
 mod media_registration;
@@ -110,6 +111,15 @@ fn native_consent_origin_allowed(method: &str, headers: &hyper::HeaderMap, dev_m
             | "media.registration.context"
             | "media.registration.resolve"
             | "content.rental-purchase"
+
+            | "content.onchain-cancel"
+            | "content.onchain-attempt"
+            | "content.onchain-create"
+            | "content.onchain-expose"
+            | "content.onchain-prepare"
+            | "content.onchain-pay"
+            | "content.onchain-recover"
+            | "content.onchain-download"
             | "content.invoice-pay"
             | "content.invoice-download"
             | "content.invoice-attempt"
@@ -837,6 +847,14 @@ mod nostr_signing_origin_tests {
             "media.registration.context",
             "media.registration.resolve",
             "content.rental-purchase",
+            "content.onchain-cancel",
+            "content.onchain-attempt",
+            "content.onchain-create",
+            "content.onchain-expose",
+            "content.onchain-prepare",
+            "content.onchain-pay",
+            "content.onchain-recover",
+            "content.onchain-download",
             "content.purchase",
             "content.cancel-purchase",
             "content.playback-handle",

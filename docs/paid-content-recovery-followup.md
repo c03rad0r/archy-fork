@@ -860,3 +860,273 @@ Written regression coverage: four output-attribution cases, two mocked sidecar
 spend cases, and two mounted UI cases (unsupported Ark and unknown on-chain
 verification). No test execution is claimed until the queued isolated backend
 and focused UI runs complete.
+
+### Durable on-chain engine draft — not wired or qualified
+
+A separate follow-on draft adds a checksummed per-operation buyer journal and
+mock wallet boundary. It preserves the original quote, fee limits, unique UTXO
+lease ID, funded PSBT, signed bytes and computed transaction ID. Funding,
+signing and publication have durable dispatch markers. A retry after signing
+ambiguity uses the saved PSBT; publication recovery checks the saved txid and an
+explicit rebroadcast uses identical bytes. Output/input/change/fee checks occur
+before signing, and signed transaction structure is checked before publication.
+
+A lost FundPsbt response is **not yet fully recoverable**. ListLeases exposes
+owned outpoints, values, scripts and expiry, but does not reconstruct the exact
+original PSBT. The draft records those diagnostics and remains blocked from new
+funding/signing. It has no reconstruction hook that could synthesize a different
+transaction from leases. Missing or expired leases do not authorize a fresh
+payment. The pinned LND schema's custom lock ID is useful provenance, not an
+idempotency key or proof that the original funding request did not execute.
+
+Nine mock/file tests are written but unrun. This engine has no live wallet
+adapter, seller protocol, cross-rail RPC integration or UI wiring yet; it is not
+a complete deployed on-chain flow. Explicit owned-lease renewal/release and a
+supported original-funding recovery strategy still require implementation.
+Publicly exposed addresses stay payable and block replacement; settled receipts
+are monotonic. All remaining durable address, snapshot and legacy delivery work
+listed above stays open.
+
+### Exact-template LND adapter draft — isolated and unqualified
+
+The follow-on adapter avoids FundPsbt entirely. Read-only preparation validates
+wallet network/sync and spending-account ownership, obtains the current Fast
+(next-block) estimate unless an explicit rate is supplied, and requires an
+absolute fee cap. It selects at most 32 confirmed native P2WPKH/P2TR inputs,
+excludes every existing lease, and leaves the reported channel reserve in
+unselected confirmed outputs. It verifies previous transaction bytes against
+each selected outpoint/value/script and persists the exact PSBT before any
+LeaseOutput request. A caller-prepared change address must be verified as an
+internal address in the default account; this draft never calls NextAddr.
+
+Each lease dispatch is durable before HTTP. A lost reply is recovered by reading
+leases under the saved owner ID, then acquiring or renewing only the same saved
+outpoint. No replacement input or different payment is selected. Signing retries
+use the saved PSBT; publication retries use the saved signed bytes. All remote
+responses are bounded. Four loopback HTTP cases are written for lost lease,
+signing and publication replies; fee/change rejection before mutation; existing
+leases and channel reserve; and a foreign lease race. They assert journal state
+before each mocked mutation and assert that FundPsbt is never called.
+
+These four cases and the earlier nine engine cases are **unrun**. Only formatting
+and whitespace checks have run. The adapter has no owner RPC, seller protocol,
+cross-rail admission or UI wiring. Durable change-address preparation, renewal
+once the operation has already reached Funded, deliberate lease release,
+real regtest signing/fee verification, and preservation against concurrent
+outside wallet/channel operations remain open. Read-only reserve checks are
+conservative but are not a global LND coin-selection lock. Exposed recipient
+addresses cannot be retired on timeout. The mocked signatures prove request and
+transaction identity only, not cryptographic signing. No live leases, signing,
+funding, publication or payments were performed.
+
+Schema review used the node's pinned LND v0.21.2-beta WalletKit definitions and
+btcwallet v0.16.19 implementation: `lnrpc/walletrpc/walletkit.proto`,
+`walletkit.yaml`, `walletkit_server.go`, and `wallet/psbt.go`. ListLeases cannot
+recover an unknown original funded PSBT; the exact-template path removes that
+ambiguity by committing the original transaction before leasing.
+
+### Change allocation and post-funding lease recovery draft
+
+The next isolated checkpoint persists an explicit change-address allocation
+marker before WalletKit NextAddr. A confirmed local internal address is saved
+and reused after reload; an absent/malformed/lost reply remains an ambiguous
+allocation and cannot trigger another NextAddr or transaction preparation.
+Stale records cannot erase or replace a saved allocation. This deliberately does
+not guess an address by comparing the wallet's global address list, since other
+wallet consumers may derive addresses concurrently.
+
+Exact-template leases can now be reconciled after Funded and after an ambiguous
+signing reply. Before signing, the engine renews only the original saved inputs
+under the same owner ID, keeping the original funded PSBT immutable. The durable
+phase remains Funded/SigningDispatched during renewal, so a lost renewal reply
+can be looked up after reload. A foreign lease blocks signing; it never causes
+coin reselection. Four additional HTTP/file cases cover allocation ambiguity,
+reload/stale records, lost renewal reply, and an expired input taken by another
+owner. All 17 engine/adapter cases remain unrun pending the coordinated slot.
+
+Owner/seller protocol, cross-rail admission and UI integration are still the
+next work, not implemented by this checkpoint. No live wallet mutations occurred.
+
+### Owner/seller/rail/UI wiring draft — isolated, uncompiled
+
+New owner methods (`content.onchain-attempt/create/expose/prepare/pay/recover/
+download`) bind the owner identity, unique verified seller and content before
+finding or creating a durable UUID. The seller route authenticates the signed
+request body and keeps a buyer-bound source snapshot and original address
+allocation. Its allocation marker precedes NextAddr; a lost reply stays unknown.
+Repeated status/download requests never allocate an address. Paid status and
+original source metadata survive catalog changes and cannot regress through a
+stale record. Delivery uses the retained snapshot and verifies size/hash into
+the existing owned-file cache.
+
+The owner returns the receive address to the browser only after durable external
+exposure. Native preparation returns the saved fee and template hash; a later
+confirmation must match that same hash. Dispatch resumes original lease/sign/
+broadcast phases rather than generic sendcoins. Modern Cashu and Lightning
+admission rejects a saved on-chain liability, and on-chain dispatch/exposure
+rechecks those rails under the shared outer admission lock. Confirmed Cashu
+receipt replay is exempt from the new on-chain guard; it remains recovery.
+
+PeerFiles looks up the node operation when reopening, blocks replacement rails
+on unknown lookup, reviews actual fee/network under an explicit fee cap, and
+uses a separate confirmation click. Delayed callbacks cannot mutate another
+modal or continue preparation/payment after its selection changes. Read-only
+polling and download recovery keep the original operation ID; no localStorage
+marker is treated as authority for a fresh payment. Dashboard-origin policy was
+extended to the new owner methods without bypassing authentication or CSRF.
+
+This checkpoint adds three seller-engine cases, two buyer-discovery/corruption
+cases, three frontend parser cases and three mounted confirmation/reload/stale
+callback cases, and updates existing on-chain tests to the durable RPCs. The
+22 engine/adapter/seller/discovery cases and all affected frontend tests are
+UNRUN; no compile or browser/live acceptance is claimed. Formatting and diff
+checks only. Root coordinates the next isolated qualification slot.
+
+Remaining gates: typed HTTP owner/seller roundtrip and authentication tests;
+actual regtest signing/lease/rebroadcast validation; mobile/desktop fee-dialog
+checks; integration with existing legacy exposed addresses and unjournaled
+payments; legacy Fedimint/token receipt recovery; and safe cancellation of a
+provably unallocated original operation. Currently a saved on-chain operation
+conservatively blocks replacement even when seller preflight failed before
+allocation; no timeout is used to retire a payable address. Large ordinary Cloud
+snapshot preparation retains its known bounded-timeout/readiness limitation.
+Shared LND channel/other-wallet races are not globally locked by these local
+per-item admission guards. No lease release, fee replacement or input reselection
+is performed. No production tree, live wallet or deployed app was modified.
+
+### Provably unallocated cancellation draft
+
+`content.onchain-cancel` now asks the authenticated seller to retire the original
+buyer/UUID binding. Before acknowledging cancellation, the seller writes and
+fsyncs a terminal tombstone. This includes an operation it has never received:
+absence alone is not the proof, and a delayed create must encounter the saved
+tombstone. A prepared operation may be retired only before address allocation
+was dispatched. A dispatched/unknown allocation, issued address or paid sale
+cannot be retired. Repeating cancellation after a lost acknowledgement returns
+the same saved terminal result without deriving another address.
+
+The owner accepts only the matching explicit `cancelled_unallocated` result with
+`address: null`, `allocation_dispatched: false` and `can_switch_method: true`.
+Its own record must still have no quote/exposure, change allocation, lease,
+funding/signing/publication material or wallet mutation. It saves that result
+before allowing another rail. A stale record cannot revive retirement. Original
+operation lookups by ID can recover this terminal result; admission lookup
+ignores only validated durable retirements. Missing/corrupt/ambiguous records
+still block payment. The UI offers “Cancel if no address was issued” and unlocks
+choices only after the matching terminal response, retaining ownership checks
+for delayed replies.
+
+Address response audit: native preparation/status/lookup return a null address.
+The explicit exposure path writes the exposure marker and reloads the record
+before returning the address. A new regression checks redaction before exposure,
+its persistence across reload, and rejection of retirement afterward.
+
+Six backend cases and four frontend/parser cases were added for lost-ack replay,
+absent-operation tombstones, dispatched/issued refusal, cross-rail admission,
+address redaction and stale cancellation callbacks. These and the prior cases
+remain UNRUN: now 28 backend engine/adapter/seller/discovery cases. No heavy
+qualification or live wallet operation was performed. Authenticated HTTP fault
+roundtrips and real regtest/browser qualification remain required before rollout.
+
+### Native flow review: common preflight dead end remains
+
+The current draft still allocates the seller's receive address on the first
+Review click, **before** buyer balance, channel-reserve and fee-cap checks. It
+then prepares the buyer's change address and transaction; only a second click
+leases/signs/publishes. Thus a buyer balance or fee-preflight failure can leave
+an issued seller address, no browser exposure, and no signed/broadcast payment.
+The unallocated cancellation protocol intentionally cannot retire that case.
+It fixes failures before seller allocation dispatch only; it is not a complete
+solution to the user's native method-switching problem.
+
+Two-phase seller offer/preparation could defer allocation until explicit Pay,
+but a simple preliminary balance check cannot eliminate subsequent races. A
+separate native-unexposed retirement protocol would require durable buyer sealing
+against late signing/dispatch, explicit seller acknowledgement and reviewed
+late-arrival handling. Neither approach is implemented by this review. Exposed
+or unknown allocations and ambiguous payment mutations remain absolute blocks;
+no timeout/empty lookup is permission to replace a payment.
+
+Three authenticated loopback HTTP regression drafts exercise the production
+handler with temporary node identities: signed cancel/replay after dropping the
+reply and delayed create; unsigned/tampered/wrong-recipient rejection; and refusal
+to retire dispatched or issued addresses. These add no product behavior. They
+remain UNRUN with the prior tests (31 backend cases total), and must use the
+isolated backend runner. The detailed sequence is also preserved in
+`/tmp/archy-onchain-native-flow-review.txt` for the coordinating agent.
+
+### Isolated two-phase on-chain draft — 7 October
+
+Unqualified source checkpoint only: no compiler, backend/UI tests or live wallet
+mutations have run for this draft. It is not part of the deployed candidate.
+
+Review now requests a retained seller offer without allocating a seller address.
+A typed FundingPlan binds the original offer, inputs and previous transactions,
+verified change address, dynamic Fast fee and explicit cap. It contains no PSBT
+or placeholder recipient. A separate Pay confirms its hash, rechecks inputs and
+leases those exact outpoints before requesting the original seller address.
+Only then is the final PSBT constructed and checked against the reviewed plan.
+Lost lease/allocation/sign/broadcast replies retain that original operation.
+
+Authenticated seller HTTP handling has an injectable wallet boundary; production
+loads wallet credentials only after request authentication reaches that boundary.
+Offer/create does not allocate. Explicit allocate revalidates current sharing,
+price and retained bytes before the first allocation; dispatched/paid operations
+continue recovering original terms. Tests are written for offer/cancel/body-tamper,
+lost HTTP replies, lost wallet allocation replies, fee-review cancellation and
+original input recovery. They remain unrun.
+
+A confirmed local change derivation plus an unallocated offer/plan can be retired
+only after the seller's durable unallocated acknowledgement. An unknown change
+allocation, any lease mutation, uncertain seller allocation or exposed address
+continues to block replacement payments. This does not implement retirement of
+native-unexposed addresses after Pay, migration of legacy exposed addresses,
+legacy Fedimint receipts, fee-bumping or large-file background readiness.
+
+Queued qualification (run serially only when the parent releases the slot):
+
+```sh
+cd /home/archipelago/Projects/archy-payment-edge-fixes
+CARGO_TARGET_DIR=/home/archipelago/Projects/archy/core/target CARGO_BUILD_JOBS=2 nice -n 10 ionice -c 2 -n 7 bash scripts/test-backend-isolated.sh onchain
+cd neode-ui
+nice -n 10 npm exec -- vitest run --maxWorkers=1 src/composables/__tests__/peerOnchainPurchase.test.ts src/composables/peerPaymentOperations.test.ts src/views/__tests__/PeerFilesLightning.test.ts src/views/__tests__/PeerFilesRefresh.test.ts
+nice -n 10 npm exec -- vue-tsc -b
+```
+
+Capture/check source hashes around each run. Follow with full isolated backend,
+full dashboard tests, build and mobile/desktop flow checks before integration or
+deployment. Compilation/type errors or fault-test failures are still possible;
+formatting and diff checks alone are not qualification.
+
+
+### Two-phase on-chain focused qualification — 7 October
+
+The isolated draft now compiles. The first compile stopped on an inherited
+rental_readiness moved-value error; the exact total_bytes-before-move correction
+already present in the active tree was carried into this isolated branch.
+Read-only review also fixed valid no-change input selection: it must not require
+funding an unused change output. Its mocked regression passes within the original
+explicit fee cap and performs no input lease.
+
+The first completed test run passed 40 and failed six. Five HTTP fixtures had a
+1 KiB storage budget below snapshot metadata overhead; the sixth expected a lease
+request that the stronger read-only foreign-lease check now rejects before
+mutation. Correcting only those fixtures/expectations gave:
+
+- Isolated backend `onchain` scope: **46 passed, 0 failed**, no skips;
+  1,917 unrelated tests filtered. All 424 captured backend inputs unchanged.
+- Affected dashboard tests: **69 passed across four files** (68 in the main run,
+  one ownership-helper test run separately after correcting its command path).
+- Actual `vue-tsc -b`: **passed**. All 509 captured UI inputs unchanged.
+
+Receipts: `/tmp/archy-onchain-two-phase-final-tests.log`,
+`/tmp/archy-onchain-two-phase-final-inputs.json`,
+`/tmp/archy-onchain-ui-focused-tests.log`,
+`/tmp/archy-onchain-ui-ownership-helper-tests.log`,
+`/tmp/archy-onchain-ui-typecheck.log`, `/tmp/archy-onchain-ui-inputs.json`.
+Failed compile/test logs remain beside these as separate evidence.
+
+This qualifies only the isolated focused source scope. Full integrated backend/UI
+regressions, production artifacts, actual LND regtest signing/lease/broadcast
+acceptance, mobile/desktop flow checks and deployment remain open. No live money,
+address allocation, input lease, signing or broadcast was performed.

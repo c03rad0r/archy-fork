@@ -1347,7 +1347,7 @@ fn psbt_key_origin_report(psbt_base64: &str) -> Result<PsbtKeyOriginReport> {
 /// LND's transaction `amount` is the wallet-wide net amount, not the value
 /// paid to a purchase address. Attribute only confirmed output values, once
 /// per outpoint. Missing/malformed evidence is unknown, never proof of payment.
-fn confirmed_address_sats(body: &serde_json::Value, address: &str) -> Result<u64> {
+pub(super) fn confirmed_address_sats(body: &serde_json::Value, address: &str) -> Result<u64> {
     use std::collections::{HashMap, HashSet};
     const MAX_SATS: u64 = 21_000_000 * 100_000_000;
     fn integer(value: &serde_json::Value) -> Result<u64> {

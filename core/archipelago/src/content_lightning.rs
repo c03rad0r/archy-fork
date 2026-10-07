@@ -19,7 +19,7 @@ pub(crate) struct Binding {
     pub price_sats: u64,
 }
 impl Binding {
-    fn validate(&self) -> Result<()> {
+    pub(crate) fn validate(&self) -> Result<()> {
         anyhow::ensure!(
             uuid::Uuid::parse_str(&self.id)?.to_string() == self.id,
             "Invalid invoice operation"
@@ -61,7 +61,7 @@ pub(crate) struct RetainedFile {
     pub mime_type: String,
 }
 impl RetainedFile {
-    fn validate(&self) -> Result<()> {
+    pub(crate) fn validate(&self) -> Result<()> {
         anyhow::ensure!(
             self.sha256.len() == 64
                 && self.sha256.bytes().all(|b| b.is_ascii_hexdigit())

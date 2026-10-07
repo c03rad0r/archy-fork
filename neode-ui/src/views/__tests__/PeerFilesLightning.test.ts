@@ -7,6 +7,7 @@ vi.mock('vue-router', () => ({ useRouter: () => ({ push: vi.fn() }) }))
 vi.mock('@/api/rpc-client', () => ({ rpcClient: { call: vi.fn(), federationListNodes: vi.fn(), payLightningInvoice: vi.fn() } }))
 vi.mock('@/composables/useAudioPlayer', () => ({ useAudioPlayer: () => ({ play: vi.fn() }) }))
 const hash = 'a'.repeat(64)
+const onchainFixture = { operation_id:'22222222-2222-4222-8222-222222222222',price_sats:546,phase:'quoted',network:'mainnet',external_exposure:false,address:null,fee_sats:null,max_fee_sats:null,template_sha256:null,txid:null,paid:false,change_allocation_ambiguous:false,can_switch_method:false,retired_unallocated:false }
 const item = { id: 'paid-file', filename: 'bought.txt', mime_type: 'text/plain', size_bytes: 4, description: '', access: { paid: { price_sats: 5, accepted: ['lightning', 'ecash'] } } }
 const receiptKey = 'peer-file-lightning:peer.onion:paid-file'
 const cashuQuoteFixture = { state: 'confirmation_required', network: 'mainnet', mint_url: 'https://original-mint.example.test', operation_id: '12345678-1234-4234-8234-123456789abc', envelope_sha256: 'b'.repeat(64), gross_token_sats: 6, seller_net_sats: 5, wallet_debit_sats: 7, expires_at: 2_000_000_000 }
@@ -39,16 +40,16 @@ beforeEach(() => {
 describe('Lightning file delivery recovery', () => {
   it('opens a confirmed on-chain delivery from HTTP cache without another payment', async () => {
     vi.mocked(rpcClient.call).mockImplementation(async ({ method }) => {
-      if (method === 'content.onchain-status') return { paid: true }
-      if (method === 'content.download-peer-onchain') return { owned: true, mime_type: 'video/mp4', size_bytes: 200000000 }
+      if (method === 'content.onchain-recover') return { ...onchainFixture, paid: true }
+      if (method === 'content.onchain-download') return { owned: true, mime_type: 'video/mp4', size_bytes: 200000000 }
       return { items: [], attempts: [], attempt: null }
     })
     const { wrapper, vm } = await open()
-    await vm.pollOnchain('bc1test')
+    await vm.pollOnchain(onchainFixture.operation_id)
     expect(vm.viewerUrl).toBe('/api/peer-content/peer.onion/paid-file')
     expect(vm.viewerMime).toBe('video/mp4')
     const calls = vi.mocked(rpcClient.call).mock.calls.map(([call]) => call)
-    expect(calls.find(call => call.method === 'content.download-peer-onchain')?.params).toMatchObject({ cache_only: true, address: 'bc1test', filename: 'bought.txt' })
+    expect(calls.find(call => call.method === 'content.onchain-download')?.params).toMatchObject({ operation_id: onchainFixture.operation_id, content_id: item.id })
     expect(calls.some(call => ['lnd.sendcoins', 'content.request-onchain'].includes(call.method))).toBe(false)
     wrapper.unmount()
   })
@@ -353,7 +354,7 @@ it('retains already dispatched Lightning evidence after unmount without opening 
     vm.openPayModal({ ...item, access: { paid: { price_sats: 545, accepted: ['onchain', 'lightning', 'ecash'] } } })
     await vm.payOnchain()
     await vm.loadOnchainQr()
-    expect(vi.mocked(rpcClient.call).mock.calls.some(([call]) => ['content.request-onchain', 'lnd.sendcoins'].includes(call.method))).toBe(false)
+    expect(vi.mocked(rpcClient.call).mock.calls.some(([call]) => ['content.onchain-create', 'content.onchain-expose', 'content.onchain-pay', 'lnd.sendcoins'].includes(call.method))).toBe(false)
     expect(vm.paymentActionBusy).toBe(false)
     expect(vm.hasBlockingLightningReceipt).toBe(false)
     expect(vm.lnError).toContain('546')
@@ -361,13 +362,13 @@ it('retains already dispatched Lightning evidence after unmount without opening 
   })
   it('allows the exact 546-sat boundary and never dispatches a changed seller amount', async () => {
     vi.mocked(rpcClient.call).mockImplementation(async ({ method }) => {
-      if (method === 'content.request-onchain') return { address: 'bc1test', amount_sats: 547 }
+      if (method === 'content.onchain-create') return { ...onchainFixture, price_sats: 547 }
       return { items: [], attempts: [], attempt: null }
     })
     const { wrapper, vm } = await open()
     vm.openPayModal({ ...item, access: { paid: { price_sats: 546, accepted: ['onchain', 'lightning', 'ecash'] } } })
     await vm.payOnchain()
-    expect(vi.mocked(rpcClient.call).mock.calls.filter(([v]) => v.method === 'content.request-onchain')).toHaveLength(1)
+    expect(vi.mocked(rpcClient.call).mock.calls.filter(([v]) => v.method === 'content.onchain-create')).toHaveLength(1)
     expect(vi.mocked(rpcClient.call).mock.calls.some(([v]) => v.method === 'lnd.sendcoins')).toBe(false)
     expect(vm.lnError).toContain('changed the payment amount')
     expect(vm.paymentActionBusy).toBe(false)
@@ -593,7 +594,7 @@ describe('External invoice recovery retains terminal settlement', () => {
 describe('Durable external invoice ownership', () => {
   it('recovers a browser-lost invoice from node storage and blocks other rails', async()=>{
     const original=vi.mocked(rpcClient.call).getMockImplementation()!
-    vi.mocked(rpcClient.call).mockImplementation(async args=>args.method==='content.invoice-attempt'?{attempt:{operation_id:'11111111-1111-4111-8111-111111111111',price_sats:5,external_exposure:true,status:{payment_hash:hash,bolt11:'ln-original',state:'issued',can_switch_method:false}}}:original(args))
+    vi.mocked(rpcClient.call).mockImplementation(async args=>args.method==='content.invoice-attempt'?{attempt:{operation_id:'11111111-1111-4111-8111-111111111111',price_sats:5,external_exposure:true,status:{payment_hash:hash,bolt11:'ln-original',state:'issued',can_switch_method:false,retired_unallocated:false}}}:original(args))
     const {wrapper,vm}=await open();await flushPromises();await vm.prepareEcashPay();await vm.payOnchain()
     expect(vm.hasBlockingLightningReceipt).toBe(true)
     expect(JSON.parse(localStorage.getItem(receiptKey)!)).toMatchObject({bolt11:'ln-original',external_exposure:true})
@@ -603,7 +604,7 @@ describe('Durable external invoice ownership', () => {
   it('local LND failure cannot release an externally displayed invoice',async()=>{
     localStorage.setItem(receiptKey,JSON.stringify({bolt11:'ln-external',payment_hash:hash,price_sats:5,origin:'native',external_exposure:true,state:'pending'}))
     const original=vi.mocked(rpcClient.call).getMockImplementation()!
-    vi.mocked(rpcClient.call).mockImplementation(async args=>args.method==='lnd.paymentstatus'?{status:'failed'}:args.method==='content.invoice-status'?{paid:false,state:'open',can_switch_method:false}:original(args))
+    vi.mocked(rpcClient.call).mockImplementation(async args=>args.method==='lnd.paymentstatus'?{status:'failed'}:args.method==='content.invoice-status'?{paid:false,state:'open',can_switch_method:false,retired_unallocated:false}:original(args))
     const {wrapper,vm}=await open();await vm.payWithLightning()
     expect(vm.hasBlockingLightningReceipt).toBe(true);expect(nativePay).not.toHaveBeenCalled()
     wrapper.unmount()
@@ -611,7 +612,7 @@ describe('Durable external invoice ownership', () => {
   it('settlement wins a cancellation reply and keeps paid-file recovery',async()=>{
     localStorage.setItem(receiptKey,JSON.stringify({operation_id:'11111111-1111-4111-8111-111111111111',bolt11:'ln-external',payment_hash:hash,price_sats:5,origin:'external',external_exposure:true,state:'pending'}))
     const original=vi.mocked(rpcClient.call).getMockImplementation()!
-    vi.mocked(rpcClient.call).mockImplementation(async args=>args.method==='content.invoice-cancel'?{paid:true,state:'settled',can_switch_method:false}:original(args))
+    vi.mocked(rpcClient.call).mockImplementation(async args=>args.method==='content.invoice-cancel'?{paid:true,state:'settled',can_switch_method:false,retired_unallocated:false}:original(args))
     const {wrapper,vm}=await open();await vm.cancelExternalInvoice()
     expect(JSON.parse(localStorage.getItem(receiptKey)!)).toMatchObject({state:'succeeded'})
     expect(vm.hasBlockingLightningReceipt).toBe(true);expect(nativePay).not.toHaveBeenCalled()
@@ -625,7 +626,7 @@ describe('Succeeded invoice reconciliation',()=>{
     const operation='11111111-1111-4111-8111-111111111111'
     localStorage.setItem(receiptKey,JSON.stringify({operation_id:operation,payment_hash:hash,price_sats:5,origin:'native',external_exposure:false,state:'succeeded'}))
     const original=vi.mocked(rpcClient.call).getMockImplementation()!
-    vi.mocked(rpcClient.call).mockImplementation(async args=>args.method==='content.invoice-attempt'?{attempt:{operation_id:operation,price_sats:5,external_exposure:false,status:{payment_hash:hash,bolt11:null,state:'issued',can_switch_method:false}}}:original(args))
+    vi.mocked(rpcClient.call).mockImplementation(async args=>args.method==='content.invoice-attempt'?{attempt:{operation_id:operation,price_sats:5,external_exposure:false,status:{payment_hash:hash,bolt11:null,state:'issued',can_switch_method:false,retired_unallocated:false}}}:original(args))
     const {wrapper,vm}=await open()
     expect(vm.lnReceipt.state).toBe('succeeded')
     expect(JSON.parse(localStorage.getItem(receiptKey)!)).toMatchObject({state:'succeeded'})
@@ -635,7 +636,7 @@ describe('Succeeded invoice reconciliation',()=>{
   })
   it('restores node-proven native success after browser storage is lost',async()=>{
     const original=vi.mocked(rpcClient.call).getMockImplementation()!
-    vi.mocked(rpcClient.call).mockImplementation(async args=>args.method==='content.invoice-attempt'?{attempt:{operation_id:'11111111-1111-4111-8111-111111111111',price_sats:5,external_exposure:false,native_succeeded:true,status:{payment_hash:hash,bolt11:null,state:'issued',can_switch_method:false}}}:original(args))
+    vi.mocked(rpcClient.call).mockImplementation(async args=>args.method==='content.invoice-attempt'?{attempt:{operation_id:'11111111-1111-4111-8111-111111111111',price_sats:5,external_exposure:false,native_succeeded:true,status:{payment_hash:hash,bolt11:null,state:'issued',can_switch_method:false,retired_unallocated:false}}}:original(args))
     const {wrapper,vm}=await open()
     expect(vm.lnReceipt.state).toBe('succeeded')
     expect(vm.hasBlockingLightningReceipt).toBe(true)
@@ -649,7 +650,7 @@ describe('Damaged supplemental invoice receipt',()=>{
   it('reconciles only from an authoritative saved node operation and preserves the damaged bytes',async()=>{
     localStorage.setItem(receiptKey,'{damaged receipt')
     const original=vi.mocked(rpcClient.call).getMockImplementation()!
-    vi.mocked(rpcClient.call).mockImplementation(async args=>args.method==='content.invoice-attempt'?{attempt:{operation_id:'11111111-1111-4111-8111-111111111111',price_sats:5,external_exposure:true,status:{payment_hash:hash,bolt11:'ln-original',state:'issued',can_switch_method:false}}}:original(args))
+    vi.mocked(rpcClient.call).mockImplementation(async args=>args.method==='content.invoice-attempt'?{attempt:{operation_id:'11111111-1111-4111-8111-111111111111',price_sats:5,external_exposure:true,status:{payment_hash:hash,bolt11:'ln-original',state:'issued',can_switch_method:false,retired_unallocated:false}}}:original(args))
     const {wrapper,vm}=await open()
     expect(localStorage.getItem(`${receiptKey}:unreadable`)).toBe('{damaged receipt')
     expect(JSON.parse(localStorage.getItem(receiptKey)!)).toMatchObject({payment_hash:hash,state:'pending',external_exposure:true})
@@ -677,7 +678,7 @@ it('recovers a saved incomplete invoice request without paying or exposing its B
   const operation='11111111-1111-4111-8111-111111111111'
   const original=vi.mocked(rpcClient.call).getMockImplementation()!
   vi.mocked(rpcClient.call).mockImplementation(async args=>{
-    if(args.method==='content.invoice-attempt')return {attempt:{operation_id:operation,price_sats:5,external_exposure:false,status:recovered?{payment_hash:hash,bolt11:null,state:'issued',can_switch_method:false}:null}}
+    if(args.method==='content.invoice-attempt')return {attempt:{operation_id:operation,price_sats:5,external_exposure:false,status:recovered?{payment_hash:hash,bolt11:null,state:'issued',can_switch_method:false,retired_unallocated:false}:null}}
     if(args.method==='content.invoice-create'){recovered=true;return {operation_id:operation,state:'open',payment_hash:hash}}
     return original(args)
   })
@@ -759,7 +760,7 @@ describe('Supported peer-file ecash choices', () => {
 describe('Unknown on-chain verification', () => {
   it('shows verification errors without downloading, paying or creating another address', async () => {
     vi.mocked(rpcClient.call).mockImplementation(async ({ method }) => {
-      if (method === 'content.onchain-status') return { paid: false, status: 'unknown', error: 'Exact outputs unavailable; do not pay again.' }
+      if (method === 'content.onchain-recover') throw Error('Exact outputs unavailable; do not pay again.')
       return { items: [], attempts: [], attempt: null }
     })
     const { wrapper, vm } = await open()
@@ -769,6 +770,115 @@ describe('Unknown on-chain verification', () => {
     expect(calls).not.toContain('content.download-peer-onchain')
     expect(calls).not.toContain('content.request-onchain')
     expect(calls).not.toContain('lnd.sendcoins')
+    wrapper.unmount()
+  })
+})
+
+
+describe('Original on-chain transaction confirmation and callback ownership',()=>{
+  const chainItem={...item,access:{paid:{price_sats:546,accepted:['onchain','lightning','ecash']}}}
+  const prepared={...onchainFixture,phase:'plan_prepared',fee_sats:142,max_fee_sats:1000,plan_sha256:'c'.repeat(64),template_sha256:null}
+  it('reviews the saved fee before a separate confirmation and never calls sendcoins',async()=>{
+    vi.mocked(rpcClient.call).mockImplementation(async({method})=>{
+      if(method==='content.onchain-create')return {...onchainFixture,phase:'offer_prepared'}
+      if(method==='content.onchain-prepare')return prepared
+      if(method==='content.onchain-pay')throw Error('Lost publish reply; recover original')
+      return {items:[],attempts:[],attempt:null}
+    })
+    const {wrapper,vm}=await open();vm.openPayModal(chainItem);await flushPromises()
+    await vm.payOnchain()
+    expect(vm.onchainAttempt.fee_sats).toBe(142)
+    expect(vi.mocked(rpcClient.call).mock.calls.some(([c])=>c.method==='content.onchain-pay')).toBe(false)
+    await vm.payOnchain()
+    expect(vi.mocked(rpcClient.call).mock.calls.find(([c])=>c.method==='content.onchain-pay')![0].params).toMatchObject({operation_id:prepared.operation_id,plan_sha256:prepared.plan_sha256})
+    expect(vi.mocked(rpcClient.call).mock.calls.some(([c])=>c.method==='lnd.sendcoins')).toBe(false)
+    expect(vm.onchainAttempt.operation_id).toBe(prepared.operation_id);wrapper.unmount()
+  })
+  it('does not prepare or send after a delayed create reply outlives its modal',async()=>{
+    let finish!:(v:unknown)=>void
+    vi.mocked(rpcClient.call).mockImplementation(async({method})=>method==='content.onchain-create'?await new Promise(resolve=>{finish=resolve}):{items:[],attempts:[],attempt:null})
+    const {wrapper,vm}=await open();vm.openPayModal(chainItem);await flushPromises()
+    const pending=vm.payOnchain();await flushPromises();expect(finish).toBeTypeOf('function')
+    vm.closePayModal();vm.openPayModal({...chainItem,id:'other'});await flushPromises();finish(onchainFixture);await pending
+    expect(vm.onchainAttempt).toBeNull()
+    expect(vi.mocked(rpcClient.call).mock.calls.some(([c])=>['content.onchain-prepare','content.onchain-pay','lnd.sendcoins'].includes(c.method))).toBe(false)
+    wrapper.unmount()
+  })
+  it('reloads original state and blocks replacement rails without paying automatically',async()=>{
+    vi.mocked(rpcClient.call).mockImplementation(async({method})=>method==='content.onchain-attempt'?{attempt:prepared}:{items:[],attempts:[],attempt:null})
+    const {wrapper,vm}=await open();vm.openPayModal(chainItem);await flushPromises()
+    expect(vm.onchainAttempt.operation_id).toBe(prepared.operation_id)
+    await vm.payWithLightning();await vm.prepareEcashPay()
+    expect(vi.mocked(rpcClient.call).mock.calls.some(([c])=>['content.invoice-create','content.purchase','content.onchain-pay','lnd.sendcoins'].includes(c.method))).toBe(false)
+    wrapper.unmount()
+  })
+})
+
+describe('Cancel only provably unallocated on-chain operations',()=>{
+  const unallocated={...onchainFixture,phase:'address_requested',network:null}
+  const retired={...unallocated,retired_unallocated:true,can_switch_method:true}
+  it('unlocks other rails only after matching terminal seller acknowledgement',async()=>{
+    vi.mocked(rpcClient.call).mockImplementation(async({method})=>{
+      if(method==='content.onchain-attempt')return {attempt:unallocated}
+      if(method==='content.onchain-cancel')return retired
+      if(method==='wallet.ecash-balance')return {cashu_sats:10,fedimint_sats:0}
+      return {items:[],attempts:[],attempt:null}
+    })
+    const {wrapper,vm}=await open()
+    expect(vm.onchainAttempt.operation_id).toBe(unallocated.operation_id)
+    await vm.cancelOriginalOnchain()
+    expect(vm.onchainAttempt).toBeNull()
+    await vm.prepareEcashPay()
+    expect(vi.mocked(rpcClient.call).mock.calls.some(([c])=>c.method==='wallet.ecash-balance')).toBe(true)
+    expect(vi.mocked(rpcClient.call).mock.calls.some(([c])=>['content.onchain-create','content.onchain-pay','lnd.sendcoins'].includes(c.method))).toBe(false)
+    wrapper.unmount()
+  })
+  it('keeps an unknown allocation blocked after cancellation fails',async()=>{
+    vi.mocked(rpcClient.call).mockImplementation(async({method})=>{
+      if(method==='content.onchain-attempt')return {attempt:unallocated}
+      if(method==='content.onchain-cancel')throw Error('Original address allocation was dispatched; recover it')
+      return {items:[],attempts:[],attempt:null}
+    })
+    const {wrapper,vm}=await open();await vm.cancelOriginalOnchain();await vm.payWithLightning()
+    expect(vm.onchainAttempt.operation_id).toBe(unallocated.operation_id)
+    expect(vi.mocked(rpcClient.call).mock.calls.some(([c])=>c.method==='content.invoice-create')).toBe(false)
+    wrapper.unmount()
+  })
+  it('cannot clear another selection after an old cancellation reply arrives',async()=>{
+    let finish!:(v:unknown)=>void
+    const other={...unallocated,operation_id:'33333333-3333-4333-8333-333333333333'}
+    vi.mocked(rpcClient.call).mockImplementation(async({method,params})=>{
+      if(method==='content.onchain-attempt')return {attempt:(params as {content_id:string}).content_id==='other'?other:unallocated}
+      if(method==='content.onchain-cancel')return await new Promise(resolve=>{finish=resolve})
+      return {items:[],attempts:[],attempt:null}
+    })
+    const {wrapper,vm}=await open();const cancel=vm.cancelOriginalOnchain();await flushPromises()
+    expect(finish).toBeTypeOf('function');vm.closePayModal();vm.openPayModal({...item,id:'other'});await flushPromises()
+    finish(retired);await cancel
+    expect(vm.onchainAttempt.operation_id).toBe(other.operation_id)
+    wrapper.unmount()
+  })
+})
+
+
+describe('Unallocated two-phase on-chain review',()=>{
+  it('lets an insufficient-funds review cancel before any Pay or address exposure',async()=>{
+    const offer={...onchainFixture,phase:'offer_prepared'}
+    vi.mocked(rpcClient.call).mockImplementation(async({method})=>{
+      if(method==='content.onchain-create')return offer
+      if(method==='content.onchain-prepare')throw Error('Insufficient confirmed funds; no seller address or inputs allocated')
+      if(method==='content.onchain-cancel')return {...offer,retired_unallocated:true,can_switch_method:true}
+      if(method==='wallet.ecash-balance')return {cashu_sats:1000,fedimint_sats:0}
+      return {items:[],attempts:[],attempt:null}
+    })
+    const {wrapper,vm}=await open();vm.openPayModal({...item,access:{paid:{price_sats:546,accepted:['onchain','ecash']}}});await flushPromises()
+    await vm.payOnchain();expect(vm.lnError).toContain('Insufficient confirmed funds')
+    expect(vm.onchainAttempt.operation_id).toBe(offer.operation_id)
+    await vm.cancelOriginalOnchain();expect(vm.onchainAttempt).toBeNull()
+    await vm.prepareEcashPay()
+    const calls=vi.mocked(rpcClient.call).mock.calls.map(([call])=>call.method)
+    expect(calls).toContain('wallet.ecash-balance')
+    for(const forbidden of ['content.onchain-pay','content.onchain-expose','lnd.sendcoins'])expect(calls).not.toContain(forbidden)
     wrapper.unmount()
   })
 })

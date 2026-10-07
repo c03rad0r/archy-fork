@@ -454,11 +454,17 @@
                   <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1" />
                 </svg>
                 <span>
-                  <span class="block text-base text-white">{{ onchainPaying ? 'Sending…' : 'Pay on-chain from my node' }}</span>
-                  <span class="block text-sm text-white/50">Sends Bitcoin on-chain from your node’s wallet (slower)</span>
+                  <span class="block text-base text-white">{{ onchainPaying ? 'Recovering original transaction…' : onchainAttempt?.paid ? 'Recover original download' : (onchainAttempt?.plan_sha256 || onchainAttempt?.template_sha256) ? 'Confirm / resume original transaction' : onchainAttempt?.external_exposure ? 'Check original Bitcoin payment' : 'Review on-chain payment' }}</span>
+                  <span class="block text-sm text-white/50">Reviews the current Fast fee before sending the saved transaction</span>
                 </span>
               </button>
 
+              <label v-if="acceptsMethod(payItem.access, 'onchain') && !(onchainAttempt?.plan_sha256 || onchainAttempt?.template_sha256)" class="block text-sm text-white/70">Maximum network fee (sats)
+                <input v-model="onchainFeeCap" type="number" min="1" step="1" class="mt-1 w-full min-h-11 rounded-xl bg-white/10 px-3" :disabled="paymentActionBusy" />
+              </label>
+              <p v-if="(onchainAttempt?.plan_sha256 || onchainAttempt?.template_sha256)" class="text-sm text-white/70 break-words">Original Bitcoin payment: {{ onchainAttempt.price_sats }} sats + {{ onchainAttempt.fee_sats }} sats network fee · {{ onchainAttempt.network }}. Confirming resumes this same funding plan; the seller address is allocated only after Pay.</p>
+              <button v-if="onchainAttempt && ['address_requested', 'offer_prepared', 'plan_prepared'].includes(onchainAttempt.phase) && !onchainAttempt.change_allocation_ambiguous" type="button" class="glass-button w-full min-h-11 rounded-xl px-3 py-2" :disabled="paymentActionBusy" @click="cancelOriginalOnchain">Cancel if no address was issued</button>
+              <p v-if="onchainAttempt?.change_allocation_ambiguous" class="text-sm text-amber-300">The original change-address reply was lost. This saved operation needs recovery; no replacement address or payment will be created.</p>
               <p v-if="lnError" class="text-xs text-red-400 px-1">{{ lnError }}</p>
             </div>
 
@@ -608,6 +614,7 @@
 </template>
 
 <script setup lang="ts">
+import { parseOnchainAttempt, type OnchainAttempt } from '@/composables/peerOnchainPurchase'
 import { parseCashuQuote, readCashuAttempt, keepCashuAttempt, keepAuthoritativeCashuQuote, archiveMalformedCashuAttempt, clearCashuAttempt, type CashuQuote } from '@/composables/peerCashuPurchase'
 import { usePeerPaymentOperations } from '@/composables/peerPaymentOperations'
 import { ref, computed, reactive, watch, onMounted, onUnmounted } from 'vue'
@@ -893,10 +900,11 @@ async function lookupNodeInvoice(onion:string,item:CatalogItem,generation:number
     keepReceipt(onion,item.id,receipt,selected,previous?.state==='failed'?previous.operation_id:undefined);lnReceiptReadError.value=false
   }catch(error){if(selected()){lnReceiptReadError.value=true;lnError.value=error instanceof Error?error.message:'Could not verify original invoice; do not pay again'}}
 }
-async function permitFreshOtherRail(item: CatalogItem, onion: string, recoverInvoice = false) {
+async function permitFreshOtherRail(item: CatalogItem, onion: string, recoverInvoice = false, recoverOnchain = false) {
   const generation=paymentGeneration.value
   await cashuLookup
   if (paymentGeneration.value!==generation || !activePaymentMatches(onion,item.id)) return false
+  if (!recoverOnchain && (onchainAttempt.value || onchainLookupError.value)) { lnError.value='Recover the original on-chain purchase before choosing another method.'; return false }
   if (hasBlockingCashuPurchase.value) { lnError.value='Recover or cancel the saved Cashu purchase before choosing another method.'; return false }
   if (!recoverInvoice && hasBlockingLightningReceipt.value) {lnError.value='Recover or cancel the original invoice before choosing another method.';return false}
   return true
@@ -913,6 +921,9 @@ const invoiceError = ref('')
 const invoiceCopied = ref(false)
 const invoiceOperationId = ref<string | null>(null)
 // On-chain QR (pay the seller's address from any external wallet).
+const onchainAttempt = ref<OnchainAttempt | null>(null)
+const onchainLookupError = ref(false)
+const onchainFeeCap = ref('1000')
 const onchainData = ref<{ address: string; amount_sats: number } | null>(null)
 const onchainQr = ref('')
 const onchainWaiting = ref(false)
@@ -1245,6 +1256,8 @@ function openPayModal(item: CatalogItem) {
   invoiceError.value = ''
   invoiceCopied.value = false
   invoiceOperationId.value = null
+  onchainAttempt.value = null
+  onchainLookupError.value = false
   onchainData.value = null
   onchainQr.value = ''
   onchainWaiting.value = false
@@ -1259,7 +1272,7 @@ function openPayModal(item: CatalogItem) {
     if (lnReceipt.value?.state === 'failed') lnError.value = `Previous Lightning attempt failed: ${lnReceipt.value.failure_reason || 'Payment failed'}. You can choose another method.`
   } catch { lnReceiptReadError.value = true; lnError.value = 'Saved payment could not be read. Do not pay again.' }
   onchainPaying.value = false
-  cashuLookup = Promise.all([lookupCashuPurchase(props.peerId || currentPeer.value?.onion || '', item, paymentGeneration.value),lookupNodeInvoice(props.peerId || currentPeer.value?.onion || '', item, paymentGeneration.value)]).then(()=>undefined)
+  cashuLookup = Promise.all([lookupCashuPurchase(props.peerId || currentPeer.value?.onion || '', item, paymentGeneration.value),lookupNodeInvoice(props.peerId || currentPeer.value?.onion || '', item, paymentGeneration.value),lookupOnchainPurchase(props.peerId || currentPeer.value?.onion || '', item, paymentGeneration.value)]).then(()=>undefined)
 }
 
 function closePayModal() {
@@ -1320,7 +1333,7 @@ function selectQrTab(tab: 'onchain' | 'lightning') {
       loadOnchainQr()
     } else if (onchainData.value && !onchainPaying.value) {
       onchainPaying.value = true
-      pollOnchain(onchainData.value.address)
+      onchainAttempt.value && pollOnchain(onchainAttempt.value.operation_id)
     }
   } else {
     if (onchainPollTimer) { clearTimeout(onchainPollTimer); onchainPollTimer = null }
@@ -1338,35 +1351,50 @@ function selectQrTab(tab: 'onchain' | 'lightning') {
  * `bitcoin:` QR for any external wallet, and poll the seller until the payment
  * lands, then release the file (the address is the gate token).
  */
-async function loadOnchainQr() {
-  if (hasBlockingLightningReceipt.value) return
-  const item = payItem.value
-  const onion = props.peerId || currentPeer.value?.onion
-  if (!item || !onion) return
-  if (!await permitFreshOtherRail(item, onion)) return
-  if (getItemPrice(item.access) < 546) { onchainError.value = 'On-chain payment requires at least 546 sats. Choose Lightning or ecash for this file.'; return }
-  const operation = paymentOperations.begin('onchain-qr', onion, item.id)
-  if (!operation) return
-  onchainError.value = ''
-  onchainData.value = null
-  onchainQr.value = ''
-  onchainWaiting.value = true
+async function lookupOnchainPurchase(onion: string, item: CatalogItem, generation: number) {
+  const selected=()=>generation===paymentGeneration.value && activePaymentMatches(onion,item.id)
   try {
-    const req = await rpcClient.call<{ address?: string; amount_sats?: number; error?: string }>({ method: 'content.request-onchain', params: { onion, content_id: item.id }, timeout: 45000, maxRetries: 1 })
-    if (!req?.address || !req?.amount_sats) throw new Error(req?.error || 'The seller could not provide an on-chain address.')
-    if (!Number.isSafeInteger(req.amount_sats) || req.amount_sats !== getItemPrice(item.access) || req.amount_sats < 546) throw new Error('The seller changed the payment amount. Refresh the file before paying.')
-    // A closed modal has never displayed this address: do not expose a late QR.
-    if (!paymentOperations.selected(operation)) return
-    let image = ''
-    try { image = await QRCode.toDataURL(`bitcoin:${req.address}?amount=${(req.amount_sats / 1e8).toFixed(8)}`, { margin: 1, width: 240 }) } catch { /* raw address is available */ }
-    if (!paymentOperations.selected(operation)) return
-    onchainData.value = { address: req.address, amount_sats: req.amount_sats }
-    onchainQr.value = image
-    onchainPaying.value = true
-    void pollOnchain(req.address)
-  } catch (error) {
-    if (paymentOperations.selected(operation)) onchainError.value = error instanceof Error ? error.message : 'Could not request an on-chain address'
-  } finally { if (paymentOperations.finish(operation)) onchainWaiting.value = false }
+    const result=await rpcClient.call<{attempt?:unknown}>({method:'content.onchain-attempt',params:{onion,content_id:item.id},timeout:15000,maxRetries:1})
+    if(!selected()) return
+    if(!result || !Object.prototype.hasOwnProperty.call(result,'attempt')) throw Error('Could not verify original on-chain operation; do not pay again')
+    onchainAttempt.value=result.attempt===null?null:parseOnchainAttempt(result.attempt)
+    onchainLookupError.value=false
+  } catch(error) {if(selected()){onchainLookupError.value=true;lnError.value=error instanceof Error?error.message:'Could not verify original on-chain purchase'}}
+}
+async function cancelOriginalOnchain() {
+  const item=payItem.value,onion=props.peerId||currentPeer.value?.onion,original=onchainAttempt.value
+  if(!item||!onion||!original||paymentActionBusy.value)return
+  const operation=paymentOperations.begin('onchain-cancel',onion,item.id);if(!operation)return
+  try {
+    const result=parseOnchainAttempt(await rpcClient.call({method:'content.onchain-cancel',params:{onion,content_id:item.id,operation_id:original.operation_id},timeout:60000,maxRetries:1}))
+    if(result.operation_id!==original.operation_id || !result.retired_unallocated || !result.can_switch_method)throw Error('Seller has not confirmed that no address was allocated. Keep the original operation.')
+    if(!paymentOperations.selected(operation))return
+    onchainAttempt.value=null;onchainLookupError.value=false;lnError.value='Unallocated on-chain request canceled. You can choose another method.'
+  }catch(error){if(paymentOperations.selected(operation))lnError.value=error instanceof Error?error.message:'Original address allocation is unresolved; do not pay again'}
+  finally{paymentOperations.finish(operation)}
+}
+async function loadOnchainQr() {
+  const item=payItem.value,onion=props.peerId || currentPeer.value?.onion
+  if(!item || !onion || !await permitFreshOtherRail(item,onion,false,true)) return
+  if(!onchainAttempt.value && getItemPrice(item.access)<546){onchainError.value='On-chain payment requires at least 546 sats.';return}
+  const operation=paymentOperations.begin('onchain-qr',onion,item.id);if(!operation)return
+  onchainWaiting.value=true;onchainError.value=''
+  try {
+    if(onchainLookupError.value) throw Error('Recover original on-chain state before displaying another address')
+    const result=await rpcClient.call<unknown>({method:'content.onchain-expose',params:{onion,content_id:item.id,price_sats:onchainAttempt.value?.price_sats ?? getItemPrice(item.access),...(onchainAttempt.value?{operation_id:onchainAttempt.value.operation_id}:{})},timeout:60000,maxRetries:1})
+    const attempt=parseOnchainAttempt(result)
+    if(!onchainAttempt.value && attempt.price_sats!==getItemPrice(item.access))throw Error('The seller changed the payment amount; do not pay')
+    if(!paymentOperations.selected(operation))return
+    onchainAttempt.value=attempt.retired_unallocated?null:attempt
+    if(attempt.retired_unallocated){onchainPaying.value=false;return}
+    if(attempt.paid){await recoverOnchainDownload(item,onion,attempt,paymentGeneration.value);return}
+    if(!attempt.address || !attempt.external_exposure) throw Error('Original address allocation is unresolved; recover this operation without requesting another address')
+    const image=await QRCode.toDataURL(`bitcoin:${attempt.address}?amount=${(attempt.price_sats/1e8).toFixed(8)}`,{margin:1,width:240})
+    if(!paymentOperations.selected(operation))return
+    onchainData.value={address:attempt.address,amount_sats:attempt.price_sats};onchainQr.value=image
+    onchainPaying.value=true;void pollOnchain(attempt.operation_id)
+  }catch(error){if(paymentOperations.selected(operation))onchainError.value=error instanceof Error?error.message:'Recover the original on-chain operation; do not pay again'}
+  finally {if(paymentOperations.finish(operation))onchainWaiting.value=false}
 }
 
 async function copyOnchain() {
@@ -1382,71 +1410,63 @@ async function copyOnchain() {
   } catch { /* clipboard denied */ }
 }
 
-/**
- * Pay on-chain from THIS node's wallet: ask the seller for a fresh address +
- * amount, broadcast with lnd.sendcoins, then poll the seller until it detects
- * the payment and release the file (address is the gate token). Slower than LN
- * because the seller waits for the tx to appear/confirm.
- */
+/** Review and confirm the node's saved transaction; never call generic sendcoins. */
 async function payOnchain() {
-  const item = payItem.value
-  const onion = props.peerId || currentPeer.value?.onion
-  if (!item || !onion || paymentActionBusy.value) return
-  if (!await permitFreshOtherRail(item, onion)) return
-  if (hasBlockingLightningReceipt.value) { lnError.value = 'Check the saved Lightning attempt before choosing another method.'; return }
-  if (getItemPrice(item.access) < 546) { lnError.value = 'On-chain payment requires at least 546 sats. Choose Lightning or ecash for this file.'; return }
-  const operation = paymentOperations.begin('onchain-send', onion, item.id)
-  if (!operation) return
-  onchainPaying.value = true
-  lnError.value = ''
-  let polling = false
+  const item=payItem.value,onion=props.peerId || currentPeer.value?.onion
+  if(!item || !onion || paymentActionBusy.value || !await permitFreshOtherRail(item,onion,false,true))return
+  if(!onchainAttempt.value && getItemPrice(item.access)<546){lnError.value='On-chain payment requires at least 546 sats.';return}
+  const operation=paymentOperations.begin('onchain-send',onion,item.id);if(!operation)return
+  const selected=()=>paymentOperations.selected(operation)
+  onchainPaying.value=true;lnError.value='';let polling=false
   try {
-    const req = await rpcClient.call<{ address?: string; amount_sats?: number; error?: string }>({ method: 'content.request-onchain', params: { onion, content_id: item.id }, timeout: 45000, maxRetries: 1 })
-    if (!req?.address || !req?.amount_sats) throw new Error(req?.error || 'The seller could not provide an on-chain address.')
-    if (!Number.isSafeInteger(req.amount_sats) || req.amount_sats !== getItemPrice(item.access) || req.amount_sats < 546) throw new Error('The seller changed the payment amount. Refresh the file before paying.')
-    if (!paymentOperations.selected(operation)) return
-    const send = await rpcClient.call<{ txid?: string; error?: string }>({ method: 'lnd.sendcoins', params: { addr: req.address, amount: req.amount_sats }, timeout: 60000, maxRetries: 1 })
-    if (!send?.txid) throw new Error(send?.error || 'The on-chain result is unconfirmed. Check this wallet transaction before sending again.')
-    if (!paymentOperations.selected(operation)) return
-    polling = true
-    void pollOnchain(req.address)
-  } catch (error) {
-    if (paymentOperations.selected(operation)) lnError.value = error instanceof Error ? error.message : 'Could not confirm on-chain payment'
-  } finally {
-    if (paymentOperations.finish(operation) && !polling) onchainPaying.value = false
-  }
-}
-
-type OnchainPollScope = { item: CatalogItem; onion: string; address: string; generation: number }
-function onchainScopeSelected(scope: OnchainPollScope) {
-  return paymentGeneration.value === scope.generation && activePaymentMatches(scope.onion, scope.item.id)
-}
-async function pollOnchain(address: string, original?: OnchainPollScope) {
-  const item = original?.item || payItem.value
-  const onion = original?.onion || props.peerId || currentPeer.value?.onion
-  if (!item || !onion) return
-  const scope = original || { item, onion, address, generation: paymentGeneration.value }
-  if (!onchainScopeSelected(scope)) return
-  try {
-    const res = await rpcClient.call<{ paid?: boolean; status?: string; error?: string }>({ method: 'content.onchain-status', params: { onion, content_id: item.id, address: scope.address }, timeout: 30000 })
-    if (!onchainScopeSelected(scope)) return
-    if (res?.error) lnError.value = res.error
-    if (res?.paid === true) {
-      const dl = await rpcClient.call<{ data?: string; owned?: boolean; owned_content_id?: string; mime_type?: string; error?: string }>({
-        method: 'content.download-peer-onchain', params: { onion, content_id: item.id, address: scope.address, filename: item.filename, price_sats: getItemPrice(item.access), cache_only: true }, timeout: 960000, maxRetries: 1,
-      })
-      if (!onchainScopeSelected(scope)) return
-      onchainPaying.value = false
-      if (dl?.data !== undefined || dl?.owned === true) {
-        openPurchased(item, dl.data, dl.mime_type, onion, dl.owned_content_id)
-      } else lnError.value = dl?.error || 'Payment is confirmed; delivery is still recoverable with this address.'
-      return
+    if(onchainLookupError.value)throw Error('Original on-chain lookup failed. Reopen this file to recover before paying.')
+    let attempt=onchainAttempt.value
+    if(attempt?.paid){await recoverOnchainDownload(item,onion,attempt,paymentGeneration.value);return}
+    if(attempt?.external_exposure) {polling=true;void pollOnchain(attempt.operation_id);return}
+    if(!attempt || attempt.phase==='address_requested') {
+      attempt=parseOnchainAttempt(await rpcClient.call({method:'content.onchain-create',params:{onion,content_id:item.id,price_sats:attempt?.price_sats ?? getItemPrice(item.access),...(attempt?{operation_id:attempt.operation_id}:{})},timeout:60000,maxRetries:1}))
+      if(!onchainAttempt.value && attempt.price_sats!==getItemPrice(item.access))throw Error('The seller changed the payment amount; do not pay')
+      if(!selected())return
+      onchainAttempt.value=attempt.retired_unallocated?null:attempt
+      if(attempt.retired_unallocated)return
+      if(attempt.phase==='address_requested')throw Error('The original seller offer is unresolved. Preserve this operation; no replacement address will be requested.')
     }
-  } catch {
-    if (onchainScopeSelected(scope)) lnError.value = 'Payment verification is unavailable. Keep the original address and do not pay again.'
-    // Retry read-only status for the original item only.
-  }
-  if (onchainScopeSelected(scope) && onchainPaying.value) onchainPollTimer = setTimeout(() => pollOnchain(scope.address, scope), 5000)
+    if(!attempt.plan_sha256 && !attempt.template_sha256) {
+      const cap=Number(onchainFeeCap.value)
+      if(!Number.isSafeInteger(cap)||cap<=0)throw Error('Enter a positive whole-sat maximum fee')
+      attempt=parseOnchainAttempt(await rpcClient.call({method:'content.onchain-prepare',params:{onion,content_id:item.id,operation_id:attempt.operation_id,max_fee_sats:cap},timeout:60000,maxRetries:1}))
+      if(selected())onchainAttempt.value=attempt.retired_unallocated?null:attempt
+      return // A separate click confirms the actual saved fee and transaction.
+    }
+    if(!selected())return
+    attempt=parseOnchainAttempt(await rpcClient.call({method:'content.onchain-pay',params:{onion,content_id:item.id,operation_id:attempt.operation_id,template_sha256:attempt.template_sha256,plan_sha256:attempt.plan_sha256},timeout:120000,maxRetries:1}))
+    if(!selected())return
+    onchainAttempt.value=attempt.retired_unallocated?null:attempt;if(attempt.retired_unallocated)return;polling=true;void pollOnchain(attempt.operation_id)
+  }catch(error){if(selected())lnError.value=error instanceof Error?error.message:'Original on-chain result is unresolved; do not pay again'}
+  finally{if(paymentOperations.finish(operation)&&!polling)onchainPaying.value=false}
+}
+type OnchainPollScope={item:CatalogItem;onion:string;operationId:string;generation:number}
+function onchainScopeSelected(scope:OnchainPollScope){return paymentGeneration.value===scope.generation&&activePaymentMatches(scope.onion,scope.item.id)}
+async function recoverOnchainDownload(item:CatalogItem,onion:string,attempt:OnchainAttempt,generation:number) {
+  const dl=await rpcClient.call<{owned?:boolean;owned_content_id?:string;mime_type?:string}>({method:'content.onchain-download',params:{onion,content_id:item.id,operation_id:attempt.operation_id},timeout:960000,maxRetries:1})
+  if(generation!==paymentGeneration.value||!activePaymentMatches(onion,item.id))return
+  onchainPaying.value=false
+  if(dl.owned===true)openPurchased(item,undefined,dl.mime_type,onion,dl.owned_content_id)
+  else lnError.value='Payment is confirmed; recover its original download without paying again.'
+}
+async function pollOnchain(operationId:string,original?:OnchainPollScope) {
+  const item=original?.item||payItem.value,onion=original?.onion||props.peerId||currentPeer.value?.onion
+  if(!item||!onion)return
+  const scope=original||{item,onion,operationId,generation:paymentGeneration.value}
+  if(!onchainScopeSelected(scope))return
+  try {
+    const attempt=parseOnchainAttempt(await rpcClient.call({method:'content.onchain-recover',params:{onion,content_id:item.id,operation_id:scope.operationId},timeout:60000,maxRetries:1}))
+    if(!onchainScopeSelected(scope))return
+    onchainAttempt.value=attempt.retired_unallocated?null:attempt
+    if(attempt.retired_unallocated){onchainPaying.value=false;return}
+    if(attempt.paid){await recoverOnchainDownload(item,onion,attempt,scope.generation);return}
+  }catch(error){if(onchainScopeSelected(scope))lnError.value=error instanceof Error?error.message:'Original payment verification unavailable; do not pay again'}
+  if(onchainScopeSelected(scope)&&onchainPaying.value)onchainPollTimer=setTimeout(()=>pollOnchain(scope.operationId,scope),5000)
 }
 
 /** Spendable balance for a given ecash backend in the current plan. */
@@ -1469,6 +1489,7 @@ async function prepareEcashPay() {
   await cashuLookup
   if (paymentGeneration.value !== generation || !activePaymentMatches(onion, item.id)) return
   if (hasBlockingLightningReceipt.value) {lnError.value='Recover or cancel the original invoice before choosing another method.';return}
+  if(onchainAttempt.value || onchainLookupError.value){lnError.value='Recover the original on-chain purchase first.';return}
   const operation = paymentOperations.begin('prepare-ecash', onion, item.id)
   if (!operation) return
   const price = getItemPrice(item.access)
