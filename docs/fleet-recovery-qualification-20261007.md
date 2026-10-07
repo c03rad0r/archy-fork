@@ -1,0 +1,47 @@
+# Fleet recovery qualification — 7 October 2026
+
+Status: source regression fixes qualified; deployed-browser and distributed
+transport acceptance remain open. This supplements tasks 8, 10 and 12 without
+claiming that the full Fleet acceptance matrix is complete.
+
+## Findings and changes
+
+A failed status poll only surfaced an error during the initial load. Once reports
+were cached, network failures silently left the previous view in place. The view
+now keeps those reports, selection and sort order, with an explicit failed-refresh
+notice and Retry. An initial failure without reports remains an unavailable state.
+A successful refresh clears the notice. Report timestamps continue ageing; a
+monitoring failure is not relabelled as proof that a peer is offline.
+
+Concurrent refreshes could overwrite newer status/alerts with older replies.
+Status, alerts and refresh completion now track request generations. Replies
+arriving after unmount cannot repopulate the session cache or change the view.
+Malformed status envelopes cannot advance the successful-refresh timestamp.
+
+## Evidence
+
+Focused Vitest run: **21 tests passed in four files**, zero failures, including
+actual Fleet view rendering with retained cards, outage notice and successful
+Retry. Other cases cover a missing cache, late status/alert replies, a malformed
+status response, late responses after unmount, real zero versus unavailable
+metrics, report ageing, sorting and selected-node history isolation.
+
+Log: `/tmp/archy-fleet-recovery-tests-final.log`.
+This is local component/composable evidence, not a live-node outage test.
+No node service, peer relationship, wallet or payment was changed.
+
+## Remaining acceptance matrix
+
+| Area | Established evidence | Remaining |
+| --- | --- | --- |
+| Report rendering | Local normalization/render tests; earlier dev/Yaya metrics evidence in progress ledger | Updated sender/receiver comparison across supported versions |
+| Status freshness | Clock-driven ageing, unknown versus stale, no synthetic metric zero | Real partition, reconnect and transport delivery |
+| Refresh failures | Visible retained reports; empty failure; Retry recovery | Candidate browser at phone/desktop widths and deployed artifact |
+| Concurrent replies | Newest status/alerts win; no unmount cache repopulation | Distributed delay/out-of-order delivery |
+| Selection/sorting | Retained across failure; history request isolation | Larger-fleet navigation and keyboard checks |
+| Authorization | No permission changes in this patch | Unauthorized/expired-trust actual-handler matrix |
+| Remote actions/updates | Outside this patch | Disposable-node success/partial failure/restart/update matrix |
+| FIPS | Existing preferred authenticated transport unchanged | Measured latency, fallback, reconnect and mixed capabilities |
+
+No current-node restart or deliberate network outage was performed. Live fault
+qualification must preserve wallets, installed applications and operator intent.

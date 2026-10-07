@@ -274,6 +274,10 @@ export function useFleetData() {
   const chartWidth = ref(300)
   let pollTimer: ReturnType<typeof setInterval> | null = null
   let historyRequest = 0
+  let statusRequest = 0
+  let alertsRequest = 0
+  let refreshRequest = 0
+  let disposed = false
 
   // --- Computed ---
 
@@ -339,35 +343,43 @@ export function useFleetData() {
   // --- Data Fetching ---
 
   async function fetchFleetStatus() {
+    const request = ++statusRequest
     try {
       const data = await rpcClient.call<{ nodes: Partial<FleetNode>[] }>({
         method: 'telemetry.fleet-status',
       })
-      if (data?.nodes) {
-        nodes.value = data.nodes.map(normalizeFleetNode)
-        lastRefreshed.value = new Date().toISOString()
-        writeFleetCache({
-          nodes: nodes.value,
-          fleetAlerts: fleetAlerts.value,
-          lastRefreshed: lastRefreshed.value,
-          selectedNodeId: selectedNodeId.value,
-          sortBy: sortBy.value,
-        })
+      if (disposed || request !== statusRequest) return
+      if (!Array.isArray(data?.nodes) || data.nodes.some(node => !node || typeof node !== 'object')) {
+        throw new Error('Invalid fleet response')
       }
-    } catch (err) {
-      if (loading.value) {
-        errorMessage.value = err instanceof Error ? err.message : 'Failed to load fleet data'
+      nodes.value = data.nodes.map(normalizeFleetNode)
+      lastRefreshed.value = new Date().toISOString()
+      errorMessage.value = ''
+      writeFleetCache({
+        nodes: nodes.value,
+        fleetAlerts: fleetAlerts.value,
+        lastRefreshed: lastRefreshed.value,
+        selectedNodeId: selectedNodeId.value,
+        sortBy: sortBy.value,
+      })
+    } catch {
+      if (!disposed && request === statusRequest) {
+        errorMessage.value = nodes.value.length
+          ? 'Fleet refresh failed. Showing the last received reports; current node status could not be checked.'
+          : 'Fleet data is unavailable. Check your connection and retry.'
       }
     }
   }
 
   async function fetchFleetAlerts() {
+    const request = ++alertsRequest
     alertsLoading.value = true
     try {
       const data = await rpcClient.call<{ alerts: FleetAlert[] }>({
         method: 'telemetry.fleet-alerts',
       })
-      if (data?.alerts) {
+      if (disposed || request !== alertsRequest) return
+      if (Array.isArray(data?.alerts)) {
         fleetAlerts.value = data.alerts
         writeFleetCache({
           nodes: nodes.value,
@@ -380,7 +392,7 @@ export function useFleetData() {
     } catch {
       // Non-critical, retry on next poll
     } finally {
-      alertsLoading.value = false
+      if (!disposed && request === alertsRequest) alertsLoading.value = false
     }
   }
 
@@ -403,14 +415,16 @@ export function useFleetData() {
   }
 
   async function refreshAll() {
+    const request = ++refreshRequest
     loading.value = !nodes.value.length
     refreshing.value = true
-    errorMessage.value = ''
     try {
       await Promise.all([fetchFleetStatus(), fetchFleetAlerts()])
     } finally {
-      loading.value = false
-      refreshing.value = false
+      if (!disposed && request === refreshRequest) {
+        loading.value = false
+        refreshing.value = false
+      }
     }
   }
 
@@ -554,6 +568,8 @@ export function useFleetData() {
   })
 
   onUnmounted(() => {
+    disposed = true
+    ++historyRequest
     disarmFleetPoll()
     window.removeEventListener('resize', updateChartWidth)
   })

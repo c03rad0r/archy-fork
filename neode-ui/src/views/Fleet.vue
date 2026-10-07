@@ -71,13 +71,19 @@
     </div>
 
     <!-- Error State -->
-    <div v-else-if="fleet.errorMessage.value" class="glass-card p-6 mb-6">
+    <div v-else-if="fleet.errorMessage.value && !fleet.nodes.value.length" class="glass-card p-6 mb-6">
       <div class="alert-error rounded-lg mb-4">{{ fleet.errorMessage.value }}</div>
       <button class="glass-button text-sm px-4 py-2" @click="fleet.refreshAll">Retry</button>
     </div>
 
     <!-- Dashboard Content -->
     <template v-else>
+      <div v-if="fleet.errorMessage.value" role="status" class="glass-card p-4 mb-4 flex flex-wrap items-center gap-3">
+        <p class="text-sm text-white/80 flex-1 min-w-0">{{ fleet.errorMessage.value }}</p>
+        <button class="glass-button text-sm px-4 py-2 disabled:opacity-50" :disabled="fleet.refreshing.value" @click="fleet.refreshAll">
+          {{ fleet.refreshing.value ? 'Retrying...' : 'Retry' }}
+        </button>
+      </div>
       <FleetOverviewCards
         :node-count="fleet.nodes.value.length"
         :online-count="fleet.onlineCount.value"
