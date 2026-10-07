@@ -27,7 +27,7 @@ describe('retained companion Cloud video PiP',()=>{
   f.bridge.onmessage({data:JSON.stringify({type:'event',session:f.messages[0].id,state:'command',command:'pause'})})
   expect(f.video.pause).toHaveBeenCalled()
   f.bridge.onmessage({data:JSON.stringify({type:'event',session:f.messages[0].id,state:'restored'})})
-  expect(f.pip.active.value).toBe(false);expect(f.messages.at(-1).action).toBe('release');f.wrapper.unmount()
+  expect(f.pip.active.value).toBe(false);expect(f.messages[f.messages.length - 1].action).toBe('release');f.wrapper.unmount()
  })
  it('ignores another session controls and stops original video on native dismissal',async()=>{
   const f=fixture();await f.pip.enter();vi.mocked(f.video.pause).mockClear()
