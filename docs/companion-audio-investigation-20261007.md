@@ -1,6 +1,13 @@
 # Companion background audio investigation — 2026-10-07
 
-Status: **OPEN — physical acceptance failed.**
+Status: **OPEN — operator now reports APK57 background playback working; notification artwork missing.**
+
+Latest operator feedback after installing 0.5.37: "works now, doesn't show the song
+image in the notification widget though only." Record reported background audio
+and notification presence as working for that test. Do not infer full queue/control,
+restart, process-death or video acceptance, or a confirmed cause for the earlier
+failure: build57 added diagnostics rather than a known playback correction.
+Artwork investigation is now the priority. Historical APK56 failure follows.
 
 APK 0.5.36 (build 56) plays V4V while foregrounded, but the operator reports audio
 stopping about five seconds after locking the phone or switching applications,
@@ -70,8 +77,9 @@ diagnostics and copy the report. No need to use a different track or USB.
   packaging. No keystore was staged, copied into evidence, or replaced.
 - Durable evidence: `~/.local/state/archipelago/release-qualification/companion-057/`.
   No wallet, payment, catalog, OTA, ISO, or native node-service deployment changed.
-- Physical background playback remains **unaccepted**; the diagnostic report is
-  the next evidence required from the affected phone.
+- At diagnostic delivery physical background playback remained unaccepted. The
+  later operator report above establishes it worked in their APK57 test; artwork
+  remains unresolved on the phone.
 
 ## Companion shell routing check
 
@@ -88,3 +96,38 @@ An initial Apps-button probe found no V4V card/package on `/dashboard/apps`; it
 therefore did not exercise an actual Apps launch button. Keep that failed probe
 distinct from the subsequent successful Discover/launcher check. No routing fix
 is justified by these results. Scripts/logs are in the durable diagnostic evidence.
+
+## Artwork origin correction
+
+Confirmed source defect: `useAppMediaBridge` admits cover URLs on the verified
+app's origin (for example the node's HTTP :7475 port), but `useCompanionAudio`
+previously rejected every HTTP cover outside the dashboard's own origin. Thus a
+cover could render in the dashboard and never become a native thumbnail.
+
+The media controller now carries its admitted origin explicitly into the player;
+an app's `media-state` payload cannot supply/override this authorization. Thumbnail
+fetching accepts HTTP only from the dashboard or that admitted origin. HTTPS
+artwork remains supported. Cross-origin requests do not send cookies, no referrer
+is sent, and redirects fail closed. No stream URL, cover URL, credentials, or
+second decoder enters the native bridge. Optional image failure still leaves
+playback running. CORS remains enforced; this does not bypass an image server's
+access policy or add a server-side image proxy.
+
+Evidence:
+
+- Focused four-file media suite: 26 tests passed. A test-only `Array.at` call was
+  corrected for the configured ES library after actual app-project typechecking;
+  the affected file was rerun separately.
+- `vue-tsc --noEmit -p tsconfig.app.json` passed. The reference-only root tsconfig
+  has no files; its bare `--noEmit` result is not used as application evidence.
+- Actual Chromium A/B fixture with an HTTP app on a separate port: old composable
+  never produced a thumbnail; corrected composable produced a real JPEG. Browser
+  checks also verified no cross-origin cookie, no followed redirect, and playback
+  remained active after the optional image error.
+- No native runtime or APK version change. A positive native JPEG/notification/
+  metadata regression is prepared separately and awaits its coordinated test slot.
+- This identifies and fixes a real artwork boundary defect, not the operator's
+  exact cover URL. Physical notification-artwork acceptance remains open until
+  the qualified UI reaches the node and the operator verifies it.
+
+Evidence folder: `~/.local/state/archipelago/release-qualification/companion-artwork-20261007/`.

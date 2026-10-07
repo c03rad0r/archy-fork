@@ -7,7 +7,7 @@ import GlobalAudioPlayer from '../GlobalAudioPlayer.vue'
 describe('native app player controls', () => {
   it('renders app artwork and synchronized controls without a second audio source', async () => {
     fixture.player = {
-      currentName: ref('Song · Artist'), externalVisible: ref(false), externalApp: ref(true), externalArtwork: ref('https://node.test:7475/media/cover.jpg'), externalShuffle: ref(true),
+      currentName: ref('Song · Artist'), externalVisible: ref(false), externalApp: ref(true), externalArtwork: ref('https://node.test:7475/media/cover.jpg'), externalArtworkOrigin: ref('https://node.test:7475'), externalShuffle: ref(true),
       playing: ref(true), loading: ref(false), error: ref(null), currentTime: ref(4), duration: ref(90), progress: ref(5), currentSrc: ref('app:session'),
       previousExternal: vi.fn(), nextExternal: vi.fn(), shuffleExternal: vi.fn(), openExternal: vi.fn(), pause: vi.fn(), play: vi.fn(), stop: vi.fn(), seek: vi.fn(),
     }

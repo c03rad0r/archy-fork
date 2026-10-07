@@ -43,7 +43,7 @@ export function useAppMediaBridge(appId: Ref<string>, url: Ref<string>, frame: R
     }
     admitted.source.postMessage({ type: 'archipelago:media-connect', version: 1, session }, admitted.origin)
   }
-  const controller = { id, play: () => command('play'), pause: () => command('pause'), seek: (position: number) => command('seek', position),
+  const controller = { id, get artworkOrigin() { return admitted?.origin || '' }, play: () => command('play'), pause: () => command('pause'), seek: (position: number) => command('seek', position),
     next: () => command('next'), previous: () => command('previous'), shuffle: () => command('shuffle'),
     open: () => launcher.openSession(appId.value), close: () => {
       if (launcher.mediaAppId === appId.value && launcher.panelAppId !== appId.value) launcher.mediaAppId = null

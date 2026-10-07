@@ -14,11 +14,14 @@ function audioSessionId(): string {
 }
 
 /** Send a small decoded thumbnail, never a protected URL or authorization data. */
-async function thumbnail(url: string, signal: AbortSignal): Promise<string> {
+async function thumbnail(url: string, admittedOrigin: string, signal: AbortSignal): Promise<string> {
   if (!url) return ''
   const source = new URL(url, window.location.href)
-  if (source.username || source.password || (source.protocol !== 'https:' && source.origin !== window.location.origin)) return ''
-  const response = await fetch(source.href, { signal, credentials: 'same-origin', referrerPolicy: 'no-referrer' })
+  // An app's authenticated media origin can use a different port on LAN HTTP.
+  // Never authorize an arbitrary HTTP origin from the artwork payload itself.
+  if (source.username || source.password || !(source.protocol === 'https:'
+    || (source.protocol === 'http:' && (source.origin === window.location.origin || source.origin === admittedOrigin)))) return ''
+  const response = await fetch(source.href, { signal, credentials: 'same-origin', referrerPolicy: 'no-referrer', redirect: 'error' })
   if (!response.ok || !response.headers.get('content-type')?.startsWith('image/')) return ''
   const reader = response.body?.getReader()
   if (!reader) return ''
@@ -113,7 +116,7 @@ export function useCompanionAudio(player = useAudioPlayer()) {
     imageRequest?.abort(); artwork = ''
     if (!session || !player.externalArtwork.value) return
     const target = session; const request = new AbortController(); imageRequest = request
-    void thumbnail(player.externalArtwork.value, request.signal).then(value => {
+    void thumbnail(player.externalArtwork.value, player.externalArtworkOrigin.value, request.signal).then(value => {
       if (!disposed && !request.signal.aborted && target === session) { artwork = value; publish() }
     }).catch(() => { /* Optional image failure never interrupts music. */ })
   }
@@ -122,7 +125,7 @@ export function useCompanionAudio(player = useAudioPlayer()) {
   watch([player.currentTime, player.duration], () => {
     if (!timer) timer = setTimeout(() => { timer = undefined; publish() }, 1000)
   })
-  watch(player.externalArtwork, () => { loadArtwork(); publish() })
+  watch([player.externalArtwork, player.externalArtworkOrigin], () => { loadArtwork(); publish() })
   const sync = () => publish()
   window.addEventListener('pageshow', sync)
   document.addEventListener('visibilitychange', sync)

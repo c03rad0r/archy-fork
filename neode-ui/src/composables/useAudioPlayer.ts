@@ -13,6 +13,8 @@ let initialized = false
 export interface ExternalAudioState { title: string; artist?: string; playing: boolean; position: number; duration: number; artwork?: string; shuffle?: boolean }
 export interface ExternalAudioController {
   id: string
+  /** Origin admitted by the host media bridge, never taken from a media-state payload. */
+  artworkOrigin?: string
   play: () => void
   pause: () => void
   seek: (position: number) => void
@@ -27,6 +29,7 @@ const suppressedExternal = new Set<string>()
 const externalVisible = ref(false)
 const externalApp = ref(false)
 const externalArtwork = ref('')
+const externalArtworkOrigin = ref('')
 const externalShuffle = ref(false)
 function nextExternal() { external?.next?.() }
 function previousExternal() { external?.previous?.() }
@@ -41,6 +44,7 @@ function updateExternal(controller: ExternalAudioController, state: ExternalAudi
     external = controller
   }
   externalArtwork.value = state.artwork || ''
+  externalArtworkOrigin.value = controller.artworkOrigin || ''
   externalShuffle.value = state.shuffle === true
   externalApp.value = true
   externalVisible.value = visible
@@ -56,6 +60,7 @@ function detachExternal(id: string) {
   if (external?.id !== id) return
   external = null
   externalArtwork.value = ''
+  externalArtworkOrigin.value = ''
   externalShuffle.value = false
   externalApp.value = false
   externalVisible.value = false
@@ -181,7 +186,7 @@ const progress = computed(() => {
 
 export function useAudioPlayer() {
   return {
-    externalArtwork, externalShuffle, nextExternal, previousExternal, shuffleExternal,
+    externalArtwork, externalArtworkOrigin, externalShuffle, nextExternal, previousExternal, shuffleExternal,
     updateExternal, detachExternal, releaseExternal, setExternalVisible, openExternal, externalVisible, externalApp,
     play,
     pause,

@@ -1,18 +1,18 @@
-import { mount } from '@vue/test-utils'
+import { mount, flushPromises } from '@vue/test-utils'
 import { defineComponent, nextTick, ref } from 'vue'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { useCompanionAudio } from '../useCompanionAudio'
 import type { useAudioPlayer } from '../useAudioPlayer'
 
 beforeEach(() => vi.useFakeTimers())
-afterEach(() => { vi.useRealTimers(); delete (window as any).ArchipelagoAudio })
+afterEach(() => { vi.useRealTimers(); vi.restoreAllMocks(); vi.unstubAllGlobals(); delete (window as any).ArchipelagoAudio })
 function fixture(install = true) {
   const messages: any[] = []
   const bridge: any = { onmessage: null, postMessage: (raw: string) => messages.push(JSON.parse(raw)) }
   if (install) (window as any).ArchipelagoAudio = bridge
   const player = {
     currentSrc: ref<string | null>('https://node.test/private?token=secret'), currentName: ref('A song'),
-    playing: ref(true), currentTime: ref(12), duration: ref(120), externalArtwork: ref(''),
+    playing: ref(true), currentTime: ref(12), duration: ref(120), externalArtwork: ref(''), externalArtworkOrigin: ref(''),
     externalApp: ref(true), externalShuffle: ref(false), error: ref<string | null>(null),
     pause: vi.fn(), play: vi.fn(), seek: vi.fn(), nextExternal: vi.fn(), previousExternal: vi.fn(), shuffleExternal: vi.fn(),
     stop: vi.fn(() => { player.currentSrc.value = null; player.playing.value = false }),
@@ -80,6 +80,44 @@ describe('companion native audio control of the existing player', () => {
     f.command('sync'); expect(f.messages).toHaveLength(2)
     f.wrapper.unmount(); const count = f.messages.length
     await vi.advanceTimersByTimeAsync(30000); expect(f.messages).toHaveLength(count)
+  })
+  it('decodes artwork from the admitted HTTP app port without forwarding cookies or following redirects', async () => {
+    const jpeg = 'data:image/jpeg;base64,/9j/fixture';
+    const fetchImage = vi.fn(async () => ({ ok: true, headers: new Headers({ 'content-type': 'image/jpeg' }),
+      body: new ReadableStream({ start(controller) { controller.enqueue(new Uint8Array([255, 216, 255])); controller.close() } }) }))
+    vi.stubGlobal('fetch', fetchImage)
+    vi.stubGlobal('createImageBitmap', vi.fn(async () => ({ close: vi.fn() })))
+    vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue({ drawImage: vi.fn() } as any)
+    vi.spyOn(HTMLCanvasElement.prototype, 'toDataURL').mockReturnValue(jpeg)
+    const f = fixture(); await nextTick()
+    f.player.externalArtworkOrigin.value = 'http://node.test:7475'
+    f.player.externalArtwork.value = 'http://node.test:7475/cover.jpg'
+    await nextTick(); await flushPromises()
+    expect(fetchImage).toHaveBeenCalledWith('http://node.test:7475/cover.jpg', expect.objectContaining({ credentials: 'same-origin', redirect: 'error', referrerPolicy: 'no-referrer' }))
+    expect(f.messages.some(value => value.artwork === jpeg)).toBe(true)
+    expect(JSON.stringify(f.messages)).not.toContain('/cover.jpg')
+    f.wrapper.unmount()
+  })
+  it('rejects arbitrary HTTP artwork and credentials even with an admitted app origin', async () => {
+    const fetchImage = vi.fn(); vi.stubGlobal('fetch', fetchImage)
+    const f = fixture(); await nextTick()
+    f.player.externalArtworkOrigin.value = 'http://node.test:7475'
+    for (const url of ['http://other.test/image.jpg', 'http://node.test:7476/image.jpg', 'http://user:password@node.test:7475/image.jpg']) {
+      f.player.externalArtwork.value = url; await nextTick(); await flushPromises()
+    }
+    expect(fetchImage).not.toHaveBeenCalled()
+    expect(f.player.pause).not.toHaveBeenCalled()
+    f.wrapper.unmount()
+  })
+  it('treats a denied redirect or image-fetch failure as optional without pausing music', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new TypeError('redirect denied')))
+    const f = fixture(); await nextTick()
+    f.player.externalArtworkOrigin.value = 'http://node.test:7475'
+    f.player.externalArtwork.value = 'http://node.test:7475/redirect'
+    await nextTick(); await flushPromises()
+    expect(f.player.pause).not.toHaveBeenCalled()
+    expect(f.messages[f.messages.length - 1]).toMatchObject({ playing: true })
+    f.wrapper.unmount()
   })
   it('does not revive paused sessions and reports native start failures without leaking details', async () => {
     const f = fixture(); await nextTick()
