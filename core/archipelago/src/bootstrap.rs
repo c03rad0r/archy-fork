@@ -302,6 +302,13 @@ pub async fn ensure_doctor_installed() {
         Ok(_) => debug!("Doctor artifacts already in sync"),
         Err(e) => warn!("Doctor bootstrap failed (non-fatal): {:#}", e),
     }
+    // Resolve known TLS bind conflicts before installing routes: nginx may
+    // otherwise acknowledge the reload signal while keeping its old workers.
+    match run_nginx_listener_repair().await {
+        Ok(true) => info!("nginx HTTPS listeners retargeted to this host's current addresses"),
+        Ok(false) => debug!("nginx listeners already match this host's addresses"),
+        Err(e) => warn!("nginx listener repair failed (non-fatal): {:#}", e),
+    }
     match run_nginx().await {
         Ok(true) => info!("Patched nginx config to proxy missing backend endpoints"),
         Ok(false) => debug!("Nginx backend endpoint proxy blocks already present"),
@@ -325,11 +332,6 @@ pub async fn ensure_doctor_installed() {
         ),
         Ok(false) => debug!("Console welcome banner already current (or not an ISO node)"),
         Err(e) => warn!("Welcome banner sync failed (non-fatal): {:#}", e),
-    }
-    match run_nginx_listener_repair().await {
-        Ok(true) => info!("nginx HTTPS listeners retargeted to this host's current addresses"),
-        Ok(false) => debug!("nginx listeners already match this host's addresses"),
-        Err(e) => warn!("nginx listener repair failed (non-fatal): {:#}", e),
     }
     match run_ha_rpc_proxy_bind_repair().await {
         Ok(true) => {
@@ -1031,9 +1033,11 @@ async fn podman_stdout(args: &[&str]) -> String {
 /// Both observed on archi-dev-box, 2026-08-15: nginx dead since boot with
 /// `bind() to 192.168.63.240:443 failed (99: Cannot assign requested
 /// address)`, and the dashboard simply unreachable.
-const NGINX_SITES: [&str; 2] = [
+const NGINX_SITES: [&str; 4] = [
     "/etc/nginx/sites-available/archipelago-http",
     "/etc/nginx/sites-available/archipelago",
+    "/etc/nginx/sites-enabled/archipelago-http",
+    "/etc/nginx/sites-enabled/archipelago",
 ];
 const NGINX_RESTART_DROPIN: &str =
     "/etc/systemd/system/nginx.service.d/10-archipelago-restart.conf";
@@ -1070,6 +1074,105 @@ fn is_cgnat(addr: &str) -> bool {
 /// new text when it differs. Lines for absent addresses are dropped and one
 /// line per present address is kept, preserving the file's indentation.
 fn retarget_https_listeners(text: &str, present: &[String]) -> Option<String> {
+    if present.is_empty() {
+        return None;
+    }
+    retarget_managed_https_wildcards(text, present)
+        .or_else(|| retarget_pinned_https_listeners(text, present))
+}
+
+/// Only the shipped node-CA dashboard profile may replace wildcard TLS binds.
+/// Public/custom vhosts, certificate paths and listener options are untouched.
+fn retarget_managed_https_wildcards(text: &str, present: &[String]) -> Option<String> {
+    if present.is_empty() {
+        return None;
+    }
+    // This migration owns the shipped top-level layout only. Do not combine an
+    // operator's differently nested/indented server with the managed profile.
+    if text
+        .lines()
+        .any(|line| line.trim() == "server {" && line != "server {")
+    {
+        return None;
+    }
+    let wildcard = |line: &str| {
+        matches!(
+            line.trim(),
+            "listen 443 ssl default_server;" | "listen [::]:443 ssl default_server;"
+        )
+    };
+    let mut out = String::new();
+    let mut changed = false;
+    for block in text.split_inclusive("\nserver {") {
+        // A top-level server boundary ends the preceding segment. Exact
+        // directives avoid claiming ownership of arbitrary TLS configuration.
+        let lines: Vec<_> = block.lines().map(str::trim).collect();
+        let recognized = lines.contains(&"server_name _;")
+            && lines.contains(&"root /opt/archipelago/web-ui;")
+            && lines.contains(&"ssl_certificate /etc/archipelago/ssl/archipelago.crt;")
+            && lines.contains(&"ssl_certificate_key /etc/archipelago/ssl/archipelago.key;")
+            && lines.iter().any(|line| wildcard(line))
+            && !lines.iter().any(|line| {
+                line.starts_with("listen ")
+                    && (line.contains(":443") || line.starts_with("listen 443"))
+                    && !wildcard(line)
+            });
+        if !recognized {
+            out.push_str(block);
+            continue;
+        }
+        let mut wrote = false;
+        for line in block.split_inclusive('\n') {
+            if wildcard(line) {
+                if !wrote {
+                    let indent = &line[..line.len() - line.trim_start().len()];
+                    for address in present {
+                        out.push_str(&format!("{indent}listen {address}:443 ssl;\n"));
+                    }
+                    wrote = true;
+                }
+            } else {
+                out.push_str(line);
+            }
+        }
+        changed = true;
+    }
+    changed.then_some(out)
+}
+
+/// `systemctl reload` returns before nginx tries its new binds. A new worker
+/// generation proves the master accepted the reload; a successful signal alone
+/// does not. Keep old connections alive and bound this check to ten seconds.
+async fn reload_nginx_checked() -> Result<()> {
+    let script = r#"set -eu
+master="$(systemctl show -p MainPID --value nginx)"
+case "$master" in ''|*[!0-9]*|0|1) exit 1 ;; esac
+workers() { ps --ppid "$master" -o pid=,args= | awk '$2 == "nginx:" && $3 == "worker" && $4 == "process" && $5 != "is" {print $1}' | sort -n | tr '\n' ' '; }
+before="$(workers)"
+test -n "$before"
+nginx -t
+systemctl reload nginx
+attempt=0
+while [ "$attempt" -lt 10 ]; do
+    after="$(workers)"
+    for worker in $after; do
+        case " $before " in *" $worker "*) ;; *) exit 0 ;; esac
+    done
+    attempt=$((attempt + 1))
+    sleep 1
+done
+echo 'nginx reload did not produce a new worker generation' >&2
+exit 1
+"#;
+    let status = host_sudo(&["sh", "-c", script]).await?;
+    anyhow::ensure!(
+        status.success(),
+        "nginx did not accept the reloaded configuration"
+    );
+    Ok(())
+}
+
+fn retarget_pinned_https_listeners(text: &str, present: &[String]) -> Option<String> {
     let listen_of = |l: &str| -> Option<String> {
         let t = l.trim();
         let rest = t.strip_prefix("listen ")?.strip_suffix(":443 ssl;")?;
@@ -1117,8 +1220,18 @@ async fn run_nginx_listener_repair() -> Result<bool> {
         return Ok(false); // no network yet; a later boot pass will do it
     }
     let mut changed = false;
+    let mut seen = std::collections::HashSet::new();
+    let repair_id = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)?
+        .as_nanos();
     for site in NGINX_SITES {
-        let Ok(text) = tokio::fs::read_to_string(site).await else {
+        let Ok(target) = tokio::fs::canonicalize(site).await else {
+            continue;
+        };
+        if !seen.insert(target.clone()) {
+            continue;
+        }
+        let Ok(text) = tokio::fs::read_to_string(&target).await else {
             continue;
         };
         let Some(healed) = retarget_https_listeners(&text, &present) else {
@@ -1134,9 +1247,16 @@ async fn run_nginx_listener_repair() -> Result<bool> {
         // Install behind `nginx -t`, and roll back if the test fails — a bad
         // config here would take the dashboard down, which is the very
         // failure this repair exists to prevent.
+        // Backups must never be written in sites-enabled: nginx includes every
+        // file there, and a backup would introduce duplicate server directives.
+        let backup = format!(
+            "/var/lib/archipelago/support/nginx-listeners-{repair_id}-{}.conf",
+            seen.len()
+        );
+        let target = format!("'{}'", target.to_string_lossy().replace('\'', "'\\''"));
         let script = format!(
-            "set -eu\ncp {site} {site}.bak-listeners\ninstall -m 0644 {staged} {site}\n\
-             if ! nginx -t 2>/dev/null; then cp {site}.bak-listeners {site}; exit 3; fi\nexit 0\n"
+            "set -eu\ninstall -d -m 0700 /var/lib/archipelago/support\ncp -- {target} {backup}\nchmod 0600 {backup}\ninstall -m 0644 {staged} {target}\n\
+             if ! nginx -t 2>/dev/null; then install -m 0644 {backup} {target}; exit 3; fi\nexit 0\n"
         );
         let status = host_sudo(&["sh", "-lc", &script]).await?;
         match status.code() {
@@ -1156,13 +1276,14 @@ async fn run_nginx_listener_repair() -> Result<bool> {
          cat > {dropin} <<'EOF'\n[Service]\nRestart=on-failure\nRestartSec=5\n\
          [Unit]\nStartLimitIntervalSec=300\nStartLimitBurst=10\nEOF\n\
          systemctl daemon-reload\n\
-         if ! systemctl is-active --quiet nginx; then systemctl reset-failed nginx 2>/dev/null || true; systemctl start nginx 2>/dev/null || true; \
-         elif [ \"${{RELOAD:-1}}\" = 1 ]; then systemctl reload nginx 2>/dev/null || true; fi\nexit 0\n",
+         if ! systemctl is-active --quiet nginx; then systemctl reset-failed nginx 2>/dev/null || true; systemctl start nginx; fi\nexit 0\n",
         dropin = NGINX_RESTART_DROPIN
     );
-    host_sudo(&["sh", "-lc", &script])
+    let status = host_sudo(&["sh", "-lc", &script])
         .await
         .context("nginx restart policy + start")?;
+    anyhow::ensure!(status.success(), "nginx restart policy or start failed");
+    reload_nginx_checked().await?;
     Ok(changed)
 }
 
@@ -1715,8 +1836,12 @@ async fn run_nginx() -> Result<bool> {
         if patched_paths.iter().any(|p| p == &canonical) {
             continue;
         }
+        // Rewrite the target, preserving the enabled symlink itself.
+        let target = canonical
+            .to_str()
+            .context("nginx config path is not UTF-8")?;
+        changed |= patch_nginx_conf(target).await?;
         patched_paths.push(canonical);
-        changed |= patch_nginx_conf(path).await?;
     }
     Ok(changed)
 }
@@ -2052,9 +2177,9 @@ async fn patch_nginx_conf(path: &str) -> Result<bool> {
 
     // Reload nginx so the new block takes effect immediately. Reload (not
     // restart) keeps in-flight connections alive.
-    if let Err(e) = host_sudo(&["systemctl", "reload", "nginx"]).await {
-        warn!("nginx reload failed (non-fatal): {:#}", e);
-    }
+    // Retain the backup if the master rejects the reload (for example because
+    // Tailscale owns a wildcard bind). A later listener repair may resolve it.
+    reload_nginx_checked().await?;
     let _ = host_sudo(&["rm", "-f", &backup]).await;
     Ok(true)
 }
@@ -2068,17 +2193,24 @@ mod tests {
         assert_eq!(fixed.matches("location /api/rental-playback/ {").count(), 2);
         assert_eq!(super::heal_rental_playback_route(&fixed), fixed);
         assert_eq!(fixed.matches("proxy_cache off;").count(), 2);
-        assert_eq!(fixed.matches("proxy_set_header Range $http_range;").count(), 2);
+        assert_eq!(
+            fixed.matches("proxy_set_header Range $http_range;").count(),
+            2
+        );
         let partial = fixed.replacen(super::NGINX_RENTAL_PLAYBACK_BLOCK, "", 1);
         assert_eq!(super::heal_rental_playback_route(&partial), fixed);
     }
-
 
     #[test]
     fn catalog_routes_upgrade_both_vhosts_without_changing_access_guards() {
         let old = "server { if ($guard) { return 404; } location /api/app-catalog { proxy_pass http://127.0.0.1:5678; } }\nserver { location /api/app-catalog { proxy_set_header Cookie $http_cookie; } }";
         let fixed = super::heal_node_catalog_route(old);
-        assert_eq!(fixed.matches("location ~ ^/api/(?:app-catalog|node-app-catalog)$ {").count(), 2);
+        assert_eq!(
+            fixed
+                .matches("location ~ ^/api/(?:app-catalog|node-app-catalog)$ {")
+                .count(),
+            2
+        );
         assert!(fixed.contains("if ($guard) { return 404; }"));
         assert!(fixed.contains("proxy_set_header Cookie $http_cookie;"));
         assert_eq!(super::heal_node_catalog_route(&fixed), fixed);
@@ -2233,6 +2365,31 @@ mod tests {
         assert!(healed.contains("listen 80 default_server;"));
         assert!(healed.contains("ssl_certificate /x;"));
         assert!(retarget_https_listeners(&healed, &present).is_none());
+    }
+
+    #[test]
+    fn managed_wildcard_tls_migration_preserves_other_vhosts() {
+        let profile = "server {\n    listen 443 ssl default_server;\n    listen [::]:443 ssl default_server;\n    server_name _;\n    ssl_certificate /etc/archipelago/ssl/archipelago.crt;\n    ssl_certificate_key /etc/archipelago/ssl/archipelago.key;\n    root /opt/archipelago/web-ui;\n}\n";
+        let custom = "server {\n    listen 443 ssl default_server;\n    server_name public.example;\n    ssl_certificate /custom.crt;\n}\n";
+        let present = vec!["192.168.1.50".into(), "10.44.0.1".into()];
+        let original = format!("{custom}{profile}{custom}");
+        let healed = retarget_managed_https_wildcards(&original, &present).unwrap();
+        assert!(healed.starts_with(custom));
+        assert!(healed.ends_with(custom));
+        assert_eq!(healed.matches("listen 192.168.1.50:443 ssl;").count(), 1);
+        assert_eq!(healed.matches("listen 10.44.0.1:443 ssl;").count(), 1);
+        assert_eq!(healed.matches("listen 443 ssl default_server;").count(), 2);
+        assert!(!healed.contains("listen [::]:443"));
+        assert!(retarget_managed_https_wildcards(&healed, &present).is_none());
+        assert!(retarget_managed_https_wildcards(profile, &[]).is_none());
+        for changed in [
+            profile.replace("archipelago.crt", "custom.crt"),
+            profile.replace("server_name _;", "server_name public.example;"),
+            profile.replace("listen 443 ssl default_server;", "listen 443 ssl http2;"),
+            profile.replace("server {", "  server {"),
+        ] {
+            assert!(retarget_managed_https_wildcards(&changed, &present).is_none());
+        }
     }
 
     #[test]

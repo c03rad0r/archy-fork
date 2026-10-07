@@ -134,3 +134,19 @@ behavior rather than treating a successful reload command as proof that nginx
 accepted the new configuration. The existing per-address retarget helper ignores
 wildcard-only configs. This live repair is not a claim that the general migration
 or IPv6 HTTPS/companion trust acceptance is complete.
+
+Source follow-up drafted after that rollout (not deployed): the bootstrap now
+recognizes only the shipped wildcard node-CA dashboard profile for conversion to
+present non-tailnet IPv4 listeners. Custom certificate/name/listener profiles are
+left out of that new migration. Both available and enabled paths are visited,
+canonical targets are deduplicated, symlinks retained, and listener backups are
+placed outside nginx include directories. Listener repair precedes route repair.
+
+Reload acceptance now checks that the nginx service master produced a new active
+worker generation; sending a successful reload signal alone no longer counts.
+Five isolated shell-fixture regressions pass, exercising accepted reload, unchanged
+workers, shutting-down workers, rejected configuration and failed signalling.
+These run the exact embedded shell against fake service commands; they do not
+reload a real node. Added Rust profile-migration tests and the integrated backend
+compile remain pending the shared qualification slot. The live repaired nodes
+still run the previously qualified 49703d7e binary.
