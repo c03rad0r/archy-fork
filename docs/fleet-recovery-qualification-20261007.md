@@ -1,6 +1,6 @@
 # Fleet recovery qualification — 7 October 2026
 
-Status: source regression fixes qualified; deployed-browser and distributed
+Status: source regressions and isolated browser checks qualified; deployed-browser and distributed
 transport acceptance remain open. This supplements tasks 8, 10 and 12 without
 claiming that the full Fleet acceptance matrix is complete.
 
@@ -26,7 +26,21 @@ Retry. Other cases cover a missing cache, late status/alert replies, a malformed
 status response, late responses after unmount, real zero versus unavailable
 metrics, report ageing, sorting and selected-node history isolation.
 
-Log: `/tmp/archy-fleet-recovery-tests-final.log`.
+Logs: `/tmp/archy-fleet-recovery-tests-final.log` and
+`/tmp/archy-fleet-recovery-typecheck.log` (Vue typecheck passed).
+
+An isolated real Chromium harness rendered the actual Fleet component and styles
+at 390px and 1440px. Cached cards and failure notice remained visible; keyboard
+focus/Enter on Retry recovered the view; genuine zero remained 0%; no horizontal
+overflow or page errors occurred. RPC was replaced with synthetic replies; all
+non-fixture network requests were blocked. This was source-served component
+qualification, not a deployed artifact or real outage. Initial harness attempts
+failed because its standalone app initialization/import was incomplete; corrected
+before both widths passed. Failed logs retained.
+
+Browser scenario: `/tmp/archy-fleet-recovery-browser.cjs`,
+server: `/tmp/archy-fleet-browser-server.mjs`,
+result: `/tmp/archy-fleet-recovery-browser.log`. The owned server was stopped.
 This is local component/composable evidence, not a live-node outage test.
 No node service, peer relationship, wallet or payment was changed.
 
@@ -36,7 +50,7 @@ No node service, peer relationship, wallet or payment was changed.
 | --- | --- | --- |
 | Report rendering | Local normalization/render tests; earlier dev/Yaya metrics evidence in progress ledger | Updated sender/receiver comparison across supported versions |
 | Status freshness | Clock-driven ageing, unknown versus stale, no synthetic metric zero | Real partition, reconnect and transport delivery |
-| Refresh failures | Visible retained reports; empty failure; Retry recovery | Candidate browser at phone/desktop widths and deployed artifact |
+| Refresh failures | Visible retained reports; empty failure; Retry recovery | Deployed artifact and actual-node outage; isolated 390/1440 browser passed |
 | Concurrent replies | Newest status/alerts win; no unmount cache repopulation | Distributed delay/out-of-order delivery |
 | Selection/sorting | Retained across failure; history request isolation | Larger-fleet navigation and keyboard checks |
 | Authorization | No permission changes in this patch | Unauthorized/expired-trust actual-handler matrix |

@@ -455,8 +455,34 @@ Monitoring gate or deferred connection UX/removal work.
 - Companion retains its dashboard WebView across navigation. Operator was asked
   to use the existing Restart app action, reconnect to Yaya, play a free demo,
   and check for the notification before backgrounding, to rule out a retained
-  page from before the matching UI deployment. No result yet; not a fix claim.
+  page from before the matching UI deployment. Operator subsequently confirmed
+  it still failed after following the guide. Do not request another blind retry.
 - No replacement APK, real payment, phone reset or wallet change performed.
 - IndeeHub agent committed final dispatch fixes as 2bfa84ef: isolated backend
   suite 2,004 passed, zero failed, five ignored. VM-only binary preparation and
   isolated full update/recovery rehearsal are ongoing; no live activation.
+
+
+## Independent workstreams — operator authorized 7 October
+
+- IndeeHub agent owns seven-service update/recovery qualification. Its VM-only
+  executable completed (SHA25614100aa55192b79ede0e9ec37317efd9125065f1336b0084d8f1b6ee37c59490);
+  all seven baseline images imported. Actual RPC rehearsal is underway in an
+  isolated VM. This executable predates the new paid-file fixes and is not a
+  release artifact. Yaya remains unchanged.
+- Companion agent owns no-USB native playback diagnostics and APK57. Code is
+  ready, Android tests/build underway. This is diagnostic, not a claimed fix;
+  physical background acceptance remains failed. See its dedicated investigation.
+- Paid-file agent owns guard fixes18b08720: unresolved on-chain attempts block
+  alternate Cashu/Lightning payment; unsafe legacy spending fails closed. Fresh
+  Fedimint file purchases are temporarily unavailable; cached delivery/recovery
+  remains.62 UI tests and typecheck pass; isolated backend suite is queued.
+  Both nodes' previously purchased20MiB fixtures still reopen with exact hashes,
+  with no new payment or spend-ledger change. See dedicated qualification doc.
+- Root owns Fleet recovery65d265f2: explicit retained-report outage notice,
+  Retry, rejection of old replies and unmount cleanup.21 tests, Vue typecheck
+  and isolated390/1440 Chromium keyboard/layout recovery checks pass. Production
+  combined UI build and deployed acceptance remain.
+- Wrong-window PWA request was inspection only and was withdrawn; no PWA change.
+- Heavy builds are serialized around the constrained host; no live wallet/app
+  shutdown was used to free resources. No OTA/ISO/catalog publication occurred.
