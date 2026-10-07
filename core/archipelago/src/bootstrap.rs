@@ -1250,12 +1250,12 @@ async fn run_nginx_listener_repair() -> Result<bool> {
         // Backups must never be written in sites-enabled: nginx includes every
         // file there, and a backup would introduce duplicate server directives.
         let backup = format!(
-            "/var/lib/archipelago/support/nginx-listeners-{repair_id}-{}.conf",
+            "/var/lib/archipelago/support/nginx-listeners/{repair_id}-{}.conf",
             seen.len()
         );
         let target = format!("'{}'", target.to_string_lossy().replace('\'', "'\\''"));
         let script = format!(
-            "set -eu\ninstall -d -m 0700 /var/lib/archipelago/support\ncp -- {target} {backup}\nchmod 0600 {backup}\ninstall -m 0644 {staged} {target}\n\
+            "set -eu\ninstall -d -m 0700 /var/lib/archipelago/support/nginx-listeners\ncp -- {target} {backup}\nchmod 0600 {backup}\ninstall -m 0644 {staged} {target}\n\
              if ! nginx -t 2>/dev/null; then install -m 0644 {backup} {target}; exit 3; fi\nexit 0\n"
         );
         let status = host_sudo(&["sh", "-lc", &script]).await?;
