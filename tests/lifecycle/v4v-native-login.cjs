@@ -63,6 +63,20 @@ const { chromium, expect } = require(process.env.PLAYWRIGHT_MODULE || '../../neo
           return route.fallback();
         });
       }
+      if (process.env.QUALIFY_COMPANION_BRIDGE === '1') {
+        if (process.env.QUALIFY_PLAYBACK !== '1') throw Error('Companion bridge qualification requires real playback');
+        await context.addInitScript(() => {
+          if (window !== window.top) return;
+          window.__qualificationAudioBridge = [];
+          window.ArchipelagoAudio = {
+            onmessage: null,
+            postMessage(raw) {
+              window.__qualificationAudioBridge.push(JSON.parse(raw));
+              if (window.__qualificationAudioBridge.length > 300) window.__qualificationAudioBridge.shift();
+            },
+          };
+        });
+      }
       page = await context.newPage();
       page.on('response', response => { const u = new URL(response.url()); if (u.origin === appOrigin && u.pathname === '/api/auth/nostr/login') proof.login.push(response.status()); });
       await page.goto(origin + '/dashboard/discover', { waitUntil: 'domcontentloaded', timeout: 60000 });

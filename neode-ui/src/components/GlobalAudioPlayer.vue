@@ -69,8 +69,10 @@
 <script setup lang="ts">
 import { ref, watch, nextTick, onBeforeUnmount } from 'vue'
 import { useAudioPlayer } from '@/composables/useAudioPlayer'
+import { useCompanionAudio } from '@/composables/useCompanionAudio'
 
 const audioPlayer = useAudioPlayer()
+useCompanionAudio(audioPlayer)
 const barEl = ref<HTMLElement | null>(null)
 
 // Publish the player's height as a CSS variable so page scroll containers can

@@ -7,10 +7,12 @@ reference app; its updated real-node acceptance is tracked in
 [v4v-native-player-20261006.md](v4v-native-player-20261006.md). Local tests are not
 proof that a particular deployed app or companion version supports every feature.
 
-Cloud video picture-in-picture (PiP) in the Android companion is a separate open
-implementation task. Do not advertise the audio bridge as a video/PiP API. Native
-fullscreen support alone does not provide Android PiP. A versioned video contract
-and examples must be added here when implementation and device tests pass.
+Cloud video PiP is implemented in companion0.5.35/build55; the operator accepted
+the delivered Cloud PiP flow on2026-10-07. Audio and video use separate channels.
+Native background audio is a companion0.5.36/build56 candidate:29 Android tests
+and six companion-bridge dashboard tests pass; physical background/lock-screen/task
+removal acceptance remains required. Do not infer those phone results from
+browser or Robolectric tests.
 
 ## Declare the audio integration
 
@@ -152,7 +154,7 @@ those guards merely to make a test pass.
    viewport test cannot prove OS background playback or PiP support. Do not promise
    playback after the operating system kills the process.
 
-## Cloud video PiP acceptance scope (not yet implemented)
+## Cloud video PiP contract and remaining acceptance
 
 Start with Cloud's existing authorized video viewer and companion fullscreen host.
 Provide an explicit PiP control when supported, with clear unavailable behavior.
@@ -165,3 +167,67 @@ logout/session expiry, FIPS disconnect/reconnect, and process recreation. Valida
 on a physical companion with ordinary and FIPS-accessed Cloud videos before APK
 publication. Document the proven video integration contract for other app authors
 only after that implementation is qualified.
+
+
+The dashboard uses the main-frame-only `ArchipelagoCloudVideo` channel, admitted
+only for the paired node's exact HTTP(S) origins. Its version1 capability check
+is separate from `archipelago-v1` app audio integration. The Cloud host arms a
+random request/session ID with video dimensions and playing state, then enters
+fullscreen on the existing video in the same user gesture before requesting PiP.
+Native commands and replies carry that session; a different session is ignored.
+`state` updates playback controls and `release` retires the session. `restored`
+returns to the same video; closing requests pause/cleanup. No video URL, cookie,
+bearer token or second player crosses the channel. The entire dashboard must
+never be used as the PiP surface. This is currently a Cloud-host contract, not
+permission for arbitrary embedded apps to call native PiP directly.
+
+## Companion native audio: build56 candidate
+
+Apps continue using the existing version1 app audio protocol above. They do not
+need a second Android stream or a separate queue implementation. The dashboard
+owns a main-frame `ArchipelagoAudio` channel restricted to paired node origins;
+embedded app frames cannot invoke it directly. The foreground `mediaPlayback`
+service owns the retained WebView session after the Activity/task closes and
+exposes an Android MediaSession with playback metadata, play/pause, previous/next,
+seek, shuffle and Stop. Playback state is confirmed by the existing app player,
+not optimistically advanced by native controls.
+
+Dashboard→native messages contain version1, a random session, monotonically
+increasing sequence, bounded title/position/duration, playback/control flags and
+optional JPEG thumbnail bytes. Artwork is fetched by the already authenticated
+page with same-origin credentials only, capped at512KiB, resized to192px and sent
+as a bounded data URL. Native code does not fetch artwork URLs or receive auth
+credentials. Cross-origin images without CORS may have no notification thumbnail;
+missing artwork never blocks playback. Native image decoding bounds dimensions.
+
+Native→dashboard controls carry the same session. Retired sessions, stale sequence
+numbers, foreign origins and subframes cannot revive/control playback. A short
+heartbeat resynchronizes state; if the dashboard stops responding for90seconds,
+the native owner stops instead of advertising a live session indefinitely.
+Playback stays in the same authenticated WebView/iframe; app authorization and
+entitlement checks remain with that player. App removal, frame replacement,
+logout, navigation/disconnect or explicit Stop release the corresponding session.
+A non-playing task removed from Recents is released. A playing one is retained;
+reopening reattaches the existing document, queue and position. A killed process
+is not automatically restarted into an authenticated stream.
+
+The implementation uses the platform MediaSession with the existing WebView
+player, rather than adding another decoder. No boot receiver or new storage
+permission is involved. Pair this APK with the matching dashboard build: an older
+dashboard does not send the native audio protocol merely because the APK changed.
+
+Qualification commands:
+
+```sh
+cd neode-ui
+./node_modules/.bin/vitest run src/composables/__tests__/useCompanionAudio.test.ts src/composables/__tests__/useAppMediaBridge.test.ts src/components/__tests__/GlobalAudioPlayerExternal.test.ts
+cd ../Android
+./gradlew :app:testDebugUnitTest
+```
+
+Before marking physical acceptance, use V4V on the matching server: play a track,
+close its panel, press Home, lock the phone, pause/resume/seek/skip/shuffle from
+native controls, remove the companion task while playing, reopen into the same
+queue/position, then Stop. Repeat logout, headset disconnect and network loss.
+Confirm download, fullscreen and Cloud PiP still work. App force-stop/process
+kill is a stop condition, not a promise of uninterrupted playback.

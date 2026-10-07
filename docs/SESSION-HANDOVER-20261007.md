@@ -5,6 +5,8 @@ candidate worktree is `/home/archipelago/Projects/archy-session-key` on branch
 `work/post-190-session-key`. Do not use credentials from chat or print private
 node, wallet, session or registry data.
 
+Latest active checkpoint: see **Companion56 native-audio qualification** at the end. Earlier receipts below are historical and apply only to their named source/artifacts.
+
 ## Current candidate
 
 Recent commits, newest first:
@@ -289,7 +291,7 @@ No percentage is inferred from test counts.
 | 17 HTTPS apps | In progress | Exact hostname/trust and companion acceptance |
 | 18 Firewall/tunnel | In progress | Read-only UI done; settings persistence/reboot/rollback qualification |
 | 19 Media guide/Cloud PiP | Nearly finished | PiP operator-accepted; finish reusable contract and remaining edge cases |
-| 20 Native background media | In progress | Cloud PiP done; native audio service/controls and device checks remain |
+| 20 Native background media | In progress | Native service/controls implemented and APK56 delivered; matching LAN HTTP UI qualification and physical device checks remain |
 | 21 Public files/folders | Queued, before22 | Shared pricing interface with blue tints, unrelated-node discovery and tiny marker |
 | 22 Mesh file sharing | Queued, final task | Node/computer choice, tree/search picker, retained multi-selection, delivery design and usual paid-file flow |
 
@@ -327,3 +329,50 @@ Task22 now follows task21 at the end. Its detailed scope is in
 `post-1.9.0-work-backlog.md`. This is a recorded requirement/design task, not a
 claim that the picker or transport/payment flow has been implemented. Existing
 public-sharing blue pricing and marker requirements are retained unchanged.
+
+
+## Companion56 native-audio qualification — 2026-10-07
+
+- Operator withdrew the accidental screensaver/Play/Skip prompts. No changes
+  were made for them, so nothing required reverting.
+- Companion0.5.36/build56 is delivered at
+  `http://192.168.63.240/packages/archipelago-companion-0.5.36.apk`.
+  SHA256 `6bee2a2a13231525997946926bb47c473e01b81c03737d22d1bce18af9982c6e`.
+  Canonical signing, clean packaging and HTTP byte verification passed. The
+  standard fleet APK and live backend/catalogs were preserved.
+- 29 Android tests pass (including native bridge, foreground notification and
+  task-removal retention on SDK28/35). These are automated tests, not phone
+  acceptance. Durable receipt:
+  `~/.local/state/archipelago/release-qualification/companion-056/`.
+- The native MediaSession/foreground service controls the same retained
+  authenticated WebView player, with queue controls, bounded thumbnail data,
+  session/origin checks and logout/stop cleanup. No protected stream URLs or
+  credentials are sent to Android and no second decoder/payment is started.
+- Initial complete dashboard qualification passed1440 tests/175files and its
+  production build. That UI was deployed on dev with backup and unchanged
+  backend, catalog/session/intent hashes and container IDs/start times.
+- Live LAN HTTP browser inspection then found `crypto.randomUUID` absent. The
+  new bridge now generates UUIDv4 using `crypto.getRandomValues`, which that
+  browser supports. A regression covers this exact condition; final full UI
+  suite/build and replacement deployment are underway. Do not ask the operator
+  to accept native audio until the matching corrected Yaya UI is deployed.
+- Yaya remains at its previous UI until qualification completes. Physical
+  Android background, lock-screen, swipe-away, reconnect and stop acceptance
+  remains required. CloudPiP55 remains operator accepted.
+- Dedicated IndeeHub agent owns backend changes and the full isolated seven-app
+  fixture. Its first latest suite had2002pass/1failure/5ignored: the new fixture
+  incorrectly expected no directory, although an empty directory is valid.
+  Assertion corrected to require no journal files. Final isolated recheck:
+  **2,003 passed, zero failed, five ignored**, committed as `b9c75b21`. This
+  is not a live IndeeHub delivery; optimized binary and full VM cutover still
+  remain before Yaya activation.
+
+- First HTTP-fix full UI run:1440 passed, one60-second Home wallet-display
+  timeout and a worker `snapshotSaved` timeout under severe memory/I/O pressure.
+  Focused rerun:all12 Home wallet-cache tests and all6 companion bridge tests
+  passed (18/18). Clean full rerun is underway; retain both failed and passing
+  logs. The initial1440-green full receipt predates the UUID fix.
+- Extended real V4V browser qualification supports optional simulated Android
+  transport while using the actual authenticated iframe and bundled free demo
+  media. It checks native command routing and JPEG thumbnail delivery; no
+  physical Android result is implied. The new end-to-end run remains pending.

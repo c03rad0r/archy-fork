@@ -10,6 +10,7 @@
     <!-- Embedded FIPS mesh tunnel (ArchyVpnService) runs as a foreground service. -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
     <application
@@ -66,6 +67,12 @@
                 <data android:scheme="nostrconnect" />
             </intent-filter>
         </activity>
+
+        <service
+            android:name=".ui.screens.CompanionAudioService"
+            android:exported="false"
+            android:stopWithTask="false"
+            android:foregroundServiceType="mediaPlayback" />
 
         <!-- Embedded FIPS mesh node: split-tunnel VpnService (fd00::/8 only),
              configured entirely by scanning the node's pairing QR. -->

@@ -1,7 +1,8 @@
 // Authentication store — login, logout, session management
 
 import { defineStore } from 'pinia'
-import { ref } from 'vue'
+import { ref, watch } from 'vue'
+import { useAudioPlayer } from '@/composables/useAudioPlayer'
 import { rpcClient } from '../api/rpc-client'
 import { useSyncStore } from './sync'
 import { useResourcesStore } from './resources'
@@ -9,6 +10,7 @@ import { useResourcesStore } from './resources'
 export const useAuthStore = defineStore('auth', () => {
   // State
   const isAuthenticated = ref(localStorage.getItem('neode-auth') === 'true')
+  watch(isAuthenticated, authenticated => { if (!authenticated) useAudioPlayer().stop() }, { flush: 'sync' })
   const isLoading = ref(false)
   const error = ref<string | null>(null)
   let sessionValidated = false
@@ -75,6 +77,7 @@ export const useAuthStore = defineStore('auth', () => {
   }
 
   async function logout(): Promise<void> {
+    useAudioPlayer().stop()
     const sync = useSyncStore()
     try {
       await rpcClient.logout()

@@ -2,6 +2,15 @@
 // No fixture media, intercepted success, payment or application state fabrication.
 const { expect } = require(process.env.PLAYWRIGHT_MODULE || '../../neode-ui/node_modules/@playwright/test');
 module.exports = async function qualifyPlayback(page, appOrigin, proof) {
+  const nativeBridge = process.env.QUALIFY_COMPANION_BRIDGE === '1';
+  async function control(command, button) {
+    if (!nativeBridge) return page.getByRole('button', { name: button, exact: true }).click();
+    await page.evaluate(command => {
+      const state = window.__qualificationAudioBridge?.filter(value => value.action === 'state').at(-1);
+      if (!state?.session || !window.ArchipelagoAudio?.onmessage) throw Error('Companion audio session missing');
+      window.ArchipelagoAudio.onmessage({ data: JSON.stringify({ version: 1, type: 'command', session: state.session, command }) });
+    }, command);
+  }
   const app = page.frames().find(frame => frame.url().startsWith(appOrigin + '/'));
   if (!app) throw Error('Managed V4V iframe missing after login');
   proof.initialBrowse = new URL(app.url()).pathname === '/browse';
@@ -46,18 +55,18 @@ module.exports = async function qualifyPlayback(page, appOrigin, proof) {
   await expect(bar).toBeVisible();
   await expect(bar).toContainText(tracks[0].title);
   await app.waitForFunction(time => window.__qualificationMedia.some(audio => !audio.paused && audio.currentTime > time + 1), initial, { timeout: 15000, polling: 100 });
-  await page.getByRole('button', { name: 'Pause audio', exact: true }).click();
+  await control('pause', 'Pause audio');
   await app.waitForFunction(() => window.__qualificationMedia.every(audio => audio.paused), undefined, { polling: 100 });
-  await page.getByRole('button', { name: 'Play audio', exact: true }).click();
+  await control('play', 'Play audio');
   await app.waitForFunction(() => window.__qualificationMedia.some(audio => !audio.paused), undefined, { polling: 100 });
-  await page.getByRole('button', { name: 'Next track', exact: true }).click();
+  await control('next', 'Next track');
   await app.waitForFunction(id => window.PulsewireLegacy.getReactBridge().helpers.activePlayerRelease()?.id === id, tracks[1].id, { polling: 100 });
   await expect(bar).toContainText(tracks[1].title);
   // Previous after >3 seconds intentionally restarts the current song in V4V.
   await app.waitForFunction(() => window.__qualificationMedia.some(audio => !audio.paused && audio.currentTime > 4), undefined, { polling: 100 });
-  await page.getByRole('button', { name: 'Previous track', exact: true }).click();
+  await control('previous', 'Previous track');
   await app.waitForFunction(() => window.__qualificationMedia.some(audio => !audio.paused && audio.currentTime < 3), undefined, { polling: 100 });
-  await page.getByRole('button', { name: 'Shuffle', exact: true }).click();
+  await control('shuffle', 'Shuffle');
   await expect(page.getByRole('button', { name: 'Shuffle', exact: true })).toHaveAttribute('aria-pressed', 'true');
   expect(await app.evaluate(() => window.PulsewireLegacy.getReactBridge().getState().ui.shuffleEnabled)).toBe(true);
   const artwork = await app.evaluate(() => window.PulsewireLegacy.getReactBridge().helpers.activePlayerRelease()?.cover || '');
@@ -73,6 +82,15 @@ module.exports = async function qualifyPlayback(page, appOrigin, proof) {
     expect(geometry.opacity).toBeGreaterThan(0); expect(geometry.fit).toBe('cover');
     for (const axis of ['x', 'y', 'width', 'height']) expect(Math.abs(geometry.image[axis] - geometry.bar[axis])).toBeLessThanOrEqual(2);
     proof.renderedArtwork = true;
+  }
+  if (nativeBridge) {
+    await expect.poll(() => page.evaluate(() => window.__qualificationAudioBridge?.filter(value => value.action === 'state').at(-1)?.title)).toContain(tracks[1].title);
+    const nativeState = await page.evaluate(() => window.__qualificationAudioBridge.filter(value => value.action === 'state').at(-1));
+    expect(nativeState.playing).toBe(true);
+    expect(nativeState.session).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
+    expect(nativeState.shuffled).toBe(true);
+    if (artwork) await expect.poll(() => page.evaluate(() => window.__qualificationAudioBridge.some(value => value.action === 'state' && value.artwork?.startsWith('data:image/jpeg;base64,'))), { timeout: 15000 }).toBe(true);
+    proof.companionBridge = { realBrowserPlayer: true, nativeTransportSimulated: true, controls: ['pause', 'play', 'next', 'previous', 'shuffle'], thumbnail: Boolean(artwork), physicalAndroid: false };
   }
   const barBounds = await bar.boundingBox();
   for (const name of ['Previous track', 'Next track', 'Open playing app']) {
