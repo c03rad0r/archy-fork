@@ -6,6 +6,7 @@ mod dwn;
 pub(crate) mod lightning_purchase;
 mod model_proxy;
 mod node_message;
+pub(crate) mod onchain_purchase;
 mod proxy;
 mod purchase;
 mod registered_media;
