@@ -291,7 +291,7 @@
     if (e.data.type === 'archipelago-rental-response') {
       var rental = rentalPending[e.data.id];
       if (!rental) return;
-      delete rentalPending[e.data.id]; clearTimeout(rental.timer);
+      delete rentalPending[e.data.id]; clearTimeout(rental.timer); rental.cleanup();
       e.data.error ? rental.reject(new Error(e.data.error)) : rental.resolve(e.data.result);
       return;
     }
@@ -336,26 +336,36 @@
     return hex.slice(0,8)+'-'+hex.slice(8,12)+'-'+hex.slice(12,16)+'-'+hex.slice(16,20)+'-'+hex.slice(20);
   }
 
+  function rentalRequest(action, payload, timeout, signal) {
+    return new Promise(function (resolve, reject) {
+      if (signal && (typeof signal.addEventListener !== 'function' || typeof signal.removeEventListener !== 'function' || typeof signal.aborted !== 'boolean')) { reject(new Error('Invalid rental cancellation signal.')); return; }
+      if (signal && signal.aborted) { reject(new Error('Rental request closed.')); return; }
+      var id = nativeRequestId();
+      function cleanup() { if (signal) signal.removeEventListener('abort', abort); }
+      function fail(message) {
+        var pending = rentalPending[id]; if (!pending) return;
+        delete rentalPending[id]; clearTimeout(pending.timer); cleanup();
+        if (action === 'request') postToSigner({type:'archipelago-rental-request',id:id,action:'cancel',playbackProtocol:2});
+        reject(new Error(message));
+      }
+      function abort() { fail('Rental request closed. Recover any dispatched payment using the original purchase.'); }
+      rentalPending[id] = { resolve: resolve, reject: reject, cleanup: cleanup, timer: setTimeout(function () {
+        fail('Rental response unavailable. Recover the same purchase without paying again.');
+      }, timeout) };
+      if (signal) signal.addEventListener('abort', abort, {once:true});
+      postToSigner(Object.assign({ type: 'archipelago-rental-request', id: id, action: action, playbackProtocol: 2 }, payload));
+    });
+  }
   window.archipelagoRental = {
-    status: function (handle) {
-      return new Promise(function (resolve, reject) {
-        var id = nativeRequestId();
-        rentalPending[id] = { resolve: resolve, reject: reject, timer: setTimeout(function () {
-          delete rentalPending[id]; reject(new Error('Playback status unavailable.'));
-        }, 15000) };
-        postToSigner({ type: 'archipelago-rental-request', id: id, action: 'status', handle: handle });
-      });
-    },
-    request: function (offer) {
-      return new Promise(function (resolve, reject) {
-        var id = nativeRequestId();
-        rentalPending[id] = { resolve: resolve, reject: reject, timer: setTimeout(function () {
-          delete rentalPending[id]; reject(new Error('Rental response unavailable. Reopen this title to recover the same purchase.'));
-        }, 600000) };
-        postToSigner({ type: 'archipelago-rental-request', id: id, offer: offer });
-      });
+    status: function (handle) { return rentalRequest('status', { handle: handle }, 35000); },
+    prepare: function (handle, retry) { return rentalRequest('prepare', { handle: handle, retry: retry === true }, 35000); },
+    start: function (handle, readyId) { return rentalRequest('start', { handle: handle, ready_id: readyId }, 35000); },
+    request: function (offer, options) {
+      if (!options || options.playbackProtocol !== 2) return Promise.reject(new Error('Playback protocol 2 is required before requesting a rental.'));
+      return rentalRequest('request', { offer: offer }, 600000, options.signal);
     }
   };
+  Object.defineProperty(window.archipelagoRental, 'playbackProtocol', { value: 2, writable: false, configurable: false, enumerable: true });
 
   window.archipelagoMediaRegistration = {
     request: function (action, payload) {

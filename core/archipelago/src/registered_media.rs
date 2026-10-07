@@ -86,6 +86,7 @@ struct Lease {
 /// stream at expiry, and must not call open_paid for HTTP HEAD/preflight.
 pub(crate) struct OpenedMedia {
     pub file: File,
+    pub verification: Arc<crate::rental_readiness::Ready>,
     pub size_bytes: u64,
     pub mime_type: String,
     pub started_at: u64,
@@ -395,6 +396,13 @@ fn verify(
     Ok(())
 }
 fn open_snapshot(data_dir: &Path, record: &Registered) -> Result<File> {
+    open_snapshot_with_stamp(data_dir, record, true)
+}
+fn open_snapshot_with_stamp(
+    data_dir: &Path,
+    record: &Registered,
+    require_original_stamp: bool,
+) -> Result<File> {
     use std::ffi::CString;
     use std::os::fd::FromRawFd;
     // Resolve from the configured data directory in one kernel operation. No
@@ -435,7 +443,8 @@ fn open_snapshot(data_dir: &Path, record: &Registered) -> Result<File> {
     );
     let file = unsafe { File::from_raw_fd(fd as i32) };
     anyhow::ensure!(
-        Stamp::from_file(&file)? == record.stamp,
+        Stamp::from_file(&file)?.size == record.stamp.size
+            && (!require_original_stamp || Stamp::from_file(&file)? == record.stamp),
         "Registered immutable snapshot changed"
     );
     Ok(file)
@@ -561,11 +570,11 @@ pub(crate) fn resolve_registration(
 /// No request chooses app scope or storage path. This is an offer prerequisite,
 /// not advertisement: the future offer creator must authenticate the peer and
 /// bind all returned terms into the purchase contract before seller acceptance.
-pub(crate) fn registered_terms(
+fn metadata_record(
     data_dir: &Path,
     identity: &NodeIdentity,
     content_id: &str,
-) -> Result<(Receipt, String)> {
+) -> Result<Registered> {
     let id = registration_id(content_id)?;
     let pin = registration_pin::load_existing(data_dir, APP_ID, identity)?;
     let held = held(data_dir, false)?;
@@ -573,32 +582,198 @@ pub(crate) fn registered_terms(
         .context("Registered content is unavailable")?;
     drop(held);
     verify(&record, &pin, identity)?;
-    let mut file = open_snapshot(data_dir, &record)?;
-    // A quote must not invite payment for altered bytes, including a same-tick
-    // metadata collision. This scan completes before any offer is accepted.
-    ensure_verified_for_use(data_dir, &record, &mut file, true)?;
+    Ok(record)
+}
+fn chunk_binding(record: &Registered) -> Result<crate::rental_chunk_index::Binding> {
+    Ok(crate::rental_chunk_index::Binding {
+        content_id: record.receipt.content_id.clone(),
+        receipt_sha256: hash(&serde_json::to_vec(&record.receipt)?),
+        full_sha256: record.receipt.sha256.clone(),
+        size: record.stamp.size,
+    })
+}
+fn readiness_key(data_dir: &Path, record: &Registered) -> Result<String> {
+    Ok(format!(
+        "{}:{}",
+        data_dir.canonicalize()?.display(),
+        hash(&serde_json::to_vec(&record.receipt)?)
+    ))
+}
+/// Signed metadata only: no whole-file scan or lease is permitted here.
+pub(crate) fn registered_metadata(
+    data_dir: &Path,
+    identity: &NodeIdentity,
+    content_id: &str,
+) -> Result<(Receipt, String)> {
+    let record = metadata_record(data_dir, identity, content_id)?;
+    Ok((record.receipt, record.terms_sha256))
+}
+/// Starts/reuses bounded background verification, before quoting or playing.
+/// The signed index survives restart; range requests never invoke this scan.
+pub(crate) fn prepare_registered(
+    data_dir: PathBuf,
+    identity: Arc<NodeIdentity>,
+    content_id: &str,
+    retry: bool,
+) -> Result<crate::rental_readiness::Status> {
+    let record = metadata_record(&data_dir, &identity, content_id)?;
+    let binding = chunk_binding(&record)?;
+    let key = readiness_key(&data_dir, &record)?;
+    let manager = crate::rental_readiness::shared();
+    if retry {
+        manager.retry_failed(&key, &binding)?;
+    }
+    manager.prepare(key, binding.clone(), move |progress| {
+        let held = keyed(&data_dir, "verify", &record.receipt.request_id)?;
+        let path = held
+            .path
+            .join(format!("chunks-{}.bin", record.receipt.request_id));
+        let mut file = open_snapshot_with_stamp(&data_dir, &record, false)?;
+        if let Ok(Some(index)) = crate::rental_chunk_index::Index::load(&path, &binding, &identity)
+        {
+            return Ok(index);
+        }
+        // A damaged derived index is not evidence about the original bytes.
+        // Rebuild only after a complete scan matches the signed producer SHA;
+        // this avoids making an editable cache a permanent recovery dead end.
+        let index = crate::rental_chunk_index::Index::scan(&mut file, binding, |n| {
+            progress.store(n, std::sync::atomic::Ordering::SeqCst);
+            Ok(())
+        })?;
+        index.save(&path, &identity)?;
+        Ok(index)
+    })
+}
+#[derive(Clone, Serialize)]
+pub(crate) struct RentalWindow {
+    pub started_at: u64,
+    pub expires_at: u64,
+}
+fn verify_lease(
+    lease: &Lease,
+    contract: &Contract,
+    capability: &str,
+    duration: u64,
+) -> Result<RentalWindow> {
+    anyhow::ensure!(
+        lease.version == 1
+            && lease.purchase_id == contract.id
+            && lease.buyer_did == contract.buyer_did
+            && lease.content_id == contract.content_id
+            && lease.contract_hash == contract.context_hash()?
+            && lease.capability_hash == hash(capability.as_bytes())
+            && lease.started_at.checked_add(duration) == Some(lease.expires_at),
+        "Persisted rental terms changed"
+    );
+    Ok(RentalWindow {
+        started_at: lease.started_at,
+        expires_at: lease.expires_at,
+    })
+}
+fn verify_settled_terms(record: &Registered, contract: &Contract) -> Result<()> {
+    anyhow::ensure!(
+        contract.content_sha256 == record.receipt.sha256
+            && contract.content_size == record.stamp.size
+            && contract.terms_sha256 == record.terms_sha256
+            && record.receipt.price_sats > 0
+            && record
+                .receipt
+                .payment_methods
+                .iter()
+                .any(|method| method == "cashu")
+            && contract.minimum_net_sats == record.receipt.price_sats,
+        "Settled purchase does not match registered immutable terms"
+    );
+    Ok(())
+}
+/// Only explicit authenticated Start invokes this commit. Losing its response
+/// cannot reset the original clock; repeated Start returns the same window.
+fn start_ready(
+    data_dir: &Path,
+    identity: &NodeIdentity,
+    contract: &Contract,
+    capability: &str,
+    ready_id: &str,
+    now: impl Fn() -> Result<u64>,
+) -> Result<RentalWindow> {
+    let record = metadata_record(data_dir, identity, &contract.content_id)?;
+    verify_settled_terms(&record, contract)?;
+    {
+        let held = keyed(data_dir, "lease", &contract.id)?;
+        if let Some(lease) = read::<Lease>(&held.path.join(format!("lease-{}.json", contract.id)))?
+        {
+            return verify_lease(&lease, contract, capability, record.receipt.viewing_seconds);
+        }
+    }
+    let ready = crate::rental_readiness::shared().ready(
+        &readiness_key(data_dir, &record)?,
+        &chunk_binding(&record)?,
+        Some(ready_id),
+    )?;
+    let mut file = open_snapshot_with_stamp(data_dir, &record, false)?;
+    // A bounded actual byte read before the first clock. Later chunks are
+    // verified immediately before delivery, including seek/range requests.
+    ready.index.read_slice(&mut file, 0, 1)?;
+    let held = keyed(data_dir, "lease", &contract.id)?;
+    let path = held.path.join(format!("lease-{}.json", contract.id));
+    if let Some(lease) = read::<Lease>(&path)? {
+        return verify_lease(&lease, contract, capability, record.receipt.viewing_seconds);
+    }
+    let started_at = now()?;
+    let expires_at = started_at
+        .checked_add(record.receipt.viewing_seconds)
+        .context("Rental expiry overflow")?;
+    let lease = Lease {
+        version: 1,
+        purchase_id: contract.id.clone(),
+        buyer_did: contract.buyer_did.clone(),
+        content_id: contract.content_id.clone(),
+        contract_hash: contract.context_hash()?,
+        capability_hash: hash(capability.as_bytes()),
+        started_at,
+        expires_at,
+    };
+    persist(&held, &path, &lease)?;
+    Ok(RentalWindow {
+        started_at,
+        expires_at,
+    })
+}
+
+pub(crate) fn registered_terms(
+    data_dir: &Path,
+    identity: &NodeIdentity,
+    content_id: &str,
+) -> Result<(Receipt, String)> {
+    let record = metadata_record(data_dir, identity, content_id)?;
+    let _ready = crate::rental_readiness::shared().ready(
+        &readiness_key(data_dir, &record)?,
+        &chunk_binding(&record)?,
+        None,
+    )?;
+    let _file = open_snapshot_with_stamp(data_dir, &record, false)?;
     Ok((record.receipt, record.terms_sha256))
 }
 
 /// Only authenticated peer GET/range routes may call this. The capability is
 /// checked against this node's durable seller journal; client receipts do not
 /// establish payment. A lease is persisted before any bytes can be returned.
-pub(crate) async fn open_paid(
-    data_dir: PathBuf,
-    identity: Arc<NodeIdentity>,
-    content_id: String,
-    purchase_id: String,
-    authenticated_buyer: String,
-    capability: String,
-) -> Result<OpenedMedia> {
+async fn paid_contract(
+    data_dir: &Path,
+    identity: &NodeIdentity,
+    content_id: &str,
+    purchase_id: &str,
+    authenticated_buyer: &str,
+    capability: &str,
+) -> Result<Contract> {
     uuid(&purchase_id)?;
     registration_id(&content_id)?;
     anyhow::ensure!(
         capability.len() == 64 && capability.bytes().all(|c| c.is_ascii_hexdigit()),
         "Invalid delivery capability"
     );
-    let (contract, saved_capability) = {
-        let journal = Journal::open(&data_dir).await?;
+    let contract = {
+        let journal = Journal::open(data_dir).await?;
         let record = journal
             .seller(&purchase_id)
             .await?
@@ -614,18 +789,157 @@ pub(crate) async fn open_paid(
             _ => anyhow::bail!("Seller receipt is not durable"),
         };
         anyhow::ensure!(
-            constant_equal(&capability, &receipt.capability),
+            constant_equal(capability, &receipt.capability),
             "Delivery capability does not match this purchase"
         );
-        (record.contract, receipt.capability)
+        record.contract
     };
+    Ok(contract)
+}
+pub(crate) async fn prepare_paid(
+    data_dir: PathBuf,
+    identity: Arc<NodeIdentity>,
+    content_id: String,
+    purchase_id: String,
+    buyer: String,
+    capability: String,
+    retry: bool,
+) -> Result<crate::rental_readiness::Status> {
+    paid_contract(
+        &data_dir,
+        &identity,
+        &content_id,
+        &purchase_id,
+        &buyer,
+        &capability,
+    )
+    .await?;
+    tokio::task::spawn_blocking(move || prepare_registered(data_dir, identity, &content_id, retry))
+        .await?
+}
+pub(crate) async fn paid_window(
+    data_dir: &Path,
+    identity: &NodeIdentity,
+    content_id: &str,
+    purchase_id: &str,
+    buyer: &str,
+    capability: &str,
+) -> Result<Option<RentalWindow>> {
+    let contract = paid_contract(
+        data_dir,
+        identity,
+        content_id,
+        purchase_id,
+        buyer,
+        capability,
+    )
+    .await?;
+    let record = metadata_record(data_dir, identity, content_id)?;
+    verify_settled_terms(&record, &contract)?;
+    let held = keyed(data_dir, "lease", purchase_id)?;
+    read::<Lease>(&held.path.join(format!("lease-{purchase_id}.json")))?
+        .map(|lease| {
+            verify_lease(
+                &lease,
+                &contract,
+                capability,
+                record.receipt.viewing_seconds,
+            )
+        })
+        .transpose()
+}
+pub(crate) async fn start_paid(
+    data_dir: PathBuf,
+    identity: Arc<NodeIdentity>,
+    content_id: String,
+    purchase_id: String,
+    buyer: String,
+    capability: String,
+    ready_id: String,
+) -> Result<RentalWindow> {
+    let contract = paid_contract(
+        &data_dir,
+        &identity,
+        &content_id,
+        &purchase_id,
+        &buyer,
+        &capability,
+    )
+    .await?;
     tokio::task::spawn_blocking(move || {
-        open_settled(&data_dir, &identity, &contract, &saved_capability, || {
+        start_ready(
+            &data_dir,
+            &identity,
+            &contract,
+            &capability,
+            &ready_id,
+            || u64::try_from(chrono::Utc::now().timestamp()).context("Invalid node clock"),
+        )
+    })
+    .await?
+}
+pub(crate) async fn open_paid(
+    data_dir: PathBuf,
+    identity: Arc<NodeIdentity>,
+    content_id: String,
+    purchase_id: String,
+    authenticated_buyer: String,
+    capability: String,
+) -> Result<OpenedMedia> {
+    let contract = paid_contract(
+        &data_dir,
+        &identity,
+        &content_id,
+        &purchase_id,
+        &authenticated_buyer,
+        &capability,
+    )
+    .await?;
+    tokio::task::spawn_blocking(move || {
+        open_started(&data_dir, &identity, &contract, &capability, || {
             u64::try_from(chrono::Utc::now().timestamp()).context("Invalid node clock")
         })
     })
     .await?
 }
+fn open_started(
+    data_dir: &Path,
+    identity: &NodeIdentity,
+    contract: &Contract,
+    capability: &str,
+    now: impl Fn() -> Result<u64>,
+) -> Result<OpenedMedia> {
+    let record = metadata_record(data_dir, identity, &contract.content_id)?;
+    verify_settled_terms(&record, contract)?;
+    let lease = {
+        let held = keyed(data_dir, "lease", &contract.id)?;
+        read::<Lease>(&held.path.join(format!("lease-{}.json", contract.id)))?
+            .context("Explicit Start is required; no rental was started")?
+    };
+    let window = verify_lease(&lease, contract, capability, record.receipt.viewing_seconds)?;
+    let instant = now()?;
+    anyhow::ensure!(
+        instant >= window.started_at && instant < window.expires_at,
+        "Rental expired or node clock moved backwards"
+    );
+    let verification = crate::rental_readiness::shared().ready(
+        &readiness_key(data_dir, &record)?,
+        &chunk_binding(&record)?,
+        None,
+    )?;
+    let file = open_snapshot_with_stamp(data_dir, &record, false)?;
+    Ok(OpenedMedia {
+        file,
+        verification,
+        size_bytes: record.stamp.size,
+        mime_type: record.mime_type,
+        started_at: window.started_at,
+        expires_at: window.expires_at,
+    })
+}
+// Existing clock/receipt invariant fixtures exercise an explicit local start;
+// public prepare/start/open separation is tested independently below.
+#[cfg(test)]
 fn open_settled(
     data_dir: &Path,
     identity: &NodeIdentity,
@@ -701,8 +1015,12 @@ fn open_settled(
         now >= lease.started_at && now < lease.expires_at,
         "Rental expired or node clock moved backwards"
     );
+    let index =
+        crate::rental_chunk_index::Index::scan(&mut file, chunk_binding(&record)?, |_| Ok(()))?;
+    let verification = crate::rental_readiness::Ready::fixture(index);
     Ok(OpenedMedia {
         file,
+        verification,
         size_bytes: record.stamp.size,
         mime_type: record.mime_type,
         started_at: lease.started_at,
@@ -785,6 +1103,30 @@ mod tests {
                 },
                 |_| Ok(()),
             )
+        }
+        async fn ready(&self, receipt: &Receipt) -> String {
+            tokio::time::timeout(std::time::Duration::from_secs(5), async {
+                loop {
+                    match prepare_registered(
+                        self.root.path().into(),
+                        self.identity.clone(),
+                        &receipt.content_id,
+                        false,
+                    )
+                    .unwrap()
+                    {
+                        crate::rental_readiness::Status::Ready { ready_id, .. } => return ready_id,
+                        crate::rental_readiness::Status::Preparing { .. } => {
+                            tokio::time::sleep(std::time::Duration::from_millis(5)).await
+                        }
+                        crate::rental_readiness::Status::Unavailable => {
+                            panic!("fixture verification failed")
+                        }
+                    }
+                }
+            })
+            .await
+            .expect("bounded fixture preparation")
         }
         fn contract(&self, receipt: &Receipt) -> Contract {
             Contract {
@@ -872,6 +1214,7 @@ mod tests {
         std::fs::remove_file(fixture.root.path().join("cloud/film.mp4")).unwrap();
         assert_eq!(fixture.register(2000).unwrap(), receipt);
         assert_eq!(std::fs::read(&mapping).unwrap(), original);
+        fixture.ready(&receipt).await;
         let found =
             registered_terms(fixture.root.path(), &fixture.identity, &receipt.content_id).unwrap();
         assert_eq!(found, (receipt.clone(), terms(&receipt).unwrap()));
@@ -1029,6 +1372,57 @@ mod tests {
             .join(STORE)
             .join(format!("lease-{}.json", contract.id))
             .exists());
+        let ready_id = fixture.ready(&receipt).await;
+        // Preparation, settlement and a GET are not permission to start the clock.
+        assert!(open_paid(
+            fixture.root.path().into(),
+            fixture.identity.clone(),
+            receipt.content_id.clone(),
+            contract.id.clone(),
+            contract.buyer_did.clone(),
+            settled.capability.clone()
+        )
+        .await
+        .is_err());
+        assert!(paid_window(
+            fixture.root.path(),
+            &fixture.identity,
+            &receipt.content_id,
+            &contract.id,
+            &contract.buyer_did,
+            &settled.capability
+        )
+        .await
+        .unwrap()
+        .is_none());
+        let window = start_paid(
+            fixture.root.path().into(),
+            fixture.identity.clone(),
+            receipt.content_id.clone(),
+            contract.id.clone(),
+            contract.buyer_did.clone(),
+            settled.capability.clone(),
+            ready_id,
+        )
+        .await
+        .unwrap();
+        // Lost Start response: a retry replays the durable original window even
+        // if its ephemeral readiness identifier no longer exists after restart.
+        let replay = start_paid(
+            fixture.root.path().into(),
+            fixture.identity.clone(),
+            receipt.content_id.clone(),
+            contract.id.clone(),
+            contract.buyer_did.clone(),
+            settled.capability.clone(),
+            uuid::Uuid::new_v4().to_string(),
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            (window.started_at, window.expires_at),
+            (replay.started_at, replay.expires_at)
+        );
         let opened = open_paid(
             fixture.root.path().into(),
             fixture.identity.clone(),
@@ -1041,6 +1435,33 @@ mod tests {
         .unwrap();
         assert_eq!(opened.expires_at - opened.started_at, 60);
         assert_eq!(opened.size_bytes, 24);
+        for offset in [0, 8, 23] {
+            let mut range = open_paid(
+                fixture.root.path().into(),
+                fixture.identity.clone(),
+                receipt.content_id.clone(),
+                contract.id.clone(),
+                contract.buyer_did.clone(),
+                settled.capability.clone(),
+            )
+            .await
+            .unwrap();
+            assert_eq!(
+                range
+                    .verification
+                    .index
+                    .read_slice(&mut range.file, offset, 1)
+                    .unwrap()
+                    .len(),
+                1
+            );
+            assert_eq!(range.started_at, window.started_at);
+        }
+        assert_eq!(
+            crate::rental_chunk_index::scans(&receipt.content_id),
+            1,
+            "quote preparation and repeated GET/ranges share one original SHA scan"
+        );
     }
     #[tokio::test]
     async fn altered_snapshot_or_overflow_never_creates_first_rental() {
@@ -1249,21 +1670,41 @@ mod tests {
             .exists());
     }
     #[tokio::test]
-    async fn offer_preflight_rebuilds_verified_cache_without_creating_rental_and_rejects_corruption(
-    ) {
+    async fn signed_index_preparation_is_lease_free_and_unsigned_cache_cannot_change_it() {
         let fixture = Fixture::new().await;
         let receipt = fixture.register(1100).unwrap();
-        let path = fixture
+        assert!(
+            registered_terms(fixture.root.path(), &fixture.identity, &receipt.content_id).is_err()
+        );
+        let ready_id = fixture.ready(&receipt).await;
+        let record =
+            metadata_record(fixture.root.path(), &fixture.identity, &receipt.content_id).unwrap();
+        let index_path = fixture
+            .root
+            .path()
+            .join(STORE)
+            .join(format!("chunks-{}.bin", receipt.request_id));
+        let index = crate::rental_chunk_index::Index::load(
+            &index_path,
+            &chunk_binding(&record).unwrap(),
+            &fixture.identity,
+        )
+        .unwrap()
+        .unwrap();
+        assert_eq!(index.binding.full_sha256, receipt.sha256);
+        let cache = fixture
             .root
             .path()
             .join(STORE)
             .join(format!("verified-{}.json", receipt.request_id));
-        let original = std::fs::read(&path).unwrap();
-        std::fs::remove_file(&path).unwrap();
-        let (terms, _) =
-            registered_terms(fixture.root.path(), &fixture.identity, &receipt.content_id).unwrap();
-        assert_eq!(terms, receipt);
-        assert_eq!(std::fs::read(&path).unwrap(), original);
+        std::fs::write(cache, b"untrusted corrupt old metadata").unwrap();
+        assert_eq!(
+            registered_terms(fixture.root.path(), &fixture.identity, &receipt.content_id)
+                .unwrap()
+                .0,
+            receipt
+        );
+        assert_eq!(fixture.ready(&receipt).await, ready_id);
         assert!(std::fs::read_dir(fixture.root.path().join(STORE))
             .unwrap()
             .all(|entry| !entry
@@ -1271,11 +1712,33 @@ mod tests {
                 .file_name()
                 .to_string_lossy()
                 .starts_with("lease-")));
-        let mut cache: VerifiedSnapshot = read(&path).unwrap().unwrap();
-        cache.sha256 = "ff".repeat(32);
-        std::fs::write(&path, serde_json::to_vec(&cache).unwrap()).unwrap();
-        assert!(
-            registered_terms(fixture.root.path(), &fixture.identity, &receipt.content_id).is_err()
-        );
+        let mut bytes = std::fs::read(&index_path).unwrap();
+        *bytes.last_mut().unwrap() ^= 1;
+        std::fs::write(&index_path, bytes).unwrap();
+        assert!(crate::rental_chunk_index::Index::load(
+            &index_path,
+            &chunk_binding(&record).unwrap(),
+            &fixture.identity
+        )
+        .is_err());
+        crate::rental_readiness::shared()
+            .forget_for_restart(&readiness_key(fixture.root.path(), &record).unwrap());
+        let replacement = fixture.ready(&receipt).await;
+        assert_ne!(replacement, ready_id);
+        assert_eq!(crate::rental_chunk_index::scans(&receipt.content_id), 2);
+        assert!(crate::rental_chunk_index::Index::load(
+            &index_path,
+            &chunk_binding(&record).unwrap(),
+            &fixture.identity
+        )
+        .unwrap()
+        .is_some());
+        assert!(std::fs::read_dir(fixture.root.path().join(STORE))
+            .unwrap()
+            .all(|entry| !entry
+                .unwrap()
+                .file_name()
+                .to_string_lossy()
+                .starts_with("lease-")));
     }
 }

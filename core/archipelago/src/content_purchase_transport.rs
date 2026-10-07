@@ -15,6 +15,7 @@ pub(crate) struct FipsPurchaseTransport {
     onion: String,
     seller_did: String,
     fips_npub: String,
+    retry_preparation: bool,
 }
 impl FipsPurchaseTransport {
     pub async fn load(data_dir: PathBuf, onion: String) -> Result<Self> {
@@ -31,7 +32,12 @@ impl FipsPurchaseTransport {
             onion,
             seller_did: peer.did,
             fips_npub,
+            retry_preparation: false,
         })
+    }
+    pub fn retry_preparation(mut self, retry: bool) -> Self {
+        self.retry_preparation = retry;
+        self
     }
     async fn post<B: Serialize + Sync, R: DeserializeOwned>(
         &self,
@@ -72,6 +78,30 @@ impl PurchaseTransport for FipsPurchaseTransport {
     }
     fn seller_did(&self) -> &str {
         &self.seller_did
+    }
+    async fn prepare_offer(&self, content_id: &str) -> Result<Option<(u64, u64)>> {
+        let state: crate::rental_readiness::Status = self
+            .post(
+                protocol::PREPARE_OFFER_ROUTE,
+                &serde_json::json!({"content_id":content_id,"retry":self.retry_preparation}),
+            )
+            .await?;
+        match state {
+            crate::rental_readiness::Status::Ready { .. } => Ok(None),
+            crate::rental_readiness::Status::Preparing {
+                completed_bytes,
+                total_bytes,
+            } => {
+                anyhow::ensure!(
+                    completed_bytes <= total_bytes && total_bytes > 0,
+                    "Invalid media preparation progress"
+                );
+                Ok(Some((completed_bytes, total_bytes)))
+            }
+            crate::rental_readiness::Status::Unavailable => anyhow::bail!(
+                "Media verification failed; no payment started. Retry media preparation."
+            ),
+        }
     }
     async fn offer(&self, id: &str, content_id: &str) -> Result<Offer> {
         #[derive(Serialize)]

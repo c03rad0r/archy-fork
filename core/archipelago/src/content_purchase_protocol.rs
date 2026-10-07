@@ -8,6 +8,7 @@ use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use std::path::Path;
 
+pub(crate) const PREPARE_OFFER_ROUTE: &str = "/content/purchase/v1/prepare-offer";
 pub(crate) const OFFER_ROUTE: &str = "/content/purchase/v1/offer";
 pub(crate) const ACCEPT_ROUTE: &str = "/content/purchase/v1/accept";
 pub(crate) const SETTLE_ROUTE: &str = "/content/purchase/v1/settle";

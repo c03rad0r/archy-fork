@@ -91,7 +91,7 @@
 
       <!-- Host-owned signer stays inside the active app surface. This keeps
            the context visible and works unchanged in the companion WebView. -->
-      <RentalPurchaseConsent v-if="!nostrBridge.showConsent.value && !showIdentityPicker && !registrationBridge.request.value" :request="rentalBridge.request.value" :quote="rentalBridge.quote.value" :phase="rentalBridge.phase.value" :error="rentalBridge.error.value" @cancel-unpaid="rentalBridge.cancelUnpaid" @review="rentalBridge.review" @approve="rentalBridge.approve" @cancel="rentalBridge.cancel" />
+      <RentalPurchaseConsent v-if="!nostrBridge.showConsent.value && !showIdentityPicker && !registrationBridge.request.value" :request="rentalBridge.request.value" :quote="rentalBridge.quote.value" :phase="rentalBridge.phase.value" :progress="rentalBridge.progress.value" :error="rentalBridge.error.value" @cancel-unpaid="rentalBridge.cancelUnpaid" @review="rentalBridge.review" @approve="rentalBridge.approve" @cancel="rentalBridge.cancel" />
       <MediaRegistrationConsent v-if="!nostrBridge.showConsent.value"
         :request="registrationBridge.request.value" :phase="registrationBridge.phase.value"
         :error="registrationBridge.error.value" @approve="registrationBridge.approve" @resolve="registrationBridge.approveResolution" @cancel="registrationBridge.cancel" />

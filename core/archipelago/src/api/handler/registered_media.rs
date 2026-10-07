@@ -4,7 +4,6 @@ use crate::{content_server::ByteRange, identity::NodeIdentity, registered_media:
 use anyhow::{Context, Result};
 use hyper::{Body, HeaderMap, Response, StatusCode};
 use std::sync::Arc;
-use tokio::io::{AsyncReadExt, AsyncSeekExt};
 
 fn route(path: &str) -> Result<(&str, &str)> {
     let (content, purchase) = path
@@ -46,6 +45,125 @@ fn denied(message: &'static str) -> Response<Body> {
 }
 
 impl ApiHandler {
+    pub(super) async fn handle_rental_control(
+        &self,
+        mut request: hyper::Request<Body>,
+    ) -> Result<Response<Body>> {
+        use hyper::body::HttpBody;
+        #[derive(serde::Deserialize)]
+        #[serde(deny_unknown_fields)]
+        struct Control {
+            capability: String,
+            ready_id: Option<String>,
+            #[serde(default)]
+            retry: bool,
+        }
+        let path = request.uri().path().to_owned();
+        let (base, action) = path.rsplit_once('/').context("Invalid rental action")?;
+        anyhow::ensure!(
+            matches!(action, "prepare" | "start") && request.method() == hyper::Method::POST,
+            "Invalid rental action"
+        );
+        let (content, purchase) = route(base)?;
+        let bytes = tokio::time::timeout(std::time::Duration::from_secs(15), async {
+            let mut bytes = Vec::new();
+            while let Some(chunk) = request.body_mut().data().await {
+                let chunk = chunk?;
+                anyhow::ensure!(
+                    bytes
+                        .len()
+                        .checked_add(chunk.len())
+                        .is_some_and(|n| n <= 16 * 1024),
+                    "Rental request too large"
+                );
+                bytes.extend_from_slice(&chunk);
+            }
+            Ok::<_, anyhow::Error>(bytes)
+        })
+        .await
+        .context("Rental request timed out")??;
+        let audience = crate::identity::did_key_from_pubkey_hex(&self.self_pubkey_hex)?;
+        let buyer = crate::content_auth::authenticate_request(
+            request.headers(),
+            &audience,
+            &hyper::Method::POST,
+            &path,
+            &bytes,
+            chrono::Utc::now().timestamp(),
+        )?;
+        let input: Control = serde_json::from_slice(&bytes)?;
+        let identity =
+            Arc::new(NodeIdentity::load_existing(&self.config.data_dir.join("identity")).await?);
+        anyhow::ensure!(identity.did_key()? == audience, "Node identity changed");
+        let result = if action == "prepare" {
+            anyhow::ensure!(input.ready_id.is_none(), "Prepare does not start a rental");
+            let prior = crate::registered_media::paid_window(
+                &self.config.data_dir,
+                &identity,
+                content,
+                purchase,
+                &buyer,
+                &input.capability,
+            )
+            .await?;
+            let metadata = crate::registered_media::registered_metadata(
+                &self.config.data_dir,
+                &identity,
+                content,
+            )?;
+            anyhow::ensure!(
+                prior
+                    .as_ref()
+                    .is_none_or(|window| clock() >= window.started_at),
+                "Rental clock moved backwards"
+            );
+            if let Some(window) = prior.as_ref().filter(|window| clock() >= window.expires_at) {
+                serde_json::json!({"state":"expired", "viewing_seconds":metadata.0.viewing_seconds,"started_at":window.started_at,"expires_at":window.expires_at})
+            } else {
+                let state = crate::registered_media::prepare_paid(
+                    self.config.data_dir.clone(),
+                    identity,
+                    content.into(),
+                    purchase.into(),
+                    buyer,
+                    input.capability,
+                    input.retry,
+                )
+                .await?;
+                let mut result = serde_json::to_value(state)?;
+                result["viewing_seconds"] = serde_json::json!(metadata.0.viewing_seconds);
+                result["started_at"] =
+                    serde_json::json!(prior.as_ref().map(|window| window.started_at));
+                result["expires_at"] =
+                    serde_json::json!(prior.as_ref().map(|window| window.expires_at));
+                result
+            }
+        } else {
+            anyhow::ensure!(!input.retry, "Start cannot retry verification");
+            let ready_id = input
+                .ready_id
+                .context("Media must be ready before explicit Start")?;
+            let window = crate::registered_media::start_paid(
+                self.config.data_dir.clone(),
+                identity,
+                content.into(),
+                purchase.into(),
+                buyer,
+                input.capability,
+                ready_id,
+            )
+            .await?;
+            anyhow::ensure!(clock() >= window.started_at, "Rental clock moved backwards");
+            serde_json::json!({"state": if clock() >= window.expires_at {"expired"} else {"started"},
+                "started_at":window.started_at,"expires_at":window.expires_at})
+        };
+        Ok(build_response(
+            StatusCode::OK,
+            "application/json",
+            Body::from(serde_json::to_vec(&result)?),
+        ))
+    }
+
     pub(super) async fn handle_registered_rental(
         &self,
         path: &str,
@@ -102,7 +220,7 @@ impl ApiHandler {
         let selected = content.to_owned();
         let key = identity.clone();
         let metadata = tokio::task::spawn_blocking(move || {
-            crate::registered_media::registered_terms(&data, &key, &selected)
+            crate::registered_media::registered_metadata(&data, &key, &selected)
         })
         .await?;
         let (receipt, _) = match metadata {
@@ -160,11 +278,9 @@ async fn rental_response(
     let started = opened.started_at;
     let expires = opened.expires_at;
     let (start, length) = range.map_or((0, total), |(start, end)| (start, end - start + 1));
-    let mut file = tokio::fs::File::from_std(opened.file);
-    file.seek(std::io::SeekFrom::Start(start)).await?;
     let chunks = futures_util::stream::try_unfold(
-        (file, length, now),
-        move |(mut file, left, now)| async move {
+        (opened.file, opened.verification, start, length, now),
+        move |(mut file, verification, position, left, now)| async move {
             if left == 0 {
                 return Ok::<_, std::io::Error>(None);
             }
@@ -175,15 +291,20 @@ async fn rental_response(
                     "Rental window ended",
                 ));
             }
-            let mut bytes = vec![0; left.min(64 * 1024) as usize];
-            let count = tokio::time::timeout(
-                std::time::Duration::from_secs(expires - instant),
-                file.read(&mut bytes),
-            )
-            .await
-            .map_err(|_| {
-                std::io::Error::new(std::io::ErrorKind::TimedOut, "Rental window ended")
-            })??;
+            let read = tokio::task::spawn_blocking(move || {
+                let bytes = verification
+                    .index
+                    .read_slice(&mut file, position, left.min(64 * 1024) as usize)
+                    .map_err(std::io::Error::other)?;
+                Ok::<_, std::io::Error>((file, verification, bytes))
+            });
+            let (file, verification, bytes) =
+                tokio::time::timeout(std::time::Duration::from_secs(expires - instant), read)
+                    .await
+                    .map_err(|_| {
+                        std::io::Error::new(std::io::ErrorKind::TimedOut, "Rental window ended")
+                    })?
+                    .map_err(std::io::Error::other)??;
             let instant = now();
             if instant < started || instant >= expires {
                 return Err(std::io::Error::new(
@@ -191,14 +312,11 @@ async fn rental_response(
                     "Rental window ended",
                 ));
             }
-            if count == 0 {
-                return Err(std::io::Error::new(
-                    std::io::ErrorKind::UnexpectedEof,
-                    "Registered snapshot ended early",
-                ));
-            }
-            bytes.truncate(count);
-            Ok(Some((bytes, (file, left - count as u64, now))))
+            let count = bytes.len() as u64;
+            Ok(Some((
+                bytes,
+                (file, verification, position + count, left - count, now),
+            )))
         },
     );
     let mut response = Response::builder()
@@ -257,10 +375,19 @@ mod tests {
         );
     }
     fn opened(size: u64) -> OpenedMedia {
-        let file = tempfile::tempfile().unwrap();
+        use sha2::{Digest, Sha256};
+        let mut file = tempfile::tempfile().unwrap();
         file.set_len(size).unwrap();
+        let binding = crate::rental_chunk_index::Binding {
+            content_id: format!("registered_{}", uuid::Uuid::new_v4()),
+            receipt_sha256: "ab".repeat(32),
+            full_sha256: hex::encode(Sha256::digest(vec![0; size as usize])),
+            size,
+        };
+        let index = crate::rental_chunk_index::Index::scan(&mut file, binding, |_| Ok(())).unwrap();
         OpenedMedia {
             file,
+            verification: crate::rental_readiness::Ready::fixture(index),
             size_bytes: size,
             mime_type: "video/mp4".into(),
             started_at: 1000,

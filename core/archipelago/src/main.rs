@@ -83,6 +83,8 @@ mod port_allocator;
 mod prepared_media;
 mod rate_limit;
 mod registered_media;
+mod rental_chunk_index;
+mod rental_readiness;
 pub mod seed;
 mod server;
 mod session;

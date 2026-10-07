@@ -23,7 +23,8 @@ impl ApiHandler {
             request.method() == Method::POST
                 && matches!(
                     path.as_str(),
-                    protocol::OFFER_ROUTE
+                    protocol::PREPARE_OFFER_ROUTE
+                        | protocol::OFFER_ROUTE
                         | protocol::ACCEPT_ROUTE
                         | protocol::SETTLE_ROUTE
                         | protocol::STATUS_ROUTE
@@ -59,6 +60,32 @@ impl ApiHandler {
         )?;
         let data_dir = &self.config.data_dir;
         let result = match path.as_str() {
+            protocol::PREPARE_OFFER_ROUTE => {
+                #[derive(Deserialize)]
+                #[serde(deny_unknown_fields)]
+                struct Prepare {
+                    content_id: String,
+                    #[serde(default)]
+                    retry: bool,
+                }
+                let input: Prepare = serde_json::from_slice(&bytes)?;
+                let identity = std::sync::Arc::new(
+                    NodeIdentity::load_existing(&data_dir.join("identity")).await?,
+                );
+                anyhow::ensure!(identity.did_key()? == audience, "Node identity changed");
+                let root = data_dir.clone();
+                serde_json::to_value(
+                    tokio::task::spawn_blocking(move || {
+                        crate::registered_media::prepare_registered(
+                            root,
+                            identity,
+                            &input.content_id,
+                            input.retry,
+                        )
+                    })
+                    .await??,
+                )?
+            }
             protocol::OFFER_ROUTE => {
                 let body: OfferRequest = serde_json::from_slice(&bytes)?;
                 anyhow::ensure!(

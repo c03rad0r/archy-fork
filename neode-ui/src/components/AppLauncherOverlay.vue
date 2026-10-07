@@ -181,7 +181,7 @@
               </div>
             </Transition>
 
-            <RentalPurchaseConsent v-if="!store.showConsent && !showIdentityPicker && !store.registrationRequest" :request="store.rentalRequest" :quote="store.rentalQuote" :phase="store.rentalPhase" :error="store.rentalError" @cancel-unpaid="store.cancelUnpaidRental" @review="store.reviewRental" @approve="store.approveRental" @cancel="store.cancelRental" />
+            <RentalPurchaseConsent v-if="!store.showConsent && !showIdentityPicker && !store.registrationRequest" :request="store.rentalRequest" :quote="store.rentalQuote" :phase="store.rentalPhase" :progress="store.rentalProgress" :error="store.rentalError" @cancel-unpaid="store.cancelUnpaidRental" @review="store.reviewRental" @approve="store.approveRental" @cancel="store.cancelRental" />
             <MediaRegistrationConsent v-if="!store.showConsent"
               :request="store.registrationRequest" :phase="store.registrationPhase" :error="store.registrationError"
               @approve="store.approveRegistration" @resolve="store.approveRegistrationResolution" @cancel="store.cancelRegistration" />

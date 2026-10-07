@@ -12,6 +12,12 @@ pub(crate) trait PurchaseTransport: Send + Sync {
     /// This identity is the independently verified peer binding, not response JSON.
     fn seller_did(&self) -> &str;
     fn seller_onion(&self) -> &str;
+    fn prepare_offer(
+        &self,
+        _content_id: &str,
+    ) -> impl Future<Output = Result<Option<(u64, u64)>>> + Send {
+        async { Ok(None) }
+    }
     fn offer(&self, id: &str, content_id: &str) -> impl Future<Output = Result<Offer>> + Send;
     fn accept(&self, envelope: &Envelope) -> impl Future<Output = Result<Accepted>> + Send;
     fn status(&self, envelope: &Envelope) -> impl Future<Output = Result<SellerStatus>> + Send;
@@ -20,6 +26,10 @@ pub(crate) trait PurchaseTransport: Send + Sync {
 }
 #[derive(Clone)]
 pub(crate) enum ReadyPurchase {
+    Preparing {
+        completed_bytes: u64,
+        total_bytes: u64,
+    },
     AwaitingConfirmation {
         operation_id: String,
         envelope_sha256: String,
@@ -210,6 +220,16 @@ pub(crate) async fn purchase_bound(
             !unresolved_owned,
             "Prior purchase delivery needs recovery; no new payment operation was created"
         );
+        if content_id.starts_with("registered_") {
+            if let Some((completed_bytes, total_bytes)) =
+                transport.prepare_offer(content_id).await?
+            {
+                return Ok(ReadyPurchase::Preparing {
+                    completed_bytes,
+                    total_bytes,
+                });
+            }
+        }
         let id = uuid::Uuid::new_v4().to_string();
         let offer = transport.offer(&id, content_id).await?;
         offer.validate()?;

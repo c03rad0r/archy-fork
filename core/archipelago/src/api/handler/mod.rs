@@ -1,16 +1,16 @@
-mod purchase;
-mod cloud_purchase;
 mod blob;
 mod cdp;
+mod cloud_purchase;
 mod content;
-mod registered_media;
-mod rental_playback;
 mod dwn;
 mod model_proxy;
 mod node_message;
 mod proxy;
+mod purchase;
+mod registered_media;
 mod remote_input;
 mod remote_relay;
+mod rental_playback;
 mod routstr_proxy;
 mod websocket;
 
@@ -389,7 +389,9 @@ impl ApiHandler {
         let method = req.method().clone();
 
         if path.starts_with("/api/rental-playback/") {
-            return self.handle_local_rental_request(&method, &path, req.headers()).await;
+            return self
+                .handle_local_rental_request(&method, &path, req.headers())
+                .await;
         }
 
         // Handle CORS preflight for all routes
@@ -453,11 +455,26 @@ impl ApiHandler {
         }
 
         // Purchase routes bound the original body before the generic buffer.
-        if method == Method::POST && matches!(path.as_str(),
-            crate::content_purchase_protocol::OFFER_ROUTE | crate::content_purchase_protocol::ACCEPT_ROUTE
-            | crate::content_purchase_protocol::SETTLE_ROUTE | crate::content_purchase_protocol::STATUS_ROUTE
-            | crate::content_purchase_protocol::CANCEL_ROUTE) {
+        if method == Method::POST
+            && matches!(
+                path.as_str(),
+                crate::content_purchase_protocol::PREPARE_OFFER_ROUTE
+                    | crate::content_purchase_protocol::OFFER_ROUTE
+                    | crate::content_purchase_protocol::ACCEPT_ROUTE
+                    | crate::content_purchase_protocol::SETTLE_ROUTE
+                    | crate::content_purchase_protocol::STATUS_ROUTE
+                    | crate::content_purchase_protocol::CANCEL_ROUTE
+            )
+        {
             return self.handle_purchase_request(req).await;
+        }
+
+        if method == Method::POST
+            && path.starts_with("/content/registered_")
+            && path.contains("/rental/")
+            && (path.ends_with("/prepare") || path.ends_with("/start"))
+        {
+            return self.handle_rental_control(req).await;
         }
 
         // Convert body to bytes for non-WS routes
@@ -649,21 +666,31 @@ impl ApiHandler {
             // falls outside `connect-src`). Session-authenticated so only
             // the logged-in node owner can spin up fetches.
             (Method::GET, "/api/node-app-catalog") => {
-                if !self.is_authenticated(&headers).await { return Ok(Self::unauthorized()); }
+                if !self.is_authenticated(&headers).await {
+                    return Ok(Self::unauthorized());
+                }
                 let data_dir = self.config.data_dir.clone();
                 let result = tokio::task::spawn_blocking(move || {
                     crate::container::node_catalog::verified_body(&data_dir)
-                }).await.unwrap_or_else(|error| Err(anyhow::anyhow!(error)));
+                })
+                .await
+                .unwrap_or_else(|error| Err(anyhow::anyhow!(error)));
                 let (status, body) = match result {
                     Ok(Some(body)) => (StatusCode::OK, body),
                     Ok(None) => (StatusCode::NOT_FOUND, "{}".to_owned()),
                     Err(error) => {
                         tracing::warn!("Node demo catalog rejected: {error}");
-                        (StatusCode::CONFLICT, "{\"error\":\"Node demo catalog is unavailable\"}".to_owned())
-                    },
+                        (
+                            StatusCode::CONFLICT,
+                            "{\"error\":\"Node demo catalog is unavailable\"}".to_owned(),
+                        )
+                    }
                 };
-                Ok(Response::builder().status(status).header("Content-Type", "application/json")
-                    .header("Cache-Control", "private, no-store").body(hyper::Body::from(body))?)
+                Ok(Response::builder()
+                    .status(status)
+                    .header("Content-Type", "application/json")
+                    .header("Cache-Control", "private, no-store")
+                    .body(hyper::Body::from(body))?)
             }
 
             (Method::GET, "/api/app-catalog") => {

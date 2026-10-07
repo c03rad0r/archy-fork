@@ -2214,6 +2214,10 @@ impl crate::content_purchase_caller::PurchaseTransport for PurchaseTestTransport
     fn seller_onion(&self) -> &str {
         "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.onion"
     }
+    async fn prepare_offer(&self, content_id: &str) -> anyhow::Result<Option<(u64, u64)>> {
+        // A registered movie still being hashed, without asking the fake mint.
+        Ok(content_id.starts_with("registered_").then_some((3, 16)))
+    }
     async fn offer(
         &self,
         id: &str,
@@ -2339,6 +2343,36 @@ async fn full_caller_recovers_lost_acceptance_and_settlement_without_another_pay
         lose_settle: AtomicBool::new(true),
         offers: Default::default(),
     };
+    let preparing_id = format!("registered_{}", uuid::Uuid::new_v4());
+    for _ in 0..3 {
+        assert!(matches!(
+            purchase(
+                buyer.path(),
+                &buyer_did,
+                &preparing_id,
+                None,
+                8,
+                None,
+                &transport
+            )
+            .await
+            .unwrap(),
+            ReadyPurchase::Preparing {
+                completed_bytes: 3,
+                total_bytes: 16
+            }
+        ));
+    }
+    assert!(transport.offers.lock().unwrap().is_empty());
+    assert!(mint.requests.lock().unwrap().is_empty());
+    assert_eq!(load_wallet(buyer.path()).await.unwrap().balance(), 8);
+    assert!(crate::content_purchase::Journal::open(buyer.path())
+        .await
+        .unwrap()
+        .find_buyers(&buyer_did, &transport.template.seller_did, &preparing_id)
+        .await
+        .unwrap()
+        .is_empty());
     assert!(purchase(
         buyer.path(),
         &buyer_did,

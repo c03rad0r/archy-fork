@@ -608,7 +608,7 @@ export const useAppLauncherStore = defineStore('appLauncher', () => {
     approveConsent,
     denyConsent,
     setNativeIdentityBusy: (busy: boolean) => { nativeIdentityBusy.value = busy },
-    rentalRequest: rentalBridge.request, rentalQuote: rentalBridge.quote, rentalPhase: rentalBridge.phase,
+    rentalRequest: rentalBridge.request, rentalQuote: rentalBridge.quote, rentalPhase: rentalBridge.phase, rentalProgress: rentalBridge.progress,
     cancelUnpaidRental: rentalBridge.cancelUnpaid, rentalError: rentalBridge.error, reviewRental: rentalBridge.review, approveRental: rentalBridge.approve, cancelRental: rentalBridge.cancel,
     registrationRequest: registrationBridge.request,
     registrationPhase: registrationBridge.phase,

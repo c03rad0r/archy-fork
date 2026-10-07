@@ -51,6 +51,9 @@ impl RpcHandler {
         )
         .await?;
         match result {
+            ReadyPurchase::Preparing { .. } => {
+                anyhow::bail!("Ordinary purchase cannot prepare a timed rental")
+            }
             ReadyPurchase::AwaitingConfirmation {
                 operation_id,
                 envelope_sha256,
@@ -127,6 +130,8 @@ impl RpcHandler {
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct RentalParams {
+    #[serde(default)]
+    retry_preparation: bool,
     seller_did: String,
     content_id: String,
     expected_sha256: String,
@@ -168,8 +173,9 @@ impl RpcHandler {
             &params.seller_did,
         )
         .await?;
-        let transport =
-            FipsPurchaseTransport::load(self.config.data_dir.clone(), onion.clone()).await?;
+        let transport = FipsPurchaseTransport::load(self.config.data_dir.clone(), onion.clone())
+            .await?
+            .retry_preparation(params.retry_preparation);
         let expected = caller::ExpectedRental {
             seller_did: params.seller_did,
             content_id: params.content_id.clone(),
@@ -189,6 +195,11 @@ impl RpcHandler {
         )
         .await?
         {
+            ReadyPurchase::Preparing {
+                completed_bytes,
+                total_bytes,
+            } => Ok(serde_json::json!({
+                "state":"preparing", "completed_bytes":completed_bytes,"total_bytes":total_bytes})),
             ReadyPurchase::AwaitingConfirmation {
                 operation_id,
                 envelope_sha256,

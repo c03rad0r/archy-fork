@@ -772,3 +772,44 @@ The separate readiness/index work must remove those scans from request paths,
 verify chunks and start the original clock only after explicit ready/start.
 IndeeHub private app packaging, distributed announcement delivery and actual
 registration/payment/playback acceptance remain open.
+
+### Separate rental readiness candidate — not yet qualified or deployed
+
+The `work/rental-readiness` checkout builds on `49703d7e`; it does not change the
+qualified ordinary-purchase deployment. Large-film rental activation remains
+blocked by the documented full-file hashing and first-lease timeout problem.
+
+The draft separates bounded background verification from explicit Start. A
+completed scan must match the original producer receipt's full SHA before the
+node signs a 64 KiB chunk index. Signed indexes bind the receipt, full hash, size,
+content identity and chunk hashes. At most two verification jobs run; index
+memory and cached jobs are bounded. Preparation can finish after a disconnected
+request but cannot start a lease. New registered purchase requests return
+preparation progress before allocating an offer UUID or spending funds.
+
+Authenticated Start commits the original viewing window once. A lost response
+is recovered using the same purchase, even if its ephemeral readiness ID was
+lost. Metadata and range reads do not initiate whole-file verification or leases.
+Each returned range slice is taken from a complete chunk whose hash was checked
+immediately before delivery. A changed chunk stops delivery; it does not renew
+the window or authorize another payment. Existing signed indexes avoid a full
+scan after restart, but do not establish that every current media byte is still
+present: subsequent corruption remains a recoverable delivery failure.
+
+The added tests cover preparation without a buyer intent or mint request,
+settlement/preparation without a lease, GET refusal before Start, original-window
+replay, repeated range reads with a full-scan counter, signature/index alteration
+and changed chunk rejection. These changes have only passed formatting and diff
+checks so far. Isolated compilation, regression tests, actual large-file timing,
+installed-app consent/Start flows and recovery acceptance are still outstanding.
+
+The matching host draft advertises read-only `archipelagoRental.playbackProtocol`
+2 and requires `request(offer, {playbackProtocol: 2, signal?})`. Paid replies expose
+only protocol, opaque handle, operation ID and known expiry. Separate installed-
+frame `prepare`, `start` and `status` actions revalidate the native app context.
+Only a successful explicit Start returns a playback URL. Preparation progress is
+visible in overlay, app-session and tab-signer consent surfaces. Polling is capped;
+closing, aborting or timing out cancels only its own pending prompt. A payment
+already dispatched remains journaled and is recovered using its original ID.
+The host rejects malformed states, changed observed windows and playback URLs in
+non-started replies. The focused host/provider run passed 29 tests across two files; actual `vue-tsc -b` passed, with all 542 captured host inputs unchanged. Logs are `/tmp/archy-rental-protocol2-host-tests.log` and `/tmp/archy-rental-protocol2-host-typecheck.log`; provenance is `/tmp/archy-rental-protocol2-host-provenance.json`. The rental Rust remains uncompiled pending the combined backend candidate.

@@ -20,8 +20,8 @@ mod interfaces;
 pub(crate) mod lnd;
 mod marketplace;
 mod media_registration;
-mod purchase;
 mod playback;
+mod purchase;
 // pub(crate): 13-10's `assistant::backends::select_backend` reuses
 // `mesh::assistant::detect_ollama()` (D-04) rather than re-probing —
 // matches the existing `pub(crate) mod bitcoin_relay;`/`pub(crate) mod
@@ -113,6 +113,8 @@ fn native_consent_origin_allowed(method: &str, headers: &hyper::HeaderMap, dev_m
             | "content.cancel-purchase"
             | "content.playback-handle"
             | "content.playback-status"
+            | "content.playback-prepare"
+            | "content.playback-start"
     ) || nostr_signing_origin_allowed(headers, dev_mode)
 }
 
@@ -831,6 +833,8 @@ mod nostr_signing_origin_tests {
             "content.cancel-purchase",
             "content.playback-handle",
             "content.playback-status",
+            "content.playback-prepare",
+            "content.playback-start",
         ] {
             assert!(!native_consent_origin_allowed(
                 method,

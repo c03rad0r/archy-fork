@@ -333,6 +333,8 @@ impl RpcHandler {
             "content.indeehub-projects" => self.handle_content_indeehub_projects().await,
             "content.browse-all-peers" => self.handle_content_browse_all_peers().await,
             "content.playback-handle" => self.handle_playback_handle(params, session_token).await,
+            "content.playback-prepare" => self.handle_playback_prepare(params, session_token).await,
+            "content.playback-start" => self.handle_playback_start(params, session_token).await,
             "content.playback-status" => self.handle_playback_status(params, session_token).await,
             "content.rental-purchase" => self.handle_content_rental_purchase(params).await,
             "content.purchase" => self.handle_content_purchase(params).await,
