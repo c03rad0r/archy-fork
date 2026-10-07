@@ -18,8 +18,9 @@ The legacy IndeeHub controller runs under the same inherited lifecycle lock and
 operation-owned reconciliation holds. Original writable layers are captured
 before any destructive stop. The controller fences ingress, drains supported
 legacy work, takes coherent quiescent volume/database backups and retains the
-fence through cutover or recovery. Its exact source hash must match the separately
-installed script; a backend binary alone does not install the controller.
+fence through cutover or recovery. Its exact source hash must match the installed script. Current binary startup
+promotes its embedded controller before recovery/reconciliation, including over
+an older runtime payload; the updater still verifies the exact on-disk hash.
 
 Completed updates and verified runtime restorations publish exact unit recipes
 before releasing holds. Routine drift reconciliation validates those recipes;
@@ -150,7 +151,7 @@ changes a catalog, enables registration/publication, or starts/stops an app:
 Binary startup now promotes its exact embedded maintenance controller before
 recovery/reconciliation, including when an older dashboard payload is installed.
 The updater still checks the on-disk helper hash against the binary. These source
-changes are undergoing full isolated backend qualification; they have not been
+changes passed full isolated backend qualification below; they have not been
 applied to Yaya. The full adapter fixture is prepared in a separate outbound-isolated
 QEMU copy-on-write VM, using public base images, the verified tracked baseline
 catalog and newly generated fixture credentials; no live app metadata/data is copied.
