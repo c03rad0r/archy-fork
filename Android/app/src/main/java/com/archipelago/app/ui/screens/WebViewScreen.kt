@@ -612,6 +612,7 @@ fun WebViewScreen(
     meshFallbackUrl: String? = null,
 ) {
     val fullscreen = rememberWebViewFullscreen()
+    val cloudPip = rememberCloudVideoPip(fullscreen)
     val downloads = rememberWebViewDownloads()
     var isLoading by remember { mutableStateOf(true) }
     // First kiosk load (often over the FIPS mesh) gets the full branded
@@ -915,6 +916,7 @@ fun WebViewScreen(
                         cookieManager.setAcceptThirdPartyCookies(this, true)
 
                         applyArchipelagoSettings()
+                        cloudPip.attach(this, listOfNotNull(serverUrl, meshFallbackUrl))
                         setDownloadListener(downloads)
                         settings.apply {
                             setSupportMultipleWindows(true)  // enables onCreateWindow for window.open
@@ -1089,6 +1091,7 @@ fun WebViewScreen(
 
                         webViewClient = object : WebViewClient() {
                             override fun onPageStarted(view: WebView?, url: String?, favicon: Bitmap?) {
+                                cloudPip.reset()
                                 isLoading = true
                                 hasError = false
                                 // New document — the injected safe-area style is
@@ -1188,7 +1191,7 @@ fun WebViewScreen(
                                 fullscreen.show(view, callback)
                             }
 
-                            override fun onHideCustomView() = fullscreen.hide()
+                            override fun onHideCustomView() { cloudPip.reset(); fullscreen.hide() }
 
                             override fun onProgressChanged(view: WebView?, newProgress: Int) {
                                 loadProgress = newProgress

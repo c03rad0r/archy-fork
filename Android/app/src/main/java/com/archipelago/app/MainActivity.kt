@@ -14,6 +14,13 @@ import com.archipelago.app.ui.theme.ArchipelagoTheme
 import kotlinx.coroutines.flow.MutableStateFlow
 
 class MainActivity : ComponentActivity() {
+    internal var cloudVideoPip: com.archipelago.app.ui.screens.CloudVideoPip? = null
+    override fun onPictureInPictureModeChanged(active: Boolean, config: android.content.res.Configuration) {
+        super.onPictureInPictureModeChanged(active, config)
+        cloudVideoPip?.modeChanged(active)
+    }
+    override fun onStop() { cloudVideoPip?.stopped(); super.onStop() }
+
 
     // Pairing deep link (archipelago://pair?...) from the launch intent or a
     // later one (launchMode=singleTask). Consumed by AppNavHost.

@@ -13,6 +13,25 @@ import org.robolectric.annotation.Config
 @RunWith(RobolectricTestRunner::class)
 @Config(manifest = Config.NONE, sdk = [28, 35])
 class WebViewFullscreenTest {
+    @Test fun closingVideoInPipKeepsOpaqueCoverUntilActivityReturns() {
+        val lifecycle = Robolectric.buildActivity(ComponentActivity::class.java).setup()
+        try {
+            val activity = lifecycle.get()
+            val fullscreen = WebViewFullscreen(activity)
+            val video = View(activity)
+            var hidden = 0
+            fullscreen.show(video) { hidden++ }
+            assertTrue(activity.enterPictureInPictureMode(android.app.PictureInPictureParams.Builder().build()))
+            assertTrue(activity.isInPictureInPictureMode)
+            fullscreen.hide()
+            assertNull(video.parent)
+            assertTrue(fullscreen.isActive)
+            assertEquals(1, hidden)
+            fullscreen.hide()
+            assertEquals(1, hidden)
+        } finally { lifecycle.pause().stop().destroy() }
+    }
+
     @Test fun backExitsFullscreenWithoutFinishingActivityAndNotifiesOnce() {
         val lifecycle = Robolectric.buildActivity(ComponentActivity::class.java).setup()
         try {

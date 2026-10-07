@@ -29,6 +29,8 @@ internal class WebViewFullscreen(private val activity: ComponentActivity?) {
     private var overlay: FrameLayout? = null
     private var callback: WebChromeClient.CustomViewCallback? = null
     private var back: OnBackPressedCallback? = null
+    val isActive: Boolean get() = overlay != null
+    fun bounds(rect: android.graphics.Rect): Boolean = overlay?.getGlobalVisibleRect(rect) == true
     private var visibleBars = 0
     private var originalBehavior = 0
 
@@ -71,6 +73,22 @@ internal class WebViewFullscreen(private val activity: ComponentActivity?) {
 
     fun hide() {
         val host = overlay ?: return
+        if (activity?.isInPictureInPictureMode == true) {
+            // A navigation/logout/custom-view exit must never expose the node
+            // management UI in the small OS window. Keep a black cover until
+            // the activity leaves PiP; the ordinary hide then removes it.
+            val notify = callback; callback = null
+            back?.remove(); back = null
+            host.keepScreenOn = false; host.removeAllViews()
+            host.addView(android.widget.TextView(host.context).apply {
+                text = "Video paused. Expand to return."
+                setTextColor(Color.WHITE)
+                gravity = android.view.Gravity.CENTER
+                contentDescription = "Video paused. Use picture-in-picture controls to expand or close."
+            }, FrameLayout.LayoutParams(-1, -1))
+            notify?.onCustomViewHidden()
+            return
+        }
         // Clear first: Chromium may synchronously call onHideCustomView again.
         overlay = null
         val notify = callback
