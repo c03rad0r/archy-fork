@@ -129,22 +129,24 @@ export function appRequiresHostFrame(id: string, installedVersion?: string): boo
     && entry.manifest?.app?.metadata?.launch?.requires_host_frame === true
     && entry.manifest.app.metadata.launch.open_in_new_tab !== true)
 }
-let launchPolicyRequest: Promise<void> | null = null
+let launchPolicyRequest: Promise<boolean> | null = null
 export function appLaunchPolicyLoaded(): boolean { return signedCatalogCache !== null }
 /** Read only the authenticated daemon-verified catalog; community fallback
  * metadata must never grant a native integration. */
-export async function ensureAppLaunchPolicy(): Promise<void> {
-  if (signedCatalogCache) return
+export async function ensureAppLaunchPolicy(): Promise<boolean> {
+  if (signedCatalogCache) return true
   if (!launchPolicyRequest) launchPolicyRequest = (async () => {
     try {
       const response = await fetch('/api/app-catalog', {credentials:'include',signal:AbortSignal.timeout(5000)})
-      if (!response.ok) return
+      if (!response.ok) return false
       const value = await response.json() as SignedAppCatalog
-      if (value.apps && !Array.isArray(value.apps)) signedCatalogCache = value
-    } catch { /* Unavailable policy cannot authorize a new integration. */ }
+      if (!value.apps || typeof value.apps !== 'object' || Array.isArray(value.apps)) return false
+      signedCatalogCache = value
+      return true
+    } catch { return false /* Unavailable policy cannot authorize a new integration. */ }
     finally { launchPolicyRequest = null }
   })()
-  await launchPolicyRequest
+  return await launchPolicyRequest
 }
 
 /** Resolve node-owned launch policy independently of the public storefront.

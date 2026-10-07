@@ -99,6 +99,8 @@ export const CREDENTIAL_INTERSTITIAL_APPS = new Set([
 ])
 
 interface LaunchOptions {
+  /** Basic offline launch grants no optional media integration. */
+  basicFrameOnly?: boolean
   path?: string
   /** The shared interstitial already ran and the user pressed Continue. */
   skipCredentialPrompt?: boolean
@@ -213,7 +215,7 @@ export const useAppLauncherStore = defineStore('appLauncher', () => {
     credentials: [] as AppCredential[],
     copied: '',
   })
-  let pendingCredentialLaunch: { appId: string; path?: string } | null = null
+  let pendingCredentialLaunch: { appId: string; opts: LaunchOptions } | null = null
   let credentialGeneration = 0
   let previousActiveElement: HTMLElement | null = null
 
@@ -223,6 +225,7 @@ export const useAppLauncherStore = defineStore('appLauncher', () => {
   /** Optional deep-link path inside the active app (e.g. /tx/<hash> for mempool) */
   const panelPath = ref<string | null>(null)
   let launchGeneration = 0
+  let mediaVersion: string | null = null
 
   function openSessionNow(appId: string, opts: LaunchOptions = {}) {
     const pkg = useAppStore().data?.['package-data']?.[appId]
@@ -237,7 +240,8 @@ export const useAppLauncherStore = defineStore('appLauncher', () => {
     // phone controls and better performance. Apps with manifest-declared host
     // integrations stay in the dashboard frame so their parent bridge remains
     // connected (for example GitWorkshop's consent-gated NIP-07 provider).
-    if (!IS_DEMO && isCompanionApp() && !HOST_FRAME_APPS.has(appId) && !appRequiresHostFrame(appId, pkg?.manifest.version) && !appHasMediaBridge(appId, pkg?.manifest.version)) {
+    const retainedMedia = mediaAppId.value === appId && mediaVersion === pkg?.manifest.version
+    if (!IS_DEMO && isCompanionApp() && !opts.basicFrameOnly && !retainedMedia && !HOST_FRAME_APPS.has(appId) && !appRequiresHostFrame(appId, pkg?.manifest.version) && !appHasMediaBridge(appId, pkg?.manifest.version)) {
       const runtimeUrl = useAppStore().data?.['package-data']?.[appId]?.installed?.['interface-addresses']?.main?.['lan-address'] || undefined
       const launchUrl = directAppUrl(appId) || resolveAppUrl(appId, opts.path, runtimeUrl)
       if (launchUrl) {
@@ -274,7 +278,7 @@ export const useAppLauncherStore = defineStore('appLauncher', () => {
     // page never changes: panel mode renders beside the page, overlay and
     // fullscreen modes render above it (AppSession styles per display mode).
     // Closing always returns the user exactly where they launched from.
-    if (pkg && appHasMediaBridge(appId, pkg.manifest.version)) mediaAppId.value = appId
+    if (!opts.basicFrameOnly && pkg && appHasMediaBridge(appId, pkg.manifest.version)) { mediaAppId.value = appId; mediaVersion = pkg.manifest.version }
     panelPath.value = opts.path ?? null
     panelAppId.value = appId
   }
@@ -284,6 +288,12 @@ export const useAppLauncherStore = defineStore('appLauncher', () => {
    * Portainer first-run token entirely. */
   function openSession(appId: string, opts: LaunchOptions = {}, checkedPolicy = false) {
     const generation = ++launchGeneration
+    cancelCredentialLaunch()
+    const installed = useAppStore().data?.['package-data']?.[appId]
+    if (mediaAppId.value === appId && mediaVersion === installed?.manifest.version) {
+      openSessionNow(appId, opts)
+      return
+    }
     if (appId.startsWith('node-demo-') && !nodeAppIsAvailable(appId)) {
       useToast().info('Loading this node’s demo app…')
       void ensureNodeAppAvailable(appId).then(available => {
@@ -296,8 +306,28 @@ export const useAppLauncherStore = defineStore('appLauncher', () => {
       })
       return
     }
-    if (!IS_DEMO && !appId.startsWith('node-demo-') && !checkedPolicy && !appLaunchPolicyLoaded()) {
-      void ensureAppLaunchPolicy().then(() => { if (generation === launchGeneration) openSession(appId, opts, true) })
+    if (!IS_DEMO && !appId.startsWith('node-demo-') && !checkedPolicy && !appLaunchPolicyLoaded() && !HOST_FRAME_APPS.has(appId)) {
+      // Basic use is immediate, including offline. Background policy discovery
+      // must never reload or move a frame the user has already started using.
+      openSession(appId, {...opts,basicFrameOnly:true}, true)
+      const policyGeneration = launchGeneration
+      useToast().info('App opened. Checking optional integration settings…')
+      void ensureAppLaunchPolicy().then(available => {
+        if (policyGeneration !== launchGeneration) return
+        if (!available) {
+          useToast().action('App opened with basic controls. Optional integration settings are unavailable.',
+            {label:'Retry settings',onClick:()=>{
+              if(policyGeneration !== launchGeneration) return
+              void ensureAppLaunchPolicy().then(recovered=>{
+                if(policyGeneration !== launchGeneration) return
+                if(recovered) useToast().info('Integration settings ready for the next app launch.')
+                else useToast().error('Integration settings remain unavailable. The app is still open.')
+              })
+            }}, {variant:'error'})
+          return
+        }
+        useToast().info('Integration settings ready for the next app launch.')
+      })
       return
     }
     // Home/goal/deep-link launchers do not pass through AppCard.canLaunch.
@@ -309,16 +339,16 @@ export const useAppLauncherStore = defineStore('appLauncher', () => {
       return
     }
     if (!opts.skipCredentialPrompt && CREDENTIAL_INTERSTITIAL_APPS.has(appId)) {
-      void prepareCredentialLaunch(appId, opts.path)
+      void prepareCredentialLaunch(appId, opts)
       return
     }
     openSessionNow(appId, opts)
   }
 
-  async function prepareCredentialLaunch(appId: string, path?: string) {
+  async function prepareCredentialLaunch(appId: string, opts: LaunchOptions) {
     const generation = ++credentialGeneration
     const appName = useAppStore().data?.['package-data']?.[appId]?.manifest?.title || appId
-    pendingCredentialLaunch = { appId, path }
+    pendingCredentialLaunch = { appId, opts }
     credentialPrompt.value = {
       show: true,
       loading: true,
@@ -348,7 +378,7 @@ export const useAppLauncherStore = defineStore('appLauncher', () => {
     if (!resolved) {
       credentialPrompt.value.show = false
       pendingCredentialLaunch = null
-      openSessionNow(appId, { path, skipCredentialPrompt: true })
+      openSessionNow(appId, { ...opts, skipCredentialPrompt: true })
       return
     }
     credentialPrompt.value = {
@@ -375,7 +405,7 @@ export const useAppLauncherStore = defineStore('appLauncher', () => {
     pendingCredentialLaunch = null
     credentialPrompt.value.show = false
     credentialPrompt.value.loading = false
-    if (pending) openSessionNow(pending.appId, { path: pending.path, skipCredentialPrompt: true })
+    if (pending) openSessionNow(pending.appId, { ...pending.opts, skipCredentialPrompt: true })
   }
 
   async function copyCredential(label: string, value: string) {
@@ -394,6 +424,7 @@ export const useAppLauncherStore = defineStore('appLauncher', () => {
 
   function closePanel() {
     launchGeneration += 1
+    cancelCredentialLaunch()
     panelAppId.value = null
     panelPath.value = null
   }
@@ -512,6 +543,7 @@ export const useAppLauncherStore = defineStore('appLauncher', () => {
   }
 
   function close() {
+    launchGeneration += 1
     bridge.cancelPending()
     registrationBridge.cancel(); rentalBridge.cancel()
     const toRestore = previousActiveElement

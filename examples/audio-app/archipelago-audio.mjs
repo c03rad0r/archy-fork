@@ -49,7 +49,7 @@ export function attachAudioBridge({ parentOrigin, snapshot, actions, unlocked = 
     if (session) send({type:'archipelago:media-state',session,available:false})
     closed = true; session = null
     host.removeEventListener('message',message); host.removeEventListener('pageshow',ready); host.removeEventListener('pagehide',leave)
-    actions.pause?.()
+    try { Promise.resolve(actions.pause?.()).catch(() => {}) } catch { /* App teardown still releases the bridge. */ }
   }
   function leave(event) { if (!event.persisted) dispose() }
   host.addEventListener('message',message); host.addEventListener('pageshow',ready); host.addEventListener('pagehide',leave)

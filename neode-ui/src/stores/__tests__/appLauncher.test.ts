@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { setActivePinia, createPinia } from 'pinia'
 import { __setSignedCatalogForTests } from '@/views/discover/curatedApps'
 import { nextTick } from 'vue'
+import { useToast } from '@/composables/useToast'
 
 // The signed catalog's embedded manifests decide which ports the app gate
 // fronts (TLS on the same port) — prime the same shape the live catalog
@@ -145,13 +146,14 @@ describe('useAppLauncherStore', () => {
     const previousFetch = globalThis.fetch
     let release!: (value: unknown) => void
     vi.stubGlobal('fetch', vi.fn(() => new Promise(resolve => { release = resolve })))
+    useAppStore().data = {'package-data':{[id]:{state:'running','ui-ready':true,manifest:{id,version:'1'}}}} as never
     const launcher = useAppLauncherStore()
     launcher.openSession(id)
     expect(launcher.panelAppId).toBeNull()
     if (cancel === 'close') launcher.closePanel()
     if (cancel === 'another-app') launcher.openSession('mempool')
     release({ ok: true, json: async () => ({ scope: 'single-node-demo', expires_at: new Date(Date.now() + 60000).toISOString(), apps: {
-      [id]: { version: '1', manifest: { app: { metadata: { launch: { media_controls: 'archipelago-v1' } } } } },
+      [id]: { version: '1', manifest: { app: { id, metadata: { launch: { media_controls: 'archipelago-v1' } } } } },
     } }) })
     await new Promise(resolve => setTimeout(resolve, 0))
     expect(launcher.panelAppId).toBe(cancel === 'none' ? id : cancel === 'another-app' ? 'mempool' : null)
@@ -161,6 +163,30 @@ describe('useAppLauncherStore', () => {
     vi.stubGlobal('fetch', previousFetch)
   })
 
+  it('shows unavailable launch policy with explicit retry and ignores a canceled retry', async()=>{
+    __setSignedCatalogForTests(null)
+    const previousFetch=globalThis.fetch
+    vi.stubGlobal('fetch',vi.fn(async()=>({ok:false})))
+    const launcher=useAppLauncherStore();launcher.openSession('mempool')
+    expect(launcher.panelAppId).toBe('mempool')
+    expect(launcher.mediaAppId).toBeNull()
+    expect(useToast().toasts.value.at(-1)?.message).toContain('Checking')
+    await new Promise(resolve=>setTimeout(resolve,0))
+    const failure=useToast().toasts.value.at(-1)
+    expect(failure?.message).toContain('unavailable');expect(failure?.action?.label).toBe('Retry settings');expect(launcher.panelAppId).toBe('mempool');expect(launcher.mediaAppId).toBeNull()
+    launcher.closePanel();const calls=vi.mocked(fetch).mock.calls.length;failure?.action?.onClick();expect(fetch).toHaveBeenCalledTimes(calls)
+    vi.stubGlobal('fetch',previousFetch)
+  })
+  it.each(['close','another-app'])('does not reopen a late generic launch after %s',async(cancel)=>{
+    __setSignedCatalogForTests(null);const previousFetch=globalThis.fetch
+    let release!:(value:unknown)=>void
+    vi.stubGlobal('fetch',vi.fn(()=>new Promise(resolve=>{release=resolve})))
+    const launcher=useAppLauncherStore();launcher.openSession('filebrowser')
+    if(cancel==='close')launcher.closePanel();else launcher.openSession('mempool')
+    release({ok:true,json:async()=>SIGNED});await new Promise(resolve=>setTimeout(resolve,0))
+    expect(launcher.panelAppId).toBe(cancel==='close'?null:'mempool')
+    vi.stubGlobal('fetch',previousFetch)
+  })
   it('blocks both browser and embedded launch while HTTP is unready', () => {
     const app = useAppStore()
     app.data = { 'package-data': { gitea: { state: 'running', 'ui-ready': false, health: 'healthy', manifest: { id: 'gitea', title: 'Gitea' } } } } as never

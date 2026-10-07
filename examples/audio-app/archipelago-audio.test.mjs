@@ -36,3 +36,10 @@ test('stale queued commands do not control a replacement handshake',async()=>{
   assert.deepEqual(f.calls,[])
   f.bridge.dispose()
 })
+
+test('dispose releases listeners even if the app pause action rejects',async()=>{
+  const handlers=new Map()
+  const host={parent:{postMessage(){}},addEventListener:(name,fn)=>handlers.set(name,fn),removeEventListener:name=>handlers.delete(name)}
+  const bridge=attachAudioBridge({parentOrigin:'https://node.test',host,snapshot:()=>null,actions:{pause:async()=>{throw Error('player already closed')}}})
+  bridge.dispose();await new Promise(setImmediate);assert.equal(handlers.size,0)
+})

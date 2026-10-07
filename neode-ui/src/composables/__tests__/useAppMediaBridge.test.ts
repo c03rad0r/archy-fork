@@ -2,18 +2,18 @@ import { mount } from '@vue/test-utils'
 import { defineComponent, nextTick, ref, shallowRef } from 'vue'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 const fixture = vi.hoisted(() => ({
-  allowed: true,
+  allowed: true, version: '1',
   player: { updateExternal: vi.fn(), detachExternal: vi.fn(), releaseExternal: vi.fn(), setExternalVisible: vi.fn() },
   launcher: { mediaAppId: 'node-demo-v4v' as string | null, panelAppId: null as string | null, openSession: vi.fn() },
 }))
-vi.mock('@/stores/app', () => ({useAppStore:()=>({data:{'package-data':{'node-demo-v4v':{manifest:{version:'1'}}}}})}))
+vi.mock('@/stores/app', () => ({useAppStore:()=>({data:{'package-data':{'node-demo-v4v':{manifest:{get version(){return fixture.version}}}}}})}))
 vi.mock('../useAudioPlayer', () => ({ useAudioPlayer: () => fixture.player }))
 vi.mock('@/stores/appLauncher', () => ({ useAppLauncherStore: () => fixture.launcher }))
 vi.mock('@/views/discover/curatedApps', () => ({ appHasMediaBridge: () => fixture.allowed }))
 import { useAppMediaBridge } from '../useAppMediaBridge'
 
 describe('app media session boundary', () => {
-  beforeEach(() => { vi.clearAllMocks(); fixture.allowed = true; fixture.launcher.mediaAppId = 'node-demo-v4v'; fixture.launcher.panelAppId = null })
+  beforeEach(() => { vi.clearAllMocks(); fixture.version = '1'; fixture.allowed = true; fixture.launcher.mediaAppId = 'node-demo-v4v'; fixture.launcher.panelAppId = null })
   it('checks frame, origin, nonce and finite state before attaching controls', async () => {
     const child = { postMessage: vi.fn() }
     const visible = ref(false)
@@ -61,4 +61,15 @@ it('retains controls and cleanup after catalog expiry but does not admit a new s
  wrapper.unmount();expect(child.postMessage.mock.lastCall![0].command).toBe('pause')
  const outsider={postMessage:vi.fn()};const denied=mount(defineComponent({setup(){const b=useAppMediaBridge(ref('node-demo-v4v'),ref('https://node.test:7475/'),shallowRef({contentWindow:outsider} as unknown as HTMLIFrameElement),ref(false));b.connect();return()=>null}}))
  expect(outsider.postMessage).not.toHaveBeenCalled();denied.unmount()
+})
+
+it('rejects state and commands from the admitted frame after installed version changes',()=>{
+ fixture.version='1';fixture.allowed=true;vi.clearAllMocks()
+ const child={postMessage:vi.fn()};let bridge!:ReturnType<typeof useAppMediaBridge>
+ const wrapper=mount(defineComponent({setup(){bridge=useAppMediaBridge(ref('node-demo-v4v'),ref('https://node.test:7475/'),shallowRef({contentWindow:child} as unknown as HTMLIFrameElement),ref(false));return()=>null}}))
+ bridge.connect();const session=child.postMessage.mock.calls[0]![0].session
+ fixture.version='2'
+ bridge.handle({source:child,origin:'https://node.test:7475',data:{type:'archipelago:media-state',version:1,session,available:true,title:'Old',artist:'Artist',playing:true,position:1,duration:10}} as unknown as MessageEvent)
+ expect(fixture.player.updateExternal).not.toHaveBeenCalled()
+ wrapper.unmount();expect(child.postMessage.mock.lastCall![0].command).toBe('pause');fixture.version='1'
 })
