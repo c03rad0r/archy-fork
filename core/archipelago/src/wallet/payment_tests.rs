@@ -2622,15 +2622,24 @@ async fn rental_catalog_term_mismatch_never_plans_or_creates_buyer_intent() {
     };
     // Preparation checks already-verified signed metadata, without scanning bytes
     // or allocating a quote. Keep this independent of the fake offer response.
-    let metadata: crate::media_registration::Receipt = serde_json::from_value(json!({
-        "version":1,"request_id":uuid::Uuid::new_v4().to_string(),"nonce":"fixture",
-        "app_audience":"indeedhub","node_did":expected.seller_did,
-        "producer":"fixture","project_id":"fixture","price_sats":8,
-        "viewing_seconds":60,"expires_at":now+300,"content_id":"registered_film",
-        "sha256":"ab".repeat(32),"size_bytes":"16","payment_methods":["cashu"],
-        "issued_at":now,"signature":"verified by registration boundary"
-    }))
-    .unwrap();
+    let metadata = crate::media_registration::Receipt {
+        version: 1,
+        request_id: uuid::Uuid::new_v4().to_string(),
+        nonce: "fixture".into(),
+        app_audience: "indeedhub".into(),
+        node_did: expected.seller_did.clone(),
+        producer: "fixture".into(),
+        project_id: "fixture".into(),
+        price_sats: 8,
+        viewing_seconds: 60,
+        expires_at: u64::try_from(now + 300).unwrap(),
+        content_id: "registered_film".into(),
+        sha256: "ab".repeat(32),
+        size_bytes: "16".into(),
+        payment_methods: vec!["cashu".into()],
+        issued_at: u64::try_from(now).unwrap(),
+        signature: "verified by registration boundary".into(),
+    };
     expected
         .verify_metadata(&expected.seller_did, &metadata)
         .unwrap();
