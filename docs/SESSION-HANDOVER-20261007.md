@@ -551,3 +551,28 @@ and LAN-IP certificate match fail. Indee final lifecycle/health guard b0b95810 i
 under the combined isolated backend run, log
 `/tmp/archy-paid-indee-lifecycle-backend-20261007.log`; VM is off. Before its next
 boot, apply the documented GRUB manager mask and validate read-only exec context.
+
+
+### Continuing agent ownership after ngit publication
+
+- Paid-file agent owns final combined backend run and source-hash verification;
+  latest log `/tmp/archy-paid-indee-lifecycle-backend-20261007.log` was still
+  compiling, not a test pass. Indee final source is b0b95810; no new mutations.
+- Companion agent now owns the frozen artwork UI production build, browser
+  qualification and guarded dev delivery, then coordinated Yaya UI delivery.
+  Script `/tmp/archy-artwork-ui-build.py`; snapshot under
+  `release-qualification/artwork-ui-20261007`. Preserve rollback and container/
+  backend/catalog/session/intent checks. APK57 remains unchanged. Root's older
+  combined UI attempt rolled back; don't mistake it for a deployed artwork fix.
+- Indee agent owns safe masked4GB VM context probes, corrected executable and
+  actual seven-service update/rollback/normal lifecycle acceptance. VM is off.
+- Root's confirmed-idle snapshot relocation helper PID1347627 is SIGSTOP-paused
+  because it competed with the compiler. Exact command argument:
+  `/tmp/archy-relocate-frozen-snapshots.py`; log
+  `/tmp/archy-relocate-frozen-snapshots.log`; root exec session38007. Paid agent
+  owns resuming it after the suite in a suitable no-compiler/VM-heavy window.
+  Do not leave it paused indefinitely. Original paths remain until each full
+  copy/hash/mode verification completes; then preserved as disk symlinks. The
+  three sources are historical GitWorkshop, ngit-review190 and companion-PiP
+  snapshots, not current build inputs. Never remove unverified originals.
+- Exact operator HTTPS hostname requested asynchronously; no reply yet.
