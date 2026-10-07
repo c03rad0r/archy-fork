@@ -87,6 +87,61 @@ Current implementation and qualification evidence: [2026-10-06 checkpoint](post-
 - Test installation/removal, permissions, unavailable apps, overlapping filenames,
   duplicate detection and category accuracy before enabling an integration.
 
+### Task 5 assessment — source and version checks, 7 October
+
+Cloud currently sends every category through File Browser, using `/Photos`,
+`/Music`, `/Documents` and `/`. Its client obtains a File Browser token from
+`app.filebrowser-token`; that credential is not an Immich or Nextcloud identity.
+An installed application therefore cannot safely become a new filesystem mount
+or inherit access to all of that application's accounts.
+
+The candidate catalog declares Immich2.7.4 and Nextcloud29. This is catalog
+metadata, not verification of each installed node's actual image/version.
+Before enabling a connector, probe the running version and supported API.
+
+| Source | Verified interface for the catalog version | Proposed initial behavior |
+| --- | --- | --- |
+| Immich |2.7.4 `POST /api/search/metadata` accepts page/size and returns `nextPage`; asset metadata, original and thumbnail endpoints require `asset.read`, `asset.download` and `asset.view`; `/api/users/me` requires `user.read` | Explicitly connect the intended user's scoped key; list photographs/videos, stream permitted thumbnails/originals; preserve albums and original asset identifiers |
+| Nextcloud | Authenticated WebDAV under `/remote.php/dav/files/{user}/`; PROPFIND exposes stable file ID, MIME, ETag and permissions; GET downloads bytes | Use the user's Login Flow/app-password authorization; navigate folders without copying storage; apply source permissions on every request |
+
+Primary references checked against the catalog versions:
+[Immich2.7.4 API schema](https://raw.githubusercontent.com/immich-app/immich/v2.7.4/open-api/immich-openapi-specs.json),
+[Nextcloud29 WebDAV](https://docs.nextcloud.com/server/29/developer_manual/client_apis/WebDAV/basic.html),
+[Nextcloud29 Login Flow](https://docs.nextcloud.com/server/29/developer_manual/client_apis/LoginFlow/index.html).
+The Immich specification SHA256 was
+`d6378294dcddcf772ffdefe470da17d62a5503a74fe1bd6a28f921196901d121`.
+Current upstream docs can describe newer APIs; do not substitute them silently.
+
+Proposed implementation boundaries (design, not enabled features):
+
+- Add source adapters behind owner-authenticated node endpoints, keeping scoped
+  upstream credentials in private node storage. Bind every connection to the
+  selected upstream account and installation; never use administrator-wide
+  enumeration or expose keys in browser storage, URLs or logs. Resolve only
+  installed service endpoints; reject redirected credential forwarding.
+- Represent each item by `(source, installation, account, upstream ID)`, with
+  display path, MIME, size, revision and operation capabilities. Identical names
+  across sources remain separate; a matching name is not proof of duplicate
+  bytes or ownership. Display a source label beside integrated category results.
+- Start with browse/preview/download and Open in source. Editing, rename, move,
+  delete, trash and versions remain source-owned until individually implemented
+  and tested through its API; never modify its data directory directly. No public
+  or paid sharing is implied by importing a source listing.
+- Stream bytes through authenticated bounded endpoints, preserving valid range
+  and revision semantics. Recheck authorization for both previews and originals;
+  encrypted/unavailable content must not fall through to privileged disk reads.
+- Page Immich results and lazily expand Nextcloud folders. A bounded, cancellable
+  per-account metadata index can support whole-library category/search results;
+  do not claim WebDAV folder enumeration is a global paginated search API.
+  Label incomplete indexing and stale results, and invalidate on revocation,
+  disconnect, uninstall or source revision changes. Never duplicate original
+  file storage merely to populate Cloud.
+- Before enablement, qualify two users with disjoint/private/shared libraries,
+  expired/revoked credentials, denied preview/download, install/remove/reinstall,
+  source outage/recovery, duplicate names, renamed items, large libraries,
+  bounded cancellation, MIME classification and account-scoped cache deletion.
+  These cases have not been executed; no source connector is accepted yet.
+
 ## 6. Web5 header and node connection flow planning
 
 - Inspect the top-bar **Wallet** label in Web5. The operator requests removing
