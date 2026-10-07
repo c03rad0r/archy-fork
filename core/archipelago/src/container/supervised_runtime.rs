@@ -263,6 +263,63 @@ pub(crate) fn load_reviewed_plans(
     Ok(record.plans)
 }
 
+/// Called by the explicit offline administration command before catalog
+/// selection. It validates the complete reviewed plan against current originals
+/// and installer pins, then preserves their exact recipes under the lifecycle lock.
+pub(crate) async fn preserve_reviewed_indeehub_originals(data: &Path) -> Result<()> {
+    let guard = super::update_transaction::Guard::acquire(data)?;
+    guard.require_clear()?;
+    anyhow::ensure!(
+        guard.held_names()?.is_empty(),
+        "Existing lifecycle holds require recovery"
+    );
+    let plans = load_reviewed_plans(data, "indeedhub")?;
+    let names = [
+        "indeedhub-postgres",
+        "indeedhub-redis",
+        "indeedhub-minio",
+        "indeedhub-relay",
+        "indeedhub-api",
+        "indeedhub-ffmpeg",
+        "indeedhub",
+    ];
+    anyhow::ensure!(
+        plans.len() == names.len() && names.iter().all(|name| plans.contains_key(*name)),
+        "Preparation requires the exact seven-member IndeeHub plan"
+    );
+    let refs: Vec<_> = names
+        .iter()
+        .map(|name| {
+            Ok((
+                name.to_string(),
+                plans[*name]
+                    .prepared
+                    .manifest
+                    .app
+                    .container
+                    .image
+                    .clone()
+                    .context("Reviewed target image is missing")?,
+            ))
+        })
+        .collect::<Result<_>>()?;
+    let targets = Podman::targets(&refs, false).await?;
+    let adapter = SystemdSupervisor::new(
+        data.to_path_buf(),
+        plans,
+        LegacyIndeeMaintenance::new(&guard)?,
+    )
+    .await?;
+    let targets = adapter.reviewed_targets(&targets).await?;
+    let mut originals = Vec::new();
+    for target in targets {
+        let original = adapter.capture(&target.name).await?;
+        adapter.prepare_target(&target, &original).await?;
+        originals.push(original);
+    }
+    supervised_update::preserve_observed_originals(&guard, &originals)
+}
+
 pub(crate) async fn recover_before_reconcile(
     data_dir: &Path,
     guard: &super::update_transaction::Guard,

@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 use std::{
     future::Future,
     io::Write,
-    os::unix::fs::{DirBuilderExt, OpenOptionsExt},
+    os::unix::fs::{DirBuilderExt, MetadataExt, OpenOptionsExt},
     path::{Path, PathBuf},
 };
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
@@ -513,7 +513,7 @@ fn save(guard: &Guard, record: &Journal) -> Result<()> {
     }
     result
 }
-// The committed unit is installation evidence, not a cache of today's catalog.
+// A captured original or terminal unit is installation evidence, not a cache of today's catalog.
 // Keep it until explicit uninstall or the next reviewed managed transaction.
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -530,6 +530,81 @@ fn installed_path(data: &Path, name: &str) -> Result<PathBuf> {
         .join("update-transactions/installed-units")
         .join(format!("{name}.json")))
 }
+/// Administrative first-upgrade preparation. Preserve freshly observed exact
+/// recipes before selecting a new catalog, so drift reconciliation cannot edit
+/// the legacy source beneath its reviewed original-hash-bound migration plan.
+/// No service is stopped/started and no completed update journal is invented.
+pub(crate) fn preserve_observed_originals(guard: &Guard, originals: &[Unit]) -> Result<()> {
+    guard.require_clear()?;
+    let data = guard
+        .directory()
+        .parent()
+        .context("Missing node data directory")?;
+    let mut names = std::collections::HashSet::new();
+    for original in originals {
+        anyhow::ensure!(
+            simple(&original.name)
+                && names.insert(&original.name)
+                && original.running
+                && digest(&original.image)
+                && digest(&original.container_id)
+                && original.file_mode & !0o777 == 0
+                && original.file_mode & 0o022 == 0,
+            "Invalid observed managed original"
+        );
+        // Validate recipe shape without changing its image spelling or bytes.
+        pin_body(
+            &original.body,
+            &original.name,
+            &format!("sha256:{}", original.image),
+        )?;
+        if let Some((body, mode)) = installed_unit(data, &original.name)? {
+            anyhow::ensure!(
+                body == original.body && mode == original.file_mode,
+                "Existing installed recipe differs; retain it for explicit recovery"
+            );
+        }
+    }
+    anyhow::ensure!(!originals.is_empty(), "No observed originals supplied");
+    let dir = guard.directory().join("installed-units");
+    match std::fs::DirBuilder::new().mode(0o700).create(&dir) {
+        Ok(()) => {}
+        Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {}
+        Err(error) => return Err(error.into()),
+    }
+    let metadata = std::fs::symlink_metadata(&dir)?;
+    anyhow::ensure!(
+        metadata.is_dir()
+            && !metadata.file_type().is_symlink()
+            && metadata.uid() == unsafe { libc::geteuid() }
+            && metadata.mode() & 0o077 == 0,
+        "Original recipe directory is not private and node-owned"
+    );
+    let preparation = uuid::Uuid::new_v4().to_string();
+    for original in originals {
+        let path = dir.join(format!("{}.json", original.name));
+        if path.exists() {
+            continue;
+        }
+        let saved = InstalledUnit {
+            schema: 1,
+            operation: preparation.clone(),
+            name: original.name.clone(),
+            body: original.body.clone(),
+            mode: original.file_mode,
+        };
+        let mut temporary = tempfile::NamedTempFile::new_in(&dir)?;
+        temporary.write_all(&serde_json::to_vec(&saved)?)?;
+        temporary.as_file().sync_all()?;
+        temporary
+            .persist_noclobber(path)
+            .map_err(|error| anyhow::anyhow!("Cannot preserve original recipe: {}", error.error))?;
+    }
+    std::fs::File::open(&dir)?.sync_all()?;
+    std::fs::File::open(guard.directory())?.sync_all()?;
+    Ok(())
+}
+
 fn publish_installed(guard: &Guard, record: &Journal) -> Result<()> {
     anyhow::ensure!(
         matches!(record.phase, Phase::Committed | Phase::Restored),
@@ -1142,6 +1217,51 @@ mod tests {
         async fn healthy(&self, _name: &str) -> Result<bool> {
             Ok(true)
         }
+    }
+    #[test]
+    fn administrative_original_capture_is_idempotent_and_uninstall_forgets_it() {
+        let root = tempfile::tempdir().unwrap();
+        let guard = Guard::acquire(root.path()).unwrap();
+        let original = Mock::new().original;
+        preserve_observed_originals(&guard, std::slice::from_ref(&original)).unwrap();
+        let first = std::fs::read(installed_path(root.path(), "movie").unwrap()).unwrap();
+        preserve_observed_originals(&guard, std::slice::from_ref(&original)).unwrap();
+        assert_eq!(
+            std::fs::read(installed_path(root.path(), "movie").unwrap()).unwrap(),
+            first
+        );
+        assert_eq!(
+            installed_unit(root.path(), "movie").unwrap(),
+            Some((original.body, 0o600))
+        );
+        assert!(guard.held_names().unwrap().is_empty());
+        assert_eq!(
+            std::fs::read_dir(guard.directory().join("supervised"))
+                .unwrap()
+                .count(),
+            0
+        );
+        forget_installed(root.path(), "movie").unwrap();
+        assert!(installed_unit(root.path(), "movie").unwrap().is_none());
+    }
+    #[test]
+    fn original_capture_checks_all_members_before_writing_and_preserves_foreign_recipe() {
+        let root = tempfile::tempdir().unwrap();
+        let guard = Guard::acquire(root.path()).unwrap();
+        let original = Mock::new().original;
+        let mut stopped = original.clone();
+        stopped.name = "other".into();
+        stopped.running = false;
+        assert!(preserve_observed_originals(&guard, &[original.clone(), stopped]).is_err());
+        assert!(!guard.directory().join("installed-units").exists());
+        preserve_observed_originals(&guard, std::slice::from_ref(&original)).unwrap();
+        let mut changed = original.clone();
+        changed.body.push_str("# foreign operator edit\n");
+        assert!(preserve_observed_originals(&guard, &[changed]).is_err());
+        assert_eq!(
+            installed_unit(root.path(), "movie").unwrap(),
+            Some((original.body, 0o600))
+        );
     }
     #[test]
     fn reviewed_migration_keeps_unrelated_operator_values_and_applies_required_new_fields() {

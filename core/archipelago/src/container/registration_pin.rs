@@ -327,6 +327,99 @@ pub fn apply_environment(manifest: &mut AppManifest, pin: &RegistrationPin) -> R
     Ok(())
 }
 
+/// Offline preparation for the first supervised legacy IndeeHub migration.
+/// This invokes the same installer pin implementation, never starts the daemon,
+/// creates a node identity, activates a catalog, or enables publication.
+pub(crate) async fn prepare_indeehub_manifest(
+    data_dir: &Path,
+    manifest_path: &Path,
+    output_path: &Path,
+) -> Result<()> {
+    let input = OpenOptions::new()
+        .read(true)
+        .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK | libc::O_CLOEXEC)
+        .open(manifest_path)?;
+    let metadata = input.metadata()?;
+    anyhow::ensure!(
+        metadata.is_file()
+            && metadata.len() <= 128 * 1024
+            && metadata.uid() == unsafe { libc::geteuid() }
+            && metadata.mode() & 0o077 == 0,
+        "Preparation requires a private node-owned manifest"
+    );
+    let mut bytes = Vec::new();
+    input.take(128 * 1024 + 1).read_to_end(&mut bytes)?;
+    anyhow::ensure!(
+        bytes.len() <= 128 * 1024,
+        "Preparation manifest is too large"
+    );
+    let mut manifest: AppManifest = serde_json::from_slice(&bytes)?;
+    manifest.validate()?;
+    anyhow::ensure!(
+        manifest.app.id == "indeedhub-api" && manifest.app.container.media_registration_identity,
+        "Preparation only supports the opted-in IndeeHub API"
+    );
+    anyhow::ensure!(
+        manifest
+            .app
+            .container
+            .image
+            .as_ref()
+            .is_some_and(|image| image
+                .rsplit_once("@sha256:")
+                .is_some_and(
+                    |(_, hash)| hash.len() == 64 && hash.bytes().all(|b| b.is_ascii_hexdigit())
+                )),
+        "Preparation requires the reviewed immutable API image"
+    );
+    for key in [
+        "ARCHIPELAGO_REGISTRATION_ENABLED",
+        "ARCHIPELAGO_PUBLICATION_ENABLED",
+    ] {
+        let entries: Vec<_> = manifest
+            .app
+            .environment
+            .iter()
+            .filter(|entry| entry.split_once('=').is_some_and(|(name, _)| name == key))
+            .collect();
+        anyhow::ensure!(
+            entries.len() == 1 && entries[0] == &format!("{key}=false"),
+            "Preparation must retain disabled registration and publication"
+        );
+    }
+    let parent = output_path
+        .parent()
+        .context("Preparation output directory missing")?;
+    let output_guard = private_root(parent)?;
+    lock(&output_guard)?;
+    let identity = crate::identity::NodeIdentity::load_existing(&data_dir.join("identity")).await?;
+    // Validate all manifest environment restrictions before creating installer state.
+    let mut validated = manifest.clone();
+    apply_environment(
+        &mut validated,
+        &RegistrationPin {
+            version: 1,
+            app_id: manifest.app.id.clone(),
+            node_public_key: identity.pubkey_hex(),
+            node_did: identity.did_key()?,
+            app_audience: uuid::Uuid::nil().to_string(),
+        },
+    )?;
+    let existing_output: Option<serde_json::Value> = read(output_path)?;
+    let pin = ensure_for_installation(data_dir, &manifest.app.id, &identity)?;
+    apply_environment(&mut manifest, &pin)?;
+    let resolved = serde_json::to_value(&manifest)?;
+    if let Some(existing) = existing_output {
+        anyhow::ensure!(
+            existing == resolved,
+            "Existing prepared manifest differs; preserve it for review"
+        );
+    } else {
+        persist(parent, output_path, &resolved)?;
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -338,6 +431,61 @@ mod tests {
             .await
             .unwrap();
         (root, identity)
+    }
+    #[tokio::test]
+    async fn offline_preparation_preserves_identity_and_disabled_flags_on_retry() {
+        let (root, identity) = fixture().await;
+        let staging = root.path().join("staging");
+        std::fs::create_dir(&staging).unwrap();
+        std::fs::set_permissions(&staging, std::fs::Permissions::from_mode(0o700)).unwrap();
+        let input = staging.join("manifest.json");
+        let output = staging.join("resolved.json");
+        let manifest=AppManifest::parse(&format!("app:\n  id: indeedhub-api\n  name: Fixture\n  version: '1'\n  container:\n    image: localhost/fixture@sha256:{}\n    media_registration_identity: true\n  environment:\n    - ARCHIPELAGO_REGISTRATION_ENABLED=false\n    - ARCHIPELAGO_PUBLICATION_ENABLED=false\n", "a".repeat(64))).unwrap();
+        std::fs::write(&input, serde_json::to_vec(&manifest).unwrap()).unwrap();
+        std::fs::set_permissions(&input, std::fs::Permissions::from_mode(0o600)).unwrap();
+        let key = std::fs::read(root.path().join("identity/node_key")).unwrap();
+        prepare_indeehub_manifest(root.path(), &input, &output)
+            .await
+            .unwrap();
+        let first = std::fs::read(&output).unwrap();
+        prepare_indeehub_manifest(root.path(), &input, &output)
+            .await
+            .unwrap();
+        assert_eq!(std::fs::read(&output).unwrap(), first);
+        assert_eq!(
+            std::fs::read(root.path().join("identity/node_key")).unwrap(),
+            key
+        );
+        assert_eq!(output.metadata().unwrap().mode() & 0o777, 0o600);
+        let resolved: AppManifest = serde_json::from_slice(&first).unwrap();
+        let pin = load_existing(root.path(), "indeedhub-api", &identity).unwrap();
+        assert!(resolved.app.environment.contains(&format!(
+            "ARCHIPELAGO_REGISTRATION_AUDIENCE={}",
+            pin.app_audience
+        )));
+        assert!(resolved
+            .app
+            .environment
+            .contains(&"ARCHIPELAGO_PUBLICATION_ENABLED=false".to_string()));
+        let absent = tempfile::tempdir().unwrap();
+        assert!(
+            prepare_indeehub_manifest(absent.path(), &input, &staging.join("missing.json"))
+                .await
+                .is_err()
+        );
+        assert!(!absent.path().join("identity").exists());
+        let mut enabled = manifest.clone();
+        enabled
+            .app
+            .environment
+            .push("ARCHIPELAGO_PUBLICATION_ENABLED=true".into());
+        std::fs::write(&input, serde_json::to_vec(&enabled).unwrap()).unwrap();
+        assert!(
+            prepare_indeehub_manifest(root.path(), &input, &staging.join("enabled.json"))
+                .await
+                .is_err()
+        );
+        assert!(!staging.join("enabled.json").exists());
     }
     #[tokio::test]
     async fn audience_is_stable_across_retries_reconstruction_and_other_apps_are_distinct() {

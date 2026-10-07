@@ -128,3 +128,41 @@ xattrs; changed restored bytes/xattrs and unreadable archives are rejected. Evid
 `/tmp/archy-20261007-volume-restore.log`. Repeatable fixture:
 `tests/regression/test_indeehub_maintenance_volumes.py`.
 Full seven-member application cutover and final backend build remain separate gates.
+
+## Explicit legacy preparation commands
+
+The candidate adds two offline administration commands; neither starts the daemon,
+changes a catalog, enables registration/publication, or starts/stops an app:
+
+- `archipelago prepare-indeehub-registration DATA_DIR MANIFEST_JSON PRIVATE_OUTPUT_JSON`
+  validates a private opted-in API manifest with an immutable image and both feature
+  flags disabled, loads the existing node identity, invokes the existing installer
+  pin provisioner, and writes a private resolved manifest. Retry preserves the same
+  audience and identity; missing identity is an error, never identity generation.
+- `archipelago prepare-indeehub-update DATA_DIR` validates the exact seven-member
+  installed reviewed plan, original unit hashes, local target images and registration
+  pins under the lifecycle lock. It preserves observed original unit recipes before
+  a newer catalog can drift-reconcile them. This records original installation
+  evidence, not a fabricated completed update. Explicit uninstall removes those
+  recipes through the existing path. Prepare the complete reviewed plan first and
+  retain the current catalog until this command succeeds for all seven members.
+
+Binary startup now promotes its exact embedded maintenance controller before
+recovery/reconciliation, including when an older dashboard payload is installed.
+The updater still checks the on-disk helper hash against the binary. These source
+changes are undergoing full isolated backend qualification; they have not been
+applied to Yaya. The full adapter fixture is prepared in a separate outbound-isolated
+QEMU copy-on-write VM, using public base images, the verified tracked baseline
+catalog and newly generated fixture credentials; no live app metadata/data is copied.
+
+Preparation qualification: the final combined isolated backend suite passes
+**2,003 tests, zero failures, five ignored**. Installer preparation preserves the
+existing identity/audience on retry and refuses absent identity or enabled feature
+flags. Original-recipe tests cover all-member preflight, retry, foreign edit
+preservation and explicit uninstall. An initial run had2,002 passes and one failure
+in the new fixture's assertion that the journal directory was absent; the shared
+readiness check creates an empty directory. The corrected test requires no journal
+files, which verifies the intended absence of a fabricated completed transaction.
+Evidence: `/tmp/archy-20261007-indeehub-final-backend-recheck.log`; initial failed
+fixture evidence remains in `/tmp/archy-20261007-indeehub-final-backend.log`.
+Optimized artifact build and full real VM adapter acceptance remain pending.

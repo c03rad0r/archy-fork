@@ -237,6 +237,17 @@ pub async fn ensure_runtime_assets_ready() {
     {
         warn!("File Browser credential helper installation failed: {error:#}");
     }
+    // The supervised updater rejects any maintenance helper whose source hash
+    // differs from this binary. Promote its embedded copy after older OTA assets
+    // and before crash recovery/reconciliation can resume an existing journal.
+    if let Err(error) = write_root_if_needed(
+        "/opt/archipelago/scripts/indeehub-maintenance-controller.py",
+        include_str!("../../../scripts/indeehub-maintenance-controller.py"),
+    )
+    .await
+    {
+        warn!("IndeeHub maintenance helper installation failed: {error:#}");
+    }
     if let Err(error) = run_npm_bridge_bootstrap().await {
         warn!("NPM public routing bootstrap needs attention: {error:#}");
     }
