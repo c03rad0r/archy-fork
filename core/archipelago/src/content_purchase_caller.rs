@@ -15,6 +15,7 @@ pub(crate) trait PurchaseTransport: Send + Sync {
     fn prepare_offer(
         &self,
         _content_id: &str,
+        _expected: Option<&ExpectedRental>,
     ) -> impl Future<Output = Result<Option<(u64, u64)>>> + Send {
         async { Ok(None) }
     }
@@ -86,7 +87,8 @@ pub(crate) async fn purchase(
     .await
 }
 
-#[derive(Clone)]
+#[derive(Clone, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
 pub(crate) struct ExpectedRental {
     pub seller_did: String,
     pub content_id: String,
@@ -95,6 +97,23 @@ pub(crate) struct ExpectedRental {
     pub viewing_seconds: u64,
 }
 impl ExpectedRental {
+    pub(crate) fn verify_metadata(
+        &self,
+        seller_did: &str,
+        receipt: &crate::media_registration::Receipt,
+    ) -> Result<()> {
+        anyhow::ensure!(
+            self.content_id.starts_with("registered_")
+                && receipt.content_id == self.content_id
+                && seller_did == self.seller_did
+                && receipt.sha256 == self.sha256
+                && receipt.price_sats == self.price_sats
+                && receipt.viewing_seconds == self.viewing_seconds,
+            "Published rental hash, price, duration or seller changed; no payment started"
+        );
+        Ok(())
+    }
+
     pub fn verify(&self, offer: &Offer) -> Result<()> {
         anyhow::ensure!(
             self.content_id.starts_with("registered_")
@@ -222,7 +241,7 @@ pub(crate) async fn purchase_bound(
         );
         if content_id.starts_with("registered_") {
             if let Some((completed_bytes, total_bytes)) =
-                transport.prepare_offer(content_id).await?
+                transport.prepare_offer(content_id, expected).await?
             {
                 return Ok(ReadyPurchase::Preparing {
                     completed_bytes,

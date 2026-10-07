@@ -67,6 +67,7 @@ impl ApiHandler {
                     content_id: String,
                     #[serde(default)]
                     retry: bool,
+                    expected: Option<crate::content_purchase_caller::ExpectedRental>,
                 }
                 let input: Prepare = serde_json::from_slice(&bytes)?;
                 let identity = std::sync::Arc::new(
@@ -76,6 +77,14 @@ impl ApiHandler {
                 let root = data_dir.clone();
                 serde_json::to_value(
                     tokio::task::spawn_blocking(move || {
+                        if let Some(expected) = &input.expected {
+                            let (receipt, _) = crate::registered_media::registered_metadata(
+                                &root,
+                                &identity,
+                                &input.content_id,
+                            )?;
+                            expected.verify_metadata(&identity.did_key()?, &receipt)?;
+                        }
                         crate::registered_media::prepare_registered(
                             root,
                             identity,

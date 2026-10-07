@@ -2214,7 +2214,14 @@ impl crate::content_purchase_caller::PurchaseTransport for PurchaseTestTransport
     fn seller_onion(&self) -> &str {
         "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.onion"
     }
-    async fn prepare_offer(&self, content_id: &str) -> anyhow::Result<Option<(u64, u64)>> {
+    async fn prepare_offer(
+        &self,
+        content_id: &str,
+        expected: Option<&crate::content_purchase_caller::ExpectedRental>,
+    ) -> anyhow::Result<Option<(u64, u64)>> {
+        if let Some(expected) = expected {
+            expected.verify(&self.template)?;
+        }
         // A registered movie still being hashed, without asking the fake mint.
         Ok(content_id.starts_with("registered_").then_some((3, 16)))
     }
@@ -2613,6 +2620,20 @@ async fn rental_catalog_term_mismatch_never_plans_or_creates_buyer_intent() {
         price_sats: 8,
         viewing_seconds: 60,
     };
+    // Preparation checks already-verified signed metadata, without scanning bytes
+    // or allocating a quote. Keep this independent of the fake offer response.
+    let metadata: crate::media_registration::Receipt = serde_json::from_value(json!({
+        "version":1,"request_id":uuid::Uuid::new_v4().to_string(),"nonce":"fixture",
+        "app_audience":"indeedhub","node_did":expected.seller_did,
+        "producer":"fixture","project_id":"fixture","price_sats":8,
+        "viewing_seconds":60,"expires_at":now+300,"content_id":"registered_film",
+        "sha256":"ab".repeat(32),"size_bytes":"16","payment_methods":["cashu"],
+        "issued_at":now,"signature":"verified by registration boundary"
+    }))
+    .unwrap();
+    expected
+        .verify_metadata(&expected.seller_did, &metadata)
+        .unwrap();
     let mut changed_hash = expected.clone();
     changed_hash.sha256 = "ef".repeat(32);
     let mut changed_price = expected.clone();
@@ -2620,6 +2641,9 @@ async fn rental_catalog_term_mismatch_never_plans_or_creates_buyer_intent() {
     let mut changed_duration = expected.clone();
     changed_duration.viewing_seconds = 120;
     for wrong in [changed_hash, changed_price, changed_duration] {
+        assert!(wrong
+            .verify_metadata(&expected.seller_did, &metadata)
+            .is_err());
         let error = purchase_bound(
             buyer.path(),
             &buyer_did,

@@ -79,11 +79,15 @@ impl PurchaseTransport for FipsPurchaseTransport {
     fn seller_did(&self) -> &str {
         &self.seller_did
     }
-    async fn prepare_offer(&self, content_id: &str) -> Result<Option<(u64, u64)>> {
+    async fn prepare_offer(
+        &self,
+        content_id: &str,
+        expected: Option<&crate::content_purchase_caller::ExpectedRental>,
+    ) -> Result<Option<(u64, u64)>> {
         let state: crate::rental_readiness::Status = self
             .post(
                 protocol::PREPARE_OFFER_ROUTE,
-                &serde_json::json!({"content_id":content_id,"retry":self.retry_preparation}),
+                &serde_json::json!({"content_id":content_id,"retry":self.retry_preparation,"expected":expected}),
             )
             .await?;
         match state {
