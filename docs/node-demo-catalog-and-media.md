@@ -322,3 +322,34 @@ This deployment includes file availability and minimum on-chain amount checks
 and the tested recovery primitives. The complete new purchase caller and
 IndeeHub publication/playback integration remain under development; these are
 not claimed accepted. No new real payment or public publication was performed.
+
+## Private IndeeHub packaging follow-up — 7 October
+
+The separately prepared IndeeHub frontend/API images at local source `3b09b81`
+were built and exported privately with all 671 recorded source inputs unchanged.
+An isolated restore of Yaya's database preserved all 32 original public application
+table hashes, advanced exactly three migrations (107 to 110), and passed an
+idempotent second migration run. This did not change live application data.
+Evidence is in `~/.local/state/archipelago/session-recovery/indeehub-private-assets-build`
+and `indeehub-yaya-restored-qualification`.
+
+OCI export changes the manifest digest while preserving the image config ID.
+The catalog must pin the archive/import digest verified against the config ID,
+not the pre-export build manifest digest. An isolated API import and higher-version
+local alias check confirmed that the exact alias@archive-digest resolves to the
+original image ID. The API archive/import digest is
+`sha256:58f8461f59205ab562a11a888337a8ff79bd47cac017733888825eeb50c42834`.
+Original build receipts remain unchanged; alias provenance is a separate receipt.
+
+The built frontend still uses playback protocol 1. A separately qualified protocol
+2 frontend is required with the next rental-readiness host; no incompatible pair
+will be activated. The API image and migration evidence can be retained when its
+source inputs remain unchanged. New private catalog signing and deployment remain
+pending the matched frontend, imported digest checks and backend qualification.
+
+The current legacy stack updater unconditionally pulls images after stopping
+containers. The draft now prepares every image first and reuses exact digest-pinned
+local imports; missing private images or a failed second-image preflight cannot
+enter lifecycle/rollback. Added tests exercise that production sequencing.
+Formatting checks pass; backend tests/compilation are pending. This narrow fix
+is not acceptance of the separate stopped-app staging/rollback work.

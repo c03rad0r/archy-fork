@@ -180,10 +180,17 @@ impl RpcHandler {
             return Err(anyhow::anyhow!("No containers found for {}", package_id));
         }
 
-        // Execute update — on failure, attempt rollback by restarting old containers
-        match self
-            .execute_update(package_id, &containers, &images_to_pull)
-            .await
+        // Resolve every image while the old stack is still available. A
+        // registry outage or missing private import must not stop the app or
+        // enter rollback (which could start a deliberately stopped member).
+        self.set_install_phase(package_id, InstallPhase::PullingImage)
+            .await;
+        match preflighted_stack_update(
+            &images_to_pull,
+            |image| async move { self.pull_update_image(package_id, &image).await },
+            || self.execute_update(package_id, &containers, &images_to_pull),
+        )
+        .await
         {
             Ok(()) => {
                 install_log(&format!("UPDATE OK: {}", package_id)).await;
@@ -193,7 +200,12 @@ impl RpcHandler {
                     "package_id": package_id,
                 }))
             }
-            Err(e) => {
+            Err(UpdateFailure::Preparation(error)) => {
+                self.clear_install_progress(package_id).await;
+                self.clear_update_state(package_id).await;
+                Err(error)
+            }
+            Err(UpdateFailure::Execution(e)) => {
                 error!("Update {} failed: {}. Attempting rollback.", package_id, e);
                 install_log(&format!(
                     "UPDATE FAIL: {} — {}. Rolling back.",
@@ -248,7 +260,7 @@ impl RpcHandler {
         }
     }
 
-    /// Core update execution: stop → pull → remove → recreate → verify.
+    /// Images are prepared first; then stop → remove → recreate → verify.
     async fn execute_update(
         &self,
         package_id: &str,
@@ -287,29 +299,6 @@ impl RpcHandler {
                 );
                 // Continue — container might already be stopped
             }
-        }
-
-        // Phase: PullingImage — about to fetch each pinned image in turn.
-        self.set_install_phase(package_id, InstallPhase::PullingImage)
-            .await;
-
-        // 2. Pull new images with progress
-        info!(
-            "Update {}: pulling {} images",
-            package_id,
-            images_to_pull.len()
-        );
-        for (i, (name, image)) in images_to_pull.iter().enumerate() {
-            info!(
-                "Update {}: pulling image {}/{} ({})",
-                package_id,
-                i + 1,
-                images_to_pull.len(),
-                image
-            );
-            self.pull_update_image(package_id, image)
-                .await
-                .context(format!("Failed to pull {} for {}", image, name))?;
         }
 
         // 3. Remove old containers
@@ -429,6 +418,32 @@ impl RpcHandler {
     /// Pull a single image with progress broadcasting (reuses install progress pattern).
     async fn pull_update_image(&self, package_id: &str, image: &str) -> Result<()> {
         self.set_install_progress(package_id, 0, 0).await;
+
+        if immutable_update_image(image) {
+            // A digest-addressed lookup asks Podman for these exact bytes,
+            // unlike a mutable tag lookup. Private imports need no registry.
+            let local = tokio::time::timeout(
+                std::time::Duration::from_secs(30),
+                tokio::process::Command::new("podman")
+                    .args(["image", "exists", image])
+                    .kill_on_drop(true)
+                    .output(),
+            )
+            .await
+            .context("Local image lookup timed out; existing app remains unchanged")??;
+            match local.status.code() {
+                Some(0) => {
+                    self.set_install_progress(package_id, 100, 100).await;
+                    return Ok(());
+                }
+                Some(1) => {}
+                _ => anyhow::bail!("Cannot inspect local image storage; update cancelled"),
+            }
+        }
+        anyhow::ensure!(
+            !image.starts_with("localhost/"),
+            "The exact private image must be imported before updating this app"
+        );
 
         let mut cmd = tokio::process::Command::new("podman");
         cmd.arg("pull");
@@ -655,6 +670,44 @@ fn should_try_orchestrator_update(package_id: &str, orchestrator_available: bool
     orchestrator_available && !uses_legacy_update_flow(package_id)
 }
 
+fn immutable_update_image(image: &str) -> bool {
+    image.rsplit_once("@sha256:").is_some_and(|(name, digest)| {
+        !name.is_empty()
+            && !name.contains('@')
+            && digest.len() == 64
+            && digest.bytes().all(|byte| byte.is_ascii_hexdigit())
+    })
+}
+
+#[derive(Debug)]
+enum UpdateFailure {
+    Preparation(anyhow::Error),
+    Execution(anyhow::Error),
+}
+
+/// A preparation failure never enters the lifecycle/rollback path. Keep this
+/// sequencing injectable so failed second-image pulls are tested without apps.
+async fn preflighted_stack_update<P, PF, E, EF>(
+    images: &[(String, String)],
+    mut prepare: P,
+    execute: E,
+) -> std::result::Result<(), UpdateFailure>
+where
+    P: FnMut(String) -> PF,
+    PF: std::future::Future<Output = Result<()>>,
+    E: FnOnce() -> EF,
+    EF: std::future::Future<Output = Result<()>>,
+{
+    for (name, image) in images {
+        prepare(image.clone()).await.map_err(|error| {
+            UpdateFailure::Preparation(error.context(format!(
+                "Cannot prepare image for {name}; existing containers were left unchanged"
+            )))
+        })?;
+    }
+    execute().await.map_err(UpdateFailure::Execution)
+}
+
 fn orchestrator_update_app_id(package_id: &str) -> &str {
     match package_id {
         "electrs" | "mempool-electrs" => "electrumx",
@@ -716,10 +769,84 @@ fn candidate_app_ids_for_container(container_name: &str) -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::{
-        candidate_app_ids_for_container, orchestrator_update_app_id,
+        candidate_app_ids_for_container, immutable_update_image, orchestrator_update_app_id,
         should_try_orchestrator_update, update_targets_need_change, uses_legacy_update_flow,
         verify_update_targets,
     };
+
+    #[tokio::test]
+    async fn stack_image_failure_precedes_every_lifecycle_action() {
+        use std::sync::{Arc, Mutex};
+        for failed_second in [true, false] {
+            let calls = Arc::new(Mutex::new(Vec::new()));
+            let preparing = calls.clone();
+            let executing = calls.clone();
+            let images = vec![
+                ("web".into(), "web-image".into()),
+                ("api".into(), "api-image".into()),
+            ];
+            let result = super::preflighted_stack_update(
+                &images,
+                move |image| {
+                    let preparing = preparing.clone();
+                    async move {
+                        preparing.lock().unwrap().push(format!("prepare:{image}"));
+                        anyhow::ensure!(!(failed_second && image == "api-image"), "import missing");
+                        Ok(())
+                    }
+                },
+                move || async move {
+                    executing.lock().unwrap().extend([
+                        "stop".into(),
+                        "remove".into(),
+                        "start".into(),
+                    ]);
+                    Ok(())
+                },
+            )
+            .await;
+            if failed_second {
+                assert!(matches!(result, Err(super::UpdateFailure::Preparation(_))));
+                assert_eq!(
+                    *calls.lock().unwrap(),
+                    ["prepare:web-image", "prepare:api-image"]
+                );
+            } else {
+                assert!(result.is_ok());
+                assert_eq!(
+                    *calls.lock().unwrap(),
+                    [
+                        "prepare:web-image",
+                        "prepare:api-image",
+                        "stop",
+                        "remove",
+                        "start"
+                    ]
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn only_exact_digest_refs_may_skip_update_registry_pull() {
+        let digest = "ab".repeat(32);
+        assert!(immutable_update_image(&format!(
+            "localhost/lfg2025/indeedhub:1.0.1@sha256:{digest}"
+        )));
+        assert!(immutable_update_image(&format!(
+            "registry.example/app@sha256:{digest}"
+        )));
+        for mutable_or_invalid in [
+            "localhost/lfg2025/indeedhub:1.0.1".to_string(),
+            "registry.example/app:latest".to_string(),
+            format!("registry.example/app@sha256:{}", "g".repeat(64)),
+            "registry.example/app@sha256:abcd".to_string(),
+            format!("@sha256:{digest}"),
+            format!("registry.example/app@other@sha256:{digest}"),
+        ] {
+            assert!(!immutable_update_image(&mutable_or_invalid));
+        }
+    }
 
     #[test]
     fn mempool_update_preflight_rejects_stale_catalog_without_reinstalling() {
