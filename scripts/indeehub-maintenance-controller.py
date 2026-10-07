@@ -3,7 +3,7 @@
 No live execution is part of source qualification. Original writable-layer images
 must already be durable. Never unlock ARCHY_UPDATE_LOCK_FD or release another hold.
 """
-import datetime, hashlib, json, os, pathlib, re, shutil, subprocess, sys, time, uuid
+import datetime, hashlib, json, os, pathlib, re, shutil, subprocess, sys, time, uuid, tarfile
 NAMES = ('indeedhub','indeedhub-api','indeedhub-ffmpeg','indeedhub-minio','indeedhub-postgres','indeedhub-redis','indeedhub-relay')
 VOLUMES = ('indeedhub-minio-data','indeedhub-postgres-data','indeedhub-redis-data','indeedhub-relay-data')
 DATA = pathlib.Path('/var/lib/archipelago')
@@ -99,6 +99,46 @@ def validate_nginx_guards(config):
             matched+=1
     require(matched>=3,'Expected complete legacy IndeeHub route guards')
     return matched
+def validate_volume_archive(path):
+    """Validate the complete inventory before extracting into private storage."""
+    entries={};size=0
+    with tarfile.open(path, 'r:') as archive:
+        for member in archive:
+            name=pathlib.PurePosixPath(member.name)
+            require(not name.is_absolute() and '..' not in name.parts,'Unsafe volume archive path')
+            key=str(name)
+            require(key not in entries and len(entries)<1000000,'Duplicate or oversized volume archive inventory')
+            require(member.isfile() or member.isdir() or member.issym() or member.islnk(),'Unsupported volume archive entry')
+            entries[key]=member;size+=member.size
+    require(entries and entries.get('.') and entries['.'].isdir(),'Volume archive root is missing')
+    for key,member in entries.items():
+        for parent in pathlib.PurePosixPath(key).parents:
+            ancestor=entries.get(str(parent))
+            require(ancestor is None or ancestor.isdir(),'Volume archive writes through a link')
+        if member.issym() or member.islnk():
+            target=pathlib.PurePosixPath(member.linkname)
+            require(not target.is_absolute(),'Volume archive link escapes restore storage')
+            parts=list(pathlib.PurePosixPath(key).parent.parts) if member.issym() else []
+            for part in target.parts:
+                if part=='..':
+                    require(parts,'Volume archive link escapes restore storage');parts.pop()
+                elif part!='.':parts.append(part)
+            if member.islnk():
+                linked=entries.get(str(pathlib.PurePosixPath(*parts)))
+                require(linked is not None and linked.isfile(),'Volume archive hardlink target is not a regular file')
+    return size
+
+def volume_archive_metadata(path):
+    entries={};links={}
+    with tarfile.open(path,'r:') as archive:
+        for member in archive:
+            name=str(pathlib.PurePosixPath(member.name))
+            entries[name]={'mode':member.mode,'uid':member.uid,'gid':member.gid,
+                'attributes':{key:value for key,value in member.pax_headers.items() if key.startswith('SCHILY.')}}
+            if member.islnk():links[name]=str(pathlib.PurePosixPath(member.linkname))
+    for name,target in links.items():entries[name]=entries[target]
+    return entries
+
 class Controller:
     def __init__(self, data, operation, lock_fd, runner=None):
         self.data=pathlib.Path(data);self.operation=operation;self.lock_fd=lock_fd;self.runner=runner
@@ -271,7 +311,7 @@ class Controller:
                 require(time.monotonic()<deadline,'Transcodes still active; retained job state, no forced completion')
                 time.sleep(1)
             self.graceful_stop('indeedhub-ffmpeg');self.legacy_api_idle();self.graceful_stop('indeedhub-api')
-        self.backup();self.verify_database_backup();self.verify();return {'operation_id':self.operation,'state':'drained'}
+        self.backup();self.verify_database_backup();self.verify_volume_backups();self.verify();return {'operation_id':self.operation,'state':'drained'}
     def backup_restore_terms(self):
         baseline=self.record.get('database_before')
         require(baseline and baseline.get('operation_id')==self.operation,'Backup database baseline missing')
@@ -335,6 +375,59 @@ class Controller:
         finally:
             self.cleanup_restore_fixture()
         self.record['backup_restore_verified']=terms;self.save()
+    def volume_restore_terms(self):
+        return {'operation_id':self.operation,'archives':{
+            name:self.record['artifacts'][name]['sha256'] for name in (v+'.tar' for v in VOLUMES)}}
+    def cleanup_volume_fixture(self):
+        name=self.record.get('volume_restore_fixture')
+        if name is None:return
+        require(bool(re.fullmatch('volume-restore-[0-9a-f]{32}',name)),'Invalid volume restore fixture')
+        path=self.root/name
+        if path.exists() or path.is_symlink():
+            require(path.is_dir() and not path.is_symlink() and path.stat().st_uid==os.getuid(),'Volume restore ownership changed')
+            owner=path/'owner'
+            require(owner.is_file() and not owner.is_symlink() and owner.read_text()==self.operation,'Volume restore ownership changed')
+            self.run(['podman','unshare','rm','-rf','--',str(path/'payload')],timeout=1800)
+            roundtrip=path/'roundtrip.tar'
+            if roundtrip.exists():
+                require(roundtrip.is_file() and not roundtrip.is_symlink(),'Volume restore output changed')
+                roundtrip.unlink()
+            owner.unlink();path.rmdir()
+        del self.record['volume_restore_fixture'];self.save()
+    def verify_volume_backups(self):
+        # Restore each entire volume to fresh owned storage, then have GNU tar
+        # compare its bytes, links, ownership, modes and metadata to the archive.
+        # Live volumes are neither mounted nor written by this verification.
+        self.holds();self.fence_matches();self.verify_artifacts()
+        terms=self.volume_restore_terms();self.cleanup_volume_fixture()
+        if self.record.get('volume_restore_verified'):
+            require(self.record['volume_restore_verified']==terms,'Volume restore proof changed');return
+        for volume in VOLUMES:
+            archive=self.root/'backup'/(volume+'.tar')
+            measured=validate_volume_archive(archive)
+            require(shutil.disk_usage(self.root).free>measured*2+512*1024*1024,'Insufficient volume restore space')
+            name='volume-restore-'+uuid.uuid4().hex;path=self.root/name
+            path.mkdir(mode=0o700)
+            with (path/'owner').open('x') as owner:
+                owner.write(self.operation);owner.flush();os.fsync(owner.fileno())
+            self.record['volume_restore_fixture']=name;self.save()
+            try:
+                (path/'payload').mkdir(mode=0o700)
+                self.run(['podman','unshare','tar','--xattrs','--acls','--numeric-owner',
+                    '--same-owner','--same-permissions','-C',str(path/'payload'),'-xpf',str(archive)],timeout=1800)
+                self.run(['podman','unshare','tar','--xattrs','--acls','--numeric-owner',
+                    '-C',str(path/'payload'),'-df',str(archive)],timeout=1800)
+                # GNU tar --compare omits extended attributes. Re-archive the
+                # restored tree and compare numeric ownership, modes, ACLs and
+                # xattrs explicitly (normalizing hardlink traversal order).
+                roundtrip=path/'roundtrip.tar'
+                with roundtrip.open('xb') as output:
+                    self.run(['podman','unshare','tar','--xattrs','--acls','--numeric-owner',
+                        '-C',str(path/'payload'),'-cpf','-','.'],timeout=1800,output=output)
+                require(volume_archive_metadata(archive)==volume_archive_metadata(roundtrip),'Restored volume metadata differs from backup')
+            finally:self.cleanup_volume_fixture()
+        self.verify_artifacts()
+        self.record['volume_restore_verified']=terms;self.save()
     def verify_artifacts(self):
         expected_artifacts={'database.dump',*(volume+'.tar' for volume in VOLUMES)}
         require(set(self.record.get('artifacts',{}))==expected_artifacts,'Backup artifact inventory incomplete or unexpected')
@@ -354,6 +447,7 @@ class Controller:
         for name in NAMES:require(self.record.get('stopped',{}).get(name,{}).get('confirmed'),'Original writer stop evidence missing')
         self.verify_artifacts()
         require(self.record.get('backup_restore_verified')==self.backup_restore_terms(),'Fresh database backup restore is not verified')
+        require(self.record.get('volume_restore_verified')==self.volume_restore_terms(),'Fresh volume backup restore is not verified')
         return {'operation_id':self.operation,'state':'held'}
     def release(self, outcome):
         require(outcome in ('committed','restored','aborted'),'Invalid release outcome')

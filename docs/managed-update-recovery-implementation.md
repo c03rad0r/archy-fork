@@ -110,3 +110,21 @@ command stderr was removed by fixture cleanup, so no exact cause is claimed.
 The stale backend compile was interrupted after the readiness edit; a fresh
 backend build/suite remains required for the final embedded controller.
 Volume-archive restore and the full supervised app cutover remain open gates.
+
+## Four-volume restore barrier — 2026-10-07
+
+The controller now restores each fresh volume archive into separate owned storage
+before target startup. It rejects unsafe paths/links and unsupported special files,
+checks restored bytes, links, ownership and modes, and rearchives the restored tree
+to compare ACLs and extended attributes explicitly (GNU tar compare alone does not
+check xattrs). Durable proof binds all four archive hashes to the operation. Failure
+retains ingress and lifecycle holds; retry removes only the operation-owned fixture.
+No production volume is mounted or modified by restore verification.
+
+All24 pure controller tests pass. The real rootless fixture passes four archives
+containing hidden files, hardlinks, symlinks, mapped numeric ownership, ACLs and
+xattrs; changed restored bytes/xattrs and unreadable archives are rejected. Evidence:
+`/tmp/archy-20261007-volume-controller-tests.log` and
+`/tmp/archy-20261007-volume-restore.log`. Repeatable fixture:
+`tests/regression/test_indeehub_maintenance_volumes.py`.
+Full seven-member application cutover and final backend build remain separate gates.

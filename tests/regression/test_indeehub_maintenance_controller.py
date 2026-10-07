@@ -59,6 +59,7 @@ class MaintenanceTests(unittest.TestCase):
   c.record['original_members']=members()
   c.record['database_before']={'operation_id':self.operation,'tables':{},'migrations':[]}
   c.record['backup_restore_verified']=c.backup_restore_terms()
+  c.record['volume_restore_verified']=c.volume_restore_terms()
   c.save()
   return c
  def test_complete_backup_checksums_allow_verification(self):
@@ -71,6 +72,39 @@ class MaintenanceTests(unittest.TestCase):
    self.assertEqual(c.fence.read_text(),self.operation)
   c.record.pop('backup_restore_verified')
   with self.assertRaisesRegex(RuntimeError,'restore is not verified'):c.verify()
+ def test_volume_restore_proof_must_match_all_archives_and_operation(self):
+  import copy
+  c=self.completed_backup();proof=copy.deepcopy(c.record['volume_restore_verified'])
+  for field in ('operation_id',*module.VOLUMES):
+   changed=copy.deepcopy(proof)
+   if field=='operation_id':changed[field]='changed'
+   else:changed['archives'][field+'.tar']='changed'
+   c.record['volume_restore_verified']=changed
+   with self.assertRaisesRegex(RuntimeError,'volume backup restore is not verified'):c.verify()
+  c.record.pop('volume_restore_verified')
+  with self.assertRaisesRegex(RuntimeError,'volume backup restore is not verified'):c.verify()
+  self.assertEqual(c.fence.read_text(),self.operation)
+ def test_foreign_volume_fixture_is_never_removed(self):
+  c=self.completed_backup();name='volume-restore-'+'a'*32
+  path=c.root/name;path.mkdir();(path/'owner').write_text(str(uuid.uuid4()))
+  c.record['volume_restore_fixture']=name
+  with self.assertRaisesRegex(RuntimeError,'ownership changed'):c.cleanup_volume_fixture()
+  self.assertEqual(self.calls,[]);self.assertTrue(path.exists())
+ def test_unsafe_archive_paths_and_links_are_rejected_before_extraction(self):
+  import tarfile,io
+  c=self.completed_backup();path=c.root/'unsafe.tar'
+  cases=[('../escape',tarfile.REGTYPE,''),('/escape',tarfile.REGTYPE,''),
+         ('link',tarfile.SYMTYPE,'../../escape'),('link',tarfile.LNKTYPE,'../escape'),
+         ('device',tarfile.CHRTYPE,''),('hard',tarfile.LNKTYPE,'missing')]
+  for name,kind,target in cases:
+   with tarfile.open(path,'w') as archive:
+    root=tarfile.TarInfo('.');root.type=tarfile.DIRTYPE;archive.addfile(root)
+    entry=tarfile.TarInfo(name);entry.type=kind;entry.linkname=target;archive.addfile(entry)
+   with self.assertRaises(RuntimeError):module.validate_volume_archive(path)
+  with tarfile.open(path,'w') as archive:
+   for name,kind,target in [('.',tarfile.DIRTYPE,''),('dir',tarfile.SYMTYPE,'safe'),('dir/file',tarfile.REGTYPE,'')]:
+    entry=tarfile.TarInfo(name);entry.type=kind;entry.linkname=target;archive.addfile(entry)
+  with self.assertRaisesRegex(RuntimeError,'writes through a link'):module.validate_volume_archive(path)
  def test_foreign_restore_fixture_is_never_removed(self):
   c=self.completed_backup();name='archy-backup-restore-'+'a'*32
   c.record['restore_fixture']={'name':name,'image_id':'a'*64}
