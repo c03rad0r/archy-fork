@@ -39,9 +39,16 @@ Read **Current live checkpoint** first. Older receipts below apply only to their
   image9b3ef4116d4b998820e25e09eda7ca14f23e9e264158629451b81e32b47d9c8e,
   OCI SHA2566db29188c0e68ed8e9e8d84ea2e9c5c70695518e0930775bf6b3200d14d99527.
   All474 frozen tracked inputs stayed unchanged; both Node stages were pinned
-  to a verified cached digest. Actual disposable worker/Redis shutdown checks,
-  scoped live import, reviewed catalog pin/signature and delivery remain open.
-  No image import, deployment or publication occurred.
+  to a verified cached digest. Actual isolated image runtime shutdown checks now
+  pass: idle SIGTERM exits 0; an active download survives SIGTERM then SIGINT,
+  finishes HLS uploads and one database key/content commit after release, exits
+  0, and leaves the second queued job waiting. Alpine 3.23.4 / FFmpeg 8.0.1 /
+  Node 20.20.2. All five synthetic fixture containers are stopped; network-none,
+  no host ports or live data mounts. Cold synthetic database setup failures are
+  retained and are not PostgreSQL startup/recovery acceptance. Detailed receipt:
+  `docs/indeehub-worker-runtime-20261008.md`.
+  Scoped live import, reviewed catalog pin/signature and delivery remain open.
+  No live image import, deployment or publication occurred.
 - Live dev/Yaya dashboard index remains
   `92050cbda69954f57f4b0bdd73d89623f6aae9fc66e4c074ee4f46bdcb9c3b2a`.
   Final Fleet UI artifact **is built**, not deployed: archive
