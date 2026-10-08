@@ -48,6 +48,82 @@ if(action==='signal'){
 }else if(action==='probe')fs.writeSync(1,JSON.stringify(proof)+'\n');else throw Error('Unsupported action');'''
 LEGACY_API_CMD = ['sh','-c',"echo 'Running database migrations...' && npx typeorm migration:run -d dist/database/ormconfig.js && echo 'Migrations complete.' && npm run start:prod"]
 
+# Qualified in original image 061516573b143b44e331f960036a6a3dc43c9b256ef8ca71afedbeb2cf797a4b.
+# Bind executing bytes so a legitimate writable-layer recovery image remains usable.
+LEGACY_RELAY_BINARY_SHA256 = 'e4d5d1ceb80150dd8bf4dd55b4f937a9d260cad0c19d616a974dcfaa6e82eb3c'
+LEGACY_RELAY_CMD = ['/bin/sh','-c','./nostr-rs-relay --db ${APP_DATA}']
+RELAY_PROCESS_SCRIPT = r'''set -eu
+identity() {
+ pid="$1"; stat=$(cat "/proc/$pid/stat"); rest=${stat##*) }; set -- $rest
+ ppid="$2"; shift 19; start="$1"
+ command=$(od -An -v -tx1 "/proc/$pid/cmdline" | tr -d ' \n')
+ printf '%s %s %s %s\n' "$pid" "$ppid" "$start" "$command"
+}
+observe() {
+ identity 1
+ count=0; child=''
+ for status in /proc/[0-9]*/status; do
+   ppid=$(sed -n 's/^PPid:[[:space:]]*//p' "$status" 2>/dev/null) || continue
+   if [ "$ppid" = 1 ]; then child=${status%/status}; child=${child##*/}; count=$((count+1)); fi
+ done
+ [ "$count" = 1 ]; identity "$child"
+ listeners=$(awk '$4 == "0A" {print $10}' /proc/net/tcp /proc/net/tcp6)
+ ready=0
+ for descriptor in /proc/"$child"/fd/*; do
+   target=$(readlink "$descriptor") || continue
+   for inode in $listeners; do [ "$target" != "socket:[$inode]" ] || ready=1; done
+ done
+ [ "$ready" = 1 ]
+ sha256sum "/proc/$child/exe" | cut -d " " -f1
+}
+proof=$(observe)
+if [ "$1" = probe ]; then printf '%s\n' "$proof"
+elif [ "$1" = signal ]; then
+ [ "$proof" = "$2" ]; [ "$(observe)" = "$2" ]
+ child=$(printf '%s\n' "$proof" | sed -n '2p'); child=${child%% *}
+ kill -INT "$child"
+ printf 'acknowledged SIGINT\n%s\n' "$proof"
+else exit 1; fi
+'''
+LEGACY_RELAY_IMAGE = '061516573b143b44e331f960036a6a3dc43c9b256ef8ca71afedbeb2cf797a4b'
+def verify_relay_image_lineage(image, unit_sha256, records, installed=None):
+    seen=set()
+    for _ in range(16):
+        image=image.removeprefix('sha256:')
+        require(re.fullmatch('[0-9a-f]{64}',image) is not None,'Invalid relay image lineage hash')
+        if image==LEGACY_RELAY_IMAGE:return
+        require(re.fullmatch('[0-9a-f]{64}',unit_sha256) is not None,'Invalid relay unit lineage hash')
+        require(image not in seen,'Cyclic relay recovery image lineage');seen.add(image)
+        matches=[]
+        for record in records:
+            if record.get('schema') not in (1,2) or record.get('package')!='indeedhub' or record.get('phase')!='Restored' or record.get('cleanup_done') is not True:continue
+            try:require(str(uuid.UUID(record['id']))==record['id'],'Invalid relay lineage operation')
+            except (KeyError,ValueError,AttributeError):continue
+            relay=[m for m in record.get('members',[]) if m.get('original',{}).get('name')=='indeedhub-relay']
+            if len(relay)!=1:continue
+            for member in relay:
+                original=member.get('original',{});recovery=member.get('recovery_image') or {}
+                if original.get('name')!='indeedhub-relay' or recovery.get('image','').removeprefix('sha256:')!=image:continue
+                require((record['schema']==1 and (member.get('preserve_original') is None or member.get('preserve_original') is False) or record['schema']==2 and member.get('preserve_original') is False) and recovery.get('operation_id')==record['id'] and recovery.get('source_container_id')==original.get('container_id'),'Relay recovery ownership changed')
+                require(hashlib.sha256(member['pinned_original_body'].encode()).hexdigest()==unit_sha256,'Relay recovery unit lineage changed')
+                require(re.fullmatch('[0-9a-f]{64}',original.get('container_id','')) is not None,'Invalid relay source identity')
+                if len(seen)==1:require(isinstance(installed,dict) and installed.get('schema')==1 and installed.get('name')=='indeedhub-relay' and installed.get('operation')==record['id'] and installed.get('body')==member['pinned_original_body'],'Relay installed recipe does not own recovery lineage')
+                matches.append((original['image'],hashlib.sha256(original['body'].encode()).hexdigest()))
+        require(len(matches)==1,'Relay image lacks unique completed owned recovery lineage')
+        image,unit_sha256=matches[0]
+    raise RuntimeError('Relay recovery image lineage is too deep')
+def relay_process_proof(raw, data_path):
+    require(isinstance(data_path,str) and data_path.startswith('/') and '\0' not in data_path,'Invalid relay data path')
+    lines=raw.strip().splitlines();require(len(lines)==3 and lines[2]==LEGACY_RELAY_BINARY_SHA256,'Incomplete or unqualified relay executable proof')
+    proof=[]
+    for line in lines[:2]:
+        fields=line.split();require(len(fields)==4 and all(re.fullmatch('[0-9]+',v) for v in fields[:3]) and re.fullmatch('[0-9a-f]+',fields[3]),'Malformed relay process proof')
+        proof.append({'pid':int(fields[0]),'ppid':int(fields[1]),'starttime':fields[2],'command':bytes.fromhex(fields[3]).decode()})
+    parent,child=proof
+    require(parent['pid']==1 and parent['ppid']==0 and parent['command']=='\0'.join(LEGACY_RELAY_CMD)+'\0','Unrecognized relay wrapper')
+    require(child['pid']>1 and child['ppid']==1 and child['command']=='./nostr-rs-relay\0--db\0'+data_path+'\0','Unrecognized relay child')
+    return {'parent':parent,'child':child,'executable_sha256':lines[2]}
+
 # The exact three migrations in the privately qualified API candidate. This is
 # an allowlist of additive schema history, never permission to discard app data.
 ADDITIVE_MIGRATIONS = {
@@ -251,9 +327,9 @@ class Controller:
         require(set(counts)==set(tables)|{'other_active_transactions'},'Legacy API business-state observation incomplete')
         require(all(type(value) is int and value==0 for value in counts.values()),'Legacy API has business work or active transactions; completion cannot be inferred')
         self.record['legacy_api_empty_state']=counts;self.save()
-    def api_recovery_identity(self, member):
+    def api_recovery_identity(self, member, role="api"):
         self.holds();self.fence_matches()
-        require(member['name']=='indeedhub-api','Legacy API member required')
+        require(role in ('api','relay') and member['name']=='indeedhub-'+role,'Legacy signal member required')
         runtime=json.loads((self.data/'update-transactions'/'supervised'/(self.operation+'.json')).read_text())
         require(runtime.get('id')==self.operation and runtime.get('phase') in ('Editing','Restoring') and runtime.get('target_startup_began') is False,'Legacy API operation changed')
         rows=[m for m in runtime['members'] if m['original']['name']==member['name']]
@@ -262,7 +338,20 @@ class Controller:
         require(recovery['source_container_id']==member['container_id'] and recovery['operation_id']==self.operation,'Legacy API recovery identity changed')
         images=json.loads(self.run(['podman','image','inspect',recovery['image']]))
         require(len(images)==1 and images[0]['Id'].removeprefix('sha256:')==recovery['image'].removeprefix('sha256:'),'Legacy API recovery image changed')
-        image=images[0];require(image['Config'].get('Cmd')==LEGACY_API_CMD and image['Config'].get('Entrypoint')==['docker-entrypoint.sh'],'Unrecognized legacy API command')
+        if role=='relay':
+            records=[];installed=None
+            if member['image_id'].removeprefix('sha256:')!=LEGACY_RELAY_IMAGE:
+                directory=self.data/'update-transactions'/'supervised'
+                require(directory.is_dir() and not directory.is_symlink() and directory.stat().st_uid==os.getuid() and directory.stat().st_mode & 0o022==0,'Unsafe relay recovery lineage directory')
+                for path in directory.glob('*.json'):
+                    require(path.is_file() and not path.is_symlink() and path.stat().st_uid==os.getuid() and path.stat().st_mode & 0o077==0 and path.stat().st_size<=4*1024*1024,'Unsafe relay recovery lineage record')
+                    record=json.loads(path.read_text());require(path.stem==record.get('id'),'Relay recovery journal filename mismatch');records.append(record)
+                directory=self.data/'update-transactions'/'installed-units';path=directory/'indeedhub-relay.json'
+                require(directory.is_dir() and not directory.is_symlink() and directory.stat().st_uid==os.getuid() and directory.stat().st_mode & 0o077==0 and path.is_file() and not path.is_symlink() and path.stat().st_uid==os.getuid() and path.stat().st_mode & 0o077==0 and path.stat().st_size<=1024*1024,'Unsafe relay installed recipe')
+                installed=json.loads(path.read_text())
+            verify_relay_image_lineage(member['image_id'],member['unit_sha256'],records,installed)
+        image=images[0];expected=(LEGACY_API_CMD,['docker-entrypoint.sh']) if role=='api' else (LEGACY_RELAY_CMD,None)
+        require((image['Config'].get('Cmd'),image['Config'].get('Entrypoint'))==expected,'Unrecognized legacy signal command')
         source=pathlib.Path(self.run(['systemctl','--user','show',member['name']+'.service','--property=SourcePath','--value']).decode().strip())
         require(source.is_file() and not source.is_symlink() and source.suffix=='.container' and source.stat().st_uid==os.getuid() and sha(source)==member['unit_sha256'],'Legacy API saved unit changed')
         return image
@@ -305,10 +394,11 @@ class Controller:
         require(observed.get('paused') is True and valid_queue_counts(observed.get('counts')) and all(v==0 for v in observed['counts'].values()),'Legacy API queue not paused and empty')
         extra=observed.get('extra');require(isinstance(extra,dict) and set(extra)=={'prioritized','waiting_children'} and all(type(v) is int and v==0 for v in extra.values()),'Legacy API has additional queued work')
         return observed
-    def api_restart_override_path(self):
+    def api_restart_override_path(self, role="api"):
+        require(role in ("api","relay"),"Unsupported restart override role")
         require(self.runtime_root.is_dir() and not self.runtime_root.is_symlink() and self.runtime_root.stat().st_uid==os.getuid() and self.runtime_root.stat().st_mode & 0o022==0,'Unsafe user runtime directory')
         parent=self.runtime_root
-        for name in ('systemd','user','indeedhub-api.service.d'):
+        for name in ('systemd','user','indeedhub-'+role+'.service.d'):
             parent=parent/name
             parent.mkdir(mode=0o700,exist_ok=True)
             require(parent.is_dir() and not parent.is_symlink() and parent.stat().st_uid==os.getuid() and parent.stat().st_mode & 0o022==0,'Unsafe API restart override directory')
@@ -317,14 +407,14 @@ class Controller:
         return ('# Archipelago maintenance operation '+self.operation+'\n[Service]\nRestart=no\n').encode()
     def verify_api_restart_override(self, path):
         require(path.is_file() and not path.is_symlink() and path.stat().st_uid==os.getuid() and path.stat().st_mode & 0o777==0o600 and path.read_bytes()==self.api_restart_override_bytes(),'API restart override changed; hold retained')
-    def ensure_api_restart_override(self):
-        self.holds();self.fence_matches();path=self.api_restart_override_path();saved=self.record.get('api_restart_override')
+    def ensure_api_restart_override(self, role="api"):
+        self.holds();self.fence_matches();path=self.api_restart_override_path(role);saved=self.record.get(role+'_restart_override')
         if saved is None:
             require(not path.exists() and not path.is_symlink(),'Unowned API restart override exists')
-            policy=self.run(['systemctl','--user','show','indeedhub-api.service','--property=Restart','--value']).decode().strip()
+            policy=self.run(['systemctl','--user','show','indeedhub-'+role+'.service','--property=Restart','--value']).decode().strip()
             require(policy in ('no','always','on-success','on-failure','on-abnormal','on-watchdog','on-abort'),'Unrecognized original restart policy')
             saved={'operation_id':self.operation,'original_policy':policy,'sha256':hashlib.sha256(self.api_restart_override_bytes()).hexdigest(),'released':False}
-            self.record['api_restart_override']=saved;self.save()
+            self.record[role+'_restart_override']=saved;self.save()
         require(saved.get('operation_id')==self.operation and saved.get('sha256')==hashlib.sha256(self.api_restart_override_bytes()).hexdigest() and saved.get('released') is False,'API restart override obligation changed')
         if path.exists() or path.is_symlink():self.verify_api_restart_override(path)
         else:
@@ -332,20 +422,20 @@ class Controller:
             with os.fdopen(descriptor,'wb') as stream:stream.write(self.api_restart_override_bytes());stream.flush();os.fsync(stream.fileno())
             directory=os.open(path.parent,os.O_RDONLY);os.fsync(directory);os.close(directory)
         self.run(['systemctl','--user','daemon-reload'])
-        require(self.run(['systemctl','--user','show','indeedhub-api.service','--property=Restart','--value']).decode().strip()=='no','API automatic restart did not close')
+        require(self.run(['systemctl','--user','show','indeedhub-'+role+'.service','--property=Restart','--value']).decode().strip()=='no','API automatic restart did not close')
         saved['installed']=True;self.save()
-    def release_api_restart_override(self):
-        saved=self.record.get('api_restart_override')
+    def release_api_restart_override(self, role="api"):
+        saved=self.record.get(role+'_restart_override')
         if not saved or saved.get('released') is True:return
         require(saved.get('operation_id')==self.operation and saved.get('sha256')==hashlib.sha256(self.api_restart_override_bytes()).hexdigest(),'API restart override ownership changed')
-        path=self.api_restart_override_path()
+        path=self.api_restart_override_path(role)
         if path.exists() or path.is_symlink():
             self.verify_api_restart_override(path);path.unlink()
             directory=os.open(path.parent,os.O_RDONLY);os.fsync(directory);os.close(directory)
         # /run may have been cleared by a reboot, or unlink may have completed
         # before an interrupted reply. Absence still requires effective-policy verification.
         self.run(['systemctl','--user','daemon-reload'])
-        require(self.run(['systemctl','--user','show','indeedhub-api.service','--property=Restart','--value']).decode().strip()==saved['original_policy'],'Original API restart policy was not restored; hold retained')
+        require(self.run(['systemctl','--user','show','indeedhub-'+role+'.service','--property=Restart','--value']).decode().strip()==saved['original_policy'],'Original API restart policy was not restored; hold retained')
         saved['released']=True;self.save()
     def signal_legacy_api(self, member):
         stopped=self.record['stopped'][member['name']]
@@ -418,6 +508,34 @@ class Controller:
                 'original_container_id':member['container_id'],'original_image_id':member['image_id'],
                 'recovery_image_id':recovery['image'],'unit_sha256':member['unit_sha256'],
                 'before_counts':before,'after_counts':after['counts'],'process_dead':True}
+    def signal_legacy_relay(self, member):
+        stopped=self.record['stopped'][member['name']]
+        image=self.api_recovery_identity(member,'relay')
+        require(datetime.datetime.fromisoformat(image['Created'].replace('Z','+00:00')).timestamp()<=stopped['intent_at'],'Relay recovery image was not captured before stop')
+        paths=[value.split('=',1)[1] for value in image['Config'].get('Env',[]) if value.startswith('APP_DATA=')]
+        require(len(paths)==1,'Ambiguous relay data path');data_path=paths[0]
+        saved=stopped.get('relay_signal')
+        if saved:
+            require(saved.get('operation_id')==self.operation and saved.get('container_id')==member['container_id'] and saved.get('acknowledged') is True and saved.get('signal')=='SIGINT' and saved.get('proof')==relay_process_proof(saved.get('raw',''),data_path) and type(saved.get('intent_at')) in (int,float) and type(saved.get('acknowledged_at')) in (int,float) and saved['acknowledged_at']>=saved['intent_at']>=stopped['intent_at'],'Incomplete durable relay signal proof; hold retained')
+            return
+        actual=self.inspect(member['name']);require(actual['Id']==member['container_id'] and actual['Image']==member['image_id'] and actual['State']['Running'],'Original relay changed before signal')
+        self.ensure_api_restart_override('relay')
+        deadline=time.monotonic()+60
+        while True:
+            sockets=self.run(['podman','exec',member['container_id'],'sh','-c','cat /proc/net/tcp /proc/net/tcp6']).decode().splitlines()
+            if any(len(line.split())>3 and line.split()[3]=='0A' for line in sockets):break
+            require(time.monotonic()<deadline,'Relay listener not ready for native shutdown');time.sleep(0.2)
+        raw=self.run(['podman','exec',member['container_id'],'sh','-c',RELAY_PROCESS_SCRIPT,'relay-process','probe']).decode().strip()
+        proof=relay_process_proof(raw,data_path)
+        saved={'operation_id':self.operation,'container_id':member['container_id'],'signal':'SIGINT','proof':proof,'raw':raw,'intent_at':time.time(),'acknowledged':False}
+        stopped['relay_signal']=saved;self.save()
+        ack=self.run(['podman','exec',member['container_id'],'sh','-c',RELAY_PROCESS_SCRIPT,'relay-process','signal',raw]).decode().strip()
+        require(ack=='acknowledged SIGINT\n'+raw,'Relay signal acknowledgement changed; hold retained')
+        saved['acknowledged']=True;saved['acknowledged_at']=time.time();self.save()
+        deadline=time.monotonic()+60
+        while self.run(['podman','ps','--no-trunc','--filter','id='+member['container_id'],'--format','{{.ID}}']).strip():
+            require(time.monotonic()<deadline,'Relay did not terminate after native shutdown signal');time.sleep(0.2)
+        self.require_api_stopped(member)
     def graceful_stop(self, name):
         # Save the obligation before systemd can remove an AutoRemove container.
         stopped=self.record.setdefault('stopped',{})
@@ -427,6 +545,8 @@ class Controller:
             actual=self.inspect(name);require(actual['Id']==member['container_id'] and actual['Image']==member['image_id'],'Original container changed before stop')
             stopped[name]={'intent_at':time.time(),'container_id':actual['Id']};self.save()
         if name=='indeedhub-api':self.signal_legacy_api(member)
+        if name=='indeedhub-relay':self.signal_legacy_relay(member)
+        if name in ('indeedhub-api','indeedhub-relay'):self.require_api_stopped(member)
         self.run(['systemctl','--user','stop',name+'.service'],timeout=180)
         properties=self.run(['systemctl','--user','show',name+'.service','--property=ActiveState,SubState,Result,ExecMainStatus']).decode()
         # --rm removes inspect state. Require a persisted Podman died event for
@@ -442,6 +562,9 @@ class Controller:
         if name=='indeedhub-api' and str(code)=='1':forced=self.legacy_api_wrapper_termination(member,properties)
         require(forced is not None or ('ActiveState=inactive' in properties and 'Result=success' in properties),'Service did not stop successfully')
         require(forced is not None or str(code)=='0' or (str(code)=='143' and (idle_worker or empty_api)),'Original process did not exit cleanly; active work is not claimed completed')
+        if name=='indeedhub-relay':
+            require(str(code)=='0','Relay native shutdown did not exit cleanly')
+            self.require_api_stopped(member)
         classification=forced['classification'] if forced else (('idle-worker-terminated-after-queue-drain' if idle_worker else 'empty-business-store-legacy-api-terminated') if str(code)=='143' else 'clean-process-exit')
         if forced:stopped[name]['legacy_idle_termination']=forced
         stopped[name].update(confirmed=True,exit_code=int(code),classification=classification,confirmed_at=time.time());self.save()
@@ -689,6 +812,7 @@ class Controller:
                 self.record['rollback_data_claim']='No target startup/migration began; only original runtime restored.'
 
         self.release_api_restart_override()
+        self.release_api_restart_override("relay")
         if not self.record.get('queue_was_paused',True):
             state=self.queue('resume');require(not state['paused'],'Could not restore queue admission')
         self.record['phase']='Released';self.record['outcome']=outcome;self.save()

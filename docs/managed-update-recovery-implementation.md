@@ -418,3 +418,34 @@ remains under investigation. The held operation is
 images and failure evidence are retained. The manager is stopped and startup
 barred. The candidate helper was separate from the installed pinned helper.
 Neither full target rollback nor successful update has passed. Yaya is unchanged.
+
+### Relay native shutdown qualification (2026-10-08)
+
+The earlier exit 130 probe signalled before the relay completed initialization.
+A new disposable probe waited for the real listener, then signalled the exact
+shell wrapper's sole relay child. Original `nostr-rs-relay 0.10.0` exited **0**
+without OOM. The final controller script independently binds parent/child PID,
+PPID, start time and command bytes, the child's listening socket inode, and the
+executing binary SHA256
+`e4d5d1ceb80150dd8bf4dd55b4f937a9d260cad0c19d616a974dcfaa6e82eb3c`.
+A changed proof was refused while the probe stayed running; the matching proof
+then received SIGINT and exited 0. These probes used the exact original image,
+network none and tmpfs only. The final probe's receipt formatter had a variable
+collision after shutdown; independent exact-container inspection confirmed exit
+0/no OOM and retained that limitation in `relay-ready6-probe.receipt.json`.
+
+The helper now has separate API/relay operation-owned runtime restart overrides.
+It still rejects relay exit 137/130. Both API and relay acknowledged-signal retries
+must prove no live replacement before any systemd stop. Relay admission retains
+exact original-image provenance: a different image requires a unique completed
+owned recovery chain plus the current installed recipe's operation/body binding;
+the executing binary hash is an additional check. Native finite-role override
+validation is checkpointed in `f78ee252`. **53 pure Python tests pass**; combined
+Rust tests and a matching executable remain pending.
+
+The actual held operation `3b3c564b-cce6-4727-8be8-369a95c479e4` still has its
+unaccepted earlier relay-137 evidence. It is not retroactively reclassified.
+The isolated manager remains stopped, PostgreSQL's original live identity and
+all recovery evidence remain intact. Keep the guest idle during serialized
+builds rather than rebooting and invalidating that identity. No Yaya application
+or catalog mutation has occurred, and full rollback/success remains pending.

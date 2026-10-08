@@ -486,4 +486,73 @@ console.log('process identity cases passed');'''
   self.assertEqual(c.release('restored')['state'],'released')
   self.assertEqual(c.record['recovery_data_verification']['operation_id'],self.operation)
   self.assertEqual(c.record['recovery_data_verification']['before_sha256'],c.record['recovery_data_verification']['after_sha256'])
+ def relay_raw(self, child_pid=35, parent_pid=1, ppid=1, command=None):
+  parent='\0'.join(module.LEGACY_RELAY_CMD)+'\0'
+  child=command or './nostr-rs-relay\0--db\0/usr/src/app/db\0'
+  return f'{parent_pid} 0 100 {parent.encode().hex()}\n{child_pid} {ppid} 200 {child.encode().hex()}\n{module.LEGACY_RELAY_BINARY_SHA256}'
+ def test_relay_process_proof_requires_exact_wrapper_child_and_complete_identity(self):
+  raw=self.relay_raw();proof=module.relay_process_proof(raw,'/usr/src/app/db')
+  self.assertEqual(proof['child']['pid'],35)
+  for bad in [raw+'\n'+raw.splitlines()[1],self.relay_raw(child_pid=1),self.relay_raw(parent_pid=2),self.relay_raw(ppid=0),self.relay_raw(command='./other\0'),raw.replace(' 200 ',' invalid '),raw.replace(module.LEGACY_RELAY_BINARY_SHA256,'a'*64)]:
+   with self.assertRaises((RuntimeError,ValueError)):module.relay_process_proof(bad,'/usr/src/app/db')
+  with self.assertRaises(RuntimeError):module.relay_process_proof(raw,'/other')
+ def test_relay_override_has_separate_owned_path_and_journal_key(self):
+  c,path,state=self.restart_policy_fixture();relay=c.api_restart_override_path('relay');old=c.runner
+  def runner(argv,timeout,output):
+   if argv==['systemctl','--user','show','indeedhub-relay.service','--property=Restart','--value']:return ('no' if relay.exists() else 'always').encode()
+   return old(argv,timeout,output)
+  c.runner=runner;c.ensure_api_restart_override('relay')
+  self.assertTrue(relay.exists());self.assertFalse(path.exists());self.assertNotIn('api_restart_override',c.record)
+  self.assertEqual(c.record['relay_restart_override']['original_policy'],'always')
+  c.ensure_api_restart_override();c.release_api_restart_override('relay')
+  self.assertTrue(path.exists());self.assertFalse(relay.exists());self.assertFalse(c.record['api_restart_override']['released'])
+  with self.assertRaises(RuntimeError):c.api_restart_override_path('postgres')
+ def test_relay_unacknowledged_or_changed_durable_signal_never_retries(self):
+  c=self.controller;m=next(x for x in members() if x['name']=='indeedhub-relay')
+  raw=self.relay_raw();saved={'operation_id':self.operation,'container_id':m['container_id'],'signal':'SIGINT','proof':module.relay_process_proof(raw,'/usr/src/app/db'),'raw':raw,'intent_at':1700000001,'acknowledged_at':1700000002,'acknowledged':True}
+  c.record={'stopped':{m['name']:{'intent_at':1700000000,'relay_signal':saved}}}
+  c.api_recovery_identity=lambda member,role:{'Created':'2020-01-01T00:00:00Z','Config':{'Env':['APP_DATA=/usr/src/app/db']}}
+  c.signal_legacy_relay(m);self.assertEqual(self.calls,[])
+  for key,bad in [('acknowledged',False),('operation_id',str(uuid.uuid4())),('container_id','wrong'),('proof',{}),('signal','SIGTERM'),('acknowledged_at',1)]:
+   old=saved[key];saved[key]=bad
+   with self.assertRaises(RuntimeError):c.signal_legacy_relay(m)
+   saved[key]=old
+  self.assertEqual(self.calls,[])
+ def test_acknowledged_api_and_relay_retry_refuses_replacement_before_stop(self):
+  for name in ('indeedhub-api','indeedhub-relay'):
+   c=self.controller;m=next(x for x in members() if x['name']==name)
+   c.record={'original_members':members(),'stopped':{name:{'container_id':m['container_id'],'intent_at':1700000000}}}
+   c.signal_legacy_api=lambda member:None;c.signal_legacy_relay=lambda member:None
+   calls=[]
+   def runner(argv,timeout,output):
+    calls.append(argv)
+    if argv[:2]==['podman','ps']:return b'unexpected-replacement'
+    raise AssertionError('Replacement must be refused before any stop '+str(argv))
+   c.runner=runner
+   with self.assertRaisesRegex(RuntimeError,'writer is still running'):c.graceful_stop(name)
+   self.assertEqual(len(calls),1);self.assertEqual(calls[0][:2],['podman','ps'])
+ def test_relay_image_requires_qualified_base_or_completed_owned_recovery_lineage(self):
+  import copy,hashlib
+  image='d'*64;body='[Container]\nImage='+image+'\n';before='[Container]\nImage='+module.LEGACY_RELAY_IMAGE+'\n'
+  record={'schema':2,'id':self.operation,'package':'indeedhub','phase':'Restored','cleanup_done':True,'members':[{'original':{'name':'indeedhub-relay','image':module.LEGACY_RELAY_IMAGE,'body':before,'container_id':'e'*64},'pinned_original_body':body,'preserve_original':False,'recovery_image':{'image':image,'operation_id':self.operation,'source_container_id':'e'*64}}]}
+  digest=hashlib.sha256(body.encode()).hexdigest()
+  module.verify_relay_image_lineage(module.LEGACY_RELAY_IMAGE,'unused',[])
+  installed={'schema':1,'name':'indeedhub-relay','operation':self.operation,'body':body}
+  module.verify_relay_image_lineage(image,digest,[record],installed)
+  for missing in (None,dict(installed,operation=str(uuid.uuid4())),dict(installed,body='changed')):
+   with self.assertRaises(RuntimeError):module.verify_relay_image_lineage(image,digest,[record],missing)
+  for bad in [[],[record,record]]:
+   with self.assertRaises(RuntimeError):module.verify_relay_image_lineage(image,digest,bad,installed)
+  legacy=copy.deepcopy(record);legacy['schema']=1
+  for malformed in (0,'false',[],{}):
+   legacy['members'][0]['preserve_original']=malformed
+   with self.assertRaises(RuntimeError):module.verify_relay_image_lineage(image,digest,[legacy],installed)
+  for change in ('unfinished','foreign','preserved','wrong-body','cycle'):
+   bad=copy.deepcopy(record)
+   if change=='unfinished':bad['cleanup_done']=False
+   if change=='foreign':bad['members'][0]['recovery_image']['operation_id']=str(uuid.uuid4())
+   if change=='preserved':bad['members'][0]['preserve_original']=True
+   if change=='wrong-body':bad['members'][0]['pinned_original_body']='changed'
+   if change=='cycle':bad['members'][0]['original']['image']=image
+   with self.assertRaises(RuntimeError):module.verify_relay_image_lineage(image,digest,[bad],installed)
 if __name__=='__main__':unittest.main()
