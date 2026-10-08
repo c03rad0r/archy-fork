@@ -1558,3 +1558,43 @@ announcements remain unrecovered from the sources checked. This releases the
 all-project-discovery publication hold, not a claim that recovery passed. Track
 recovery separately and retain the limitation in release notes. Other artifact,
 upgrade, security and publication checks remain required.
+
+## 2026-10-08: final IndeeHub update restored at health-check boundary
+
+Native operation `851483a2` automatically restored during target startup, before
+the final frontend was started. This is **not successful final delivery**.
+The MinIO target started at 18:24:31.489 UTC. Its immediate probe was still
+`starting`; MinIO reported API readiness at 18:24:32, and the next scheduled
+health check reported `healthy` at 18:25:02.851. The updater's previous 30 samples,
+one second apart with no final sample after sleeping, could expire before that
+healthy result. The actual health configuration uses a 30-second interval,
+five-second timeout and five retries. PostgreSQL, Redis and MinIO were the only
+target members started; relay, API, worker and final frontend were not started.
+
+Independent post-restoration verification passed: all 31 running containers,
+24 unrelated runtime identities preserved, the exact current 110-migration
+history and original database commitments preserved, and restoration-image
+proof matched. Retain the operation journal and backup history; do not treat a
+restored transaction as a successful update or erase the first failed attempt.
+
+The shared native provider (`b77…`) is deployed. The final frontend image
+(`8db…`) remains pending; paired cached-account-A to chosen-identity-B acceptance
+has not run. Prior clean native login success does not prove this reported
+cached-account transition is fixed on the deployed frontend.
+
+Source correction `7fe63355` replaces the sample-count deadline with a bounded
+monotonic readiness deadline derived once from the first inspected health
+configuration. It includes the configured start period, intervals, timeouts and
+retries, with a 30-second minimum and five-minute ceiling; every inspect is
+bounded too. `starting` never qualifies as healthy, configured-but-missing health
+status stays pending, and unhealthy or exited containers fail immediately.
+Running-only readiness remains allowed only for containers without a configured
+health check. The isolated runner checkout bind is separately committed as
+`1b0b119a` and preserves all existing isolation properties.
+
+Validation at this checkpoint: source formatting and independent source review
+passed; seven deterministic paused-time regressions are compiling through the
+isolated runner. The full isolated suite, production backend build, another
+explicit native update, post-update runtime/data proofs, and paired browser
+acceptance remain pending. No wallet, payment, personal-media or profile changes
+are part of this readiness correction.
