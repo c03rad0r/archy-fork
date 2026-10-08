@@ -9,11 +9,182 @@ use sha2::{Digest, Sha256};
 use std::{
     collections::HashMap,
     future::Future,
-    io::Write,
+    io::{Read, Write},
     os::unix::fs::{MetadataExt, OpenOptionsExt, PermissionsExt},
     path::{Path, PathBuf},
     time::Duration,
 };
+
+fn owned_directory(path: &Path) -> Result<()> {
+    let meta = std::fs::symlink_metadata(path)?;
+    anyhow::ensure!(
+        meta.is_dir()
+            && !meta.file_type().is_symlink()
+            && meta.uid() == unsafe { libc::geteuid() }
+            && meta.mode() & 0o022 == 0,
+        "Maintenance ownership directory changed"
+    );
+    Ok(())
+}
+fn owned_record(path: &Path, limit: u64, exact_private: bool) -> Result<Vec<u8>> {
+    let mut file = std::fs::OpenOptions::new()
+        .read(true)
+        .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK)
+        .open(path)?;
+    let meta = file.metadata()?;
+    anyhow::ensure!(
+        meta.is_file()
+            && meta.uid() == unsafe { libc::geteuid() }
+            && meta.mode() & 0o022 == 0
+            && (!exact_private || meta.mode() & 0o777 == 0o600)
+            && meta.len() <= limit,
+        "Maintenance ownership record changed"
+    );
+    let mut bytes = Vec::new();
+    Read::by_ref(&mut file)
+        .take(limit + 1)
+        .read_to_end(&mut bytes)?;
+    anyhow::ensure!(
+        bytes.len() as u64 <= limit,
+        "Maintenance ownership record exceeds bound"
+    );
+    Ok(bytes)
+}
+/// The sole admitted drop-in is the currently held Indee API restart fence.
+/// This never grants ownership to arbitrary operator or historical overrides.
+fn validate_maintenance_override(
+    data: &Path,
+    runtime: &Path,
+    name: &str,
+    dropins: &str,
+    restart: &str,
+) -> Result<()> {
+    if dropins.is_empty() {
+        return Ok(());
+    }
+    anyhow::ensure!(
+        name == "indeedhub-api" && restart == "no",
+        "External service override refused"
+    );
+    owned_directory(data)?;
+    for relative in [
+        "update-transactions",
+        "update-transactions/holds",
+        "update-transactions/supervised",
+        "update-transactions/indeehub-maintenance",
+        "app-maintenance",
+    ] {
+        owned_directory(&data.join(relative))?;
+    }
+    let operation = String::from_utf8(owned_record(
+        &data.join("update-transactions/holds/indeedhub-api"),
+        128,
+        false,
+    )?)?;
+    anyhow::ensure!(
+        uuid::Uuid::parse_str(&operation)?.to_string() == operation,
+        "Invalid maintenance hold owner"
+    );
+    anyhow::ensure!(
+        owned_record(&data.join("app-maintenance/indeedhub"), 128, false)? == operation.as_bytes(),
+        "Maintenance admission fence owner changed"
+    );
+    let maintenance_dir = data
+        .join("update-transactions/indeehub-maintenance")
+        .join(&operation);
+    owned_directory(&maintenance_dir)?;
+    let journal: serde_json::Value = serde_json::from_slice(&owned_record(
+        &maintenance_dir.join("journal.json"),
+        16 * 1024 * 1024,
+        false,
+    )?)?;
+    let native: serde_json::Value = serde_json::from_slice(&owned_record(
+        &data
+            .join("update-transactions/supervised")
+            .join(format!("{operation}.json")),
+        16 * 1024 * 1024,
+        false,
+    )?)?;
+    anyhow::ensure!(
+        native["id"].as_str() == Some(operation.as_str())
+            && native["package"] == "indeedhub"
+            && matches!(native["schema"].as_u64(), Some(1 | 2))
+            && native["cleanup_done"] == false
+            && matches!(
+                native["phase"].as_str(),
+                Some("Editing" | "Starting" | "Restoring" | "Restored" | "Committed")
+            ),
+        "Native maintenance operation is not active"
+    );
+    anyhow::ensure!(
+        journal["operation_id"].as_str() == Some(operation.as_str())
+            && matches!(
+                journal["phase"].as_str(),
+                Some("Prepared" | "Drained" | "Recovering")
+            ),
+        "Maintenance journal owner is not active"
+    );
+    let originals = native["members"]
+        .as_array()
+        .context("Missing native members")?;
+    let matching: Vec<_> = originals
+        .iter()
+        .filter(|m| m["original"]["name"] == name)
+        .collect();
+    anyhow::ensure!(matching.len() == 1, "Ambiguous native API identity");
+    let original = &matching[0]["original"];
+    let members = journal["original_members"]
+        .as_array()
+        .context("Missing maintenance members")?;
+    let matching: Vec<_> = members.iter().filter(|m| m["name"] == name).collect();
+    anyhow::ensure!(matching.len() == 1, "Ambiguous maintenance API identity");
+    let member = matching[0];
+    let body = original["body"]
+        .as_str()
+        .context("Missing original API unit")?;
+    anyhow::ensure!(
+        ["container_id", "image", "config_sha256"]
+            .iter()
+            .all(|key| original[*key]
+                .as_str()
+                .is_some_and(|v| v.len() == 64 && v.bytes().all(|b| b.is_ascii_hexdigit())))
+            && member["container_id"] == original["container_id"]
+            && member["image_id"] == original["image"]
+            && member["config_sha256"] == original["config_sha256"]
+            && original["running"].is_boolean()
+            && member["running"] == original["running"]
+            && member["unit_sha256"] == hex::encode(Sha256::digest(body.as_bytes())),
+        "Maintenance API binding changed"
+    );
+    let bytes = format!("# Archipelago maintenance operation {operation}\n[Service]\nRestart=no\n");
+    let saved = &journal["api_restart_override"];
+    anyhow::ensure!(
+        saved["operation_id"].as_str() == Some(operation.as_str())
+            && saved["released"] == false
+            && saved["sha256"] == hex::encode(Sha256::digest(bytes.as_bytes())),
+        "Maintenance restart override obligation changed"
+    );
+    owned_directory(runtime)?;
+    for relative in [
+        "systemd",
+        "systemd/user",
+        "systemd/user/indeedhub-api.service.d",
+    ] {
+        owned_directory(&runtime.join(relative))?;
+    }
+    let expected = runtime
+        .join("systemd/user/indeedhub-api.service.d")
+        .join(format!("zz-archipelago-maintenance-{operation}.conf"));
+    anyhow::ensure!(
+        expected.to_str() == Some(dropins),
+        "Unexpected or additional service override"
+    );
+    anyhow::ensure!(
+        owned_record(&expected, 512, true)? == bytes.as_bytes(),
+        "Maintenance restart override bytes changed"
+    );
+    Ok(())
+}
 
 pub(crate) trait DrainBarrier: Sync {
     /// Called after the node persisted original writable recovery images.
@@ -449,6 +620,7 @@ impl<B: DrainBarrier> SystemdSupervisor<B> {
             "--property=SourcePath",
             "--property=DropInPaths",
             "--property=LoadState",
+            "--property=Restart",
         ])
         .await?;
         let values: HashMap<_, _> = output
@@ -457,12 +629,22 @@ impl<B: DrainBarrier> SystemdSupervisor<B> {
             .collect();
         anyhow::ensure!(
             values.get("LoadState") == Some(&"loaded")
-                && values.get("DropInPaths") == Some(&"")
                 && values
                     .get("SourcePath")
                     .is_some_and(|path| Path::new(path) == expected),
             "Service is not owned by the exact original source Quadlet or has external overrides"
         );
+        validate_maintenance_override(
+            &self.data_dir,
+            &PathBuf::from(format!("/run/user/{}", unsafe { libc::geteuid() })),
+            name,
+            values
+                .get("DropInPaths")
+                .context("Missing service override inventory")?,
+            values
+                .get("Restart")
+                .context("Missing service restart policy")?,
+        )?;
         let meta = std::fs::symlink_metadata(&expected)?;
         anyhow::ensure!(
             meta.is_file()
@@ -680,6 +862,200 @@ impl<B: DrainBarrier> Supervisor for SystemdSupervisor<B> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    struct OverrideFixture {
+        _root: tempfile::TempDir,
+        data: PathBuf,
+        runtime: PathBuf,
+        override_path: PathBuf,
+        native_path: PathBuf,
+        journal_path: PathBuf,
+    }
+    fn private_write(path: &Path, bytes: &[u8]) {
+        std::fs::write(path, bytes).unwrap();
+        std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600)).unwrap();
+    }
+    impl OverrideFixture {
+        fn new() -> Self {
+            let root = tempfile::tempdir().unwrap();
+            let data = root.path().join("data");
+            let runtime = root.path().join("runtime");
+            let operation = uuid::Uuid::new_v4().to_string();
+            let maintenance = data
+                .join("update-transactions/indeehub-maintenance")
+                .join(&operation);
+            for path in [
+                data.join("update-transactions/holds"),
+                data.join("update-transactions/supervised"),
+                maintenance.clone(),
+                data.join("app-maintenance"),
+                runtime.join("systemd/user/indeedhub-api.service.d"),
+            ] {
+                std::fs::create_dir_all(path).unwrap();
+            }
+            private_write(
+                &data.join("update-transactions/holds/indeedhub-api"),
+                operation.as_bytes(),
+            );
+            private_write(
+                &data.join("app-maintenance/indeedhub"),
+                operation.as_bytes(),
+            );
+            let body = "[Container]\nContainerName=indeedhub-api\n";
+            let original = serde_json::json!({"name":"indeedhub-api","container_id":"a".repeat(64),"image":"b".repeat(64),"config_sha256":"c".repeat(64),"body":body,"running":true});
+            let native = serde_json::json!({"schema":2,"id":operation,"package":"indeedhub","phase":"Restoring","cleanup_done":false,"members":[{"original":original}]});
+            let bytes =
+                format!("# Archipelago maintenance operation {operation}\n[Service]\nRestart=no\n");
+            let journal = serde_json::json!({"operation_id":operation,"phase":"Recovering","original_members":[{"name":"indeedhub-api","container_id":original["container_id"],"image_id":original["image"],"config_sha256":original["config_sha256"],"unit_sha256":hex::encode(Sha256::digest(body.as_bytes())),"running":true}],"api_restart_override":{"operation_id":operation,"released":false,"sha256":hex::encode(Sha256::digest(bytes.as_bytes()))}});
+            let override_path = runtime
+                .join("systemd/user/indeedhub-api.service.d")
+                .join(format!("zz-archipelago-maintenance-{operation}.conf"));
+            let native_path = data
+                .join("update-transactions/supervised")
+                .join(format!("{operation}.json"));
+            let journal_path = maintenance.join("journal.json");
+            private_write(&override_path, bytes.as_bytes());
+            private_write(&native_path, &serde_json::to_vec(&native).unwrap());
+            private_write(&journal_path, &serde_json::to_vec(&journal).unwrap());
+            Self {
+                _root: root,
+                data,
+                runtime,
+                override_path,
+                native_path,
+                journal_path,
+            }
+        }
+        fn validate(&self) -> Result<()> {
+            validate_maintenance_override(
+                &self.data,
+                &self.runtime,
+                "indeedhub-api",
+                self.override_path.to_str().unwrap(),
+                "no",
+            )
+        }
+    }
+    #[test]
+    fn only_exact_active_api_restart_override_is_owned() {
+        let f = OverrideFixture::new();
+        f.validate().unwrap();
+        for (name, paths, restart) in [
+            (
+                "indeedhub-ffmpeg",
+                f.override_path.display().to_string(),
+                "no",
+            ),
+            (
+                "indeedhub-api",
+                format!("{} /other.conf", f.override_path.display()),
+                "no",
+            ),
+            (
+                "indeedhub-api",
+                f.override_path.display().to_string(),
+                "always",
+            ),
+        ] {
+            assert!(
+                validate_maintenance_override(&f.data, &f.runtime, name, &paths, restart).is_err()
+            );
+        }
+        // Services without overrides preserve the existing ordinary ownership path.
+        validate_maintenance_override(
+            Path::new("/absent"),
+            Path::new("/absent"),
+            "other",
+            "",
+            "always",
+        )
+        .unwrap();
+    }
+    #[test]
+    fn restart_override_requires_matching_live_native_and_controller_obligations() {
+        for (native, key, value) in [
+            (
+                true,
+                "/id",
+                serde_json::json!(uuid::Uuid::new_v4().to_string()),
+            ),
+            (true, "/cleanup_done", serde_json::json!(true)),
+            (true, "/phase", serde_json::json!("Aborted")),
+            (
+                true,
+                "/members/0/original/container_id",
+                serde_json::json!("d".repeat(64)),
+            ),
+            (
+                false,
+                "/operation_id",
+                serde_json::json!(uuid::Uuid::new_v4().to_string()),
+            ),
+            (false, "/phase", serde_json::json!("Released")),
+            (
+                false,
+                "/api_restart_override/released",
+                serde_json::json!(true),
+            ),
+            (
+                false,
+                "/api_restart_override/sha256",
+                serde_json::json!("d".repeat(64)),
+            ),
+        ] {
+            let f = OverrideFixture::new();
+            let path = if native {
+                &f.native_path
+            } else {
+                &f.journal_path
+            };
+            let mut record: serde_json::Value =
+                serde_json::from_slice(&std::fs::read(path).unwrap()).unwrap();
+            *record.pointer_mut(key).unwrap() = value;
+            private_write(path, &serde_json::to_vec(&record).unwrap());
+            assert!(f.validate().is_err(), "Accepted changed binding: {key}");
+        }
+        let f = OverrideFixture::new();
+        private_write(
+            &f.data.join("app-maintenance/indeedhub"),
+            uuid::Uuid::new_v4().to_string().as_bytes(),
+        );
+        assert!(f.validate().is_err());
+    }
+    #[test]
+    fn restart_override_refuses_tamper_symlink_and_writable_ownership_paths() {
+        let f = OverrideFixture::new();
+        let original = std::fs::read(&f.override_path).unwrap();
+        private_write(&f.override_path, b"[Service]\nRestart=always\n");
+        assert!(f.validate().is_err());
+        private_write(&f.override_path, &original);
+        std::fs::set_permissions(&f.override_path, std::fs::Permissions::from_mode(0o644)).unwrap();
+        assert!(f.validate().is_err());
+        private_write(&f.override_path, &original);
+        let foreign = f.runtime.join("foreign");
+        private_write(&foreign, &original);
+        std::fs::remove_file(&f.override_path).unwrap();
+        std::os::unix::fs::symlink(&foreign, &f.override_path).unwrap();
+        assert!(f.validate().is_err());
+        assert_eq!(std::fs::read(&foreign).unwrap(), original);
+        std::fs::remove_file(&f.override_path).unwrap();
+        private_write(&f.override_path, &original);
+        std::fs::set_permissions(
+            f.override_path.parent().unwrap(),
+            std::fs::Permissions::from_mode(0o777),
+        )
+        .unwrap();
+        assert!(f.validate().is_err());
+        std::fs::set_permissions(
+            f.override_path.parent().unwrap(),
+            std::fs::Permissions::from_mode(0o700),
+        )
+        .unwrap();
+        f.validate().unwrap();
+        let real = f.journal_path.with_extension("owned");
+        std::fs::rename(&f.journal_path, &real).unwrap();
+        std::os::unix::fs::symlink(&real, &f.journal_path).unwrap();
+        assert!(f.validate().is_err());
+    }
     struct UnusedBarrier;
     impl DrainBarrier for UnusedBarrier {
         async fn acquire(&self, _: &str, _: &[Unit], _: bool) -> Result<()> {
