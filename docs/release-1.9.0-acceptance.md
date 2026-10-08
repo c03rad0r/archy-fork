@@ -1016,3 +1016,35 @@ Durable public receipts and failed-attempt evidence:
 `~/.local/state/archipelago/release-qualification/ngit-iso-190-20261007/`.
 Existing known limitations are retained in the release notes. Current IndeeHub,
 artwork and payment follow-ups are not included in this original ISO.
+
+### Publication status and subsequent storage regression
+
+OTA metadata promotion proposal
+`0e90b3847ff377ad5c9e400037651b565defa4ee229eac785a7897c30423a4e7`
+was marked applied. Exact main/tag parity and public metadata bytes passed. Dev,
+Yaya and Shorty now use the public catalog; their app IDs/start times and guard
+configuration were preserved. Thirty-two external management-denial probes and
+tailnet UI access passed after the change. Framework reaches the public manifest
+and its saved current version is already1.9.0-alpha; this is a read-only result,
+not a fresh authenticated update RPC acceptance.
+
+The public demo was deployed with immutable qualified images and preserved
+configuration/rollback. Public version is1.9.0-alpha-demo. Mobile login/dashboard
+passed on retry after the initial30-second form wait timed out. Public resumable
+upload recovery/exact bytes/visitor isolation and replace/zero-byte/cancel cases
+passed. Fixed-quota and interrupted-TCP scenarios retain their isolated evidence.
+
+The raw ISO and both checksum files passed full public-download hash checks.
+The public signed checksum also verifies against the pinned release root. Logs:
+`/tmp/archy-190-publish-iso.log` (ISO PASS before the idle upload tunnel closed),
+`/tmp/archy-190-publish-iso-checksums.log` (small sidecars retried over HTTPS).
+No ISO re-upload or artifact change was needed. A subsequent
+follow-up backend suite exposed the pre-existing storage-prefix bug documented in
+[known limitations](release-1.9.0-known-limitations.md). Its correction is being
+qualified separately. Artifact-byte verification is not a claim that this newly
+identified issue has been fixed in the already published release.
+
+Public assets: [1.9.0-alpha release](https://source.archipelago-foundation.org/lfg2025/archy/releases/tag/v1.9.0-alpha).
+The separate follow-up branch now passes1,683 backend tests (four existing ignored)
+and all1,222 frontend tests after correcting the storage classifier. These are
+source test results, not inclusion in the published artifacts or live acceptance.

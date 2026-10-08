@@ -2,6 +2,7 @@ import { describe, it, expect, afterEach, beforeEach, vi } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
 import MediaLightbox from '../cloud/MediaLightbox.vue'
 import { usePipSession } from '../../composables/usePipSession'
+import { togglePip } from '../../utils/pip'
 import type { FileBrowserItem } from '../../api/filebrowser-client'
 
 // jsdom has no picture-in-picture implementation — stub the pieces the
@@ -75,6 +76,18 @@ async function mountLightbox() {
 }
 
 describe('MediaLightbox picture-in-picture handoff', () => {
+  it('checks PiP support when the action is invoked in a WebView', async () => {
+    const video = document.createElement('video')
+    const request = vi.spyOn(video, 'requestPictureInPicture')
+    Object.defineProperty(document, 'pictureInPictureEnabled', { value: false, configurable: true })
+    await togglePip(video)
+    expect(request).not.toHaveBeenCalled()
+
+    Object.defineProperty(document, 'pictureInPictureEnabled', { value: true, configurable: true })
+    await togglePip(video)
+    expect(request).toHaveBeenCalledOnce()
+  })
+
   it('entering PiP emits close exactly once and adopts the video before doing so', async () => {
     const wrapper = await mountLightbox()
     const video = findVideo()

@@ -20,7 +20,10 @@ export function isPipSupported(): boolean {
 }
 
 export async function togglePip(video: HTMLVideoElement | null | undefined): Promise<void> {
-  if (!video || !pipSupported) return
+  // Check at call time. Embedded WebViews can expose the document capability
+  // after the module has been evaluated, and companion navigation can restore
+  // a page with a different media capability than its first load.
+  if (!video || !isPipSupported()) return
   try {
     if (document.pictureInPictureElement === video) await document.exitPictureInPicture()
     else await video.requestPictureInPicture()
