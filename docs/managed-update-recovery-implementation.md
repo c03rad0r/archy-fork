@@ -717,3 +717,33 @@ Actual success qualification `f39bd824-1d3e-49dc-a0ad-d2a90523bdb0` is in
 progress; no success or deployment is claimed by this checkpoint. Historical
 published catalog bytes remain unchanged. The separately prepared unsigned
 candidate catalog already has the correct hooks (see worker runtime receipt).
+
+
+### Corrected-plan attempt: overloaded observation, then native recovery
+
+Operation `f39bd824-1d3e-49dc-a0ad-d2a90523bdb0` did not reach target startup.
+During acquire, reading the exact original worker's persisted died event with
+`podman events` exceeded its unchanged 30-second bound. The initial recovery
+call then exceeded the unchanged 90-second systemd-start observation bound and
+reported unresolved Restoring at 11:08:12 UTC. This was an accurate caller-time
+failure, not the eventual terminal outcome.
+
+Subsequent read-only evidence found original worker
+`2ddac1b1c3e1454e1c1e61686e134940fd62fa6ce5a009920d960eede6240b04`
+died with exit137 at 11:05:13 UTC. Its recovered unit entered active state at
+11:08:13, one second after the caller's timeout. Supported native recovery then
+completed autonomously: **Restored, cleanup_done=true, maintenance Released**.
+No manual journal edit, ownership adoption, resume command or second RPC was
+used. Independent checks passed all seven running original/recovery image pins,
+exact saved units, frontend/API writable-layer sentinels and absent holds/fence.
+No backup or successful target-cutover acceptance is claimed for this attempt.
+
+Host pressure during the failure reached memory-full avg10 56% and I/O-full
+avg10 59%; QEMU resident memory fell to about 880 MiB. An unrelated compiler
+was running in another project's systemd unit. This supports overloaded
+observation as a contributor; it does not prove a new worker shutdown defect.
+No unrelated process, service, scheduler priority or production timeout changed.
+After verified safe recovery, the same QEMU was paused with memory retained to
+serialize queued work. Success qualification remains open and must resume only
+when the host can support the unchanged deadlines. The corrected hook itself
+was not reached in this operation.
