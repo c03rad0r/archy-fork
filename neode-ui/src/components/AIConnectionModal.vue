@@ -28,7 +28,8 @@
     <button v-if="status?.local_ready" class="glass-button rounded-lg px-4 py-2 text-sm text-white mt-4 w-full" @click="useLocal">Use local AI</button>
     <p class="text-xs text-white/40 mt-4">Your draft stays in place when you close this window.</p>
   </BaseModal>
-  <ReceiveBitcoinModal :show="show && funding" initial-method="ecash" @close="finishFunding" @received="finishFunding" />
+  <ReceiveBitcoinModal :show="show && funding && !scanning" initial-method="ecash" @close="finishFunding" @received="finishFunding" @scan="scanning = true" />
+  <WalletScanModal :show="show && scanning" @close="finishScan" @sent="finishScan" />
 </template>
 
 <script setup lang="ts">
@@ -36,6 +37,7 @@ import { computed, ref, watch } from 'vue'
 import { rpcClient } from '@/api/rpc-client'
 import BaseModal from './BaseModal.vue'
 import ReceiveBitcoinModal from './ReceiveBitcoinModal.vue'
+import WalletScanModal from './WalletScanModal.vue'
 import RoutstrBudgetSection from '@/views/settings/RoutstrBudgetSection.vue'
 
 type Choice = 'claude' | 'openai' | 'routstr'
@@ -59,6 +61,7 @@ const error = ref('')
 const loading = ref(false)
 const saving = ref(false)
 const funding = ref(false)
+const scanning = ref(false)
 const configured = computed(() => mode.value === 'claude' ? status.value?.claude_configured : status.value?.openai_configured)
 let refreshPromise: Promise<ProviderStatus | null> | null = null
 async function refresh(): Promise<ProviderStatus | null> {
@@ -96,7 +99,7 @@ async function refreshBalance() {
   catch { balance.value = null }
 }
 function choose(choice: Choice) { key.value = ''; error.value = ''; mode.value = choice; if (choice === 'routstr') void refreshBalance() }
-function close() { key.value = ''; funding.value = false; emit('close') }
+function close() { key.value = ''; funding.value = false; scanning.value = false; emit('close') }
 async function save() {
   if ((mode.value !== 'claude' && mode.value !== 'openai') || saving.value) return
   const provider = mode.value
@@ -128,8 +131,9 @@ async function continueRoutstr() {
     emit('configured', 'routstr'); close()
   } catch { error.value = 'Could not select Routstr. Try again.' }
 }
+async function finishScan() { scanning.value = false; await refreshBalance() }
 async function finishFunding() { funding.value = false; await refreshBalance() }
-watch(() => props.show, open => { if (open) { error.value = ''; void refresh(); if (mode.value === 'routstr') void refreshBalance() } else { key.value = ''; funding.value = false } })
+watch(() => props.show, open => { if (open) { error.value = ''; void refresh(); if (mode.value === 'routstr') void refreshBalance() } else { key.value = ''; funding.value = false; scanning.value = false } })
 async function syncSelection() { const state = await refresh(); if (state) emit('configured', state.settings.provider, state.settings.provider === 'openai' ? state.settings.openai_model : undefined) }
 defineExpose({ checkNeeded, syncSelection, showRoutstr: () => choose('routstr') })
 </script>

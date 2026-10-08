@@ -385,3 +385,15 @@ change the allowance, send a payment, start inference, or publish content. API
 keys use the existing private node credential store and are not passed to AIUI.
 Focused provider/publishing tests and production qualification are in progress;
 these changes are not yet deployed or publicly released.
+
+Provider-focused validation: 20 dashboard/setup/signer tests, 22 AIUI provider
+and generation tests, and 22 trusted bridge/integration tests pass. Initial
+publishing tests required an AI-connection component stub for their isolated
+mounts; the provider default test now checks initial state before the suite's
+explicit Claude selection. The full backend suite and production builds remain
+pending. Framework still runs the preceding candidate; its management service is
+active and no Ollama container exists after cleanup.
+The funding modal's Scan action now opens the existing wallet scanner and returns
+to funding on close; six focused connection-modal tests pass after that wiring.
+The first dashboard production build passed; it will be rebuilt for this final
+scanner wiring before deployment. AIUI and isolated backend builds are ongoing.
