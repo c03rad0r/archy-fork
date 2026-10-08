@@ -98,3 +98,55 @@ qualification conditions are stable. Yaya was not changed.
 
 Logs: `/tmp/archy-combined-ui-dev-deploy-retry.log` and the private preflight
 receipt `/tmp/archy-combined-ui-dev-preflight-retry.json`.
+
+## Additional partial-failure and provenance fixtures
+
+The later artwork UI artifact did successfully deliver the earlier Fleet recovery
+changes to dev and Yaya; see `docs/companion-audio-investigation-20261007.md` for
+the guarded deployment receipt. The failed combined deployment above remains
+historical evidence, not the latest UI deployment state.
+
+A new isolated fixture found alerts failures were swallowed: a denied, unsupported
+or timed-out alerts method left an empty panel saying “No alerts across the fleet.”
+A malformed alert list could also replace valid retained alerts with null entries.
+The UI now reports alerts unavailable or explicitly marks retained alerts while
+keeping successful node status results usable. A successful alert response clears
+the warning; an older failed request cannot overwrite that recovery.
+
+Node cards now distinguish collector/unverified reports from trusted federation.
+The trusted label requires all three server-owned fields: `source=federation`,
+`trust_level=trusted`, and strict `identity_authenticated=true`. Collector reports
+say “Collector · identity unverified”; legacy/missing or incomplete provenance says
+“Source unverified.” This is presentation of server evidence, not frontend identity
+verification. It MUST ship with the corrected backend provenance gate: historical
+collector ingestion accepted caller-supplied fields, so UI labels alone cannot
+repair that boundary. No isolated Fleet change in this section is deployed.
+
+Focused suite: **28 tests in five files passed**. Seven added cases cover three
+partial-alert failure classes with mixed-version node reports and real zero versus
+missing metrics, malformed alerts retaining prior evidence, late history after
+unmount, old alert denial after newer success, and provenance labels. These are
+synthetic RPC/component fixtures, not proof of real authorization or partition
+behavior. Before the change, four new partial-failure cases failed and the existing
+late-history safeguard passed. Initial wrong-project test invocation failed before
+test collection; the corrected invocation established the failures. Logs are
+`/tmp/archy-fleet-partial-before.log`,
+`/tmp/archy-fleet-partial-before-corrected.log`, and
+`/tmp/archy-fleet-acceptance-final.log`.
+
+Current Fleet UI exposes status, alerts, history and export only. It has no remote
+restart/update/action RPC, so those action-success/partial-failure acceptance cells
+remain unsupported/open; no service operation was invented for the fixture.
+
+Exact app-project typecheck passed (`vue-tsc --noEmit -p tsconfig.app.json`,
+2 GB heap cap, low priority); log `/tmp/archy-fleet-acceptance-typecheck.log`.
+Real Chromium rendered the actual source component at 390px and 1440px:
+collector and trusted labels, denied-alert warning, successful status cards,
+no false empty-alert claim, and Refresh recovery passed with no page errors or
+horizontal overflow. All non-loopback requests were blocked. The first cold-load
+attempt exceeded its 30-second load timeout before assertions; the corrected
+DOMContentLoaded/60-second fixture passed both widths. Logs:
+`/tmp/archy-fleet-acceptance-browser.log` and
+`/tmp/archy-fleet-acceptance-browser-retry.log`. Owned browser/server jobs stopped.
+This is source-browser evidence, not a production build or real identity/transport
+acceptance. Backend provenance qualification and coupled release remain required.

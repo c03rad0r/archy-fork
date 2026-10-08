@@ -51,3 +51,26 @@ describe('fleet unavailable readings', () => {
     wrapper.unmount()
   })
 })
+
+it('labels collector, legacy, and incomplete provenance as unverified', () => {
+  const nodes = [
+    normalizeFleetNode({ node_id: 'trusted', source: 'federation', trust_level: 'trusted', identity_authenticated: true }),
+    normalizeFleetNode({ node_id: 'collector', source: 'collector', trust_level: 'unverified', identity_authenticated: false }),
+    normalizeFleetNode({ node_id: 'legacy', source: 'federation', trust_level: 'trusted' }),
+    normalizeFleetNode({ node_id: 'unknown' }),
+    normalizeFleetNode({ node_id: 'denied', source: 'federation', trust_level: 'untrusted', identity_authenticated: true }),
+  ]
+  const wrapper = mount(FleetNodeGrid, {
+    props: { nodes, sortedNodes: nodes, sortBy: 'status', selectedNodeId: null },
+    global: { mocks: { $ver: (v: string) => v } },
+  })
+  try {
+    const cards = wrapper.findAll('.fleet-node-card')
+    expect(cards[0]!.text()).toContain('Trusted federation')
+    expect(cards[1]!.text()).toContain('Collector · identity unverified')
+    for (const card of cards.slice(2)) {
+      expect(card.text()).toContain('Source unverified')
+      expect(card.text()).not.toContain('Trusted federation')
+    }
+  } finally { wrapper.unmount() }
+})

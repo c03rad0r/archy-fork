@@ -8,6 +8,9 @@ import type { ChartDataset } from '@/components/LineChart.vue'
 
 export interface FleetNode {
   node_id: string
+  identity_authenticated?: boolean
+  source?: string
+  trust_level?: string
   node_name?: string | null
   hostname?: string | null
   server_url?: string | null
@@ -137,6 +140,12 @@ export function fleetNodeDisplayName(node: FleetNode): string {
   return name || node.node_id.slice(0, 8)
 }
 
+export function fleetSourceLabel(node: FleetNode): string {
+  if (node.source === 'collector') return 'Collector · identity unverified'
+  if (node.source === 'federation' && node.trust_level === 'trusted' && node.identity_authenticated === true) return 'Trusted federation'
+  return 'Source unverified'
+}
+
 export function fleetNodeSubtitle(node: FleetNode): string {
   const host = node.hostname?.trim()
   if (host && host !== fleetNodeDisplayName(node)) return host
@@ -188,6 +197,9 @@ function numberOrZero(value: unknown): number {
 export function normalizeFleetNode(node: Partial<FleetNode>): FleetNode {
   return {
     node_id: typeof node.node_id === 'string' ? node.node_id : 'unknown',
+    identity_authenticated: node.identity_authenticated === true,
+    source: typeof node.source === 'string' ? node.source : 'unknown',
+    trust_level: typeof node.trust_level === 'string' ? node.trust_level : 'unverified',
     node_name: typeof node.node_name === 'string' ? node.node_name : null,
     hostname: typeof node.hostname === 'string' ? node.hostname : null,
     server_url: typeof node.server_url === 'string' ? node.server_url : null,
@@ -265,6 +277,7 @@ export function useFleetData() {
   const fleetAlerts = ref<FleetAlert[]>(cached.fleetAlerts ?? [])
   const refreshing = ref(false)
   const alertsLoading = ref(false)
+  const alertsErrorMessage = ref('')
   const selectedNodeId = ref<string | null>(cached.selectedNodeId ?? null)
   const nodeHistory = ref<NodeHistoryEntry[]>([])
   const nodeHistoryLoading = ref(false)
@@ -379,8 +392,14 @@ export function useFleetData() {
         method: 'telemetry.fleet-alerts',
       })
       if (disposed || request !== alertsRequest) return
-      if (Array.isArray(data?.alerts)) {
+      if (!Array.isArray(data?.alerts) || data.alerts.some(alert => !alert ||
+        typeof alert.node_id !== 'string' || typeof alert.rule !== 'string' ||
+        typeof alert.message !== 'string' || typeof alert.timestamp !== 'string')) {
+        throw new Error('Invalid fleet alerts response')
+      }
+      {
         fleetAlerts.value = data.alerts
+        alertsErrorMessage.value = ''
         writeFleetCache({
           nodes: nodes.value,
           fleetAlerts: fleetAlerts.value,
@@ -390,7 +409,11 @@ export function useFleetData() {
         })
       }
     } catch {
-      // Non-critical, retry on next poll
+      if (!disposed && request === alertsRequest) {
+        alertsErrorMessage.value = fleetAlerts.value.length
+          ? 'Alert refresh failed. Showing the last received alerts.'
+          : 'Fleet alerts are unavailable. Retry refresh to check for alerts.'
+      }
     } finally {
       if (!disposed && request === alertsRequest) alertsLoading.value = false
     }
@@ -575,7 +598,7 @@ export function useFleetData() {
   })
 
   return {
-    loading, refreshing, errorMessage, nodes, fleetAlerts, alertsLoading,
+    loading, refreshing, errorMessage, nodes, fleetAlerts, alertsLoading, alertsErrorMessage,
     selectedNodeId, selectedNode, nodeHistory, nodeHistoryLoading,
     autoRefresh, lastRefreshed, sortBy, chartWidth, now,
     onlineCount, offlineCount, unknownCount, healthyCount, fleetHealthPct,

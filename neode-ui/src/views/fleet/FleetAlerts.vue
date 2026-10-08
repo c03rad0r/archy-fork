@@ -2,10 +2,11 @@
   <div class="glass-card p-5 mb-6">
     <h3 class="text-sm font-medium text-white/80 mb-4">Fleet Alerts</h3>
 
+    <p v-if="errorMessage" role="status" class="text-sm text-amber-200 mb-3">{{ errorMessage }}</p>
     <div v-if="alertsLoading" class="text-white/40 text-sm py-4 text-center">
       Loading alerts...
     </div>
-    <div v-else-if="!alerts.length" class="text-white/40 text-sm py-4 text-center">
+    <div v-else-if="!alerts.length && !errorMessage" class="text-white/40 text-sm py-4 text-center">
       No alerts across the fleet.
     </div>
     <div v-else class="space-y-2 max-h-80 overflow-y-auto">
@@ -37,5 +38,6 @@ import { type FleetAlert, alertSeverityDot, alertTypeLabel, formatTimestamp } fr
 defineProps<{
   alerts: FleetAlert[]
   alertsLoading: boolean
+  errorMessage?: string
 }>()
 </script>

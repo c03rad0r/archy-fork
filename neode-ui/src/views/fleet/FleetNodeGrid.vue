@@ -42,6 +42,8 @@
           {{ fleetNodeSubtitle(node) }}
         </div>
 
+        <div class="mb-3 text-xs text-white/50">{{ fleetSourceLabel(node) }}</div>
+
         <div class="space-y-2 mb-3">
           <div class="fleet-metric-row">
             <span class="text-xs text-white/50">CPU</span>
@@ -94,7 +96,7 @@
 <script setup lang="ts">
 import {
   type FleetNode, type SortOption, SORT_OPTIONS,
-  isOnline, fleetStatus, formatMetric, healthBarClass, formatUptime, timeAgo, fleetNodeDisplayName, fleetNodeSubtitle,
+  isOnline, fleetStatus, formatMetric, healthBarClass, formatUptime, timeAgo, fleetNodeDisplayName, fleetNodeSubtitle, fleetSourceLabel,
 } from './useFleetData'
 
 defineProps<{

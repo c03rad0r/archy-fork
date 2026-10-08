@@ -117,6 +117,7 @@
       <FleetAlerts
         :alerts="fleet.fleetAlerts.value"
         :alerts-loading="fleet.alertsLoading.value"
+        :error-message="fleet.alertsErrorMessage.value"
       />
 
       <FleetNodeDetail
