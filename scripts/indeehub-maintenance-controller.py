@@ -704,12 +704,16 @@ class Controller:
             # TCP readiness waits for the final server, avoiding interrupted restore.
             deadline=time.monotonic()+90
             while True:
+                remaining=deadline-time.monotonic()
+                require(remaining>0,'Backup restore database did not become ready')
                 try:
-                    self.run(['podman','exec',identifier,'pg_isready','-h','127.0.0.1','-U','indeedhub','-d','indeedhub'],timeout=10)
-                    break
-                except subprocess.CalledProcessError:
-                    require(time.monotonic()<deadline,'Backup restore database did not become ready')
-                    time.sleep(0.5)
+                    self.run(['podman','exec',identifier,'pg_isready','-h','127.0.0.1','-U','indeedhub','-d','indeedhub'],timeout=min(10,remaining))
+                except (subprocess.CalledProcessError,subprocess.TimeoutExpired):
+                    remaining=deadline-time.monotonic()
+                    require(remaining>0,'Backup restore database did not become ready')
+                    time.sleep(min(0.5,remaining));continue
+                require(time.monotonic()<deadline,'Backup restore database did not become ready')
+                break
             with (self.root/'backup'/'database.dump').open('rb') as source:
                 self.run(['podman','exec','-i',identifier,'pg_restore','--exit-on-error','--no-owner','--no-acl',
                           '-U','indeedhub','-d','indeedhub'],timeout=1800,input_file=source)

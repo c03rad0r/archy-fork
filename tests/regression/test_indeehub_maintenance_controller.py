@@ -575,4 +575,38 @@ console.log('process identity cases passed');'''
   c.save_failure('acquire',RuntimeError('diagnostic'*1000));path=c.root/'last-failure.private.json';record=json.loads(path.read_text())
   self.assertEqual(record['operation_id'],self.operation);self.assertEqual(record['action'],'acquire');self.assertEqual(record['error_type'],'RuntimeError');self.assertEqual(len(record['message']),4096)
   self.assertEqual(path.stat().st_mode&0o777,0o600);self.assertEqual(c.path.read_bytes(),before)
+ def database_readiness_fixture(self, failures):
+  c=self.completed_backup();c.record.pop('backup_restore_verified');attempts=[]
+  c.inspect=lambda identifier:{'Mounts':[]}
+  c.cleanup_restore_fixture=lambda:c.record.pop('restore_fixture',None)
+  c.database_commitments=lambda identifier:c.record['database_before']
+  def run(argv,**kwargs):
+   if argv[:2]==['podman','create']:return ('d'*64).encode()
+   if argv[:2]==['podman','start']:return b''
+   if argv[:2]==['podman','exec'] and argv[3]=='pg_isready':
+    attempts.append(argv)
+    if failures:raise failures.pop(0)
+    return b''
+   if argv[:3]==['podman','exec','-i']:return b''
+   raise AssertionError(argv)
+  c.run=run
+  return c,attempts
+ def test_database_readiness_probe_timeout_retries_within_existing_deadline(self):
+  from unittest.mock import patch
+  c,attempts=self.database_readiness_fixture([module.subprocess.TimeoutExpired(['pg_isready'],10),module.subprocess.CalledProcessError(1,['pg_isready'])])
+  with patch.object(module.time,'monotonic',side_effect=[0,1,2,3,4,5,6]),patch.object(module.time,'sleep'):
+   c.verify_database_backup()
+  self.assertEqual(len(attempts),3);self.assertEqual(c.record['backup_restore_verified'],c.backup_restore_terms())
+ def test_database_readiness_probe_timeout_never_extends_overall_deadline(self):
+  from unittest.mock import patch
+  c,attempts=self.database_readiness_fixture([module.subprocess.TimeoutExpired(['pg_isready'],10)])
+  with patch.object(module.time,'monotonic',side_effect=[0,1,91]),patch.object(module.time,'sleep'):
+   with self.assertRaisesRegex(RuntimeError,'did not become ready'):c.verify_database_backup()
+  self.assertEqual(len(attempts),1);self.assertNotIn('backup_restore_verified',c.record);self.assertNotIn('restore_fixture',c.record)
+ def test_database_readiness_rejects_success_after_deadline(self):
+  from unittest.mock import patch
+  c,attempts=self.database_readiness_fixture([])
+  with patch.object(module.time,'monotonic',side_effect=[0,89,91]),patch.object(module.time,'sleep'):
+   with self.assertRaisesRegex(RuntimeError,'did not become ready'):c.verify_database_backup()
+  self.assertEqual(len(attempts),1);self.assertNotIn('backup_restore_verified',c.record);self.assertNotIn('restore_fixture',c.record)
 if __name__=='__main__':unittest.main()

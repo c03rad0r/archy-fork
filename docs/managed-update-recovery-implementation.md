@@ -495,3 +495,15 @@ refusal. Bounded private failure diagnostics now preserve the controller's reaso
 without exposing stderr in the public RPC response. The previously recorded
 2,025 Rust tests predate these final helper changes; a matching executable and
 final combined receipt remain required.
+
+The matching c58d1180 VM build passed with unchanged inputs. A second actual
+RPC operation, `7d2ea2ae-7b42-4a2c-9095-f0ef2ab52048`, successfully drained all
+seven recovered-image originals (including the relay's owned lineage admission)
+and completed backup. Private diagnostics identified a **10-second pg_isready
+probe TimeoutExpired**, not a schema mismatch. Pre-target recovery again reached
+Restored with cleanup complete. The readiness loop now treats probe timeout as
+not ready only within its existing 90-second overall budget, caps each attempt
+and sleep by remaining time, and rejects success after the deadline. No mutation
+or pg_restore timeout is retried. **58 pure controller tests pass**, including
+ready-after-timeout, expired-deadline cleanup and late-success refusal. Another
+matching executable/full transaction and final combined suite remain pending.
