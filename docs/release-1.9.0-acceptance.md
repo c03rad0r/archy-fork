@@ -3,6 +3,36 @@
 
 ## Post-1.9.0 source acceptance checkpoint — 8 October 2026
 
+### Reviewed private-delivery source candidate
+
+Source review is complete at candidate `5e737fac`: all 536 production backend
+inputs exactly match the 2,031-test qualification and passed optimized build;
+all 781 dashboard inputs match the passed combined app typecheck/build and
+reviewed 36-input delta gate. This approves source integration for private Yaya
+testing, not a new OTA/ISO or completion of the open release regression matrix.
+Production backend SHA256:
+`75d4562ba606c48704ffe886f31de2b2fbe6fee81a5eb2d46371118df29ef50b`.
+Dashboard archive SHA256:
+`eba26d22e5137caac0277df80f88f7e0e10e5dde14f027df8dde587ab2a7e1e8`.
+
+Fresh Yaya plan review verifies all seven original unit hashes. Unit changes are
+image pins plus the API's two disabled publication/registration flags and three
+node-bound public identity fields. Dependency images resolve to their unchanged
+live IDs. Plan SHA256:
+`f26b469a84833121db8df7e23e709d08eb6f40d9d12ddcb1b4263b685b398816`.
+All 31 running containers, including the separately added JustWorks app, remain
+preserved. The plan is not installed and no catalog or backend activation has run.
+
+The final ngit proposal disposition, resulting accepted merge commit and exact
+post-push main/tag checks must be recorded before activation in the private
+acceptance ledger at
+`~/.local/state/archipelago/release-qualification/post190-source-acceptance-20261008/`.
+This directory holds the resulting commit receipt without creating a self-referential
+commit hash in this document. Both mirrors and local main must agree. Preserve
+all earlier failed/partial publication evidence. The historical checkpoint below
+records the pre-acceptance draft and must not substitute for that final receipt.
+
+
 The original 1.9.0-alpha publication is recorded later in this ledger. The old
 release summary below is historical. This checkpoint concerns the new private
 IndeeHub delivery candidate; it is **not accepted main or catalog activation**.
