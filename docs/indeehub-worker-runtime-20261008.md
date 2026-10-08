@@ -64,3 +64,17 @@ execution unless explicitly invoked and the cutover/review gates are satisfied.
 Its exact archive/image/digest/alias bindings and existing node preservation
 checks remain required. Neither the catalog nor importer has been signed,
 activated or executed against Yaya.
+
+
+## Independent staged frontend hook audit — 8 October
+
+The actual successful-update rehearsal exposed a stale inherited frontend hook
+in the synthetic VM catalog. The prepared delivery catalog was independently
+checked against the authoritative current `apps/indeedhub/manifest.yml`:
+all frontend hooks are structurally identical, including the corrected BusyBox
+sed address `/location = .*sw[.]js {/i`. Sorted JSON hook SHA256 on both sides:
+`64015f79ca84c604cecd22e9e4a892644d485988f163c01e3d47277a64282747`.
+The unsigned catalog remains unchanged at
+`9967d06c8809d69cce6057b9f45a630e9ce21fd5cd33541e352e23336cd8eb07`.
+No historical signed catalog was rewritten. This comparison establishes correct
+staged hooks, not successful cutover or live deployment; those gates remain open.
