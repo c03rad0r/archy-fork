@@ -5,9 +5,53 @@ candidate worktree is `/home/archipelago/Projects/archy-session-key` on branch
 `work/post-190-session-key`. Do not use credentials from chat or print private
 node, wallet, session or registry data.
 
-Latest active checkpoint: see **Corrected maintenance scope and artwork delivery** at the end. Earlier receipts below are historical and apply only to their named source/artifacts.
+Read **Current live checkpoint** first. Older receipts below apply only to their named source/artifacts; later entries retain detailed evidence and corrections.
 
-## Current candidate
+## Current live checkpoint — supersedes historical entries below
+
+- Work continues in `archy-session-key`, branch `work/post-190-session-key`.
+  Latest backend changes: rental guard `4dde14bf`, Fleet collector provenance
+  `9268930c`; both await the next combined isolated backend run. The previous
+  2,006-pass suite predates those changes and the maintenance user-scope fix.
+- Live dev/Yaya dashboard index is
+  `92050cbda69954f57f4b0bdd73d89623f6aae9fc66e4c074ee4f46bdcb9c3b2a`.
+  Guarded preservation and browser checks passed. **Phone artwork still failed**;
+  the operator explicitly parked it until all other tasks finish (task23).
+  APK0.5.37 background playback/notification presence remain accepted.
+- Original1.9.0 ISO software release is now published on ngit with all three
+  original assets; see the publication receipt below. No next OTA/ISO/catalog
+  release is accepted or published.
+- IndeeHub's corrected integration executable (scope/lifecycle fixes) built with
+  stable input hashes; SHA3cbe5a5c3a74e6463ab0874c74e23dfca68f0bfc3fe54883f0edf69abb37ac0d.
+  Its seven-service VM manager-start acceptance passed. It predates the rental
+  and Fleet changes and is not an optimized release artifact.
+- VM update/rollback acceptance is still open. Earlier attempts were refused
+  by the lifecycle lock; a traced attempt acquired it successfully, but diagnostic
+  teardown preceded async preflight completion. No persistent lock/Podman defect
+  has yet been established. Indee agent owns the bounded repeat and tracer cleanup.
+  Do not claim missing-plan or rollback acceptance from these attempts.
+- The exact selected demo is Yaya Cloud `/Photos/web54321-balanced-2.mp4`,
+  203331877 bytes, SHA256766f5f6b9d2a6fd90cb7541447fbba666773635bd90def145bcd479a1b8b0591.
+  Read-only hash and Chromium metadata (1920x1080,249.766667s) pass. Preserve source.
+  Backstage publication, cross-node paid viewing and bounded payment authorization
+  remain separate open gates; do not spend or select another personal file.
+- Fleet alert-error/provenance UI is isolated (`a7e82ae5` plus history follow-up),
+  not live. Its first delta passes28 focused tests, app typecheck and390/1440 browser
+  fixtures. Integrate only after its history follow-up is qualified; deploy with
+  the corrected backend, never treat an older server's report claims as proof.
+- Task21 public UI groundwork `6bcdd106` (37 tests + app typecheck) and task22
+  Mesh picker groundwork `3360354a` (10 tests) remain isolated/unintegrated. They
+  do not enable live menus or complete backend/global search/paid delivery/folders.
+  Their end-of-backlog delivery order remains in force.
+- Paid-file agent owns the next full isolated backend run, after VM shutdown and
+  explicit final input freeze. Never run unrestricted cargo tests on a live node.
+- Optional snapshot helper1347627 was cancelled with all three originals intact;
+  do not resume its PID. Five earlier UI archive relocations remain completed.
+- Private Android debug.keystore remains untracked; never stage it. Preserve
+  wallets, app data, stopped/uninstalled choices. Framework startup incident is
+  closed separately from the still-open paid-file regression.
+
+## Historical starting candidate
 
 Recent commits, newest first:
 
