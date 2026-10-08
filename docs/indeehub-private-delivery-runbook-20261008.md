@@ -9,9 +9,14 @@ by preparing it.
 
 - Full same-boot post-target rollback: operation `5bd06edc`, qualified fixture
   executable `dd94dc6d…`, embedded helper `6fc3f978…`, 2,031 backend tests passed.
-- Successful full cutover remains required. Most recent `f39bd824` refused before
-  target startup under severe host pressure, then natively recovered cleanly.
-  Do not treat that recovery as a successful update or change production limits.
+- Successful full cutover and independent final checks now pass for `8b53579c`:
+  Committed/cleanup complete, Released maintenance, exact seven target images and
+  saved units, new runtime IDs, fresh DB/four-volume restore proofs and no holds.
+  Historical `f39bd824` timed out before target startup under host pressure, then
+  natively recovered cleanly; that failure is retained separately.
+- Matching optimized backend build is in progress against all536 unchanged
+  backend inputs from the 2,031-test snapshot. Do not substitute the test-profile
+  executable as the production artifact.
 - Unsigned delivery catalog: worker runtime evidence directory,
   `unsigned-full-candidate-with-worker-29627fc.json`, SHA256
   `9967d06c8809d69cce6057b9f45a630e9ce21fd5cd33541e352e23336cd8eb07`.
@@ -94,3 +99,24 @@ If failure occurs, use only the supported operation-bound native recovery and
 inspect its exact journal/holds. Preserve data written after cutover; never
 reinstall, wipe/recreate wallets, run migration-down or restore old DB/media over
 new writes automatically. Retain private recovery images, backups and receipts.
+
+
+## Concrete operator-signing preparation
+
+The current worker-inclusive unsigned catalog has not been signed. The prior
+October7 signing request was unanswered and named the older frontend/API-only
+candidate; it cannot establish approval/signature for the current payload.
+The independently reviewed helper is:
+`~/.local/state/archipelago/release-qualification/indeehub-delivery-tools-20261008/sign-reviewed-worker-catalog.py`.
+Helper SHA256: `2711cfc060b71dcb7c7397a62a65971645ff861e8db3670f960c5b13baf5c13f`.
+Canonical unsigned payload SHA256:
+`d373968ee7043242fc954c3b1f114e236dc21f8749ea584a00360bb4db48fe30`.
+
+Read-only pinned-input/verifier preflight passes. Noninteractive signing refuses.
+The helper uses hidden operator-terminal input, makes terminal-echo fallback
+fatal, passes the phrase only through the pinned ceremony executable's stdin,
+and verifies the expected root and exact payload. It preserves the immutable
+unsigned input and creates a separate signed output without replacing an existing
+file. No secret was read, signing performed or new operator request sent during
+preparation. Finish the build/source/review gates before requesting this final
+operator step; never request a mnemonic in chat.
