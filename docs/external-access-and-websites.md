@@ -638,3 +638,7 @@ release remains gated by the separate release checklist and ngit/mirror review.
 The operator was asked to restore the 2FA they temporarily disabled for testing.
 Private catalogue pin and isolated Yaya services remain for UAT; remove/replace
 them only during the reviewed release or explicit rollback.
+
+Final Tor readback from Yaya's SOCKS client also returned the original synthetic
+website SHA-256 after reboot. Thus FIPS-backed public HTTPS, the isolated TLS
+passthrough, and the existing Tor onion all retained the same content.
