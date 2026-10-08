@@ -62,7 +62,7 @@ describe('Private device management', () => {
     const w = view(); await flushPromises(); await w.get('[aria-label="Remove Phone"]').trigger('click')
     expect(vi.mocked(rpcClient.call).mock.calls.filter(([a]) => a.method === 'vpn.remove-peer')).toHaveLength(0)
     await button(w, 'Remove device').trigger('click'); await flushPromises()
-    expect(w.text()).toContain('Could not confirm removal'); expect(w.get('[aria-label="Remove Phone"]').exists()).toBe(true); w.unmount()
+    expect(w.text()).toContain('Could not confirm removal'); expect(w.find('[aria-label="Remove Phone"]').exists()).toBe(true); w.unmount()
   })
   it('keeps a failed list distinct from no devices and disables creation', async () => {
     vi.mocked(rpcClient.call).mockRejectedValue(new Error('offline'))

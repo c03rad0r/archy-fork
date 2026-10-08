@@ -18,7 +18,7 @@ const removeName = ref('')
 const copied = ref(false)
 const needsRefresh = ref(false)
 const safeName = (value: string) => /^[A-Za-z0-9][A-Za-z0-9 _-]{0,63}$/.test(value)
-const filename = (value: string) => value.toLowerCase().replaceAll(' ', '-')
+const filename = (value: string) => value.toLowerCase().replace(/ /g, '-')
 const canCreate = computed(() => props.statusKnown && props.configured && props.managementVerified && devices.value !== null && !needsRefresh.value && safeName(name.value.trim()) && !devices.value.some(d => filename(d.name) === filename(name.value.trim())))
 let active = true
 let request = 0
