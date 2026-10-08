@@ -18,6 +18,14 @@ pub(crate) struct Unit {
     pub file_mode: u32,
     pub running: bool,
     pub config_sha256: String,
+    #[serde(default)]
+    pub launch_config_sha256_v2: Option<String>,
+}
+fn configuration_matches(current: &Observed, original: &Unit) -> bool {
+    match &original.launch_config_sha256_v2 {
+        Some(expected) => current.launch_config_sha256_v2.as_ref() == Some(expected),
+        None => current.config_sha256 == original.config_sha256,
+    }
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub(crate) struct PreparedTarget {
@@ -210,7 +218,7 @@ pub(crate) async fn capture_local_recovery_image(
         current.id == original.container_id
             && current.image == original.image
             && current.running == original.running
-            && current.config_sha256 == original.config_sha256,
+            && configuration_matches(&current, original),
         "Original runtime changed before writable-layer snapshot"
     );
     let exists = command(&["image", "exists", tag]).await?;
@@ -445,7 +453,12 @@ fn validate(record: &Journal) -> Result<()> {
                 && digest(&member.original.container_id)
                 && member.original.file_mode & !0o777 == 0
                 && member.original.file_mode & 0o022 == 0
-                && digest(&member.original.config_sha256),
+                && digest(&member.original.config_sha256)
+                && member
+                    .original
+                    .launch_config_sha256_v2
+                    .as_ref()
+                    .is_none_or(|v| record.schema == 2 && digest(v)),
             "Invalid original supervised identity"
         );
         anyhow::ensure!(
@@ -904,7 +917,7 @@ async fn pre_target_state(member: &Member, supervisor: &impl Supervisor) -> Resu
             && current.id == member.original.container_id
             && current.image == member.original.image
             && current.running == member.original.running
-            && current.config_sha256 == member.original.config_sha256
+            && configuration_matches(&current, &member.original)
     });
     if member.preserve_original == Some(true) {
         anyhow::ensure!(
@@ -923,7 +936,7 @@ async fn pre_target_state(member: &Member, supervisor: &impl Supervisor) -> Resu
         .image;
     if let Some(current) = observed {
         let own_recovery = current.image == *recovery
-            && current.config_sha256 == member.original.config_sha256
+            && configuration_matches(&current, &member.original)
             && body == member.pinned_original_body;
         if current.running {
             anyhow::ensure!(
@@ -940,7 +953,7 @@ async fn pre_target_state(member: &Member, supervisor: &impl Supervisor) -> Resu
             own_recovery
                 || (current.id == member.original.container_id
                     && current.image == member.original.image
-                    && current.config_sha256 == member.original.config_sha256),
+                    && configuration_matches(&current, &member.original)),
             "Unexpected stopped replacement; retain its data for inspection"
         );
     }
@@ -1030,7 +1043,7 @@ async fn restore(guard: &Guard, record: &mut Journal, supervisor: &impl Supervis
                     && original.id == member.original.container_id
                     && original.image == member.original.image
                     && original.running == member.original.running
-                    && original.config_sha256 == member.original.config_sha256,
+                    && configuration_matches(&original, &member.original),
                 "Original service changed during preparation; recovery requires inspection"
             );
         }
@@ -1120,7 +1133,7 @@ async fn restore(guard: &Guard, record: &mut Journal, supervisor: &impl Supervis
                             .as_ref()
                             .context("Missing recovery image")?
                             .image
-                    && current.config_sha256 == member.original.config_sha256,
+                    && configuration_matches(&current, &member.original),
                 "Original launch configuration did not recover"
             );
         } else {
@@ -1232,6 +1245,7 @@ mod tests {
                     file_mode: 0o600,
                     running: true,
                     config_sha256: "c".repeat(64),
+                    launch_config_sha256_v2: None,
                 },
                 body: Mutex::new(body),
                 running: AtomicBool::new(true),
@@ -1382,11 +1396,28 @@ mod tests {
                 running: true,
                 retainable: false,
                 config_sha256: if new { "d".repeat(64) } else { "c".repeat(64) },
+                launch_config_sha256_v2: None,
             }))
         }
         async fn healthy(&self, _name: &str) -> Result<bool> {
             Ok(true)
         }
+    }
+    #[tokio::test]
+    async fn launch_v2_comparison_never_promotes_legacy_record_or_falls_back_to_raw_digest() {
+        let runtime = Mock::new();
+        let mut current = runtime.observed("movie").await.unwrap().unwrap();
+        let mut original = runtime.original.clone();
+        current.launch_config_sha256_v2 = Some("e".repeat(64));
+        current.config_sha256 = "f".repeat(64);
+        assert!(!configuration_matches(&current, &original));
+        original.launch_config_sha256_v2 = Some("e".repeat(64));
+        assert!(configuration_matches(&current, &original));
+        current.config_sha256 = original.config_sha256.clone();
+        current.launch_config_sha256_v2 = Some("d".repeat(64));
+        assert!(!configuration_matches(&current, &original));
+        current.launch_config_sha256_v2 = None;
+        assert!(!configuration_matches(&current, &original));
     }
     struct DrainFailureStack {
         members: std::collections::BTreeMap<String, Mock>,

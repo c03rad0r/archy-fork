@@ -88,7 +88,14 @@ impl LegacyIndeeMaintenance {
             // and the inherited flock open description (unlike a detached service).
             let mut command = tokio::process::Command::new("/usr/bin/systemd-run");
             command
-                .args(["--user", "--scope", "--quiet", "--collect", "--", "/usr/bin/python3"])
+                .args([
+                    "--user",
+                    "--scope",
+                    "--quiet",
+                    "--collect",
+                    "--",
+                    "/usr/bin/python3",
+                ])
                 .arg(path)
                 .arg(action)
                 .env("ARCHY_UPDATE_LOCK_FD", fd.to_string())
@@ -572,6 +579,11 @@ impl<B: DrainBarrier> Supervisor for SystemdSupervisor<B> {
             file_mode: meta.mode() & 0o777,
             running: observed.running,
             config_sha256: observed.config_sha256,
+            launch_config_sha256_v2: Some(
+                observed
+                    .launch_config_sha256_v2
+                    .context("Original launch configuration is ambiguous or incomplete")?,
+            ),
         })
     }
     async fn validate_original_file(&self, original: &Unit) -> Result<()> {
@@ -707,6 +719,7 @@ mod tests {
             file_mode: 0o600,
             running: true,
             config_sha256: "d".repeat(64),
+            launch_config_sha256_v2: None,
         };
         let mut target = Target {
             name: "movie".into(),

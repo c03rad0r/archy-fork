@@ -17,6 +17,8 @@ pub(crate) struct Observed {
     pub image: String,
     pub running: bool,
     pub config_sha256: String,
+    #[serde(default)]
+    pub launch_config_sha256_v2: Option<String>,
     /// False for auto-remove, external supervision, pods, paused/unknown states.
     pub retainable: bool,
 }
@@ -648,6 +650,7 @@ impl Runtime for Podman {
             running: state == "running",
             retainable,
             config_sha256: hex::encode(sha2::Sha256::digest(serde_json::to_vec(&config)?)),
+            launch_config_sha256_v2: launch_fingerprint_v2(row, &config).ok(),
         }))
     }
     async fn stop(&self, id: &str) -> Result<()> {
@@ -702,6 +705,64 @@ impl Runtime for Podman {
     }
 }
 
+/// Domain-separated launch identity for fresh supervised recovery records.
+/// Keep the raw legacy digest unchanged: old records cannot be promoted using
+/// information that was never persisted with their original capture.
+fn launch_fingerprint_v2(row: &serde_json::Value, config: &serde_json::Value) -> Result<String> {
+    use sha2::Digest;
+    let id = row
+        .get("Id")
+        .and_then(|v| v.as_str())
+        .context("Missing container ID")?;
+    anyhow::ensure!(
+        id.len() == 64 && id.bytes().all(|b| b.is_ascii_hexdigit()),
+        "Invalid container ID"
+    );
+    let hostname = row
+        .pointer("/Config/Hostname")
+        .and_then(|v| v.as_str())
+        .context("Missing launch hostname")?;
+    let generated = hostname == &id[..12];
+    let entries = row
+        .pointer("/Config/Env")
+        .and_then(|v| v.as_array())
+        .context("Missing launch environment")?;
+    let mut env = std::collections::BTreeMap::<String, serde_json::Value>::new();
+    for entry in entries {
+        let entry = entry.as_str().context("Invalid launch environment entry")?;
+        let (key, value) = entry
+            .split_once('=')
+            .context("Missing launch environment value")?;
+        anyhow::ensure!(
+            !key.is_empty() && !key.contains('\0') && !value.contains('\0'),
+            "Invalid launch environment key/value"
+        );
+        let value = if key == "HOSTNAME" && generated && value == hostname {
+            serde_json::json!({"generated_container_hostname":true})
+        } else {
+            serde_json::Value::String(value.into())
+        };
+        anyhow::ensure!(
+            env.insert(key.into(), value).is_none(),
+            "Duplicate launch environment key"
+        );
+    }
+    let mut normalized = config.as_object().context("Invalid launch config")?.clone();
+    normalized.insert("env".into(), serde_json::to_value(env)?);
+    normalized.insert(
+        "hostname".into(),
+        if generated {
+            serde_json::json!({"generated_container_hostname":true})
+        } else {
+            serde_json::Value::String(hostname.into())
+        },
+    );
+    normalized.insert("fingerprint_version".into(), serde_json::json!(2));
+    Ok(hex::encode(sha2::Sha256::digest(serde_json::to_vec(
+        &normalized,
+    )?)))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -709,6 +770,68 @@ mod tests {
         atomic::{AtomicBool, AtomicUsize, Ordering},
         Mutex,
     };
+    fn launch_fixture(id: &str) -> (serde_json::Value, serde_json::Value) {
+        let row = serde_json::json!({"Id":id,"Config":{"Hostname":&id[..12],"Env":[format!("HOSTNAME={}",&id[..12]),"A=one","B=two=three"]}});
+        let config = serde_json::json!({"env":row["Config"]["Env"],"mounts":[{"Source":"/original","Destination":"/data","RW":true}],"command":["node","dist/main"],"entrypoint":["entry.sh"],"user":"1000","network":"indeehub"});
+        (row, config)
+    }
+    #[test]
+    fn launch_v2_normalizes_only_generated_hostname_and_unique_environment_order() {
+        let (a, config) = launch_fixture(&"a".repeat(64));
+        let (mut b, _) = launch_fixture(&"b".repeat(64));
+        b["Config"]["Env"].as_array_mut().unwrap().reverse();
+        assert_eq!(
+            launch_fingerprint_v2(&a, &config).unwrap(),
+            launch_fingerprint_v2(&b, &config).unwrap()
+        );
+        let expected = launch_fingerprint_v2(&a, &config).unwrap();
+        for changed in [
+            serde_json::json!(["HOSTNAME=operator-host", "A=one", "B=two=three"]),
+            serde_json::json!([
+                format!("HOSTNAME={}", "a".repeat(12)),
+                "A=changed",
+                "B=two=three"
+            ]),
+            serde_json::json!(["A=one", "B=two=three"]),
+        ] {
+            let mut row = a.clone();
+            row["Config"]["Env"] = changed;
+            assert_ne!(expected, launch_fingerprint_v2(&row, &config).unwrap());
+        }
+        let mut custom = a.clone();
+        custom["Config"]["Hostname"] = serde_json::json!("operator-host");
+        assert_ne!(expected, launch_fingerprint_v2(&custom, &config).unwrap());
+    }
+    #[test]
+    fn launch_v2_rejects_ambiguous_environment_and_preserves_command_and_mount_semantics() {
+        let (row, config) = launch_fixture(&"a".repeat(64));
+        for env in [
+            serde_json::Value::Null,
+            serde_json::json!(["A=one", "A=one"]),
+            serde_json::json!(["NO_VALUE"]),
+            serde_json::json!(["=empty-key"]),
+            serde_json::json!([42]),
+        ] {
+            let mut bad = row.clone();
+            bad["Config"]["Env"] = env;
+            assert!(launch_fingerprint_v2(&bad, &config).is_err());
+        }
+        let expected = launch_fingerprint_v2(&row, &config).unwrap();
+        for (key, value) in [
+            ("command", serde_json::json!(["dist/main", "node"])),
+            ("entrypoint", serde_json::json!(["other.sh"])),
+            (
+                "mounts",
+                serde_json::json!([{"Source":"/other","Destination":"/data","RW":true}]),
+            ),
+            ("user", serde_json::json!("0")),
+            ("network", serde_json::json!("other")),
+        ] {
+            let mut changed = config.clone();
+            changed[key] = value;
+            assert_ne!(expected, launch_fingerprint_v2(&row, &changed).unwrap());
+        }
+    }
     struct Mock {
         rows: Mutex<Vec<Observed>>,
         calls: Mutex<Vec<String>>,
@@ -728,6 +851,7 @@ mod tests {
                         running: true,
                         retainable: true,
                         config_sha256: "a".repeat(64),
+                        launch_config_sha256_v2: None,
                     },
                     Observed {
                         id: format!("{:064x}", 2),
@@ -736,6 +860,7 @@ mod tests {
                         running: false,
                         retainable: true,
                         config_sha256: "b".repeat(64),
+                        launch_config_sha256_v2: None,
                     },
                 ]),
                 calls: Default::default(),
