@@ -15,6 +15,8 @@
       at the Peer level — never trusted automatically.
     </p>
 
+    <p v-if="error" role="alert" class="mb-3 text-sm text-red-400">{{ error }}</p>
+
     <label class="block text-xs text-white/60 mb-1">Message (optional)</label>
     <textarea
       v-model="message"
@@ -48,6 +50,7 @@ const props = defineProps<{
   show: boolean
   targetLabel: string
   sending?: boolean
+  error?: string
 }>()
 
 defineEmits<{

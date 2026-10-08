@@ -59,6 +59,7 @@
     </div>
 
     <div v-show="activeView === 'discover'">
+      <p v-if="route.query.intent === 'own'" class="glass-card p-4 mb-4 text-sm text-white/70">To link nodes you own, use Link Your Nodes below. Trusted access still requires ownership confirmation; discovery requests only grant Observer access.</p>
       <QuickActions
         :generating-invite="generatingInvite"
         :invite-type="inviteType"
@@ -221,7 +222,7 @@
       :deploying="deploying"
       :deploy-result="deployResult"
       :action-error="nodeActionError"
-      @close="selectedNode = null; nodeActionError = ''"
+      @close="closeNode"
       @change-trust="changeTrust"
       @remove-node="removeNode"
       @deploy-app="deployApp"
@@ -334,8 +335,22 @@ function normalizedView(value: unknown): ViewId {
   if (value === 'list') return 'connected'
   return viewTabs.some(tab => tab.id === value) ? value as ViewId : 'discover'
 }
-const activeView = ref<ViewId>(normalizedView(route.query.view))
-watch(() => route.query.view, value => { activeView.value = normalizedView(value) })
+const requestedView = () => route.query.view ?? (route.hash === '#connection-requests' ? 'requests' : route.query.node ? 'connected' : undefined)
+const activeView = ref<ViewId>(normalizedView(requestedView()))
+watch(requestedView, value => { activeView.value = normalizedView(value) })
+watch([() => route.query.node, nodes], ([identity, available]) => {
+  if (typeof identity !== 'string') return
+  selectedNode.value = available.find(node => node.did === identity || node.pubkey === identity || node.onion === identity) ?? null
+}, { immediate: true })
+function closeNode() {
+  selectedNode.value = null
+  nodeActionError.value = ''
+  if (route.query.node) {
+    const query = { ...route.query }
+    delete query.node
+    void router.replace({ query })
+  }
+}
 function setView(id: ViewId) {
   activeView.value = id
   void router.replace({ query: { ...route.query, view: id } })

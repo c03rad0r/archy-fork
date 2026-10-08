@@ -30,3 +30,10 @@ it('keeps the Requests tab useful when there are no requests', () => {
   expect(wrapper.findAll('button').some(b => b.text() === 'Poll Now')).toBe(true)
   wrapper.unmount()
 })
+
+it('does not claim an approval expired when its timestamp is unavailable', () => {
+  const wrapper = mount(PendingRequestsPanel, { props: { requests: [{ ...request, received_at: 'unavailable' }], polling: false, busyId: null } })
+  expect(wrapper.text()).toContain('Approved — status unavailable')
+  expect(wrapper.text()).not.toContain('expired')
+  wrapper.unmount()
+})

@@ -24,20 +24,33 @@ before this flow ships.
 - Navigating away during initial identity loading cannot start a later orphaned
   polling timer. No backend, API contract, trust elevation or payment changes.
 
-Validation: twelve focused tests across five files pass, plus app-project
-`vue-tsc -p tsconfig.app.json --noEmit`. The initial combined focused run had
-11 passes and one incorrect test assertion against a shallow component stub;
-correcting the assertion to inspect its Vue prop yielded 2/2 targeted navigation
-passes. No production source fix was needed for that assertion. Source browser
-checks at 390/1440px are prepared but resource-queued behind IndeeHub; no visual,
-production-artifact, actual companion or live-node acceptance is claimed.
+Additional return-path step:
+
+- Cloud entry preserves its selected tab/category on return, including loading a
+  directly restored Paid Files tab. Fleet separates Connect with Nodes from its
+  explicit Link your own nodes entry, without automatically creating an invite.
+- Peer Files returns to the correct node detail and Connected view. Closing that
+  detail clears only the selection query so refresh cannot reopen it.
+- Manual direct entry routes known discovery identities/current requests through
+  the existing flow. Failed sends keep the confirmation, message and address for
+  retry; duplicate clicks issue one request. Unknown approval age stays unresolved
+  rather than enabling an accidental second request; valid expiry follows the
+  backend's existing 30-day limit.
+
+Validation: 33 focused cases across seven affected files pass, plus app-project
+`vue-tsc -p tsconfig.app.json --noEmit`. The initial second-slice run had 32 passes
+and one stale Vue wrapper assertion after rerender; reacquiring the current dialog
+and checking visible error text passed all eight targeted discovery cases. No
+production source fix was needed for that test assertion. Source browser checks pass at 390/1440px with no page errors, document overflow
+or unexpected RPC. The first cold navigation timed out during Vite dependency
+optimization; the bounded warm retry passed. No deployed-artifact, actual
+companion or live-node acceptance is claimed.
 Evidence: `release-qualification/connection-journey-20261008/` under the local
 Archipelago state directory. Browser fixture allows only loopback synthetic RPC.
 
-Still open: Cloud/Fleet return paths and explicit own-node entry, authenticated
-reciprocal confirmation/retry acceptance, stale-advertisement age when supplied
-by the protocol, desktop/phone UAT and before/after timings. This step does not
-complete task 6 or satisfy the release gates below.
+Still open: authenticated reciprocal confirmation/retry acceptance,
+stale-advertisement age when supplied by the protocol, desktop/phone UAT and
+before/after timings. These UI steps do not complete the real-node release gates.
 
 ## Entry and return paths
 

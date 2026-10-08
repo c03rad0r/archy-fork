@@ -37,6 +37,10 @@
       </div>
     </div>
 
+    <div class="mb-4">
+      <RouterLink :to="{ name: 'federation', query: { view: 'connected', from: 'peer-files', peer: peerOnion, node: currentPeer?.did } }" class="glass-button inline-flex px-4 py-2 rounded-lg text-sm">Node connections</RouterLink>
+    </div>
+
     <!-- Loading -->
     <div v-if="loading && catalogItems.length === 0" class="glass-card p-8 text-center">
       <svg class="animate-spin h-6 w-6 text-purple-400 mx-auto mb-2" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
@@ -619,7 +623,7 @@ import { parseOnchainAttempt, type OnchainAttempt } from '@/composables/peerOnch
 import { parseCashuQuote, readCashuAttempt, keepCashuAttempt, keepAuthoritativeCashuQuote, archiveMalformedCashuAttempt, clearCashuAttempt, type CashuQuote } from '@/composables/peerCashuPurchase'
 import { usePeerPaymentOperations } from '@/composables/peerPaymentOperations'
 import { ref, computed, reactive, watch, onMounted, onUnmounted } from 'vue'
-import { useRouter } from 'vue-router'
+import { RouterLink, useRouter } from 'vue-router'
 import QRCode from 'qrcode'
 import { rpcClient } from '@/api/rpc-client'
 import { useResourcesStore } from '@/stores/resources'

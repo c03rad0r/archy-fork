@@ -107,6 +107,7 @@
     <PeerRequestModal
       :show="visible && requestTarget !== null"
       :target-label="requestTarget?.label ?? ''"
+      :error="error"
       :sending="sendingTo !== null && sendingTo === requestTarget?.target"
       @send="confirmRequest"
       @cancel="requestTarget = null"
@@ -193,36 +194,49 @@ function actOn(node: DiscoverableNode) {
   if (hasRequest(node.nostr_pubkey)) { emit('viewRequest'); return }
   sendTo(node)
 }
+function isCurrentRequest(r: PendingPeerRequest): boolean {
+  if (r.state === 'pending' || r.state === 'sent') return true
+  const age = Date.now() - new Date(r.received_at).getTime()
+  return r.state === 'approved' && (!Number.isFinite(age) || age <= 30 * 86400000)
+}
 function hasRequest(key: string): boolean {
-  return props.outboundSent.some(r => r.from_nostr_pubkey === key && ['pending', 'sent', 'approved'].includes(r.state))
+  return props.outboundSent.some(r => r.from_nostr_pubkey === key && isCurrentRequest(r))
 }
 function sendTo(node: DiscoverableNode) {
+  error.value = ''
   requestTarget.value = { target: node.nostr_pubkey, label: shortNpub(node.nostr_npub), clearManual: false }
 }
 
 function sendDirect() {
-  const v = manualNpub.value.trim()
-  if (!v) return
+  const v = manualNpub.value.trim().toLowerCase()
+  if (!v || sendingTo.value !== null) return
+  const known = nodes.value.find(node => node.nostr_npub === v || node.nostr_pubkey === v)
+  if (known) { actOn(known); return }
+  if (props.outboundSent.some(r => (r.from_nostr_npub === v || r.from_nostr_pubkey === v) && isCurrentRequest(r))) { emit('viewRequest'); return }
+  error.value = ''
   requestTarget.value = { target: v, label: v.length > 21 ? `${v.slice(0, 12)}…${v.slice(-6)}` : v, clearManual: true }
 }
 
 async function confirmRequest(message: string | undefined) {
   const req = requestTarget.value
   if (!req || sendingTo.value !== null) return
-  await sendInternal(req.target, message)
+  const sent = await sendInternal(req.target, message)
+  if (!sent || requestTarget.value !== req) return
   if (req.clearManual) manualNpub.value = ''
   requestTarget.value = null
 }
 
-async function sendInternal(target: string, message?: string) {
-  if (sendingTo.value !== null) return
+async function sendInternal(target: string, message?: string): Promise<boolean> {
+  if (sendingTo.value !== null) return false
   sendingTo.value = target
   error.value = ''
   try {
     await rpcClient.handshakeConnect(target, message)
     emit('sent')
+    return true
   } catch (e: unknown) {
     error.value = e instanceof Error ? e.message : 'Send failed'
+    return false
   } finally {
     sendingTo.value = null
   }

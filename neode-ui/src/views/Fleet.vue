@@ -58,6 +58,12 @@
       </div>
     </div>
 
+    <div class="glass-card p-4 mb-6 flex flex-wrap items-center gap-3">
+      <RouterLink :to="{ name: 'federation', query: { view: 'discover', from: 'fleet' } }" class="glass-button px-4 py-2 rounded-lg text-sm">Connect with Nodes</RouterLink>
+      <RouterLink :to="{ name: 'federation', query: { view: 'discover', from: 'fleet', intent: 'own' } }" class="glass-button px-4 py-2 rounded-lg text-sm">Link your own nodes</RouterLink>
+      <p class="w-full text-xs text-white/60">Peer connections use Observer access. Linking your own nodes requires the existing ownership confirmation for Trusted access.</p>
+    </div>
+
     <!-- Loading State -->
     <div v-if="fleet.loading.value" class="flex items-center justify-center py-20">
       <div class="glass-card p-8 max-w-md text-center">
@@ -149,7 +155,7 @@
 </template>
 
 <script setup lang="ts">
-import { useRouter } from 'vue-router'
+import { RouterLink, useRouter } from 'vue-router'
 import BackButton from '@/components/BackButton.vue'
 import FleetOverviewCards from './fleet/FleetOverviewCards.vue'
 import FleetNodeGrid from './fleet/FleetNodeGrid.vue'

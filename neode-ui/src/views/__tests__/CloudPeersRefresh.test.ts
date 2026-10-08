@@ -4,7 +4,10 @@ import { describe, expect, it, vi } from 'vitest'
 import Cloud from '../Cloud.vue'
 import { rpcClient } from '@/api/rpc-client'
 
+const routeFixture = vi.hoisted(() => ({ name: 'cloud', query: {} as Record<string, string> }))
+
 vi.mock('vue-router', () => ({
+  useRoute: () => routeFixture,
   useRouter: () => ({ push: vi.fn() }),
   RouterLink: { name: 'RouterLink', props: ['to'], template: '<a><slot /></a>' },
 }))
@@ -16,6 +19,7 @@ vi.mock('@/stores/app', () => ({
 vi.mock('@/api/rpc-client', () => ({
   rpcClient: {
     federationListNodes: vi.fn(),
+    call: vi.fn().mockResolvedValue({ items: [] }),
   },
 }))
 
@@ -69,4 +73,17 @@ describe('Cloud peer list', () => {
     expect(wrapper.text()).not.toContain('Refreshing peer nodes...')
     expect(wrapper.text()).not.toContain('No peers yet')
   })
+})
+
+it('loads paid files once when returning directly to the selected paid tab', async () => {
+  routeFixture.query = { tab: 'paid', category: 'music' }
+  vi.mocked(rpcClient.federationListNodes).mockResolvedValue({ nodes: [] })
+  vi.mocked(rpcClient.call).mockClear().mockResolvedValue({ items: [] })
+  const wrapper = mount(Cloud, { global: { plugins: [createPinia()] } })
+  await flushPromises()
+  const ownedCalls = vi.mocked(rpcClient.call).mock.calls.filter(([call]) => call.method === 'content.owned-list')
+  expect(ownedCalls).toHaveLength(1)
+  expect(wrapper.text()).toContain('Nothing purchased yet')
+  wrapper.unmount()
+  routeFixture.query = {}
 })

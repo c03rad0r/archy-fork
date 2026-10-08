@@ -1,6 +1,6 @@
 <template>
   <div class="mb-6">
-    <BackButton label="Web5" @click="router.push('/dashboard/web5')" />
+    <BackButton :label="returnDestination.label" @click="router.push(returnDestination.to)" />
     <div class="flex items-start justify-between gap-4">
       <div>
         <h1 class="text-3xl font-bold text-white mb-2">Connect with Nodes</h1>
@@ -25,7 +25,8 @@
 
 <script setup lang="ts">
 import { ref, computed } from 'vue'
-import { useRouter } from 'vue-router'
+import { useRouter, useRoute } from 'vue-router'
+import { connectionReturn } from './connectionNavigation'
 import BackButton from '@/components/BackButton.vue'
 import { shortDid } from './utils'
 import { safeClipboardWrite } from '../web5/utils'
@@ -40,6 +41,8 @@ defineEmits<{
 }>()
 
 const router = useRouter()
+const route = useRoute()
+const returnDestination = computed(() => connectionReturn(route.query))
 const didCopied = ref(false)
 
 const shortDidDisplay = computed(() => shortDid(props.selfDid))

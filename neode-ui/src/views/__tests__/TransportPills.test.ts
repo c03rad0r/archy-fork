@@ -38,6 +38,7 @@ import PeerFiles from '../PeerFiles.vue'
 import { rpcClient } from '@/api/rpc-client'
 
 vi.mock('vue-router', () => ({
+  useRoute: () => ({ name: 'cloud', query: {} }),
   useRouter: () => ({ push: vi.fn() }),
   RouterLink: { name: 'RouterLink', props: ['to'], template: '<a><slot /></a>' },
 }))

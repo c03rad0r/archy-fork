@@ -119,7 +119,8 @@ function badgeLabel(r: PendingPeerRequest): string {
   if (r.state === 'approved') {
     if (props.peerDids?.includes(r.from_did)) return 'Peer added'
     const age = Date.now() - new Date(r.received_at).getTime()
-    if (!Number.isFinite(age) || age > 30 * 24 * 60 * 60 * 1000) return 'Approval expired — reconnect'
+    if (!Number.isFinite(age)) return 'Approved — status unavailable'
+    if (age > 30 * 24 * 60 * 60 * 1000) return 'Approval expired — reconnect'
     return r.outbound ? 'They approved — connecting' : 'Approved — connecting'
   }
   if (r.outbound && r.state === 'rejected') return 'They rejected'
