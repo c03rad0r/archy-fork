@@ -45,3 +45,22 @@ media. It does not qualify real MinIO behavior, deployment, production migration
 full-length media, producer payments, timed rentals or discovery. Scoped Yaya
 image import and reviewed signed catalog inclusion remain gated by the IndeeHub
 cutover/recovery acceptance work. No live image import or publication occurred.
+
+## Prepared unsigned catalog amendment
+
+A separate `unsigned-full-candidate-with-worker-29627fc.json` in the evidence
+directory has SHA256 `9967d06c8809d69cce6057b9f45a630e9ce21fd5cd33541e352e23336cd8eb07`.
+Its baseline remains unchanged at SHA256
+`e217c73f76cd67fd7e9d96cd94fc4b4abd9f34ac35cce890dc59c02b30ada6a3`.
+The exact semantic diff changes only the worker image to the qualified local
+alias plus manifest digest and both worker version fields from 1.0.0 to 1.0.1.
+The worker's API dependency has no version constraint; all dependency fields,
+pull policy, root metadata and other app entries remain unchanged.
+`worker-catalog-amendment-receipt.json` records the paths, before/after values,
+hashes and source/runtime linkage. The preparation script is retained alongside.
+
+The worker-only importer is prepared and root-reviewed as tooling. It refuses
+execution unless explicitly invoked and the cutover/review gates are satisfied.
+Its exact archive/image/digest/alias bindings and existing node preservation
+checks remain required. Neither the catalog nor importer has been signed,
+activated or executed against Yaya.
