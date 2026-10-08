@@ -226,3 +226,33 @@ Durable SHA-verified evidence:
 Temporary original: `/tmp/archy-paid-final-combined-9lHLvVsA/`.
 No real/repeated payment or live-node lifecycle change occurred. Actual-node
 initial-payment response-loss acceptance remains open.
+
+## 2026-10-08: update retry ownership and current combined qualification
+
+Actual synthetic IndeeHub recovery exposed a stuck Installing overlay after a
+failed update. Image byte progress overwrote Updating, while failure cleanup
+correctly cleared only its Updating owner. Commit `2b2fd2b5` makes byte progress
+preserve Updating and its existing readiness, matching phase/message updates.
+The scanner and failure finalizer were not broadened to clear unrelated installs.
+
+The new regression exercises the actual StateManager/RpcHandler, local-image
+and streamed progress, phase/message changes, failure cleanup and normal install
+behavior. Its first run caught an incorrect test assumption about wrapper
+readiness (one passed, one failed); `105454bd` captures the wrapper's actual
+readiness instead. The corrected focused run passed both tests.
+
+The full isolated suite at `105454bd` then passed **2,026 tests, zero failures,
+five existing ignores**, in 18.39 seconds, with 365 MB peak and no swap. All
+**532 tracked backend/helper/catalog inputs** remained unchanged. The receipt
+explicitly checks payment/rental/Fleet, pre-target preservation, v2 identity,
+owned restart overrides and the new progress regression. This receipt includes
+the current helper through `260e1327`; older suite receipts remain historical.
+
+SHA-verified logs/manifests/receipts, including the initial fixture failure, are
+retained at
+`~/.local/state/archipelago/release-qualification/paid-file-recovery-20261007/final-combined-105454bd/`.
+Temporary full evidence: `/tmp/archy-paid-final-combined-jsKnboX5/`. The compiler
+slot was handed to IndeeHub for its matching executable and actual transaction
+acceptance. No real/repeat payment or live-node lifecycle mutation occurred.
+Full IndeeHub target-start/rollback acceptance and actual-node initial-payment
+response-loss acceptance remain open.
