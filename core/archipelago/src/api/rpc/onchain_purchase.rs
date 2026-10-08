@@ -469,6 +469,198 @@ mod tests {
         }
     }
     #[tokio::test]
+    async fn rental_preserves_unresolved_lightning_operation_on_review_and_delayed_consent() {
+        let data = tempfile::tempdir().unwrap();
+        let identity = crate::identity::NodeIdentity::load_or_create(&data.path().join("identity"))
+            .await
+            .unwrap();
+        let mut binding = binding();
+        binding.buyer_did = identity.did_key().unwrap();
+        binding.content_id = "registered_rental".into();
+        let onion = format!("{}.onion", "a".repeat(56));
+        let peer = serde_json::from_value(json!({
+            "did": binding.seller_did, "pubkey": hex::encode([8; 32]),
+            "onion": onion, "trust_level": "trusted", "added_at": "now",
+            "fips_npub": "fixture-no-network"
+        }))
+        .unwrap();
+        crate::federation::save_nodes(data.path(), &[peer])
+            .await
+            .unwrap();
+        let mut config = crate::config::Config::default();
+        config.data_dir = data.path().to_path_buf();
+        let handler = RpcHandler::new(
+            config,
+            std::sync::Arc::new(crate::state::StateManager::new()),
+            std::sync::Arc::new(crate::monitoring::MetricsStore::new()),
+            crate::session::SessionStore::new_for_tests(data.path().join("sessions.json")),
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+        let journal = crate::content_lightning::Journal::open(data.path())
+            .await
+            .unwrap();
+        let record = crate::content_lightning::BuyerRecord {
+            binding: crate::content_lightning::Binding {
+                id: binding.id.clone(),
+                buyer_did: binding.buyer_did.clone(),
+                seller_did: binding.seller_did.clone(),
+                content_id: binding.content_id.clone(),
+                price_sats: 546,
+            },
+            seller_onion: onion,
+            external_exposure: true,
+            native_retired: false,
+            native_replacement: None,
+            native_dispatched: false,
+            native_result: None,
+            last: None,
+        };
+        journal.save_buyer(&record).unwrap();
+        drop(journal);
+        for consent in [
+            None,
+            Some(json!({
+                "operation_id": uuid::Uuid::new_v4().to_string(),
+                "envelope_sha256": "cd".repeat(32), "wallet_debit_sats": 546
+            })),
+        ] {
+            let error = handler
+                .handle_content_rental_purchase(Some(json!({
+                    "seller_did": binding.seller_did, "content_id": binding.content_id,
+                    "expected_sha256": "ab".repeat(32), "expected_price_sats": 546,
+                    "expected_viewing_seconds": 3600, "max_wallet_debit": 546, "consent": consent
+                })))
+                .await
+                .unwrap_err();
+            assert!(
+                error
+                    .to_string()
+                    .contains("externally payable invoice remains unresolved"),
+                "{error:#}"
+            );
+        }
+        let journal = crate::content_lightning::Journal::open(data.path())
+            .await
+            .unwrap();
+        assert_eq!(
+            serde_json::to_value(journal.buyer(&binding.id).unwrap().unwrap()).unwrap(),
+            serde_json::to_value(record).unwrap()
+        );
+        assert!(!data.path().join("wallet").exists());
+        assert!(crate::content_purchase::Journal::open(data.path())
+            .await
+            .unwrap()
+            .find_buyers(&binding.buyer_did, &binding.seller_did, &binding.content_id)
+            .await
+            .unwrap()
+            .is_empty());
+    }
+
+    #[tokio::test]
+    async fn rental_waits_for_alternate_rail_commit_and_rejects_quote_and_consent_recovery() {
+        let data = tempfile::tempdir().unwrap();
+        let identity = crate::identity::NodeIdentity::load_or_create(&data.path().join("identity"))
+            .await
+            .unwrap();
+        let mut binding = binding();
+        binding.buyer_did = identity.did_key().unwrap();
+        binding.content_id = "registered_rental".into();
+        let onion = format!("{}.onion", "a".repeat(56));
+        let peer = serde_json::from_value(json!({
+            "did": binding.seller_did, "pubkey": hex::encode([8; 32]),
+            "onion": onion, "trust_level": "trusted", "added_at": "now",
+            "fips_npub": "fixture-no-network"
+        }))
+        .unwrap();
+        crate::federation::save_nodes(data.path(), &[peer])
+            .await
+            .unwrap();
+        let mut config = crate::config::Config::default();
+        config.data_dir = data.path().to_path_buf();
+        let handler = RpcHandler::new(
+            config,
+            std::sync::Arc::new(crate::state::StateManager::new()),
+            std::sync::Arc::new(crate::monitoring::MetricsStore::new()),
+            crate::session::SessionStore::new_for_tests(data.path().join("sessions.json")),
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+        // The other rail owns admission before it persists the uncertain spend.
+        let admission = crate::content_payment_admission::lock(
+            data.path(),
+            &binding.buyer_did,
+            &binding.seller_did,
+            &binding.content_id,
+        )
+        .await
+        .unwrap();
+        let params = json!({
+            "seller_did": binding.seller_did, "content_id": binding.content_id,
+            "expected_sha256": "ab".repeat(32), "expected_price_sats": 546,
+            "expected_viewing_seconds": 3600, "max_wallet_debit": 546
+        });
+        let pending = handler.handle_content_rental_purchase(Some(params.clone()));
+        tokio::pin!(pending);
+        assert!(
+            tokio::time::timeout(std::time::Duration::from_millis(50), &mut pending)
+                .await
+                .is_err(),
+            "Rental must wait for cross-rail admission before inspecting journals/context"
+        );
+        let journal = Journal::open(data.path(), &binding.id).await.unwrap();
+        journal
+            .save(&Record::new(binding.clone(), onion.clone()).unwrap())
+            .unwrap();
+        drop(journal);
+        let path = data
+            .path()
+            .join("content-onchain")
+            .join(format!("{}.json", binding.id));
+        let original = std::fs::read(&path).unwrap();
+        drop(admission);
+        let error = tokio::time::timeout(std::time::Duration::from_secs(5), &mut pending)
+            .await
+            .unwrap()
+            .unwrap_err();
+        assert!(
+            error.to_string().contains("original on-chain purchase"),
+            "{error:#}"
+        );
+        for consent in [
+            None,
+            Some(json!({
+                "operation_id": uuid::Uuid::new_v4().to_string(),
+                "envelope_sha256": "cd".repeat(32), "wallet_debit_sats": 546
+            })),
+        ] {
+            let mut retry = params.clone();
+            retry["consent"] = consent.unwrap_or(serde_json::Value::Null);
+            let error = handler
+                .handle_content_rental_purchase(Some(retry))
+                .await
+                .unwrap_err();
+            assert!(
+                error.to_string().contains("original on-chain purchase"),
+                "{error:#}"
+            );
+        }
+        assert_eq!(std::fs::read(path).unwrap(), original);
+        assert!(!data.path().join("wallet").exists());
+        assert!(crate::content_purchase::Journal::open(data.path())
+            .await
+            .unwrap()
+            .find_buyers(&binding.buyer_did, &binding.seller_did, &binding.content_id)
+            .await
+            .unwrap()
+            .is_empty());
+    }
+
+    #[tokio::test]
     async fn unresolved_onchain_operation_blocks_cashu_and_every_lightning_spend_entry() {
         let data = tempfile::tempdir().unwrap();
         let identity = crate::identity::NodeIdentity::load_or_create(&data.path().join("identity"))

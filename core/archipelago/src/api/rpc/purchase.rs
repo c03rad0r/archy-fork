@@ -174,12 +174,6 @@ impl RpcHandler {
             crate::identity::NodeIdentity::load_existing(&self.config.data_dir.join("identity"))
                 .await?;
         let buyer = identity.did_key()?;
-        let (state, _) = self.state_manager.get_snapshot().await;
-        let data = self.config.data_dir.clone();
-        tokio::task::spawn_blocking(move || {
-            crate::container::registration_pin::installed_context(&data, &identity, &state)
-        })
-        .await??;
         let onion = crate::content_purchase_transport::seller_onion_for_did(
             &self.config.data_dir,
             &params.seller_did,
@@ -188,6 +182,26 @@ impl RpcHandler {
         let transport = FipsPurchaseTransport::load(self.config.data_dir.clone(), onion.clone())
             .await?
             .retry_preparation(params.retry_preparation);
+        // Hold the same outer admission lock as every other payment rail,
+        // including quote recovery and delayed consent callbacks. Check journals
+        // only after locking so an in-flight alternate rail cannot be missed.
+        let _rail = crate::content_payment_admission::lock(
+            &self.config.data_dir,
+            &buyer,
+            transport.seller_did(),
+            &params.content_id,
+        )
+        .await?;
+        self.ensure_onchain_allows_other_rail(&buyer, transport.seller_did(), &params.content_id)
+            .await?;
+        self.ensure_invoice_allows_other_rail(&buyer, transport.seller_did(), &params.content_id)
+            .await?;
+        let (state, _) = self.state_manager.get_snapshot().await;
+        let data = self.config.data_dir.clone();
+        tokio::task::spawn_blocking(move || {
+            crate::container::registration_pin::installed_context(&data, &identity, &state)
+        })
+        .await??;
         let expected = caller::ExpectedRental {
             seller_did: params.seller_did,
             content_id: params.content_id.clone(),
