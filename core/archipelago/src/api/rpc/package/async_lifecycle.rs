@@ -642,6 +642,8 @@ mod update_completion_tests {
             })
             .await;
         flip_package_state(&state, "movie", PackageState::Updating).await;
+        let update_ready = state.get_snapshot().await.0.package_data["movie"].ui_ready;
+        assert_eq!(update_ready, Some(false));
         // Both calls happen even when an immutable image already exists locally.
         for (downloaded, total) in [(0, 0), (100, 100)] {
             handler
@@ -650,7 +652,7 @@ mod update_completion_tests {
             let (snapshot, _) = state.get_snapshot().await;
             let entry = &snapshot.package_data["movie"];
             assert_eq!(entry.state, PackageState::Updating);
-            assert_eq!(entry.ui_ready, Some(true));
+            assert_eq!(entry.ui_ready, update_ready);
             assert_eq!(
                 entry.install_progress.as_ref().unwrap().downloaded,
                 downloaded
