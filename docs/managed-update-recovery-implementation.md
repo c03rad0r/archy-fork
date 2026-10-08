@@ -543,3 +543,19 @@ separate candidate verifier passed against the actual preserved guest relay and
 record chain without replacing the installed helper or modifying journals.
 Matching embedded-helper build and full target rollback/cutover remain required;
 the 2,026-test receipt predates this helper-only correction.
+
+The matching 66c7a22d fixture executable built with unchanged inputs, then
+retained all seven IDs across actual manager startup. Operation
+`2339983b-bcb3-4f53-ac72-7638dca65f03` refused before target startup when a
+`podman exec ... node` command exceeded 30 seconds; its exact trailing action
+remains to be classified from the private diagnostic. Recovery reached Restored
+with cleanup complete and package Running/progress cleared. This does not
+qualify full target rollback.
+
+Guest memory was healthy (about 2.39 GiB available, no guest swap), while the
+host had substantial I/O/CPU pressure and roughly 2.64 GiB of this guest swapped
+out. Cold host pages are a plausible contributor, not a proven sole cause.
+The same guest is QMP-paused while the separately frozen worker image builds.
+Before another transaction, bounded read-only API-module/Redis-PING and
+PostgreSQL probes will record latency and unchanged container identities;
+production deadlines and transaction gates remain unchanged.
