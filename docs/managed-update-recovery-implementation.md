@@ -559,3 +559,30 @@ The same guest is QMP-paused while the separately frozen worker image builds.
 Before another transaction, bounded read-only API-module/Redis-PING and
 PostgreSQL probes will record latency and unchanged container identities;
 production deadlines and transaction gates remain unchanged.
+
+### Fresh recovery-image startup budget (2026-10-08)
+
+Actual operation `6432d320-307f-49f6-ae93-3599a066f97a` drained all seven
+members and captured backup, then safely recovered before target startup when
+its fresh restore database exceeded the 90-second readiness deadline. The
+separate, networkless exact-image diagnostic with a 300-second observation
+window completed before the daemon restart: final TCP readiness succeeded at
+approximately 104.2 seconds (105.777 seconds including final evidence capture).
+The guest retained its boot identity and all seven service runtimes were running;
+the diagnostic container was removed. Its sole FATAL log line was "the database
+system is shutting down" during the normal bootstrap-server transition, followed
+by final-server readiness. No OOM, PANIC, permission or initdb error was recorded.
+Host I/O/memory pressure and repeated bounded Podman probe timeouts were present.
+Private receipt remains in the guest's
+`indeehub-fixture/archy-pg-ready-diagnostic-c8939db7f6f74554934bf2be27efbdb5/receipt.json`.
+
+Only the disposable backup-restore PostgreSQL initialization deadline is now
+180 seconds. Every readiness attempt remains capped at ten seconds or remaining
+budget, success after the overall deadline is rejected, and cleanup remains in
+`finally`. The database restore itself is never retried. Regressions cover the
+observed 104-second successful initialization, expiration after 180 seconds,
+late success refusal, the remaining-budget probe cap, and a failed restore being
+executed exactly once. This source change still requires matching embedded-helper
+build and actual transaction acceptance; it does not close cutover or rollback.
+The current guest was QMP-paused without reboot to serialize worker runtime and
+backend process-fixture qualification.

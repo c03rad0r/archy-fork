@@ -625,13 +625,31 @@ console.log('process identity cases passed');'''
  def test_database_readiness_probe_timeout_never_extends_overall_deadline(self):
   from unittest.mock import patch
   c,attempts=self.database_readiness_fixture([module.subprocess.TimeoutExpired(['pg_isready'],10)])
-  with patch.object(module.time,'monotonic',side_effect=[0,1,91]),patch.object(module.time,'sleep'):
+  with patch.object(module.time,'monotonic',side_effect=[0,1,181]),patch.object(module.time,'sleep'):
    with self.assertRaisesRegex(RuntimeError,'did not become ready'):c.verify_database_backup()
   self.assertEqual(len(attempts),1);self.assertNotIn('backup_restore_verified',c.record);self.assertNotIn('restore_fixture',c.record)
  def test_database_readiness_rejects_success_after_deadline(self):
   from unittest.mock import patch
   c,attempts=self.database_readiness_fixture([])
-  with patch.object(module.time,'monotonic',side_effect=[0,89,91]),patch.object(module.time,'sleep'):
+  with patch.object(module.time,'monotonic',side_effect=[0,179,181]),patch.object(module.time,'sleep'):
    with self.assertRaisesRegex(RuntimeError,'did not become ready'):c.verify_database_backup()
   self.assertEqual(len(attempts),1);self.assertNotIn('backup_restore_verified',c.record);self.assertNotIn('restore_fixture',c.record)
+ def test_database_readiness_accepts_observed_slow_bootstrap_within_startup_budget(self):
+  from unittest.mock import patch
+  c,attempts=self.database_readiness_fixture([module.subprocess.CalledProcessError(2,['pg_isready'])])
+  with patch.object(module.time,'monotonic',side_effect=[0,89,90,103,104]),patch.object(module.time,'sleep'):
+   c.verify_database_backup()
+  self.assertEqual(len(attempts),2);self.assertEqual(c.record['backup_restore_verified'],c.backup_restore_terms())
+ def test_database_readiness_caps_probe_at_remaining_budget_and_never_retries_restore(self):
+  from unittest.mock import patch
+  c,attempts=self.database_readiness_fixture([]);original=c.run;timeouts=[];restores=[]
+  def run(argv,**kwargs):
+   if argv[:2]==['podman','exec'] and argv[3]=='pg_isready':timeouts.append(kwargs['timeout'])
+   if argv[:3]==['podman','exec','-i']:
+    restores.append(argv);raise module.subprocess.TimeoutExpired(['pg_restore'],1800)
+   return original(argv,**kwargs)
+  c.run=run
+  with patch.object(module.time,'monotonic',side_effect=[0,179,179.5]),patch.object(module.time,'sleep'):
+   with self.assertRaises(module.subprocess.TimeoutExpired):c.verify_database_backup()
+  self.assertEqual(timeouts,[1]);self.assertEqual(len(restores),1);self.assertNotIn('backup_restore_verified',c.record);self.assertNotIn('restore_fixture',c.record)
 if __name__=='__main__':unittest.main()

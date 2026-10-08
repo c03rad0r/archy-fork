@@ -720,7 +720,10 @@ class Controller:
             self.run(['podman','start',identifier])
             # The image bootstrap server accepts Unix sockets before it exits;
             # TCP readiness waits for the final server, avoiding interrupted restore.
-            deadline=time.monotonic()+90
+            # Exact recovery-image qualification under host I/O pressure reached
+            # final TCP readiness at 104 seconds. Give only this fresh initdb
+            # startup 180 seconds; probes remain bounded and restore is not retried.
+            deadline=time.monotonic()+180
             while True:
                 remaining=deadline-time.monotonic()
                 require(remaining>0,'Backup restore database did not become ready')
