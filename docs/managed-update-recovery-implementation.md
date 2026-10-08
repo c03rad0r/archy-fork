@@ -625,3 +625,11 @@ Snapshot recovery uses the same stack-wide admission. Actual-path fake Podman
 regressions exercise managed/held/corrupt/operator-disabled siblings and ensure
 accepted mutation runs under the lifecycle lock. Compilation, isolated execution,
 matching executable and fresh actual transaction acceptance remain required.
+
+The automatic-recovery correction `6a342f66` passed the complete isolated backend
+suite: **2,031 passed, zero failed, five existing ignores**, all 536 captured
+backend/helper/catalog inputs unchanged. The three new automatic-recovery
+regressions and all retained payment/Fleet/lifecycle gates passed. Evidence:
+`/tmp/archy-paid-final-combined-LxkyEuYT/receipt.json` and adjacent log/manifest.
+This proves isolated regression behavior, not recovery of operation23550e9e.
+A matching fixture executable and fresh actual transaction remain required.
