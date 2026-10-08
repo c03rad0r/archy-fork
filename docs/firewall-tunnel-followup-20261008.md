@@ -87,3 +87,15 @@ Final follow-up receipts:
 
 All fixture browser/server processes stopped after verification. No node, helper,
 firewall, wallet or saved-device configuration was changed by these UI checks.
+
+A final narrow follow-up disables in-flight deduplication for the private device
+list. The shared client's dedup key is only method+params; a new view/capability
+generation could otherwise attach to the preceding generation's unresolved
+promise. The device suite now passes 18/18, including fresh-list recovery and late
+old-response rejection (`/tmp/archy-firewall-private-generation-tests-20261008.log`).
+No broader browser rerun was needed for this request-policy-only change.
+
+Retry behavior is unchanged: this client's maxRetries value of 1 already means
+one network attempt, just like 0 after its minimum clamp. A confirmed pre-dispatch
+CSRF rejection may still refresh credentials and retry. No cross-node dedup fault
+was claimed: the client's base URL is fixed per instance.

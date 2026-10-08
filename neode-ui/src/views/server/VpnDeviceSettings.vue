@@ -32,7 +32,7 @@ async function refresh() {
   loading.value = true
   error.value = ''
   try {
-    const result = await rpcClient.call<{ peers: Device[] }>({ method: 'vpn.list-peers', dedup: true, maxRetries: 1 })
+    const result = await rpcClient.call<{ peers: Device[] }>({ method: 'vpn.list-peers', dedup: false, maxRetries: 1 })
     if (!canReadDevices.value || !active || generation !== request) return
     if (!Array.isArray(result?.peers) || result.peers.some(p => !p || typeof p.name !== 'string' || typeof p.ip !== 'string' || (p.management_state !== undefined && !['active', 'pending', 'revoking'].includes(p.management_state)))) throw new Error('Invalid device list')
     devices.value = result.peers.map(p => ({ name: p.name, ip: p.ip, management_state: p.management_state }))

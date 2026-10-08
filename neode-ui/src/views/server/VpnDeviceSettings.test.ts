@@ -36,7 +36,23 @@ describe('Private device management', () => {
     expect(rpcClient.call).not.toHaveBeenCalled()
     await w.setProps({ statusKnown: true }); await flushPromises()
     expect(rpcClient.call).toHaveBeenCalledTimes(1)
-    expect(rpcClient.call).toHaveBeenCalledWith(expect.objectContaining({ method: 'vpn.list-peers' }))
+    expect(rpcClient.call).toHaveBeenCalledWith(expect.objectContaining({ method: 'vpn.list-peers', dedup: false }))
+    w.unmount()
+  })
+  it('starts a fresh non-deduplicated list after capability recovery and ignores the prior generation', async () => {
+    const replies: Array<(value: { peers: typeof peer[] }) => void> = []
+    vi.mocked(rpcClient.call).mockImplementation(async () => new Promise(resolve => { replies.push(resolve) }))
+    const w = view(); await flushPromises()
+    await w.setProps({ managementVerified: false }); await flushPromises()
+    await w.setProps({ managementVerified: true }); await flushPromises()
+    expect(replies).toHaveLength(2)
+    for (const [options] of vi.mocked(rpcClient.call).mock.calls) {
+      expect(options).toEqual(expect.objectContaining({ method: 'vpn.list-peers', dedup: false }))
+    }
+    replies[1]!({ peers: [{ ...peer, name: 'Tablet' }] }); await flushPromises()
+    expect(w.text()).toContain('Tablet')
+    replies[0]!({ peers: [{ ...peer, name: 'Old Phone' }] }); await flushPromises()
+    expect(w.text()).toContain('Tablet'); expect(w.text()).not.toContain('Old Phone')
     w.unmount()
   })
   it('clears private details and rejects an in-flight reveal when capability is lost', async () => {
