@@ -11,13 +11,29 @@ Read **Current live checkpoint** first. Older receipts below apply only to their
 
 ### Latest continuation checkpoint (read before older bullets)
 
-- **Newest continuation:** Indee operation `8b53579c…` passed all seven writer
-  drain/exit proofs; backup verification and successful cutover remain in progress.
-  Prior `f39bd824` native recovery finished autonomously after observer timeouts;
-  independent final checks passed. Same VM was safely paused for compilation,
-  then resumed and passed nine readiness probes including the exact died-event
-  query. Only its owned transient unit received best-effort MemoryLow=3GiB;
-  MemoryMin/swap limits and all other services are unchanged. Reset on cleanup.
+- **Newest continuation:** controlled native cutover `8b53579c` and same-boot
+  post-target rollback `5bd06edc` both passed, including independent final checks.
+  Cutover committed with cleanup complete, maintenance Released, all seven exact
+  target images/saved units and new runtime IDs, fresh database/four-volume
+  restore proofs and no holds. Evidence: `daea20bc` and
+  [managed-update-recovery-implementation.md](managed-update-recovery-implementation.md).
+  The qualification VM shut down cleanly; temporary MemoryLow was reset to zero.
+- **Yaya worker image is imported, not activated:** `6afb6abc` records exact
+  qualified archive/blob/image verification and preserved live state across the
+  inert import. All 30 existing container identities/start times/statuses,
+  identity/session, operator intent, management service and catalogs matched.
+  Frontend/API images were already staged; fresh read-only preflight confirmed
+  all seven legacy members running and original Quadlet hashes unchanged.
+  Receipt: [indeehub-worker-runtime-20261008.md](indeehub-worker-runtime-20261008.md).
+- **Production build remains in progress:** agent checkpoint reports optimized
+  session `73204` past lightning/cashu and compiling mainline/totp/lofty
+  dependencies, without reported errors; the main binary is not yet compiled.
+  There is no completed production artifact or backend deployment. The prepared
+  inert staging/API-pin runner awaits that artifact; existing-node registration
+  pin, fresh exact live plan, reviewed source/mirror gates and signed catalog
+  remain required before activation. Operator signing is prepared and checked,
+  **not performed**; no new signing request or Yaya deployment has occurred.
+  Cloud/VPN builds remain queued behind the delivery-critical build.
 - Firewall UI is integrated through `a1bc6426`: full width, standard black entry,
   right-aligned statuses, unchanged Network background, shared header/BackButton,
   verified-capability private reads and separate requests across view generations.
@@ -25,17 +41,21 @@ Read **Current live checkpoint** first. Older receipts below apply only to their
   four-width source browser qualification passed. Not deployed. Isolated new VPN
   backend compilation stopped on an omitted existing JSON fixture before tests;
   missing inputs are now materialized, but no pass is claimed.
-- Combined dashboard snapshot: `/tmp/archy-integrated-ui-qualified-20261008`,
-  781 tracked inputs. Delta gate verifies all34 changes against the qualified
-  1,459-test Fleet baseline map exactly to reviewed File Browser, connection and
-  firewall slices. Typecheck/build still pending. Runner:
-  `/tmp/archy-integrated-ui-20261008.py`; delta gate:
-  `/tmp/archy-integrated-ui-delta-gate.py`. No build was started during VM work.
+- Combined dashboard snapshot: `/tmp/archy-integrated-ui-qualified-v2-20261008`,
+  781 tracked inputs. Delta gate passes all 36 reviewed changes against the
+  qualified 1,459-test Fleet baseline, including the two additional files from
+  main ancestry integration `8d70d031`. Six retained PiP checks passed; receipts:
+  `/tmp/archy-retained-pip-main-20261008.log` and matching `.json`. Gate script:
+  `/tmp/archy-integrated-ui-delta-gate-v2.py`. Combined typecheck/production UI
+  build remain pending behind the optimized backend build. Candidate includes
+  main ancestry through `8d70d031`; actual local main was not changed.
 - Existing ngit proposal `8f394251` remains **draft**, updated by normal fast-forward
   from `e97f958f` to `cf3c38bed009edd729f908b452913a7a1a8e0b67`; advertised tip verified.
   Its title is now “Post-1.9.0 recovery, private IndeeHub delivery and dashboard
   follow-ups”, with exact updated cover note verified. No duplicate PR, force push,
-  accepted-main merge, release or catalog activation occurred. `cf3c38be` joins
+  accepted-main merge, release or catalog activation occurred. The draft remains
+  at `cf3c38be`, behind the latest candidate; it is not current candidate
+  publication. `cf3c38be` joins
   existing proposal ancestry with zero tracked content change. Required mirror
   check after source publication still fails only local main mismatch; retained
   log `/tmp/archy-post190-mirror-check-20261008.log`. Do not claim main parity or
@@ -46,6 +66,8 @@ Read **Current live checkpoint** first. Older receipts below apply only to their
   explicitly not activation-ready until fresh live bindings and remaining gates.
   Cloud Libraries backend/UI remain isolated, uncompiled and not enabled.
 
+
+### Earlier checkpoint snapshots (historical; superseded above)
 
 - Latest actual attempt `5bd06edc…` reached target startup but failed; native
   rollback and independent **same-boot** verification passed: all seven restored

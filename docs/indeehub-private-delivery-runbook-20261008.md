@@ -1,9 +1,11 @@
 # IndeeHub private Yaya delivery — 8 October 2026
 
-Status: prepared, **not activated**. This is private free/authenticated app testing;
+Status: worker image staging completed; production build in progress; **not activated**.
+This is private free/authenticated app testing;
 paid viewing, publication and payment UAT remain separate. No funds or public
-announcements are authorized by this runbook. No Yaya command has been executed
-by preparing it.
+announcements are authorized by this runbook. Separately authorized inert Yaya
+worker import and read-only preflight are completed (`6afb6abc`); no backend
+deployment, app lifecycle change or catalog activation has occurred.
 
 ## Frozen inputs and prerequisite evidence
 
@@ -16,7 +18,9 @@ by preparing it.
   natively recovered cleanly; that failure is retained separately.
 - Matching optimized backend build is in progress against all536 unchanged
   backend inputs from the 2,031-test snapshot. Do not substitute the test-profile
-  executable as the production artifact.
+  executable as the production artifact. Latest agent checkpoint for session
+  `73204`: past lightning/cashu, compiling mainline/totp/lofty dependencies with
+  no reported errors; main binary not yet compiled. No finished artifact exists.
 - Unsigned delivery catalog: worker runtime evidence directory,
   `unsigned-full-candidate-with-worker-29627fc.json`, SHA256
   `9967d06c8809d69cce6057b9f45a630e9ce21fd5cd33541e352e23336cd8eb07`.
@@ -24,14 +28,25 @@ by preparing it.
   `64015f79ca84c604cecd22e9e4a892644d485988f163c01e3d47277a64282747`.
 - Existing frontend/API import evidence is in
   `~/.local/state/archipelago/session-recovery/indeehub-yaya-private-staging-5d0ea64/`.
-  Worker import is prepared only; its qualified OCI SHA256 is
+  Worker import is complete (`6afb6abc`): qualified OCI SHA256
   `6db29188c0e68ed8e9e8d84ea2e9c5c70695518e0930775bf6b3200d14d99527`.
+  Exact archive/blobs/image were verified; all 30 existing container identities,
+  start times/statuses, node identity/session, operator intent, management service
+  and catalogs were preserved. Receipt:
+  `~/.local/state/archipelago/release-qualification/worker-runtime-29627fc-20261008/yaya-worker-import-receipt-20261008.json`.
+  This is inert staging, not an app update or signed catalog selection.
 - Preserve historical catalog signatures and all old failure journals. Require
   reviewed local/ngit/Gitea main and applicable release refs to match before
   catalog activation. Parent owns source acceptance and signature coordination;
   check the existing signature request before requesting a new one.
 
-## Read-only preflight before any Yaya mutation
+## Fresh preflight before delivery mutations
+
+The retained fresh inventory is
+`~/.local/state/archipelago/release-qualification/indeehub-yaya-fresh-preflight-20261008/`.
+It confirmed all seven legacy members running, original Quadlet hashes unchanged
+and frontend/API pins matching their import receipt. Refresh relevant bindings
+before generating/applying the final plan; an earlier snapshot is not a lease.
 
 1. Verify actual hostname `yaya-server`, rootless Podman owner/storage, current
    backend artifact/helper hashes and free durable disk capacity. The qualified
@@ -55,8 +70,10 @@ by preparing it.
 The offline draft planner is in
 `~/.local/state/archipelago/release-qualification/indeehub-delivery-tools-20261008/`.
 It explicitly reports `activation_ready=false`: its original-state inputs are
-archived, public registration pins are unresolved, and signature/import/live
-checks remain open. Draft SHA256
+archived, public registration pins are unresolved, and signature/final live
+plan checks remain open. The earlier draft predates the completed worker import;
+its false readiness flag is preserved rather than presented as a current import
+failure. A new plan must bind fresh live evidence. Draft SHA256
 `aae8cdeca470b30481042c62f040435aa2292180cb54f0f4496d86a2204c4b8b`.
 All three delivery image pins and frontend hooks match the frozen candidate.
 This corrects an old planner assumption that would otherwise retain the legacy
@@ -64,9 +81,13 @@ worker. It is preparation, not an executable deployment authorization flag.
 
 ## Qualified activation sequence
 
-After full cutover qualification and source/signature gates, import only the
-qualified worker with the reviewed importer, recording that app runtimes,
-identity/session, intents, management service and catalogs are unchanged.
+Native success/rollback qualification and inert worker import are complete.
+Do not repeat import merely because the earlier prepared plan still records false
+flags. Reverify the exact staged alias/digest against its receipt before delivery.
+After the production artifact finishes and passes its frozen-input/hash checks,
+prepare its reviewed inert staging and existing-node API registration pin using
+`/tmp/indeehub-stage-production-and-prepare-pin.py`; that step remains pending.
+Finish source/mirror/signature gates and review the fresh seven-member plan.
 Deploy the reviewed matching backend/helper artifact through the existing
 preserving deployment procedure. Install only the exact reviewed plan and
 verified signed private candidate; preserve previous catalog/drop-in bytes.
