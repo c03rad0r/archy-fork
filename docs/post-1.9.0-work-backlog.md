@@ -112,6 +112,15 @@ Current implementation and qualification evidence: [2026-10-06 checkpoint](post-
 - Track this under task5 and its removal safeguard now; keep notification artwork
   task23 last as requested. No connector or no-File-Browser acceptance is claimed.
 
+Removal safeguard source checkpoint: `96259f0e` integrates the independently
+reviewed warning in My Apps, app details and legacy container details. All seven
+focused modal/removal checks pass, including cancel without removal, canonical
+and legacy IDs, preserved files by default, explicit delete-data opt-in and reset
+on reopening or switching apps. Four changed Vue scripts/templates compile.
+Log: `/tmp/archy-filebrowser-warning-tests.log`. Combined typecheck/artifact/live
+acceptance remains pending; no File Browser was stopped or removed. The actual
+Nextcloud/Immich connectors and no-File-Browser acceptance remain unfinished.
+
 ### Task 5 assessment — source and version checks, 7 October
 
 Cloud currently sends every category through File Browser, using `/Photos`,

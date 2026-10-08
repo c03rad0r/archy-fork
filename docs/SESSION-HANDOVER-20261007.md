@@ -76,8 +76,10 @@ Read **Current live checkpoint** first. Older receipts below apply only to their
 - Task5 now explicitly requires supported Nextcloud/Immich connections to work
   without File Browser installed/running, with account boundaries and independent
   source availability. Removing File Browser currently disables local Cloud
-  access. Removal-warning UI is in progress, preserves files by default and does
-  not imply automatic file migration. Requirement integrated as `8c282871`.
+  access. Removal-warning UI is integrated as `96259f0e`: seven focused checks and
+  four Vue script/template parses pass, independent review complete. Not deployed;
+  combined type/artifact checks remain. It preserves files by default and does
+  not imply migration. Requirement integrated as `8c282871`.
 - Task21 public UI groundwork `6bcdd106` and task22 Mesh picker groundwork
   `3360354a` remain isolated/unintegrated, after earlier tasks. They do not enable
   live menus or complete backend/global search/paid delivery/folders.
