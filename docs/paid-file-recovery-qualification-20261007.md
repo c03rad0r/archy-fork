@@ -148,3 +148,24 @@ Durable evidence (backend log, input manifest, receipt and runner):
 Temporary original: `/tmp/archy-paid-final-combined-fjrs3hIE/`.
 The compiler slot was released to Indee immediately after successful provenance
 verification; no additional backend compilation was started by this agent.
+
+## Subsequent pre-target rollback safety correction (qualification pending)
+
+Independent source review found that a failed initial drain could enter native
+rollback and stop intact original writers, even though no target had started.
+Commit `07c7eb0f` fixes this in `supervised_update.rs`: recovery durably chooses
+which exact originals to preserve, restores only stopped/missing members, adopts
+an operation-owned recreation after a lost start acknowledgement, and refuses
+unexpected replacements or violations of an original stopped state. Preserved
+members keep their original service recipes. Journal schema 2 prevents an older
+backend from ignoring these preservation decisions; existing schema 1 journals
+remain readable and migrate before restoration.
+
+Six new regressions cover intact busy originals, partial frontend stop, lost
+start acknowledgement, changed preserved identity, old-journal migration, and
+unexpected startup of an originally stopped member. Formatting and diff checks
+pass; these tests have **not yet executed**. The previous 2,012-test result and
+normal executable `913c6572bf689f8c88d25ac6e7436e978fc88a3c1e0cecf26db159967285aa5b`
+predate this fix. The next single combined isolated suite waits for the Indee
+helper's actual-original restart-policy correction and VM shutdown. No live
+node service or payment was changed for this work.
