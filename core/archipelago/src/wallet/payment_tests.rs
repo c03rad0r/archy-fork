@@ -2783,3 +2783,6 @@ async fn unconfirmed_quote_can_cancel_and_requote_without_exposing_wallet_funds(
     }
     assert!(mint.requests.lock().unwrap().is_empty());
 }
+
+#[path = "payment_tests/process_fixture.rs"]
+mod process_fixture;
