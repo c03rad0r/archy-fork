@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <meta name="theme-color" content="#fafafa">
+  <title>Just Works · Archipelago</title>
+  <script src="assets/early-theme.js"></script>
+  <link rel="stylesheet" href="assets/design-system.css">
+  <link rel="stylesheet" href="assets/launcher.css">
+  <script type="module" src="assets/launcher.js"></script>
+</head>
+<body>
+  <section id="hosted-surface" aria-label="Just Works"><nav class="hosted-navigation" aria-label="Just Works navigation"><button id="back-to-launcher" hidden>← Website &amp; Business tools</button></nav><a id="hosted-switch" class="button icon ring" href="/business-demo/" aria-label="Switch to Business tools" title="Switch to Business tools"><svg id="switch-building" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 21V5l8-3v19M12 8h8v13M2 21h20M7 7v2m0 3v2m0 3v1m8-7h2m-2 4h2m-2 4h2"/></svg><svg id="switch-person" viewBox="0 0 24 24" aria-hidden="true" hidden><circle cx="12" cy="8" r="4"/><path d="M4 21v-2a8 8 0 0 1 16 0v2"/></svg><span id="switch-label">Business</span></a><iframe id="hosted-site" title="Just Works website" src="https://justworks.cash/" allow="clipboard-read; clipboard-write"></iframe></section>
+  <div id="app" hidden>
+    <main class="jw-container jw-page launcher">
+      <section id="home" aria-labelledby="home-title">
+        <div class="intro">
+          <div><p class="jw-eyebrow">Just Works on Archipelago</p><h1 id="home-title">Your business.<br>All together.</h1></div>
+          <p class="intro-note">A home for your business online.<br>The tools to keep it moving.</p>
+        </div>
+        <div class="jw-grid launch-options">
+          <article class="jw-card launch-card">
+            <div class="card-heading"><span class="jw-eyebrow">01 / Your online presence</span><span class="card-arrow" aria-hidden="true">↗</span></div>
+            <div class="website-art" aria-hidden="true"><div class="mini-browser"><div class="mini-toolbar"><span></span><span></span><span></span><b>your business, online</b></div><div class="mini-page"><div class="mini-sun"></div><div class="mini-page-copy">Something<br>worth sharing.</div><div class="mini-lines"></div><span class="mini-cta">Made for you ↗</span></div></div></div>
+            <div class="card-copy"><h2>Website</h2><p>Bring your existing links together into a site you can edit, publish and share.</p></div>
+            <a id="website-launch" class="jw-button jw-button--primary" href="https://justworks.cash/" >Create your website <span aria-hidden="true">↗</span></a>
+            <p class="jw-help">Your page, photos, public link and QR code.</p>
+          </article>
+          <article id="business-card" class="jw-card launch-card" hidden>
+            <div class="card-heading"><span class="jw-eyebrow">02 / Your day to day</span><span class="card-arrow" aria-hidden="true">↗</span></div>
+            <div class="business-art" aria-hidden="true"><div class="mini-operations"><div class="mini-operation"><span class="operation-mark">↗</span><b>Orders</b><span>Ready to serve</span></div><div class="mini-operation"><span class="operation-mark">＋</span><b>Bookings</b><span>A place for everyone</span></div><div class="mini-operation"><span class="operation-mark">✓</span><b>Payments</b><span>Keep things moving</span></div></div></div>
+            <div class="card-copy"><h2>Business tools</h2><p>Manage menus, bookings, orders and payments. Add the tools your business needs.</p></div>
+            <a id="business-launch" class="jw-button" href="/business-demo/" >Open business tools <span aria-hidden="true">↗</span></a>
+            <p id="business-help" class="jw-help">Your merchant dashboard, POS and signage.</p>
+          </article>
+        </div>
+        <section class="connected-strip" aria-label="Connected website">
+          <div><span class="status-dot" aria-hidden="true"></span><strong id="connection-title">Start with what you already have.</strong><p id="connection-description">Create your website first. Connect it in Archipelago’s Dashboard → Setup → Instant business site to unlock Business tools.</p></div>
+          <button id="forget" class="jw-button jw-button--compact jw-button--pill" hidden>Forget this link</button>
+        </section>
+      </section>
+
+      <p id="storage-notice" class="storage-notice" role="status" hidden>Browser storage is unavailable. You can use your connected site for this visit; connect it again next time.</p>
+      <footer class="launcher-footer"><span>Powered by the existing Just Works services.</span><span>Owner login stays with Just Works · Internet required</span></footer>
+      <noscript><p>Enable JavaScript to connect a site, or visit <a href="https://justworks.cash/">Just Works</a> directly.</p></noscript>
+    </main>
+  </div>
+</body>
+</html>

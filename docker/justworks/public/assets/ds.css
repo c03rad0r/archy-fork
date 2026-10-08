@@ -1,0 +1,141 @@
+/*
+ * Design-system chrome shared with cash-just-works: the three-way theme
+ * toggle and the brand mark. Ported verbatim from public/css/components.css
+ * in the cash-just-works repo — colors resolve through tokens.css, so this
+ * follows the same light/dark rules as the source site.
+ */
+
+.theme-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding: 3px;
+  border: 1px solid var(--jw-line);
+  border-radius: var(--jw-radius-pill);
+  background: var(--jw-surface-sunken);
+}
+
+.theme-toggle button {
+  width: 32px;
+  height: 28px;
+  display: inline-grid;
+  place-items: center;
+  border: 0;
+  border-radius: var(--jw-radius-pill);
+  background: transparent;
+  color: var(--jw-text-muted);
+  cursor: pointer;
+  transition:
+    background var(--jw-duration-base) var(--jw-ease-out),
+    color var(--jw-duration-base) var(--jw-ease-out);
+}
+
+.theme-toggle button:hover { color: var(--jw-text-primary); }
+
+.theme-toggle button[aria-pressed="true"] {
+  background: var(--jw-surface);
+  color: var(--jw-text-primary);
+  box-shadow: var(--jw-shadow-xs);
+}
+
+.theme-toggle button:focus-visible {
+  outline: 2px solid var(--jw-field-border-focus);
+  outline-offset: 1px;
+}
+
+.theme-toggle svg {
+  width: 15px;
+  height: 15px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.8;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+/* Brand mark: one continuous line, path swapped by assets/ds/logo.js. */
+
+.jw-mark {
+  width: var(--jw-mark-width, 2.1em);
+  height: auto;
+  flex: none;
+  display: block;
+  overflow: visible;
+}
+
+.jw-mark-portal {
+  width: auto;
+  height: var(--jw-mark-height, 1.35em);
+}
+
+.jw-mark-portal { filter: var(--jw-portal-depth); }
+
+.jw-portal-frame { fill: var(--jw-text-primary); }
+.jw-portal-head { stop-color: var(--jw-text-subtle); }
+.jw-portal-floor { stop-color: transparent; }
+
+.jw-mark-path {
+  fill: none;
+  stroke-width: 3;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.jw-mark-stop-a { stop-color: var(--jw-accent); }
+.jw-mark-stop-b { stop-color: var(--jw-highlight); }
+
+.brand .jw-mark { margin-right: -0.15em; }
+
+/* App icon: the mark in a translucent rimmed container. Fixed dark ground in
+   both themes on purpose (see tokens.css). */
+
+.jw-app-icon {
+  position: relative;
+  width: var(--jw-app-icon-size);
+  height: var(--jw-app-icon-size);
+  flex: none;
+  display: grid;
+  place-items: center;
+  border-radius: var(--jw-app-icon-radius);
+  background: var(--jw-app-icon-bg);
+  -webkit-backdrop-filter: blur(var(--jw-app-icon-blur));
+  backdrop-filter: blur(var(--jw-app-icon-blur));
+}
+
+.jw-app-icon::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  padding: var(--jw-app-icon-rim-width);
+  border-radius: inherit;
+  background: linear-gradient(
+    135deg,
+    var(--jw-app-icon-rim-bright) 0%,
+    var(--jw-app-icon-rim-fade) 32%,
+    var(--jw-app-icon-rim-fade) 68%,
+    var(--jw-app-icon-rim-bright) 100%
+  );
+  -webkit-mask:
+    linear-gradient(#000 0 0) content-box,
+    linear-gradient(#000 0 0);
+  mask:
+    linear-gradient(#000 0 0) content-box,
+    linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+  mask-composite: exclude;
+  pointer-events: none;
+}
+
+.jw-app-icon .jw-mark.jw-mark-portal,
+.jw-app-icon .jw-mark.jw-mark-line {
+  width: auto;
+  height: calc(var(--jw-app-icon-size) * 0.52);
+  transform: translateY(calc(var(--jw-app-icon-size) * -0.025));
+}
+
+.brand .jw-app-icon { margin-right: var(--jw-space-1); }
+
+.jw-app-icon.lg { --jw-app-icon-size: 76px; --jw-app-icon-rim-width: 1.5px; }
+.jw-app-icon.sm { --jw-app-icon-size: 26px; }
+
+.nav-actions { display: flex; align-items: center; gap: 14px; }

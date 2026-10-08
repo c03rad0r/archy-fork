@@ -1,0 +1,109 @@
+Just Works app + dashboard setup: deployment-agent handoff
+2026-10-08
+
+Integration boundary
+This proposal is based on main 8d175972. That main already contains the qualified
+native identity import implementation (fe398df8 + 7f03994e, merged through
+8d175972). Do not reapply a1bb9981 or beb8e296 from the original app branch.
+This proposal adds the remaining app/dashboard integration, the FIPS port8340
+mapping, generated app-session metadata and the optional catalog entry.
+No existing signer implementation is changed by this proposal.
+
+The application payload matches the yaya demo at original app commit4ae5fff0;
+changes during review preparation are this handoff, README corrections and
+trailing blank-line cleanup in three MIT notices. Original Just Works projects
+and hosted services were not modified. Vendored Business code and licenses are
+inside docker/justworks; no separate upstream PR/deployment is necessary.
+
+User experience
+First launch embeds the existing hosted website creator. A connected published
+site unlocks the Website/Business chooser. The lower-left ring control always
+allows switching, including before setup, to avoid a dead end. Business resolves
+the connected public npub through hosted Core. All views remain inside the
+Archipelago iframe/host tab. Desktop chooser gutters follow the header; mobile
+spacing is unchanged. The dashboard icon is the normalized white portal SVG.
+Dashboard > Setup > Instant business site checks the page and connects the native
+ecash receiving address using owner-authorized hosted Core APIs.
+
+Receiving uses wallet.ecash-lnaddress and its existing hosted address/mint
+service. No LND/Bitcoin dependency or extra wallet app is introduced. This is
+not a self-hosted mint. Success requires publication verification and a fresh
+public record matching the selected address. Legacy Business order checkout
+with hardcoded payment destinations is blocked; it is not certified by this PR.
+The hosted CMS retains its separate sign-in. A website owner's nsec may be
+imported once as a separate native Business identity. Local Business and wallet
+setup reuse it with node-password authorization and explicit Nostr-key sharing
+consent. No node wallet key is sent to hosted Core.
+
+Ingest into the next normal deployment
+1. Review/merge once on ngit, then mirror the exact accepted commits to Gitea.
+   The explicitly requested Gitea PR is a cross-linked review mirror; do not
+   independently squash or merge it to produce a different history.
+2. Build the current combined platform source. Do not deploy an old demo backend
+   or replace newer work with the binary recorded below. Include the Just Works
+   FIPS port mapping and existing native-import RPCs.
+3. Build the current combined neode-ui. Include the native guide/components,
+   generated host-frame metadata, white SVG and catalog entry. Do not copy the
+   older preview UI over newer platform/IndeeHub changes.
+4. Ship apps/justworks and docker/justworks into both active runtime and boot
+   runtime using the standard deployment pipeline. Build the image locally as
+   localhost/archipelago-justworks:0.1.0. A running image with that same tag is not
+   proof it contains these sources: confirm its image ID before recreating ONLY
+   Just Works. Respect stopped/uninstalled app decisions.
+5. Preserve /var/lib/archipelago/justworks and all existing native identities.
+   The app requires the /data bind mount, 256Mi memory and writable persistent
+   storage for container UID65534. Use the runtime's rootless UID mapping when
+   establishing directory ownership; do not hardcode a host UID on other nodes.
+6. Rebuild/reload manifests as usual and validate gated port8340, /healthz,
+   iframe launch and launch-in-tab. Dashboard guide must not complete merely
+   from opening an app or submitting failed credentials.
+7. Test native import/signing only with a disposable identity; remove only that
+   fixture. Preserve all original identity/default hashes. Never publish an
+   owner payment change or send a payment as an unattended test.
+
+Existing yaya demo checkpoint (historical evidence, recheck before deployment)
+The app is installed with persistent data and the preview dashboard on18342.
+Active context: /opt/archipelago/docker/justworks
+Boot context: /opt/archipelago/web-ui/archipelago-runtime/docker/justworks
+Existing persistence override:
+  ~/.config/containers/systemd/justworks.container.d/10-business-data.conf
+It resets Volume= and binds /var/lib/archipelago/justworks:/data:rw because the
+previous backend cached the old manifest. Preserve it until generated effective
+configuration has the correct bind; do not drop the volume during an update.
+App image at the verified demo checkpoint:
+  3954d0ff0f82841b98900a5b58807374d63b706ddb26c0a27e28852ecbd2ebda
+Rollback app image tag: localhost/archipelago-justworks:before-gutters
+Signer binary deployed during this task:
+  e3daed8b26359855c58883fd331a68b5a04f1b9211046c744a5935f0abcd46b6
+Signer backup/receipt/rollback directory:
+  /var/lib/archipelago/support/justworks-native-signer-20261008T172934Z
+Deployment notes on yaya: /opt/archipelago/justworks-deployment-status.txt
+This binary was qualified against the previous production inputs, but latest
+main is now newer: rebuild current source rather than redeploying this binary.
+
+Evidence
+Qualified native-import backend: isolated suite2033 passed,0 failed,5 ignored;
+locked release build passed. Real disposable import, duplicate reuse, independent
+signature verification and export match passed; fixture removed. Existing
+identity/default/session files, UI/operator-intent files and every app container
+ID/start time were unchanged after deployment and settling. Embedded IndeeHub
+maintenance helper stayed byte-identical.
+Live native setup: Chromium/Firefox/WebKit, desktop and phone, all6 cases passed
+8 checks each. Live Business QR follow-up: Chromium phone,30 checks passed.
+Desktop chooser gutters: all6 engine/profile cases,22 checks over9 widths.
+Public customer flow: published merchant page's iframe links to the proper Tip
+page; actual checkout fetched the native receiving address and got LNURL-pay
+payRequest. No invoice/payment was sent. Linux WebKit is not physical iOS testing.
+
+Local private evidence is retained outside git in
+~/.local/share/archy-justworks-deployment/ and browser-check report directories.
+Temporary authenticated browser cookies were removed. No credentials, nsecs,
+wallet records, browser traces or deployment binaries belong in this proposal.
+No OTA/ISO/catalog release was published; unrelated release acceptance remains open.
+
+Review branch revalidation on main8d175972
+Adapter tests13 passed; manifest16 passed with0 warnings; strict release catalog
+check reported0 drift/missing entries; targeted guide/store tests26 passed on
+Node24.20.0; frontend typecheck and production build passed. An initial test run
+on system Node26 failed because its experimental global localStorage shadows the
+browser test environment; the supported Node24 run passed without source edits.

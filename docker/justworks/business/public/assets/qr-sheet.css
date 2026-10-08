@@ -1,0 +1,46 @@
+@font-face{font-family:Geist;src:url('/fonts/geist-latin-wght-normal.woff2') format('woff2');font-weight:100 900;font-display:swap}
+@font-face{font-family:Syne;src:url('/fonts/syne-latin-wght-normal.woff2') format('woff2');font-weight:400 800;font-display:swap}
+*{box-sizing:border-box}
+:root{font-family:Geist,Arial,sans-serif;color:#151515;background:#eeeFEB;font-synthesis:none}
+body{margin:0}
+[hidden]{display:none!important}
+.sheet-tools{background:#090909;color:white;display:flex;align-items:center;gap:20px;padding:18px max(24px,calc((100vw - 980px)/2));font-size:13px}
+.sheet-tools>a{color:white;text-decoration:none;white-space:nowrap}
+.sheet-tools>span{font-weight:650;margin-right:auto}
+.sheet-tools button{border:0;background:#ff5a31;color:#111;border-radius:5px;padding:13px 17px;font:inherit;font-weight:700;cursor:pointer;white-space:nowrap}
+.sheet-tools button:disabled{opacity:.5;cursor:wait}
+a:focus-visible,button:focus-visible{outline:3px solid #ff5a31;outline-offset:4px}
+.print-help,.status{max-width:794px;margin:22px auto 0;padding:0 16px;font-size:12px;line-height:1.6;color:#555}
+.print-help strong{color:#111;display:block;font-size:17px;margin-bottom:5px}
+.status{margin-top:12px;font-size:11px}
+.status.error{color:#9d2615;font-size:15px}
+.sheet{width:210mm;min-height:297mm;margin:22px auto 44px;background:white;padding:10mm;box-shadow:0 12px 50px #00000012;color:#111}
+.sheet-heading{display:flex;align-items:center;justify-content:space-between;gap:5mm;height:20mm;margin-bottom:4mm}
+.eyebrow{font-size:8pt;font-weight:750;text-transform:uppercase;letter-spacing:.15em;margin:0 0 2mm;color:#bd3b19}
+h1{font-family:Syne,Geist,sans-serif;font-size:24pt;line-height:1.05;margin:0;overflow-wrap:anywhere;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+.sheet-heading>div{min-width:0;max-width:125mm}
+.sheet-caption{font-size:8pt;line-height:1.6;text-align:right;flex-shrink:0;margin:0}
+.sheet-caption span{color:#666;font-size:7pt}
+.labels{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));grid-auto-rows:48mm;gap:0}
+.qr-label{border:1px dashed #b5b5b5;text-align:center;display:flex;flex-direction:column;align-items:center;padding:2mm 2mm 1.5mm;break-inside:avoid;overflow:hidden;min-width:0}
+.label-merchant{font-size:6.5pt;line-height:1.15;margin:0 0 .8mm;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#555}
+.qr-label h2{font-family:Syne,Geist,sans-serif;font-size:11pt;line-height:1.1;font-weight:750;margin:0 0 .6mm;max-width:100%}
+.qr-label a{display:block;width:33mm;height:33mm;padding:2mm;background:#fff;flex-shrink:0}
+.qr-label img{display:block;width:100%;height:100%;object-fit:contain}
+.label-caption{font-size:6pt;margin:.6mm 0 0;line-height:1.1;color:#555}
+.sheet-footer{display:flex;justify-content:space-between;gap:4mm;padding-top:4mm;font-size:6pt;color:#666;line-height:1.3}
+.sheet-footer>span:first-child{font-weight:800;letter-spacing:.13em;color:#111}
+@media screen and (max-width:830px){.sheet{width:calc(100% - 28px);min-height:0;padding:20px}.sheet-heading{height:auto;min-height:70px;margin-bottom:15px}.sheet-heading>div{max-width:60%}h1{font-size:28px}.sheet-caption{font-size:10px}.sheet-caption span{font-size:9px}.labels{grid-template-columns:repeat(2,minmax(0,1fr));grid-auto-rows:auto}.qr-label{min-height:185px;padding:10px 4px}.sheet-footer{font-size:8px;flex-wrap:wrap}.sheet-tools{padding:14px;gap:12px;flex-wrap:wrap}.sheet-tools>span{font-size:11px}.sheet-tools button{font-size:12px}.eyebrow{font-size:9px}.sheet-heading{gap:10px}}
+@media screen and (max-width:380px){.labels{grid-template-columns:1fr}.sheet-heading{display:block}.sheet-heading>div{max-width:100%}.sheet-caption{text-align:left;margin-top:10px}}
+@page{size:A4 portrait;margin:10mm}
+@media print{
+  :root,body{background:#fff}
+  .sheet-tools,.print-help,.status{display:none!important}
+  .sheet{width:190mm;min-height:0;margin:0;padding:0;box-shadow:none}
+  .sheet-heading{height:20mm}
+  .labels{grid-template-columns:repeat(3,minmax(0,1fr));grid-auto-rows:48mm}
+  .sheet-footer{padding-top:4mm}
+  .sheet:not([data-ready="true"]){display:none!important}
+  body:has(.sheet:not([data-ready="true"])) .status{display:block!important;color:#111}
+  a{color:inherit;text-decoration:none}
+}

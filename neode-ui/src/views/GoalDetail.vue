@@ -145,6 +145,14 @@
                     </template>
                   </div>
 
+                  <JustworksSetup
+                    v-else-if="step.id === 'connect-justworks-site'"
+                    @connected="completeVerifyStep(step)"
+                  />
+                  <JustworksPayments
+                    v-else-if="step.id === 'connect-justworks-payments'"
+                    @connected="completeVerifyStep(step)"
+                  />
                   <button
                     v-else-if="step.action === 'configure'"
                     @click="openConfigureStep(step)"
@@ -224,6 +232,8 @@
 
 <script setup lang="ts">
 import { computed, onUnmounted, ref, watch } from 'vue'
+import JustworksPayments from './goals/JustworksPayments.vue'
+import JustworksSetup from './goals/JustworksSetup.vue'
 import BalanceAmount from '@/components/BalanceAmount.vue'
 import { useRoute, useRouter, RouterLink } from 'vue-router'
 import { useI18n } from 'vue-i18n'
@@ -247,6 +257,7 @@ import {
 
 /** Map appId to its icon file path under /assets/img/app-icons/ */
 const APP_ICON_MAP: Record<string, string> = {
+  justworks: '/assets/img/app-icons/justworks.svg',
   'bitcoin-knots': '/assets/img/app-icons/bitcoin-knots.webp',
   lnd: '/assets/img/app-icons/lnd.png',
   'btcpay-server': '/assets/img/app-icons/btcpay-server.png',
@@ -270,6 +281,7 @@ function stepIconUrl(step: GoalStep): string | undefined {
  * overlay on top of the current screen; X-Frame-Options apps open a tab).
  */
 const GOAL_COMPLETION_CTA: Record<string, { label: string; route?: string; launchAppId?: string }> = {
+  'instant-business-site': { label: 'Open Just Works', launchAppId: 'justworks' },
   'open-a-shop': { label: 'Go to my shop (BTCPay)', launchAppId: 'btcpay-server' },
   'accept-payments': { label: 'Go to Lightning (LND)', route: '/dashboard/apps/lnd' },
   'run-lightning-node': { label: 'View my channels', route: '/dashboard/apps/lnd/channels' },
@@ -398,7 +410,7 @@ async function installApp(step: GoalStep) {
 
 function openConfigureStep(step: GoalStep) {
   ensureGoalStarted()
-  goalStore.completeStep(goalId.value, step.id)
+  if (step.completion !== 'app') goalStore.completeStep(goalId.value, step.id)
   const override = goalStepRouteOverride(step)
   if (override) {
     // Internal screens (channels, web5, settings) — tag where we came from so
@@ -408,7 +420,7 @@ function openConfigureStep(step: GoalStep) {
     // Launch the app itself: iframe apps overlay on top of the wizard,
     // tab-only apps open a tab (mobile: the in-app browser) — the app
     // launcher handles every case.
-    useAppLauncherStore().openSession(step.appId)
+    useAppLauncherStore().openSession(step.appId, { path: step.appPath })
   }
 }
 

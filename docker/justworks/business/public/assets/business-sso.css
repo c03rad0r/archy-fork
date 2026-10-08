@@ -1,0 +1,2 @@
+.exchange {max-width:36rem; margin:2rem auto; padding:1.5rem; font:1rem/1.5 system-ui,sans-serif; overflow-wrap:anywhere}
+.exchange h1 {font-size:1.6rem}.exchange button {padding:.8rem 1rem; margin:.3rem; min-height:44px; cursor:pointer}.exchange button:disabled {cursor:default; opacity:.6}.exchange :focus-visible {outline:3px solid #e99a30; outline-offset:3px}.jw-session-transfer {padding:.75rem; margin-bottom:1rem; width:100%; cursor:pointer}

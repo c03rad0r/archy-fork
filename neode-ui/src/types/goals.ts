@@ -27,6 +27,10 @@ export interface GoalStep {
   icon?: string
   /** Custom label for the step's CTA button (configure steps) */
   ctaLabel?: string
+  /** Path inside the app for a guided setup entry point. */
+  appPath?: string
+  /** App-owned verification must acknowledge completion, rather than a click. */
+  completion?: 'app'
 }
 
 export type GoalStatus = 'not-started' | 'in-progress' | 'completed' | 'error'

@@ -23,6 +23,44 @@ const FUND_WALLET_STEP: GoalStep = {
 
 export const GOALS: GoalDefinition[] = [
   {
+    id: 'instant-business-site',
+    title: 'Instant business site',
+    subtitle: 'Turn your existing business links into a website with Just Works',
+    icon: 'shop',
+    category: 'commerce',
+    requiredApps: ['justworks'],
+    steps: [
+      {
+        id: 'install-justworks',
+        title: 'Install Just Works',
+        description: 'A lightweight home for your website and business tools. Uses the existing Just Works services; no Bitcoin node or channel setup is needed.',
+        appId: 'justworks',
+        action: 'install',
+        isAutomatic: true,
+      },
+      {
+        id: 'connect-justworks-site',
+        title: 'Create or connect your business site',
+        description: 'Start with your existing website or social links, create your page in Just Works, then connect its public link. This step finishes when Just Works confirms the page is published. Owner login stays with Just Works.',
+        appId: 'justworks',
+        action: 'configure',
+        completion: 'app',
+        isAutomatic: false,
+      },
+      {
+        id: 'connect-justworks-payments',
+        title: 'Receive payments in your Archipelago wallet',
+        description: 'Use this node’s Lightning address on your hosted website. Customer payments become ecash in your Archipelago wallet. No Bitcoin node or LND setup is required.',
+        appId: 'justworks',
+        action: 'configure',
+        completion: 'app',
+        isAutomatic: false,
+      },
+    ],
+    estimatedTime: '~5–10 min',
+    difficulty: 'beginner',
+  },
+  {
     id: 'open-a-shop',
     title: 'Open a Shop',
     subtitle: 'Accept Bitcoin payments with your own online store',

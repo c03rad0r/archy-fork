@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <meta name="theme-color" content="#080808">
+  <meta name="referrer" content="no-referrer">
+  <title>QR in DIN A4 · Just Works</title>
+  <link rel="stylesheet" href="/assets/qr-sheet.css?v=1">
+</head>
+<body>
+  <nav class="sheet-tools" aria-label="QR sheet actions">
+    <a id="back" href="/">← Business</a>
+    <span>QR in DIN A4</span>
+    <button id="print" type="button" disabled>Print / Save as PDF <span aria-hidden="true">↗</span></button>
+  </nav>
+  <aside class="print-help"><strong>One sheet. Every way in.</strong> Print on A4 at 100% scale, with browser headers and footers off. Choose “Save as PDF” in the print dialog to download. Cut along the guides for individual labels. Use the customer-facing labels on windows and tables; keep the Business, POS and Stats labels for your team.</aside>
+  <p id="status" class="status" role="status" aria-live="polite">Opening merchant QR sheet…</p>
+  <main id="sheet" class="sheet" hidden>
+    <header class="sheet-heading"><div><p class="eyebrow">Just Works · Quick access</p><h1 id="merchant-name"></h1></div><p class="sheet-caption">Scan. Open. Just works.<br><span id="label-count"></span></p></header>
+    <section id="labels" class="labels" aria-label="Merchant QR labels"></section>
+    <footer class="sheet-footer"><span>JUST WORKS</span><span>Public links · No login credentials in these codes</span><span>A4 · 210 × 297 mm</span></footer>
+  </main>
+  <script type="module" src="/assets/qr-sheet.js?v=3"></script>
+</body>
+</html>

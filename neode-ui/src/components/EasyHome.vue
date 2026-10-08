@@ -65,6 +65,7 @@ const goalStatuses = goalStore.goalStatuses
 
 /** Map appId to its icon file path under /assets/img/app-icons/ */
 const APP_ICON_MAP: Record<string, string> = {
+  justworks: '/assets/img/app-icons/justworks.svg',
   'bitcoin-knots': '/assets/img/app-icons/bitcoin-knots.webp',
   lnd: '/assets/img/app-icons/lnd.png',
   'btcpay-server': '/assets/img/app-icons/btcpay-server.png',
