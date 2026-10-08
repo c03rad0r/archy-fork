@@ -87,6 +87,31 @@ Current implementation and qualification evidence: [2026-10-06 checkpoint](post-
 - Test installation/removal, permissions, unavailable apps, overlapping filenames,
   duplicate detection and category accuracy before enabling an integration.
 
+### Required File Browser replacement behavior — operator clarification, 8 October
+
+- Cloud currently depends on File Browser for its own local files, photos, music
+  and documents. Installing Nextcloud or Immich alone does not replace that
+  connection. Do not imply that the integrations are already enabled.
+- Add a specific warning to every File Browser removal entry in the UI, including
+  the legacy container details route. Explain the Cloud impact, offer Keep File
+  Browser and explicit removal, and preserve app data by default. A display name
+  alone must not identify the dependency. No forced reinstall after removal.
+- The completed connectors MUST let Cloud browse/preview/download the configured
+  source without File Browser installed or running. Nextcloud supplies permitted
+  files/folders; Immich supplies permitted photos/videos. Connectors must be
+  authorized for the intended upstream account; installation alone is not setup.
+- Model each Cloud source independently: a missing File Browser must not block a
+  working connector, and a failed connector must not hide another working source.
+  Show unavailable local storage truthfully, with setup/reinstall guidance.
+- Qualify File Browser absent and stopped, each connector alone, both connectors,
+  unavailable/revoked upstream access, and removing/reinstalling each app. Preserve
+  account boundaries, app data, user uninstall decisions and unaffected sources.
+- Existing File Browser files are not automatically moved to a replacement.
+  Any future transfer requires a separate explicit operation preserving originals;
+  do not advertise migration or expose them through another account by default.
+- Track this under task5 and its removal safeguard now; keep notification artwork
+  task23 last as requested. No connector or no-File-Browser acceptance is claimed.
+
 ### Task 5 assessment — source and version checks, 7 October
 
 Cloud currently sends every category through File Browser, using `/Photos`,
