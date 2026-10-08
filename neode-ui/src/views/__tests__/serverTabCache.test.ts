@@ -47,7 +47,7 @@ const dnsStatusMock = vi.fn(async () => ({
   provider: 'system', servers: [], doh_enabled: false, doh_url: null, resolv_conf_servers: [],
 }))
 const diskStatusMock = vi.fn(async () => ({
-  used_bytes: 0, total_bytes: 0, free_bytes: 0, used_percent: 0, level: 'ok' as const,
+  used_bytes: 0, total_bytes: 0, free_bytes: 0, used_percent: 0, level: 'ok' as 'ok' | 'warning' | 'critical', encrypted: false,
 }))
 
 vi.mock('@/api/rpc-client', () => ({
@@ -293,6 +293,28 @@ describe('Server tab cache (Task 1): seven load groups', () => {
     await flushPromises()
     expect(wrapper.findComponent(RefreshIndicator).props('state')).toBe('ready')
 
+    wrapper.unmount()
+  })
+})
+
+describe('Disk status display follows cached revalidation', () => {
+  it('clears an old warning after freeing space and revisiting Server', async () => {
+    diskStatusMock.mockResolvedValueOnce({ used_bytes: 90, total_bytes: 100, free_bytes: 10, used_percent: 90, level: 'critical', encrypted: true })
+    const wrapper = mountServerHost(); await flushPromises()
+    expect(wrapper.text()).toContain('90.0% used')
+    await toggleTab(wrapper, false); vi.advanceTimersByTime(12000)
+    diskStatusMock.mockResolvedValueOnce({ used_bytes: 50, total_bytes: 100, free_bytes: 50, used_percent: 50, level: 'ok', encrypted: false })
+    await toggleTab(wrapper, true); await flushPromises()
+    expect(wrapper.text()).not.toContain('90.0% used'); expect(wrapper.text()).not.toContain('remaining')
+    wrapper.unmount()
+  })
+  it('shows a newly returned disk warning on re-entry', async () => {
+    const wrapper = mountServerHost(); await flushPromises()
+    expect(wrapper.text()).not.toContain('95.0% used')
+    await toggleTab(wrapper, false); vi.advanceTimersByTime(12000)
+    diskStatusMock.mockResolvedValueOnce({ used_bytes: 95, total_bytes: 100, free_bytes: 5, used_percent: 95, level: 'critical', encrypted: true })
+    await toggleTab(wrapper, true); await flushPromises()
+    expect(wrapper.text()).toContain('95.0% used')
     wrapper.unmount()
   })
 })

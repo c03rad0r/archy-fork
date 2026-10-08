@@ -787,8 +787,6 @@ async function connectToWifi(password: string) {
 }
 
 // Disk space
-const diskWarning = ref<{ level: 'warning' | 'critical'; used_percent: number; free_bytes: number } | null>(null)
-const diskEncrypted = ref(false)
 const diskCleaning = ref(false)
 
 // 02-06: the seventh Server load group. TTL 10s (fast tier, same as
@@ -805,15 +803,17 @@ const diskStatusRes = useCachedResource<{ used_bytes: number; total_bytes: numbe
   persist: true,
   fetcher: () => rpcClient.diskStatus(),
 })
+// Reactivation refreshes the cached resource directly. Derive its display
+// state reactively so a successful refresh cannot leave an old warning behind.
+const diskWarning = computed(() => {
+  const res = diskStatusRes.data.value
+  return res?.level === 'warning' || res?.level === 'critical'
+    ? { level: res.level, used_percent: res.used_percent, free_bytes: res.free_bytes }
+    : null
+})
+const diskEncrypted = computed(() => !!diskStatusRes.data.value?.encrypted)
 function loadDiskStatus() {
-  return diskStatusRes.refresh().then(() => {
-    const res = diskStatusRes.data.value
-    if (!res) return
-    diskEncrypted.value = !!(res as Record<string, unknown>).encrypted
-    if (res.level === 'warning' || res.level === 'critical') {
-      diskWarning.value = { level: res.level, used_percent: res.used_percent, free_bytes: res.free_bytes }
-    } else { diskWarning.value = null }
-  })
+  return diskStatusRes.refresh()
 }
 
 async function runDiskCleanup() {
