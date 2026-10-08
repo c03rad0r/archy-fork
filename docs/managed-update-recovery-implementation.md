@@ -747,3 +747,36 @@ After verified safe recovery, the same QEMU was paused with memory retained to
 serialize queued work. Success qualification remains open and must resume only
 when the host can support the unchanged deadlines. The corrected hook itself
 was not reached in this operation.
+
+
+### Successful same-boot cutover accepted (2026-10-08)
+
+Actual operation `8b53579c-ea29-4e8b-9f7f-e533589cf59f` passed the full native
+pipeline: Prepared → Editing → Starting → **Committed, cleanup_done=true**,
+maintenance **Released**, package Running with cleared progress. All seven
+original stop proofs, coherent backup, fresh database restore and all four
+volume restore verifications passed before target startup. The harness verified
+all seven exact target images and marker environments, new runtime identities,
+and removal of original AutoRemove IDs. An independent read-only check passed
+exact persisted target units, all seven running, absent holds/fence, unchanged
+boot and qualified executable/helper hashes, plus frontend provider configuration
+and `nginx -t`. Together with `5bd06edc`'s same-boot post-target rollback, the
+controlled fixture success/recovery acceptance is now complete.
+
+The reviewed plan was `22bc9c23cb2fe66f2858fc10ad5c5383347c35891598722ad3e21b01491b9dc8`.
+Before admission, three rounds of read-only API/Redis, PostgreSQL and the exact
+prior-worker died-event probes passed under unchanged30-second limits; final
+latencies were1.687,0.404 and0.177seconds respectively. All identities remained
+unchanged. The fixture retained best-effort I/O priority0; its owned transient
+unit received temporary best-effort MemoryLow3GiB (previous0), with MemoryMin0
+and swap limits unchanged. This scheduling difference is recorded, not an app
+or production timeout change. MemoryLow was reset to0 after final acceptance,
+and the fixture was asked to shut down normally before production compilation.
+
+Nine exact private native journals/receipts, including the failed pre-target
+attempt, are retained under
+`~/.local/state/archipelago/release-qualification/indeehub-admission-artifacts-20261008/final-native-acceptance/`
+with individual hashes. No Yaya data or service was changed by this qualification.
+The synthetic target uses reviewed local images and current frontend hooks;
+actual delivery image/import, API node pins, optimized matching backend,
+source/signature gates and Yaya UI/data acceptance remain separate requirements.
