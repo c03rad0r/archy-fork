@@ -1,9 +1,20 @@
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { mount } from '@vue/test-utils'
 import { createRouter, createMemoryHistory } from 'vue-router'
 import BaseModal from '../BaseModal.vue'
 
 describe('BaseModal', () => {
+  it('lets a parent flow own history while panels change', async () => {
+    const push = vi.spyOn(window.history, 'pushState')
+    const back = vi.spyOn(window.history, 'back')
+    const wrapper = mount(BaseModal, { props: { show: false, title: 'Panel', manageHistory: false } })
+    await wrapper.setProps({ show: true })
+    await wrapper.setProps({ show: false })
+    expect(push).not.toHaveBeenCalled()
+    expect(back).not.toHaveBeenCalled()
+    wrapper.unmount(); push.mockRestore(); back.mockRestore()
+  })
+
   afterEach(() => {
     document.body.style.overflow = ''
   })

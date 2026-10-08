@@ -6,7 +6,7 @@ import WalletScanModal from '../WalletScanModal.vue'
 import { rpcClient } from '@/api/rpc-client'
 vi.mock('@/api/rpc-client', () => ({ rpcClient: { call: vi.fn() } }))
 vi.mock('../WalletScanModal.vue', () => ({ default: { props: ['show'], template: '<div />' } }))
-vi.mock('../ReceiveBitcoinModal.vue', () => ({ default: { props: ['show', 'initialMethod'], template: '<div />' } }))
+vi.mock('../ReceiveBitcoinModal.vue', () => ({ default: { props: ['show', 'initialMethod', 'manageHistory'], template: '<div />' } }))
 vi.mock('@/views/settings/RoutstrBudgetSection.vue', () => ({ default: { template: '<div />' } }))
 const state = () => ({ schema: 1, settings: { provider: 'auto', openai_model: '' }, claude_configured: false, openai_configured: false, local_ready: false, routstr_remaining_sats: 0 })
 function mountModal() { return mount(AIConnectionModal, { props: { show: false }, global: { stubs: { BaseModal: { props: ['show'], template: '<div v-if="show"><slot /></div>' } } } }) }
@@ -19,7 +19,7 @@ describe('AI connection setup', () => {
     expect(button(w, 'Top up with ecash').exists()).toBe(true)
     expect(vi.mocked(rpcClient.call).mock.calls.every(([r]) => !['assistant.budget-set', 'system.settings.set'].includes(r.method))).toBe(true)
     await button(w, 'Top up with ecash').trigger('click')
-    expect(w.findComponent(ReceiveBitcoinModal).props()).toMatchObject({ show: true, initialMethod: 'ecash' })
+    expect(w.findComponent(ReceiveBitcoinModal).props()).toMatchObject({ show: true, initialMethod: 'ecash', manageHistory: false })
     w.findComponent(ReceiveBitcoinModal).vm.$emit('scan'); await flushPromises()
     expect(w.findComponent(WalletScanModal).props('show')).toBe(true)
     expect(w.findComponent(ReceiveBitcoinModal).props('show')).toBe(false)

@@ -1,5 +1,5 @@
 <template>
-  <BaseModal :show="show && !funding" title="Connect your AI" max-width="max-w-xl" @close="close">
+  <BaseModal :manage-history="false" :show="show && !funding" title="Connect your AI" max-width="max-w-xl" @close="close">
     <p class="text-sm text-white/60 mb-4">Choose how your assistant connects. API keys stay on this node and never enter your chat.</p>
     <p v-if="loading" role="status" class="text-sm text-white/60 mb-3">Checking this node…</p>
     <p v-if="error" role="alert" class="text-sm text-amber-200 mb-3">{{ error }}</p>
@@ -28,12 +28,13 @@
     <button v-if="status?.local_ready" class="glass-button rounded-lg px-4 py-2 text-sm text-white mt-4 w-full" @click="useLocal">Use local AI</button>
     <p class="text-xs text-white/40 mt-4">Your draft stays in place when you close this window.</p>
   </BaseModal>
-  <ReceiveBitcoinModal :show="show && funding && !scanning" initial-method="ecash" @close="finishFunding" @received="finishFunding" @scan="scanning = true" />
+  <ReceiveBitcoinModal :manage-history="false" :show="show && funding && !scanning" initial-method="ecash" @close="finishFunding" @received="finishFunding" @scan="scanning = true" />
   <WalletScanModal :show="show && scanning" @close="finishScan" @sent="finishScan" />
 </template>
 
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
+import { useModalHistory } from '@/composables/useModalHistory'
 import { rpcClient } from '@/api/rpc-client'
 import BaseModal from './BaseModal.vue'
 import ReceiveBitcoinModal from './ReceiveBitcoinModal.vue'
@@ -52,6 +53,8 @@ interface ProviderStatus {
 const props = defineProps<{ show: boolean }>()
 const emit = defineEmits<{ close: []; configured: [provider: Choice | 'auto' | 'local', model?: string] }>()
 const choices: { id: Choice; label: string }[] = [{ id: 'routstr', label: 'Routstr · sats' }, { id: 'claude', label: 'Claude API' }, { id: 'openai', label: 'OpenAI API' }]
+// Keep one browser Back entry while switching between connection, funding and scan.
+useModalHistory(computed(() => props.show), close)
 const mode = ref<Choice | null>('routstr')
 const key = ref('')
 const model = ref('')

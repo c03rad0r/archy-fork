@@ -1,5 +1,5 @@
 <template>
-  <BaseModal :show="show && !receiveSuccess" :title="t('web5.receiveBitcoinTitle')" max-width="max-w-2xl" content-class="max-h-[90vh] overflow-y-auto" @close="close">
+  <BaseModal :manage-history="manageHistory !== false" :show="show && !receiveSuccess" :title="t('web5.receiveBitcoinTitle')" max-width="max-w-2xl" content-class="max-h-[90vh] overflow-y-auto" @close="close">
         <!-- Method tabs -->
         <div class="flex gap-1 mb-4 p-1 bg-white/5 rounded-lg">
           <button
@@ -111,6 +111,7 @@
   <!-- Completion is deliberately its own modal, matching the Lightning
        payment moment. It is not an inline status inside the receive form. -->
   <BaseModal
+    :manage-history="manageHistory !== false"
     :show="show && !!receiveSuccess"
     title="Payment received"
     max-width="max-w-2xl"
@@ -147,6 +148,7 @@ const lightning = useLightningRequired()
 
 const props = defineProps<{
   show: boolean
+  manageHistory?: boolean
   initialMethod?: 'lightning' | 'onchain' | 'ecash' | 'ark'
   /** Optional info banner shown on the on-chain tab (e.g. Zeus channel limits) */
   note?: string
