@@ -192,3 +192,8 @@ the phone. Served index hashes were verified again after those checks.
 Build, failed/successful browser logs, source manifest, protected preflight data,
 qualification archive and `delivery-receipt.json` are in
 `~/.local/state/archipelago/release-qualification/artwork-ui-20261007/`.
+
+
+## Operator artwork result and deferral
+
+After the guarded dev/Yaya UI deployment, the operator reported that the notification song image still did not appear. Physical artwork acceptance therefore FAILED and remains open; the earlier synthetic/browser/native fixture evidence did not establish this phone outcome. Background playback and notification presence remain operator-accepted. The operator explicitly moved artwork to the end of all remaining tasks. No further artwork diagnostics, APK or UI rebuild will be undertaken until that deferred task resumes.
