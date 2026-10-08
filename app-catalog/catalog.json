@@ -673,6 +673,18 @@
       "tier": "optional",
       "icon": "/assets/img/app-icons/angor-green.png",
       "repoUrl": "https://github.com/hoytech/strfry"
+    },
+    {
+      "id": "justworks",
+      "title": "Just Works",
+      "version": "0.1.0",
+      "description": "Turn your existing business links into a website with Just Works. Open your website editor and business tools from one lightweight launcher. Uses the hosted Just Works services; an internet connection is required.",
+      "icon": "/assets/img/app-icons/justworks.svg",
+      "author": "Just Works contributors",
+      "category": "business",
+      "tier": "optional",
+      "repoUrl": "https://github.com/bencoin21/justworks.cash",
+      "dockerImage": "localhost/archipelago-justworks:0.1.0"
     }
   ]
 }

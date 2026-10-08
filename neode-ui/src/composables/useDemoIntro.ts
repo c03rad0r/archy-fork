@@ -38,6 +38,7 @@ const DEMO_PROXY_PORTS: Record<string, number> = {
 // Apps loaded in the in-app iframe via a same-origin path served by the mock
 // backend (per-app mock UIs and placeholder dashboards).
 const DEMO_MOCK_UI: Record<string, string> = {
+  justworks: '/app/justworks/',
   mempool: '/app/mempool/',
   'mempool-web': '/app/mempool/',
   'bitcoin-knots': '/app/bitcoin-knots/',

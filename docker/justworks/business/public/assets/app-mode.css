@@ -1,0 +1,19 @@
+.app-mode{display:flex;align-items:center;justify-content:flex-end;gap:8px;flex-wrap:wrap;color:#f7f7f4;font:500 12px/1.4 var(--jw-font-sans,system-ui,sans-serif)}
+.app-mode>button,.app-help-close{appearance:none;border:1px solid #ffffff45;border-radius:999px;background:#101613d9;color:#f7f7f4;min-height:40px;padding:8px 14px;font:inherit;cursor:pointer;white-space:nowrap}
+.app-mode button:hover{border-color:#ff996f;background:#242c27}.app-mode button:focus-visible{outline:3px solid #ff996f;outline-offset:3px}.app-mode button[hidden]{display:none}.app-mode button:disabled{opacity:.6;cursor:wait}
+.app-mode-status:empty{display:none}.app-mode-status{max-width:28em;color:#ffce96;flex-basis:100%;text-align:right}
+.app-install-help{position:fixed;inset:0;margin:auto;width:min(440px,calc(100vw - 32px));max-height:calc(100dvh - 32px);overflow:auto;padding:28px;border:1px solid #ffffff40;border-radius:24px;background:#111914;color:#f7f7f4;font:400 16px/1.6 var(--jw-font-sans,system-ui,sans-serif);text-align:left;box-shadow:0 24px 100px #0009}
+.app-install-help::backdrop{background:#000b;backdrop-filter:blur(6px)}.app-install-help h2{font-size:25px;line-height:1.2;letter-spacing:-.03em;margin:0 0 20px}.app-install-help p{color:#d5dfd8}.app-help-close{font-size:15px;min-width:100px}
+body[data-pwa-app=pos]>.app-mode{display:none}
+.pos-app-controls{position:sticky;top:calc(76px + env(safe-area-inset-top));z-index:10;padding:8px max(24px,env(safe-area-inset-right)) 8px max(24px,env(safe-area-inset-left));background:#080909}
+body[data-pwa-app=pos] .tabs{top:calc(76px + var(--app-toolbar-height,56px) + env(safe-area-inset-top))}
+body[data-pwa-app=pos]{padding-top:calc(76px + env(safe-area-inset-top));padding-bottom:env(safe-area-inset-bottom)}
+body[data-pwa-app=pos] .topbar[data-topbar]{top:env(safe-area-inset-top)!important}
+body[data-pwa-app=pos] .topbar{grid-template-columns:minmax(0,1fr) minmax(0,1fr) auto auto;gap:16px}
+body[data-pwa-app=pos] .topbar .jw-login-open{margin:0;justify-self:end}
+.screen-utilities{justify-self:end;display:flex;flex-direction:column;align-items:flex-end;gap:8px;min-width:0}.screen-utilities .app-mode{font-size:12px}.screen-utilities .app-mode>button{min-height:36px;padding:6px 11px}
+.screen-utilities time{white-space:nowrap;flex-shrink:0}
+body[data-pwa-app=screen] .stage{padding-top:max(3vh,env(safe-area-inset-top));padding-right:max(4vw,env(safe-area-inset-right));padding-bottom:max(2vh,env(safe-area-inset-bottom));padding-left:max(4vw,env(safe-area-inset-left))}
+@media(max-width:700px){body[data-pwa-app=pos]{padding-top:calc(64px + env(safe-area-inset-top))}.pos-app-controls{top:calc(64px + env(safe-area-inset-top));padding:8px 12px}body[data-pwa-app=pos] .tabs{top:calc(64px + var(--app-toolbar-height,60px) + env(safe-area-inset-top))}.app-mode>button{min-height:44px}.screen-utilities{align-items:flex-start;justify-self:start;grid-column:1/-1;flex-direction:row;justify-content:space-between;width:100%}.screen-utilities .app-mode{justify-content:flex-end}.screen-utilities .app-mode>button{min-height:40px}.app-mode-status{font-size:11px}.app-install-help{padding:24px}}
+@media print{.app-mode{display:none!important}}
+@media(max-width:700px){body[data-pwa-app=pos] .topbar{grid-template-columns:minmax(0,1fr) auto auto;gap:10px;padding-inline:12px}body[data-pwa-app=pos] .topbar .merchant{display:none}body[data-pwa-app=pos] .brand small{display:none}body[data-pwa-app=pos] .topbar .jw-login-open{min-height:40px}}

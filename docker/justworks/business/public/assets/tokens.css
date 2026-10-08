@@ -1,0 +1,553 @@
+/*
+ * Just Works design tokens — the single source of truth for color, type,
+ * space, radius, shadow, and motion. Everything else in the site (base.css,
+ * components.css, home.css, cms.css, public-page.css) and the /design viewer
+ * read from here. Change a value in this file and both the live site and the
+ * design system move together.
+ *
+ * Three tiers, in order:
+ *   1. Primitives  --jw-<hue>-<step>   raw palette, identical in every theme
+ *   2. Semantic    --jw-bg, --jw-text-*, --jw-accent...  theme-dependent roles
+ *   3. Component   --jw-button-*, --jw-field-*...  what components actually use
+ *
+ * Components must consume tier 3 (or tier 2), never tier 1 directly, so a
+ * theme swap reaches every surface.
+ *
+ * THEMING: light is the default; dark is declared twice on purpose, once for
+ * `prefers-color-scheme: dark` (system setting, works with JS disabled) and
+ * once for `[data-theme="dark"]` (explicit toggle). The two blocks must stay
+ * in sync — `npm run check` fails the build if they drift apart.
+ */
+
+/* ---------------------------------------------------------------------------
+ * 1. PRIMITIVES — the raw brand palette. Theme-independent.
+ * ------------------------------------------------------------------------ */
+
+:root {
+  /* Mint — the primary brand hue. */
+  --jw-mint-50: #e8faf6;
+  --jw-mint-300: #55d6bd;
+  --jw-mint-400: #20c5a8;
+  --jw-mint-500: #12a98e;
+  --jw-mint-600: #08806b;
+
+  /* Sun — warmth, highlights, the "create" energy. */
+  --jw-sun-50: #fff8e3;
+  --jw-sun-300: #ffd463;
+  --jw-sun-400: #ffcc4d;
+  --jw-sun-600: #cd8f08;
+
+  /* Coral — alerts, destructive states, accent contrast. */
+  --jw-coral-50: #ffecec;
+  --jw-coral-300: #ff8585;
+  --jw-coral-500: #ed3c3c;
+
+  /* Blue — links, information, the Nostr/identity surfaces. */
+  --jw-blue-50: #eaf0ff;
+  --jw-blue-100: #cfdcff;
+  --jw-blue-300: #6f95ff;
+  --jw-blue-400: #2764ff;
+
+  /* Canonical white and black. Every white or black surface, fill, and piece
+     of text in the system resolves to one of these two — never to #fff or
+     #000 — so the whole site moves if they change. */
+  --jw-white: #fafafa;
+  --jw-black: #0a0a0a;
+
+  /* Neutral ramp between them. */
+  --jw-neutral-0: var(--jw-white);
+  --jw-neutral-100: #f2f4f3;
+  --jw-neutral-1000: var(--jw-black);
+
+  /* Ember — the accent. A vermilion red one step from Bitcoin orange:
+     provenance without impersonating the coin itself. */
+  --jw-ember-100: #ffe1d6;
+  --jw-ember-200: #ffb49a;
+  --jw-ember-300: #ff7a52;
+  --jw-ember-400: #f4511e;
+  --jw-ember-600: #b0300a;
+
+  /* Bitcoin orange. Payment rails only — never decorative. */
+  --jw-bitcoin: #f7931a;
+}
+
+/* ---------------------------------------------------------------------------
+ * 2. SEMANTIC — light theme (the default).
+ * ------------------------------------------------------------------------ */
+
+:root {
+  color-scheme: light;
+
+  /* Ground and surfaces, back to front. */
+  --jw-bg: var(--jw-white);
+  --jw-bg-gradient: linear-gradient(180deg, var(--jw-white) 0%, #f4f5f4 46%, #eef0ef 78%, #e9ebea 100%);
+  --jw-surface: var(--jw-white);
+  --jw-surface-raised: var(--jw-white);
+  --jw-surface-sunken: var(--jw-neutral-100);
+  --jw-surface-veil: rgba(250, 250, 250, 0.78);
+  --jw-surface-glass: rgba(250, 250, 250, 0.86);
+  --jw-scrim: rgba(10, 10, 10, 0.42);
+
+  /* Text, strongest to faintest. */
+  --jw-text-primary: var(--jw-black);
+  --jw-text-strong: #1f2422;
+  --jw-text-body: #454545;
+  --jw-text-muted: #737373;
+  --jw-text-subtle: #8f9995;
+  --jw-text-inverse: var(--jw-white);
+  --jw-text-on-accent: var(--jw-black);
+
+  /* Lines and dividers. */
+  --jw-line: rgba(10, 10, 10, 0.1);
+  --jw-line-strong: rgba(10, 10, 10, 0.2);
+  --jw-line-faint: rgba(10, 10, 10, 0.06);
+
+  /* Accents. `accent` is the one the eye should follow. */
+  --jw-accent: var(--jw-ember-400);
+  --jw-accent-strong: var(--jw-ember-600);
+  --jw-accent-soft: var(--jw-ember-100);
+  --jw-accent-contrast: var(--jw-white);
+  --jw-accent-ring: rgba(244, 81, 30, 0.22);
+  --jw-highlight: var(--jw-sun-400);
+  --jw-highlight-soft: var(--jw-sun-50);
+  --jw-info: var(--jw-blue-400);
+  --jw-info-soft: var(--jw-blue-50);
+
+  /* Status. */
+  --jw-success: var(--jw-mint-600);
+  --jw-success-soft: var(--jw-mint-50);
+  --jw-warning: var(--jw-sun-600);
+  --jw-warning-soft: var(--jw-sun-50);
+  --jw-danger: var(--jw-coral-500);
+  --jw-danger-soft: var(--jw-coral-50);
+
+  /* Shadows carry the light theme's depth. */
+  --jw-shadow-color: rgba(0, 0, 0, 0.12);
+  --jw-shadow-xs: 0 1px 2px rgba(0, 0, 0, 0.06);
+  --jw-shadow-sm: 0 8px 22px rgba(0, 0, 0, 0.045);
+  --jw-shadow-md: 0 14px 34px rgba(0, 0, 0, 0.055);
+  --jw-shadow-lg: 0 18px 54px rgba(0, 0, 0, 0.08);
+  --jw-shadow-xl: 0 28px 80px rgba(0, 0, 0, 0.16);
+  --jw-shadow-accent: 0 14px 34px rgba(244, 81, 30, 0.16);
+
+  /* Ambient shadow behind the hero device: enough depth to lift a dark
+     object off either ground without reading as a glow. */
+  --jw-device-shadow:
+    0 4px 10px rgba(0, 0, 0, 0.18),
+    0 30px 60px rgba(0, 0, 0, 0.26);
+
+  /* The brand mark's conic sweep, so the logo follows the theme. */
+  --jw-mark-sweep: conic-gradient(from 200deg, #ffcc4d, #ff5d5d, #2764ff, #20c5a8, #ffcc4d);
+  --jw-mark-inset: var(--jw-white);
+}
+
+/* ---------------------------------------------------------------------------
+ * 2b. SEMANTIC — dark theme, applied by system preference.
+ *
+ * Keep every declaration below identical to the [data-theme="dark"] block.
+ * ------------------------------------------------------------------------ */
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+
+    --jw-bg: var(--jw-black);
+    --jw-bg-gradient: linear-gradient(180deg, var(--jw-black), var(--jw-black));
+    --jw-surface: rgba(255, 255, 255, 0.04);
+    --jw-surface-raised: rgba(255, 255, 255, 0.07);
+    --jw-surface-sunken: rgba(0, 0, 0, 0.28);
+    --jw-surface-veil: rgba(18, 18, 18, 0.72);
+    --jw-surface-glass: rgba(10, 10, 10, 0.82);
+    --jw-scrim: rgba(0, 0, 0, 0.66);
+
+    --jw-text-primary: var(--jw-white);
+    --jw-text-strong: rgba(250, 250, 250, 0.92);
+    --jw-text-body: rgba(250, 250, 250, 0.72);
+    --jw-text-muted: rgba(250, 250, 250, 0.56);
+    --jw-text-subtle: rgba(250, 250, 250, 0.44);
+    --jw-text-inverse: var(--jw-black);
+    --jw-text-on-accent: #052e27;
+
+    --jw-line: rgba(255, 255, 255, 0.12);
+    --jw-line-strong: rgba(255, 255, 255, 0.24);
+    --jw-line-faint: rgba(255, 255, 255, 0.07);
+
+    --jw-accent: var(--jw-ember-300);
+    --jw-accent-strong: var(--jw-ember-200);
+    --jw-accent-soft: rgba(244, 81, 30, 0.16);
+    --jw-accent-contrast: var(--jw-black);
+    --jw-accent-ring: rgba(255, 122, 82, 0.28);
+    --jw-highlight: var(--jw-sun-300);
+    --jw-highlight-soft: rgba(255, 204, 77, 0.14);
+    --jw-info: var(--jw-blue-300);
+    --jw-info-soft: rgba(39, 100, 255, 0.16);
+
+    --jw-success: var(--jw-mint-300);
+    --jw-success-soft: rgba(32, 197, 168, 0.14);
+    --jw-warning: var(--jw-sun-300);
+    --jw-warning-soft: rgba(255, 204, 77, 0.14);
+    --jw-danger: var(--jw-coral-300);
+    --jw-danger-soft: rgba(255, 93, 93, 0.16);
+
+    --jw-shadow-color: rgba(0, 0, 0, 0.6);
+    --jw-shadow-xs: 0 1px 2px rgba(0, 0, 0, 0.4);
+    --jw-shadow-sm: 0 8px 22px rgba(0, 0, 0, 0.34);
+    --jw-shadow-md: 0 14px 34px rgba(0, 0, 0, 0.42);
+    --jw-shadow-lg: 0 18px 54px rgba(0, 0, 0, 0.5);
+    --jw-shadow-xl: 0 28px 80px rgba(0, 0, 0, 0.62);
+    --jw-shadow-accent: 0 14px 34px rgba(244, 81, 30, 0.22);
+
+    --jw-topbar-scrolled-bg: linear-gradient(180deg, rgba(10, 10, 10, 0.6), rgba(10, 10, 10, 0.3));
+    --jw-topbar-scrolled-border: rgba(255, 255, 255, 0.06);
+    --jw-topbar-scrolled-shadow: none;
+    --jw-button-primary-fill: var(--jw-white);
+    --jw-button-primary-text: var(--jw-black);
+    --jw-button-primary-fill-hover: #ececec;
+    --jw-button-secondary-fill: var(--jw-black);
+    --jw-button-secondary-fill-hover: #171717;
+    --jw-app-icon-bg: rgba(10, 10, 10, 0.72);
+    --jw-app-icon-rim-bright: rgba(255, 255, 255, 0.85);
+    --jw-app-icon-rim-fade: rgba(10, 10, 10, 0.04);
+    --jw-modal-bg: rgba(17, 17, 17, 0.78);
+    --jw-portal-depth: drop-shadow(0 0 5px rgba(250, 250, 250, 0.22));
+    --jw-device-shadow:
+      0 0 0 1px rgba(255, 255, 255, 0.07),
+      0 6px 14px rgba(0, 0, 0, 0.5),
+      0 34px 70px rgba(0, 0, 0, 0.6);
+    --jw-mark-sweep: conic-gradient(from 200deg, #ffd463, #ff8585, #6f95ff, #55d6bd, #ffd463);
+    --jw-mark-inset: var(--jw-black);
+  }
+}
+
+/* ---------------------------------------------------------------------------
+ * 2c. SEMANTIC — dark theme, applied by explicit toggle.
+ *
+ * Keep every declaration below identical to the prefers-color-scheme block.
+ * ------------------------------------------------------------------------ */
+
+:root[data-theme="dark"] {
+  color-scheme: dark;
+
+  --jw-bg: var(--jw-black);
+  --jw-bg-gradient: linear-gradient(180deg, var(--jw-black), var(--jw-black));
+  --jw-surface: rgba(255, 255, 255, 0.04);
+  --jw-surface-raised: rgba(255, 255, 255, 0.07);
+  --jw-surface-sunken: rgba(0, 0, 0, 0.28);
+  --jw-surface-veil: rgba(18, 18, 18, 0.72);
+  --jw-surface-glass: rgba(10, 10, 10, 0.82);
+  --jw-scrim: rgba(0, 0, 0, 0.66);
+
+  --jw-text-primary: var(--jw-white);
+  --jw-text-strong: rgba(250, 250, 250, 0.92);
+  --jw-text-body: rgba(250, 250, 250, 0.72);
+  --jw-text-muted: rgba(250, 250, 250, 0.56);
+  --jw-text-subtle: rgba(250, 250, 250, 0.44);
+  --jw-text-inverse: var(--jw-black);
+  --jw-text-on-accent: #052e27;
+
+  --jw-line: rgba(255, 255, 255, 0.12);
+  --jw-line-strong: rgba(255, 255, 255, 0.24);
+  --jw-line-faint: rgba(255, 255, 255, 0.07);
+
+  --jw-accent: var(--jw-ember-300);
+  --jw-accent-strong: var(--jw-ember-200);
+  --jw-accent-soft: rgba(244, 81, 30, 0.16);
+  --jw-accent-contrast: var(--jw-black);
+  --jw-accent-ring: rgba(255, 122, 82, 0.28);
+  --jw-highlight: var(--jw-sun-300);
+  --jw-highlight-soft: rgba(255, 204, 77, 0.14);
+  --jw-info: var(--jw-blue-300);
+  --jw-info-soft: rgba(39, 100, 255, 0.16);
+
+  --jw-success: var(--jw-mint-300);
+  --jw-success-soft: rgba(32, 197, 168, 0.14);
+  --jw-warning: var(--jw-sun-300);
+  --jw-warning-soft: rgba(255, 204, 77, 0.14);
+  --jw-danger: var(--jw-coral-300);
+  --jw-danger-soft: rgba(255, 93, 93, 0.16);
+
+  --jw-shadow-color: rgba(0, 0, 0, 0.6);
+  --jw-shadow-xs: 0 1px 2px rgba(0, 0, 0, 0.4);
+  --jw-shadow-sm: 0 8px 22px rgba(0, 0, 0, 0.34);
+  --jw-shadow-md: 0 14px 34px rgba(0, 0, 0, 0.42);
+  --jw-shadow-lg: 0 18px 54px rgba(0, 0, 0, 0.5);
+  --jw-shadow-xl: 0 28px 80px rgba(0, 0, 0, 0.62);
+  --jw-shadow-accent: 0 14px 34px rgba(244, 81, 30, 0.22);
+
+  --jw-topbar-scrolled-bg: linear-gradient(180deg, rgba(10, 10, 10, 0.6), rgba(10, 10, 10, 0.3));
+  --jw-topbar-scrolled-border: rgba(255, 255, 255, 0.06);
+  --jw-topbar-scrolled-shadow: none;
+  --jw-button-primary-fill: var(--jw-white);
+  --jw-button-primary-text: var(--jw-black);
+  --jw-button-primary-fill-hover: #ececec;
+  --jw-button-secondary-fill: var(--jw-black);
+  --jw-button-secondary-fill-hover: #171717;
+  --jw-app-icon-bg: rgba(10, 10, 10, 0.72);
+  --jw-app-icon-rim-bright: rgba(255, 255, 255, 0.85);
+  --jw-app-icon-rim-fade: rgba(10, 10, 10, 0.04);
+  --jw-modal-bg: rgba(17, 17, 17, 0.78);
+  --jw-portal-depth: drop-shadow(0 0 5px rgba(250, 250, 250, 0.22));
+  --jw-device-shadow:
+    0 0 0 1px rgba(255, 255, 255, 0.07),
+    0 6px 14px rgba(0, 0, 0, 0.5),
+    0 34px 70px rgba(0, 0, 0, 0.6);
+  --jw-mark-sweep: conic-gradient(from 200deg, #ffd463, #ff8585, #6f95ff, #55d6bd, #ffd463);
+  --jw-mark-inset: var(--jw-black);
+}
+
+/* ---------------------------------------------------------------------------
+ * 3. TYPE, SPACE, SHAPE, MOTION — theme-independent.
+ * ------------------------------------------------------------------------ */
+
+:root {
+  /* Geist carries the headings; Inter carries everything else. Swap this one
+     token to change every heading on the site and in /design. */
+  --jw-font-display: "Syne Variable", "Geist Variable", Inter, ui-sans-serif, system-ui, sans-serif;
+  --jw-font-sans: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --jw-font-mono: "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+
+  /* Static steps for UI. */
+  --jw-text-2xs: 0.72rem;
+  --jw-text-xs: 0.78rem;
+  --jw-text-sm: 0.88rem;
+  --jw-text-base: 1rem;
+  --jw-text-lg: 1.125rem;
+  --jw-text-xl: 1.25rem;
+  --jw-text-2xl: 1.5rem;
+  --jw-text-3xl: 1.875rem;
+
+  /* Fluid steps for editorial headlines. The vw term dominates from phone to
+     desktop so poster type scales with the viewport rather than stepping. */
+  --jw-text-title: clamp(1.7rem, 3vw, 2.6rem);
+  --jw-text-headline: clamp(2.1rem, 4.6vw, 3.6rem);
+  --jw-text-display: clamp(2.45rem, 6.5vw, 5rem);
+
+  /* Syne hangs deep descenders; 0.96 clipped them. */
+  --jw-leading-tight: 1.06;
+  --jw-leading-snug: 1.12;
+  --jw-leading-normal: 1.45;
+  --jw-leading-relaxed: 1.6;
+
+  --jw-weight-normal: 450;
+  --jw-weight-medium: 560;
+  --jw-weight-semibold: 700;
+  --jw-weight-bold: 820;
+  --jw-weight-black: 900;
+
+  --jw-tracking-eyebrow: 0.09em;
+  --jw-tracking-tight: -0.01em;
+
+  /* Space scale — 4px base. */
+  --jw-space-1: 4px;
+  --jw-space-2: 8px;
+  --jw-space-3: 12px;
+  --jw-space-4: 16px;
+  --jw-space-5: 20px;
+  --jw-space-6: 24px;
+  --jw-space-8: 32px;
+  --jw-space-10: 40px;
+  --jw-space-12: 48px;
+  --jw-space-16: 64px;
+  --jw-space-20: 80px;
+  --jw-space-24: 96px;
+  --jw-section-gap: clamp(64px, 9vw, 128px);
+
+  --jw-radius-xs: 4px;
+  --jw-radius-sm: 6px;
+  --jw-radius-md: 8px;
+  --jw-radius-lg: 14px;
+  --jw-radius-xl: 22px;
+  --jw-radius-pill: 999px;
+
+  /* Fixed at 1220px through laptop widths, then grows with the window to a
+     1560px ceiling so large displays do not strand the content in gutters.
+     The outer min() keeps the side gutter on small screens. */
+  --jw-container: min(calc(100% - 32px), clamp(1220px, 82vw, 1560px));
+  --jw-container-narrow: min(calc(100% - 32px), 880px);
+  --jw-hitbox-min: 42px;
+
+  /* Motion. GSAP reads the durations/eases through motion.js so CSS
+     transitions and scripted tweens stay on the same curve. */
+  --jw-duration-fast: 120ms;
+  --jw-duration-base: 180ms;
+  --jw-duration-slow: 340ms;
+  --jw-duration-slower: 620ms;
+  --jw-ease-out: cubic-bezier(0.22, 1, 0.36, 1);
+  --jw-ease-in-out: cubic-bezier(0.65, 0, 0.35, 1);
+  --jw-ease-spring: cubic-bezier(0.2, 0.8, 0.2, 1);
+
+  --jw-z-base: 1;
+  --jw-z-sticky: 10;
+  --jw-z-overlay: 60;
+  --jw-z-modal: 70;
+  --jw-z-toast: 80;
+}
+
+/* ---------------------------------------------------------------------------
+ * 4. COMPONENT TOKENS
+ *
+ * What components.css actually reads. Every value resolves to a semantic
+ * token, so these follow the theme automatically and can be retargeted
+ * (e.g. point --jw-button-primary-bg at --jw-info) without touching CSS
+ * rules. This is the layer to tweak when a component needs to change.
+ * ------------------------------------------------------------------------ */
+
+:root {
+  /* Buttons.
+     There are two: primary and secondary. Both are rimmed rather than
+     filled — a two-colour gradient painted onto the border only, with the
+     middle left transparent so whatever is behind shows through. Hierarchy
+     comes from which two colours the rim uses, not from a fill. */
+  --jw-button-height: var(--jw-hitbox-min);
+  --jw-button-radius: var(--jw-radius-md);
+  --jw-button-padding: 0 var(--jw-space-6);
+  --jw-button-weight: var(--jw-weight-bold);
+  /* Matched to the ring/app-icon rim the menu button wears. */
+  --jw-button-rim-width: 1px;
+  /* The rim is bright at the two diagonal corners and drops out entirely
+     across the middle, so the page shows through the gap. Same very light
+     grey in both themes. */
+  --jw-button-rim-bright: #e6e6e6;
+  --jw-button-rim-gap-start: 27%;
+  --jw-button-rim-gap-end: 73%;
+
+  /* Primary inverts the page: black on light, white on dark. */
+  --jw-button-primary-fill: var(--jw-black);
+  --jw-button-primary-text: var(--jw-white);
+  --jw-button-primary-fill-hover: #1c1c1c;
+
+  --jw-button-secondary-fill: var(--jw-white);
+  --jw-button-secondary-text: var(--jw-text-body);
+  --jw-button-secondary-fill-hover: var(--jw-neutral-100);
+
+  /* Ghost — a quiet inline action: no rim, no fill until hovered. */
+  --jw-button-ghost-text: var(--jw-text-muted);
+  --jw-button-ghost-text-hover: var(--jw-text-primary);
+  --jw-button-ghost-fill-hover: var(--jw-surface-veil);
+
+  /* Fields. */
+  --jw-field-height: 50px;
+  --jw-field-radius: var(--jw-radius-md);
+  --jw-field-bg: var(--jw-surface);
+  --jw-field-text: var(--jw-text-primary);
+  --jw-field-placeholder: var(--jw-text-subtle);
+  --jw-field-border: var(--jw-line);
+  --jw-field-border-focus: var(--jw-info);
+  --jw-field-ring: 0 0 0 4px var(--jw-accent-ring);
+  --jw-field-shadow: var(--jw-shadow-sm);
+  --jw-field-label: var(--jw-text-body);
+  --jw-field-sheen: var(--jw-line);
+
+  /* Cards and panels. */
+  --jw-card-bg: var(--jw-surface);
+  --jw-card-border: var(--jw-line);
+  --jw-card-radius: var(--jw-radius-md);
+  --jw-card-shadow: var(--jw-shadow-lg);
+  --jw-card-padding: var(--jw-space-5);
+  --jw-modal-padding: clamp(20px, 3vw, 30px);
+  /* Dialog glass: translucent over the scrim's blur, opaque enough to read. */
+  --jw-modal-bg: rgba(252, 252, 252, 0.94);
+  /* Depth under the brand mark: a soft contact shadow on light. */
+  --jw-portal-depth: drop-shadow(0 1px 1.5px rgba(10, 10, 10, 0.28));
+
+  /* Chips. */
+  --jw-chip-bg: var(--jw-surface-veil);
+  --jw-chip-text: var(--jw-text-strong);
+  --jw-chip-border: var(--jw-line);
+  --jw-chip-dot: var(--jw-accent);
+
+  /* Navigation chrome. */
+  --jw-topbar-height: 64px;
+  --jw-topbar-bg: var(--jw-surface-glass);
+  --jw-topbar-border: var(--jw-line);
+  /* Applied only once the page has scrolled past --jw-topbar-scroll-start. */
+  --jw-topbar-scrolled-bg: linear-gradient(180deg, rgba(250, 250, 250, 0.6), rgba(250, 250, 250, 0.3));
+  --jw-topbar-scrolled-border: rgba(10, 10, 10, 0.06);
+  --jw-topbar-scrolled-shadow: none;
+  --jw-topbar-blur: 8px;
+
+  /* Brand mark. */
+  --jw-mark-size: 30px;
+  --jw-mark-radius: var(--jw-radius-md);
+  --jw-mark-ring: 6px;
+}
+
+/* ---------------------------------------------------------------------------
+ * 5. LEGACY BRIDGE
+ *
+ * base.css, cms.css and public-page.css were written against these short
+ * names before the token layer existed. Mapping them here means the existing
+ * site inherits theming for free, and new work should reach for --jw-* names.
+ * ------------------------------------------------------------------------ */
+
+:root {
+  --ink: var(--jw-text-primary);
+  --paper: var(--jw-bg);
+  --card: var(--jw-surface);
+  --muted: var(--jw-text-muted);
+  --line: var(--jw-line);
+  --mint: var(--jw-accent);
+  --green: var(--jw-accent-strong);
+  --sun: var(--jw-highlight);
+  --coral: var(--jw-danger);
+  --blue: var(--jw-info);
+  --shadow: var(--jw-shadow-color);
+  --soft-shadow: var(--jw-shadow-lg);
+  --radius: var(--jw-radius-md);
+}
+
+/* ---------------------------------------------------------------------------
+ * 6. APP ICON
+ *
+ * The mark in its container. Light theme: light ground, dark rim. Dark theme
+ * overrides these to the inverse in the theme blocks above.
+ * ------------------------------------------------------------------------ */
+
+:root {
+  --jw-app-icon-size: 38px;
+  /* Roughly the iOS squircle ratio. */
+  --jw-app-icon-radius: 24%;
+  --jw-app-icon-bg: rgba(250, 250, 250, 0.72);
+  --jw-app-icon-blur: 10px;
+  --jw-app-icon-rim-width: 1px;
+  --jw-app-icon-rim-bright: rgba(10, 10, 10, 0.6);
+  --jw-app-icon-rim-fade: rgba(10, 10, 10, 0.04);
+
+  /* Circular icon actions (dialog close, help). */
+  --jw-ring-button-size: 44px;
+}
+
+/* ---------------------------------------------------------------------------
+ * 7. SELF-HOSTED FONTS
+ *
+ * The same files justworks.cash serves, so every surface here — dashboard,
+ * module pages, and the locally generated merchant site — renders the real
+ * Syne headings and Geist body instead of falling back to system fonts.
+ * Paths are relative to this stylesheet, so they work under any base path.
+ * ------------------------------------------------------------------------ */
+
+@font-face {
+  font-family: "Syne Variable";
+  src: url("../fonts/syne-latin-wght-normal.woff2") format("woff2-variations");
+  font-weight: 400 800;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "Geist Variable";
+  src: url("../fonts/geist-latin-wght-normal.woff2") format("woff2-variations");
+  font-weight: 100 900;
+  font-style: normal;
+  font-display: swap;
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+
+@font-face {
+  font-family: "Geist Variable";
+  src: url("../fonts/geist-latin-ext-wght-normal.woff2") format("woff2-variations");
+  font-weight: 100 900;
+  font-style: normal;
+  font-display: swap;
+  unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7, U+02CC, U+02CE-02D7, U+02DD, U+02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF;
+}

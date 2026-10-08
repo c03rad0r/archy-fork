@@ -21,6 +21,7 @@ export const GENERATED_APP_PORTS: Record<string, number> = {
   "immich": 2283,
   "indeedhub": 7778,
   "jellyfin": 8096,
+  "justworks": 8340,
   "lnd-ui": 18083,
   "mempool": 4080,
   "mempool-api": 8999,
@@ -79,6 +80,7 @@ export const GENERATED_APP_TITLES: Record<string, string> = {
   "indeedhub-redis": "IndeedHub Redis",
   "indeedhub-relay": "IndeedHub Nostr Relay",
   "jellyfin": "Jellyfin",
+  "justworks": "Just Works",
   "lnd": "LND",
   "lnd-ui": "LND UI",
   "mempool": "Mempool Explorer",
@@ -120,4 +122,5 @@ export const GENERATED_NEW_TAB_APPS = new Set<string>([
 ])
 
 export const GENERATED_HOST_FRAME_APPS = new Set<string>([
+  "justworks",
 ])

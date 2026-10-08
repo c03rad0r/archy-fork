@@ -1,0 +1,62 @@
+app:
+  id: justworks
+  name: Just Works
+  version: 0.1.0
+  description: >-
+    Turn your existing business links into a website with Just Works.
+    Open your website editor and business tools from one lightweight launcher.
+    Uses the hosted Just Works services; an internet connection is required.
+  category: business
+  upstream:
+    kind: manual
+    url: https://github.com/bencoin21/justworks-business
+  container:
+    build:
+      context: /opt/archipelago/docker/justworks
+      dockerfile: Dockerfile
+      tag: localhost/archipelago-justworks:0.1.0
+    network: archy-net
+  resources:
+    cpu_limit: 1
+    memory_limit: 256Mi
+    disk_limit: 128Mi
+  security:
+    capabilities: []
+    readonly_root: true
+    no_new_privileges: true
+    network_policy: isolated
+  ports:
+    - host: 8340
+      container: 8340
+      protocol: tcp
+      bind: 127.0.0.1
+      auth: gated
+      session_passthrough: true
+  volumes:
+    - type: bind
+      source: /var/lib/archipelago/justworks
+      target: /data
+  environment: []
+  health_check:
+    type: http
+    endpoint: http://127.0.0.1:8340
+    path: /healthz
+    interval: 30s
+    timeout: 5s
+    retries: 3
+  interfaces:
+    main:
+      name: Just Works
+      description: Website and business tools
+      type: ui
+      port: 8340
+      protocol: http
+      path: /
+  metadata:
+    icon: /assets/img/app-icons/justworks.svg
+    author: Just Works contributors
+    repo: https://github.com/bencoin21/justworks.cash
+    tier: optional
+    launch:
+      requires_host_frame: true
+      open_in_new_tab: false

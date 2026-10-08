@@ -21,6 +21,7 @@ COPY docker/bitcoin-ui /docker/bitcoin-ui
 COPY docker/electrs-ui /docker/electrs-ui
 COPY docker/lnd-ui /docker/lnd-ui
 COPY docker/fedimint-ui /docker/fedimint-ui
+COPY docker/justworks/public /docker/justworks/public
 COPY demo/files /demo/files
 COPY demo/content /demo/content
 # Peer catalog media (posters/covers/photos for content.browse-peer mocks) —

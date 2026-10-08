@@ -1578,6 +1578,8 @@ function demoFederationNodes() {
 // shell's bundled assets (qrcode.js, css, bg images, icons) resolve via their
 // relative paths. The data endpoints each shell polls are mocked separately.
 const DOCKER_UI = path.join(__dirname, '..', 'docker')
+app.use('/app/justworks', express.static(path.join(DOCKER_UI, 'justworks/public')))
+app.get('/app/justworks/setup', (_req, res) => res.sendFile(path.join(DOCKER_UI, 'justworks/public/index.html')))
 for (const [prefixes, dir] of [
   [['/app/bitcoin-core', '/app/bitcoin-knots', '/app/bitcoin-ui'], 'bitcoin-ui'],
   [['/app/electrumx', '/app/electrs', '/app/archy-electrs-ui'], 'electrs-ui'],
@@ -1966,6 +1968,11 @@ app.post('/rpc/v1', (req, res) => {
           },
         })
       }
+
+      // The dashboard uses this read-only RPC to validate its session on reload.
+      // Keep demo deep links (including setup guides) compatible with that probe.
+      case 'system.get-hostname':
+        return res.json({ result: { hostname: 'archipelago-demo', mdns_hostname: 'archipelago-demo.local', lan_ip: '127.0.0.1' } })
 
       case 'auth.login': {
         const { password } = params
