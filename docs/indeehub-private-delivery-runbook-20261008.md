@@ -1,6 +1,6 @@
 # IndeeHub private Yaya delivery — 8 October 2026
 
-Status: worker image staging completed; production build in progress; **not activated**.
+Status: optimized production build, inert Yaya backend/helper staging, existing-node public pin and fresh seven-member plan preparation passed; **not activated**.
 This is private free/authenticated app testing;
 paid viewing, publication and payment UAT remain separate. No funds or public
 announcements are authorized by this runbook. Separately authorized inert Yaya
@@ -16,11 +16,9 @@ deployment, app lifecycle change or catalog activation has occurred.
   saved units, new runtime IDs, fresh DB/four-volume restore proofs and no holds.
   Historical `f39bd824` timed out before target startup under host pressure, then
   natively recovered cleanly; that failure is retained separately.
-- Matching optimized backend build is in progress against all536 unchanged
-  backend inputs from the 2,031-test snapshot. Do not substitute the test-profile
-  executable as the production artifact. Latest agent checkpoint for session
-  `73204`: past lightning/cashu, compiling mainline/totp/lofty dependencies with
-  no reported errors; main binary not yet compiled. No finished artifact exists.
+- Matching optimized backend build passed against all 536 unchanged inputs from
+  the 2,031-test snapshot. The production artifact and actual Yaya inert staging/
+  public-pin/fresh-plan evidence are recorded in the latest checkpoint below.
 - Unsigned delivery catalog: worker runtime evidence directory,
   `unsigned-full-candidate-with-worker-29627fc.json`, SHA256
   `9967d06c8809d69cce6057b9f45a630e9ce21fd5cd33541e352e23336cd8eb07`.
@@ -85,8 +83,9 @@ Native success/rollback qualification and inert worker import are complete.
 Do not repeat import merely because the earlier prepared plan still records false
 flags. Reverify the exact staged alias/digest against its receipt before delivery.
 After the production artifact finishes and passes its frozen-input/hash checks,
-prepare its reviewed inert staging and existing-node API registration pin using
-`/tmp/indeehub-stage-production-and-prepare-pin.py`; that step remains pending.
+the reviewed inert staging and existing-node API registration pin preparation
+completed using `/tmp/indeehub-stage-production-and-prepare-pin.py`; do not repeat
+that completed step.
 Finish source/mirror/signature gates and review the fresh seven-member plan.
 Deploy the reviewed matching backend/helper artifact through the existing
 preserving deployment procedure. Install only the exact reviewed plan and
@@ -141,3 +140,56 @@ unsigned input and creates a separate signed output without replacing an existin
 file. No secret was read, signing performed or new operator request sent during
 preparation. Finish the build/source/review gates before requesting this final
 operator step; never request a mnemonic in chat.
+
+
+## Passed production artifact and live preparation
+
+The optimized release build exited successfully with all 536 qualified inputs
+unchanged against the 2,031-test snapshot. Executable SHA256:
+`75d4562ba606c48704ffe886f31de2b2fbe6fee81a5eb2d46371118df29ef50b`
+(75,754,632 bytes). Exact embedded helper SHA256:
+`6fc3f978cb88dbf022dc5bc07eaf0337c6b6b79ff42b20cee7b33ed7c100b879`.
+An independent inode copy, helper and build receipt are retained privately at
+`~/.local/state/archipelago/private-artifacts/indeehub-production-backend-75d4562b-20261008/`.
+
+The reviewed staging/pin runner completed on actual `yaya-server`. It verified
+the executable contains the exact helper bytes, staged both without activation,
+and used only the existing node identity to prepare the stable public API pin.
+All 31 runtime IDs/start times/statuses, identity/session, operator intents,
+catalogs and management service remained unchanged. Registration/publication
+remain false. Relative to the earlier 30-runtime import baseline, an unrelated
+`justworks` runtime was added (`localhost/archipelago-justworks:0.1.0`, created
+2026-10-08T12:42:16.228360672Z); all original 30 were independently unchanged.
+The new app must also be preserved by deployment. Pin evidence:
+`~/.local/state/archipelago/release-qualification/indeehub-production-pin-preparation-20261008/`.
+
+Fresh live original units remain unchanged, all seven target image references
+resolve locally, and the four unchanged dependency references resolve to their
+current runtime image IDs. The exact fresh seven-member plan is retained under
+`~/.local/state/archipelago/release-qualification/indeehub-yaya-final-plan-20261008/`:
+`reviewed-unit-plan.draft.private.json`, SHA256
+`f26b469a84833121db8df7e23e709d08eb6f40d9d12ddcb1b4263b685b398816`.
+Worker app version is 1.0.1. API typed defaults were checked using the reviewed
+strict canonicalization and all three public values bind to the live Yaya pin.
+The plan has not been installed; final source/mirror, signature and plan review
+remain required before activation.
+
+Reviewed concrete tools are archived at
+`~/.local/state/archipelago/release-qualification/indeehub-yaya-delivery-tools-reviewed-20261008/`.
+They are source/syntax reviewed, not executed: preserving backend/helper/catalog
+activation; one-shot native update with a durable no-resubmission marker;
+independent runtime/identity/unit/image checks; and read-only database comparison.
+Activation first refuses stopped/missing runtimes, existing plans/selectors,
+pending journals/holds and inconsistent crash snapshots. It backs up the old
+artifacts, stops management only, installs the matching helper before native
+original-recipe preparation, then starts the matching backend with the reviewed
+signed private selector. All existing app runtimes must remain unchanged until
+the separate native update is explicitly submitted. Partial failures retain
+private logs and do not automatically restore data or retry.
+
+Execute database acceptance **before browser authentication**, since login can
+legitimately change original database rows. It requires the exact committed
+operation, original 107 migrations plus exactly three approved additions,
+unchanged original table schemas/rows and all persistent volume identities.
+Unexplained drift is a failed/inconclusive acceptance check, never authorization
+to migrate, erase or restore data. Media/browser acceptance remains separate.
