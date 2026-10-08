@@ -1,0 +1,16 @@
+{
+  "name": "gashboard",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Datum mining dashboard for the four little boards that probably won't find a block",
+  "packageManager": "pnpm@9.12.3",
+  "scripts": {
+    "dev": "pnpm -r --parallel dev",
+    "build": "pnpm -r build",
+    "typecheck": "pnpm -r typecheck",
+    "lint": "pnpm -r lint"
+  },
+  "engines": {
+    "node": ">=22.12.0"
+  }
+}

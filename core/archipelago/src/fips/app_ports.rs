@@ -7,6 +7,7 @@
 
 #[rustfmt::skip]
 pub const APP_LAUNCH_PORTS: &[u16] = &[
+    1337,
     2283,
     2342,
     3000,

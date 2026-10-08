@@ -1,0 +1,34 @@
+{
+  "name": "gashboard",
+  "short_name": "gashboard",
+  "description": "Solo mining dashboard for Datum miners.",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "portrait-primary",
+  "background_color": "#07090f",
+  "theme_color": "#0a0e1a",
+  "categories": ["utilities", "finance"],
+  "icons": [
+    {
+      "src": "/icons/icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    },
+    {
+      "src": "/icons/maskable.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "maskable"
+    }
+  ],
+  "shortcuts": [
+    {
+      "name": "Graphs",
+      "short_name": "Graphs",
+      "url": "/graphs",
+      "description": "Open telemetry graphs"
+    }
+  ]
+}

@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 220" role="img" aria-label="Avalon Nano 3 miner">
+  <rect width="320" height="220" fill="none"/>
+  <g filter="url(#g)">
+    <rect x="76" y="44" width="168" height="128" rx="20" fill="#e7edf5" stroke="#29ffe6" stroke-width="4"/>
+    <rect x="96" y="64" width="128" height="88" rx="14" fill="#111827"/>
+    <circle cx="160" cy="108" r="42" fill="#07090f" stroke="#ff3df0" stroke-width="6"/>
+    <path d="M160 68c16 22 16 58 0 80M120 108c22-16 58-16 80 0M132 80c30 4 52 26 56 56M188 80c-4 30-26 52-56 56" stroke="#29ffe6" stroke-width="4" stroke-linecap="round"/>
+    <rect x="112" y="166" width="96" height="12" rx="6" fill="#475569"/>
+    <path d="M64 112h28M228 112h28" stroke="#ffd84a" stroke-width="8" stroke-linecap="round"/>
+  </g>
+  <defs><filter id="g"><feDropShadow dx="0" dy="8" stdDeviation="8" flood-color="#000" flood-opacity=".45"/></filter></defs>
+</svg>

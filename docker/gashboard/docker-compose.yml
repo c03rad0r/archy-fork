@@ -1,0 +1,45 @@
+# gashboard — deploy as a Portainer Stack on the same Umbrel host that runs Datum.
+#
+# Uses host networking so the API can reach Datum through the port Umbrel
+# already publishes on the host, avoiding container DNS and changing IPs.
+
+services:
+  gashboard:
+    # Portainer "Stacks → Repository" will build this from the gashboard git repo.
+    # Do not set `image: gashboard:...` here: Portainer will try to pull that
+    # local-only name from Docker Hub before building and deployment will fail.
+    # If you want to pull a pre-built image instead, replace `build:` with an
+    # `image:` value that includes your registry, for example:
+    # image: ghcr.io/your-user/gashboard:0.1.0
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: gashboard
+    restart: unless-stopped
+    environment:
+      NODE_ENV: production
+      PORT: "1337"
+      LOG_LEVEL: "${LOG_LEVEL:-info}"
+      CORS_ORIGIN: "${CORS_ORIGIN:-}"
+      # Datum's admin UI/API is published by Umbrel on the host at port 21000.
+      DATUM_URL: "${DATUM_URL:-http://127.0.0.1:21000}"
+      DATUM_ADMIN_USER: "${DATUM_ADMIN_USER:-admin}"
+      DATUM_ADMIN_PASSWORD: "${DATUM_ADMIN_PASSWORD?must be set}"
+      DATUM_POLL_INTERVAL_MS: "${DATUM_POLL_INTERVAL_MS:-5000}"
+      CONTRIBUTION_LEDGER_PATH: "${CONTRIBUTION_LEDGER_PATH:-/data/contribution-ledger.json}"
+      MEMPOOL_API_URL: "${MEMPOOL_API_URL:-https://tx1138.com/api}"
+      NOSTR_ALLOWED_NPUBS: "${NOSTR_ALLOWED_NPUBS?must be set}"
+      JWT_SECRET: "${JWT_SECRET?must be set}"
+      JWT_TTL_SECONDS: "${JWT_TTL_SECONDS:-86400}"
+    network_mode: host
+    volumes:
+      - gashboard_data:/data
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:1337/healthz"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+
+volumes:
+  gashboard_data:

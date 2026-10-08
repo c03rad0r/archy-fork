@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256">
+  <rect width="256" height="256" fill="#0c1120"/>
+  <rect x="48" y="54" width="160" height="72" fill="#151b2b" stroke="#ff4f78" stroke-width="5"/>
+  <g>
+    <animateTransform attributeName="transform" type="translate" values="0 -22;0 28;0 -22" dur="1s" repeatCount="indefinite"/>
+    <rect x="76" y="126" width="104" height="42" fill="#6cff8c" stroke="#0a0d17" stroke-width="4"/>
+    <text x="128" y="153" text-anchor="middle" fill="#0a0d17" font-family="monospace" font-size="19" font-weight="700">FIAT</text>
+  </g>
+  <text x="128" y="101" text-anchor="middle" fill="#ffd84a" font-family="monospace" font-size="24" font-weight="700">BRRR</text>
+  <text x="128" y="222" text-anchor="middle" fill="#ff3df0" font-family="monospace" font-size="15" font-weight="700">INFINITE PATCH</text>
+</svg>

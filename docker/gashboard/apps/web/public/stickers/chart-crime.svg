@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256">
+  <rect width="256" height="256" fill="#07090f"/>
+  <rect x="34" y="47" width="188" height="139" fill="#101624" stroke="#2c3a66" stroke-width="4"/>
+  <path d="M52 164h154M52 127h154M52 90h154" stroke="#1f2a4a" stroke-width="3"/>
+  <path d="M55 156l32-2 22-47 31 42 18-9 17-60 31 3" fill="none" stroke="#29ffe6" stroke-width="7"/>
+  <circle cx="175" cy="80" r="9" fill="#ff4f78"/>
+  <text x="128" y="222" text-anchor="middle" fill="#ffd84a" font-family="monospace" font-size="18" font-weight="700">CHART CRIME</text>
+</svg>
