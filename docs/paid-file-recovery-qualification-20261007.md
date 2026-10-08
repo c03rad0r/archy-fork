@@ -256,3 +256,32 @@ slot was handed to IndeeHub for its matching executable and actual transaction
 acceptance. No real/repeat payment or live-node lifecycle mutation occurred.
 Full IndeeHub target-start/rollback acceptance and actual-node initial-payment
 response-loss acceptance remain open.
+
+## 2026-10-08: fresh no-spend actual-node readiness
+
+Dev and Yaya each still return the original owned 20 MiB fixture with its exact
+accepted hash and bytes after the seller shares were removed. The cumulative
+two-payment ledger remains byte-identical. Only
+`content.owned-get(cache_only:true)` and authenticated cached HTTP GET ran; no
+payment/status/retry method, wallet write or service mutation was requested.
+
+Runnable checks: `python3 /tmp/archy-paid-cache-readonly-20261007.py` repeats only
+those cache checks; `python3 /tmp/archy-paid-readiness-20261008.py` audits their
+fresh receipt and the earlier eleven synthetic payment regressions. The latter
+passed: backend source inputs still match `105454bd`; the IndeeHub embedded
+helper has changed, so this explicitly does **not** assert current full-artifact
+qualification. No redundant test compilation ran. Durable SHA-verified evidence:
+`~/.local/state/archipelago/release-qualification/paid-file-recovery-20261007/no-spend-readiness-20261008/`.
+
+The remaining no-real-payment path is a separate disposable two-node environment
+with a local synthetic mint and fresh synthetic operation. Existing isolated
+caller/mint tests already exercise initial acceptance/settlement response loss;
+the production FIPS transport does not expose their fault switches. Actual-node
+acceptance therefore still needs that separately qualified transport/process
+fixture: lose the initial reply after durable dispatch/settlement, restart only
+fixture processes, resume the same operation, and prove one debit/credit plus
+exact delivery. Do not erase historical ownership/cache/journals, inject test
+proofs into installed wallets, or replay a real purchase to imitate this case.
+The old completed sales can prove preservation and free reopen, not a previously
+unobserved initial-response failure. Corrected-artifact activation and current
+seller persistence acceptance also remain separate deployment gates.
