@@ -13,7 +13,7 @@
           role="dialog"
           aria-modal="true"
           aria-labelledby="uninstall-dialog-title"
-          class="glass-card p-6 max-w-2xl w-full relative z-10"
+          class="glass-card p-6 max-w-2xl w-full relative z-10 max-h-[90dvh] overflow-y-auto"
         >
           <div class="flex items-start gap-4 mb-4">
             <div class="p-3 bg-red-500/20 rounded-lg">
@@ -26,6 +26,10 @@
               <p class="text-white/70">
                 {{ t('apps.uninstallConfirm', { name: appTitle }) }}
               </p>
+              <div v-if="cloudStorageDependency" role="note" class="mt-4 rounded-xl border border-amber-400/30 bg-amber-500/10 p-4">
+                <p class="font-semibold text-white">{{ t('apps.fileBrowserWarningTitle') }}</p>
+                <p class="mt-2 text-sm text-white/80">{{ t('apps.fileBrowserWarning') }}</p>
+              </div>
               <div class="mt-4 rounded-xl border border-amber-400/20 bg-amber-500/10 p-4">
                 <label class="flex items-start gap-3 cursor-pointer">
                   <input
@@ -35,7 +39,7 @@
                   />
                   <span class="min-w-0">
                     <span class="block text-sm font-medium text-white">{{ t('apps.deleteAppDataLabel') }}</span>
-                    <span class="block text-xs text-white/60 mt-1">{{ t('apps.deleteAppDataHelp') }}</span>
+                    <span class="block text-xs text-white/60 mt-1">{{ t(cloudStorageDependency ? 'apps.fileBrowserDeleteDataHelp' : 'apps.deleteAppDataHelp') }}</span>
                   </span>
                 </label>
               </div>
@@ -47,7 +51,7 @@
               @click="$emit('close')"
               class="px-4 py-2 glass-button rounded-lg text-sm font-medium"
             >
-              {{ t('common.cancel') }}
+              {{ t(cloudStorageDependency ? 'apps.keepFileBrowser' : 'common.cancel') }}
             </button>
             <button
               @click="$emit('confirm', deleteAppData)"
@@ -64,7 +68,7 @@
                 <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
                 <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
               </svg>
-              <span>{{ uninstalling ? t('common.uninstalling') : t('common.uninstall') }}</span>
+              <span>{{ uninstalling ? t('common.uninstalling') : t(cloudStorageDependency ? 'apps.removeFileBrowser' : 'common.uninstall') }}</span>
             </button>
           </div>
         </div>
@@ -76,12 +80,14 @@
 <script setup lang="ts">
 import { ref, computed, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
+import { isCloudStorageApp } from '@/utils/cloudStorageDependency'
 import { useModalKeyboard } from '@/composables/useModalKeyboard'
 
 const { t } = useI18n()
 
 const props = defineProps<{
   show: boolean
+  appId: string
   appTitle: string
   uninstalling: boolean
 }>()
@@ -90,6 +96,8 @@ const emit = defineEmits<{
   close: []
   confirm: [deleteAppData: boolean]
 }>()
+
+const cloudStorageDependency = computed(() => isCloudStorageApp(props.appId))
 
 const modalRef = ref<HTMLElement | null>(null)
 const restoreFocusRef = ref<HTMLElement | null>(null)
@@ -103,8 +111,8 @@ useModalKeyboard(
 )
 
 watch(
-  () => props.show,
-  (show) => {
+  () => [props.show, props.appId] as const,
+  ([show]) => {
     if (show) {
       deleteAppData.value = false
     }

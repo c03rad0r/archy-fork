@@ -125,6 +125,7 @@ import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { useContainerStore } from '@/stores/container'
+import { isCloudStorageApp } from '@/utils/cloudStorageDependency'
 import { appConfirm } from '@/composables/useAppConfirm'
 import { type ContainerStatus as ContainerStatusData } from '@/api/container-client'
 import ContainerStatus from '@/components/ContainerStatus.vue'
@@ -326,9 +327,14 @@ onUnmounted(() => {
 })
 
 async function handleRemove() {
+  const cloudStorageDependency = isCloudStorageApp(appId.value)
   const ok = await appConfirm({
-    message: t('apps.uninstallConfirm', { name: appName.value }),
-    confirmLabel: t('apps.uninstallTitle'),
+    title: cloudStorageDependency ? t('apps.fileBrowserWarningTitle') : t('apps.uninstallTitle'),
+    message: cloudStorageDependency
+      ? t('apps.fileBrowserWarning')
+      : t('apps.uninstallConfirm', { name: appName.value }),
+    confirmLabel: t(cloudStorageDependency ? 'apps.removeFileBrowser' : 'apps.uninstallTitle'),
+    cancelLabel: t(cloudStorageDependency ? 'apps.keepFileBrowser' : 'common.cancel'),
     danger: true,
   })
   if (!ok) {

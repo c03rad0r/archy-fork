@@ -57,6 +57,7 @@
 
     <AppsUninstallModal
       :show="uninstallModal.show"
+      :app-id="appId"
       :app-title="uninstallModal.appTitle"
       :uninstalling="pendingAction === 'uninstall'"
       @close="closeUninstallModal"
