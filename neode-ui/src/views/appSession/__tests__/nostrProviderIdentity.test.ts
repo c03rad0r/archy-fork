@@ -24,8 +24,17 @@ type ProviderWindow = Window & {
 
 describe('nostr-provider identity selection', () => {
   let providerWindow: ProviderWindow
+  let listeners: Array<[string, EventListenerOrEventListenerObject, boolean | AddEventListenerOptions | undefined]>
 
   beforeEach(() => {
+    vi.useFakeTimers()
+    listeners = []
+    const add = window.addEventListener.bind(window)
+    vi.spyOn(window, 'addEventListener').mockImplementation((type, listener, options) => {
+      if (listener) listeners.push([type, listener as EventListenerOrEventListenerObject, options])
+      add(type, listener, options)
+    })
+    sessionStorage.clear()
     providerWindow = window as ProviderWindow
     delete providerWindow.__archipelagoNostr
     delete providerWindow.nostr
@@ -36,6 +45,9 @@ describe('nostr-provider identity selection', () => {
   })
 
   afterEach(() => {
+    for (const [type, listener, options] of listeners) window.removeEventListener(type, listener, options)
+    vi.clearAllTimers()
+    vi.unstubAllGlobals()
     vi.useRealTimers()
     vi.restoreAllMocks()
     Reflect.deleteProperty(document, 'readyState')
@@ -119,6 +131,46 @@ describe('nostr-provider identity selection', () => {
     expect(postMessage).not.toHaveBeenCalledWith(
       expect.objectContaining({ type: 'nostr-request', method: 'getPublicKey' }),
       signerOrigin,
+    )
+  })
+
+  it('does not reopen after a selected identity when activation survives account restoration', async () => {
+    const { frame, postMessage, signerOrigin } = loadProvider(true)
+    const selected = new MessageEvent('message', {
+      data: { type: 'archipelago:signer-identity', identity: { nostr_pubkey: 'selected-key' } },
+      origin: signerOrigin,
+    })
+    Object.defineProperty(selected, 'source', { value: frame.contentWindow })
+    window.dispatchEvent(selected)
+    await expect(providerWindow.nostr!.getPublicKey()).resolves.toBe('selected-key')
+    postMessage.mockClear()
+    const next = providerWindow.nostr!.getPublicKey()
+    expect(postMessage).not.toHaveBeenCalledWith(
+      expect.objectContaining({ type: 'archipelago:signer-select-identity' }), expect.anything(),
+    )
+    const request = postMessage.mock.calls[0]![0] as { id: number }
+    const response = new MessageEvent('message', {
+      data: { type: 'nostr-response', id: request.id, result: 'selected-key' }, origin: signerOrigin,
+    })
+    Object.defineProperty(response, 'source', { value: frame.contentWindow })
+    window.dispatchEvent(response)
+    await expect(next).resolves.toBe('selected-key')
+    // Explicit account switching remains available after a successful login.
+    void providerWindow.archipelagoNostr!.selectIdentity()
+    expect(postMessage).toHaveBeenCalledWith(
+      expect.objectContaining({ type: 'archipelago:signer-select-identity', force: true }), signerOrigin,
+    )
+  })
+
+  it('does not mistake reload activation for a new login while restoring a session', () => {
+    sessionStorage.setItem('nostr_token', 'test-session-hint')
+    const { postMessage, signerOrigin } = loadProvider(true)
+    void providerWindow.nostr!.getPublicKey()
+    expect(postMessage).toHaveBeenCalledWith(
+      expect.objectContaining({ type: 'nostr-request', method: 'getPublicKey' }), signerOrigin,
+    )
+    expect(postMessage).not.toHaveBeenCalledWith(
+      expect.objectContaining({ type: 'archipelago:signer-select-identity' }), expect.anything(),
     )
   })
 

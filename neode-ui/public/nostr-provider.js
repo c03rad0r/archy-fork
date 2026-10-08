@@ -211,7 +211,16 @@
       selectedPublicKeyTimer = null;
       return Promise.resolve(publicKey);
     }
-    if (navigator.userActivation && navigator.userActivation.isActive) {
+    // The picker click itself leaves transient user activation active. A second
+    // public-key lookup in the same login must not open another picker.
+    var restoringSession = false;
+    try {
+      var sessionHint = sessionStorage.getItem('nostr_token');
+      restoringSession = !!sessionHint && sessionHint.indexOf('mock-') !== 0;
+    } catch (_) {}
+    // This is only a UI hint: the broker still verifies the node session and
+    // signing permissions. A restored app token never authorizes a signature.
+    if (!restoringSession && !selectedIdentity && navigator.userActivation && navigator.userActivation.isActive) {
       return selectIdentity().then(function () {
         return getPublicKey();
       });

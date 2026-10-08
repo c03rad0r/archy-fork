@@ -147,6 +147,7 @@ const lightning = useLightningRequired()
 
 const props = defineProps<{
   show: boolean
+  initialMethod?: 'lightning' | 'onchain' | 'ecash' | 'ark'
   /** Optional info banner shown on the on-chain tab (e.g. Zeus channel limits) */
   note?: string
   /** Generate an on-chain address immediately when the modal opens */
@@ -168,7 +169,7 @@ watch(() => props.show, (open) => {
   // Blank slate on every open: a leftover amount/memo/token or a previous
   // invoice quietly carrying into a new receive flow is exactly the stale-
   // state class the operator flagged on the send modal (2026-08-05).
-  receiveMethod.value = 'onchain'
+  receiveMethod.value = props.initialMethod ?? 'onchain'
   invoiceAmount.value = 0
   invoiceMemo.value = ''
   invoiceResult.value = ''
@@ -342,8 +343,8 @@ async function pollLnClaims() {
 onUnmounted(stopLnClaimPoll)
 
 // Fetch the address the first time the operator opens the ecash tab.
-watch(receiveMethod, (m) => {
-  if (m === 'ecash' && props.show) {
+watch([receiveMethod, () => props.show], ([m, open]) => {
+  if (m === 'ecash' && open) {
     lnWatchStartedAt.value = Math.floor(Date.now() / 1000)
     void loadLnAddress()
   }

@@ -15,7 +15,7 @@
       </div>
       <div class="web5-card-actions-top items-center gap-2">
         <RouterLink to="/dashboard/server/federation" class="glass-button glass-button-sm px-3 rounded-lg text-sm font-medium inline-flex items-center gap-2 no-underline">
-          Find Nodes
+          Connect with Nodes
         </RouterLink>
         <RouterLink to="/dashboard/fleet" class="glass-button glass-button-sm px-3 rounded-lg text-sm font-medium inline-flex items-center gap-2 no-underline">
           Fleet
@@ -74,7 +74,7 @@
 
     <div class="web5-card-actions-bottom-grid mt-6 grid-cols-2 gap-3">
       <RouterLink to="/dashboard/server/federation" class="mobile-card-action glass-button rounded-lg text-sm font-medium text-white/90 hover:text-white transition-colors no-underline">
-        Find Nodes
+        Connect with Nodes
       </RouterLink>
       <RouterLink to="/dashboard/fleet" class="mobile-card-action glass-button rounded-lg text-sm font-medium text-white/90 hover:text-white transition-colors no-underline">
         Fleet

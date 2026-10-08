@@ -14,21 +14,21 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use tracing::{debug, warn};
 
-/// Spawn the background metrics collector (runs every 300 seconds / 5 minutes).
+/// Spawn the background metrics collector at the store's one-minute resolution.
 /// Evaluates alert rules on each snapshot and dispatches notifications.
 /// Note: health_monitor.rs handles container state polling at 120s intervals.
-/// This collector handles system-level metrics (CPU, disk, network) and only
-/// calls podman stats every 5 minutes to avoid duplicate subprocess overhead.
+/// Runtime commands have deadlines; unavailable container stats cannot hold
+/// system readings indefinitely. Missed ticks are skipped, never replayed.
 pub fn spawn_metrics_collector(
     store: Arc<MetricsStore>,
     state: Option<Arc<crate::state::StateManager>>,
     data_dir: Option<PathBuf>,
 ) {
     tokio::spawn(async move {
-        // Wait 60s for system to stabilize after boot
-        tokio::time::sleep(std::time::Duration::from_secs(60)).await;
+        // Start promptly without competing with the very first boot tasks.
+        tokio::time::sleep(std::time::Duration::from_secs(5)).await;
 
-        let mut interval = tokio::time::interval(std::time::Duration::from_secs(300));
+        let mut interval = tokio::time::interval(std::time::Duration::from_secs(60));
         interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
 
         loop {

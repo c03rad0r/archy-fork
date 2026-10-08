@@ -182,6 +182,7 @@
 
       <PendingRequestsPanel
         :requests="pendingRequests"
+        :peer-dids="nodes.map(node => node.did)"
         :polling="pollingHandshake"
         :busy-id="pendingBusyId"
         @poll="pollHandshake"
@@ -260,6 +261,7 @@
 
 <script setup lang="ts">
 import { ref, computed, onMounted, onUnmounted } from 'vue'
+import { validContact, lastContactLabel } from './web5/nodeAvailability'
 import { rpcClient } from '@/api/rpc-client'
 import { useCachedResource } from '@/composables/useCachedResource'
 import { useTransportStore } from '@/stores/transport'
@@ -349,6 +351,7 @@ const selfDid = ref<string>((() => {
   try { return localStorage.getItem('neode_did') || '' } catch { return '' }
 })())
 
+const availabilityNow = ref(Date.now())
 const mapNodes = computed(() => {
   const result = []
   if (selfDid.value) {
@@ -367,6 +370,7 @@ const mapNodes = computed(() => {
       label: nodeName(node),
       trust_level: node.trust_level as 'trusted' | 'observer' | 'untrusted',
       online: isOnlineCheck(node),
+      statusLabel: isOnlineCheck(node) ? 'Online' : lastContactLabel(node.last_seen, availabilityNow.value),
       app_count: node.last_state?.apps?.length ?? 0,
       is_self: false,
     })
@@ -572,10 +576,8 @@ async function cancelPending(id: string) {
 }
 
 function isOnlineCheck(node: FederatedNode): boolean {
-  if (!node.last_seen) return false
-  const lastSeen = new Date(node.last_seen).getTime()
-  const tenMinutesAgo = Date.now() - 10 * 60 * 1000
-  return lastSeen > tenMinutesAgo
+  const lastSeen = validContact(node.last_seen, availabilityNow.value)
+  return lastSeen !== undefined && availabilityNow.value - lastSeen < 10 * 60 * 1000
 }
 
 /** Explicit reload (mutations, retry): surfaces a load failure in the error
@@ -832,6 +834,7 @@ onMounted(async () => {
     // Self DID not available
   }
   autoRefreshTimer = setInterval(() => {
+    availabilityNow.value = Date.now()
     void nodesRes.refresh()
     loadPendingRequests()
   }, 5000)

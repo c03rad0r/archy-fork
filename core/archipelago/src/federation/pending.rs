@@ -14,6 +14,9 @@ use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use std::path::Path;
 use tokio::fs;
+use tokio::io::AsyncWriteExt;
+
+static PENDING_STORE_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 
 const PENDING_FILE: &str = "federation/pending_requests.json";
 const MAX_PENDING_PER_PUBKEY: usize = 5;
@@ -76,11 +79,12 @@ pub async fn load_pending(data_dir: &Path) -> Result<Vec<PendingPeerRequest>> {
     let content = fs::read_to_string(&path)
         .await
         .context("Failed to read pending requests file")?;
-    let file: PendingRequestsFile = serde_json::from_str(&content).unwrap_or_default();
+    let file: PendingRequestsFile = serde_json::from_str(&content)
+        .context("Invalid pending requests file; preserving existing data")?;
     Ok(file.requests)
 }
 
-pub async fn save_pending(data_dir: &Path, requests: &[PendingPeerRequest]) -> Result<()> {
+async fn save_pending(data_dir: &Path, requests: &[PendingPeerRequest]) -> Result<()> {
     let path = data_dir.join(PENDING_FILE);
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)
@@ -92,9 +96,27 @@ pub async fn save_pending(data_dir: &Path, requests: &[PendingPeerRequest]) -> R
     };
     let content =
         serde_json::to_string_pretty(&file).context("Failed to serialize pending requests")?;
-    fs::write(&path, content)
-        .await
-        .context("Failed to write pending requests file")?;
+    let parent = path.parent().context("Pending requests parent missing")?;
+    let temporary = parent.join(format!(".pending-{}.tmp", uuid::Uuid::new_v4()));
+    let result = async {
+        let mut file = fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .mode(0o600)
+            .open(&temporary)
+            .await?;
+        file.write_all(content.as_bytes()).await?;
+        file.sync_all().await?;
+        drop(file);
+        fs::rename(&temporary, &path).await?;
+        fs::File::open(parent).await?.sync_all().await?;
+        Ok::<_, anyhow::Error>(())
+    }
+    .await;
+    if result.is_err() {
+        let _ = fs::remove_file(&temporary).await;
+    }
+    result.context("Failed to atomically save pending requests")?;
     Ok(())
 }
 
@@ -102,7 +124,10 @@ pub async fn save_pending(data_dir: &Path, requests: &[PendingPeerRequest]) -> R
 fn expire_stale(requests: &mut Vec<PendingPeerRequest>) {
     let cutoff = chrono::Utc::now() - chrono::Duration::days(PENDING_EXPIRY_DAYS);
     for r in requests.iter_mut() {
-        if !matches!(r.state, PendingState::Pending | PendingState::Sent) {
+        if !matches!(
+            r.state,
+            PendingState::Pending | PendingState::Sent | PendingState::Approved
+        ) {
             continue;
         }
         if let Ok(ts) = chrono::DateTime::parse_from_rfc3339(&r.received_at) {
@@ -131,6 +156,7 @@ pub async fn insert_inbound(
     from_name: Option<String>,
     message: Option<String>,
 ) -> Result<Option<PendingPeerRequest>> {
+    let _guard = PENDING_STORE_LOCK.lock().await;
     let mut requests = load_pending(data_dir).await?;
     expire_stale(&mut requests);
 
@@ -189,6 +215,7 @@ pub async fn insert_outbound(
     to_name: Option<String>,
     message: Option<String>,
 ) -> Result<PendingPeerRequest> {
+    let _guard = PENDING_STORE_LOCK.lock().await;
     let mut requests = load_pending(data_dir).await?;
     expire_stale(&mut requests);
     requests.retain(|r| {
@@ -218,6 +245,7 @@ pub async fn find_by_id(data_dir: &Path, id: &str) -> Result<Option<PendingPeerR
 }
 
 pub async fn set_state(data_dir: &Path, id: &str, state: PendingState) -> Result<()> {
+    let _guard = PENDING_STORE_LOCK.lock().await;
     let mut requests = load_pending(data_dir).await?;
     if let Some(r) = requests.iter_mut().find(|r| r.id == id) {
         r.state = state;
@@ -228,10 +256,32 @@ pub async fn set_state(data_dir: &Path, id: &str, state: PendingState) -> Result
     Ok(())
 }
 
+/// Resolve a pending decision once; concurrent approval/rejection cannot
+/// overwrite each other after a slow network request.
+pub async fn decide(data_dir: &Path, id: &str, decision: PendingState) -> Result<()> {
+    anyhow::ensure!(
+        matches!(decision, PendingState::Approved | PendingState::Rejected),
+        "Invalid pending decision"
+    );
+    let _guard = PENDING_STORE_LOCK.lock().await;
+    let mut requests = load_pending(data_dir).await?;
+    let row = requests
+        .iter_mut()
+        .find(|row| row.id == id)
+        .context("Pending request not found")?;
+    anyhow::ensure!(
+        !row.outbound && row.state == PendingState::Pending,
+        "Request has already been decided"
+    );
+    row.state = decision;
+    save_pending(data_dir, &requests).await
+}
+
 /// Remove a pending request entirely. Used when the sender cancels an
 /// outbound request they initiated and we want it gone (not just marked
 /// Rejected/Cancelled — those states fill up the UI audit trail).
 pub async fn delete(data_dir: &Path, id: &str) -> Result<()> {
+    let _guard = PENDING_STORE_LOCK.lock().await;
     let mut requests = load_pending(data_dir).await?;
     let before = requests.len();
     requests.retain(|r| r.id != id);
@@ -370,5 +420,142 @@ mod tests {
             .unwrap();
         let reloaded = find_by_id(dir.path(), &row.id).await.unwrap().unwrap();
         assert_eq!(reloaded.state, PendingState::Approved);
+    }
+}
+
+#[cfg(test)]
+mod persistence_regressions {
+    use super::*;
+
+    #[tokio::test]
+    async fn concurrent_requests_are_not_lost() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut tasks = Vec::new();
+        for i in 0..24 {
+            let path = dir.path().to_path_buf();
+            tasks.push(tokio::spawn(async move {
+                insert_inbound(
+                    &path,
+                    format!("key-{i}"),
+                    format!("npub-{i}"),
+                    format!("did:key:{i}"),
+                    None,
+                    None,
+                )
+                .await
+                .unwrap()
+            }));
+        }
+        for task in tasks {
+            assert!(task.await.unwrap().is_some());
+        }
+        let rows = load_pending(dir.path()).await.unwrap();
+        assert_eq!(rows.len(), 24);
+        assert_eq!(
+            rows.iter()
+                .map(|r| &r.id)
+                .collect::<std::collections::HashSet<_>>()
+                .len(),
+            24
+        );
+    }
+
+    #[tokio::test]
+    async fn malformed_store_is_preserved_instead_of_replaced_with_one_request() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join(PENDING_FILE);
+        fs::create_dir_all(path.parent().unwrap()).await.unwrap();
+        let damaged = b"{incomplete existing requests";
+        fs::write(&path, damaged).await.unwrap();
+        assert!(insert_inbound(
+            dir.path(),
+            "key".into(),
+            "npub".into(),
+            "did:key:test".into(),
+            None,
+            None
+        )
+        .await
+        .is_err());
+        assert_eq!(fs::read(path).await.unwrap(), damaged);
+    }
+}
+
+#[cfg(test)]
+mod decision_regressions {
+    use super::*;
+    #[tokio::test]
+    async fn only_one_concurrent_operator_decision_wins() {
+        let dir = tempfile::tempdir().unwrap();
+        let row = insert_inbound(
+            dir.path(),
+            "key".into(),
+            "npub".into(),
+            "did:key:peer".into(),
+            None,
+            None,
+        )
+        .await
+        .unwrap()
+        .unwrap();
+        let (approve, reject) = tokio::join!(
+            decide(dir.path(), &row.id, PendingState::Approved),
+            decide(dir.path(), &row.id, PendingState::Rejected)
+        );
+        assert_eq!(
+            usize::from(approve.is_ok()) + usize::from(reject.is_ok()),
+            1
+        );
+        let saved = find_by_id(dir.path(), &row.id).await.unwrap().unwrap();
+        assert_eq!(
+            saved.state,
+            if approve.is_ok() {
+                PendingState::Approved
+            } else {
+                PendingState::Rejected
+            }
+        );
+    }
+    #[tokio::test]
+    async fn an_expired_approval_does_not_block_a_new_request_forever() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut row = insert_inbound(
+            dir.path(),
+            "key".into(),
+            "npub".into(),
+            "did:key:peer".into(),
+            None,
+            None,
+        )
+        .await
+        .unwrap()
+        .unwrap();
+        row.state = PendingState::Approved;
+        row.received_at = (chrono::Utc::now() - chrono::Duration::days(31)).to_rfc3339();
+        save_pending(dir.path(), &[row]).await.unwrap();
+        let renewed = insert_inbound(
+            dir.path(),
+            "key".into(),
+            "npub".into(),
+            "did:key:peer".into(),
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+        assert!(renewed.is_some());
+        let rows = load_pending(dir.path()).await.unwrap();
+        assert_eq!(
+            rows.iter()
+                .filter(|r| r.state == PendingState::Expired)
+                .count(),
+            1
+        );
+        assert_eq!(
+            rows.iter()
+                .filter(|r| r.state == PendingState::Pending)
+                .count(),
+            1
+        );
     }
 }

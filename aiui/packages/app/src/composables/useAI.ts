@@ -13,7 +13,7 @@ import { useCodeContext } from '@/composables/useCodeContext'
 import { apiFetch } from '@/utils/api-fetch'
 import { useSettingsStore } from '@/stores/settings'
 
-type Provider = 'routstr' | 'claude' | 'openrouter' | 'mock'
+type Provider = 'routstr' | 'claude' | 'openrouter' | 'mock' | 'openai' | 'auto' | 'local'
 
 // API paths are relative to the base URL so they work both in dev (/) and Archy (/aiui/)
 const BASE = import.meta.env.BASE_URL || '/'
@@ -120,34 +120,15 @@ Prioritize Podcasting 2.0–friendly platforms: Fountain.fm, Podcast Index, Cast
 Always include these tags so the UI can render rich cards. Write a brief reason why each is worth checking out.
 ${librarySection}`
 
-const activeProvider = ref<Provider>('claude')
+const activeProvider = ref<Provider>(archyBridge.isInArchy() ? 'auto' : 'claude')
 
 const activeModel = ref('claude-haiku-4.5')
 
-// One-shot signal a send/regenerate/edit failure looked like a missing or
-// invalid API key (or an unreachable proxy) rather than a transient/server
-// error — consumed by ChatWindow.vue to auto-open Settings so the user isn't
-// left in a dead end with no obvious next step. Deliberately narrow (401/403,
-// explicit "api key"/"unauthorized" text, or a connection-level failure to
-// reach the proxy at all) so a rate-limited or momentarily-flaky provider
-// response does NOT send the user to Settings for a problem Settings can't
-// fix. Reset to false by the consumer immediately after acting on it, so it
-// behaves as a pulse rather than sticky state (each new failure can re-fire).
+// Credentials require setup; network failures and provider outages require retry.
 const needsApiKey = ref(false)
-
+const needsFunding = ref(false)
 function looksLikeMissingApiKey(err: string): boolean {
-  const lower = err.toLowerCase()
-  return (
-    /\b(401|403)\b/.test(err) ||
-    lower.includes('api key') ||
-    lower.includes('x-api-key') ||
-    lower.includes('unauthorized') ||
-    lower.includes('authentication_error') ||
-    lower.includes('failed to fetch') ||
-    lower.includes('econnrefused') ||
-    lower.includes(' 502') ||
-    lower.includes(' 503')
-  )
+  return /\b(401|403)\b|api[ _-]?key|unauthorized|authentication_error|credential/i.test(err)
 }
 
 // ─── Routstr model catalog (fetched from the node's session-gated proxy) ───
@@ -161,7 +142,7 @@ async function refreshRoutstrModels() {
   routstrModelsFetched = true
   try {
     const res = await apiFetch(ROUTSTR_MODELS_PATH)
-    if (!res.ok) return
+    if (!res.ok) { routstrModelsFetched = false; return }
     const data = await res.json()
     if (Array.isArray(data?.data)) {
       routstrModels.value = data.data
@@ -170,13 +151,21 @@ async function refreshRoutstrModels() {
           id: m.id as string,
           name: (m.name as string) || (m.id as string),
         }))
-    }
+      if (activeProvider.value === 'routstr' && activeModel.value === 'routstr-unavailable' && routstrModels.value[0]) activeModel.value = routstrModels.value[0].id
+    } else { routstrModelsFetched = false }
   } catch {
     routstrModelsFetched = false // allow a retry on the next send/open
   }
 }
 
 const availableProviders = computed(() => {
+  if (archyBridge.isInArchy()) return [
+    { id: 'local' as Provider, name: 'Local AI', models: [{ id: 'node', name: 'Node configuration' }] },
+    { id: 'auto' as Provider, name: 'Node AI', models: [{ id: 'node', name: 'Node configuration' }] },
+    { id: 'claude' as Provider, name: 'Claude API', models: [{ id: 'node', name: 'Node configuration' }] },
+    { id: 'openai' as Provider, name: 'OpenAI API', models: [{ id: activeProvider.value === 'openai' ? activeModel.value : 'node', name: activeProvider.value === 'openai' ? activeModel.value : 'Configure model' }] },
+    { id: 'routstr' as Provider, name: 'Routstr (sats)', models: routstrModels.value.length ? routstrModels.value : [{ id: 'routstr-unavailable', name: 'Models unavailable — retry' }] },
+  ]
   const providers: { id: Provider; name: string; models: { id: string; name: string }[] }[] = [
     {
       id: 'routstr',
@@ -187,7 +176,7 @@ const availableProviders = computed(() => {
     },
     {
       id: 'claude',
-      name: 'Claude (Max)',
+      name: 'Claude API',
       models: [
         { id: 'claude-haiku-4.5', name: 'Claude 4.5 Haiku' },
         { id: 'claude-sonnet-4', name: 'Claude Sonnet 4' },
@@ -207,23 +196,35 @@ const availableProviders = computed(() => {
   })
   providers.push({
     id: 'mock',
-    name: 'Local (no API)',
+    name: 'Demo echo',
     models: [{ id: 'echo', name: 'Echo (mirror input)' }],
   })
   return providers
 })
 
 function setProvider(provider: Provider) {
+  if (archyBridge.isInArchy()) {
+    if (provider === 'routstr' && activeProvider.value === 'routstr') return true
+    archyBridge.requestAISetup(); return false
+  }
   activeProvider.value = provider
   const p = availableProviders.value.find((pp) => pp.id === provider)
   if (p && p.models.length > 0) {
     activeModel.value = p.models[0].id
   }
+  return true
 }
 
 function setModel(model: string) {
+  if (archyBridge.isInArchy() && activeProvider.value !== 'routstr') { archyBridge.requestAISetup(); return }
   activeModel.value = model
 }
+
+archyBridge.onProviderConfigured(({ provider, model }) => {
+  activeProvider.value = provider
+  activeModel.value = model || (provider === 'routstr' ? routstrModels.value[0]?.id || 'routstr-unavailable' : 'node')
+  if (provider === 'routstr') void refreshRoutstrModels()
+})
 
 interface ChatMessage {
   role: 'user' | 'assistant'
@@ -448,6 +449,7 @@ async function streamRoutstr(
   })
 
   const bodyText = await res.text().catch(() => '')
+  if (res.status === 402) needsFunding.value = true
   if (!res.ok) {
     // The node's refusals carry a plain-language error.message (budget not
     // set, budget spent, wallet can't fund) — surface it verbatim.
@@ -974,5 +976,6 @@ export function useAI() {
     setProvider,
     setModel,
     needsApiKey,
+    needsFunding,
   }
 }

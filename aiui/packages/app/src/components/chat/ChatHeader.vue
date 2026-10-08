@@ -123,6 +123,7 @@
           :style="modelPickerDropdownStyle"
           @click.stop
         >
+        <button v-if="archyBridge.isInArchy()" class="w-full text-left rounded-lg px-3 py-2 text-sm text-white/90 hover:bg-white/10" @click="showModelPicker = false; archyBridge.requestAISetup()">AI connection</button>
         <div v-for="provider in availableProviders" :key="provider.id">
           <p class="text-xs font-semibold uppercase tracking-wider mb-1.5 px-1 text-white/40">
             {{ provider.name }}
@@ -247,6 +248,7 @@ import { useAI } from '@/composables/useAI'
 import { useContentPanel } from '@/composables/useContentPanel'
 import { downloadConversation, type ExportFormat } from '@/utils/conversation-export'
 import { parseImportFile } from '@/utils/conversation-import'
+import { archyBridge } from '@/services/archyBridge'
 import { useComparisonMode } from '@/composables/useComparisonMode'
 
 defineProps<{
@@ -332,8 +334,7 @@ const modelDisplayName = computed(() => {
 })
 
 function selectModel(providerId: string, modelId: string) {
-  setProvider(providerId as 'routstr' | 'claude' | 'openrouter' | 'mock')
-  setModel(modelId)
+  if (setProvider(providerId as Parameters<typeof setProvider>[0])) setModel(modelId)
   showModelPicker.value = false
 }
 

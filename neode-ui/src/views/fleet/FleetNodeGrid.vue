@@ -17,7 +17,7 @@
 
     <!-- Empty State -->
     <div v-if="!nodes.length" class="text-white/40 text-sm py-8 text-center">
-      No nodes reporting. Ensure telemetry is enabled on beta nodes.
+      No fleet nodes yet. Connect a trusted node to see its status.
     </div>
 
     <div v-else class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
@@ -32,7 +32,7 @@
           <div class="flex items-center gap-2">
             <span
               class="fleet-status-dot"
-              :class="isOnline(node.reported_at) ? 'fleet-dot-online' : 'fleet-dot-offline'"
+              :class="fleetStatus(node.reported_at) === 'unknown' ? 'bg-white/30' : isOnline(node.reported_at) ? 'fleet-dot-online' : 'fleet-dot-offline'"
             ></span>
             <span class="text-sm font-semibold text-white truncate">{{ fleetNodeDisplayName(node) }}</span>
           </div>
@@ -49,10 +49,10 @@
               <div
                 class="fleet-bar-fill"
                 :class="healthBarClass(node.cpu_pct)"
-                :style="{ width: Math.min(node.cpu_pct, 100) + '%' }"
+                :style="{ width: Math.min(node.cpu_pct ?? 0, 100) + '%' }"
               ></div>
             </div>
-            <span class="text-xs text-white/60 w-10 text-right">{{ node.cpu_pct.toFixed(0) }}%</span>
+            <span class="text-xs text-white/60 w-10 text-right">{{ formatMetric(node.cpu_pct) }}</span>
           </div>
           <div class="fleet-metric-row">
             <span class="text-xs text-white/50">RAM</span>
@@ -60,10 +60,10 @@
               <div
                 class="fleet-bar-fill"
                 :class="healthBarClass(node.mem_pct)"
-                :style="{ width: Math.min(node.mem_pct, 100) + '%' }"
+                :style="{ width: Math.min(node.mem_pct ?? 0, 100) + '%' }"
               ></div>
             </div>
-            <span class="text-xs text-white/60 w-10 text-right">{{ node.mem_pct.toFixed(0) }}%</span>
+            <span class="text-xs text-white/60 w-10 text-right">{{ formatMetric(node.mem_pct) }}</span>
           </div>
           <div class="fleet-metric-row">
             <span class="text-xs text-white/50">Disk</span>
@@ -71,10 +71,10 @@
               <div
                 class="fleet-bar-fill"
                 :class="healthBarClass(node.disk_pct)"
-                :style="{ width: Math.min(node.disk_pct, 100) + '%' }"
+                :style="{ width: Math.min(node.disk_pct ?? 0, 100) + '%' }"
               ></div>
             </div>
-            <span class="text-xs text-white/60 w-10 text-right">{{ node.disk_pct.toFixed(0) }}%</span>
+            <span class="text-xs text-white/60 w-10 text-right">{{ formatMetric(node.disk_pct) }}</span>
           </div>
         </div>
 
@@ -82,9 +82,9 @@
           <span>{{ node.running_count }}/{{ node.container_count }} containers</span>
           <span>{{ node.federation_peers }} peers</span>
         </div>
-        <div class="flex items-center justify-between text-xs text-white/40 mt-1">
-          <span>Up {{ formatUptime(node.uptime_secs) }}</span>
-          <span>{{ timeAgo(node.reported_at) }}</span>
+        <div class="flex flex-wrap gap-x-3 gap-y-1 items-center justify-between text-xs text-white/40 mt-1">
+          <span>{{ node.uptime_secs === null ? 'Uptime unavailable' : 'Up ' + formatUptime(node.uptime_secs) }}</span>
+          <span>{{ fleetStatus(node.reported_at) === 'unknown' ? 'Status unknown' : fleetStatus(node.reported_at) === 'stale' ? 'Not reporting · last seen ' + timeAgo(node.reported_at) : 'Seen ' + timeAgo(node.reported_at) }}</span>
         </div>
       </div>
     </div>
@@ -94,7 +94,7 @@
 <script setup lang="ts">
 import {
   type FleetNode, type SortOption, SORT_OPTIONS,
-  isOnline, healthBarClass, formatUptime, timeAgo, fleetNodeDisplayName, fleetNodeSubtitle,
+  isOnline, fleetStatus, formatMetric, healthBarClass, formatUptime, timeAgo, fleetNodeDisplayName, fleetNodeSubtitle,
 } from './useFleetData'
 
 defineProps<{

@@ -390,7 +390,7 @@
     "manageDomains": "Administrar dominios",
     "relaysConnected": "{count} conectados",
     "peersKnown": "{count} par(es) conocido(s)",
-    "findNodes": "Buscar nodos",
+    "findNodes": "Conectar con nodos",
     "sendMessage": "Enviar mensaje",
     "sendMessageTitle": "Enviar mensaje (a trav\u00e9s de Tor)",
     "to": "Para",

@@ -25,7 +25,7 @@
     </div>
 
     <!-- Tabs: Trusted | Observers | Messages | Requests -->
-    <div class="flex gap-1 mb-4 border-b border-white/10">
+    <div class="flex gap-1 mb-4 border-b border-white/10 overflow-x-auto whitespace-nowrap shrink-0">
       <button
         @click="nodesContainerTab = 'trusted'"
         class="px-4 py-2 text-sm font-medium rounded-t-lg transition-colors"
@@ -48,11 +48,12 @@
         :class="nodesContainerTab === 'requests' ? 'bg-white/10 text-white' : 'text-white/60 hover:text-white/80 hover:bg-white/5'"
       >
         {{ t('web5.requests') }}
-        <span v-if="connectionRequests.length > 0" class="ml-1.5 text-xs text-orange-400">({{ connectionRequests.length }})</span>
-        <span v-if="connectionRequests.length > 0" class="w-2 h-2 rounded-full bg-orange-500 animate-pulse"></span>
+        <span v-if="requestCount > 0" class="ml-1.5 text-xs text-orange-400">({{ requestCount }})</span>
+        <span v-if="requestCount > 0" class="w-2 h-2 rounded-full bg-orange-500 animate-pulse"></span>
       </button>
     </div>
 
+    <p v-if="peersError && nodesContainerTab !== 'requests'" role="status" class="text-xs text-amber-200 mb-2">{{ peersError }}</p>
     <!-- Trusted tab -->
     <div v-show="nodesContainerTab === 'trusted'" class="space-y-2 min-h-0 overflow-y-auto max-h-72 xl:flex-1 xl:basis-0 xl:max-h-none">
       <div v-if="loadingPeers && peers.length === 0" class="p-4 text-center text-white/60 text-sm">
@@ -65,16 +66,16 @@
         {{ t('common.loading') }}
       </div>
       <div
-        v-for="p in peers"
+        v-for="p in sortedPeers"
         :key="p.pubkey"
         @click="router.push({ path: '/dashboard/server/federation', query: { node: p.did || p.pubkey || p.onion } })"
         class="flex items-center justify-between p-3 bg-white/5 rounded-lg cursor-pointer hover:bg-white/10 transition-colors"
       >
         <div class="flex items-center gap-3 min-w-0">
-          <div class="w-2 h-2 rounded-full shrink-0" :class="peerReachable[p.onion] ? 'bg-green-400' : 'bg-amber-400'"></div>
+          <div class="w-2 h-2 rounded-full shrink-0" :class="statusClass(p)"></div>
           <div class="min-w-0">
             <p class="text-sm font-mono text-white/90 truncate">{{ p.name || p.onion || (p.pubkey || '').slice(0, 16) + '...' }}</p>
-            <p class="text-xs text-white/50 truncate">{{ p.onion }}</p>
+            <p class="text-xs text-white/50 truncate">{{ availabilityText(p) }} · {{ contactText(p) }}</p>
           </div>
         </div>
         <button
@@ -98,16 +99,16 @@
         {{ t('common.loading') }}
       </div>
       <div
-        v-for="p in observers"
+        v-for="p in sortedObservers"
         :key="p.pubkey"
         @click="router.push({ path: '/dashboard/server/federation', query: { node: p.did || p.pubkey || p.onion } })"
         class="flex items-center justify-between p-3 bg-white/5 rounded-lg cursor-pointer hover:bg-white/10 transition-colors"
       >
         <div class="flex items-center gap-3 min-w-0">
-          <div class="w-2 h-2 rounded-full shrink-0" :class="peerReachable[p.onion] ? 'bg-green-400' : 'bg-amber-400'"></div>
+          <div class="w-2 h-2 rounded-full shrink-0" :class="statusClass(p)"></div>
           <div class="min-w-0">
             <p class="text-sm font-mono text-white/90 truncate">{{ p.name || p.onion || (p.pubkey || '').slice(0, 16) + '...' }}</p>
-            <p class="text-xs text-white/50 truncate">{{ p.onion }}</p>
+            <p class="text-xs text-white/50 truncate">{{ availabilityText(p) }} · {{ contactText(p) }}</p>
           </div>
         </div>
         <span class="px-2 py-1 text-xs rounded bg-blue-500/20 text-blue-300 shrink-0">
@@ -118,10 +119,17 @@
 
     <!-- Requests tab -->
     <div v-show="nodesContainerTab === 'requests'" class="space-y-2 min-h-0 overflow-y-auto max-h-72 xl:flex-1 xl:basis-0 xl:max-h-none">
-      <div v-if="loadingRequests && connectionRequests.length === 0" class="p-4 text-center text-white/60 text-sm">
+      <p v-if="requestError" role="status" class="text-xs text-amber-200">{{ requestError }}</p>
+      <button v-for="request in nostrRequests" :key="'nostr:' + request.id"
+        class="w-full text-left p-3 bg-white/5 rounded-lg hover:bg-white/10 transition-colors"
+        @click="router.push({ path: '/dashboard/server/federation', hash: '#connection-requests' })">
+        <span class="block text-sm text-white truncate">{{ request.from_name || request.from_did || request.from_nostr_npub }}</span>
+        <span class="block text-xs text-white/60">Nostr · {{ request.state === 'approved' ? 'Approved — connecting' : request.outbound ? 'Sent — awaiting approval' : 'Incoming — review request' }}</span>
+      </button>
+      <div v-if="loadingRequests && requestCount === 0" class="p-4 text-center text-white/60 text-sm">
         {{ t('common.loading') }}
       </div>
-      <div v-else-if="connectionRequests.length === 0" class="p-4 text-center text-white/60 text-sm">
+      <div v-else-if="requestCount === 0" class="p-4 text-center text-white/60 text-sm">
         {{ t('web5.noRequests') }}
       </div>
       <div v-else-if="loadingRequests" class="p-2 text-center text-white/45 text-xs">
@@ -231,13 +239,14 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed } from 'vue'
+import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { rpcClient } from '@/api/rpc-client'
 import { useMessageToast } from '@/composables/useMessageToast'
 import { useWeb5BadgeStore } from '@/stores/web5Badge'
-import { useAppStore } from '@/stores/app'
+import type { PendingPeerRequest } from '@/api/rpc-client'
+import { availabilityRank, lastContactLabel, nodeAvailability, validContact, type ReachabilitySample } from './nodeAvailability'
 import { useModalKeyboard } from '@/composables/useModalKeyboard'
 import { formatMessageTime } from './utils'
 import type { Peer, ConnectionRequest } from './types'
@@ -246,13 +255,13 @@ const router = useRouter()
 const { t } = useI18n()
 const messageToast = useMessageToast()
 const web5Badge = useWeb5BadgeStore()
-const appStore = useAppStore()
 
-const CONNECTED_NODES_CACHE_KEY = 'archipelago.web5.connected-nodes.v1'
+
+const CONNECTED_NODES_CACHE_KEY = 'archipelago.web5.connected-nodes.v2'
 type ConnectedNodesCache = {
   peers: Peer[]
   observers: Peer[]
-  peerReachable: Record<string, boolean>
+  peerReachable: Record<string, ReachabilitySample>
   connectionRequests: ConnectionRequest[]
 }
 
@@ -289,8 +298,27 @@ const cached = readConnectedNodesCache()
 const peers = ref<Peer[]>(cached.peers ?? [])
 const observers = ref<Peer[]>(cached.observers ?? [])
 const loadingPeers = ref(false)
-const peerReachableLocal = ref<Record<string, boolean>>(cached.peerReachable ?? {})
-const peerReachable = computed(() => ({ ...appStore.peerHealth, ...peerReachableLocal.value }))
+const peerReachableLocal = ref<Record<string, ReachabilitySample>>(cached.peerReachable ?? {})
+const now = ref(Date.now())
+let ageTimer: ReturnType<typeof setInterval> | undefined
+let peerGeneration = 0
+onMounted(() => { ageTimer = setInterval(() => { now.value = Date.now() }, 15_000) })
+onUnmounted(() => { clearInterval(ageTimer); peerGeneration++ })
+function availability(peer: Peer) { return nodeAvailability(peerReachableLocal.value[peer.onion], now.value) }
+function availabilityText(peer: Peer) {
+  const status = availability(peer)
+  return status === 'online' ? 'Online' : status === 'unreachable' ? 'Unreachable' : 'Status unknown'
+}
+function contactText(peer: Peer) {
+  const local = validContact(peerReachableLocal.value[peer.onion]?.lastSeen, now.value) ?? 0
+  const recorded = validContact(peer.last_seen, now.value) ?? 0
+  return lastContactLabel(Math.max(local, recorded), now.value)
+}
+function statusClass(peer: Peer) {
+  return availability(peer) === 'online' ? 'bg-green-400' : availability(peer) === 'unreachable' ? 'bg-amber-400' : 'bg-white/30'
+}
+const sortedPeers = computed(() => [...peers.value].sort((a, b) => availabilityRank(availability(a)) - availabilityRank(availability(b))))
+const sortedObservers = computed(() => [...observers.value].sort((a, b) => availabilityRank(availability(a)) - availabilityRank(availability(b))))
 
 // Send message modal
 const showSendMessageModal = ref(false)
@@ -309,6 +337,10 @@ const sendMessageSuccess = ref('')
 
 // Connection requests
 const connectionRequests = ref<ConnectionRequest[]>(cached.connectionRequests ?? [])
+const nostrRequests = ref<PendingPeerRequest[]>([])
+const requestCount = computed(() => connectionRequests.value.length + nostrRequests.value.length)
+const requestError = ref('')
+const peersError = ref('')
 const loadingRequests = ref(false)
 const processingRequestId = ref<string | null>(null)
 
@@ -329,13 +361,14 @@ function federationNodeToPeer(node: FederationNode): Peer {
     onion: node.onion,
     pubkey: node.pubkey,
     did: node.did,
+    last_seen: node.last_seen,
     name: node.name || `Federation: ${node.did?.slice(0, 16) || 'node'}`,
   }
 }
 
 function switchToRequestsTab() {
   nodesContainerTab.value = 'requests'
-  if (connectionRequests.value.length === 0 && !loadingRequests.value) {
+  if (!loadingRequests.value) {
     loadConnectionRequests()
   }
 }
@@ -346,74 +379,58 @@ function refreshActiveTab() {
   else void loadPeers()
 }
 
+function persistCache() {
+  writeConnectedNodesCache({ peers: peers.value, observers: observers.value, peerReachable: peerReachableLocal.value, connectionRequests: connectionRequests.value })
+}
 async function loadPeers() {
-  const hadPeers = peers.value.length > 0 || observers.value.length > 0
+  if (loadingPeers.value) return
+  const generation = ++peerGeneration
   loadingPeers.value = true
-  try {
-    // Independent RPCs — fetched together (serialized they stacked two full
-    // mesh round-trips before anything rendered).
-    const [res, fedSettled] = await Promise.all([
-      rpcClient.listPeers(),
-      rpcClient.federationListNodes().catch(() => null),
-    ])
-    const peerList = res.peers || []
-    const observerList: Peer[] = []
-
-    try {
-      const fedNodes = fedSettled?.nodes || []
-      for (const n of fedNodes) {
-        if (!n.onion || n.trust_level === 'untrusted') {
-          continue
-        }
-
-        if (n.trust_level === 'observer') {
-          if (!observerList.some(p => p.onion === n.onion || p.pubkey === n.pubkey)) {
-            observerList.push(federationNodeToPeer(n))
-          }
-          continue
-        }
-
-        if (!peerList.some(p => p.onion === n.onion || p.pubkey === n.pubkey)) {
-          peerList.push(federationNodeToPeer(n))
-        }
-      }
-    } catch {
-      // Federation may not be set up
+  peersError.value = ''
+  let direct: Peer[] | undefined
+  let federated: FederationNode[] | undefined
+  function applyLists() {
+    if (generation !== peerGeneration) return
+    const trusted = direct ? [...direct] : [...peers.value]
+    const observerList: Peer[] = federated ? [] : [...observers.value]
+    for (const node of federated ?? []) {
+      if (!node.onion || node.trust_level === 'untrusted') continue
+      const list = node.trust_level === 'observer' ? observerList : trusted
+      const peer = federationNodeToPeer(node)
+      const index = list.findIndex(p => p.did === node.did || p.onion === node.onion || (p.pubkey && p.pubkey === node.pubkey))
+      if (index < 0) list.push(peer)
+      else list[index] = { ...list[index], ...peer }
     }
-
-    peers.value = peerList
+    peers.value = trusted
     observers.value = observerList
-    // The list is ready — render it and re-enable Refresh NOW. The
-    // reachability dots fill in as probes resolve. Before 2026-07-22 the
-    // probes ran ONE AT A TIME with a 30s Tor timeout each, so Refresh sat
-    // disabled for N-offline-peers × 30s ("takes ages").
-    loadingPeers.value = false
-    void Promise.allSettled(
-      [...peers.value, ...observers.value].map(async (p) => {
-        try {
-          const check = await rpcClient.checkPeerReachable(p.onion)
-          peerReachableLocal.value[p.onion] = check.reachable
-        } catch {
-          peerReachableLocal.value[p.onion] = false
-        }
-      }),
-    ).then(() => {
-      writeConnectedNodesCache({
-        peers: peers.value,
-        observers: observers.value,
-        peerReachable: peerReachableLocal.value,
-        connectionRequests: connectionRequests.value,
-      })
-    })
-  } catch (e) {
-    if (import.meta.env.DEV) console.error('Failed to load peers:', e)
-    if (!hadPeers) {
-      peers.value = []
-      observers.value = []
-    }
-  } finally {
-    loadingPeers.value = false
+    persistCache()
   }
+  const results = await Promise.allSettled([
+    rpcClient.listPeers().then(result => { direct = result.peers || []; applyLists() }),
+    rpcClient.federationListNodes().then(result => { federated = result.nodes || []; applyLists() }),
+  ])
+  if (generation !== peerGeneration) return
+  if (results.some(result => result.status === 'rejected')) peersError.value = 'Some nodes could not be refreshed. Showing available information.'
+  loadingPeers.value = false
+  // Bound concurrent probes, render each result immediately, and ignore replies
+  // from a superseded refresh. A failed RPC is unknown, not an offline node.
+  const pending = [...new Map([...peers.value, ...observers.value].map(peer => [peer.onion, peer])).values()]
+  async function probe() {
+    while (pending.length && generation === peerGeneration) {
+      const peer = pending.shift()!
+      let reachable: boolean | null = null
+      try { reachable = (await rpcClient.checkPeerReachable(peer.onion)).reachable } catch { /* unknown */ }
+      if (generation !== peerGeneration) return
+      now.value = Date.now()
+      peerReachableLocal.value[peer.onion] = {
+        reachable,
+        checkedAt: now.value,
+        lastSeen: reachable ? now.value : validContact(peerReachableLocal.value[peer.onion]?.lastSeen, now.value),
+      }
+      persistCache()
+    }
+  }
+  void Promise.all(Array.from({ length: Math.min(4, pending.length) }, probe))
 }
 
 async function sendMessage() {
@@ -437,23 +454,20 @@ async function sendMessage() {
 }
 
 async function loadConnectionRequests() {
-  const hadRequests = connectionRequests.value.length > 0
+  if (loadingRequests.value) return
   loadingRequests.value = true
-  try {
-    const res = await rpcClient.call<{ requests: ConnectionRequest[] }>({ method: 'network.list-requests' })
-    connectionRequests.value = res.requests || []
-    web5Badge.pendingRequestCount = connectionRequests.value.length
-    writeConnectedNodesCache({
-      peers: peers.value,
-      observers: observers.value,
-      peerReachable: peerReachableLocal.value,
-      connectionRequests: connectionRequests.value,
-    })
-  } catch {
-    if (!hadRequests) connectionRequests.value = []
-  } finally {
-    loadingRequests.value = false
-  }
+  requestError.value = ''
+  const results = await Promise.allSettled([
+    rpcClient.call<{ requests: ConnectionRequest[] }>({ method: 'network.list-requests' }).then(res => { connectionRequests.value = res.requests || [] }),
+    rpcClient.federationListPendingRequests().then(res => {
+      nostrRequests.value = (res.requests || []).filter(request => request.state === 'pending' || request.state === 'sent' ||
+        (request.state === 'approved' && ![...peers.value, ...observers.value].some(peer => peer.did === request.from_did)))
+    }),
+  ])
+  if (results.some(result => result.status === 'rejected')) requestError.value = 'Some requests could not be refreshed. Try again.'
+  web5Badge.pendingRequestCount = connectionRequests.value.length + nostrRequests.value.filter(request => request.state === 'pending' && !request.outbound).length
+  persistCache()
+  loadingRequests.value = false
 }
 
 async function acceptRequest(requestId: string) {
@@ -461,7 +475,7 @@ async function acceptRequest(requestId: string) {
   try {
     await rpcClient.call({ method: 'network.accept-request', params: { id: requestId } })
     connectionRequests.value = connectionRequests.value.filter(r => r.id !== requestId)
-    web5Badge.pendingRequestCount = connectionRequests.value.length
+    web5Badge.pendingRequestCount = connectionRequests.value.length + nostrRequests.value.filter(request => request.state === 'pending' && !request.outbound).length
     writeConnectedNodesCache({
       peers: peers.value,
       observers: observers.value,
@@ -482,7 +496,7 @@ async function rejectRequest(requestId: string) {
   try {
     await rpcClient.call({ method: 'network.reject-request', params: { id: requestId } })
     connectionRequests.value = connectionRequests.value.filter(r => r.id !== requestId)
-    web5Badge.pendingRequestCount = connectionRequests.value.length
+    web5Badge.pendingRequestCount = connectionRequests.value.length + nostrRequests.value.filter(request => request.state === 'pending' && !request.outbound).length
     writeConnectedNodesCache({
       peers: peers.value,
       observers: observers.value,

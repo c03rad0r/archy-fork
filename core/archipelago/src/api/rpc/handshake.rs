@@ -276,6 +276,11 @@ impl RpcHandler {
             }
             Err(e) => tracing::debug!("background handshake poll failed: {e:#}"),
         }
+        if load_discovery_state(&self.config.data_dir).await.enabled {
+            if let Err(error) = self.retry_peer_approval_replies().await {
+                tracing::warn!("Peer approval retry could not complete: {error:#}");
+            }
+        }
     }
 
     pub(super) async fn handle_handshake_poll(&self) -> Result<serde_json::Value> {
@@ -356,6 +361,16 @@ impl RpcHandler {
                         );
                         continue;
                     };
+                    let scoped_invite = match crate::federation::restrict_discovery_invite(
+                        invite_code,
+                        &row.from_did,
+                    ) {
+                        Ok(code) => code,
+                        Err(_) => {
+                            tracing::warn!("Rejected peer invite with mismatched identity");
+                            continue;
+                        }
+                    };
                     let row_id = row.id.clone();
                     let (data, _) = self.state_manager.get_snapshot().await;
                     let local_did =
@@ -373,7 +388,7 @@ impl RpcHandler {
                     let local_name = data.server_info.name.clone();
                     match crate::federation::accept_invite(
                         &self.config.data_dir,
-                        invite_code,
+                        &scoped_invite,
                         &local_did,
                         &local_onion,
                         &local_pubkey,

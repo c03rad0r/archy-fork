@@ -75,11 +75,15 @@ pub fn open(data: &[u8], key: &[u8; 32]) -> Result<Vec<u8>> {
         .map_err(|_| anyhow::anyhow!("decryption failed — key mismatch or corruption"))
 }
 
-/// Heuristic: does this look like legacy plaintext JSON (starts with `{`/`[`)?
-/// Encrypted blobs start with a random nonce byte, so a `{`/`[` first byte is a
-/// reliable migration signal.
+/// Recognize a complete legacy JSON object/array, including leading whitespace.
+/// A random nonce can start with `{` or `[`; checking only that byte misclassifies
+/// valid ciphertext and can trigger an empty-store migration. Validate the entire
+/// document without allocating a second copy of the store's object tree.
 pub fn is_plaintext_json(raw: &[u8]) -> bool {
-    matches!(raw.first(), Some(b'{') | Some(b'['))
+    matches!(
+        raw.iter().copied().find(|byte| !byte.is_ascii_whitespace()),
+        Some(b'{') | Some(b'[')
+    ) && serde_json::from_slice::<serde::de::IgnoredAny>(raw).is_ok()
 }
 
 #[cfg(test)]
@@ -110,7 +114,42 @@ mod tests {
     fn detects_plaintext_vs_ciphertext() {
         assert!(is_plaintext_json(b"{\"a\":1}"));
         assert!(is_plaintext_json(b"[]"));
+        assert!(is_plaintext_json(b" \r\n\t{\"messages\": []}\n"));
+        for invalid in [
+            b"{".as_slice(),
+            b"[",
+            b"{}trailing",
+            b"[\xff]",
+            b"null",
+            b"\"text\"",
+        ] {
+            assert!(!is_plaintext_json(invalid));
+        }
         assert!(!is_plaintext_json(&seal(b"x", &[3u8; 32]).unwrap()));
+    }
+
+    #[test]
+    fn json_prefix_nonce_does_not_trigger_plaintext_migration() {
+        use chacha20poly1305::aead::{Aead, KeyInit};
+        let key = [3u8; 32];
+        let plaintext = br#"{"messages":[{"message":"preserve me"}]}"#;
+        let cipher = chacha20poly1305::ChaCha20Poly1305::new_from_slice(&key).unwrap();
+        // Deterministically reproduce both collisions instead of relying on
+        // OsRng to happen to pick one during a test run.
+        for prefix in [b'{', b'['] {
+            let mut nonce = [0xffu8; 12];
+            nonce[0] = prefix;
+            let encrypted = cipher
+                .encrypt(
+                    chacha20poly1305::aead::generic_array::GenericArray::from_slice(&nonce),
+                    plaintext.as_slice(),
+                )
+                .unwrap();
+            let mut envelope = nonce.to_vec();
+            envelope.extend(encrypted);
+            assert!(!is_plaintext_json(&envelope));
+            assert_eq!(open(&envelope, &key).unwrap(), plaintext);
+        }
     }
 
     /// KEY-05 regression: a blob written by the pre-migration `seal` must still

@@ -1025,10 +1025,46 @@ impl RpcHandler {
             .ok_or_else(|| anyhow::anyhow!("Missing key"))?;
 
         match key {
-            "claude_api_key_set" => {
-                let key_file = self.config.data_dir.join("secrets/claude-api-key");
-                let has_key = tokio::fs::metadata(&key_file).await.is_ok();
-                Ok(serde_json::json!({ "value": has_key }))
+            "claude_api_key_set" | "openai_api_key_set" => {
+                let provider = if key == "claude_api_key_set" {
+                    "claude"
+                } else {
+                    "openai"
+                };
+                Ok(
+                    serde_json::json!({ "value": crate::settings::model_provider::has_key(&self.config.data_dir, provider).await }),
+                )
+            }
+            "ai_provider" => {
+                let settings =
+                    crate::settings::model_provider::ModelProvider::load(&self.config.data_dir)
+                        .await?;
+                Ok(serde_json::json!({ "value": settings }))
+            }
+            "ai_provider_status" => {
+                let settings =
+                    crate::settings::model_provider::ModelProvider::load(&self.config.data_dir)
+                        .await?;
+                let local = tokio::time::timeout(std::time::Duration::from_secs(4), async {
+                    let (detected, _) = crate::api::rpc::mesh::assistant::detect_ollama().await;
+                    detected
+                        && crate::assistant::backends::ollama::model_supports_tools(
+                            crate::assistant::backends::ollama::OLLAMA_BASE_URL,
+                            crate::assistant::backends::ollama::OLLAMA_DEFAULT_MODEL,
+                        )
+                        .await
+                });
+                let (claude, openai, local) = tokio::join!(
+                    crate::settings::model_provider::has_key(&self.config.data_dir, "claude"),
+                    crate::settings::model_provider::has_key(&self.config.data_dir, "openai"),
+                    local,
+                );
+                let budget = crate::assistant::AssistantBudget::load(&self.config.data_dir).await;
+                Ok(serde_json::json!({ "value": {
+                    "schema": 1, "settings": settings, "claude_configured": claude,
+                    "openai_configured": openai, "local_ready": local.ok(),
+                    "routstr_remaining_sats": budget.remaining_sats(),
+                }}))
             }
             _ => Ok(serde_json::json!({ "value": null })),
         }
@@ -1210,38 +1246,21 @@ impl RpcHandler {
         let value = params.get("value").and_then(|v| v.as_str()).unwrap_or("");
 
         match key {
-            "claude_api_key" => {
-                let secrets_dir = self.config.data_dir.join("secrets");
-                tokio::fs::create_dir_all(&secrets_dir)
-                    .await
-                    .context("Failed to create secrets dir")?;
-                let key_file = secrets_dir.join("claude-api-key");
-
-                if value.is_empty() {
-                    // Remove key
-                    tokio::fs::remove_file(&key_file).await.ok();
-                    info!("Claude API key removed");
+            "claude_api_key" | "openai_api_key" => {
+                let provider = if key == "claude_api_key" {
+                    "claude"
                 } else {
-                    // Save key
-                    tokio::fs::write(&key_file, value)
-                        .await
-                        .context("Failed to write API key")?;
-                    #[cfg(unix)]
-                    {
-                        use std::os::unix::fs::PermissionsExt;
-                        std::fs::set_permissions(&key_file, std::fs::Permissions::from_mode(0o600))
-                            .ok();
-                    }
-                    info!("Claude API key saved");
-                }
-
-                // `secrets/claude-api-key` (above) is deliberately the ONLY
-                // Claude key ledger on this node (13-02-PLAN.md). A second
-                // copy used to be written alongside it for a standalone,
-                // unauthenticated sidecar process on port 3142 — that
-                // sidecar and its key copy are retired; the session-gated
-                // Rust daemon reads this one file directly.
-
+                    "openai"
+                };
+                crate::settings::model_provider::save_key(&self.config.data_dir, provider, value)
+                    .await?;
+                info!(provider, "AI provider credential updated");
+                Ok(serde_json::json!({ "saved": true }))
+            }
+            "ai_provider" => {
+                let settings: crate::settings::model_provider::ModelProvider =
+                    serde_json::from_str(value).context("Invalid AI provider settings")?;
+                settings.save(&self.config.data_dir).await?;
                 Ok(serde_json::json!({ "saved": true }))
             }
             _ => anyhow::bail!("Unknown setting: {}", key),

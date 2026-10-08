@@ -82,6 +82,7 @@
         :node-count="fleet.nodes.value.length"
         :online-count="fleet.onlineCount.value"
         :offline-count="fleet.offlineCount.value"
+        :unknown-count="fleet.unknownCount.value"
         :fleet-health-pct="fleet.fleetHealthPct.value"
         :healthy-count="fleet.healthyCount.value"
         :avg-cpu="fleet.avgCpu.value"

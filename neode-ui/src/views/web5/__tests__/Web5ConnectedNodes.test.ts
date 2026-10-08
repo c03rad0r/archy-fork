@@ -1,7 +1,9 @@
-import { mount } from '@vue/test-utils'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { mount, flushPromises, enableAutoUnmount } from '@vue/test-utils'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import Web5ConnectedNodes from '../Web5ConnectedNodes.vue'
 import { rpcClient } from '@/api/rpc-client'
+
+enableAutoUnmount(afterEach)
 
 vi.mock('vue-router', () => ({
   useRouter: () => ({ push: vi.fn() }),
@@ -15,6 +17,7 @@ vi.mock('@/api/rpc-client', () => ({
   rpcClient: {
     listPeers: vi.fn(() => new Promise(() => {})),
     federationListNodes: vi.fn().mockResolvedValue({ nodes: [] }),
+    federationListPendingRequests: vi.fn().mockResolvedValue({ requests: [] }),
     checkPeerReachable: vi.fn().mockResolvedValue({ reachable: false }),
     call: vi.fn(),
   },
@@ -41,6 +44,7 @@ vi.mock('@/composables/useModalKeyboard', () => ({
 describe('Web5ConnectedNodes', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    sessionStorage.clear()
   })
 
   it('shows a loading state for empty trusted nodes while peers are loading', async () => {
@@ -83,4 +87,43 @@ describe('Web5ConnectedNodes', () => {
 
     expect(wrapper.text()).toContain('Please connect')
   })
+  it('shows Nostr requests beside legacy requests without requiring discovery first', async () => {
+    vi.mocked(rpcClient.call).mockResolvedValue({ requests: [] })
+    vi.mocked(rpcClient.federationListPendingRequests).mockResolvedValueOnce({ requests: [{
+      id: 'nostr-1', from_did: 'did:key:yaya', from_name: 'Yaya', from_nostr_npub: 'npub1yaya',
+      from_nostr_pubkey: 'abc', message: null, received_at: new Date().toISOString(), state: 'approved', outbound: false,
+    }] })
+    const wrapper = mount(Web5ConnectedNodes)
+    await wrapper.vm.loadConnectionRequests()
+    expect(wrapper.text()).toContain('Yaya')
+    expect(wrapper.text()).toContain('Approved — connecting')
+    expect(wrapper.text()).not.toContain('web5.noRequests')
+  })
+
+  it('renders direct peers while federation is slow and distinguishes probe failure from unreachable', async () => {
+    vi.mocked(rpcClient.listPeers).mockResolvedValueOnce({ peers: [
+      { onion: 'online.onion', pubkey: 'online', name: 'Available node' },
+      { onion: 'failed.onion', pubkey: 'failed', name: 'Query failed' },
+      { onion: 'offline.onion', pubkey: 'offline', name: 'No route' },
+    ] })
+    let finish!: (value: { nodes: [] }) => void
+    vi.mocked(rpcClient.federationListNodes).mockReturnValueOnce(new Promise(resolve => { finish = resolve }))
+    vi.mocked(rpcClient.checkPeerReachable).mockImplementation(async onion => {
+      if (onion === 'failed.onion') throw new Error('unauthorized')
+      return { onion, reachable: onion === 'online.onion' }
+    })
+    const wrapper = mount(Web5ConnectedNodes)
+    const load = wrapper.vm.loadPeers()
+    await flushPromises()
+    expect(wrapper.text()).toContain('Available node')
+    expect(wrapper.text()).toContain('Status unknown')
+    finish({ nodes: [] })
+    await load
+    await flushPromises()
+    expect(wrapper.text()).toContain('Online · Last seen just now')
+    expect(wrapper.text()).toContain('Unreachable · No confirmed contact')
+    expect(wrapper.text()).toContain('Status unknown · No confirmed contact')
+    expect(wrapper.text()).not.toContain('Offline for')
+  })
+
 })

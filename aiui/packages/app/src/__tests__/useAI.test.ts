@@ -249,6 +249,24 @@ describe('useAI', () => {
       expect(chatStore.isStreaming).toBe(false)
     })
 
+    it.each([502, 503, 429, 401])('distinguishes HTTP %s from a missing credential', async (status) => {
+      globalThis.fetch = vi.fn().mockResolvedValue({ ok: false, status, text: async () => 'Provider request failed' })
+      const store = useChatStore(); store.webSearchEnabled = false
+      const ai = useAI(); ai.needsApiKey.value = false
+      await ai.sendMessage('test')
+      expect(ai.needsApiKey.value).toBe(status === 401)
+      expect(store.isStreaming).toBe(false)
+    })
+
+    it('offers funding for a Routstr payment-required response without mislabeling it a key error', async () => {
+      globalThis.fetch = vi.fn().mockResolvedValue({ ok: false, status: 402, text: async () => JSON.stringify({ error: { message: 'Your spending allowance is exhausted' } }) })
+      const store = useChatStore(); store.webSearchEnabled = false
+      const ai = useAI(); ai.setProvider('routstr'); ai.needsApiKey.value = false; ai.needsFunding.value = false
+      await ai.sendMessage('test')
+      expect(ai.needsFunding.value).toBe(true); expect(ai.needsApiKey.value).toBe(false)
+      expect(store.messages.find(m => m.role === 'assistant')?.content).toContain('spending allowance')
+    })
+
     it('handles connection errors gracefully', async () => {
       globalThis.fetch = vi.fn().mockRejectedValue(new Error('Network failure'))
 

@@ -159,4 +159,4 @@ export interface DwnMessageEntry {
 
 export type VisibilityLevel = 'hidden' | 'discoverable' | 'public'
 
-export type Peer = { onion: string; pubkey: string; name?: string; did?: string }
+export type Peer = { onion: string; pubkey: string; name?: string; did?: string; last_seen?: string }

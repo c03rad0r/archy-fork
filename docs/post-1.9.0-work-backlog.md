@@ -1,8 +1,17 @@
 # Work requested after 1.9.0-alpha
 
-Status: queued by the operator on 2026-10-05. Complete the current release first;
-these requests do not silently expand its artifact scope. No implementation or
-acceptance is claimed by this backlog.
+Status: implementation and qualification in progress. 1.9.0-alpha was published
+separately; these follow-ups are not in its immutable artifacts. The list below
+remains the complete acceptance scope, not a claim that every item is finished.
+
+Current evidence is recorded in [Fleet metrics](fleet-metrics-followup.md),
+[peering reliability](peering-reliability-followup.md), and the
+[IndeeHub design review](indeehub-distribution-current-design.md). Monitoring and
+the tested signer/dashboard candidate are deployed to dev and Yaya with rollback
+backups; actual IndeeHub image publication is deferred until the end as requested.
+Framework's authenticated Monitoring check awaits an operator dashboard login.
+Streaming, storage-source integrations, AIUI setup, V4V packaging/player,
+companion hardware checks and the full Fleet acceptance matrix remain open.
 
 ## 1. Distributed IndeeHub publishing and paid viewing
 
