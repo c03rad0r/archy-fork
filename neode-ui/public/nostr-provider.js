@@ -144,6 +144,7 @@
   // call. Keeping this as an optional companion API preserves NIP-07 compatibility
   // while allowing users to change their node identity when they log in again.
   function selectIdentity() {
+    autoAuthSuspended = false;
     if (identitySelection) {
       identitySelection.reject(new Error('A node identity choice is already open'));
       clearTimeout(identitySelection.timer);
@@ -164,21 +165,86 @@
     });
   }
 
+  // JWT claims are a reuse hint only; the API still verifies the signature.
+  // Never let an unrelated or expired app session override the chosen node key.
+  function tokenMatchesIdentity(token, pubkey) {
+    try {
+      if (typeof token !== 'string' || !pubkey) return false;
+      var parts = token.split('.');
+      if (parts.length !== 3 || !parts.every(function (part) { return /^[A-Za-z0-9_-]+$/.test(part); })) return false;
+      var encoded = parts[1].replace(/-/g, '+').replace(/_/g, '/');
+      while (encoded.length % 4) encoded += '=';
+      var claims = JSON.parse(atob(encoded));
+      return claims.sub === pubkey && typeof claims.exp === 'number' &&
+        Number.isFinite(claims.exp) && claims.exp > Date.now() / 1000;
+    } catch (_) { return false; }
+  }
+
+  var authGeneration = 0, authAttempt = null, autoAuthTimer = null, autoAuthSuspended = false;
+  function clearSession() {
+    authGeneration++;
+    authAttempt = null;
+    clearTimeout(autoAuthTimer);
+    autoAuthSuspended = true;
+    var previous = selectedIdentity && selectedIdentity.nostr_pubkey;
+    selectedIdentity = null; selectedPublicKey = null;
+    clearTimeout(selectedPublicKeyTimer);
+    window.dispatchEvent(new CustomEvent('archipelago:identity-changing', { detail: { nostr_pubkey: null, previous_nostr_pubkey: previous } }));
+    // These are app session credentials, not stored accounts, profiles or keys.
+    try {
+      ['nostr_token', 'nostr_pubkey', 'refresh_token'].forEach(function (key) { sessionStorage.removeItem(key); });
+    } catch (_) {}
+  }
+
+  function scheduleIdentityAuth(pubkey) {
+    if (!autoNip98 || autoAuthSuspended) return;
+    try { if (tokenMatchesIdentity(sessionStorage.getItem('nostr_token'), pubkey)) return; } catch (_) {}
+    clearTimeout(autoAuthTimer);
+    var generation = authGeneration;
+    autoAuthTimer = setTimeout(function () {
+      if (generation === authGeneration && selectedIdentity && selectedIdentity.nostr_pubkey === pubkey) doNip98Auth(pubkey, generation);
+    }, 1500);
+  }
+
   function finishIdentitySelection(identity) {
     // The identity picker is itself an explicit choice to disclose this key.
     // Keep it briefly so the login library's immediately-following
     // getPublicKey() does not depend on another cross-origin WebView round trip.
     // This is deliberately one-shot and short-lived.
-    if (identity && typeof identity.nostr_pubkey === 'string' && identity.nostr_pubkey) {
+    if (identity && typeof identity.nostr_pubkey === 'string' && /^[0-9a-f]{64}$/.test(identity.nostr_pubkey)) {
+      var previous = selectedIdentity && selectedIdentity.nostr_pubkey;
+      var changed = previous !== identity.nostr_pubkey;
+      var storedToken = null;
+      try { storedToken = sessionStorage.getItem('nostr_token'); } catch (_) {}
+      var invalidSession = !!storedToken && !tokenMatchesIdentity(storedToken, identity.nostr_pubkey);
       selectedIdentity = { nostr_pubkey: identity.nostr_pubkey };
+      var displayName = identity.display_name || identity.name;
+      if (typeof displayName === 'string' && displayName.trim()) selectedIdentity.display_name = displayName.trim().slice(0, 160);
+      if (changed || (invalidSession && !authAttempt)) {
+        authGeneration++;
+        authAttempt = null;
+        clearTimeout(autoAuthTimer);
+        window.dispatchEvent(new CustomEvent('archipelago:identity-changing', { detail: {
+          nostr_pubkey: identity.nostr_pubkey, previous_nostr_pubkey: previous,
+        } }));
+      }
+      try {
+        if (!tokenMatchesIdentity(sessionStorage.getItem('nostr_token'), identity.nostr_pubkey)) {
+          ['nostr_token', 'nostr_pubkey', 'refresh_token'].forEach(function (key) { sessionStorage.removeItem(key); });
+        } else {
+          if (sessionStorage.getItem('nostr_pubkey') !== identity.nostr_pubkey) sessionStorage.removeItem('refresh_token');
+          sessionStorage.setItem('nostr_pubkey', identity.nostr_pubkey);
+        }
+      } catch (_) {}
       selectedPublicKey = identity.nostr_pubkey;
       clearTimeout(selectedPublicKeyTimer);
       selectedPublicKeyTimer = setTimeout(function () {
         selectedPublicKey = null;
         selectedPublicKeyTimer = null;
       }, 15000);
+      scheduleIdentityAuth(identity.nostr_pubkey);
       identitySubscribers.slice().forEach(function (subscriber) {
-        try { subscriber(selectedIdentity); } catch (error) {
+        try { subscriber(getSelectedIdentity()); } catch (error) {
           console.error('[nostr-provider] identity listener failed:', error);
         }
       });
@@ -187,7 +253,8 @@
     var selection = identitySelection;
     identitySelection = null;
     clearTimeout(selection.timer);
-    selection.resolve(identity);
+    if (!identity || !/^[0-9a-f]{64}$/.test(identity.nostr_pubkey)) selection.reject(new Error('Invalid native public key'));
+    else selection.resolve(getSelectedIdentity());
   }
 
   function cancelIdentitySelection() {
@@ -216,7 +283,7 @@
     var restoringSession = false;
     try {
       var sessionHint = sessionStorage.getItem('nostr_token');
-      restoringSession = !!sessionHint && sessionHint.indexOf('mock-') !== 0;
+      restoringSession = !!selectedIdentity && tokenMatchesIdentity(sessionHint, selectedIdentity.nostr_pubkey);
     } catch (_) {}
     // This is only a UI hint: the broker still verifies the node session and
     // signing permissions. A restored app token never authorizes a signature.
@@ -237,7 +304,7 @@
     }
     identitySubscribers.push(subscriber);
     if (selectedIdentity) {
-      try { subscriber(selectedIdentity); } catch (error) {
+      try { subscriber(getSelectedIdentity()); } catch (error) {
         console.error('[nostr-provider] identity listener failed:', error);
       }
     }
@@ -249,12 +316,12 @@
   }
 
   function getSelectedIdentity() {
-    return selectedIdentity && { nostr_pubkey: selectedIdentity.nostr_pubkey };
+    return selectedIdentity && Object.assign({}, selectedIdentity);
   }
 
   window.addEventListener('message', function (e) {
     var validSource = embedded
-      ? e.source === window.parent
+      ? e.source === window.parent && e.origin === dashboardOrigin()
       : signerFrame && e.source === signerFrame.contentWindow && e.origin === dashboardOrigin();
     if (!validSource || !e.data) return;
 
@@ -275,7 +342,8 @@
       finishIdentitySelection(e.data.identity);
       window.postMessage({
         type: 'archipelago:identity',
-        nostr_pubkey: e.data.identity && e.data.identity.nostr_pubkey,
+        nostr_pubkey: selectedIdentity && selectedIdentity.nostr_pubkey,
+        display_name: selectedIdentity && selectedIdentity.display_name,
       }, window.location.origin);
       return;
     }
@@ -391,16 +459,21 @@
     selectIdentity: selectIdentity,
     onIdentitySelected: onIdentitySelected,
     getSelectedIdentity: getSelectedIdentity,
+    clearSession: clearSession,
   };
 
   // Optional direct NIP-98 session bootstrap for apps that use it. Signing
   // itself is shown by the shared broker, so this deliberately adds no second
   // full-screen loader inside the app.
-  var authDone = false;
-
-  function doNip98Auth(pubkey) {
-    if (authDone) return;
-    authDone = true;
+  function doNip98Auth(pubkey, generation) {
+    if (authAttempt || autoAuthSuspended) return;
+    var attempt = {};
+    authAttempt = attempt;
+    function current() {
+      return authAttempt === attempt && generation === authGeneration && !autoAuthSuspended &&
+        selectedIdentity && selectedIdentity.nostr_pubkey === pubkey;
+    }
+    function requireCurrent() { if (!current()) throw new Error('Identity choice changed'); }
     var healthUrl = window.location.origin + '/api/nostr-auth/health';
     var sessionUrl = window.location.origin + '/api/auth/nostr/session';
     var healthController = new AbortController();
@@ -408,6 +481,7 @@
 
     fetch(healthUrl, { signal: healthController.signal }).then(function (response) {
       clearTimeout(healthTimeout);
+      requireCurrent();
       if (!response.ok) throw new Error('Health ' + response.status);
       return window.nostr.signEvent({
         kind: 27235,
@@ -417,6 +491,8 @@
         tags: [['u', sessionUrl], ['method', 'POST']],
       });
     }).then(function (signed) {
+      requireCurrent();
+      if (!signed || signed.pubkey !== pubkey) throw new Error('Signer identity differs from selected identity');
       var controller = new AbortController();
       setTimeout(function () { controller.abort(); }, 10000);
       return fetch(sessionUrl, {
@@ -428,10 +504,12 @@
       if (!response.ok) throw new Error('Auth failed: ' + response.status);
       return response.json();
     }).then(function (data) {
-      if (!data.accessToken) throw new Error('Authentication returned no access token');
+      requireCurrent();
+      if (!tokenMatchesIdentity(data.accessToken, pubkey)) throw new Error('Authentication returned an expired or differently bound session');
       sessionStorage.setItem('nostr_token', data.accessToken);
       sessionStorage.setItem('nostr_pubkey', pubkey);
       if (data.refreshToken) sessionStorage.setItem('refresh_token', data.refreshToken);
+      else sessionStorage.removeItem('refresh_token');
       return waitForSignerToHide().then(function () {
         // Give WebView one paint after the iframe is hidden before replacing
         // the document. The stored session is already durable at this point.
@@ -441,6 +519,7 @@
           });
         });
       }).then(function () {
+        requireCurrent();
         if (window.ArchipelagoSurface &&
             typeof window.ArchipelagoSurface.expectPageTransition === 'function') {
           window.ArchipelagoSurface.expectPageTransition();
@@ -448,24 +527,12 @@
         window.location.reload();
       });
     }).catch(function (error) {
-      authDone = false;
+      if (authAttempt === attempt) authAttempt = null;
       var message = error && error.message ? error.message : String(error);
       if (message.toLowerCase().indexOf('abort') > -1) message = 'API timeout';
       console.warn('[nostr-provider] NIP-98 skipped:', message);
     });
   }
-
-  window.addEventListener('message', function (e) {
-    if (!e.data || e.data.type !== 'archipelago:identity' || !autoNip98) return;
-    if (e.source !== window && e.source !== window.parent) return;
-    var pubkey = e.data.nostr_pubkey;
-    if (!pubkey) return;
-    try {
-      var token = sessionStorage.getItem('nostr_token');
-      if (token && token.indexOf('mock-') === -1) return;
-    } catch (_) {}
-    setTimeout(function () { doNip98Auth(pubkey); }, 1500);
-  });
 
   // Only identity-aware apps open the chooser eagerly. The provider is also
   // injected into several ordinary app proxies; those stay untouched unless
