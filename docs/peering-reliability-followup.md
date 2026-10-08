@@ -62,3 +62,18 @@ route. Nostr requests were absent from its Requests tab and badge.
 The prior reply-rejection test expected a Pending row. This revision deliberately
 supersedes that behavior: the decision remains Approved with delivery pending,
 so a relay outage does not undo an operator decision or require reapproval.
+
+## Read-only reciprocal membership recheck — 2026-10-08
+
+Authenticated checks on the actual dev and Yaya nodes found exactly one entry
+for each other's previously recorded DID. Both relationships remain Observer,
+and each corresponding request remains Approved. Last contact was about34s
+and3s old respectively at the snapshot. No invite, approval, trust change,
+peer removal or explicit synchronization was issued. The check verified node
+hostnames and used existing private sessions without printing credentials.
+
+This closes the current persisted reciprocal-membership snapshot check, not the
+wider outage/reconnect, new approval handshake, relationship-removal UI or FIPS
+transport acceptance. Different unrelated peer counts are not treated as drift
+caused by this read-only check. Evidence and replay script are archived under
+`~/.local/state/archipelago/release-qualification/peering-readonly-20261008/`.
