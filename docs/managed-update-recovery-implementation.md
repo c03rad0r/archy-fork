@@ -507,3 +507,19 @@ and sleep by remaining time, and rejects success after the deadline. No mutation
 or pg_restore timeout is retried. **58 pure controller tests pass**, including
 ready-after-timeout, expired-deadline cleanup and late-success refusal. Another
 matching executable/full transaction and final combined suite remain pending.
+
+The 260e1327 matching executable built with unchanged inputs and passed the
+30-second actual manager startup check with all seven identities retained.
+Operation `81c9f6aa-555f-4bd3-b122-a8a957ed599b` safely refused when its
+read-only legacy business-state `psql` probe exceeded 30 seconds, before backup
+or target startup. Recovery preserved five original containers and recreated
+only the already-stopped frontend and worker; exact recipes, running state,
+boot identity and cleared holds/fence were independently verified. The exact
+query subsequently completed in 0.65 seconds without any timeout relaxation.
+
+A subsequent RPC was refused before transaction creation because package state
+remained Installing although installed.status was running and progress was null.
+Source review found byte-download progress unconditionally changes Updating to
+Installing; failure cleanup only releases Updating. The narrow progress-state
+fix and regression are pending. This is not full target rollback acceptance.
+The recovered guest is QMP-paused without reboot for serialized validation.
