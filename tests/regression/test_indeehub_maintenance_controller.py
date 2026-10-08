@@ -534,7 +534,7 @@ console.log('process identity cases passed');'''
  def test_relay_image_requires_qualified_base_or_completed_owned_recovery_lineage(self):
   import copy,hashlib
   image='d'*64;body='[Container]\nImage='+image+'\n';before='[Container]\nImage='+module.LEGACY_RELAY_IMAGE+'\n'
-  record={'schema':2,'id':self.operation,'package':'indeedhub','phase':'Restored','cleanup_done':True,'members':[{'original':{'name':'indeedhub-relay','image':module.LEGACY_RELAY_IMAGE,'body':before,'container_id':'e'*64},'pinned_original_body':body,'preserve_original':False,'recovery_image':{'image':image,'operation_id':self.operation,'source_container_id':'e'*64}}]}
+  record={'schema':2,'target_startup_began':False,'id':self.operation,'package':'indeedhub','phase':'Restored','cleanup_done':True,'members':[{'original':{'name':'indeedhub-relay','image':module.LEGACY_RELAY_IMAGE,'body':before,'container_id':'e'*64},'pinned_original_body':body,'preserve_original':False,'recovery_image':{'image':image,'operation_id':self.operation,'source_container_id':'e'*64}}]}
   digest=hashlib.sha256(body.encode()).hexdigest()
   module.verify_relay_image_lineage(module.LEGACY_RELAY_IMAGE,'unused',[])
   installed={'schema':1,'name':'indeedhub-relay','operation':self.operation,'body':body}
@@ -543,6 +543,13 @@ console.log('process identity cases passed');'''
    with self.assertRaises(RuntimeError):module.verify_relay_image_lineage(image,digest,[record],missing)
   for bad in [[],[record,record]]:
    with self.assertRaises(RuntimeError):module.verify_relay_image_lineage(image,digest,bad,installed)
+  post_target=copy.deepcopy(record);post_target['target_startup_began']=True;post_target['members'][0]['preserve_original']=None
+  module.verify_relay_image_lineage(image,digest,[post_target],installed)
+  for started,preserved in ((True,False),(False,None),(0,False),(1,None),(None,False)):
+   bad=copy.deepcopy(record);bad['target_startup_began']=started;bad['members'][0]['preserve_original']=preserved
+   with self.assertRaises(RuntimeError):module.verify_relay_image_lineage(image,digest,[bad],installed)
+  missing=copy.deepcopy(record);missing.pop('target_startup_began')
+  with self.assertRaises(RuntimeError):module.verify_relay_image_lineage(image,digest,[missing],installed)
   legacy=copy.deepcopy(record);legacy['schema']=1
   for malformed in (0,'false',[],{}):
    legacy['members'][0]['preserve_original']=malformed

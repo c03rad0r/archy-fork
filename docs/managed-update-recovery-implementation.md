@@ -449,3 +449,11 @@ The isolated manager remains stopped, PostgreSQL's original live identity and
 all recovery evidence remain intact. Keep the guest idle during serialized
 builds rather than rebooting and invalidating that identity. No Yaya application
 or catalog mutation has occurred, and full rollback/success remains pending.
+
+The `dc84a8b6` combined suite subsequently passed **2,025 tests**, with all 532
+inputs stable. Its matching executable attempt was deliberately stopped before
+completion when source review found that post-target rollback journals correctly
+retain `preserve_original: null`. Relay lineage now distinguishes that verified
+post-target state from pre-target `preserve_original: false`, and rejects missing
+or nonboolean startup markers and inconsistent pairs. The expanded 53 Python
+cases pass; the 2,025-test receipt predates this final helper-only correction.

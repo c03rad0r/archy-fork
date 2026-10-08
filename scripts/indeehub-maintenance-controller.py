@@ -104,7 +104,7 @@ def verify_relay_image_lineage(image, unit_sha256, records, installed=None):
             for member in relay:
                 original=member.get('original',{});recovery=member.get('recovery_image') or {}
                 if original.get('name')!='indeedhub-relay' or recovery.get('image','').removeprefix('sha256:')!=image:continue
-                require((record['schema']==1 and (member.get('preserve_original') is None or member.get('preserve_original') is False) or record['schema']==2 and member.get('preserve_original') is False) and recovery.get('operation_id')==record['id'] and recovery.get('source_container_id')==original.get('container_id'),'Relay recovery ownership changed')
+                require((record['schema']==1 and (member.get('preserve_original') is None or member.get('preserve_original') is False) or record['schema']==2 and (record.get('target_startup_began') is True and member.get('preserve_original') is None or record.get('target_startup_began') is False and member.get('preserve_original') is False)) and recovery.get('operation_id')==record['id'] and recovery.get('source_container_id')==original.get('container_id'),'Relay recovery ownership changed')
                 require(hashlib.sha256(member['pinned_original_body'].encode()).hexdigest()==unit_sha256,'Relay recovery unit lineage changed')
                 require(re.fullmatch('[0-9a-f]{64}',original.get('container_id','')) is not None,'Invalid relay source identity')
                 if len(seen)==1:require(isinstance(installed,dict) and installed.get('schema')==1 and installed.get('name')=='indeedhub-relay' and installed.get('operation')==record['id'] and installed.get('body')==member['pinned_original_body'],'Relay installed recipe does not own recovery lineage')
