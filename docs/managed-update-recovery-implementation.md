@@ -586,3 +586,42 @@ executed exactly once. This source change still requires matching embedded-helpe
 build and actual transaction acceptance; it does not close cutover or rollback.
 The current guest was QMP-paused without reboot to serialize worker runtime and
 backend process-fixture qualification.
+
+### Actual automatic-recovery race found and contained (2026-10-08)
+
+The 180-second helper matching fixture executable built with stable inputs:
+full SHA256 `9acf7970f1e2409733e22789a6264b347b3748ba45cee4b79c9e51f6c662acd9`,
+stripped VM `41a5fca8551e1d213c0d69ec24aa60534e4610282fbe3433beaa507933108761`,
+helper `6fc3f978cb88dbf022dc5bc07eaf0337c6b6b79ff42b20cee7b33ed7c100b879`.
+Actual manager startup and read-only API/Redis/PostgreSQL readiness passed with
+all seven identities retained. A first request correctly refused stale reviewed
+original-unit hashes after prior recovery, without creating a transaction. The
+old synthetic plan was archived; independently verified replacement plan
+`2ae10528245c5304d8107236ec91f1dda7609b85affab5aea385baf2f87cfbca` retained the
+intentional API post-install exit77 hook and exact current original-unit pins.
+
+Operation `23550e9e-cc0a-427b-9813-7aa1bfc0df5d` stopped the frontend cleanly,
+then refused the legacy worker's unknown process-exit result before backup or
+target startup. Podman could not observe PID death after SIGKILL; the 45-second
+systemd stop budget killed conmon, producing died exit code -1, not a proven
+137/143 termination. The stop safety check correctly refused this evidence.
+
+Separately, actual manager logs prove the periodic `crash_recovery` stack path
+restarted that same stopped original worker while transaction holds were active.
+At 07:24:17 it logged Recovering stack container, and at 07:24:18 started original
+ID `981d58a1f5613ccbf92d91c1dd404f247718ba7146448db9cdfc5b0acffd8527`.
+Supervised recovery then refused the unexpected live replacement. This is a
+confirmed competing recovery path, not merely a timeout inference.
+
+The fixture manager was stopped and barred, and the guest QMP-paused on its same
+boot. **Operation23550e9e remains unresolved Restoring/Recovering with holds and
+journal intact.** Never rewrite it to Restored or adopt the restarted identity as
+proof of successful rollback. No Yaya service or app data was changed.
+
+Source correction applies the existing saved-unit/hold fail-closed policy to
+whole stacks, holds the lifecycle lock across every alias/start mutation, reads
+stopped/uninstalled intent strictly and rechecks it before later mutations.
+Snapshot recovery uses the same stack-wide admission. Actual-path fake Podman
+regressions exercise managed/held/corrupt/operator-disabled siblings and ensure
+accepted mutation runs under the lifecycle lock. Compilation, isolated execution,
+matching executable and fresh actual transaction acceptance remain required.

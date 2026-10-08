@@ -728,7 +728,7 @@ fn parse_health_from_status(status: &str) -> Option<String> {
 /// Try to recover a container. Running containers need a real restart so
 /// rootless network helpers such as pasta are recreated; `podman start` is a
 /// no-op for a running container with a missing host listener.
-fn automatic_recovery_allowed(data_dir: &Path, name: &str) -> bool {
+pub(crate) fn automatic_recovery_allowed(data_dir: &Path, name: &str) -> bool {
     match (
         crate::container::supervised_update::installed_unit(data_dir, name),
         crate::container::update_transaction::is_held(data_dir, name),
@@ -739,6 +739,11 @@ fn automatic_recovery_allowed(data_dir: &Path, name: &str) -> bool {
 }
 
 async fn restart_container(name: &str, state: &str, data_dir: &Path) -> bool {
+    // Keep admission held across the command, so an update cannot acquire
+    // ownership after the policy check and race this automatic restart.
+    let Ok(_admission) = crate::container::update_transaction::Guard::acquire(data_dir) else {
+        return false;
+    };
     if !automatic_recovery_allowed(data_dir, name) {
         warn!(container = %name, "Automatic restart refused: reviewed managed runtime needs explicit recovery");
         return false;
@@ -1228,6 +1233,13 @@ pub fn spawn_health_monitor(state: Arc<StateManager>, data_dir: PathBuf) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn automatic_restart_refuses_competing_lifecycle_before_command() {
+        let root = tempfile::TempDir::new().unwrap();
+        let _guard = crate::container::update_transaction::Guard::acquire(root.path()).unwrap();
+        assert!(!restart_container("indeedhub-ffmpeg", "running", root.path()).await);
+    }
 
     #[tokio::test]
     async fn automatic_recovery_never_restarts_saved_held_or_damaged_managed_runtime() {

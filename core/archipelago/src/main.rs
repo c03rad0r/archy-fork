@@ -284,7 +284,7 @@ async fn main() -> Result<()> {
                 "🔧 Recovering {} containers from previous crash...",
                 containers.len()
             );
-            let report = crash_recovery::recover_containers(&containers).await;
+            let report = crash_recovery::recover_containers(&config.data_dir, &containers).await;
             info!(
                 "🔧 Recovery complete: {}/{} containers restarted (failed: {:?})",
                 report.recovered, report.total, report.failed
