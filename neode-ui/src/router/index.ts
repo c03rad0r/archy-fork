@@ -246,6 +246,16 @@ const router = createRouter({
           component: () => import('../views/AppRegistries.vue'),
         },
         {
+          path: 'setup/external-access',
+          name: 'external-access',
+          component: () => import('@/views/publishing/PublishingSetup.vue'),
+        },
+        {
+          path: 'setup/website',
+          name: 'publish-website',
+          component: () => import('@/views/publishing/PublishingSetup.vue'),
+        },
+        {
           path: 'goals/:goalId',
           name: 'goal-detail',
           component: () => import('../views/GoalDetail.vue'),

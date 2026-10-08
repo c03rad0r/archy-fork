@@ -406,7 +406,7 @@ async fn serve_connection(
     if is_tls {
         match gate.tls.acceptor().await {
             Some(acceptor) => match acceptor.accept(stream).await {
-                Ok(tls_stream) => serve_http(tls_stream, peer, gate, app).await,
+                Ok(tls_stream) => serve_http(tls_stream, peer, gate, app, true).await,
                 Err(e) => {
                     // Routine: a browser probing a cert it does not trust, or a
                     // scanner. Not operator-actionable, so debug.
@@ -424,18 +424,24 @@ async fn serve_connection(
             }
         }
     } else {
-        serve_http(stream, peer, gate, app).await;
+        serve_http(stream, peer, gate, app, false).await;
     }
 }
 
 /// The HTTP half, generic over the transport so TLS and plain share one path —
 /// the gate's authentication, proxying and upgrade handling must not differ by
 /// scheme, and generics make that structural rather than a thing to remember.
-async fn serve_http<S>(stream: S, peer: SocketAddr, gate: Arc<AppGate>, app: GatedPort)
-where
+async fn serve_http<S>(
+    stream: S,
+    peer: SocketAddr,
+    gate: Arc<AppGate>,
+    app: GatedPort,
+    secure: bool,
+) where
     S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send + 'static,
 {
-    let service = hyper::service::service_fn(move |req| {
+    let service = hyper::service::service_fn(move |mut req: hyper::Request<hyper::Body>| {
+        req.extensions_mut().insert(super::SecureTransport(secure));
         let gate = gate.clone();
         let app = app.clone();
         async move { Ok::<_, std::convert::Infallible>(gate.handle(req, &app, peer.ip()).await) }

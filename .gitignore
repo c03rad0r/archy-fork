@@ -162,3 +162,6 @@ uploads/
 
 # Generated PWA dev output (vite-plugin-pwa) — never a source artifact
 neode-ui/dev-dist/
+
+# Isolated feature worktree compilation and validation artifacts
+.build/

@@ -62,10 +62,13 @@ const props = withDefaults(defineProps<{
   maxWidth?: string
   zIndex?: string
   contentClass?: string
+  /** A parent flow may own one history entry across several modal panels. */
+  manageHistory?: boolean
 }>(), {
   maxWidth: 'max-w-md',
   zIndex: 'z-[3000]',
   contentClass: '',
+  manageHistory: true,
 })
 
 const emit = defineEmits<{
@@ -109,7 +112,7 @@ useBodyScrollLock(computed(() => props.show))
 // Browser/mouse/gesture Back closes the modal instead of navigating the
 // router out from under it — the native-app behaviour kiosk and mobile
 // browsers expect (the companion webview already provides it natively).
-useModalHistory(computed(() => props.show), close)
+useModalHistory(computed(() => props.show && props.manageHistory), close)
 </script>
 
 <style scoped>

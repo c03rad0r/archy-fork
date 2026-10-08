@@ -1800,25 +1800,42 @@ mod tests {
         );
     }
 
-    /// D-05: a fresh node's `AssistantBudget` defaults to a zero
-    /// allowance, and `select_backend` must never select Routstr in that
-    /// case — the operator sees Claude alone (or Claude's own error)
-    /// rather than a paid backend chosen and then declined at the payment
-    /// step.
+    /// Routstr is the default provider, but a fresh node cannot discover,
+    /// infer or pay until the operator explicitly sets an allowance.
     #[tokio::test]
-    async fn zero_allowance_never_selects_routstr() {
+    async fn default_routstr_with_zero_allowance_stops_before_network_or_payment() {
         let (handler, _tmp) = test_rpc_handler().await;
         let budget = AssistantBudget::load(handler.data_dir()).await;
-        assert_eq!(
-            budget.allowance_sats, 0,
-            "a fresh node must default to a zero allowance"
-        );
+        assert_eq!(budget.allowance_sats, 0);
+        let (backend, id) = backends::select_backend(&handler).await;
+        assert_eq!(id, backends::BackendId::Routstr);
+        let result = tokio::time::timeout(
+            std::time::Duration::from_secs(1),
+            backend.send("synthetic", &[], &[]),
+        )
+        .await
+        .expect("zero allowance must stop before provider discovery");
+        let error = result.err().expect("zero allowance cannot run inference");
+        assert!(error.to_string().contains("spending allowance"));
+        let after = AssistantBudget::load(handler.data_dir()).await;
+        assert_eq!(after.allowance_sats, 0);
+        assert_eq!(after.spent_sats, 0);
+    }
+
+    /// Keep the saved legacy automatic selection behavior: zero allowance
+    /// must not enable the paid fallback.
+    #[tokio::test]
+    async fn automatic_selection_with_zero_allowance_never_selects_routstr() {
+        let (handler, _tmp) = test_rpc_handler().await;
+        crate::settings::model_provider::ModelProvider {
+            provider: crate::settings::model_provider::Provider::Auto,
+            openai_model: String::new(),
+        }
+        .save(handler.data_dir())
+        .await
+        .unwrap();
         let (_backend, id) = backends::select_backend(&handler).await;
-        assert_ne!(
-            id,
-            backends::BackendId::Routstr,
-            "a zero allowance must never select Routstr"
-        );
+        assert_ne!(id, backends::BackendId::Routstr);
     }
 
     /// D-05: `payment_policy()`'s ceiling is computed ONLY from the

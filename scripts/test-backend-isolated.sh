@@ -11,6 +11,7 @@ metadata=$(mktemp)
 trap 'rm -f "$metadata"' EXIT
 case "${ARCHY_TEST_PACKAGE:-archipelago}" in
   archipelago) test_target=(-p archipelago --bin archipelago) ;;
+  archipelago-publishing-tests) test_target=(-p archipelago-publishing-tests --lib) ;;
   archipelago-container) test_target=(-p archipelago-container --lib) ;;
   *) echo 'Unsupported isolated test package' >&2; exit 2 ;;
 esac

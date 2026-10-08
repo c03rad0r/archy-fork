@@ -219,3 +219,6 @@ app:
   nostr_integration:
     relay_type: public
     monetization_enabled: true
+
+  metadata:
+    guest_access: true

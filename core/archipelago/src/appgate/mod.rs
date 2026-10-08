@@ -50,6 +50,8 @@ use tokio::sync::RwLock;
 /// Paths the gate serves itself rather than proxying. Namespaced so an app
 /// that happens to have its own `/login` is unaffected.
 const GATE_PREFIX: &str = "/__archipelago-gate/";
+#[derive(Clone, Copy)]
+pub(crate) struct SecureTransport(pub bool);
 
 /// Result of examining a request's credentials.
 #[derive(Debug, PartialEq, Eq)]
@@ -60,6 +62,11 @@ pub enum Authorization {
     /// `Authorization: Bearer <device token>` — strip that header before the
     /// app sees it, exactly as the session cookie is stripped.
     AllowGateToken,
+    /// App-only cookie; never repair or issue a dashboard session for it.
+    AllowGuest,
+    /// Expiring external guest credential presented as an API bearer token.
+    /// It still requires the current port's guest opt-in and is stripped.
+    AllowGuestToken,
     /// Serve the login page.
     Challenge,
 }
@@ -105,7 +112,7 @@ impl AppGate {
 
     /// Does this request carry a credential good for `app_id`?
     ///
-    /// Two accepted forms, deliberately no others:
+    /// Accepted credentials retain distinct scopes:
     ///
     /// * the node session cookie — and because a session still pending its
     ///   TOTP step fails `validate()`, **2FA is honoured here for free**. The
@@ -113,6 +120,8 @@ impl AppGate {
     /// * an app-scoped bearer token, for machine clients that speak HTTP but
     ///   cannot hold a cookie or complete an interactive login (Home
     ///   Assistant reaching an app's API is the motivating case).
+    /// * a separately named app-only cookie, with live scope/expiry/revocation
+    ///   checks and no ability to authenticate to dashboard RPC.
     pub async fn authorize(&self, headers: &HeaderMap, app_id: &str) -> Authorization {
         if let Some(token) = crate::session::extract_session_cookie(headers) {
             if self.sessions.validate(&token).await {
@@ -120,12 +129,29 @@ impl AppGate {
             }
         }
 
+        let guest_enabled = self
+            .port_map
+            .read()
+            .await
+            .gated_ports()
+            .any(|p| p.app_id == app_id && p.guest_access && p.auth_enabled);
         if let Some(token) = bearer_token(headers) {
-            if crate::device_tokens::verify_for_app(&self.data_dir, &token, app_id)
-                .await
-                .is_some()
+            if let Some(credential) =
+                crate::device_tokens::verified_app_token(&self.data_dir, &token, app_id).await
             {
-                return Authorization::AllowGateToken;
+                if !credential.name.starts_with("external:") || credential.apps.is_none() {
+                    return Authorization::AllowGateToken;
+                }
+                if guest_enabled {
+                    return Authorization::AllowGuestToken;
+                }
+            }
+        }
+        if guest_enabled {
+            if let Some(token) = cookie_value(headers, &format!("archy_app_access_{app_id}")) {
+                if crate::device_tokens::verify_guest(&self.data_dir, &token, app_id).await {
+                    return Authorization::AllowGuest;
+                }
             }
         }
 
@@ -156,7 +182,30 @@ impl AppGate {
                 ))
                 .unwrap();
         }
+        // A managed public route must still refer to this guest-enabled app.
+        // Refuse stale routes before login actions or public-resource exceptions.
+        if let Some(expected) = req.headers().get("x-archipelago-app") {
+            if expected.to_str().ok() != Some(app.app_id.as_str())
+                || live.is_none()
+                || !app.declared
+                || !app.guest_access
+                || !app.auth_enabled
+                || app.session_passthrough
+            {
+                return Response::builder()
+                    .status(StatusCode::NOT_FOUND)
+                    .body(Body::from("App route is no longer available"))
+                    .unwrap();
+            }
+        }
 
+        // Managed gateway routes are HTTPS-only. Mark cookies Secure even
+        // though the final in-node FIPS hop uses HTTP. A forged header can only
+        // strengthen this cookie attribute, never grant authorization.
+        let mut req = req;
+        if req.headers().contains_key("x-archipelago-app") {
+            req.extensions_mut().insert(SecureTransport(true));
+        }
         let path = req.uri().path().to_string();
         // A dashboard same-origin proxy strips `/app/<id>/` before this gate
         // sees the URI. Carry that trusted proxy mount into the challenge's
@@ -226,12 +275,20 @@ impl AppGate {
             }
             // The credential WAS the Authorization header, and it was ours.
             Authorization::AllowGateToken => proxy_to_app(req, app, true).await,
+            Authorization::AllowGuest if app.guest_access && !app.session_passthrough => {
+                proxy_to_app(req, app, false).await
+            }
+            Authorization::AllowGuestToken if app.guest_access && !app.session_passthrough => {
+                proxy_to_app(req, app, true).await
+            }
             // 401 rather than a redirect: a redirect to a login page is
             // indistinguishable from the app itself redirecting, and machine
             // clients would follow it and parse HTML as if it were their API
             // response. The status says "you are not authenticated" in a way
             // every client understands, and browsers still render the body.
-            Authorization::Challenge => {
+            Authorization::Challenge
+            | Authorization::AllowGuest
+            | Authorization::AllowGuestToken => {
                 login_page(app, None, StatusCode::UNAUTHORIZED, &mount_prefix)
             }
         }
@@ -279,6 +336,16 @@ impl AppGate {
         // never appears in the HTML, in a `view-source`, or in a screenshot
         // of the second-factor page.
         let pending = crate::session::extract_session_cookie(req.headers());
+        let secure = req
+            .extensions()
+            .get::<SecureTransport>()
+            .map(|s| s.0)
+            .unwrap_or(false)
+            || req
+                .headers()
+                .get("x-forwarded-proto")
+                .and_then(|v| v.to_str().ok())
+                == Some("https");
 
         // Same limiter instance as the JSON-RPC login path, so an attacker
         // cannot get a fresh budget of guesses simply by moving to an app
@@ -305,6 +372,26 @@ impl AppGate {
         };
 
         match action {
+            "guest" if app.guest_access && app.auth_enabled => {
+                let token = field(&form, "access_token").unwrap_or_default();
+                if !crate::device_tokens::verify_guest(&self.data_dir, &token, &app.app_id).await {
+                    self.limiter.record_failure(client_ip).await;
+                    return login_page(
+                        app,
+                        Some("App access token is invalid, expired or revoked."),
+                        StatusCode::UNAUTHORIZED,
+                        mount_prefix,
+                    );
+                }
+                let mut response = redirect_to_app(mount_prefix);
+                // Host-only and app-specific. A token is rechecked on EVERY
+                // request, so revocation and its expiry apply immediately.
+                let suffix = if secure { "; Secure" } else { "" };
+                if let Ok(cookie) = header::HeaderValue::from_str(&format!("archy_app_access_{}={token}; HttpOnly; SameSite=Lax; Path=/; Max-Age=3600{suffix}", app.app_id)) {
+                    response.headers_mut().append(header::SET_COOKIE, cookie);
+                }
+                response
+            }
             "login" => self.do_login(app, &form, client_ip, mount_prefix).await,
             "totp" => {
                 self.do_totp(app, &form, pending, client_ip, mount_prefix)
@@ -545,6 +632,9 @@ async fn proxy_to_app(
 
     let (mut parts, body) = req.into_parts();
     parts.uri = uri;
+    strip_matching_cookies(&mut parts.headers, |name| {
+        name.starts_with("archy_app_access_")
+    });
     // Strip the gate's own credential before it reaches the app — the app
     // should never be in a position to log, echo, or forward the node
     // session. But ONLY the gate's cookies: apps run their own cookie logins
@@ -672,12 +762,18 @@ fn neutralize_frame_blocking(headers: &mut hyper::HeaderMap) {
 }
 
 /// Cookie names owned by the gate/daemon, never the app's to see.
-const GATE_COOKIE_NAMES: &[&str] = &["session", "csrf_token"];
+const GATE_COOKIE_NAMES: &[&str] = &["session", "csrf_token", "remember"];
 
 /// Remove the gate's own cookie pairs from the Cookie header, preserving the
 /// app's cookies (its login/session/prefs) untouched. Drops the header
 /// entirely when nothing remains.
 fn strip_gate_cookies(headers: &mut hyper::HeaderMap) {
+    strip_matching_cookies(headers, |name| {
+        GATE_COOKIE_NAMES.contains(&name) || name.starts_with("archy_app_access_")
+    });
+}
+
+fn strip_matching_cookies(headers: &mut hyper::HeaderMap, remove: fn(&str) -> bool) {
     let Some(cookie) = headers.get(header::COOKIE) else {
         return;
     };
@@ -691,7 +787,7 @@ fn strip_gate_cookies(headers: &mut hyper::HeaderMap) {
         .map(str::trim)
         .filter(|pair| {
             let name = pair.split('=').next().unwrap_or("").trim();
-            !GATE_COOKIE_NAMES.contains(&name)
+            !remove(name)
         })
         .filter(|pair| !pair.is_empty())
         .collect();
@@ -1289,7 +1385,8 @@ fn login_page(
 <form method="post" action="{prefix}login">
 <input type="password" name="password" placeholder="Node password" autocomplete="current-password" autofocus required>
 <button type="submit"><span class="idle">Sign in</span><span class="busy">{spinner}Signing in…</span></button>
-</form>"#,
+</form>
+{guest_form}"#,
         logo = logo_markup(),
         spinner = SPINNER_SVG,
         icon = icon_markup(app),
@@ -1298,6 +1395,14 @@ fn login_page(
             .map(|e| format!(r#"<div class="err">{}</div>"#, esc(e)))
             .unwrap_or_default(),
         prefix = gate_url(mount_prefix, ""),
+        guest_form = if app.guest_access && app.auth_enabled {
+            format!(
+                r#"<details><summary>Have an app-only access token?</summary><p class="sub">This opens only this app, without a dashboard login. The app may also require its own account.</p><form method="post" action="{}"><input type="password" name="access_token" placeholder="App access token" autocomplete="off" required><button type="submit">Open this app</button></form></details>"#,
+                gate_url(mount_prefix, "guest")
+            )
+        } else {
+            String::new()
+        },
     );
     page("Sign in", app, &body, status, mount_prefix)
 }
@@ -1332,6 +1437,122 @@ fn totp_page(
 
 #[cfg(test)]
 mod tests {
+
+    #[tokio::test]
+    async fn managed_gateway_rejects_stale_identity_or_disabled_guest_policy_before_login() {
+        let gate = test_gate().await;
+        let mut app = app();
+        app.guest_access = true;
+        for (expected, enabled, declared) in [
+            ("another-app", true, true),
+            ("strfry", false, true),
+            ("strfry", true, false),
+        ] {
+            app.auth_enabled = enabled;
+            app.declared = declared;
+            *gate.port_map.write().await = identity::test_port_map(app.clone());
+            for path in ["/", "/manifest.json", "/__archipelago-gate/guest"] {
+                let request = Request::get(path)
+                    .header("x-archipelago-app", expected)
+                    .body(Body::empty())
+                    .unwrap();
+                let response = gate
+                    .handle(request, &app, "127.0.0.1".parse().unwrap())
+                    .await;
+                assert_eq!(response.status(), StatusCode::NOT_FOUND);
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn guest_login_is_app_only_and_revocation_blocks_subsequent_requests() {
+        let gate = test_gate().await;
+        let mut app = app();
+        app.guest_access = true;
+        *gate.port_map.write().await = identity::test_port_map(app.clone());
+        let token = crate::device_tokens::create_scoped_expiring(
+            &gate.data_dir,
+            "external:test:Guest",
+            Some(vec![app.app_id.clone()]),
+            Some(u64::MAX),
+        )
+        .await
+        .unwrap();
+        let mut request = Request::post(format!("{GATE_PREFIX}guest"))
+            .header("content-type", "application/x-www-form-urlencoded")
+            .body(Body::from(format!("access_token={token}")))
+            .unwrap();
+        request.extensions_mut().insert(SecureTransport(true));
+        let response = gate
+            .handle(request, &app, "127.0.0.1".parse().unwrap())
+            .await;
+        assert_eq!(response.status(), StatusCode::SEE_OTHER);
+        let cookies: Vec<_> = response
+            .headers()
+            .get_all(header::SET_COOKIE)
+            .iter()
+            .map(|h| h.to_str().unwrap())
+            .collect();
+        assert_eq!(cookies.len(), 1);
+        assert!(
+            cookies[0].starts_with("archy_app_access_strfry=")
+                && cookies[0].contains("; Secure")
+                && cookies[0].contains("HttpOnly")
+        );
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            header::COOKIE,
+            cookies[0].split(';').next().unwrap().parse().unwrap(),
+        );
+        assert_eq!(
+            gate.authorize(&headers, &app.app_id).await,
+            Authorization::AllowGuest
+        );
+        assert_eq!(
+            gate.authorize(&headers, "lnd").await,
+            Authorization::Challenge
+        );
+        assert!(!gate.sessions.validate(&token).await);
+        assert!(crate::device_tokens::verify(&gate.data_dir, &token)
+            .await
+            .is_none());
+        let mut bearer = HeaderMap::new();
+        bearer.insert(
+            header::AUTHORIZATION,
+            format!("Bearer {token}").parse().unwrap(),
+        );
+        assert_eq!(
+            gate.authorize(&bearer, &app.app_id).await,
+            Authorization::AllowGuestToken
+        );
+        app.guest_access = false;
+        *gate.port_map.write().await = identity::test_port_map(app.clone());
+        assert_eq!(
+            gate.authorize(&bearer, &app.app_id).await,
+            Authorization::Challenge
+        );
+        assert_eq!(
+            gate.authorize(&headers, &app.app_id).await,
+            Authorization::Challenge
+        );
+        app.guest_access = true;
+        *gate.port_map.write().await = identity::test_port_map(app.clone());
+        crate::device_tokens::remove(&gate.data_dir, "external:test:Guest")
+            .await
+            .unwrap();
+        assert_eq!(
+            gate.authorize(&headers, &app.app_id).await,
+            Authorization::Challenge
+        );
+    }
+
+    #[test]
+    fn guest_and_remember_credentials_never_reach_the_app() {
+        let mut headers = HeaderMap::new();
+        headers.insert(header::COOKIE, "session=owner; remember=master; csrf_token=csrf; archy_app_access_nextcloud=guest; own_app_session=keep".parse().unwrap());
+        strip_gate_cookies(&mut headers);
+        assert_eq!(headers[header::COOKIE], "own_app_session=keep");
+    }
 
     #[test]
     fn credentialless_allowlist_covers_the_manifest_that_broke_apps() {
@@ -1369,6 +1590,7 @@ mod tests {
 
     fn app() -> GatedPort {
         GatedPort {
+            guest_access: false,
             port: 8090,
             app_id: "strfry".to_string(),
             app_name: "Strfry Relay".to_string(),

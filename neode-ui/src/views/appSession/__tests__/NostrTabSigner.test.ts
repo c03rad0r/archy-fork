@@ -18,6 +18,23 @@ describe('NostrTabSigner visibility', () => {
     window.dispatchEvent(event)
   }
 
+  it('sends cloneable public identity fields and hides the frame after picker selection', async () => {
+    vi.useFakeTimers()
+    const postMessage = vi.spyOn(window.parent, 'postMessage').mockImplementation(message => {
+      structuredClone(message) // Browser postMessage rejects Vue reactive proxies.
+    })
+    const wrapper = shallowMount(NostrTabSigner)
+    try {
+      parentMessage({ type: 'archipelago:signer-init', appId: 'blossom', appName: 'Blossom' })
+      const identity = reactive({ id: 'profile', name: 'Alice', did: 'did:example:alice', pubkey: 'public', nostr_pubkey: 'a'.repeat(64) })
+      wrapper.findComponent({ name: 'NostrIdentityPicker' }).vm.$emit('select', identity)
+      await Promise.resolve()
+      expect(postMessage).toHaveBeenCalledWith(expect.objectContaining({ type: 'archipelago:signer-identity', identity: expect.objectContaining({ id: 'profile' }) }), window.location.origin)
+      await vi.advanceTimersByTimeAsync(450)
+      expect(postMessage).toHaveBeenCalledWith({ type: 'archipelago:signer-hide' }, window.location.origin)
+    } finally { wrapper.unmount(); vi.useRealTimers() }
+  })
+
   it('does not reveal the full-screen frame for a silent remembered request', async () => {
     localStorage.setItem('archipelago_app_identity_archipelago-source', JSON.stringify({
       id: 'identity-a',

@@ -231,6 +231,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "archipelago-publishing-tests"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "chrono",
+ "hyper 0.14.32",
+ "reqwest 0.11.27",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+ "tempfile",
+ "tokio",
+ "uuid",
+]
+
+[[package]]
 name = "archipelago-security"
 version = "0.1.0"
 dependencies = [

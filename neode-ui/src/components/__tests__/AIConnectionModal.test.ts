@@ -1,15 +1,49 @@
 import { mount, flushPromises } from '@vue/test-utils'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import AIConnectionModal from '../AIConnectionModal.vue'
+import ReceiveBitcoinModal from '../ReceiveBitcoinModal.vue'
+import WalletScanModal from '../WalletScanModal.vue'
 import { rpcClient } from '@/api/rpc-client'
 vi.mock('@/api/rpc-client', () => ({ rpcClient: { call: vi.fn() } }))
-vi.mock('../ReceiveBitcoinModal.vue', () => ({ default: { props: ['show', 'initialMethod'], template: '<div />' } }))
+vi.mock('../WalletScanModal.vue', () => ({ default: { props: ['show'], template: '<div />' } }))
+vi.mock('../ReceiveBitcoinModal.vue', () => ({ default: { props: ['show', 'initialMethod', 'manageHistory'], template: '<div />' } }))
 vi.mock('@/views/settings/RoutstrBudgetSection.vue', () => ({ default: { template: '<div />' } }))
 const state = () => ({ schema: 1, settings: { provider: 'auto', openai_model: '' }, claude_configured: false, openai_configured: false, local_ready: false, routstr_remaining_sats: 0 })
 function mountModal() { return mount(AIConnectionModal, { props: { show: false }, global: { stubs: { BaseModal: { props: ['show'], template: '<div v-if="show"><slot /></div>' } } } }) }
 function button(w: ReturnType<typeof mountModal>, label: string) { return w.findAll('button').find(b => b.text() === label)! }
 beforeEach(() => { vi.clearAllMocks(); vi.mocked(rpcClient.call).mockImplementation(async ({ method }) => method === 'system.settings.get' ? { value: state() } : {}) })
 describe('AI connection setup', () => {
+  it('recognizes the existing Claude key and selects it without reading or rewriting the secret', async () => {
+    vi.mocked(rpcClient.call).mockImplementation(async ({ method }) => method === 'system.settings.get' ? { value: { ...state(), claude_configured: true } } : {})
+    const w = mountModal(); await w.setProps({ show: true }); await flushPromises()
+    await button(w, 'Claude API').trigger('click')
+    expect(w.text()).toContain('Your Claude API key from Settings is ready to use.')
+    expect(w.find('#ai-connection-key').exists()).toBe(false)
+    expect(button(w, 'Use Claude').attributes('disabled')).toBeUndefined()
+    await w.get('form').trigger('submit'); await flushPromises()
+    const writes = vi.mocked(rpcClient.call).mock.calls.map(([r]) => r).filter(r => r.method === 'system.settings.set')
+    expect(writes.map(r => r.params)).toEqual([{ key: 'ai_provider', value: JSON.stringify({ provider: 'claude', openai_model: '' }) }])
+    expect(w.emitted('configured')).toEqual([['claude', undefined]])
+    await button(w, 'Change API key').trigger('click')
+    expect((w.get('#ai-connection-key').element as HTMLInputElement).value).toBe('')
+    await w.setProps({ show: false }); w.unmount()
+  })
+
+  it('opens on Routstr with a top-up action without authorizing spending', async () => {
+    const w = mountModal(); await w.setProps({ show: true }); await flushPromises()
+    expect(button(w, 'Routstr · sats').attributes('aria-pressed')).toBe('true')
+    expect(button(w, 'Top up with ecash').exists()).toBe(true)
+    expect(vi.mocked(rpcClient.call).mock.calls.every(([r]) => !['assistant.budget-set', 'system.settings.set'].includes(r.method))).toBe(true)
+    await button(w, 'Top up with ecash').trigger('click')
+    expect(w.findComponent(ReceiveBitcoinModal).props()).toMatchObject({ show: true, initialMethod: 'ecash', manageHistory: false })
+    w.findComponent(ReceiveBitcoinModal).vm.$emit('scan'); await flushPromises()
+    expect(w.findComponent(WalletScanModal).props('show')).toBe(true)
+    expect(w.findComponent(ReceiveBitcoinModal).props('show')).toBe(false)
+    w.findComponent(WalletScanModal).vm.$emit('close'); await flushPromises()
+    expect(w.findComponent(ReceiveBitcoinModal).props('show')).toBe(true)
+    w.unmount()
+  })
+
   it('detects absent configuration without treating a failed status query as missing keys', async () => {
     const w = mountModal()
     expect(await (w.vm as any).checkNeeded()).toBe(true)
@@ -26,7 +60,7 @@ describe('AI connection setup', () => {
     await w.get('form').trigger('submit'); await flushPromises()
     const writes = vi.mocked(rpcClient.call).mock.calls.map(([r]) => r).filter(r => r.method === 'system.settings.set')
     expect(writes.map(r => r.params)).toEqual([{ key: 'openai_api_key', value: 'test-private-key' }, { key: 'ai_provider', value: JSON.stringify({ provider: 'openai', openai_model: 'test-chat-model' }) }])
-    expect((w.get('#ai-connection-key').element as HTMLInputElement).value).toBe('')
+    expect(w.find('#ai-connection-key').exists()).toBe(false)
     expect(w.emitted('configured')).toEqual([['openai', 'test-chat-model']])
     expect(JSON.stringify(w.emitted())).not.toContain('test-private-key')
     w.unmount()

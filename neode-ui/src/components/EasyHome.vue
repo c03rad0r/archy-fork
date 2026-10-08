@@ -6,7 +6,7 @@
     <RouterLink
       v-for="(goal, idx) in goals"
       :key="goal.id"
-      :to="`/dashboard/goals/${goal.id}`"
+      :to="goal.route || `/dashboard/goals/${goal.id}`"
       class="goal-card glass-card p-6 block"
       :class="{ 'home-card-animate': animate }"
       :style="{ '--card-stagger': idx }"
@@ -85,6 +85,8 @@ function goalAppIcons(goal: GoalDefinition): { appId: string; url: string }[] {
 
 function goalIcon(icon: string): string {
   const icons: Record<string, string> = {
+    globe: '🌐',
+    website: '📝',
     shop: '🏪',
     payments: '⚡',
     photos: '📸',

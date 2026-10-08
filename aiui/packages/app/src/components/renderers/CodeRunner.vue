@@ -10,6 +10,9 @@
       >
         Run
       </button>
+      <button v-if="isHtml && embedded" class="text-xs px-2.5 py-1 rounded bg-accent/15 text-accent/80" :disabled="preparingWebsite" @click="prepareWebsite">
+        Continue to website setup
+      </button>
       <button
         v-if="consoleOutput.length > 0"
         class="text-xs px-2 py-1 rounded bg-white/5 text-white/40 hover:text-white/60 hover:bg-white/10 transition-colors"
@@ -18,6 +21,8 @@
         Clear
       </button>
     </div>
+
+    <p v-if="websiteError" role="alert" class="px-3 py-2 text-xs text-red-300">{{ websiteError }}</p>
 
     <!-- Code display -->
     <pre class="px-3 py-2 text-xs text-white/70 overflow-x-auto max-h-48 bg-black/20"><code>{{ code }}</code></pre>
@@ -53,6 +58,7 @@
 
 <script setup lang="ts">
 import { ref, computed, onMounted, onBeforeUnmount } from 'vue'
+import { archyBridge } from '@/services/archyBridge'
 
 const props = defineProps<{
   code: string
@@ -62,6 +68,18 @@ const props = defineProps<{
 interface ConsoleEntry {
   type: 'log' | 'error'
   text: string
+}
+
+const embedded = window.parent !== window
+const preparingWebsite = ref(false)
+const websiteError = ref('')
+async function prepareWebsite() {
+  preparingWebsite.value = true; websiteError.value = ''
+  try {
+    const result = await archyBridge.requestAction('prepare-website', { html: props.code })
+    if (!result.success) websiteError.value = result.error || 'Could not open website setup'
+  } catch (e) { websiteError.value = e instanceof Error ? e.message : 'Could not open website setup' }
+  finally { preparingWebsite.value = false }
 }
 
 const consoleOutput = ref<ConsoleEntry[]>([])

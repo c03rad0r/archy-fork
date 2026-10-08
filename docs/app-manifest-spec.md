@@ -173,6 +173,22 @@ override wins over the manifest in both directions and applies on the next
 request — your app cannot assume the gate is or isn't in front of it, so it
 must always enforce its own authorization for sensitive operations.
 
+## Optional guest access
+
+`metadata.guest_access: true` opts an application into Setup's expiring,
+revocable app-only access credentials. It requires an explicitly declared gated
+port, an enabled AppGate, and no `session_passthrough`. The signed catalog remains
+authoritative for catalog apps; a disk manifest cannot override its policy.
+Wallets, signing surfaces and node administration apps must not opt in.
+
+A guest credential opens only the selected application, never dashboard login or
+RPC. The application must still enforce its own accounts and permissions. Guest
+credentials expire after the operator-selected interval (one hour to 30 days)
+and can be revoked. Every subsequent HTTP request checks current scope, expiry
+and revocation; an already established stream or WebSocket is not disconnected
+by this first implementation. AppGate strips guest credentials before proxying.
+Do not treat the guest gate as authorization for an application's internal API.
+
 ## Launch metadata
 
 `metadata.launch` is consumed by catalog generation and the dashboard

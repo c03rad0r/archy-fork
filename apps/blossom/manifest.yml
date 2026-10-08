@@ -1,0 +1,87 @@
+app:
+  id: blossom
+  name: Blossom
+  version: 6.4.1-archy.2
+  upstream:
+    kind: github
+    repo: hzrd149/blossom-server
+  description: Local file storage for Nostr and websites, using your Archipelago signer. External publishing is a separate explicit choice.
+  category: data
+  container:
+    network: slirp4netns
+    build:
+      context: /opt/archipelago/docker/blossom
+      dockerfile: Dockerfile
+      tag: localhost/archipelago-blossom:6.4.1-archy.2
+    derived_env:
+      - key: ARCHY_BLOSSOM_PUBKEYS
+        template: '{{NODE_IDENTITY_PUBKEYS}}'
+  dependencies:
+    - storage: 1Gi
+  resources:
+    cpu_limit: 1
+    memory_limit: 512m
+    disk_limit: 5Gi
+  security:
+    capabilities: []
+    readonly_root: true
+    no_new_privileges: true
+    network_policy: isolated
+    seccomp_profile: default
+  ports:
+    - host: 8191
+      container: 3000
+      protocol: tcp
+      bind: 127.0.0.1
+      auth: gated
+  volumes:
+    - type: bind
+      source: /var/lib/archipelago/blossom/data
+      target: /data
+      options: [rw]
+    - type: bind
+      source: /var/lib/archipelago/blossom/bridge
+      target: /bridge
+      options: [rw]
+    - type: bind
+      source: /var/lib/archipelago/blossom/config.json
+      target: /config/config.json
+      options: [ro]
+    - type: tmpfs
+      target: /tmp
+      options: [rw, nosuid, nodev, size=64m]
+  files:
+    - path: /var/lib/archipelago/blossom/config.json
+      overwrite: false
+      content: '{}'
+  hooks:
+    post_install:
+      - copy_from_host:
+          src: web-ui/nostr-provider.js
+          dest: /bridge/nostr-provider.js
+      - exec: [sh, -c, 'test -s /bridge/nostr-provider.js']
+  health_check:
+    type: http
+    endpoint: http://127.0.0.1:3000
+    path: /healthz
+    interval: 30s
+    timeout: 5s
+    retries: 3
+    start_period: 30s
+  interfaces:
+    main:
+      name: Local files
+      type: ui
+      port: 8191
+      protocol: http
+      path: /
+  metadata:
+    author: hzrd149 / Archipelago
+    tier: optional
+    icon: /assets/img/app-icons/blossom.svg
+    license: MIT
+    repo: https://github.com/hzrd149/blossom-server
+    tags: [nostr, blossom, storage, websites]
+    launch:
+      open_in_new_tab: false
+      requires_host_frame: false

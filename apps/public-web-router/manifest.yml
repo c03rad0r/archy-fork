@@ -1,0 +1,49 @@
+app:
+  id: public-web-router
+  name: Public Web Router
+  version: 0.1.0
+  description: Connect explicitly published websites to your own public gateway. HTTPS keys stay on this node. Configure routes through Setup.
+  container:
+    network: slirp4netns
+    build:
+      context: /opt/archipelago/docker/public-web-router
+      dockerfile: Dockerfile
+      tag: localhost/archipelago-public-web-router:0.1.0
+  dependencies:
+    - storage: 256Mi
+  resources:
+    cpu_limit: 1
+    memory_limit: 256m
+    disk_limit: 512Mi
+  security:
+    capabilities: []
+    readonly_root: true
+    no_new_privileges: true
+    network_policy: isolated
+    seccomp_profile: default
+  volumes:
+    - type: bind
+      source: /var/lib/archipelago/public-web-router/data
+      target: /data
+      options: [rw]
+    - type: bind
+      source: /var/lib/archipelago/public-web-router/config
+      target: /config
+      options: [ro]
+    - type: tmpfs
+      target: /tmp
+      options: [rw, nosuid, nodev, size=16m]
+  health_check:
+    type: exec
+    endpoint: python3 -c "import pathlib,time; assert time.time()-pathlib.Path('/tmp/router/heartbeat').stat().st_mtime < 30"
+    interval: 30s
+    timeout: 5s
+    retries: 3
+    start_period: 30s
+  metadata:
+    author: Archipelago
+    category: networking
+    tier: optional
+    license: Apache-2.0 / MIT
+    icon: /assets/img/app-icons/nginx.svg
+    tags: [networking, websites, privacy]

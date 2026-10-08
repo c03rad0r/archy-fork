@@ -1,5 +1,5 @@
 <template>
-  <BaseModal :show="show && !funding" title="Connect your AI" max-width="max-w-xl" @close="close">
+  <BaseModal :manage-history="false" :show="show && !funding" title="Connect your AI" max-width="max-w-xl" @close="close">
     <p class="text-sm text-white/60 mb-4">Choose how your assistant connects. API keys stay on this node and never enter your chat.</p>
     <p v-if="loading" role="status" class="text-sm text-white/60 mb-3">Checking this node…</p>
     <p v-if="error" role="alert" class="text-sm text-amber-200 mb-3">{{ error }}</p>
@@ -8,19 +8,22 @@
     </div>
     <form v-if="mode === 'claude' || mode === 'openai'" class="space-y-3" @submit.prevent="save">
       <p class="text-xs text-white/60">{{ mode === 'openai' ? 'Use an OpenAI API key with API billing. Choose a chat model your project can access.' : 'Use your Anthropic API key. Usage is billed to that API account.' }}</p>
-      <p v-if="configured" class="text-sm text-white/70">A key is already configured. Leave this field empty to keep it.</p>
-      <label class="block text-sm text-white/80" for="ai-connection-key">{{ mode === 'openai' ? 'OpenAI' : 'Claude' }} API key</label>
-      <input id="ai-connection-key" v-model="key" type="password" autocomplete="off" spellcheck="false" class="input-glass w-full" placeholder="Paste API key" :disabled="saving" />
+      <p v-if="configured" class="text-sm text-white/70" role="status">Your {{ mode === 'claude' ? 'Claude' : 'OpenAI' }} API key from Settings is ready to use.</p>
+      <button v-if="configured && !replacingKey" type="button" class="glass-button rounded-lg px-4 py-2 text-sm text-white" @click="replacingKey = true">Change API key</button>
+      <template v-if="status && (!configured || replacingKey)">
+        <label class="block text-sm text-white/80" for="ai-connection-key">{{ mode === 'openai' ? 'OpenAI' : 'Claude' }} API key</label>
+        <input id="ai-connection-key" v-model="key" type="password" autocomplete="off" spellcheck="false" class="input-glass w-full" placeholder="Paste API key" :disabled="saving" />
+      </template>
       <template v-if="mode === 'openai'">
         <label class="block text-sm text-white/80" for="ai-connection-model">Model ID</label>
         <input id="ai-connection-model" v-model="model" type="text" spellcheck="false" class="input-glass w-full" placeholder="Enter your OpenAI model ID" :disabled="saving" />
       </template>
-      <button class="glass-button rounded-lg px-4 py-2 text-sm text-white w-full" :disabled="saving || loading || (!key.trim() && !configured) || (mode === 'openai' && !model.trim())">{{ saving ? 'Saving…' : 'Save and continue' }}</button>
+      <button class="glass-button rounded-lg px-4 py-2 text-sm text-white w-full" :disabled="saving || loading || (!key.trim() && !configured) || (mode === 'openai' && !model.trim())">{{ saving ? 'Saving…' : configured && !key.trim() ? (mode === 'claude' ? 'Use Claude' : 'Use OpenAI') : 'Save and continue' }}</button>
     </form>
     <div v-else-if="mode === 'routstr'" class="space-y-3">
       <p class="text-sm text-white/70">Pay for AI with ecash. Add funds to this node’s wallet and set the most it may spend.</p>
       <p class="text-sm text-white/70">Ecash balance: {{ balance === null ? 'Unavailable' : balance.toLocaleString() + ' sats' }}</p>
-      <button class="glass-button rounded-lg px-4 py-2 text-sm text-white" @click="funding = true">Add ecash</button>
+      <button class="glass-button rounded-lg px-4 py-2 text-sm text-white" @click="funding = true">Top up with ecash</button>
       <RoutstrBudgetSection />
       <button class="glass-button rounded-lg px-4 py-2 text-sm text-white w-full" @click="continueRoutstr">Use Routstr</button>
       <p class="text-xs text-white/50">The selected model’s price and accepted mint still apply. No payment is sent by opening this setup.</p>
@@ -28,14 +31,17 @@
     <button v-if="status?.local_ready" class="glass-button rounded-lg px-4 py-2 text-sm text-white mt-4 w-full" @click="useLocal">Use local AI</button>
     <p class="text-xs text-white/40 mt-4">Your draft stays in place when you close this window.</p>
   </BaseModal>
-  <ReceiveBitcoinModal :show="show && funding" initial-method="ecash" @close="finishFunding" @received="finishFunding" />
+  <ReceiveBitcoinModal :manage-history="false" :show="show && funding && !scanning" initial-method="ecash" @close="finishFunding" @received="finishFunding" @scan="scanning = true" />
+  <WalletScanModal :show="show && scanning" @close="finishScan" @sent="finishScan" />
 </template>
 
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
+import { useModalHistory } from '@/composables/useModalHistory'
 import { rpcClient } from '@/api/rpc-client'
 import BaseModal from './BaseModal.vue'
 import ReceiveBitcoinModal from './ReceiveBitcoinModal.vue'
+import WalletScanModal from './WalletScanModal.vue'
 import RoutstrBudgetSection from '@/views/settings/RoutstrBudgetSection.vue'
 
 type Choice = 'claude' | 'openai' | 'routstr'
@@ -49,9 +55,12 @@ interface ProviderStatus {
 }
 const props = defineProps<{ show: boolean }>()
 const emit = defineEmits<{ close: []; configured: [provider: Choice | 'auto' | 'local', model?: string] }>()
-const choices: { id: Choice; label: string }[] = [{ id: 'claude', label: 'Claude API' }, { id: 'openai', label: 'OpenAI API' }, { id: 'routstr', label: 'Routstr · sats' }]
-const mode = ref<Choice | null>(null)
+const choices: { id: Choice; label: string }[] = [{ id: 'routstr', label: 'Routstr · sats' }, { id: 'claude', label: 'Claude API' }, { id: 'openai', label: 'OpenAI API' }]
+// Keep one browser Back entry while switching between connection, funding and scan.
+useModalHistory(computed(() => props.show), close)
+const mode = ref<Choice | null>('routstr')
 const key = ref('')
+const replacingKey = ref(false)
 const model = ref('')
 const status = ref<ProviderStatus | null>(null)
 const balance = ref<number | null>(null)
@@ -59,6 +68,7 @@ const error = ref('')
 const loading = ref(false)
 const saving = ref(false)
 const funding = ref(false)
+const scanning = ref(false)
 const configured = computed(() => mode.value === 'claude' ? status.value?.claude_configured : status.value?.openai_configured)
 let refreshPromise: Promise<ProviderStatus | null> | null = null
 async function refresh(): Promise<ProviderStatus | null> {
@@ -95,8 +105,8 @@ async function refreshBalance() {
   try { const result = await rpcClient.call<{ balance_sats: number }>({ method: 'wallet.ecash-balance', timeout: 8000 }); balance.value = Number.isFinite(result.balance_sats) ? result.balance_sats : null }
   catch { balance.value = null }
 }
-function choose(choice: Choice) { key.value = ''; error.value = ''; mode.value = choice; if (choice === 'routstr') void refreshBalance() }
-function close() { key.value = ''; funding.value = false; emit('close') }
+function choose(choice: Choice) { key.value = ''; replacingKey.value = false; error.value = ''; mode.value = choice; if (choice === 'routstr') void refreshBalance() }
+function close() { key.value = ''; funding.value = false; scanning.value = false; emit('close') }
 async function save() {
   if ((mode.value !== 'claude' && mode.value !== 'openai') || saving.value) return
   const provider = mode.value
@@ -128,8 +138,9 @@ async function continueRoutstr() {
     emit('configured', 'routstr'); close()
   } catch { error.value = 'Could not select Routstr. Try again.' }
 }
+async function finishScan() { scanning.value = false; await refreshBalance() }
 async function finishFunding() { funding.value = false; await refreshBalance() }
-watch(() => props.show, open => { if (open) { error.value = ''; void refresh() } else { key.value = ''; funding.value = false } })
+watch(() => props.show, open => { if (open) { error.value = ''; void refresh(); if (mode.value === 'routstr') void refreshBalance() } else { key.value = ''; replacingKey.value = false; funding.value = false; scanning.value = false } })
 async function syncSelection() { const state = await refresh(); if (state) emit('configured', state.settings.provider, state.settings.provider === 'openai' ? state.settings.openai_model : undefined) }
 defineExpose({ checkNeeded, syncSelection, showRoutstr: () => choose('routstr') })
 </script>

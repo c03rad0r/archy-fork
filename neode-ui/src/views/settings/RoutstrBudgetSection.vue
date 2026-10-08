@@ -64,8 +64,8 @@ async function apply() {
       >{{ active ? 'enabled' : 'off' }}</span>
     </div>
     <p class="text-sm text-white/60 mb-5">
-      Routstr is pay-per-use AI inference, paid in sats over Cashu, used when your local
-      model can't take a request. It never spends without a prepaid ceiling you set here —
+      Routstr is pay-per-use AI inference, paid in sats from this node’s ecash wallet.
+      This allowance limits spending; it does not add funds to the wallet. It never spends without a ceiling you set here —
       at <span class="font-mono">0</span> it is completely disabled. The assistant stops
       when the ceiling is reached; raising it widens the remainder without erasing the
       spend history.

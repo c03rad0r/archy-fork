@@ -325,6 +325,7 @@ function onAiuiMessage(event: MessageEvent) {
 // the iframe survives deactivation that message will not be re-sent on
 // re-entry, so it must NOT be reset on deactivate.
 function armChatLive() {
+  if (!IS_DEMO && aiuiConnected.value) void connectionSetup.value?.syncSelection()
   window.removeEventListener('message', onAiuiMessage)
   window.addEventListener('message', onAiuiMessage)
   window.removeEventListener('aiui:tool-confirm-request', onToolConfirmRequest)
