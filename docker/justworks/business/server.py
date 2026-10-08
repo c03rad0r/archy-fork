@@ -6,6 +6,8 @@ import mimetypes
 import os
 import secrets
 import socket
+import ssl
+import http.client
 import sqlite3
 import subprocess
 import threading
@@ -128,48 +130,66 @@ def screen_tips(npub, lightning_address):
     name, host = lightning_address.split('@')
     if not name or not host or any(char in host for char in '/?#:@'):
         raise ValueError('invalid Lightning address')
-    endpoint = assert_public_https(f'https://{host}/.well-known/lnurlp/{quote(name, safe="")}')
-
-    class NoRedirect(HTTPRedirectHandler):
-        def redirect_request(self, *args, **kwargs):
-            raise ValueError('LNURL redirect is not permitted for screen metadata')
-
-    with build_opener(NoRedirect).open(Request(endpoint, headers={'User-Agent': 'JustWorks-Screen/1'}), timeout=4) as response:
-        raw = response.read(65537)
-        if len(raw) > 65536:
-            raise ValueError('LNURL metadata too large')
-        pay = json.loads(raw)
+    endpoint = f'https://{host}/.well-known/lnurlp/{quote(name, safe="")}'
+    pay = fetch_lnurl_json(endpoint, timeout=4)
     provider = pay.get('nostrPubkey')
     if pay.get('tag') != 'payRequest' or pay.get('allowsNostr') is not True or not isinstance(provider, str) or len(provider) != 64 or any(c not in '0123456789abcdef' for c in provider):
         raise ValueError('No verified Nostr receipt source')
     return helper({'action': 'screen-tips', 'npub': npub, 'provider': provider, 'relays': PAYMENT_RELAYS})['tips']
 
 
-def assert_public_https(url):
+def resolve_public_https(url):
     parsed = urlparse(url)
-    if parsed.scheme != "https" or not parsed.hostname or parsed.username or parsed.password:
+    if parsed.scheme != "https" or not parsed.hostname or parsed.username or parsed.password or parsed.fragment:
         raise ValueError("Lightning provider returned an unsafe URL")
     addresses = socket.getaddrinfo(parsed.hostname, parsed.port or 443, type=socket.SOCK_STREAM)
     if not addresses or any(not ipaddress.ip_address(item[4][0]).is_global for item in addresses):
         raise ValueError("Lightning provider must use a public host")
-    return url
+    return parsed, addresses
 
 
-class NoLnurlRedirect(HTTPRedirectHandler):
-    def redirect_request(self, *args, **kwargs):
-        # A validated public endpoint cannot delegate access to another host or
-        # protocol, especially a private service reachable from this node.
-        raise ValueError("Lightning provider redirects are not permitted")
+class PinnedLnurlConnection(http.client.HTTPSConnection):
+    def __init__(self, parsed, addresses, timeout):
+        # Direct sockets intentionally ignore ambient HTTP(S)_PROXY settings.
+        super().__init__(parsed.hostname, parsed.port or 443, timeout=timeout,
+                         context=ssl.create_default_context())
+        self.addresses = addresses
+
+    def connect(self):
+        last_error = None
+        for family, kind, protocol, _canonical, address in self.addresses:
+            connection = socket.socket(family, kind, protocol)
+            try:
+                connection.settimeout(self.timeout)
+                # Numeric sockaddr from the validated lookup: no second DNS lookup.
+                connection.connect(address)
+                self.sock = self._context.wrap_socket(connection, server_hostname=self.host)
+                return
+            except OSError as error:
+                connection.close()
+                last_error = error
+        raise last_error or OSError("Lightning provider connection unavailable")
 
 
-def fetch_lnurl_json(url):
-    endpoint = assert_public_https(url)
-    request = Request(endpoint, headers={"User-Agent": "JustWorks-Business/0.1"})
-    with build_opener(NoLnurlRedirect).open(request, timeout=10) as response:
+def fetch_lnurl_json(url, timeout=10):
+    parsed, addresses = resolve_public_https(url)
+    connection = PinnedLnurlConnection(parsed, addresses, timeout)
+    try:
+        target = parsed.path or "/"
+        if parsed.query:
+            target += "?" + parsed.query
+        connection.request("GET", target, headers={"User-Agent": "JustWorks-Business/0.1"})
+        response = connection.getresponse()
+        if 300 <= response.status < 400:
+            raise ValueError("Lightning provider redirects are not permitted")
+        if response.status >= 400:
+            raise HTTPError(url, response.status, response.reason, response.headers, None)
         raw = response.read(65537)
-    if len(raw) > 65536:
-        raise ValueError("Lightning provider response too large")
-    return json.loads(raw)
+        if len(raw) > 65536:
+            raise ValueError("Lightning provider response too large")
+        return json.loads(raw)
+    finally:
+        connection.close()
 
 
 def lightning_invoice(lightning_address, amount_msat, comment=""):
@@ -178,14 +198,14 @@ def lightning_invoice(lightning_address, amount_msat, comment=""):
     name, host = lightning_address.rsplit("@", 1)
     if not name or not host or any(char in host for char in "/?#"):
         raise ValueError("Merchant Lightning address is invalid")
-    endpoint = assert_public_https(f"https://{host}/.well-known/lnurlp/{name}")
+    endpoint = f"https://{host}/.well-known/lnurlp/{quote(name, safe="")}"
     pay = fetch_lnurl_json(endpoint)
     if pay.get("tag") != "payRequest" or not pay.get("callback"):
         raise ValueError("Lightning address does not support payments")
     minimum, maximum = int(pay.get("minSendable", 0)), int(pay.get("maxSendable", 0))
     if amount_msat < minimum or (maximum and amount_msat > maximum):
         raise ValueError(f"Amount must be between {max(1, minimum // 1000)} and {maximum // 1000} sats")
-    callback = assert_public_https(str(pay["callback"]))
+    callback = str(pay["callback"])
     # Some LNURL providers reject otherwise valid NIP-57 requests when their
     # signed content contains a literal percent sign. Keep the human meaning
     # while using a provider-safe comment for both the zap and callback.
