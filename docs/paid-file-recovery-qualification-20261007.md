@@ -109,7 +109,7 @@ The combined run qualifies source/isolated behavior. It does not claim a new
 production payment, initial-payment outage/restart acceptance or deployment of
 this backend to either node.
 
-## Later source checkpoints: validation pending
+## Later source checkpoints (before the final combined pass)
 
 The 2,006-test stable-input pass above predates Indee scope-launch correction
 `01a55d2d` and rental admission fix `4dde14bf`; it remains valid historical
@@ -125,3 +125,26 @@ RPC regressions cover concurrent alternate-rail commit, subsequent quote and
 consent retries, exposed Lightning refusal and preserved original records.
 Formatting/syntax checks pass; isolated execution waits for the VM-free compiler
 slot. No real or repeated payment was sent.
+
+## Final combined qualification including rental, Fleet and controller fixes
+
+The full isolated backend suite now passes **2,012 tests, zero failures, five
+existing ignores** against source frozen at `9964b5c1`. All **532 tracked
+backend/helper/catalog inputs** were captured before compilation and verified
+unchanged afterward. Both new rental RPC regressions, all four Fleet provenance
+regressions and eleven selected paid-file recovery/admission cases explicitly
+passed. Tests ran in the required isolated runner: 24.77 seconds, 272.3 MiB peak,
+no swap, process exit zero. No real payments or live service changes occurred.
+
+This supersedes the pending current-source validation above. It includes the
+Indee scope/helper corrections, rental guard `4dde14bf`, and Fleet provenance
+`9268930c`. The older normal executable still predates these final changes; a
+matching corrected executable and actual VM/full transaction acceptance remain
+required before deployment. Actual-node initial-payment response-loss acceptance
+also remains open; synthetic test success does not close it.
+
+Durable evidence (backend log, input manifest, receipt and runner):
+`~/.local/state/archipelago/release-qualification/paid-file-recovery-20261007/final-combined-9964b5c1/`.
+Temporary original: `/tmp/archy-paid-final-combined-fjrs3hIE/`.
+The compiler slot was released to Indee immediately after successful provenance
+verification; no additional backend compilation was started by this agent.
