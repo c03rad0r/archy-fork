@@ -397,3 +397,11 @@ The funding modal's Scan action now opens the existing wallet scanner and return
 to funding on close; six focused connection-modal tests pass after that wiring.
 The first dashboard production build passed; it will be rebuilt for this final
 scanner wiring before deployment. AIUI and isolated backend builds are ongoing.
+
+The first full isolated backend run passed 1,717 tests with one outdated default
+selection assertion failing (four explicit ignores). The assertion expected an
+unconfigured node to choose Claude. Updated coverage distinguishes the new Routstr
+default from a saved legacy Auto choice, and the Routstr adapter now rejects zero
+allowance before even discovering providers. A rerun is required; no passing full
+suite or deployment is claimed yet. Final dashboard and AIUI production builds
+have both passed.

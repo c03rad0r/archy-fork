@@ -377,6 +377,9 @@ impl Backend for RoutstrBackend {
         tools: &[ToolDef],
         history: &[ChatMessage],
     ) -> Result<BackendTurn> {
+        if self.policy.budget_sats == 0 {
+            anyhow::bail!("Set a Routstr spending allowance before using AI.");
+        }
         let providers = discover_providers(self.tor_proxy.as_deref()).await;
         self.send_with_providers(&providers, system, tools, history)
             .await
