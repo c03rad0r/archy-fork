@@ -21,7 +21,7 @@
     <!-- View Tabs (same style as Home Dashboard/Setup tabs; full-width on mobile) -->
     <!-- md:self-start: in map view the root is a flex column, and stretch
          alignment would otherwise pull the pill full-width on desktop -->
-    <div v-if="nodes.length > 0" role="tablist" class="mode-switcher mb-6 w-full md:w-auto md:self-start">
+    <div role="tablist" aria-label="Node connections" class="mode-switcher mb-6 max-w-full overflow-x-auto whitespace-nowrap md:self-start">
       <button
         v-for="tab in viewTabs"
         :key="tab.id"
@@ -31,9 +31,11 @@
         :class="{ 'mode-switcher-btn-active': activeView === tab.id }"
         @click="setView(tab.id)"
       >
-        {{ tab.label }}
+        {{ tab.label }}<span v-if="tab.id === 'requests' && requestCount" class="ml-1 text-xs">({{ requestCount }})</span>
       </button>
     </div>
+
+    <p v-if="discoveryError" role="alert" class="mb-4 text-sm text-red-400">{{ discoveryError }}</p>
 
     <!-- Mobile DID card: below the tabs per UX; hidden on the map tab where
          vertical space belongs to the map (desktop keeps the header card) -->
@@ -56,7 +58,7 @@
       />
     </div>
 
-    <template v-if="activeView === 'list'">
+    <div v-show="activeView === 'discover'">
       <QuickActions
         :generating-invite="generatingInvite"
         :invite-type="inviteType"
@@ -86,8 +88,8 @@
             </div>
             <p class="text-xs text-white/60 mt-1">
               When on, this node publishes a presence event (DID + npub only — never an onion)
-              so other nodes can find you and request to peer. Inbound requests land in the
-              panel below for your approval. Off by default.
+              so other nodes can find you and request to peer. Review incoming requests in
+              the Requests tab. Off by default.
             </p>
             <button
               class="text-xs text-white/50 hover:text-white/80 underline underline-offset-2 mt-1"
@@ -103,13 +105,6 @@
               @click="toggleDiscovery"
             >
               {{ discoveryToggling ? '…' : (discoveryEnabled ? 'Disable' : 'Enable') }}
-            </button>
-            <button
-              class="px-3 py-1.5 glass-button glass-button-sm rounded text-xs text-white/90 hover:text-white disabled:opacity-50"
-              :disabled="!discoveryEnabled"
-              @click="showDiscoverModal = true"
-            >
-              Discover Nodes
             </button>
           </div>
         </div>
@@ -178,31 +173,43 @@
           </div>
         </div>
       </div>
-      <div v-if="discoveryError" class="mb-4 text-xs text-red-400">{{ discoveryError }}</div>
 
-      <PendingRequestsPanel
-        :requests="pendingRequests"
+      <DiscoverModal
+        :visible="discoveryEnabled && activeView === 'discover'"
+        inline
+        :outbound-sent="pendingRequests"
         :peer-dids="nodes.map(node => node.did)"
-        :polling="pollingHandshake"
-        :busy-id="pendingBusyId"
-        @poll="pollHandshake"
-        @approve="approvePending"
-        @reject="rejectPending"
-        @cancel="cancelPending"
+        @view-request="setView('requests')"
+        @open-node="onMapSelect"
+        @sent="loadPendingRequests(); setView('requests')"
       />
+    </div>
 
-      <NodeList
-        :nodes="nodes"
-        :loading="loading"
-        :error="error"
-        :sync-results="syncResults"
-        :dwn-sync-dot-class="dwnSyncDotClass"
-        :cleaning-nodes="cleaningNodes"
-        @select-node="selectedNode = $event"
-        @clear-sync-results="syncResults = []"
-        @cleanup-dead="cleanupDeadNodes"
-      />
-    </template>
+    <PendingRequestsPanel
+      v-show="activeView === 'requests'"
+      show-empty
+      :requests="pendingRequests"
+      :peer-dids="nodes.map(node => node.did)"
+      :polling="pollingHandshake"
+      :busy-id="pendingBusyId"
+      @poll="pollHandshake"
+      @approve="approvePending"
+      @reject="rejectPending"
+      @cancel="cancelPending"
+    />
+
+    <NodeList
+      v-show="activeView === 'connected'"
+      :nodes="nodes"
+      :loading="loading"
+      :error="error"
+      :sync-results="syncResults"
+      :dwn-sync-dot-class="dwnSyncDotClass"
+      :cleaning-nodes="cleaningNodes"
+      @select-node="selectedNode = $event"
+      @clear-sync-results="syncResults = []"
+      @cleanup-dead="cleanupDeadNodes"
+    />
 
     <NodeDetailModal
       :node="selectedNode"
@@ -230,13 +237,6 @@
       @join="joinFederation"
     />
 
-    <DiscoverModal
-      :visible="showDiscoverModal"
-      :outbound-sent="pendingRequests"
-      @close="showDiscoverModal = false"
-      @sent="loadPendingRequests"
-    />
-
     <PresenceSignModal
       :show="showPresenceSignModal"
       :server-name="appStore.serverName"
@@ -260,7 +260,8 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted, onUnmounted } from 'vue'
+import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
 import { validContact, lastContactLabel } from './web5/nodeAvailability'
 import { rpcClient } from '@/api/rpc-client'
 import { useCachedResource } from '@/composables/useCachedResource'
@@ -320,21 +321,26 @@ const deploying = ref(false)
 const deployResult = ref('')
 
 const viewTabs = [
-  { id: 'list', label: 'List View' },
+  { id: 'discover', label: 'Discover' },
+  { id: 'requests', label: 'Requests' },
+  { id: 'connected', label: 'Connected' },
   { id: 'map', label: 'Network Map' },
 ] as const
 
 type ViewId = typeof viewTabs[number]['id']
-const activeView = ref<ViewId>(
-  (localStorage.getItem('federation-view') as ViewId) || (nodes.value.length >= 3 ? 'map' : 'list')
-)
-
+const route = useRoute()
+const router = useRouter()
+function normalizedView(value: unknown): ViewId {
+  if (value === 'list') return 'connected'
+  return viewTabs.some(tab => tab.id === value) ? value as ViewId : 'discover'
+}
+const activeView = ref<ViewId>(normalizedView(route.query.view))
+watch(() => route.query.view, value => { activeView.value = normalizedView(value) })
 function setView(id: ViewId) {
   activeView.value = id
-  localStorage.setItem('federation-view', id)
+  void router.replace({ query: { ...route.query, view: id } })
 }
-
-const mapActive = computed(() => activeView.value === 'map' && nodes.value.length > 0)
+const mapActive = computed(() => activeView.value === 'map')
 
 /** Map click-through: tapping a peer opens the same detail modal as the list
  *  view. Tapping the self node is a no-op (its actions live in the header). */
@@ -438,7 +444,6 @@ const cleaningNodes = ref(false)
 const discoveryEnabled = ref(false)
 const discoveryToggling = ref(false)
 const discoveryError = ref('')
-const showDiscoverModal = ref(false)
 // Signing-details disclosure: who signs the presence event (always the node's
 // own discovery key) and a human-readable view of the signed content.
 const showSigningInfo = ref(false)
@@ -460,6 +465,10 @@ async function loadNodeNpub() {
   }
 }
 const pendingRequests = ref<PendingPeerRequest[]>([])
+const requestCount = computed(() => pendingRequests.value.filter(r =>
+  r.state === 'pending' || r.state === 'sent' ||
+  (r.state === 'approved' && !nodes.value.some(node => node.did === r.from_did))
+).length)
 const pollingHandshake = ref(false)
 const pendingBusyId = ref<string | null>(null)
 
@@ -819,6 +828,7 @@ async function rotateDid(password: string) {
 }
 
 let autoRefreshTimer: ReturnType<typeof setInterval> | null = null
+let disposed = false
 
 onMounted(async () => {
   loadDwnStatus()
@@ -833,6 +843,7 @@ onMounted(async () => {
   } catch {
     // Self DID not available
   }
+  if (disposed) return
   autoRefreshTimer = setInterval(() => {
     availabilityNow.value = Date.now()
     void nodesRes.refresh()
@@ -841,6 +852,7 @@ onMounted(async () => {
 })
 
 onUnmounted(() => {
+  disposed = true
   if (autoRefreshTimer) {
     clearInterval(autoRefreshTimer)
     autoRefreshTimer = null

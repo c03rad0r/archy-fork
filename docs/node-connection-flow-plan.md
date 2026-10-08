@@ -1,8 +1,43 @@
 # Node connection flow plan
 
-Status: proposal for the post-1.9.0 work. Uses existing components, colors,
-spacing, glass cards, typography and motion. No broad navigation redesign has
-been deployed. Connection reliability must be qualified before this flow ships.
+Status: partial implementation prepared in an isolated worktree, not deployed.
+Uses existing components, colors, spacing, glass cards, typography and motion.
+Connection reliability and the remaining acceptance below must be qualified
+before this flow ships.
+
+## Implemented UI step — 2026-10-08
+
+- Web5 exposes Connect with Nodes and Connected Nodes above the mobile collapse.
+- Existing Federation route has Discover, Requests, Connected and Network Map
+  tabs even with zero peers. The route query retains selection; legacy `view=list`
+  opens Connected. Existing node detail modals preserve the underlying view.
+- Discovery reuses the existing component inline, with local name/identity search,
+  retained results/search across tab switches and stale-response rejection.
+  The existing 30-second RPC timeout and signing confirmation remain in place.
+  Presence advertisements explicitly do not imply reachability or authorization.
+- Existing requests open Requests and existing peers open their detail; fresh
+  requests still use the existing confirmation and Observer semantics. Own-node
+  Trusted linking remains the separate, existing authenticated invite action.
+- Requests has an empty state and active count. Action errors remain visible
+  across tabs. Approved—connecting and Peer added remain distinct: persisted
+  local membership does not assert reciprocal connection confirmation.
+- Navigating away during initial identity loading cannot start a later orphaned
+  polling timer. No backend, API contract, trust elevation or payment changes.
+
+Validation: twelve focused tests across five files pass, plus app-project
+`vue-tsc -p tsconfig.app.json --noEmit`. The initial combined focused run had
+11 passes and one incorrect test assertion against a shallow component stub;
+correcting the assertion to inspect its Vue prop yielded 2/2 targeted navigation
+passes. No production source fix was needed for that assertion. Source browser
+checks at 390/1440px are prepared but resource-queued behind IndeeHub; no visual,
+production-artifact, actual companion or live-node acceptance is claimed.
+Evidence: `release-qualification/connection-journey-20261008/` under the local
+Archipelago state directory. Browser fixture allows only loopback synthetic RPC.
+
+Still open: Cloud/Fleet return paths and explicit own-node entry, authenticated
+reciprocal confirmation/retry acceptance, stale-advertisement age when supplied
+by the protocol, desktop/phone UAT and before/after timings. This step does not
+complete task 6 or satisfy the release gates below.
 
 ## Entry and return paths
 

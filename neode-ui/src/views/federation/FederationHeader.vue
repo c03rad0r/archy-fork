@@ -3,8 +3,8 @@
     <BackButton label="Web5" @click="router.push('/dashboard/web5')" />
     <div class="flex items-start justify-between gap-4">
       <div>
-        <h1 class="text-3xl font-bold text-white mb-2">Federation & Peers</h1>
-        <p class="text-white/70">Connect, sync, and share with trusted nodes</p>
+        <h1 class="text-3xl font-bold text-white mb-2">Connect with Nodes</h1>
+        <p class="text-white/70">Discover peers, manage requests, and view your connected nodes</p>
       </div>
       <!-- Your Node DID — top right card (desktop) -->
       <div v-if="selfDid" class="hidden md:block shrink-0">

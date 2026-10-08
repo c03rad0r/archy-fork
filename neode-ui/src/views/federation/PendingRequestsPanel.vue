@@ -1,5 +1,5 @@
 <template>
-  <div id="connection-requests" v-if="visibleRequests.length > 0" class="glass-card p-6 mb-6">
+  <div id="connection-requests" v-if="showEmpty || visibleRequests.length > 0" class="glass-card p-6 mb-6">
     <div class="flex items-center justify-between mb-4">
       <div>
         <h2 class="text-base font-semibold text-white">Nostr Connection Requests</h2>
@@ -18,6 +18,7 @@
       </button>
     </div>
 
+    <p v-if="visibleRequests.length === 0" class="text-sm text-white/60" role="status">No current requests. Discover a node or share an invite to get started.</p>
     <div class="space-y-3">
       <div
         v-for="req in visibleRequests"
@@ -81,6 +82,7 @@ const props = defineProps<{
   polling: boolean
   busyId: string | null
   peerDids?: string[]
+  showEmpty?: boolean
 }>()
 
 defineEmits<{

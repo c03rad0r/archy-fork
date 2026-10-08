@@ -1,13 +1,13 @@
 <template>
-  <Teleport to="body">
+  <Teleport to="body" :disabled="inline">
     <Transition name="modal">
       <div
         v-if="visible"
-        class="fixed inset-0 z-[3000] flex items-center justify-center p-4"
+        :class="inline ? 'mb-6' : 'fixed inset-0 z-[3000] flex items-center justify-center p-4'"
         @click.self="$emit('close')"
       >
-        <div class="absolute inset-0 bg-black/60 backdrop-blur-sm"></div>
-        <div class="glass-card p-6 max-w-2xl w-full max-h-[80vh] overflow-y-auto relative z-10">
+        <div v-if="!inline" class="absolute inset-0 bg-black/60 backdrop-blur-sm"></div>
+        <div :class="inline ? 'glass-card p-6' : 'glass-card p-6 max-w-2xl w-full max-h-[80vh] overflow-y-auto relative z-10'">
           <div class="flex items-center justify-between mb-4">
             <div>
               <h2 class="text-xl font-semibold text-white">Discover Nodes</h2>
@@ -17,7 +17,7 @@
                 an optional message travel inside an encrypted DM.
               </p>
             </div>
-            <button @click="$emit('close')" class="text-white/40 hover:text-white/70 transition-colors">
+            <button v-if="!inline" aria-label="Close discovery" @click="$emit('close')" class="text-white/40 hover:text-white/70 transition-colors">
               <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
               </svg>
@@ -37,6 +37,8 @@
             </span>
           </div>
 
+          <input v-model="search" aria-label="Search discovered nodes" placeholder="Search node identity…" class="w-full mb-3 bg-black/30 text-white text-sm rounded px-3 py-2 border border-white/10" />
+          <p class="mb-4 text-xs text-white/50">Presence is a discovery advertisement. It does not confirm that a node is reachable or connected. New requests grant Observer access.</p>
           <div v-if="error" class="mb-4 text-sm text-red-400">{{ error }}</div>
 
           <!-- Manual entry: paste an npub directly -->
@@ -67,6 +69,7 @@
           </div>
 
           <div v-else class="space-y-2">
+            <p v-if="nodes.length && !filteredNodes.length" class="text-sm text-white/60">No nodes match your search.</p>
             <div v-if="loading && nodes.length > 0" class="p-2 text-center text-white/45 text-xs flex items-center justify-center gap-2">
               <svg class="animate-spin h-3.5 w-3.5" fill="none" viewBox="0 0 24 24">
                 <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
@@ -75,22 +78,22 @@
               Searching relays...
             </div>
             <div
-              v-for="node in nodes"
+              v-for="node in filteredNodes"
               :key="node.nostr_pubkey"
               class="p-3 bg-white/5 rounded-lg border border-white/10"
             >
               <div class="flex items-start justify-between gap-3">
                 <div class="min-w-0 flex-1">
                   <div class="text-sm text-white truncate">
-                    {{ shortNpub(node.nostr_npub) }}
+                    {{ node.name || shortNpub(node.nostr_npub) }}
                   </div>
                   <div class="text-[11px] text-white/40 font-mono truncate">{{ node.did }}</div>
                   <div class="text-[10px] text-white/30 mt-1">version {{ node.version || '?' }}</div>
                 </div>
                 <button
                   class="px-3 py-1.5 glass-button glass-button-sm rounded text-xs text-white/90 hover:text-white disabled:opacity-50 shrink-0"
-                  :disabled="sendingTo === node.nostr_pubkey || alreadySentTo(node.nostr_pubkey)"
-                  @click="sendTo(node)"
+                  :disabled="sendingTo !== null"
+                  @click="actOn(node)"
                 >
                   {{ statusFor(node) }}
                 </button>
@@ -102,7 +105,7 @@
     </Transition>
 
     <PeerRequestModal
-      :show="requestTarget !== null"
+      :show="visible && requestTarget !== null"
       :target-label="requestTarget?.label ?? ''"
       :sending="sendingTo !== null && sendingTo === requestTarget?.target"
       @send="confirmRequest"
@@ -112,7 +115,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, watch } from 'vue'
+import { computed, ref, watch, onUnmounted } from 'vue'
 import { rpcClient, type PendingPeerRequest } from '@/api/rpc-client'
 import PeerRequestModal from '@/components/federation/PeerRequestModal.vue'
 
@@ -121,17 +124,21 @@ interface DiscoverableNode {
   nostr_npub: string
   did: string
   version: string
+  name?: string | null
 }
 
 const props = defineProps<{
   visible: boolean
-  /// Outbound rows from the parent's pending list, used to grey out
-  /// "Send Request" buttons for npubs we've already requested.
+  inline?: boolean
+  peerDids?: string[]
+  /// Existing requests select their Requests view instead of sending again.
   outboundSent: PendingPeerRequest[]
 }>()
 
 const emit = defineEmits<{
   close: []
+  viewRequest: []
+  openNode: [did: string]
   /// Fired after a successful send so the parent can refresh its
   /// pending-requests list to show the new "Sent" row.
   sent: []
@@ -143,25 +150,37 @@ const error = ref('')
 const lastSearchAt = ref('')
 const sendingTo = ref<string | null>(null)
 const manualNpub = ref('')
+const search = ref('')
+const filteredNodes = computed(() => {
+  const term = search.value.trim().toLowerCase()
+  return nodes.value.filter(node => `${node.name ?? ''} ${node.did} ${node.nostr_npub}`.toLowerCase().includes(term))
+})
+let discoveryGeneration = 0
 
 watch(
   () => props.visible,
   (v) => {
-    if (v && nodes.value.length === 0) refresh()
+    if (v && nodes.value.length === 0) void refresh()
+    if (!v) { discoveryGeneration++; loading.value = false }
   },
+  { immediate: true },
 )
+onUnmounted(() => { discoveryGeneration++ })
 
 async function refresh() {
+  if (loading.value) return
+  const generation = ++discoveryGeneration
   loading.value = true
   error.value = ''
   try {
     const result = await rpcClient.handshakeDiscover()
+    if (generation !== discoveryGeneration) return
     nodes.value = result.nodes
     lastSearchAt.value = new Date().toLocaleTimeString()
   } catch (e: unknown) {
-    error.value = e instanceof Error ? e.message : 'Discovery failed'
+    if (generation === discoveryGeneration) error.value = e instanceof Error ? e.message : 'Discovery failed'
   } finally {
-    loading.value = false
+    if (generation === discoveryGeneration) loading.value = false
   }
 }
 
@@ -169,6 +188,14 @@ async function refresh() {
 // message before anything is sent (Request/Cancel).
 const requestTarget = ref<{ target: string; label: string; clearManual: boolean } | null>(null)
 
+function actOn(node: DiscoverableNode) {
+  if (props.peerDids?.includes(node.did)) { emit('openNode', node.did); return }
+  if (hasRequest(node.nostr_pubkey)) { emit('viewRequest'); return }
+  sendTo(node)
+}
+function hasRequest(key: string): boolean {
+  return props.outboundSent.some(r => r.from_nostr_pubkey === key && ['pending', 'sent', 'approved'].includes(r.state))
+}
 function sendTo(node: DiscoverableNode) {
   requestTarget.value = { target: node.nostr_pubkey, label: shortNpub(node.nostr_npub), clearManual: false }
 }
@@ -181,13 +208,14 @@ function sendDirect() {
 
 async function confirmRequest(message: string | undefined) {
   const req = requestTarget.value
-  if (!req) return
+  if (!req || sendingTo.value !== null) return
   await sendInternal(req.target, message)
   if (req.clearManual) manualNpub.value = ''
   requestTarget.value = null
 }
 
 async function sendInternal(target: string, message?: string) {
+  if (sendingTo.value !== null) return
   sendingTo.value = target
   error.value = ''
   try {
@@ -200,15 +228,10 @@ async function sendInternal(target: string, message?: string) {
   }
 }
 
-function alreadySentTo(npubHex: string): boolean {
-  return props.outboundSent.some(
-    (r) => r.outbound && r.from_nostr_pubkey === npubHex && r.state === 'sent',
-  )
-}
-
 function statusFor(node: DiscoverableNode): string {
   if (sendingTo.value === node.nostr_pubkey) return 'Sending…'
-  if (alreadySentTo(node.nostr_pubkey)) return 'Already sent'
+  if (props.peerDids?.includes(node.did)) return 'Open node'
+  if (hasRequest(node.nostr_pubkey)) return 'View request'
   return 'Send Request'
 }
 

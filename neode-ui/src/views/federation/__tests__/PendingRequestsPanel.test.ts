@@ -23,3 +23,10 @@ describe('Nostr connection progress', () => {
     wrapper.unmount()
   })
 })
+
+it('keeps the Requests tab useful when there are no requests', () => {
+  const wrapper = mount(PendingRequestsPanel, { props: { requests: [], polling: false, busyId: null, showEmpty: true } })
+  expect(wrapper.get('[role="status"]').text()).toContain('No current requests')
+  expect(wrapper.findAll('button').some(b => b.text() === 'Poll Now')).toBe(true)
+  wrapper.unmount()
+})
