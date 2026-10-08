@@ -7,6 +7,7 @@ import datetime, hashlib, json, os, pathlib, re, shutil, subprocess, sys, time, 
 NAMES = ('indeedhub','indeedhub-api','indeedhub-ffmpeg','indeedhub-minio','indeedhub-postgres','indeedhub-redis','indeedhub-relay')
 VOLUMES = ('indeedhub-minio-data','indeedhub-postgres-data','indeedhub-redis-data','indeedhub-relay-data')
 DATA = pathlib.Path('/var/lib/archipelago')
+MIGRATION_TABLE = 'typeorm_migrations'
 QUEUE_COUNTS = frozenset(('active','waiting','paused','delayed','failed','completed'))
 def valid_queue_counts(counts):
     return isinstance(counts,dict) and set(counts)==QUEUE_COUNTS and all(type(v) is int and v>=0 for v in counts.values())
@@ -69,16 +70,16 @@ SELECT format($query$
  $query$,c.relname,c.oid,c.oid,c.oid,c.oid,c.relrowsecurity::text||':'||c.relforcerowsecurity::text,c.relname,c.relname)
 FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname='public' AND c.relkind IN ('r','p') ORDER BY c.relname
 \gexec
-SELECT jsonb_build_object('migration_rows',coalesce(jsonb_agg(to_jsonb(m) ORDER BY id),'[]'::jsonb)) FROM public.migrations m;
+SELECT jsonb_build_object('migration_rows',coalesce(jsonb_agg(to_jsonb(m) ORDER BY id),'[]'::jsonb)) FROM public.typeorm_migrations m;
 COMMIT;
 '''
 def verify_database_compatibility(before, after):
     require(before.get('operation_id')==after.get('operation_id'),'Data compatibility operation changed')
-    old=before['tables'];new=after['tables'];require(set(old)<=set(new),'Data compatibility lost original tables')
+    old=before['tables'];new=after['tables'];require(MIGRATION_TABLE in old and MIGRATION_TABLE in new,'Data compatibility lacks configured migration history table');require(set(old)<=set(new),'Data compatibility lost original tables')
     extra=set(new)-set(old);require(extra<=ADDITIVE_TABLES,'Data compatibility contains unreviewed tables')
     for name in old:
         require(old[name]['schema']==new[name]['schema'],'Data compatibility changed original table schema')
-        if name!='migrations':
+        if name!=MIGRATION_TABLE:
             require(old[name]['rows']==new[name]['rows'] and old[name]['rows_sha256']==new[name]['rows_sha256'],'Data compatibility changed original rows')
     for name in extra:require(new[name]['rows']==0,'Data compatibility contains new application data')
     previous=before['migrations'];current=after['migrations']
@@ -458,7 +459,7 @@ class Controller:
                 require(migrations is None,'Duplicate database migration observation');migrations=row['migration_rows']
             else:
                 name=row.pop('table');require(name not in tables and re.fullmatch('[a-zA-Z_][a-zA-Z0-9_]*',name),'Invalid database table observation');tables[name]=row
-        require(tables and 'migrations' in tables and isinstance(migrations,list),'Database compatibility observation incomplete')
+        require(tables and MIGRATION_TABLE in tables and isinstance(migrations,list),'Database compatibility observation incomplete')
         return {'operation_id':self.operation,'tables':tables,'migrations':migrations}
     def verify_restored_data(self):
         baseline=self.record.get('database_before')

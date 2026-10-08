@@ -380,3 +380,41 @@ fingerprints for fresh transactions are being qualified separately; legacy
 records must retain strict comparison. The pre-target writer-preservation fix
 in 07c7eb0f also awaits combined compilation/tests. No Yaya migration or catalog
 activation has occurred.
+
+### Actual seven-service rehearsal, 2026-10-08
+
+The matching VM executable for 32317236 passed the full isolated suite:
+**2,021 passed, zero failed, five existing ignores**, 532 inputs unchanged.
+Its fresh child VM uses the real `Restart=always`, 30-second Podman stop and
+45-second systemd stop settings. Manager startup preserved all seven registered
+container IDs. The actual authenticated missing-plan update refusal retained
+all seven IDs and cleared Updating. The subsequent controller recorded the
+frontend exit 0, narrowly qualified idle-worker exit 137, and empty-business
+API wrapper exit 1, including its operation-owned runtime restart override.
+
+The database barrier then correctly refused an invalid table assumption:
+IndeeHub's actual history is `public.typeorm_migrations`, not `public.migrations`.
+Both compiled configuration files in exact original API image
+`364a8d5dd4114349b9c09ac0b16b00aa066195294ae41399d72a85122db7b5a9`
+and a read-only database existence query confirmed this. The helper now uses
+that configured table, requires it in both compatibility snapshots and gives
+no row-change exemption to an unrelated table called `migrations`.
+**48 pure controller tests pass.** No history table or database row was edited.
+
+Recovery also exposed that the native no-external-overrides guard rejects the
+controller's own runtime restart fence. API-only exact ownership recognition
+is checkpointed in 884ea492, with regression cases; its combined Rust validation
+and executable remain pending. It does not admit arbitrary drop-ins.
+
+A separate candidate-helper rehearsal, with the manager stopped and real
+lifecycle flock retained, passed actual database commitments/dump and clean
+MinIO/Redis stops. It then refused relay exit 137. The original relay image
+`061516573b143b44e331f960036a6a3dc43c9b256ef8ca71afedbeb2cf797a4b`
+uses a shell PID 1 around `nostr-rs-relay`. A disposable, networkless child-SIGINT
+probe exited 130 without OOM; this is **not accepted as graceful**. Relay shutdown
+remains under investigation. The held operation is
+`3b3c564b-cce6-4727-8be8-369a95c479e4` in child fixture
+`indeehub-v2-20261007T232717`. PostgreSQL remains intact; all original recovery
+images and failure evidence are retained. The manager is stopped and startup
+barred. The candidate helper was separate from the installed pinned helper.
+Neither full target rollback nor successful update has passed. Yaya is unchanged.

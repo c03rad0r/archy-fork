@@ -447,19 +447,38 @@ console.log('process identity cases passed');'''
  def test_rollback_compatibility_binds_operation_preserves_rows_and_allows_only_empty_additions(self):
   import copy
   table={'schema':{'columns':['original']},'rows':0,'rows_sha256':'a'*64}
-  before={'operation_id':self.operation,'tables':{'migrations':copy.deepcopy(table),'contents':copy.deepcopy(table)},'migrations':[{'id':1,'timestamp':1,'name':'Original1'}]}
+  before={'operation_id':self.operation,'tables':{'typeorm_migrations':copy.deepcopy(table),'contents':copy.deepcopy(table)},'migrations':[{'id':1,'timestamp':1,'name':'Original1'}]}
   after=copy.deepcopy(before)
   self.assertEqual(module.verify_database_compatibility(before,after)['original_tables'],2)
   names=list(module.ADDITIVE_MIGRATIONS)
   after['migrations'] += [{'id':i+2,'timestamp':module.ADDITIVE_MIGRATIONS[name],'name':name} for i,name in enumerate(names)]
-  after['tables']['migrations']['rows']=4;after['tables']['migrations']['rows_sha256']='b'*64
+  after['tables']['typeorm_migrations']['rows']=4;after['tables']['typeorm_migrations']['rows_sha256']='b'*64
   for name in module.ADDITIVE_TABLES:after['tables'][name]=copy.deepcopy(table)
   self.assertEqual(len(module.verify_database_compatibility(before,after)['new_empty_tables']),5)
   for mutate in [lambda d:d.update(operation_id=str(uuid.uuid4())),lambda d:d['tables']['contents'].update(rows_sha256='c'*64),lambda d:d['tables']['contents']['schema'].update(columns=['changed']),lambda d:d['tables']['archipelago_publications'].update(rows=1),lambda d:d['migrations'][0].update(name='Altered'),lambda d:d['migrations'][-1].update(name='Unreviewed'),lambda d:d['tables'].update(unreviewed=copy.deepcopy(table))]:
    damaged=copy.deepcopy(after);mutate(damaged)
    with self.assertRaisesRegex(RuntimeError,'Data compatibility'):module.verify_database_compatibility(before,damaged)
+ def test_migration_history_uses_configured_table_and_never_exempts_unrelated_migrations(self):
+  import copy
+  self.assertEqual(module.MIGRATION_TABLE,'typeorm_migrations')
+  self.assertIn('FROM public.typeorm_migrations m;',module.DB_COMMITMENTS_SQL)
+  self.assertNotIn('FROM public.migrations m;',module.DB_COMMITMENTS_SQL)
+  table={'schema':{},'rows':0,'rows_sha256':'a'*64}
+  before={'operation_id':self.operation,'tables':{'typeorm_migrations':copy.deepcopy(table),'migrations':copy.deepcopy(table)},'migrations':[]}
+  after=copy.deepcopy(before);after['tables']['migrations']['rows_sha256']='b'*64
+  with self.assertRaisesRegex(RuntimeError,'changed original rows'):module.verify_database_compatibility(before,after)
+ def test_database_compatibility_rejects_missing_configured_history(self):
+  baseline={'operation_id':self.operation,'tables':{},'migrations':[]}
+  with self.assertRaisesRegex(RuntimeError,'lacks configured migration history'):module.verify_database_compatibility(baseline,baseline)
+ def test_database_observation_requires_actual_typeorm_history_table(self):
+  c=self.controller;table={'table':'migrations','schema':{},'rows':0,'rows_sha256':'a'*64}
+  def result(argv,timeout,output):return (json.dumps(table)+'\n'+json.dumps({'migration_rows':[]})+'\n').encode()
+  c.runner=result
+  with self.assertRaisesRegex(RuntimeError,'observation incomplete'):c.database_commitments()
+  table['table']='typeorm_migrations'
+  self.assertIn('typeorm_migrations',c.database_commitments()['tables'])
  def test_verified_rollback_records_operation_proof_before_releasing_fence(self):
-  c=self.controller;table={'schema':{},'rows':0,'rows_sha256':'a'*64};baseline={'operation_id':self.operation,'tables':{'migrations':table},'migrations':[]}
+  c=self.controller;table={'schema':{},'rows':0,'rows_sha256':'a'*64};baseline={'operation_id':self.operation,'tables':{'typeorm_migrations':table},'migrations':[]}
   c.record={'operation_id':self.operation,'phase':'Recovering','database_before':baseline};c.save()
   c.fence.parent.mkdir(parents=True);c.fence.write_text(self.operation)
   module.atomic(c.data/'update-transactions'/'supervised'/(self.operation+'.json'),{'phase':'Restored','target_startup_began':True})
