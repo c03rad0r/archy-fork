@@ -24,16 +24,24 @@ Read **Current live checkpoint** first. Older receipts below apply only to their
   Latest actual RPC also returns package state to Running with progress cleared;
   the stuck Installing regression is fixed and accepted on that manager path.
 - **Post-target rollback and successful cutover remain unpassed.** Matching
-  fixture executable build for `66c7a22d` is running while child
-  `indeehub-v2-20261008T012000` remains QMP-paused, preserving runtime identity.
-  Four operations in that child are terminal Restored with cleanup complete and
-  no holds/fence. Earlier failed parent fixtures remain archived/unrecovered;
+  fixture executable for `66c7a22d` built and retained all seven IDs at startup.
+  Warmed read-only API/Redis/PostgreSQL probes passed without identity changes.
+  Actual operation6432d320 then passed complete drain/backup, but its temporary
+  database restore instance did not become ready within90seconds. Recovery is
+  terminal Restored with cleanup complete and package Running/progress cleared.
+  Exact recovery-image startup diagnostics are underway; production timeouts
+  remain unchanged. Earlier failed parent fixtures remain archived/unrecovered;
   never rewrite their journals or adopt unproven replacement identities.
   See `docs/managed-update-recovery-implementation.md` for current detailed
   evidence. No migration or app/catalog changes have been made on live Yaya.
 - Future Indee worker shutdown fix is app-repository commit `29627fc`, four
-  focused tests passed. It still needs a rebuilt worker image and image pin;
-  legacy image compatibility does not mean this future image is delivered.
+  focused tests passed. Its new private worker image is now built and verified:
+  image9b3ef4116d4b998820e25e09eda7ca14f23e9e264158629451b81e32b47d9c8e,
+  OCI SHA2566db29188c0e68ed8e9e8d84ea2e9c5c70695518e0930775bf6b3200d14d99527.
+  All474 frozen tracked inputs stayed unchanged; both Node stages were pinned
+  to a verified cached digest. Actual disposable worker/Redis shutdown checks,
+  scoped live import, reviewed catalog pin/signature and delivery remain open.
+  No image import, deployment or publication occurred.
 - Live dev/Yaya dashboard index remains
   `92050cbda69954f57f4b0bdd73d89623f6aae9fc66e4c074ee4f46bdcb9c3b2a`.
   Final Fleet UI artifact **is built**, not deployed: archive
