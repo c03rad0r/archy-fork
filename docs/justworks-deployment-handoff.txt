@@ -37,8 +37,8 @@ consent. No node wallet key is sent to hosted Core.
 
 Ingest into the next normal deployment
 1. Review/merge once on ngit, then mirror the exact accepted commits to Gitea.
-   The explicitly requested Gitea PR is a cross-linked review mirror; do not
-   independently squash or merge it to produce a different history.
+   PRs belong on ngit only. Gitea mirrors accepted code; do not open a duplicate
+   PR or independently squash/merge to produce a different history.
 2. Build the current combined platform source. Do not deploy an old demo backend
    or replace newer work with the binary recorded below. Include the Just Works
    FIPS port mapping and existing native-import RPCs.
