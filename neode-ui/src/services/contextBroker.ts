@@ -1,4 +1,5 @@
 import type { Ref } from 'vue'
+import { prepareWebsiteImport } from '@/services/websiteImport'
 import type {
   AIUIRequest,
   ArchyResponse,
@@ -237,6 +238,7 @@ export class ContextBroker {
         this.handleContextRequest(msg.id, msg.category, msg.query)
         break
       case 'action:request':
+        if (msg.action === 'prepare-website' && event.source !== this.iframe.value?.contentWindow) return
         this.handleActionRequest(msg.id, msg.action, msg.params)
         break
       case 'theme:request':
@@ -640,6 +642,14 @@ export class ContextBroker {
 
     try {
       switch (action) {
+        case 'prepare-website':
+          if (prepareWebsiteImport(params?.html)) {
+            void import('@/router').then(({ default: router }) => router.push('/dashboard/setup/website'))
+            success = true
+          } else {
+            error = 'Provide a nonempty HTML draft up to 512 KiB'
+          }
+          break
         case 'navigate':
           if (params.path) {
             window.dispatchEvent(new CustomEvent('aiui:navigate', { detail: params.path }))

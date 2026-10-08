@@ -1193,6 +1193,13 @@ impl Server {
         // only. Binding wildcard [::]:port reserves the same host ports
         // Podman needs and can restart-loop apps that publish those ports.
         let relay_task = tokio::spawn(app_port_v6_relay_loop(tx.subscribe()));
+        let publishing_task = tokio::spawn(crate::publishing::serving::run(
+            self._config.data_dir.clone(), tx.subscribe(),
+        ));
+
+        let publishing_tor_task = tokio::spawn(crate::publishing::tor::run(
+            self._config.data_dir.clone(), tx.subscribe(),
+        ));
 
         // The app gate: authentication in front of every app port, on every
         // address the node answers on. It can only claim a port whose app has
@@ -1233,6 +1240,8 @@ impl Server {
             let _ = t.await;
         }
         relay_task.abort();
+        publishing_task.abort();
+        publishing_tor_task.abort();
         // Aborted rather than awaited, like the relay loop: the sweep sleeps
         // up to a minute between ticks and its accept loops exit on the
         // shutdown watch, so awaiting it would stall the drain for no gain.

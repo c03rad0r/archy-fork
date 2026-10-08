@@ -23,6 +23,20 @@ const FUND_WALLET_STEP: GoalStep = {
 
 export const GOALS: GoalDefinition[] = [
   {
+    id: 'external-access', title: 'Allow external connections',
+    subtitle: 'Choose FIPS, public web and Tor access for your services',
+    icon: 'globe', category: 'network', requiredApps: [],
+    route: '/dashboard/setup/external-access', estimatedTime: 'Guided setup', difficulty: 'beginner',
+    steps: [{ id: 'external-access', title: 'Configure access', description: 'Choose and verify each connection.', action: 'configure', isAutomatic: false }],
+  },
+  {
+    id: 'publish-website', title: 'Publish a website',
+    subtitle: 'Create a website on your node and choose where to publish it',
+    icon: 'website', category: 'community', requiredApps: [],
+    route: '/dashboard/setup/website', estimatedTime: 'Guided setup', difficulty: 'beginner',
+    steps: [{ id: 'publish-website', title: 'Create and publish', description: 'Preview your website and reuse existing connections.', action: 'configure', isAutomatic: false }],
+  },
+  {
     id: 'open-a-shop',
     title: 'Open a Shop',
     subtitle: 'Accept Bitcoin payments with your own online store',
@@ -114,34 +128,6 @@ export const GOALS: GoalDefinition[] = [
       },
     ],
     estimatedTime: '~30 min + sync time',
-    difficulty: 'beginner',
-  },
-  {
-    id: 'file-browser',
-    title: 'File Browser',
-    subtitle: 'Browse, upload, and manage files on your server',
-    icon: 'files',
-    category: 'storage',
-    requiredApps: ['filebrowser'],
-    steps: [
-      {
-        id: 'install-filebrowser',
-        title: 'Install FileBrowser',
-        description: 'FileBrowser is a lightweight web file manager. Upload, download, and organize files on your server from any browser.',
-        appId: 'filebrowser',
-        action: 'install',
-        isAutomatic: true,
-      },
-      {
-        id: 'configure-filebrowser',
-        title: 'Log In',
-        description: 'Open FileBrowser and log in. Change your password on first login, then start managing your files.',
-        appId: 'filebrowser',
-        action: 'configure',
-        isAutomatic: false,
-      },
-    ],
-    estimatedTime: '~5 min',
     difficulty: 'beginner',
   },
   {

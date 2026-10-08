@@ -21,7 +21,7 @@ export type AIContextCategory =
   | 'bitcoin'
 
 /** Actions AIUI can request Archy to perform */
-export type AIActionType = 'install-app' | 'open-app' | 'navigate' | 'launch-app' | 'search-web' | 'read-file' | 'tail-logs'
+export type AIActionType = 'prepare-website' | 'install-app' | 'open-app' | 'navigate' | 'launch-app' | 'search-web' | 'read-file' | 'tail-logs'
 
 // ─── AIUI → Archy (Requests) ───────────────────────────────────────────────
 

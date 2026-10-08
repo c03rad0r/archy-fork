@@ -2,6 +2,8 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { ref, type Ref } from 'vue'
 import { setActivePinia, createPinia } from 'pinia'
 
+vi.mock('@/router', () => ({ default: { push: vi.fn() } }))
+
 vi.mock('@/api/rpc-client', () => ({
   rpcClient: {
     call: vi.fn(),
@@ -22,6 +24,8 @@ import { ContextBroker } from '../contextBroker'
 import { useAIPermissionsStore } from '@/stores/aiPermissions'
 import { rpcClient } from '@/api/rpc-client'
 import { fileBrowserClient } from '@/api/filebrowser-client'
+import router from '@/router'
+import { pendingWebsiteHtml } from '../websiteImport'
 
 describe('ContextBroker', () => {
   let broker: ContextBroker
@@ -31,6 +35,7 @@ describe('ContextBroker', () => {
   beforeEach(() => {
     setActivePinia(createPinia())
     vi.clearAllMocks()
+    pendingWebsiteHtml.value = null
 
     mockPostMessage = vi.fn()
     iframeRef = ref<HTMLIFrameElement | null>({
@@ -44,6 +49,23 @@ describe('ContextBroker', () => {
 
   it('creates with correct allowed origin', () => {
     expect(broker).toBeDefined()
+  })
+
+  it('only accepts website drafts from the registered AIUI frame and origin', async () => {
+    const receive = (origin: string, source: MessageEventSource | null) => {
+      ;(broker as unknown as { handleMessage(event: MessageEvent): void }).handleMessage(new MessageEvent('message', {
+        origin, source, data: { type: 'action:request', id: 'website-draft', action: 'prepare-website', params: { html: '<h1>Draft</h1>' } },
+      }))
+    }
+    receive('https://untrusted.example', iframeRef.value!.contentWindow)
+    receive('http://localhost:8100', window)
+    expect(pendingWebsiteHtml.value).toBeNull()
+    expect(router.push).not.toHaveBeenCalled()
+    receive('http://localhost:8100', iframeRef.value!.contentWindow)
+    await vi.waitFor(() => expect(router.push).toHaveBeenCalledWith('/dashboard/setup/website'))
+    expect(pendingWebsiteHtml.value).toBe('<h1>Draft</h1>')
+    expect(rpcClient.call).not.toHaveBeenCalled()
+    expect(mockPostMessage).toHaveBeenCalledWith(expect.objectContaining({ type: 'action:response', id: 'website-draft', success: true }), expect.any(String))
   })
 
   it('start registers message listener', () => {

@@ -7,6 +7,7 @@ members = [
     "openwrt",
     "performance",
     "security",
+    "publishing-tests",
 ]
 
 # Shared package metadata, inherited by each member via `license.workspace = true`.
@@ -27,3 +28,7 @@ opt-level = 3
 
 # Archipelago workspace - no StartOS dependencies
 # All patches removed - we use standard crates.io dependencies
+
+# Small source-sharing validation harness; no optimized tests needed.
+[profile.test.package.archipelago-publishing-tests]
+opt-level = 0

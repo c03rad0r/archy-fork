@@ -66,6 +66,7 @@ mod monitoring;
 mod music;
 mod names;
 mod network;
+mod publishing;
 mod node_message;
 mod nostr_discovery;
 mod nostr_handshake;

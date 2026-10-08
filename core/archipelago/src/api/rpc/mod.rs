@@ -29,6 +29,7 @@ mod monitoring;
 mod music;
 mod names;
 mod network;
+mod publishing;
 mod node;
 mod nostr;
 mod onboarding_gate;

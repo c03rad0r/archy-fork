@@ -6,6 +6,7 @@ export interface GoalDefinition {
   subtitle: string
   icon: string
   category: 'commerce' | 'payments' | 'storage' | 'identity' | 'network' | 'backup' | 'community'
+  route?: string
   requiredApps: string[]
   steps: GoalStep[]
   estimatedTime: string
