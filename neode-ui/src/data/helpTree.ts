@@ -83,6 +83,18 @@ export const helpTree: HelpSection[] = [
         relatedPath: '/dashboard/web5',
       },
       {
+        id: 'external-access-guide',
+        label: 'Allowing External Connections',
+        content: 'Open Setup → Allow external connections. Choose how visitors will connect: FIPS, an HTTPS domain through your own gateway, or Tor. You can select more than one. Save your choices, then choose a supported app and create an expiring guest token. Share that token privately. Guests cannot use it to sign in to your dashboard. Check the app address from the visitor’s device; saved settings alone do not confirm a working connection.',
+        relatedPath: '/dashboard/setup/external-access',
+      },
+      {
+        id: 'website-guide',
+        label: 'Publishing a Website',
+        content: 'Open Setup → Publish a website. The guide reuses your saved connections and skips Blossom installation when it is already installed. Create a page with AIUI, use Continue to website setup on its HTML preview, then review and save the draft. You can keep a signed copy in local Blossom. Choose an address and explicitly publish each connection. For Nostr, review the exact page, profile identity, storage server and relays before sharing: public copies may remain even after a removal request. FIPS and Tor do not require a purchased domain.',
+        relatedPath: '/dashboard/setup/website',
+      },
+      {
         id: 'self-hosting',
         label: 'Self-Hosting',
         content: 'Archipelago runs your services locally. Your data stays on your hardware, giving you full control and privacy. No cloud subscriptions, no data harvesting, no service shutdowns. You own your node, your data, and your identity. Back up your node regularly using the backup feature in Settings.',

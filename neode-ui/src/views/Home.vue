@@ -260,7 +260,7 @@
                 </button>
               </div>
               <div class="grid grid-cols-1 gap-3 mt-auto">
-                <RouterLink v-for="goal in topGoals" :key="goal.id" :to="`/dashboard/goals/${goal.id}`" class="home-card-btn path-action-button path-action-button--continue flex items-center justify-center gap-3">
+                <RouterLink v-for="goal in topGoals" :key="goal.id" :to="goal.route || `/dashboard/goals/${goal.id}`" class="home-card-btn path-action-button path-action-button--continue flex items-center justify-center gap-3">
                   <span>{{ goal.title }}</span>
                 </RouterLink>
               </div>

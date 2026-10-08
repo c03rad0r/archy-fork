@@ -29,10 +29,10 @@ export interface DnsPlan {
 }
 export interface HttpsCheck { hostname: string; sha256: string; checked_at: string }
 export const PUBLISH_ROUTES: { id: PublishRoute; title: string; description: string }[] = [
-  { id: 'fips', title: 'FIPS network', description: 'Reach your node through FIPS. Visitors need a FIPS connection or a configured LAN gateway.' },
-  { id: 'public-web', title: 'Public web', description: 'An HTTPS address for ordinary browsers, using your selected gateway or a direct public connection.' },
-  { id: 'tor', title: 'Tor', description: 'An onion address controlled by your node. Visitors use Tor Browser.' },
-  { id: 'nostr', title: 'Nostr / nsites', description: 'Publish a static website through Nostr and Blossom. Public copies may remain after you unpublish.' },
+  { id: 'fips', title: 'FIPS network', description: 'Use your node’s FIPS address without a public gateway.' },
+  { id: 'public-web', title: 'Public web', description: 'Use a domain and a reverse proxy you control.' },
+  { id: 'tor', title: 'Tor', description: 'Your node controls its onion address and keeps it when you unpublish.' },
+  { id: 'nostr', title: 'Nostr / nsites', description: 'Share a signed static copy through Nostr and Blossom.' },
 ]
 export const publishing = {
   status: () => rpcClient.call<PublishingStatus>({ method: 'publishing.status', maxRetries: 1 }),

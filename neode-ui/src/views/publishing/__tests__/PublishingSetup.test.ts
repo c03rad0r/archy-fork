@@ -18,15 +18,38 @@ beforeEach(() => {
   api.update.mockResolvedValue({ state: { ...state(), version: 3 }, project_id: null })
 })
 describe('publishing setup', () => {
+  it('keeps unpublish controls available when a published route is deselected', async () => {
+    page.name = 'publish-website'
+    appStore.data['package-data'].blossom = { state: 'installed' }
+    api.status.mockResolvedValue({ state: { ...state(), projects: { site: { id: 'site', name: 'Site', draft: '<h1>Public</h1>', routes: ['tor'], domain: null, revisions: [], tor_publication: { html: '<h1>Public</h1>', port: 32100 } } } }, apps: [], publication_enabled: true })
+    const wrapper = mount(PublishingSetup); await flushPromises()
+    await wrapper.get('[aria-controls="setup-step-connections"]').trigger('click')
+    await wrapper.get('input[value="tor"]').setValue(false)
+    await wrapper.get('[aria-controls="setup-step-publish"]').trigger('click')
+    expect(wrapper.findAll('button').some(button => button.text() === 'Unpublish from Tor')).toBe(true)
+    expect(api.update).not.toHaveBeenCalled()
+    expect(rpcClient.call).not.toHaveBeenCalled()
+  })
   it('reuses saved routes and advances the walkthrough without publishing or signing', async () => {
     page.name = 'publish-website'
     appStore.data['package-data'].blossom = { state: 'installed' }
     const wrapper = mount(PublishingSetup); await flushPromises()
     expect(wrapper.get('[aria-controls="setup-step-design"]').attributes('aria-expanded')).toBe('true')
     expect(wrapper.get('[aria-controls="setup-step-connections"]').attributes('aria-expanded')).toBe('false')
-    await wrapper.findAll('button').find(b => b.text() === 'Continue')!.trigger('click')
+    expect(wrapper.findAll('button').find(b => b.text().startsWith('Save and continue'))!.attributes('disabled')).toBeDefined()
+    await wrapper.get('[aria-controls="setup-step-publish"]').trigger('click')
     expect(wrapper.get('[aria-controls="setup-step-publish"]').attributes('aria-expanded')).toBe('true')
     expect(api.update).not.toHaveBeenCalled()
+    expect(rpcClient.call).not.toHaveBeenCalled()
+  })
+  it('saves before advancing and keeps failed saves on the same step', async () => {
+    const wrapper = mount(PublishingSetup); await flushPromises()
+    api.update.mockRejectedValueOnce(new Error('Connection choices could not be saved'))
+    await wrapper.findAll('button').find(b => b.text().startsWith('Save and continue'))!.trigger('click'); await flushPromises()
+    expect(wrapper.get('[aria-controls="setup-step-connections"]').attributes('aria-expanded')).toBe('true')
+    expect(wrapper.get('[role="alert"]').text()).toContain('could not be saved')
+    await wrapper.findAll('button').find(b => b.text().startsWith('Save and continue'))!.trigger('click'); await flushPromises()
+    expect(wrapper.get('[aria-controls="setup-step-sharing"]').attributes('aria-expanded')).toBe('true')
     expect(rpcClient.call).not.toHaveBeenCalled()
   })
   it('carries the existing connection choices into a new website draft', async () => {
@@ -86,7 +109,7 @@ describe('publishing setup', () => {
     const inputs = wrapper.findAll('input[type="checkbox"][value]')
     expect((inputs[0]!.element as HTMLInputElement).checked).toBe(true)
     await inputs[2]!.setValue(true)
-    await wrapper.findAll('button').find(b => b.text() === 'Save connection choices')!.trigger('click')
+    await wrapper.findAll('button').find(b => b.text().startsWith('Save and continue'))!.trigger('click')
     await flushPromises()
     expect(api.update).toHaveBeenCalledWith(2, { action: 'connections', routes: ['fips', 'tor'] })
     expect(wrapper.text()).toContain('Existing app access has not changed')
@@ -94,7 +117,7 @@ describe('publishing setup', () => {
   it('keeps a failed save visible and does not pretend it succeeded', async () => {
     api.update.mockRejectedValue(new Error('Reload before saving'))
     const wrapper = mount(PublishingSetup); await flushPromises()
-    await wrapper.findAll('button').find(b => b.text() === 'Save connection choices')!.trigger('click'); await flushPromises()
+    await wrapper.findAll('button').find(b => b.text().startsWith('Save and continue'))!.trigger('click'); await flushPromises()
     expect(wrapper.get('[role="alert"]').text()).toContain('Reload before saving')
     expect(wrapper.text()).not.toContain('Connection preferences saved')
   })

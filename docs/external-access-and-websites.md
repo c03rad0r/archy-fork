@@ -100,7 +100,34 @@ been created. The earlier standalone proxy route/certificate were removed. A new
 route now connects the dashboard-published synthetic site to
 `https://free.archipelago.builders` through Yaya. Trusted TLS, exact page bytes,
 `/rpc` returning 404, and traversal rejection (400) pass. The route remains for UAT;
-full revoke/restart qualification is still in progress.
+FIPS/HTTPS revocation retained the Tor publication and archive, and Tor
+revocation retained HTTPS. Republishing retained the onion hostname. The existing
+Yaya Tor client timed out after republish, while a separate fresh Tor client
+fetched the exact restored page; do not treat the first timeout as a confirmed
+publisher defect or a universal reachability pass. Temporary notice logging was
+removed and the isolated test client was stopped after qualification.
+
+A management-service restart retained exact project/archive state, all app
+container IDs/states, and native Bitcoin/LND PIDs/start times. Public HTTPS and
+Tor both returned exact content after that restart. A full machine reboot is
+separate and awaits the operator's recovery arrangement. The actual dashboard
+Blossom iframe passed profile selection, explicit denial with zero uploads, and
+an approved local upload through the canonical signer. Physical companion
+acceptance remains separate; this was a browser iframe test.
+
+The operator requested a further UX pass informed by all existing guides. The
+seven existing goal guides, help tree, shared walkthrough and onboarding patterns
+were reviewed. The revised flow uses concise visitor-oriented multiselect cards,
+an AIUI-first creation path, optional HTML/model controls, a saved-version preview,
+explicit Save and continue, and contextual Help entries. The Home shortcuts now
+respect the same dedicated guide routes as the Setup cards. The final polish is active on Framework. The production typecheck and build pass,
+as do 23 focused tests. The deployed flow again passed real draft save, local
+Blossom archive/readback, FIPS publishing and the mobile overflow check, with zero
+external browser requests. It preserves original Setup visuals, a single main
+Save and continue action, keyboard focus/scroll handling, and visible revoke
+controls even when an already-published route is deselected.
+No local Ollama service responded on Framework; live model generation remains
+unqualified. No proprietary fallback was used or added.
 
 New source work includes local Blossom website archives, explicit app-only guest
 credentials, and an on-demand HTTPS check against exact published page bytes.
