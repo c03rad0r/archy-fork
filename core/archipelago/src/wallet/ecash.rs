@@ -70,6 +70,9 @@ pub struct StoredProof {
     /// Whether this proof is reserved (allocated to an in-progress operation).
     #[serde(default)]
     pub reserved: bool,
+    /// Owner of a recoverable send reservation; absent on legacy proofs.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reserved_by: Option<String>,
     /// Timestamp when received.
     pub created_at: String,
 }
@@ -84,6 +87,10 @@ pub struct WalletState {
     /// Primary mint URL.
     #[serde(default)]
     pub mint_url: String,
+
+    /// Durable receive commit ownership; never prune with transaction history.
+    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    pub(super) receive_commits: std::collections::BTreeMap<String, String>,
 
     // ── Legacy compatibility ──
     // Old wallet format had a `tokens` field. If present during deserialization,
@@ -180,6 +187,7 @@ impl WalletState {
                 mint_url: mint_url.to_string(),
                 spent: false,
                 reserved: false,
+                reserved_by: None,
                 created_at: now.clone(),
             });
         }
@@ -235,7 +243,7 @@ pub enum EcashNetwork {
 }
 
 impl EcashNetwork {
-    fn wallet_file(&self) -> &'static str {
+    pub(super) fn wallet_file(&self) -> &'static str {
         match self {
             Self::Mainnet => WALLET_FILE,
             Self::Testnet => "wallet/ecash.testnet.json",
@@ -267,71 +275,65 @@ impl EcashNetwork {
 
 /// Read the node's ecash network. Absent file = mainnet, so nodes that never
 /// touch this setting behave exactly as before.
-pub async fn load_network(data_dir: &Path) -> EcashNetwork {
+pub async fn load_network(data_dir: &Path) -> Result<EcashNetwork> {
     let path = data_dir.join(NETWORK_FILE);
-    let Ok(content) = fs::read_to_string(&path).await else {
-        return EcashNetwork::Mainnet;
-    };
-    serde_json::from_str::<NetworkConfig>(&content)
-        .map(|c| c.network)
-        .unwrap_or_default()
+    match fs::read_to_string(&path).await {
+        Ok(content) => Ok(serde_json::from_str::<NetworkConfig>(&content)
+            .context("Ecash network configuration is damaged; no wallet was selected")?
+            .network),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(EcashNetwork::Mainnet),
+        Err(error) => Err(error).context("Could not read ecash network configuration"),
+    }
 }
 
 /// Switch the node's ecash network. The other network's wallet is left on
 /// disk untouched, so switching is reversible and loses nothing.
 pub async fn save_network(data_dir: &Path, network: EcashNetwork) -> Result<()> {
+    let _mutation = super::mutation::guard(data_dir).await?;
+    crate::content_purchase::Journal::open(data_dir)
+        .await?
+        .ensure_seller_policy_change(network, None)
+        .await?;
     let dir = data_dir.join("wallet");
     fs::create_dir_all(&dir)
         .await
         .context("Failed to create wallet dir")?;
     let content = serde_json::to_string_pretty(&NetworkConfig { network })
         .context("Failed to serialize ecash network")?;
-    fs::write(data_dir.join(NETWORK_FILE), content)
-        .await
-        .context("Failed to write ecash network")?;
+    write_file_atomically(&data_dir.join(NETWORK_FILE), &content).await?;
     Ok(())
 }
 
 #[derive(Debug, Clone, Copy, Default, Serialize, Deserialize)]
 struct NetworkConfig {
-    #[serde(default)]
     network: EcashNetwork,
 }
 
 /// Load wallet state from disk.
 pub async fn load_wallet(data_dir: &Path) -> Result<WalletState> {
-    let network = load_network(data_dir).await;
+    let network = load_network(data_dir).await?;
     let path = data_dir.join(network.wallet_file());
-    if !path.exists() {
-        return Ok(WalletState {
-            mint_url: network.default_mint(),
-            ..Default::default()
-        });
-    }
-    let content = fs::read_to_string(&path)
-        .await
-        .context("Failed to read wallet file")?;
-
-    // An empty file is a legitimate "nothing here yet" (a create that never
-    // got its first write); anything else that fails to parse is a damaged
-    // purse and must NOT be read as an empty one.
-    //
-    // This used to be `unwrap_or_default()`, which turned a truncated file
-    // into a zero balance — and because the very next operation saves the
-    // wallet back, that empty state was then written over the only copy of
-    // the proofs. Failing here keeps the damaged file intact so the coins
-    // can still be recovered from it (or from a backup) by hand.
-    let mut wallet: WalletState = if content.trim().is_empty() {
-        WalletState::default()
-    } else {
-        serde_json::from_str(&content).with_context(|| {
-            format!(
-                "Ecash wallet file {} is damaged and was NOT overwritten — your coins are \
-                 still in it. Restore it from a backup, or move it aside to start empty.",
-                path.display()
-            )
-        })?
+    let content = match fs::read_to_string(&path).await {
+        Ok(content) => content,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            return Ok(WalletState {
+                mint_url: network.default_mint(),
+                ..Default::default()
+            });
+        }
+        Err(error) => return Err(error).context("Failed to read wallet file"),
     };
+
+    // An existing empty file is indistinguishable from a truncated purse.
+    // Only absence represents a fresh wallet; never turn damaged data into
+    // a successful zero balance that a later operation could overwrite.
+    let mut wallet: WalletState = serde_json::from_str(&content).with_context(|| {
+        format!(
+            "Ecash wallet file {} is damaged and was NOT overwritten. \
+             Recover it from a backup before continuing.",
+            path.display()
+        )
+    })?;
 
     // Set default mint URL if empty
     if wallet.mint_url.is_empty() {
@@ -349,37 +351,76 @@ pub async fn load_wallet(data_dir: &Path) -> Result<WalletState> {
 /// previous plain write truncated the real file first, which is precisely how
 /// a wallet ends up unparseable.
 async fn write_file_atomically(path: &Path, content: &str) -> Result<()> {
-    let tmp = path.with_extension("json.tmp");
-    let mut f = fs::File::create(&tmp)
-        .await
-        .with_context(|| format!("Failed to create {}", tmp.display()))?;
     use tokio::io::AsyncWriteExt;
-    f.write_all(content.as_bytes())
+    struct TemporaryFile(std::path::PathBuf);
+    impl Drop for TemporaryFile {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_file(&self.0);
+        }
+    }
+    let parent = path.parent().context("Wallet file has no directory")?;
+    let tmp = TemporaryFile(parent.join(format!(".ecash-{}.tmp", uuid::Uuid::new_v4())));
+    let mut options = fs::OpenOptions::new();
+    options.write(true).create_new(true);
+    #[cfg(unix)]
+    options.mode(0o600);
+    let mut file = options
+        .open(&tmp.0)
+        .await
+        .context("Failed to create wallet temp file")?;
+    file.write_all(content.as_bytes())
         .await
         .context("Failed to write wallet temp file")?;
-    f.sync_all().await.context("Failed to flush wallet file")?;
-    drop(f);
-    fs::rename(&tmp, path)
+    file.sync_all()
         .await
-        .with_context(|| format!("Failed to replace {}", path.display()))?;
+        .context("Failed to flush wallet file")?;
+    drop(file);
+    // Complete the commit without yielding: async filesystem work must not
+    // rename an old purse after cancellation releases the mutation guard.
+    std::fs::rename(&tmp.0, path).context("Failed to replace wallet file")?;
+    std::fs::File::open(parent)?
+        .sync_all()
+        .context("Failed to flush wallet directory")?;
     Ok(())
 }
 
 /// Save wallet state to disk.
-pub async fn save_wallet(data_dir: &Path, wallet: &WalletState) -> Result<()> {
+pub(super) async fn save_wallet(data_dir: &Path, wallet: &WalletState) -> Result<()> {
     let dir = data_dir.join("wallet");
     fs::create_dir_all(&dir)
         .await
         .context("Failed to create wallet dir")?;
-    let path = data_dir.join(load_network(data_dir).await.wallet_file());
+    let path = data_dir.join(load_network(data_dir).await?.wallet_file());
     let content = serde_json::to_string_pretty(wallet).context("Failed to serialize wallet")?;
     write_file_atomically(&path, &content).await?;
     Ok(())
 }
 
+/// Record revenue without overwriting a simultaneous receipt/send snapshot.
+pub(crate) async fn record_streaming_revenue(
+    data_dir: &Path,
+    amount_sats: u64,
+    service_id: &str,
+    peer_id: &str,
+) -> Result<()> {
+    let _mutation = super::mutation::guard(data_dir).await?;
+    let mut wallet = load_wallet(data_dir).await?;
+    wallet.record_tx(
+        TransactionType::StreamingRevenue,
+        amount_sats,
+        &format!(
+            "Streaming payment: {} sats for {} from {}",
+            amount_sats, service_id, peer_id
+        ),
+        &wallet.mint_url.clone(),
+        peer_id,
+    );
+    save_wallet(data_dir, &wallet).await
+}
+
 /// Load accepted mints list.
 pub async fn load_accepted_mints(data_dir: &Path) -> Result<AcceptedMints> {
-    let network = load_network(data_dir).await;
+    let network = load_network(data_dir).await?;
     let path = data_dir.join(network.mints_file());
     if !path.exists() {
         return Ok(AcceptedMints {
@@ -405,11 +446,16 @@ pub async fn load_accepted_mints(data_dir: &Path) -> Result<AcceptedMints> {
 
 /// Save accepted mints list.
 pub async fn save_accepted_mints(data_dir: &Path, mints: &AcceptedMints) -> Result<()> {
+    let _mutation = super::mutation::guard(data_dir).await?;
+    crate::content_purchase::Journal::open(data_dir)
+        .await?
+        .ensure_seller_policy_change(load_network(data_dir).await?, Some(&mints.mints))
+        .await?;
     let dir = data_dir.join("wallet");
     fs::create_dir_all(&dir)
         .await
         .context("Failed to create wallet dir")?;
-    let path = data_dir.join(load_network(data_dir).await.mints_file());
+    let path = data_dir.join(load_network(data_dir).await?.mints_file());
     let content =
         serde_json::to_string_pretty(mints).context("Failed to serialize accepted mints")?;
     write_file_atomically(&path, &content).await?;
@@ -426,7 +472,7 @@ pub async fn save_accepted_mints(data_dir: &Path, mints: &AcceptedMints) -> Resu
 /// through here. On a node with no phrase yet the source is absent and the
 /// behaviour is exactly as it was before: valid proofs, no backup.
 async fn mint_client(data_dir: &Path, mint_url: &str) -> Result<MintClient> {
-    Ok(MintClient::new(mint_url)?.with_recovery(RecoverySource::load(data_dir).await))
+    Ok(MintClient::new(mint_url)?.with_recovery(RecoverySource::load(data_dir).await?))
 }
 
 /// Request a mint quote — returns a Lightning invoice to pay.
@@ -441,6 +487,7 @@ pub async fn mint_quote(
 
 /// Mint new ecash tokens after a Lightning invoice has been paid.
 pub async fn mint_tokens(data_dir: &Path, quote_id: &str, amount_sats: u64) -> Result<u64> {
+    let _mutation = super::mutation::guard(data_dir).await?;
     let mut wallet = load_wallet(data_dir).await?;
     let mint_url = wallet.mint_url.clone();
     let client = mint_client(data_dir, &mint_url).await?;
@@ -471,6 +518,7 @@ pub async fn melt_quote(data_dir: &Path, bolt11: &str) -> Result<super::mint_cli
 
 /// Melt ecash tokens to pay a Lightning invoice.
 pub async fn melt_tokens(data_dir: &Path, quote_id: &str, bolt11: &str) -> Result<u64> {
+    let _mutation = super::mutation::guard(data_dir).await?;
     let mut wallet = load_wallet(data_dir).await?;
     let mint_url = wallet.mint_url.clone();
     let client = mint_client(data_dir, &mint_url).await?;
@@ -576,6 +624,17 @@ fn swap_fee(total_paid: u64, amount_delivered: u64) -> u64 {
 /// are left unclaimed (reconcilable from the mint quote id). Idempotent resume
 /// is phasing step 3 (deferred).
 pub async fn swap_between_mints(
+    data_dir: &Path,
+    from_mint: &str,
+    to_mint: &str,
+    amount_sats: u64,
+    max_fee_sats: u64,
+) -> Result<u64> {
+    let _mutation = super::mutation::guard(data_dir).await?;
+    swap_between_mints_locked(data_dir, from_mint, to_mint, amount_sats, max_fee_sats).await
+}
+
+async fn swap_between_mints_locked(
     data_dir: &Path,
     from_mint: &str,
     to_mint: &str,
@@ -737,8 +796,9 @@ async fn wait_for_mint_quote_paid(client: &MintClient, quote_id: &str) -> Result
 
 /// Create an ecash token string to send to a peer, drawing from the home mint.
 pub async fn send_token(data_dir: &Path, amount_sats: u64) -> Result<String> {
+    let _mutation = super::mutation::guard(data_dir).await?;
     let mint_url = load_wallet(data_dir).await?.mint_url;
-    send_token_at(data_dir, &mint_url, amount_sats).await
+    send_token_at_locked(data_dir, &mint_url, amount_sats).await
 }
 
 /// Create an ecash token denominated in a specific mint's tokens.
@@ -747,6 +807,261 @@ pub async fn send_token(data_dir: &Path, amount_sats: u64) -> Result<String> {
 /// on the seeder's accepted mint, we send a token from *that* mint so the seeder
 /// only ever receives its own mint's proofs (see plan §2a, payer-side swap).
 pub async fn send_token_at(data_dir: &Path, mint_url: &str, amount_sats: u64) -> Result<String> {
+    let _mutation = super::mutation::guard(data_dir).await?;
+    send_token_at_locked(data_dir, mint_url, amount_sats).await
+}
+
+/// Prepare one immutable caller-owned payment. Callers must persist and reuse
+/// the operation ID and context hash; a fresh ID is a different payment.
+/// This does not authorize delivery or replace the seller's settlement receipt.
+pub async fn send_token_recoverable(
+    data_dir: &Path,
+    operation_id: &str,
+    network: EcashNetwork,
+    mint_url: &str,
+    amount_sats: u64,
+    context_hash: &str,
+) -> Result<String> {
+    send_token_recoverable_with_deadline(
+        data_dir,
+        operation_id,
+        network,
+        mint_url,
+        amount_sats,
+        context_hash,
+        None,
+        || chrono::Utc::now().timestamp(),
+        None,
+    )
+    .await
+}
+
+/// Recover original results after expiry, but never initiate a fresh exact send
+/// or swap POST after the immutable purchase deadline. The caller binds this
+/// deadline into context_hash and must already have seller acceptance saved.
+pub async fn send_token_recoverable_before(
+    data_dir: &Path,
+    operation_id: &str,
+    network: EcashNetwork,
+    mint_url: &str,
+    amount_sats: u64,
+    context_hash: &str,
+    expires_at: i64,
+) -> Result<String> {
+    anyhow::ensure!(expires_at > 0, "Invalid purchase spend deadline");
+    send_token_recoverable_with_deadline(
+        data_dir,
+        operation_id,
+        network,
+        mint_url,
+        amount_sats,
+        context_hash,
+        Some(expires_at),
+        || chrono::Utc::now().timestamp(),
+        None,
+    )
+    .await
+}
+fn ensure_fresh_payment_allowed(expires_at: Option<i64>, now: i64) -> Result<()> {
+    anyhow::ensure!(
+        expires_at.is_none_or(|deadline| now < deadline),
+        "The offer expired; recover the original purchase instead of starting another payment"
+    );
+    Ok(())
+}
+async fn send_token_recoverable_with_deadline(
+    data_dir: &Path,
+    operation_id: &str,
+    network: EcashNetwork,
+    mint_url: &str,
+    amount_sats: u64,
+    context_hash: &str,
+    expires_at: Option<i64>,
+    now: impl Fn() -> i64 + Send + Sync,
+    plan: Option<&super::purchase_fee_plan::FeePlan>,
+) -> Result<String> {
+    use super::send_journal::{Binding, Journal, Outcome, Phase, Request};
+    let held = super::mutation::guard(data_dir).await?;
+    anyhow::ensure!(
+        load_network(data_dir).await? == network,
+        "Switch back to the payment's original network before recovering it"
+    );
+    let binding = Binding {
+        id: operation_id.into(),
+        network,
+        mint_url: mint_url.into(),
+        amount_sats,
+        context_hash: context_hash.into(),
+    };
+    let journal = Journal::new(&held);
+    let previous = journal.load(operation_id).await?;
+    if let Some(plan) = plan {
+        plan.validate()?;
+        anyhow::ensure!(
+            previous.is_some(),
+            "Original planned inputs are missing; no new proof selection allowed"
+        );
+        anyhow::ensure!(
+            plan.mint_url == mint_url && plan.gross_sats == amount_sats,
+            "Planned amount or mint changed"
+        );
+    }
+    let recovering = previous.is_some();
+    let record = if let Some(record) = previous {
+        anyhow::ensure!(
+            record.binding == binding,
+            "Payment operation terms changed; no new spend allowed"
+        );
+        record
+    } else {
+        ensure_fresh_payment_allowed(expires_at, now())?;
+        anyhow::ensure!(amount_sats > 0, "Payment amount must be positive");
+        let wallet = load_wallet(data_dir).await?;
+        let (indices, excess) = wallet
+            .select_proofs(&binding.mint_url, amount_sats)
+            .context("Insufficient spendable balance for this payment")?;
+        let proofs: Vec<_> = indices
+            .iter()
+            .map(|&index| wallet.proofs[index].proof.clone())
+            .collect();
+        let request = if excess == 0 {
+            Request::Exact { proofs }
+        } else {
+            let mut denominations = amount_to_denominations(amount_sats);
+            denominations.extend(amount_to_denominations(excess));
+            let client = mint_client(data_dir, &binding.mint_url).await?;
+            let prepared = client
+                .prepare_swap_at_least(&proofs, &denominations, amount_sats)
+                .await?;
+            // Establish recovery support before reserving or spending inputs.
+            // Newly derived outputs must not already exist at the mint.
+            let existing = client.restore_prepared_swap(&prepared).await.map_err(|_| {
+                anyhow::anyhow!(
+                    "The mint could not verify payment recovery support; no funds spent"
+                )
+            })?;
+            anyhow::ensure!(
+                existing.is_none(),
+                "Payment outputs already exist at the mint; no funds spent"
+            );
+            Request::Swap(prepared)
+        };
+        ensure_fresh_payment_allowed(expires_at, now())?;
+        journal.prepare(binding.clone(), request).await?
+    };
+    anyhow::ensure!(
+        !matches!(record.phase, Phase::Cancelled),
+        "Payment operation was cancelled"
+    );
+    if matches!(record.phase, Phase::Result(_) | Phase::Committed(_)) {
+        return journal.commit_wallet(&binding).await;
+    }
+    // An exact Prepared record has never exposed a token: result durability
+    // precedes both wallet commit and return. Do not reserve fresh inputs merely
+    // to reject an already-expired accepted plan.
+    if matches!(&record.request, Request::Exact { .. }) {
+        ensure_fresh_payment_allowed(expires_at, now())?;
+    }
+    journal.reserve_wallet(&binding).await?;
+    let (send, change) = match &record.request {
+        Request::Exact { proofs } => {
+            if let Some(plan) = plan {
+                plan.validate_proofs(proofs)?;
+                plan.verify_mint_keysets(&MintClient::new(mint_url)?.get_keysets().await?, false)?;
+            }
+            ensure_fresh_payment_allowed(expires_at, now())?;
+            (proofs.clone(), vec![])
+        }
+        Request::Swap(prepared) => {
+            // All recovery material is already durable. Do not derive new
+            // outputs or release reservations after an ambiguous response.
+            let client = MintClient::new(&binding.mint_url)?;
+            let restored = if recovering {
+                client.restore_prepared_swap(prepared).await.map_err(|_| {
+                    anyhow::anyhow!("Could not recover this payment yet; its funds remain reserved")
+                })?
+            } else {
+                None
+            };
+            let result = if let Some(restored) = restored {
+                restored
+            } else {
+                if recovering {
+                    let states = client.check_state(prepared.inputs()).await.map_err(|_| {
+                        anyhow::anyhow!(
+                            "Could not verify this payment's original inputs; do not pay again"
+                        )
+                    })?;
+                    anyhow::ensure!(
+                        states.iter().all(|state| state.state == "UNSPENT"),
+                        "This payment is still pending at the mint; do not pay again"
+                    );
+                }
+                if let Some(plan) = plan {
+                    plan.verify_mint_keysets(&client.get_keysets().await?, true)?;
+                }
+                ensure_fresh_payment_allowed(expires_at, now())?;
+                journal.mark_dispatched(&binding).await?;
+                client.execute_prepared_swap(prepared).await.map_err(|_| anyhow::anyhow!(
+                    "The mint did not confirm this payment; retry this same operation to recover it"))?
+            };
+            let mut needed = amount_to_denominations(amount_sats);
+            let mut send = Vec::new();
+            let mut change = Vec::new();
+            for proof in result.new_proofs {
+                if let Some(index) = needed.iter().position(|amount| *amount == proof.amount) {
+                    needed.remove(index);
+                    send.push(proof);
+                } else {
+                    change.push(proof);
+                }
+            }
+            anyhow::ensure!(
+                needed.is_empty(),
+                "Recovered payment is incomplete; do not pay again"
+            );
+            (send, change)
+        }
+    };
+    let token = CashuToken::new(&binding.mint_url, send);
+    let encoded = token.serialize_v4().or_else(|_| token.serialize())?;
+    if let Some(plan) = plan {
+        plan.validate_token(&encoded)?;
+    }
+    journal
+        .record_result(
+            &binding,
+            Outcome {
+                token: encoded,
+                change,
+            },
+        )
+        .await?;
+    journal.commit_wallet(&binding).await
+}
+
+/// Executes only a previously pinned private wallet plan. A missing send record
+/// rejects instead of silently selecting another set of inputs.
+pub(crate) async fn send_token_preplanned_before(
+    data_dir: &Path,
+    contract: &crate::content_purchase::Contract,
+    plan: &super::purchase_fee_plan::FeePlan,
+) -> Result<String> {
+    send_token_recoverable_with_deadline(
+        data_dir,
+        &contract.id,
+        contract.network,
+        &contract.mint_url,
+        contract.gross_token_sats,
+        &contract.context_hash()?,
+        Some(contract.expires_at),
+        || chrono::Utc::now().timestamp(),
+        Some(plan),
+    )
+    .await
+}
+
+async fn send_token_at_locked(data_dir: &Path, mint_url: &str, amount_sats: u64) -> Result<String> {
     let mut wallet = load_wallet(data_dir).await?;
     let mint_url = mint_url.to_string();
 
@@ -937,6 +1252,7 @@ pub async fn build_payment_token(
     amount_sats: u64,
     max_fee_sats: u64,
 ) -> Result<String> {
+    let _mutation = super::mutation::guard(data_dir).await?;
     if amount_sats == 0 {
         anyhow::bail!("payment amount must be greater than zero");
     }
@@ -965,15 +1281,16 @@ pub async fn build_payment_token(
                 "Payment plan: direct from {} for {} sats",
                 mint_url, amount_sats
             );
-            send_token_at(data_dir, &mint_url, amount_sats).await
+            send_token_at_locked(data_dir, &mint_url, amount_sats).await
         }
         PaymentPlan::Swap { from_mint, to_mint } => {
             debug!(
                 "Payment plan: swap {}→{} then pay {} sats (fee cap {})",
                 from_mint, to_mint, amount_sats, max_fee_sats
             );
-            swap_between_mints(data_dir, &from_mint, &to_mint, amount_sats, max_fee_sats).await?;
-            send_token_at(data_dir, &to_mint, amount_sats).await
+            swap_between_mints_locked(data_dir, &from_mint, &to_mint, amount_sats, max_fee_sats)
+                .await?;
+            send_token_at_locked(data_dir, &to_mint, amount_sats).await
         }
         PaymentPlan::Insufficient => anyhow::bail!(
             "cannot pay {} sats: no accepted mint covers it within balance/trust",
@@ -1041,6 +1358,7 @@ async fn remove_pending_swap(data_dir: &Path, mint_quote_id: &str) -> Result<()>
 /// Returns the total sats reclaimed. Safe to call repeatedly (idempotent): a
 /// quote is only minted once, and `ISSUED` quotes are never re-claimed.
 pub async fn resume_pending_swaps(data_dir: &Path) -> Result<u64> {
+    let _mutation = super::mutation::guard(data_dir).await?;
     let pending = load_pending_swaps(data_dir).await?;
     let mut reclaimed = 0u64;
     for swap in pending {
@@ -1177,14 +1495,164 @@ fn target_liquidity_score(liq: &SwapLiquidity, to_mint: &str) -> i64 {
         .sum()
 }
 
+/// Settle one caller-owned incoming token without losing an ambiguous mint
+/// response. Persist and reuse operation_id/context_hash for the same purchase.
+/// This is not a delivery receipt, refund authorization, or purchase protocol.
+pub async fn receive_token_recoverable(
+    data_dir: &Path,
+    operation_id: &str,
+    network: EcashNetwork,
+    mint_url: &str,
+    token_str: &str,
+    minimum_sats: u64,
+    context_hash: &str,
+) -> Result<u64> {
+    use super::receive_journal::{canonical_mint, Binding, Journal, Phase};
+    use sha2::{Digest, Sha256};
+    let held = super::mutation::guard(data_dir).await?;
+    anyhow::ensure!(
+        load_network(data_dir).await? == network,
+        "Switch back to the settlement's original network"
+    );
+    anyhow::ensure!(
+        token_str.len() <= 512 * 1024,
+        "Incoming token exceeds settlement size limit"
+    );
+    let binding = Binding {
+        id: operation_id.into(),
+        network,
+        mint_url: canonical_mint(mint_url)?,
+        token_hash: hex::encode(Sha256::digest(token_str.as_bytes())),
+        context_hash: context_hash.into(),
+        minimum_sats,
+    };
+    binding.validate()?;
+    let journal = Journal::new(&held);
+    let previous = journal.load(operation_id).await?;
+    let recovering = previous.is_some();
+    let record = if let Some(record) = previous {
+        anyhow::ensure!(
+            record.binding == binding,
+            "Settlement operation terms changed; do not redeem again"
+        );
+        record
+    } else {
+        let token = CashuToken::deserialize(token_str)
+            .map_err(|_| anyhow::anyhow!("Invalid incoming settlement token"))?;
+        anyhow::ensure!(
+            token.unit.as_deref().unwrap_or("sat") == "sat" && token.token.len() == 1,
+            "Settlement requires one sat-denominated mint"
+        );
+        let entry = &token.token[0];
+        anyhow::ensure!(
+            canonical_mint(&entry.mint)? == binding.mint_url,
+            "Incoming token mint does not match settlement terms"
+        );
+        let amount = entry
+            .proofs
+            .iter()
+            .try_fold(0u64, |sum, proof| sum.checked_add(proof.amount))
+            .context("Incoming amount overflow")?;
+        anyhow::ensure!(
+            amount >= minimum_sats
+                && entry
+                    .proofs
+                    .iter()
+                    .all(|proof| proof.amount.is_power_of_two()
+                        && !proof.secret.is_empty()
+                        && proof.c_as_pubkey().is_ok()),
+            "Invalid incoming settlement proofs or amount"
+        );
+        journal
+            .ensure_unclaimed(&binding.mint_url, &entry.proofs, Some(operation_id))
+            .await?;
+        let accepted = load_accepted_mints(data_dir).await?;
+        anyhow::ensure!(accepted.mints.iter().any(|mint| canonical_mint(mint).ok().as_deref() == Some(binding.mint_url.as_str())), "Settlement mint is not accepted");
+        let wallet = load_wallet(data_dir).await?;
+        anyhow::ensure!(
+            !entry
+                .proofs
+                .iter()
+                .any(|proof| wallet.proofs.iter().any(|stored| !stored.spent
+                    && canonical_mint(&stored.mint_url).ok().as_deref()
+                        == Some(binding.mint_url.as_str())
+                    && stored.proof.secret == proof.secret)),
+            "Incoming settlement overlaps existing wallet funds"
+        );
+        anyhow::ensure!(
+            !wallet
+                .receive_commits
+                .contains_key(&format!("received:{operation_id}")),
+            "Settlement marker exists without its recovery record; manual recovery required"
+        );
+        let client = mint_client(data_dir, &binding.mint_url).await?;
+        let prepared = client.prepare_swap_at_least(&entry.proofs, &amount_to_denominations(amount), minimum_sats).await
+            .map_err(|_| anyhow::anyhow!("Could not prepare a recoverable settlement covering the agreed net price; no proofs redeemed"))?;
+        let existing = client.restore_prepared_swap(&prepared).await.map_err(|_| {
+            anyhow::anyhow!(
+                "The mint could not verify settlement recovery support; no proofs redeemed"
+            )
+        })?;
+        anyhow::ensure!(
+            existing.is_none(),
+            "New settlement outputs already exist; no proofs redeemed"
+        );
+        journal.prepare(binding.clone(), prepared).await?
+    };
+    if !matches!(record.phase, Phase::Prepared) {
+        return journal.commit_wallet(&binding).await;
+    }
+    let client = MintClient::new(&binding.mint_url)?;
+    let restored = if recovering {
+        client
+            .restore_prepared_swap(&record.request)
+            .await
+            .map_err(|_| {
+                anyhow::anyhow!(
+                    "Could not recover this settlement yet; retain the original operation"
+                )
+            })?
+    } else {
+        None
+    };
+    let result = if let Some(result) = restored {
+        result
+    } else {
+        if recovering {
+            let states = client.check_state(record.request.inputs()).await
+                .map_err(|_| anyhow::anyhow!("Could not verify incoming settlement inputs; do not redeem or refund again"))?;
+            anyhow::ensure!(
+                states.iter().all(|state| state.state == "UNSPENT"),
+                "Incoming settlement remains pending at the mint; do not redeem or refund again"
+            );
+        }
+        client
+            .execute_prepared_swap(&record.request)
+            .await
+            .map_err(|_| {
+                anyhow::anyhow!(
+                    "The mint did not confirm settlement; retry this same operation to recover it"
+                )
+            })?
+    };
+    journal.record_result(&binding, result.new_proofs).await?;
+    journal.commit_wallet(&binding).await
+}
+
 /// Receive a Cashu token from a peer — swaps proofs at the mint for fresh ones.
 pub async fn receive_token(data_dir: &Path, token_str: &str) -> Result<u64> {
+    let _mutation = super::mutation::guard(data_dir).await?;
     // Handle legacy format for backwards compatibility
     if token_str.starts_with("cashuSend_") {
         return receive_legacy_token(data_dir, token_str).await;
     }
 
     let token = CashuToken::deserialize(token_str)?;
+    for entry in &token.token {
+        super::receive_journal::Journal::new(&_mutation)
+            .ensure_unclaimed(&entry.mint, &entry.proofs, None)
+            .await?;
+    }
     let total_amount = token.total_amount();
 
     if total_amount == 0 {
@@ -1304,6 +1772,7 @@ pub async fn verify_and_receive_payment(
     token_str: &str,
     required_sats: u64,
 ) -> Result<u64> {
+    let _mutation = super::mutation::guard(data_dir).await?;
     let token_str = token_str.trim();
     // Synthetic legacy balances are not cryptographic proof of payment.
     if token_str.starts_with("cashuSend_") {
@@ -1339,6 +1808,9 @@ pub async fn verify_and_receive_payment(
         [entry] => entry,
         _ => anyhow::bail!("Use a single-mint token for this payment"),
     };
+    super::receive_journal::Journal::new(&_mutation)
+        .ensure_unclaimed(&entry.mint, &entry.proofs, None)
+        .await?;
     let total = entry
         .proofs
         .iter()
@@ -1424,7 +1896,14 @@ pub struct RestoreOutcome {
 /// coins or resurrecting spent ones, which matters because the most likely
 /// time to press this button is when something already looks wrong.
 pub async fn restore_from_seed(data_dir: &Path, mint_url: &str) -> Result<RestoreOutcome> {
-    let recovery = RecoverySource::load(data_dir).await.ok_or_else(|| {
+    let _mutation = super::mutation::guard(data_dir).await?;
+    super::receive_journal::Journal::new(&_mutation)
+        .ensure_restore_allowed(load_network(data_dir).await?, mint_url)
+        .await?;
+    let outgoing = super::send_journal::Journal::new(&_mutation)
+        .restore_exclusions(load_network(data_dir).await?, mint_url)
+        .await?;
+    let recovery = RecoverySource::load(data_dir).await?.ok_or_else(|| {
         anyhow::anyhow!(
             "This wallet has no backup phrase yet, so there is nothing to restore from. \
              Set one up in Settings → Ecash backup phrase."
@@ -1446,6 +1925,7 @@ pub async fn restore_from_seed(data_dir: &Path, mint_url: &str) -> Result<Restor
         .proofs
         .iter()
         .map(|p| p.proof.secret.clone())
+        .chain(outgoing)
         .collect();
 
     let mut outcome = RestoreOutcome::default();
@@ -1546,11 +2026,9 @@ pub async fn restore_from_seed(data_dir: &Path, mint_url: &str) -> Result<Restor
         // have found coins beyond where the counter file thought we were —
         // reusing those would mint proofs that collide with existing ones.
         if let Some(highest) = highest_seen {
-            if let Err(e) =
-                super::nut13::advance_counter_to(data_dir, &keyset.id, highest + 1).await
-            {
-                warn!("Could not advance the NUT-13 counter after restore: {e:#}");
-            }
+            super::nut13::advance_counter_to(data_dir, &keyset.id, highest + 1)
+                .await
+                .context("Could not preserve the restored wallet derivation position")?;
         }
     }
 
@@ -1901,6 +2379,7 @@ mod tests {
             mint_url: "http://mint".into(),
             spent: true,
             reserved: false,
+            reserved_by: None,
             created_at: "2020-01-01T00:00:00Z".into(),
         });
         // Add a recent unspent proof
@@ -1914,6 +2393,7 @@ mod tests {
             mint_url: "http://mint".into(),
             spent: false,
             reserved: false,
+            reserved_by: None,
             created_at: chrono::Utc::now().to_rfc3339(),
         });
 
@@ -2287,7 +2767,7 @@ mod tests {
     async fn ecash_network_defaults_to_mainnet_and_leaves_files_alone() {
         let tmp = TempDir::new().unwrap();
         let dir = tmp.path();
-        assert_eq!(load_network(dir).await, EcashNetwork::Mainnet);
+        assert_eq!(load_network(dir).await.unwrap(), EcashNetwork::Mainnet);
         // A node that never touches this setting has no new file.
         assert!(!dir.join(NETWORK_FILE).exists());
         assert_eq!(
@@ -2314,6 +2794,7 @@ mod tests {
             mint_url: default_mint_url(),
             spent: false,
             reserved: false,
+            reserved_by: None,
             created_at: "2026-01-01T00:00:00Z".into(),
         });
         save_wallet(dir, &real).await.unwrap();
@@ -2343,6 +2824,7 @@ mod tests {
             mint_url: EcashNetwork::Testnet.default_mint(),
             spent: false,
             reserved: false,
+            reserved_by: None,
             created_at: "2026-01-01T00:00:00Z".into(),
         });
         save_wallet(dir, &t).await.unwrap();
@@ -2382,16 +2864,72 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn an_empty_wallet_file_is_treated_as_a_fresh_wallet() {
+    async fn damaged_network_selection_never_falls_back_to_real_funds() {
         let tmp = TempDir::new().unwrap();
-        let dir = tmp.path();
-        std::fs::create_dir_all(dir.join("wallet")).unwrap();
-        std::fs::write(dir.join("wallet/ecash.json"), "   \n").unwrap();
-        // A create that never got its first write is not damage.
-        let w = load_wallet(dir)
-            .await
-            .expect("empty file is a fresh wallet");
-        assert_eq!(w.balance(), 0);
+        let path = tmp.path().join(NETWORK_FILE);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        for bytes in ["", "{}", "{broken", r#"{"network":"unknown"}"#] {
+            std::fs::write(&path, bytes).unwrap();
+            assert!(load_network(tmp.path()).await.is_err());
+            assert!(load_wallet(tmp.path()).await.is_err());
+            assert!(save_wallet(tmp.path(), &WalletState::default())
+                .await
+                .is_err());
+            assert!(!tmp.path().join("wallet/ecash.json").exists());
+            assert_eq!(std::fs::read_to_string(&path).unwrap(), bytes);
+        }
+    }
+
+    #[tokio::test]
+    async fn an_empty_wallet_file_is_preserved_as_damaged() {
+        let tmp = TempDir::new().unwrap();
+        let path = tmp.path().join("wallet/ecash.json");
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        for content in ["", "   \n"] {
+            std::fs::write(&path, content).unwrap();
+            assert!(load_wallet(tmp.path())
+                .await
+                .unwrap_err()
+                .to_string()
+                .contains("damaged"));
+            assert_eq!(std::fs::read_to_string(&path).unwrap(), content);
+        }
+    }
+
+    #[tokio::test]
+    async fn concurrent_atomic_writes_keep_complete_private_files() {
+        use std::os::unix::fs::PermissionsExt;
+        let tmp = TempDir::new().unwrap();
+        let path = tmp.path().join("wallet.json");
+        let first = "a".repeat(65536);
+        let second = "b".repeat(65536);
+        let (a, b) = tokio::join!(
+            write_file_atomically(&path, &first),
+            write_file_atomically(&path, &second)
+        );
+        a.unwrap();
+        b.unwrap();
+        let saved = std::fs::read_to_string(&path).unwrap();
+        assert!(saved == first || saved == second);
+        assert_eq!(
+            std::fs::metadata(&path).unwrap().permissions().mode() & 0o777,
+            0o600
+        );
+        assert_eq!(std::fs::read_dir(tmp.path()).unwrap().count(), 1);
+    }
+
+    #[tokio::test]
+    async fn failed_atomic_replace_preserves_target_and_cleans_temporary_file() {
+        let tmp = TempDir::new().unwrap();
+        let path = tmp.path().join("wallet.json");
+        std::fs::create_dir(&path).unwrap();
+        std::fs::write(path.join("keep"), "preserved").unwrap();
+        assert!(write_file_atomically(&path, "new state").await.is_err());
+        assert_eq!(
+            std::fs::read_to_string(path.join("keep")).unwrap(),
+            "preserved"
+        );
+        assert_eq!(std::fs::read_dir(tmp.path()).unwrap().count(), 1);
     }
 
     #[tokio::test]
@@ -2409,6 +2947,7 @@ mod tests {
             mint_url: default_mint_url(),
             spent: false,
             reserved: false,
+            reserved_by: None,
             created_at: "2026-01-01T00:00:00Z".into(),
         });
         save_wallet(dir, &w).await.unwrap();

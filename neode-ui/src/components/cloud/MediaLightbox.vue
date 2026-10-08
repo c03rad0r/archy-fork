@@ -31,16 +31,18 @@
               </svg>
             </button>
             <button
-              v-if="pipAvailable && currentItem && isVideoFile(currentItem)"
+              v-if="(pipAvailable || companionPip.available) && currentItem && isVideoFile(currentItem)"
               class="lightbox-btn"
               title="Picture-in-picture" aria-label="Picture-in-picture"
-              @click.stop="togglePip(videoEl)"
+              @click.stop="companionPip.available ? companionPip.enter() : togglePip(videoEl)"
+              :disabled="companionPip.busy.value"
             >
               <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <rect x="3" y="5" width="18" height="14" rx="2" stroke-width="2" />
                 <rect x="12" y="12" width="7" height="5" rx="1" stroke-width="2" />
               </svg>
             </button>
+            <span v-if="companionPip.error.value" role="alert" class="max-w-64 text-xs text-red-200">{{ companionPip.error.value }}</span>
             <button class="lightbox-btn" aria-label="Close viewer" title="Close" @click="close">
               <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
@@ -143,6 +145,7 @@ import type { FileBrowserItem } from '@/api/filebrowser-client'
 import { getFileCategory } from '@/composables/useFileType'
 import { isPipSupported, togglePip } from '@/utils/pip'
 import FileActionsMenu from './FileActionsMenu.vue'
+import { useCompanionVideoPip } from '@/composables/useCompanionVideoPip'
 import { usePipSession } from '@/composables/usePipSession'
 
 const props = defineProps<{
@@ -167,6 +170,7 @@ const mediaError = ref(false)
 const currentUrl = ref<string | null>(null)
 const backdropEl = ref<HTMLElement | null>(null)
 const videoEl = ref<HTMLVideoElement | null>(null)
+const companionPip = useCompanionVideoPip(videoEl)
 
 const expanded = ref(false)
 let loadId = 0
@@ -257,6 +261,7 @@ function next() {
 }
 
 function close() {
+  companionPip.stop()
   if (document.fullscreenElement === backdropEl.value) void document.exitFullscreen?.().catch(() => {})
   emit('close')
 }
@@ -359,12 +364,14 @@ watch(() => props.show, async (visible) => {
     await nextTick()
     backdropEl.value?.focus()
   } else {
+    companionPip.stop()
     ++loadId
     restorePage()
   }
 }, { immediate: true })
 
 watch([currentItem, () => props.show], ([item, visible]) => {
+  companionPip.stop()
   if (visible && item) void loadMedia(item)
 }, { immediate: true })
 

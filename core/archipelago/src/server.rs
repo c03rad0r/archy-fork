@@ -291,15 +291,15 @@ impl Server {
         );
 
         // Background handshake poll: fetch inbound nostr peer requests every
-        // 5 minutes instead of only when a user presses the Federation Poll
+        // 30 seconds instead of only when a user presses the Federation Poll
         // button (requests used to sit on relays unseen — 2026-07-22). The
         // handler's own discoverability gate makes this a no-op until the
         // user opts in.
         {
             let rpc = api_handler.rpc_handler().clone();
             tokio::spawn(async move {
-                let mut tick = tokio::time::interval(std::time::Duration::from_secs(300));
-                tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+                let mut tick = tokio::time::interval(std::time::Duration::from_secs(30));
+                tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
                 loop {
                     tick.tick().await;
                     rpc.background_handshake_poll().await;

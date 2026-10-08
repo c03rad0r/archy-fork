@@ -15,6 +15,8 @@ app:
   container_name: indeedhub-api
 
   container:
+    # Public identity pins only; registration/publication stay disabled by default.
+    media_registration_identity: true
     image: source.archipelago-foundation.org/lfg2025/indeedhub-api:1.0.0
     pull_policy: if-not-present
     network: indeedhub-net

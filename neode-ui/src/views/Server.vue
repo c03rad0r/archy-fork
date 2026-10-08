@@ -101,10 +101,9 @@
             >
               <div class="flex items-center gap-3">
                 <svg class="w-5 h-5 text-white/60" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" /></svg>
-                <span class="text-white/80 text-sm">Firewall Active</span>
+                <span class="text-white/80 text-sm">Firewall</span>
               </div>
-              <span class="text-green-400 text-sm font-medium">Protected</span>
-              <svg class="w-4 h-4 text-white/30" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7" /></svg>
+              <span class="ml-auto text-right text-white/60 text-sm">Check status</span>
             </router-link>
             <div class="flex items-center justify-between p-3 bg-white/5 rounded-lg">
               <div class="flex items-center gap-3">
@@ -166,9 +165,9 @@
         </div>
         <router-link
           to="/dashboard/server/firewall-tunnels"
-          class="mt-4 w-full flex items-center justify-center gap-2 p-3 rounded-lg bg-white/10 hover:bg-white/15 transition-colors text-sm text-white/90"
+          class="glass-button mt-4 w-full gap-2 rounded-lg text-sm font-medium"
         >
-          Firewall &amp; tunnels
+          Firewalls &amp; tunnels
           <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7" /></svg>
         </router-link>
       </div>
@@ -291,7 +290,11 @@
               />
             </div>
           </div>
-          <p v-if="physicalInterfaces.length === 0" class="text-sm text-white/50 text-center py-4">No physical interfaces detected</p>
+          <div v-if="interfacesError" role="status" class="flex items-center justify-between gap-3 text-sm text-white/60 py-2">
+            <span>{{ allInterfaces.length ? 'Couldn’t refresh interfaces. Showing last known information.' : 'Couldn’t load network interfaces.' }}</span>
+            <button class="glass-button rounded px-3 py-1.5 text-xs shrink-0" :disabled="interfacesRefreshing" @click="loadInterfaces">Retry</button>
+          </div>
+          <p v-else-if="physicalInterfaces.length === 0 && interfacesRes.data.value !== null" class="text-sm text-white/50 text-center py-4">No physical interfaces detected</p>
           <p v-if="wifiRadioError" class="text-xs text-red-400">{{ wifiRadioError }}</p>
         </div>
       </template>
@@ -665,7 +668,8 @@ const interfacesRes = useCachedResource<NetworkInterface[]>({
     return res.interfaces
   },
 })
-const interfacesLoading = computed(() => interfacesRes.loadState.value === 'loading')
+const interfacesError = computed(() => interfacesRes.error.value)
+const interfacesLoading = computed(() => interfacesRes.loadState.value === 'loading' || (interfacesRes.loadState.value === 'idle' && interfacesRes.data.value === null))
 const interfacesRefreshing = computed(() => interfacesRes.loadState.value === 'refreshing')
 const allInterfaces = computed(() => interfacesRes.data.value ?? [])
 const physicalInterfaces = computed(() => allInterfaces.value.filter(i => i.type === 'ethernet' || i.type === 'wifi'))

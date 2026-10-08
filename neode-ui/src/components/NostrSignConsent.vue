@@ -28,7 +28,12 @@
           <div v-else class="mb-5 space-y-2">
             <div class="rounded-xl border border-white/10 bg-black/20 p-3"><p class="mb-1 text-xs uppercase tracking-wider text-white/45">Request</p><p class="text-sm font-medium text-white">{{ methodLabel }}</p></div>
             <div v-if="identityLabel" class="rounded-xl border border-white/10 bg-black/20 p-3"><p class="mb-1 text-xs uppercase tracking-wider text-white/45">Identity</p><p class="text-sm font-medium text-white">{{ identityLabel }}</p></div>
-            <div v-if="contentPreview" class="rounded-xl border border-white/10 bg-black/20 p-3"><p class="mb-1 text-xs uppercase tracking-wider text-white/45">Content</p><p class="break-all font-mono text-sm text-white/75">{{ contentPreview }}</p></div>
+            <div v-if="mediaApproval" class="space-y-2 rounded-xl border border-white/10 bg-black/20 p-3 text-sm">
+              <p class="text-white/75">{{ mediaApproval.resolving ? 'Recover the completed registration or retire its expired incomplete request.' : 'Register this video for the selected IndeeHub project.' }}</p>
+              <dl class="space-y-2"><div><dt class="text-xs text-white/45">Project</dt><dd class="break-all text-white">{{ mediaApproval.project }}</dd></div><div v-if="mediaApproval.file"><dt class="text-xs text-white/45">Cloud video</dt><dd class="break-all text-white">{{ mediaApproval.file }}</dd></div><div><dt class="text-xs text-white/45">Rental terms</dt><dd class="text-white">{{ mediaApproval.price }} sats · {{ mediaApproval.seconds }} seconds after first play</dd></div></dl>
+              <details><summary class="min-h-11 cursor-pointer py-3 text-white/65">Full signed terms</summary><pre class="max-h-48 overflow-auto whitespace-pre-wrap break-all text-xs text-white/60">{{ content }}</pre></details>
+            </div>
+            <div v-else-if="contentPreview" class="rounded-xl border border-white/10 bg-black/20 p-3"><p class="mb-1 text-xs uppercase tracking-wider text-white/45">Content</p><p class="break-all font-mono text-sm text-white/75">{{ contentPreview }}</p></div>
             <div v-if="eventKind !== undefined" class="rounded-xl border border-white/10 bg-black/20 p-3"><p class="mb-1 text-xs uppercase tracking-wider text-white/45">Event kind</p><p class="text-sm font-medium text-white">{{ eventKind }} <span class="text-white/45">({{ eventKindLabel }})</span></p></div>
           </div>
 
@@ -55,7 +60,7 @@ const EVENT_KIND_LABELS: Record<number, string> = {
   0: 'Metadata', 1: 'Short text note', 2: 'Recommend relay', 3: 'Contacts', 4: 'Encrypted DM',
   5: 'Event deletion', 6: 'Repost', 7: 'Reaction', 1618: 'Git pull request', 1619: 'Git pull request update',
   1621: 'Git issue', 9734: 'Zap request', 9735: 'Zap receipt', 10002: 'Relay list',
-  30023: 'Long-form content', 30617: 'Git repository announcement',
+  27236: 'Local Cloud video registration', 27237: 'Recover or retire video registration', 30023: 'Long-form content', 30617: 'Git repository announcement',
 }
 const METHOD_LABELS: Record<string, string> = {
   getPublicKey: 'Share public identity', signEvent: 'Sign Nostr event',
@@ -78,6 +83,17 @@ const methodLabel = computed(() => METHOD_LABELS[props.method] ?? props.method)
 const requestTitle = computed(() => props.method === 'getPublicKey' ? 'Share this identity?' : 'Approve this request?')
 const progressTitle = computed(() => props.method === 'getPublicKey' ? 'Sharing identity…' : 'Signing locally…')
 const successTitle = computed(() => props.method === 'getPublicKey' ? 'Identity shared' : 'Request signed')
+const mediaApproval = computed(() => {
+  if (![27236, 27237].includes(props.eventKind ?? 0) || !props.content) return null
+  try {
+    const value = JSON.parse(props.content)
+    if (!['archipelago.media-registration.approval.v1', 'archipelago.media-registration.resolution.v1'].includes(value.scope)
+      || typeof value.intent?.projectId !== 'string' || (props.eventKind === 27236 && typeof value.selection?.cloudFile !== 'string')
+      || !Number.isSafeInteger(value.intent.priceSats) || !Number.isSafeInteger(value.intent.viewingSeconds)) return null
+    return { project: value.intent.projectId, file: value.selection?.cloudFile ?? '', resolving: props.eventKind === 27237,
+      price: value.intent.priceSats, seconds: value.intent.viewingSeconds }
+  } catch { return null }
+})
 const contentPreview = computed(() => !props.content ? '' : props.content.length > 200 ? `${props.content.slice(0, 200)}…` : props.content)
 const eventKindLabel = computed(() => props.eventKind === undefined ? '' : EVENT_KIND_LABELS[props.eventKind] ?? 'Unknown')
 function approve() { emit('approve', rememberChoice.value) }

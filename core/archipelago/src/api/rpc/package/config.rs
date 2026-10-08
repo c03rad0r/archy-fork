@@ -526,7 +526,18 @@ pub(in crate::api::rpc) async fn get_containers_for_app(package_id: &str) -> Res
         .await
         .context("podman ps timed out while listing containers")?
         .context("Failed to list containers")?;
-    let stdout = String::from_utf8_lossy(&output.stdout);
+    containers_from_list_output(package_id, &output)
+}
+
+fn containers_from_list_output(
+    package_id: &str,
+    output: &std::process::Output,
+) -> Result<Vec<String>> {
+    anyhow::ensure!(
+        output.status.success(),
+        "podman ps failed while listing containers"
+    );
+    let stdout = std::str::from_utf8(&output.stdout).context("Invalid container list response")?;
     let all: Vec<&str> = stdout.lines().filter(|s| !s.is_empty()).collect();
 
     let patterns = all_container_names(package_id);
@@ -542,6 +553,32 @@ pub(in crate::api::rpc) async fn get_containers_for_app(package_id: &str) -> Res
 #[cfg(test)]
 mod tests {
     use super::{all_container_names, get_data_dirs_for_app, get_health_check_args};
+
+    #[test]
+    fn failed_container_listing_is_not_an_absent_app() {
+        use std::os::unix::process::ExitStatusExt;
+        let mut output = std::process::Output {
+            status: std::process::ExitStatus::from_raw(1 << 8),
+            stdout: vec![],
+            stderr: b"store unavailable".to_vec(),
+        };
+        assert!(super::containers_from_list_output("node-demo-music", &output).is_err());
+        output.stdout = b"node-demo-music\n".to_vec();
+        assert!(super::containers_from_list_output("node-demo-music", &output).is_err());
+        output.status = std::process::ExitStatus::from_raw(0);
+        assert_eq!(
+            super::containers_from_list_output("node-demo-music", &output).unwrap(),
+            vec!["node-demo-music"]
+        );
+        output.stdout.clear();
+        assert!(
+            super::containers_from_list_output("node-demo-music", &output)
+                .unwrap()
+                .is_empty()
+        );
+        output.stdout = vec![0xff];
+        assert!(super::containers_from_list_output("node-demo-music", &output).is_err());
+    }
 
     #[test]
     fn bitcoin_variant_container_names_are_precise() {

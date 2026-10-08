@@ -1,0 +1,189 @@
+# Fleet recovery qualification — 7 October 2026
+
+Status: source regressions and isolated browser checks qualified; deployed-browser and distributed
+transport acceptance remain open. This supplements tasks 8, 10 and 12 without
+claiming that the full Fleet acceptance matrix is complete.
+
+## Findings and changes
+
+A failed status poll only surfaced an error during the initial load. Once reports
+were cached, network failures silently left the previous view in place. The view
+now keeps those reports, selection and sort order, with an explicit failed-refresh
+notice and Retry. An initial failure without reports remains an unavailable state.
+A successful refresh clears the notice. Report timestamps continue ageing; a
+monitoring failure is not relabelled as proof that a peer is offline.
+
+Concurrent refreshes could overwrite newer status/alerts with older replies.
+Status, alerts and refresh completion now track request generations. Replies
+arriving after unmount cannot repopulate the session cache or change the view.
+Malformed status envelopes cannot advance the successful-refresh timestamp.
+
+## Evidence
+
+Focused Vitest run: **21 tests passed in four files**, zero failures, including
+actual Fleet view rendering with retained cards, outage notice and successful
+Retry. Other cases cover a missing cache, late status/alert replies, a malformed
+status response, late responses after unmount, real zero versus unavailable
+metrics, report ageing, sorting and selected-node history isolation.
+
+Logs: `/tmp/archy-fleet-recovery-tests-final.log` and
+`/tmp/archy-fleet-recovery-typecheck.log` (Vue typecheck passed).
+
+An isolated real Chromium harness rendered the actual Fleet component and styles
+at 390px and 1440px. Cached cards and failure notice remained visible; keyboard
+focus/Enter on Retry recovered the view; genuine zero remained 0%; no horizontal
+overflow or page errors occurred. RPC was replaced with synthetic replies; all
+non-fixture network requests were blocked. This was source-served component
+qualification, not a deployed artifact or real outage. Initial harness attempts
+failed because its standalone app initialization/import was incomplete; corrected
+before both widths passed. Failed logs retained.
+
+Browser scenario: `/tmp/archy-fleet-recovery-browser.cjs`,
+server: `/tmp/archy-fleet-browser-server.mjs`,
+result: `/tmp/archy-fleet-recovery-browser.log`. The owned server was stopped.
+This is local component/composable evidence, not a live-node outage test.
+No node service, peer relationship, wallet or payment was changed.
+
+Combined frontend regression suite subsequently passed **1,448 tests in 176 files**,
+zero failures, using one worker. Log:`/tmp/archy-combined-ui-20261007-full.log`.
+Input hashes:`/tmp/archy-combined-ui-20261007-inputs.json`.
+
+Production build passed from a separate frozen copy of all 701 qualified inputs;
+all hashes were verified again after build. Real Chromium loaded this production
+dist at 390px and1440px, with synthetic Fleet outage/recovery replies: retained
+reports, keyboard Retry, genuine zero, layout and error checks passed. Payment
+and signing were blocked. This is artifact qualification, not a real outage.
+
+Durable artifact and evidence:
+`~/.local/state/archipelago/release-qualification/combined-ui-20261007/`.
+Archive SHA256:`16523c80ecebbb4ba1f6d289ead81ab86d59daf67093ce1d8d68d5bce3ffaae5`.
+Index SHA256:`65e5a09eb736f73650ef5ac52bdebf66d1c877e69511edd7bd3095847f6734de`.
+
+The initial dev deployment preservation gate refused before any writes because
+three container start times changed independently after preflight. Failed log
+retained at `/tmp/archy-combined-ui-dev-deploy.log`; actual deployed-node
+acceptance remains separate until the retry and browser checks pass.
+
+## Remaining acceptance matrix
+
+| Area | Established evidence | Remaining |
+| --- | --- | --- |
+| Report rendering | Local normalization/render tests; earlier dev/Yaya metrics evidence in progress ledger | Updated sender/receiver comparison across supported versions |
+| Status freshness | Clock-driven ageing, unknown versus stale, no synthetic metric zero | Real partition, reconnect and transport delivery |
+| Refresh failures | Visible retained reports; empty failure; Retry recovery | Deployed artifact and actual-node outage; isolated 390/1440 browser passed |
+| Concurrent replies | Newest status/alerts win; no unmount cache repopulation | Distributed delay/out-of-order delivery |
+| Selection/sorting | Retained across failure; history request isolation | Larger-fleet navigation and keyboard checks |
+| Authorization | No permission changes in this patch | Unauthorized/expired-trust actual-handler matrix |
+| Remote actions/updates | Outside this patch | Disposable-node success/partial failure/restart/update matrix |
+| FIPS | Existing preferred authenticated transport unchanged | Measured latency, fallback, reconnect and mixed capabilities |
+
+No current-node restart or deliberate network outage was performed. Live fault
+qualification must preserve wallets, installed applications and operator intent.
+
+
+## Dev deployment attempt and verified rollback
+
+The immediate retry passed preflight but failed the final container-preservation
+check because `botfights` was independently replaced during the deployment. The
+helper automatically restored the prior UI. A subsequent HTTP fetch verified
+index SHA256 `4d9424a4ad7548221a07e2c4f14019029ac5fc4e3f1d27ff5eca72b5ff0f6a56`,
+matching the preflight baseline. Do not claim the new UI is deployed.
+
+Read-only systemd and management journal checks show pre-existing health-monitor
+restarts of datum, gashboard and angor-relay, and later botfights recovery from a
+stuck stopping state. These checks explain the inventory change; they do not
+establish why the health checks failed. No live app was stopped by this UI task.
+Keep the preservation gate, leave the prior UI in place, and retry only after
+qualification conditions are stable. Yaya was not changed.
+
+Logs: `/tmp/archy-combined-ui-dev-deploy-retry.log` and the private preflight
+receipt `/tmp/archy-combined-ui-dev-preflight-retry.json`.
+
+## Additional partial-failure and provenance fixtures
+
+The later artwork UI artifact did successfully deliver the earlier Fleet recovery
+changes to dev and Yaya; see `docs/companion-audio-investigation-20261007.md` for
+the guarded deployment receipt. The failed combined deployment above remains
+historical evidence, not the latest UI deployment state.
+
+A new isolated fixture found alerts failures were swallowed: a denied, unsupported
+or timed-out alerts method left an empty panel saying “No alerts across the fleet.”
+A malformed alert list could also replace valid retained alerts with null entries.
+The UI now reports alerts unavailable or explicitly marks retained alerts while
+keeping successful node status results usable. A successful alert response clears
+the warning; an older failed request cannot overwrite that recovery.
+
+Node cards now distinguish collector/unverified reports from trusted federation.
+The trusted label requires all three server-owned fields: `source=federation`,
+`trust_level=trusted`, and strict `identity_authenticated=true`. Collector reports
+say “Collector · identity unverified”; legacy/missing or incomplete provenance says
+“Source unverified.” This is presentation of server evidence, not frontend identity
+verification. It MUST ship with the corrected backend provenance gate: historical
+collector ingestion accepted caller-supplied fields, so UI labels alone cannot
+repair that boundary. No isolated Fleet change in this section is deployed.
+
+Focused suite: **28 tests in five files passed**. Seven added cases cover three
+partial-alert failure classes with mixed-version node reports and real zero versus
+missing metrics, malformed alerts retaining prior evidence, late history after
+unmount, old alert denial after newer success, and provenance labels. These are
+synthetic RPC/component fixtures, not proof of real authorization or partition
+behavior. Before the change, four new partial-failure cases failed and the existing
+late-history safeguard passed. Initial wrong-project test invocation failed before
+test collection; the corrected invocation established the failures. Logs are
+`/tmp/archy-fleet-partial-before.log`,
+`/tmp/archy-fleet-partial-before-corrected.log`, and
+`/tmp/archy-fleet-acceptance-final.log`.
+
+Current Fleet UI exposes status, alerts, history and export only. It has no remote
+restart/update/action RPC, so those action-success/partial-failure acceptance cells
+remain unsupported/open; no service operation was invented for the fixture.
+
+Exact app-project typecheck passed (`vue-tsc --noEmit -p tsconfig.app.json`,
+2 GB heap cap, low priority); log `/tmp/archy-fleet-acceptance-typecheck.log`.
+Real Chromium rendered the actual source component at 390px and 1440px:
+collector and trusted labels, denied-alert warning, successful status cards,
+no false empty-alert claim, and Refresh recovery passed with no page errors or
+horizontal overflow. All non-loopback requests were blocked. The first cold-load
+attempt exceeded its 30-second load timeout before assertions; the corrected
+DOMContentLoaded/60-second fixture passed both widths. Logs:
+`/tmp/archy-fleet-acceptance-browser.log` and
+`/tmp/archy-fleet-acceptance-browser-retry.log`. Owned browser/server jobs stopped.
+This is source-browser evidence, not a production build or real identity/transport
+acceptance. Backend provenance qualification and coupled release remain required.
+
+The backend provenance follow-up explicitly returns `history_available=false`
+for federation identities whose collector history cannot be trusted. The UI now
+consumes that flag: it clears any supplied history entries and displays “History
+is unavailable for this node.” Changing selection clears the prior message;
+legacy `history`/`entries` forms remain supported. A failed history refresh marks
+retained history or unavailability instead of silently implying success. A new
+composable plus real detail-component fixture verifies the unavailable flag wins
+even when entries accompany it, and does not leak into a newly selected node.
+Focused Fleet suite after this follow-up: **29 tests in five files passed**;
+log `/tmp/archy-fleet-history-final.log`.
+The exact app-project typecheck also passed again after the history follow-up,
+with the same 2 GB bound; log `/tmp/archy-fleet-history-typecheck.log`.
+Completed logs and browser fixture sources are archived at
+`~/.local/state/archipelago/release-qualification/fleet-acceptance-20261007/`.
+
+## Alert provenance and cache migration follow-up
+
+Alert rows now reuse the same explicit provenance label as node cards, with a
+wrapping header for narrow displays. Collector alerts do not inherit trust from
+the claimed/truncated node ID. Existing cached node and alert provenance is
+stripped on read: historical unsigned collector responses could supply those
+fields. Content, metrics and staleness remain available; only a fresh corrected
+backend response may restore authenticated labels. Invalid cached alert rows
+are discarded. Regression checks cover cached claimed trust and a later fresh
+response, as well as actual alert-panel labels. This does not authenticate a
+collector identity or replace the required backend gate.
+
+The unchanged combined baseline passed **1,459 tests in 177 files** from a frozen
+771-input copy, all hashes unchanged, at
+`~/.local/state/archipelago/release-qualification/fleet-combined-ui-20261007/`.
+The subsequent three-file alert/cache delta passed **31 focused tests in five
+files** and the exact app-project typecheck (2 GB cap, exit 0), logs
+`/tmp/archy-fleet-alert-cache-corrected.log` and
+`/tmp/archy-fleet-alert-cache-typecheck.log`. This is full baseline plus focused
+delta evidence, not a full-suite rerun after the delta. No production deployment
+or additional artwork investigation occurred.

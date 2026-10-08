@@ -53,6 +53,13 @@ export function useNostrBridge(
   let consentApprovedAt = 0
   let consentGeneration = 0
   let approvedGeneration = 0
+  let sessionGeneration = 0
+  let disposed = false
+  let draining = false
+  let presentationComplete: Promise<void> = Promise.resolve()
+  let finishErrorPresentation: (() => void) | undefined
+  type RequestScope = { appId: string; identityId: string | null; session: number }
+  const requests: Array<{ event: MessageEvent; resolve: () => void; scope: RequestScope }> = []
 
   function requestConsent(
     method: string,
@@ -64,7 +71,7 @@ export function useNostrBridge(
       consentGeneration += 1
       consentRequest.value = {
         appName: options.appName(), method, identityLabel, eventKind, content,
-        resolve, reject,
+        resolve, reject: () => reject(new Error('Signing request denied.')),
       }
       consentPhase.value = 'review'
       consentError.value = ''
@@ -73,6 +80,7 @@ export function useNostrBridge(
   }
 
   function approveConsent(remember: boolean) {
+    if (consentPhase.value !== 'review' || !consentRequest.value) return
     consentRequest.value?.resolve(remember)
     consentApprovedAt = Date.now()
     approvedGeneration = consentGeneration
@@ -82,6 +90,8 @@ export function useNostrBridge(
   function denyConsent() {
     consentGeneration += 1
     consentRequest.value?.reject()
+    finishErrorPresentation?.()
+    finishErrorPresentation = undefined
     consentRequest.value = null
     showConsent.value = false
     consentPhase.value = 'review'
@@ -104,9 +114,10 @@ export function useNostrBridge(
   function finishConsentError(error: unknown) {
     consentError.value = error instanceof Error ? error.message : 'The node could not complete this request.'
     consentPhase.value = 'error'
+    presentationComplete = new Promise(resolve => { finishErrorPresentation = resolve })
   }
 
-  async function handleNostrRequest(event: MessageEvent) {
+  async function processNostrRequest(event: MessageEvent, scope: RequestScope) {
     if (!event.data || event.data.type !== 'nostr-request') return
     const { id, method, params } = event.data
     const source = event.source as Window | null
@@ -116,28 +127,48 @@ export function useNostrBridge(
       !senderMatches(options.appUrl(), event.origin)
     ) return
 
+    if (disposed) {
+      source.postMessage({ type: 'nostr-response', id, error: 'App session closed.' }, event.origin)
+      return
+    }
+    if (scope.appId !== options.appId() || scope.identityId !== (getStoredIdentity()?.id || null)
+      || scope.session !== sessionGeneration) {
+      source.postMessage({ type: 'nostr-response', id, error: 'App or identity changed. Please retry.' }, event.origin)
+      return
+    }
+    const requestedSession = sessionGeneration
+    const requestedApp = options.appId()
     const storedIdentity = getStoredIdentity()
     const identityId = storedIdentity?.id || null
     const identityScope = identityId || 'node-default'
     const identityLabel = storedIdentity?.name || 'Node default identity'
     const origin = event.origin
     let prompted = false
+    let promptGeneration: number | undefined
+    const stillCurrent = () => !disposed && requestedSession === sessionGeneration && requestedApp === options.appId()
+      && source === options.frameWindow() && senderMatches(options.appUrl(), origin)
+      && (getStoredIdentity()?.id || null) === identityId
+      && (promptGeneration === undefined || promptGeneration === consentGeneration)
 
     try {
       if (CONSENT_METHODS.has(method)) {
         const key = consentKey(origin, options.appId(), identityScope, method)
         if (!hasRememberedConsent(key)) {
           prompted = true
-          const remember = await requestConsent(
+          const consent = requestConsent(
             method,
             identityLabel,
             method === 'signEvent' ? params?.event?.kind : undefined,
             method === 'signEvent' ? params?.event?.content : undefined,
           )
+          promptGeneration = consentGeneration
+          const remember = await consent
+          if (!stillCurrent()) throw new Error('App or identity changed. Please retry.')
           if (remember) rememberConsent(key)
         }
       }
 
+      if (!stillCurrent()) throw new Error('App or identity changed. Please retry.')
       let result: unknown
       if (method === 'getPublicKey') {
         if (storedIdentity?.nostr_pubkey) {
@@ -166,8 +197,9 @@ export function useNostrBridge(
       } else {
         throw new Error(`Unsupported NIP-07 method: ${method}`)
       }
+      if (!stillCurrent()) throw new Error('App or identity changed. Please retry.')
       source.postMessage({ type: 'nostr-response', id, result }, origin)
-      if (prompted) void finishConsentSuccess()
+      if (prompted) presentationComplete = finishConsentSuccess()
     } catch (err) {
       source.postMessage({
         type: 'nostr-response', id,
@@ -177,8 +209,58 @@ export function useNostrBridge(
     }
   }
 
+  async function drainRequests() {
+    if (draining) return
+    draining = true
+    try {
+      while (requests.length) {
+        const next = requests.shift()!
+        try { await processNostrRequest(next.event, next.scope) } catch {
+          // A removed/navigated frame can reject postMessage; drain the remaining requests.
+        } finally { next.resolve() }
+        // Preserve the approved success animation and never replace a prompt.
+        await presentationComplete
+      }
+    } finally { draining = false }
+  }
+
+  function handleNostrRequest(event: MessageEvent): Promise<void> {
+    if (!event.data || event.data.type !== 'nostr-request'
+      || !event.source || event.source !== options.frameWindow()
+      || !senderMatches(options.appUrl(), event.origin)) return Promise.resolve()
+    if (disposed || requests.length >= 16) {
+      (event.source as Window).postMessage({ type: 'nostr-response', id: event.data.id,
+        error: disposed ? 'App session closed.' : 'Too many signing requests. Please retry.' }, event.origin)
+      return Promise.resolve()
+    }
+    return new Promise(resolve => {
+      requests.push({ event, resolve, scope: { appId: options.appId(),
+        identityId: getStoredIdentity()?.id || null, session: sessionGeneration } })
+      void drainRequests()
+    })
+  }
+
+  function cancelPending() {
+    sessionGeneration += 1
+    denyConsent()
+    for (const next of requests.splice(0)) {
+      try {
+        (next.event.source as Window)?.postMessage({ type: 'nostr-response', id: next.event.data.id,
+          error: 'App session closed.' }, next.event.origin)
+      } catch { /* frame already removed */ }
+      next.resolve()
+    }
+  }
+
+  function dispose() {
+    disposed = true
+    cancelPending()
+  }
+
   return {
     handleNostrRequest,
+    cancelPending,
+    dispose,
     showConsent,
     consentRequest,
     consentPhase,

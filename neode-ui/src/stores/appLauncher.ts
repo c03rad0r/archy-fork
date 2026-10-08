@@ -1,5 +1,6 @@
+import { appHasMediaBridge, appRequiresHostFrame, appLaunchPolicyLoaded, ensureAppLaunchPolicy, ensureNodeAppAvailable, nodeAppIsAvailable } from '@/views/discover/curatedApps'
 import { defineStore } from 'pinia'
-import { ref, watch } from 'vue'
+import { ref, watch, onScopeDispose } from 'vue'
 import { rpcClient } from '@/api/rpc-client'
 import { recordAppLaunch } from '@/utils/appUsage'
 import { requestExternalOpen } from '@/api/remote-relay'
@@ -12,11 +13,10 @@ import { useToast } from '@/composables/useToast'
 import { IS_DEMO, isDemoApp, isDemoExternal, demoAppUrl } from '@/composables/useDemoIntro'
 import type { AppCredential, AppCredentialsResponse } from '@/types/api'
 import { resolveAppCredentials } from '@/views/apps/appCredentials'
-import {
-  consentKey,
-  hasRememberedConsent,
-  rememberConsent,
-} from '@/views/appSession/nostrConsent'
+import { useNostrBridge } from '@/views/appSession/useNostrBridge'
+import { useMediaRegistrationBridge } from '@/composables/useMediaRegistrationBridge'
+import { useRentalPurchaseBridge } from '@/composables/useRentalPurchaseBridge'
+import type { SelectedIdentity } from '@/views/appSession/useAppIdentity'
 
 /**
  * Open a URL in a new browser tab — but if a companion (phone) is currently
@@ -92,12 +92,15 @@ const NEW_TAB_APP_IDS = new Set([
  * original synchronous user gesture. Portainer is dynamic (first-run only);
  * File Browser and PhotoPrism have stable fallback credentials. */
 export const CREDENTIAL_INTERSTITIAL_APPS = new Set([
+  'datum',
   'filebrowser',
   'photoprism',
   'portainer',
 ])
 
 interface LaunchOptions {
+  /** Basic offline launch grants no optional media integration. */
+  basicFrameOnly?: boolean
   path?: string
   /** The shared interstitial already ran and the user pressed Continue. */
   skipCredentialPrompt?: boolean
@@ -188,16 +191,6 @@ const PORT_TO_APP_ID: Record<string, string> = {
   '50002': 'electrumx',
 }
 
-export interface NostrConsentRequest {
-  appName: string
-  method: string
-  eventKind?: number
-  content?: string
-  identityLabel?: string
-  resolve: (remember: boolean) => void
-  reject: () => void
-}
-
 /** App identity (catalog icon + display name) for the companion's native
  *  branded loader. Undefined when the app isn't in package-data. */
 function launchMeta(appId: string): InAppLaunchMeta | undefined {
@@ -213,10 +206,6 @@ export const useAppLauncherStore = defineStore('appLauncher', () => {
   const isOpen = ref(false)
   const url = ref('')
   const title = ref('')
-  const consentRequest = ref<NostrConsentRequest | null>(null)
-  const showConsent = ref(false)
-  const consentPhase = ref<'review' | 'signing' | 'success' | 'error'>('review')
-  const consentError = ref('')
   const credentialPrompt = ref({
     show: false,
     loading: false,
@@ -226,17 +215,31 @@ export const useAppLauncherStore = defineStore('appLauncher', () => {
     credentials: [] as AppCredential[],
     copied: '',
   })
-  let pendingCredentialLaunch: { appId: string; path?: string } | null = null
+  let pendingCredentialLaunch: { appId: string; opts: LaunchOptions } | null = null
   let credentialGeneration = 0
-  let consentApprovedAt = 0
-  let consentGeneration = 0
-  let approvedGeneration = 0
   let previousActiveElement: HTMLElement | null = null
 
   /** Active app in the store-driven session (no route change) */
   const panelAppId = ref<string | null>(null)
+  const mediaAppId = ref<string | null>(null)
   /** Optional deep-link path inside the active app (e.g. /tx/<hash> for mempool) */
   const panelPath = ref<string | null>(null)
+  let launchGeneration = 0
+  let mediaVersion: string | null = null
+
+  /** Capture the active launch, so a late frame callback cannot retain a
+   * closed session or a newer launch of the same app. */
+  function mediaSessionGeneration(appId: string): number | null {
+    return panelAppId.value === appId ? launchGeneration : null
+  }
+  function retainMediaSession(appId: string, version: string, generation: number | null): boolean {
+    const installed = useAppStore().data?.['package-data']?.[appId]
+    if (generation === null || generation !== launchGeneration || panelAppId.value !== appId
+      || installed?.manifest.version !== version || !appHasMediaBridge(appId, version)) return false
+    mediaAppId.value = appId
+    mediaVersion = version
+    return true
+  }
 
   function openSessionNow(appId: string, opts: LaunchOptions = {}) {
     const pkg = useAppStore().data?.['package-data']?.[appId]
@@ -251,7 +254,8 @@ export const useAppLauncherStore = defineStore('appLauncher', () => {
     // phone controls and better performance. Apps with manifest-declared host
     // integrations stay in the dashboard frame so their parent bridge remains
     // connected (for example GitWorkshop's consent-gated NIP-07 provider).
-    if (!IS_DEMO && isCompanionApp() && !HOST_FRAME_APPS.has(appId)) {
+    const retainedMedia = mediaAppId.value === appId && mediaVersion === pkg?.manifest.version
+    if (!IS_DEMO && isCompanionApp() && !opts.basicFrameOnly && !retainedMedia && !HOST_FRAME_APPS.has(appId) && !appRequiresHostFrame(appId, pkg?.manifest.version) && !appHasMediaBridge(appId, pkg?.manifest.version)) {
       const runtimeUrl = useAppStore().data?.['package-data']?.[appId]?.installed?.['interface-addresses']?.main?.['lan-address'] || undefined
       const launchUrl = directAppUrl(appId) || resolveAppUrl(appId, opts.path, runtimeUrl)
       if (launchUrl) {
@@ -288,6 +292,7 @@ export const useAppLauncherStore = defineStore('appLauncher', () => {
     // page never changes: panel mode renders beside the page, overlay and
     // fullscreen modes render above it (AppSession styles per display mode).
     // Closing always returns the user exactly where they launched from.
+    if (!opts.basicFrameOnly && pkg && appHasMediaBridge(appId, pkg.manifest.version)) { mediaAppId.value = appId; mediaVersion = pkg.manifest.version }
     panelPath.value = opts.path ?? null
     panelAppId.value = appId
   }
@@ -295,7 +300,51 @@ export const useAppLauncherStore = defineStore('appLauncher', () => {
   /** One launch gate for Home, My Apps, Discover, Spotlight and details.
    * Previously each Apps view owned a private modal, so Home skipped the
    * Portainer first-run token entirely. */
-  function openSession(appId: string, opts: LaunchOptions = {}) {
+  function openSession(appId: string, opts: LaunchOptions = {}, checkedPolicy = false) {
+    const generation = ++launchGeneration
+    cancelCredentialLaunch()
+    const installed = useAppStore().data?.['package-data']?.[appId]
+    if (mediaAppId.value === appId && mediaVersion === installed?.manifest.version) {
+      openSessionNow(appId, opts)
+      return
+    }
+    if (appId.startsWith('node-demo-') && !nodeAppIsAvailable(appId)) {
+      useToast().info('Loading this node’s demo app…')
+      void ensureNodeAppAvailable(appId).then(available => {
+        if (generation !== launchGeneration) return
+        if (!available) {
+          useToast().error('This node’s demo catalog is unavailable. Please retry.')
+          return
+        }
+        openSession(appId, opts)
+      })
+      return
+    }
+    if (!IS_DEMO && !appId.startsWith('node-demo-') && !checkedPolicy && !appLaunchPolicyLoaded() && !HOST_FRAME_APPS.has(appId)) {
+      // Basic use is immediate, including offline. Background policy discovery
+      // must never reload or move a frame the user has already started using.
+      openSession(appId, {...opts,basicFrameOnly:true}, true)
+      const policyGeneration = launchGeneration
+      useToast().info('App opened. Checking optional integration settings…')
+      void ensureAppLaunchPolicy().then(available => {
+        if (policyGeneration !== launchGeneration) return
+        if (!available) {
+          useToast().action('App opened with basic controls. Optional integration settings are unavailable.',
+            {label:'Retry settings',onClick:()=>{
+              if(policyGeneration !== launchGeneration) return
+              void ensureAppLaunchPolicy().then(recovered=>{
+                if(policyGeneration !== launchGeneration) return
+                if(!recovered) useToast().error('Integration settings remain unavailable. The app is still open.')
+              })
+            }}, {variant:'error'})
+          return
+        }
+        // Successful background policy discovery needs no user-facing toast.
+        // The app is already open; the policy is available for later launches
+        // and media admission can still converge through its own bridge.
+      })
+      return
+    }
     // Home/goal/deep-link launchers do not pass through AppCard.canLaunch.
     // Apply the same readiness gate here so a container that has just entered
     // `running` cannot race nginx and show a transient 502 to the user.
@@ -305,16 +354,16 @@ export const useAppLauncherStore = defineStore('appLauncher', () => {
       return
     }
     if (!opts.skipCredentialPrompt && CREDENTIAL_INTERSTITIAL_APPS.has(appId)) {
-      void prepareCredentialLaunch(appId, opts.path)
+      void prepareCredentialLaunch(appId, opts)
       return
     }
     openSessionNow(appId, opts)
   }
 
-  async function prepareCredentialLaunch(appId: string, path?: string) {
+  async function prepareCredentialLaunch(appId: string, opts: LaunchOptions) {
     const generation = ++credentialGeneration
     const appName = useAppStore().data?.['package-data']?.[appId]?.manifest?.title || appId
-    pendingCredentialLaunch = { appId, path }
+    pendingCredentialLaunch = { appId, opts }
     credentialPrompt.value = {
       show: true,
       loading: true,
@@ -344,7 +393,7 @@ export const useAppLauncherStore = defineStore('appLauncher', () => {
     if (!resolved) {
       credentialPrompt.value.show = false
       pendingCredentialLaunch = null
-      openSessionNow(appId, { path, skipCredentialPrompt: true })
+      openSessionNow(appId, { ...opts, skipCredentialPrompt: true })
       return
     }
     credentialPrompt.value = {
@@ -371,7 +420,7 @@ export const useAppLauncherStore = defineStore('appLauncher', () => {
     pendingCredentialLaunch = null
     credentialPrompt.value.show = false
     credentialPrompt.value.loading = false
-    if (pending) openSessionNow(pending.appId, { path: pending.path, skipCredentialPrompt: true })
+    if (pending) openSessionNow(pending.appId, { ...pending.opts, skipCredentialPrompt: true })
   }
 
   async function copyCredential(label: string, value: string) {
@@ -389,6 +438,8 @@ export const useAppLauncherStore = defineStore('appLauncher', () => {
   }
 
   function closePanel() {
+    launchGeneration += 1
+    cancelCredentialLaunch()
     panelAppId.value = null
     panelPath.value = null
   }
@@ -507,7 +558,9 @@ export const useAppLauncherStore = defineStore('appLauncher', () => {
   }
 
   function close() {
-    if (showConsent.value) denyConsent()
+    launchGeneration += 1
+    bridge.cancelPending()
+    registrationBridge.cancel(); rentalBridge.cancel()
     const toRestore = previousActiveElement
     previousActiveElement = null
     isOpen.value = false
@@ -515,7 +568,7 @@ export const useAppLauncherStore = defineStore('appLauncher', () => {
     title.value = ''
     // Explicitly remove NIP-07 listener as safety net — if user navigates away
     // without close() triggering the isOpen watcher, the listener would leak
-    window.removeEventListener('message', handleNostrRequest)
+    window.removeEventListener('message', handleNativeRequest)
     if (toRestore && typeof toRestore.focus === 'function') {
       requestAnimationFrame(() => {
         toRestore.focus()
@@ -523,185 +576,66 @@ export const useAppLauncherStore = defineStore('appLauncher', () => {
     }
   }
 
-  function approveConsent(remember: boolean) {
-    if (consentRequest.value) {
-      consentRequest.value.resolve(remember)
-    }
-    consentApprovedAt = Date.now()
-    approvedGeneration = consentGeneration
-    consentPhase.value = 'signing'
-  }
-
-  function denyConsent() {
-    consentGeneration += 1
-    if (consentRequest.value) {
-      consentRequest.value.reject()
-      consentRequest.value = null
-    }
-    showConsent.value = false
-    consentPhase.value = 'review'
-    consentError.value = ''
-  }
-
-  async function finishConsentSuccess() {
-    const generation = approvedGeneration
-    const remaining = Math.max(0, 350 - (Date.now() - consentApprovedAt))
-    if (remaining) await new Promise(resolve => setTimeout(resolve, remaining))
-    if (generation !== consentGeneration || !showConsent.value) return
-    consentPhase.value = 'success'
-    await new Promise(resolve => setTimeout(resolve, 325))
-    if (generation !== consentGeneration) return
-    consentRequest.value = null
-    showConsent.value = false
-    consentPhase.value = 'review'
-  }
-
-  function finishConsentError(error: unknown) {
-    consentError.value = error instanceof Error ? error.message : 'The node could not complete this request.'
-    consentPhase.value = 'error'
-  }
-
-  function requestConsent(appName: string, method: string, eventKind?: number, content?: string, identityLabel?: string): Promise<boolean> {
-    return new Promise((resolve, reject) => {
-      consentGeneration += 1
-      consentRequest.value = {
-        appName, method, eventKind, content, identityLabel,
-        resolve, reject,
-      }
-      consentPhase.value = 'review'
-      consentError.value = ''
-      showConsent.value = true
-    })
-  }
-
-  // NIP-07 postMessage handler — responds to nostr-request from iframe apps
-  async function handleNostrRequest(event: MessageEvent) {
-    if (!event.data || event.data.type !== 'nostr-request') return
-    const { id, method, params } = event.data
-    const source = event.source as Window | null
-    if (!source) return
-
-    // Only the app we actually opened may drive this bridge — see
-    // senderMatchesApp for why the scheme is deliberately not compared.
-    if (!senderMatchesApp(url.value, event.origin)) return
-
-    const origin = event.origin
-    let prompted = false
-    const activeAppId = resolveAppIdFromUrl(url.value) || inferAppIdFromTitle(title.value) || 'unknown-app'
-
-    // Check if app has a per-app identity stored (from identity picker)
-    const IDENTITY_KEY = 'archipelago_app_identity_'
-    const appKey = IDENTITY_KEY + (url.value || '').replace(/[^a-z0-9]/gi, '_')
-    let appIdentityId: string | null = null
+  // Reuse the same bounded queue and consent lifecycle as AppSession. Keep
+  // the legacy URL-based identity storage key so existing selections survive.
+  let nostrFrame: Window | null = null
+  function overlayIdentity(): SelectedIdentity | null {
     try {
-      const stored = localStorage.getItem(appKey)
-      if (stored) {
-        const parsed: unknown = JSON.parse(stored)
-        if (typeof parsed === 'object' && parsed !== null && 'id' in parsed) {
-          const idVal = (parsed as Record<string, unknown>).id
-          appIdentityId = typeof idVal === 'string' ? idVal : null
-        }
-      }
-    } catch { /* ignore */ }
-
-    // Every identity-sensitive method needs consent (or a remembered
-    // approval for this origin) — not just signEvent. getPublicKey
-    // deanonymizes; the decrypts turn the node into a decryption oracle.
-    const CONSENT_METHODS = new Set([
-      'getPublicKey', 'signEvent',
-      'nip04.encrypt', 'nip04.decrypt',
-      'nip44.encrypt', 'nip44.decrypt',
-    ])
-    const scopedKey = consentKey(origin, activeAppId, appIdentityId || 'node-default', method)
-    const alreadyApproved = hasRememberedConsent(scopedKey)
-    if (CONSENT_METHODS.has(method) && !alreadyApproved) {
-      prompted = true
-      const eventKind = method === 'signEvent' ? (params?.event?.kind as number | undefined) : undefined
-      const content = method === 'signEvent' ? (params?.event?.content as string | undefined) : undefined
-      try {
-        const remember = await requestConsent(
-          title.value || 'App', method, eventKind, content,
-          appIdentityId || 'Node default identity',
-        )
-        if (remember) rememberConsent(scopedKey)
-      } catch {
-        source.postMessage({ type: 'nostr-response', id, error: `User denied ${method} request` }, origin || '*')
-        return
-      }
-    }
-
-    try {
-      let result: unknown
-
-      if (method === 'getPublicKey') {
-        if (appIdentityId) {
-          // Use the app-specific identity's Nostr key
-          const res = await rpcClient.call<{ nostr_pubkey: string; nostr_npub: string; id: string; name: string; pubkey: string; did: string; is_default: boolean }>({
-            method: 'identity.get', params: { id: appIdentityId }
-          })
-          result = res.nostr_pubkey
-        } else {
-          const res = await rpcClient.call<{ nostr_pubkey: string }>({ method: 'node.nostr-pubkey' })
-          result = res.nostr_pubkey
-        }
-      } else if (method === 'signEvent') {
-        if (appIdentityId) {
-          // Sign with the app-specific identity's Nostr key
-          const res = await rpcClient.call<unknown>({
-            method: 'identity.nostr-sign',
-            params: { id: appIdentityId, event: params.event }
-          })
-          result = res
-        } else {
-          const res = await rpcClient.call<unknown>({ method: 'node.nostr-sign', params: { event: params.event } })
-          result = res
-        }
-      } else if (method === 'getRelays') {
-        result = {}
-      } else if (method === 'nip04.encrypt') {
-        const res = await rpcClient.call<{ ciphertext: string }>({
-          method: 'identity.nostr-encrypt-nip04',
-          params: { id: appIdentityId || undefined, pubkey: params.pubkey, plaintext: params.plaintext }
-        })
-        result = res.ciphertext
-      } else if (method === 'nip04.decrypt') {
-        const res = await rpcClient.call<{ plaintext: string }>({
-          method: 'identity.nostr-decrypt-nip04',
-          params: { id: appIdentityId || undefined, pubkey: params.pubkey, ciphertext: params.ciphertext }
-        })
-        result = res.plaintext
-      } else if (method === 'nip44.encrypt') {
-        const res = await rpcClient.call<{ ciphertext: string }>({
-          method: 'identity.nostr-encrypt-nip44',
-          params: { id: appIdentityId || undefined, pubkey: params.pubkey, plaintext: params.plaintext }
-        })
-        result = res.ciphertext
-      } else if (method === 'nip44.decrypt') {
-        const res = await rpcClient.call<{ plaintext: string }>({
-          method: 'identity.nostr-decrypt-nip44',
-          params: { id: appIdentityId || undefined, pubkey: params.pubkey, ciphertext: params.ciphertext }
-        })
-        result = res.plaintext
-      } else {
-        throw new Error(`Unsupported NIP-07 method: ${method}`)
-      }
-      source.postMessage({ type: 'nostr-response', id, result }, origin || '*')
-      if (prompted) void finishConsentSuccess()
-    } catch (err) {
-      const message = err instanceof Error ? err.message : 'Unknown error'
-      source.postMessage({ type: 'nostr-response', id, error: message }, origin || '*')
-      if (prompted && showConsent.value) finishConsentError(err)
-    }
+      const key = 'archipelago_app_identity_' + url.value.replace(/[^a-z0-9]/gi, '_')
+      const stored = JSON.parse(localStorage.getItem(key) || 'null')
+      if (!stored || typeof stored.id !== 'string' || !stored.id) return null
+      return { ...stored, name: typeof stored.name === 'string' ? stored.name : stored.id }
+    } catch { return null }
   }
+  const nativeIdentityBusy = ref(false)
+  const registrationBridge = useMediaRegistrationBridge({
+    consentBusy: (): boolean => rentalBridge.isBusy(),
+    appId: () => resolveAppIdFromUrl(url.value) || inferAppIdFromTitle(title.value) || 'unknown-app',
+    appUrl: () => url.value, frameWindow: () => isOpen.value ? nostrFrame : null,
+  })
+  const rentalBridge = useRentalPurchaseBridge({
+    consentBusy: (): boolean => bridge.showConsent.value || nativeIdentityBusy.value || registrationBridge.isBusy(),
+    appId: () => resolveAppIdFromUrl(url.value) || inferAppIdFromTitle(title.value) || 'unknown-app',
+    appUrl: () => url.value, frameWindow: () => isOpen.value ? nostrFrame : null,
+  })
+  const bridge = useNostrBridge(overlayIdentity, {
+    appId: () => resolveAppIdFromUrl(url.value) || inferAppIdFromTitle(title.value) || 'unknown-app',
+    appName: () => title.value || 'App',
+    appUrl: () => url.value,
+    frameWindow: () => isOpen.value ? nostrFrame : null,
+  })
+  const { handleNostrRequest, showConsent, consentRequest, consentPhase,
+    consentError, approveConsent, denyConsent } = bridge
+
+  function handleNativeRequest(event: MessageEvent) {
+    handleNostrRequest(event)
+    void registrationBridge.handle(event); void rentalBridge.handle(event)
+  }
+
+  function setNostrFrame(frame: Window | null) {
+    if (frame === nostrFrame) return
+    bridge.cancelPending()
+    registrationBridge.cancel(); rentalBridge.cancel()
+    nostrFrame = frame
+  }
+  watch(url, () => { bridge.cancelPending(); registrationBridge.cancel(); rentalBridge.cancel() }, { flush: 'sync' })
+  onScopeDispose(() => {
+    window.removeEventListener('message', handleNativeRequest)
+    bridge.dispose()
+    registrationBridge.dispose(); rentalBridge.dispose()
+    nostrFrame = null
+  })
 
   // Listen for NIP-07 requests only while an app is open
   watch(isOpen, (open) => {
     if (open) {
-      window.addEventListener('message', handleNostrRequest)
+      window.addEventListener('message', handleNativeRequest)
     } else {
-      window.removeEventListener('message', handleNostrRequest)
+      window.removeEventListener('message', handleNativeRequest)
+      bridge.cancelPending()
+    registrationBridge.cancel(); rentalBridge.cancel()
     }
-  })
+  }, { flush: 'sync' })
 
   return {
     isOpen,
@@ -712,6 +646,9 @@ export const useAppLauncherStore = defineStore('appLauncher', () => {
     close,
     closePanel,
     panelAppId,
+    mediaAppId,
+    mediaSessionGeneration,
+    retainMediaSession,
     panelPath,
     credentialPrompt,
     cancelCredentialLaunch,
@@ -723,5 +660,15 @@ export const useAppLauncherStore = defineStore('appLauncher', () => {
     consentError,
     approveConsent,
     denyConsent,
+    setNativeIdentityBusy: (busy: boolean) => { nativeIdentityBusy.value = busy },
+    rentalRequest: rentalBridge.request, rentalQuote: rentalBridge.quote, rentalPhase: rentalBridge.phase, rentalProgress: rentalBridge.progress,
+    cancelUnpaidRental: rentalBridge.cancelUnpaid, rentalError: rentalBridge.error, reviewRental: rentalBridge.review, approveRental: rentalBridge.approve, cancelRental: rentalBridge.cancel,
+    registrationRequest: registrationBridge.request,
+    registrationPhase: registrationBridge.phase,
+    registrationError: registrationBridge.error,
+    approveRegistration: registrationBridge.approve,
+    approveRegistrationResolution: registrationBridge.approveResolution,
+    cancelRegistration: registrationBridge.cancel,
+    setNostrFrame,
   }
 })

@@ -8,15 +8,18 @@ import type { ChartDataset } from '@/components/LineChart.vue'
 
 export interface FleetNode {
   node_id: string
+  identity_authenticated?: boolean
+  source?: string
+  trust_level?: string
   node_name?: string | null
   hostname?: string | null
   server_url?: string | null
   version: string
-  uptime_secs: number
+  uptime_secs: number | null
   cpu_cores: number
-  cpu_pct: number
-  mem_pct: number
-  disk_pct: number
+  cpu_pct: number | null
+  mem_pct: number | null
+  disk_pct: number | null
   container_count: number
   running_count: number
   federation_peers: number
@@ -26,6 +29,9 @@ export interface FleetNode {
 }
 
 export interface FleetAlert {
+  source?: string
+  trust_level?: string
+  identity_authenticated?: boolean
   node_id: string
   rule: string
   message: string
@@ -43,7 +49,8 @@ export type SortOption = 'status' | 'last-seen' | 'name'
 
 // --- Utility Functions ---
 
-export function formatUptime(secs: number): string {
+export function formatUptime(secs: number | null): string {
+  if (secs === null) return 'Unavailable'
   if (secs < 60) return `${secs}s`
   const days = Math.floor(secs / 86400)
   const hours = Math.floor((secs % 86400) / 3600)
@@ -53,9 +60,9 @@ export function formatUptime(secs: number): string {
   return `${mins}m`
 }
 
-export function timeAgo(dateStr: string): string {
-  const now = Date.now()
+export function timeAgo(dateStr: string, now = Date.now()): string {
   const then = new Date(dateStr).getTime()
+  if (!Number.isFinite(then) || then > now + 60_000) return 'Unknown'
   const diffMs = now - then
   if (diffMs < 0) return 'just now'
   const diffSecs = Math.floor(diffMs / 1000)
@@ -68,18 +75,34 @@ export function timeAgo(dateStr: string): string {
   return `${diffDays}d ago`
 }
 
-export function isOnline(reportedAt: string): boolean {
-  const thirtyMinMs = 30 * 60 * 1000
-  return Date.now() - new Date(reportedAt).getTime() < thirtyMinMs
+export function fleetStatus(reportedAt: string, now = Date.now()): 'online' | 'stale' | 'unknown' {
+  const age = now - new Date(reportedAt).getTime()
+  if (!Number.isFinite(age) || age < -60_000) return 'unknown'
+  return age < 30 * 60 * 1000 ? 'online' : 'stale'
 }
 
-export function healthBarClass(pct: number): string {
+export function isOnline(reportedAt: string, now = Date.now()): boolean {
+  return fleetStatus(reportedAt, now) === 'online'
+}
+
+export function formatMetric(value: number | null, digits = 0): string {
+  return value === null ? '—' : `${value.toFixed(digits)}%`
+}
+
+export function averageMetric(nodes: FleetNode[], field: 'cpu_pct' | 'mem_pct' | 'disk_pct', now = Date.now()): number | null {
+  const values = nodes.filter(n => isOnline(n.reported_at, now)).map(n => n[field]).filter((v): v is number => v !== null && Number.isFinite(v))
+  return values.length ? values.reduce((sum, value) => sum + value, 0) / values.length : null
+}
+
+export function healthBarClass(pct: number | null): string {
+  if (pct === null) return ''
   if (pct >= 85) return 'monitoring-bar-danger'
   if (pct >= 60) return 'monitoring-bar-warn'
   return 'monitoring-bar-ok'
 }
 
-export function healthTextClass(pct: number): string {
+export function healthTextClass(pct: number | null): string {
+  if (pct === null) return ''
   if (pct >= 85) return 'fleet-text-danger'
   if (pct >= 60) return 'fleet-text-warn'
   return ''
@@ -120,6 +143,12 @@ export function fleetNodeDisplayName(node: FleetNode): string {
   return name || node.node_id.slice(0, 8)
 }
 
+export function fleetSourceLabel(node: Pick<FleetNode, 'source' | 'trust_level' | 'identity_authenticated'>): string {
+  if (node.source === 'collector') return 'Collector · identity unverified'
+  if (node.source === 'federation' && node.trust_level === 'trusted' && node.identity_authenticated === true) return 'Trusted federation'
+  return 'Source unverified'
+}
+
 export function fleetNodeSubtitle(node: FleetNode): string {
   const host = node.hostname?.trim()
   if (host && host !== fleetNodeDisplayName(node)) return host
@@ -132,25 +161,36 @@ export const SORT_OPTIONS: Array<{ label: string; value: SortOption }> = [
   { label: 'Name', value: 'name' },
 ]
 
-export function sortFleetNodes(nodes: FleetNode[], sortBy: SortOption): FleetNode[] {
+function reportTime(node: FleetNode, now: number): number {
+  return fleetStatus(node.reported_at, now) === 'unknown' ? 0 : new Date(node.reported_at).getTime()
+}
+
+export function sortFleetNodes(nodes: FleetNode[], sortBy: SortOption, now = Date.now()): FleetNode[] {
   const sorted = [...nodes]
   switch (sortBy) {
     case 'status':
       sorted.sort((a, b) => {
-        const aOnline = isOnline(a.reported_at)
-        const bOnline = isOnline(b.reported_at)
-        if (aOnline !== bOnline) return aOnline ? -1 : 1
-        return new Date(b.reported_at).getTime() - new Date(a.reported_at).getTime()
+        const rank = { online: 0, unknown: 1, stale: 2 }
+        return rank[fleetStatus(a.reported_at, now)] - rank[fleetStatus(b.reported_at, now)]
       })
       break
     case 'last-seen':
-      sorted.sort((a, b) => new Date(b.reported_at).getTime() - new Date(a.reported_at).getTime())
+      sorted.sort((a, b) => reportTime(b, now) - reportTime(a, now))
       break
     case 'name':
       sorted.sort((a, b) => fleetNodeDisplayName(a).localeCompare(fleetNodeDisplayName(b)))
       break
   }
   return sorted
+}
+
+function numberOrNull(value: unknown): number | null {
+  return typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : null
+}
+
+function percentageOrNull(value: unknown): number | null {
+  const number = numberOrNull(value)
+  return number !== null && number <= 100 ? number : null
 }
 
 function numberOrZero(value: unknown): number {
@@ -160,21 +200,24 @@ function numberOrZero(value: unknown): number {
 export function normalizeFleetNode(node: Partial<FleetNode>): FleetNode {
   return {
     node_id: typeof node.node_id === 'string' ? node.node_id : 'unknown',
+    identity_authenticated: node.identity_authenticated === true,
+    source: typeof node.source === 'string' ? node.source : 'unknown',
+    trust_level: typeof node.trust_level === 'string' ? node.trust_level : 'unverified',
     node_name: typeof node.node_name === 'string' ? node.node_name : null,
     hostname: typeof node.hostname === 'string' ? node.hostname : null,
     server_url: typeof node.server_url === 'string' ? node.server_url : null,
     version: typeof node.version === 'string' ? node.version : 'unknown',
-    uptime_secs: numberOrZero(node.uptime_secs),
+    uptime_secs: numberOrNull(node.uptime_secs),
     cpu_cores: numberOrZero(node.cpu_cores),
-    cpu_pct: numberOrZero(node.cpu_pct),
-    mem_pct: numberOrZero(node.mem_pct),
-    disk_pct: numberOrZero(node.disk_pct),
+    cpu_pct: percentageOrNull(node.cpu_pct),
+    mem_pct: percentageOrNull(node.mem_pct),
+    disk_pct: percentageOrNull(node.disk_pct),
     container_count: numberOrZero(node.container_count),
     running_count: numberOrZero(node.running_count),
     federation_peers: numberOrZero(node.federation_peers),
     recent_alerts: Array.isArray(node.recent_alerts) ? node.recent_alerts : [],
     containers: Array.isArray(node.containers) ? node.containers : [],
-    reported_at: typeof node.reported_at === 'string' ? node.reported_at : new Date(0).toISOString(),
+    reported_at: typeof node.reported_at === 'string' ? node.reported_at : '',
   }
 }
 
@@ -195,7 +238,20 @@ type FleetCache = {
   sortBy: SortOption
 }
 
-const FLEET_CACHE_KEY = 'archipelago.fleet.cache.v1'
+const FLEET_CACHE_KEY = 'archipelago.fleet.cache.v2'
+
+function isFleetAlert(alert: unknown): alert is FleetAlert {
+  if (!alert || typeof alert !== 'object') return false
+  const value = alert as Partial<FleetAlert>
+  return typeof value.node_id === 'string' && typeof value.rule === 'string' &&
+    typeof value.message === 'string' && typeof value.timestamp === 'string'
+}
+
+function withoutCachedProvenance<T extends object>(report: T) {
+  // Historical collector payloads could claim provenance. Only a fresh
+  // corrected server response may assign authenticated identity labels.
+  return { ...report, source: 'unknown', trust_level: 'unverified', identity_authenticated: false }
+}
 
 function readFleetCache(): Partial<FleetCache> {
   if (typeof window === 'undefined') return {}
@@ -204,8 +260,8 @@ function readFleetCache(): Partial<FleetCache> {
     if (!raw) return {}
     const parsed = JSON.parse(raw) as Partial<FleetCache>
     return {
-      nodes: Array.isArray(parsed.nodes) ? parsed.nodes.map(normalizeFleetNode) : [],
-      fleetAlerts: Array.isArray(parsed.fleetAlerts) ? parsed.fleetAlerts : [],
+      nodes: Array.isArray(parsed.nodes) ? parsed.nodes.map(normalizeFleetNode).map(withoutCachedProvenance) : [],
+      fleetAlerts: Array.isArray(parsed.fleetAlerts) ? parsed.fleetAlerts.filter(isFleetAlert).map(withoutCachedProvenance) : [],
       lastRefreshed: typeof parsed.lastRefreshed === 'string' ? parsed.lastRefreshed : '',
       selectedNodeId: typeof parsed.selectedNodeId === 'string' ? parsed.selectedNodeId : null,
       sortBy: parsed.sortBy === 'last-seen' || parsed.sortBy === 'name' ? parsed.sortBy : 'status',
@@ -227,6 +283,9 @@ function writeFleetCache(state: FleetCache) {
 // --- Composable ---
 
 export function useFleetData() {
+  const now = ref(Date.now())
+  let clockTimer: ReturnType<typeof setInterval> | null = null
+  let active = true
   const cached = readFleetCache()
   const loading = ref(!(cached.nodes?.length ?? 0))
   const errorMessage = ref('')
@@ -234,47 +293,46 @@ export function useFleetData() {
   const fleetAlerts = ref<FleetAlert[]>(cached.fleetAlerts ?? [])
   const refreshing = ref(false)
   const alertsLoading = ref(false)
+  const alertsErrorMessage = ref('')
   const selectedNodeId = ref<string | null>(cached.selectedNodeId ?? null)
   const nodeHistory = ref<NodeHistoryEntry[]>([])
   const nodeHistoryLoading = ref(false)
+  const nodeHistoryMessage = ref('')
   const autoRefresh = ref(true)
   const lastRefreshed = ref(cached.lastRefreshed ?? '')
   const sortBy = ref<SortOption>(cached.sortBy ?? 'status')
   const chartWidth = ref(300)
   let pollTimer: ReturnType<typeof setInterval> | null = null
+  let historyRequest = 0
+  let statusRequest = 0
+  let alertsRequest = 0
+  let refreshRequest = 0
+  let disposed = false
 
   // --- Computed ---
 
-  const onlineCount = computed(() => nodes.value.filter(n => isOnline(n.reported_at)).length)
-  const offlineCount = computed(() => nodes.value.length - onlineCount.value)
-  const healthyCount = computed(() => nodes.value.filter(n => n.recent_alerts.length === 0).length)
+  const onlineCount = computed(() => nodes.value.filter(n => isOnline(n.reported_at, now.value)).length)
+  const offlineCount = computed(() => nodes.value.filter(n => fleetStatus(n.reported_at, now.value) === 'stale').length)
+  const unknownCount = computed(() => nodes.value.filter(n => fleetStatus(n.reported_at, now.value) === 'unknown').length)
+  const healthyCount = computed(() => nodes.value.filter(n => isOnline(n.reported_at, now.value) && n.cpu_pct !== null && n.mem_pct !== null && n.disk_pct !== null && n.recent_alerts.length === 0).length)
 
   const fleetHealthPct = computed(() => {
     if (!nodes.value.length) return 0
     return Math.round((healthyCount.value / nodes.value.length) * 100)
   })
 
-  const avgCpu = computed(() => {
-    if (!nodes.value.length) return 0
-    return nodes.value.reduce((sum, n) => sum + n.cpu_pct, 0) / nodes.value.length
-  })
+  const avgCpu = computed(() => averageMetric(nodes.value, 'cpu_pct', now.value))
 
-  const avgMem = computed(() => {
-    if (!nodes.value.length) return 0
-    return nodes.value.reduce((sum, n) => sum + n.mem_pct, 0) / nodes.value.length
-  })
+  const avgMem = computed(() => averageMetric(nodes.value, 'mem_pct', now.value))
 
-  const avgDisk = computed(() => {
-    if (!nodes.value.length) return 0
-    return nodes.value.reduce((sum, n) => sum + n.disk_pct, 0) / nodes.value.length
-  })
+  const avgDisk = computed(() => averageMetric(nodes.value, 'disk_pct', now.value))
 
   const selectedNode = computed(() => {
     if (!selectedNodeId.value) return null
     return nodes.value.find(n => n.node_id === selectedNodeId.value) ?? null
   })
 
-  const sortedNodes = computed(() => sortFleetNodes(nodes.value, sortBy.value))
+  const sortedNodes = computed(() => sortFleetNodes(nodes.value, sortBy.value, now.value))
 
   const allAppIds = computed(() => {
     const appSet = new Set<string>()
@@ -315,36 +373,48 @@ export function useFleetData() {
   // --- Data Fetching ---
 
   async function fetchFleetStatus() {
+    const request = ++statusRequest
     try {
       const data = await rpcClient.call<{ nodes: Partial<FleetNode>[] }>({
         method: 'telemetry.fleet-status',
       })
-      if (data?.nodes) {
-        nodes.value = data.nodes.map(normalizeFleetNode)
-        lastRefreshed.value = new Date().toISOString()
-        writeFleetCache({
-          nodes: nodes.value,
-          fleetAlerts: fleetAlerts.value,
-          lastRefreshed: lastRefreshed.value,
-          selectedNodeId: selectedNodeId.value,
-          sortBy: sortBy.value,
-        })
+      if (disposed || request !== statusRequest) return
+      if (!Array.isArray(data?.nodes) || data.nodes.some(node => !node || typeof node !== 'object')) {
+        throw new Error('Invalid fleet response')
       }
-    } catch (err) {
-      if (loading.value) {
-        errorMessage.value = err instanceof Error ? err.message : 'Failed to load fleet data'
+      nodes.value = data.nodes.map(normalizeFleetNode)
+      lastRefreshed.value = new Date().toISOString()
+      errorMessage.value = ''
+      writeFleetCache({
+        nodes: nodes.value,
+        fleetAlerts: fleetAlerts.value,
+        lastRefreshed: lastRefreshed.value,
+        selectedNodeId: selectedNodeId.value,
+        sortBy: sortBy.value,
+      })
+    } catch {
+      if (!disposed && request === statusRequest) {
+        errorMessage.value = nodes.value.length
+          ? 'Fleet refresh failed. Showing the last received reports; current node status could not be checked.'
+          : 'Fleet data is unavailable. Check your connection and retry.'
       }
     }
   }
 
   async function fetchFleetAlerts() {
+    const request = ++alertsRequest
     alertsLoading.value = true
     try {
       const data = await rpcClient.call<{ alerts: FleetAlert[] }>({
         method: 'telemetry.fleet-alerts',
       })
-      if (data?.alerts) {
+      if (disposed || request !== alertsRequest) return
+      if (!Array.isArray(data?.alerts) || !data.alerts.every(isFleetAlert)) {
+        throw new Error('Invalid fleet alerts response')
+      }
+      {
         fleetAlerts.value = data.alerts
+        alertsErrorMessage.value = ''
         writeFleetCache({
           nodes: nodes.value,
           fleetAlerts: fleetAlerts.value,
@@ -354,36 +424,55 @@ export function useFleetData() {
         })
       }
     } catch {
-      // Non-critical, retry on next poll
+      if (!disposed && request === alertsRequest) {
+        alertsErrorMessage.value = fleetAlerts.value.length
+          ? 'Alert refresh failed. Showing the last received alerts.'
+          : 'Fleet alerts are unavailable. Retry refresh to check for alerts.'
+      }
     } finally {
-      alertsLoading.value = false
+      if (!disposed && request === alertsRequest) alertsLoading.value = false
     }
   }
 
   async function fetchNodeHistory(nodeId: string) {
+    const request = ++historyRequest
     nodeHistoryLoading.value = true
     try {
-      const data = await rpcClient.call<{ history?: NodeHistoryEntry[]; entries?: NodeHistoryEntry[] }>({
+      const data = await rpcClient.call<{ history?: NodeHistoryEntry[]; entries?: NodeHistoryEntry[]; history_available?: boolean }>({
         method: 'telemetry.fleet-node-history',
         params: { node_id: nodeId },
       })
-      nodeHistory.value = normalizeNodeHistoryResponse(data)
+      if (request === historyRequest && selectedNodeId.value === nodeId) {
+        if (data.history_available === false) {
+          nodeHistory.value = []
+          nodeHistoryMessage.value = 'History is unavailable for this node.'
+        } else {
+          nodeHistory.value = normalizeNodeHistoryResponse(data)
+          nodeHistoryMessage.value = ''
+        }
+      }
     } catch {
-      // Non-critical
+      if (request === historyRequest && selectedNodeId.value === nodeId) {
+        nodeHistoryMessage.value = nodeHistory.value.length
+          ? 'History refresh failed. Showing the last received history.'
+          : 'History is unavailable for this node.'
+      }
     } finally {
-      nodeHistoryLoading.value = false
+      if (request === historyRequest) nodeHistoryLoading.value = false
     }
   }
 
   async function refreshAll() {
+    const request = ++refreshRequest
     loading.value = !nodes.value.length
     refreshing.value = true
-    errorMessage.value = ''
     try {
       await Promise.all([fetchFleetStatus(), fetchFleetAlerts()])
     } finally {
-      loading.value = false
-      refreshing.value = false
+      if (!disposed && request === refreshRequest) {
+        loading.value = false
+        refreshing.value = false
+      }
     }
   }
 
@@ -405,7 +494,7 @@ export function useFleetData() {
 
   function toggleAutoRefresh() {
     autoRefresh.value = !autoRefresh.value
-    if (autoRefresh.value) {
+    if (autoRefresh.value && active) {
       startAutoRefresh()
     } else {
       stopAutoRefresh()
@@ -454,6 +543,10 @@ export function useFleetData() {
 
   // Fetch node history when selection changes
   watch(selectedNodeId, (newId) => {
+    historyRequest++
+    nodeHistory.value = []
+    nodeHistoryLoading.value = false
+    nodeHistoryMessage.value = ''
     if (newId) {
       fetchNodeHistory(newId)
     } else {
@@ -495,17 +588,24 @@ export function useFleetData() {
   // first, so calling it from both onMounted and onActivated on a fresh
   // KeepAlive-wrapped mount is safe and idempotent.
   function armFleetPoll() {
+    active = true
+    now.value = Date.now()
+    if (clockTimer) clearInterval(clockTimer)
+    clockTimer = setInterval(() => { now.value = Date.now() }, 15_000)
     if (autoRefresh.value) startAutoRefresh()
   }
   function disarmFleetPoll() {
+    active = false
+    if (clockTimer) clearInterval(clockTimer)
+    clockTimer = null
     stopAutoRefresh()
   }
 
   onMounted(async () => {
     updateChartWidth()
     window.addEventListener('resize', updateChartWidth)
-    await refreshAll()
     armFleetPoll()
+    await refreshAll()
   })
 
   onActivated(() => {
@@ -517,15 +617,17 @@ export function useFleetData() {
   })
 
   onUnmounted(() => {
+    disposed = true
+    ++historyRequest
     disarmFleetPoll()
     window.removeEventListener('resize', updateChartWidth)
   })
 
   return {
-    loading, refreshing, errorMessage, nodes, fleetAlerts, alertsLoading,
-    selectedNodeId, selectedNode, nodeHistory, nodeHistoryLoading,
-    autoRefresh, lastRefreshed, sortBy, chartWidth,
-    onlineCount, offlineCount, healthyCount, fleetHealthPct,
+    loading, refreshing, errorMessage, nodes, fleetAlerts, alertsLoading, alertsErrorMessage,
+    selectedNodeId, selectedNode, nodeHistory, nodeHistoryLoading, nodeHistoryMessage,
+    autoRefresh, lastRefreshed, sortBy, chartWidth, now,
+    onlineCount, offlineCount, unknownCount, healthyCount, fleetHealthPct,
     avgCpu, avgMem, avgDisk, sortedNodes, allAppIds,
     nodeHistoryLabels, nodeHistoryCpuDatasets, nodeHistoryMemDatasets, nodeHistoryDiskDatasets,
     refreshAll, selectNode, toggleAutoRefresh, exportFleetData,

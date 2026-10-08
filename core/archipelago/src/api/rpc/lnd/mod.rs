@@ -1,8 +1,10 @@
 mod channels;
+pub(super) mod external_invoice;
 mod fee_bump;
 mod fee_policy;
 mod info;
 mod macaroons;
+pub(super) mod onchain_purchase;
 mod payments;
 mod seed_backup;
 mod wallet;

@@ -186,8 +186,9 @@ defineEmits<{
 }>()
 
 const chatStore = useChatStore()
-const { sendMessage, stopGeneration, editAndResend, regenerateLastResponse, activeModel, needsApiKey } = useAI()
+const { sendMessage, stopGeneration, editAndResend, regenerateLastResponse, activeModel, needsApiKey, needsFunding } = useAI()
 const { updatePanelFromText, panelOpen, panelFilms, panelTitle, activeTab, availableTabs, setActiveTab, enterDesignSystemMode } = useContentPanel()
+import { archyBridge } from '@/services/archyBridge'
 import { useCodeContext } from '@/composables/useCodeContext'
 import { useVisualViewport } from '@/composables/useVisualViewport'
 const codeContext = useCodeContext()
@@ -206,9 +207,17 @@ const showSettings = ref(false)
 // without fixing anything).
 watch(needsApiKey, (needs) => {
   if (needs) {
-    showSettings.value = true
+    if (archyBridge.isInArchy()) archyBridge.requestAISetup()
+    else showSettings.value = true
     needsApiKey.value = false
   }
+})
+
+watch(needsFunding, needed => {
+  if (!needed) return
+  if (archyBridge.isInArchy()) archyBridge.requestAISetup('funding')
+  else showSettings.value = true
+  needsFunding.value = false
 })
 
 // Scroll position memory per conversation

@@ -75,6 +75,26 @@ describe('usePaidItemViewer — UIFIX-04 (lightbox routing) + UIFIX-06 (loading/
     vi.stubGlobal('atob', vi.fn(() => 'binarydata'))
   })
 
+  it('opens a large cached video through authenticated HTTP without decoding or a blob allocation', async () => {
+    mockedRpc.call.mockResolvedValue({ owned: true, mime_type: 'video/mp4', size_bytes: 200000000 })
+    const viewer = usePaidItemViewer()
+    await viewer.open(VIDEO_ITEM)
+    expect(await viewer.resolveBlobUrl(viewer.lightboxItems.value[0]!.path)).toBe('/api/peer-content/abc123.onion/content-2')
+    expect(createObjectURLSpy).not.toHaveBeenCalled()
+    expect(atob).not.toHaveBeenCalled()
+    expect(mockedRpc.call).toHaveBeenCalledWith(expect.objectContaining({ params: { onion: VIDEO_ITEM.onion, content_id: VIDEO_ITEM.content_id, cache_only: true } }))
+  })
+
+  it('does not open incomplete delivery or start another purchase', async () => {
+    mockedRpc.call.mockRejectedValue(new Error('Delivery incomplete'))
+    const viewer = usePaidItemViewer()
+    await viewer.open(VIDEO_ITEM)
+    expect(viewer.lightboxIndex.value).toBeNull()
+    expect(viewer.error.value).toBeTruthy()
+    expect(mockedRpc.call).toHaveBeenCalledTimes(1)
+    expect(createObjectURLSpy).not.toHaveBeenCalled()
+  })
+
   it('routes an image mime to the lightbox, not window.open', async () => {
     mockedRpc.call.mockResolvedValue({ data_base64: 'ZmFrZQ==', mime_type: 'image/jpeg' })
     const viewer = usePaidItemViewer()

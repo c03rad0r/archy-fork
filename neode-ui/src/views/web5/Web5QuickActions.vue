@@ -1,7 +1,11 @@
 <template>
   <!-- Quick Actions Container -->
   <div class="glass-card p-6 mb-6">
-    <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-6 gap-4 stagger-grid">
+    <div class="flex flex-wrap gap-3 mb-4" aria-label="Node connections">
+      <RouterLink :to="{ name: 'federation', query: { view: 'discover' } }" class="glass-button px-4 py-2 rounded-lg text-sm text-white">Connect with Nodes</RouterLink>
+      <RouterLink :to="{ name: 'federation', query: { view: 'connected' } }" class="glass-button px-4 py-2 rounded-lg text-sm text-white">Connected Nodes</RouterLink>
+    </div>
+    <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-5 gap-4 stagger-grid">
       <!-- Networking Profits -->
       <div data-controller-container tabindex="0" :class="{ 'card-stagger': showStagger }" class="flex flex-col gap-3 p-4 bg-white/5 rounded-lg min-w-0" style="--stagger-index: 0">
         <div class="flex items-center gap-3 min-w-0">
@@ -113,27 +117,6 @@
         </button>
       </div>
 
-      <!-- Wallet Connection -->
-      <div data-controller-container tabindex="0" :class="{ 'card-stagger': showStagger }" class="flex flex-col gap-3 p-4 bg-white/5 rounded-lg min-w-0" style="--stagger-index: 2">
-        <div class="flex items-center gap-3 min-w-0">
-          <div class="relative shrink-0">
-            <div class="w-3 h-3 rounded-full" :class="walletConnected ? 'bg-green-400' : 'bg-red-400'"></div>
-            <div v-if="walletConnected" class="absolute inset-0 w-3 h-3 rounded-full bg-green-400 animate-ping opacity-75"></div>
-          </div>
-          <div class="min-w-0">
-            <p class="text-sm font-medium text-white">{{ t('web5.wallet') }}</p>
-            <p class="text-xs text-white/60">{{ walletConnected ? t('common.connected') : t('common.disconnected') }}</p>
-          </div>
-        </div>
-        <button
-          @click="$emit('connectWallet')"
-          class="w-full mt-auto px-3 py-1.5 glass-button glass-button-sm rounded text-xs font-medium text-white/90 hover:text-white transition-colors disabled:opacity-50"
-          :disabled="connectingWallet"
-        >
-          {{ connectingWallet ? t('common.connecting') : walletConnected ? t('common.disconnect') : t('common.connect') }}
-        </button>
-      </div>
-
       <!-- Nostr Relay Status -->
       <div data-controller-container tabindex="0" :class="{ 'card-stagger': showStagger }" class="flex flex-col gap-3 p-4 bg-white/5 rounded-lg min-w-0" style="--stagger-index: 3">
         <div class="flex items-center gap-3 min-w-0">
@@ -203,7 +186,7 @@
 
 <script setup lang="ts">
 import { ref } from 'vue'
-import { useRouter } from 'vue-router'
+import { RouterLink, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import type { ProfitsData, NostrRelayStatsData, HwWalletDevice } from './types'
 
@@ -225,8 +208,6 @@ defineProps<{
   dhtDid: string | null
   dhtDidCopied: boolean
   publishingDht: boolean
-  walletConnected: boolean
-  connectingWallet: boolean
   nostrRelayStats: NostrRelayStatsData | null
   connectedNodesCount: number
   detectedHwWallets: HwWalletDevice[]
@@ -239,7 +220,6 @@ defineEmits<{
   copyDhtDid: []
   refreshDhtDid: []
   publishDhtDid: []
-  connectWallet: []
   manageRelays: []
 }>()
 </script>

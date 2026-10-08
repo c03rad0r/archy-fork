@@ -6,11 +6,18 @@ export const useWeb5BadgeStore = defineStore('web5Badge', () => {
   const pendingRequestCount = ref(0)
 
   async function refresh() {
-    try {
-      const res = await rpcClient.call<{ requests: Array<{ id: string }> }>({ method: 'network.list-requests' })
-      pendingRequestCount.value = res.requests?.length ?? 0
-    } catch (e) {
-      if (import.meta.env.DEV) console.warn('Badge refresh failed — best-effort', e)
+    const results = await Promise.allSettled([
+      rpcClient.call<{ requests: Array<{ id: string }> }>({ method: 'network.list-requests' }),
+      rpcClient.federationListPendingRequests(),
+    ])
+    // Do not clear an existing badge when a request source is unavailable.
+    if (results.every(result => result.status === 'fulfilled')) {
+      const legacy = results[0]
+      const nostr = results[1]
+      if (legacy?.status === 'fulfilled' && nostr?.status === 'fulfilled') {
+        pendingRequestCount.value = (legacy.value.requests?.length ?? 0) +
+          (nostr.value.requests?.filter(request => request.state === 'pending' && !request.outbound).length ?? 0)
+      }
     }
   }
 

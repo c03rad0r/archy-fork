@@ -83,7 +83,33 @@ const RUNTIME_ASSETS_DIR: &str = "/opt/archipelago/web-ui/archipelago-runtime";
 /// Inserted into every server block of the nginx config that lacks the
 /// `/api/app-catalog` proxy. Kept in sync with the canonical block in
 /// image-recipe/configs/nginx-archipelago.conf.
-const NGINX_APP_CATALOG_BLOCK: &str = "\n    # App Store catalog proxy — backend fetches from configured registries\n    # so the browser doesn't hit CORS/CSP. Without this block nginx falls\n    # through to the SPA index.html and the frontend gets HTML back instead\n    # of JSON.\n    location /api/app-catalog {\n        proxy_pass http://127.0.0.1:5678;\n        proxy_http_version 1.1;\n        proxy_set_header Host $host;\n        proxy_set_header X-Real-IP $remote_addr;\n        proxy_set_header Cookie $http_cookie;\n        proxy_connect_timeout 15s;\n        proxy_read_timeout 30s;\n        proxy_send_timeout 15s;\n        error_page 502 503 = @backend_unavailable;\n        error_page 504 = @backend_timeout;\n    }\n\n";
+const INDEEHUB_MAINTENANCE_GUARD: &str =
+    "if (-f /var/lib/archipelago/app-maintenance/indeedhub) { return 503; }";
+/// Patch only recognized literal IndeeHub routes, including asset/WebSocket
+/// sublocations; unknown operator routes are not guessed by this repair.
+fn heal_indeehub_maintenance_guards(content: &str) -> String {
+    let route=regex::Regex::new(r"(?m)^([ \t]*)(location[ \t]+(?:\^~[ \t]+|=[ \t]+)?/app/indeedhub(?:/[^\s{]*)?[ \t]*\{)[ \t]*$").unwrap();
+    let mut result = String::new();
+    let mut previous = 0;
+    for capture in route.captures_iter(content) {
+        let full = capture.get(0).unwrap();
+        result.push_str(&content[previous..full.end()]);
+        if !content[full.end()..]
+            .trim_start()
+            .starts_with(INDEEHUB_MAINTENANCE_GUARD)
+        {
+            result.push_str(&format!(
+                "\n{}    {}",
+                &capture[1], INDEEHUB_MAINTENANCE_GUARD
+            ));
+        }
+        previous = full.end();
+    }
+    result.push_str(&content[previous..]);
+    result
+}
+
+const NGINX_APP_CATALOG_BLOCK: &str = "\n    # App Store catalog proxy — backend fetches from configured registries\n    # so the browser doesn't hit CORS/CSP. Without this block nginx falls\n    # through to the SPA index.html and the frontend gets HTML back instead\n    # of JSON.\n    location ~ ^/api/(?:app-catalog|node-app-catalog)$ {\n        proxy_pass http://127.0.0.1:5678;\n        proxy_http_version 1.1;\n        proxy_set_header Host $host;\n        proxy_set_header X-Real-IP $remote_addr;\n        proxy_set_header Cookie $http_cookie;\n        proxy_connect_timeout 15s;\n        proxy_read_timeout 30s;\n        proxy_send_timeout 15s;\n        error_page 502 503 = @backend_unavailable;\n        error_page 504 = @backend_timeout;\n    }\n\n";
 
 const NGINX_SOURCE_PROXY_BLOCK: &str = "    # GitWorkshop follows the dashboard origin so LAN, Tailscale, FIPS, Tor,\n    # hostnames and reverse proxies all use the connection that already works.\n    location /app/archipelago-source/ {\n        proxy_pass http://127.0.0.2:8337/;\n        proxy_http_version 1.1;\n        proxy_set_header Host $http_host;\n        proxy_set_header Cookie $http_cookie;\n        proxy_set_header X-Real-IP $remote_addr;\n        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;\n        proxy_set_header X-Forwarded-Proto $scheme;\n        proxy_set_header X-Forwarded-Prefix /app/archipelago-source;\n        proxy_hide_header X-Frame-Options;\n        add_header X-Frame-Options \"SAMEORIGIN\" always;\n        add_header X-Content-Type-Options \"nosniff\" always;\n        proxy_read_timeout 300s;\n    }\n";
 
@@ -109,6 +135,24 @@ const NGINX_LND_PROXY_BLOCK: &str = "\n    # LND REST proxy — backend handles 
 /// and peer media won't play (B3). Forwards Cookie (session auth) + Range and
 /// disables buffering so streaming works. Kept in sync with the canonical
 /// block in image-recipe/configs/nginx-archipelago.conf.
+const NGINX_RENTAL_PLAYBACK_BLOCK: &str = r#"
+    # Session-bound rental playback: never cache opaque handles or capabilities.
+    location /api/rental-playback/ {
+        proxy_pass http://127.0.0.1:5678;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header Cookie $http_cookie;
+        proxy_set_header Origin $http_origin;
+        proxy_set_header Range $http_range;
+        proxy_buffering off;
+        proxy_cache off;
+        proxy_connect_timeout 10s;
+        proxy_read_timeout 40s;
+        error_page 502 503 = @backend_unavailable;
+        error_page 504 = @backend_timeout;
+    }
+"#;
+
 const NGINX_PEER_CONTENT_BLOCK: &str = "\n    # Peer content streaming proxy (B3) — Range-streams a peer's media file.\n    # Long read timeout: this path also serves full-file downloads of large\n    # media (#38), which can take minutes over Tor; 120s aborted them.\n    location /api/peer-content/ {\n        proxy_pass http://127.0.0.1:5678;\n        proxy_http_version 1.1;\n        proxy_set_header Host $host;\n        proxy_set_header Cookie $http_cookie;\n        proxy_set_header Range $http_range;\n        proxy_buffering off;\n        proxy_connect_timeout 10s;\n        proxy_read_timeout 900s;\n        error_page 502 503 = @backend_unavailable;\n        error_page 504 = @backend_timeout;\n    }\n";
 
 /// Inserted into every server block lacking the Pine node-status proxy.
@@ -162,6 +206,26 @@ pub async fn ensure_runtime_assets_ready() {
         Ok(_) => debug!("No OTA runtime payload to synchronize"),
         Err(e) => warn!("Runtime asset bootstrap failed (non-fatal): {:#}", e),
     }
+    // Older provisioning/rotation wrote a root-only leaf key. nginx could
+    // read it while the unprivileged app gate silently lost HTTPS. Repair
+    // permissions without replacing node identity, including binary-only OTA.
+    match host_sudo(&[
+        "python3",
+        "-c",
+        include_str!("../../../scripts/repair-app-gate-tls-permissions.py"),
+    ])
+    .await
+    {
+        Ok(status) if status.success() => debug!("App gate TLS key permissions verified"),
+        Ok(status) => warn!("App gate TLS key permissions need attention: {status}"),
+        Err(error) => warn!("App gate TLS permission repair failed: {error}"),
+    }
+    // A frontend payload can predate the binary during qualification or rollback.
+    // Replace its doctor before starting reconciliation; direct writes cannot
+    // escape the management service's ProtectSystem filesystem namespace.
+    if let Err(error) = sync_doctor_script().await {
+        warn!("Doctor script synchronization failed: {error:#}");
+    }
     // A binary-only qualification or OTA rollback can precede the matching
     // script payload. Install the exact embedded helper before Quadlet
     // reconciliation can introduce its required ExecStartPre command.
@@ -172,6 +236,17 @@ pub async fn ensure_runtime_assets_ready() {
     .await
     {
         warn!("File Browser credential helper installation failed: {error:#}");
+    }
+    // The supervised updater rejects any maintenance helper whose source hash
+    // differs from this binary. Promote its embedded copy after older OTA assets
+    // and before crash recovery/reconciliation can resume an existing journal.
+    if let Err(error) = write_root_if_needed(
+        "/opt/archipelago/scripts/indeehub-maintenance-controller.py",
+        include_str!("../../../scripts/indeehub-maintenance-controller.py"),
+    )
+    .await
+    {
+        warn!("IndeeHub maintenance helper installation failed: {error:#}");
     }
     if let Err(error) = run_npm_bridge_bootstrap().await {
         warn!("NPM public routing bootstrap needs attention: {error:#}");
@@ -264,6 +339,13 @@ pub async fn ensure_doctor_installed() {
         Ok(_) => debug!("Doctor artifacts already in sync"),
         Err(e) => warn!("Doctor bootstrap failed (non-fatal): {:#}", e),
     }
+    // Resolve known TLS bind conflicts before installing routes: nginx may
+    // otherwise acknowledge the reload signal while keeping its old workers.
+    match run_nginx_listener_repair().await {
+        Ok(true) => info!("nginx HTTPS listeners retargeted to this host's current addresses"),
+        Ok(false) => debug!("nginx listeners already match this host's addresses"),
+        Err(e) => warn!("nginx listener repair failed (non-fatal): {:#}", e),
+    }
     match run_nginx().await {
         Ok(true) => info!("Patched nginx config to proxy missing backend endpoints"),
         Ok(false) => debug!("Nginx backend endpoint proxy blocks already present"),
@@ -287,11 +369,6 @@ pub async fn ensure_doctor_installed() {
         ),
         Ok(false) => debug!("Console welcome banner already current (or not an ISO node)"),
         Err(e) => warn!("Welcome banner sync failed (non-fatal): {:#}", e),
-    }
-    match run_nginx_listener_repair().await {
-        Ok(true) => info!("nginx HTTPS listeners retargeted to this host's current addresses"),
-        Ok(false) => debug!("nginx listeners already match this host's addresses"),
-        Err(e) => warn!("nginx listener repair failed (non-fatal): {:#}", e),
     }
     match run_ha_rpc_proxy_bind_repair().await {
         Ok(true) => {
@@ -993,9 +1070,11 @@ async fn podman_stdout(args: &[&str]) -> String {
 /// Both observed on archi-dev-box, 2026-08-15: nginx dead since boot with
 /// `bind() to 192.168.63.240:443 failed (99: Cannot assign requested
 /// address)`, and the dashboard simply unreachable.
-const NGINX_SITES: [&str; 2] = [
+const NGINX_SITES: [&str; 4] = [
     "/etc/nginx/sites-available/archipelago-http",
     "/etc/nginx/sites-available/archipelago",
+    "/etc/nginx/sites-enabled/archipelago-http",
+    "/etc/nginx/sites-enabled/archipelago",
 ];
 const NGINX_RESTART_DROPIN: &str =
     "/etc/systemd/system/nginx.service.d/10-archipelago-restart.conf";
@@ -1028,10 +1107,118 @@ fn is_cgnat(addr: &str) -> bool {
     (64..=127).contains(&second)
 }
 
+fn has_tailnet_https_listener(sockets: &str) -> bool {
+    sockets.lines().any(|line| {
+        line.split_whitespace()
+            .nth(3)
+            .and_then(|local| local.rsplit_once(':'))
+            .is_some_and(|(address, port)| port == "443" && is_cgnat(address))
+    })
+}
+
 /// Rewrite the `listen <ip>:443 ssl;` set for one config's text. Returns the
 /// new text when it differs. Lines for absent addresses are dropped and one
 /// line per present address is kept, preserving the file's indentation.
 fn retarget_https_listeners(text: &str, present: &[String]) -> Option<String> {
+    if present.is_empty() {
+        return None;
+    }
+    retarget_managed_https_wildcards(text, present)
+        .or_else(|| retarget_pinned_https_listeners(text, present))
+}
+
+/// Only the shipped node-CA dashboard profile may replace wildcard TLS binds.
+/// Public/custom vhosts, certificate paths and listener options are untouched.
+fn retarget_managed_https_wildcards(text: &str, present: &[String]) -> Option<String> {
+    if present.is_empty() {
+        return None;
+    }
+    // This migration owns the shipped top-level layout only. Do not combine an
+    // operator's differently nested/indented server with the managed profile.
+    if text
+        .lines()
+        .any(|line| line.trim() == "server {" && line != "server {")
+    {
+        return None;
+    }
+    let wildcard = |line: &str| {
+        matches!(
+            line.trim(),
+            "listen 443 ssl default_server;" | "listen [::]:443 ssl default_server;"
+        )
+    };
+    let mut out = String::new();
+    let mut changed = false;
+    for block in text.split_inclusive("\nserver {") {
+        // A top-level server boundary ends the preceding segment. Exact
+        // directives avoid claiming ownership of arbitrary TLS configuration.
+        let lines: Vec<_> = block.lines().map(str::trim).collect();
+        let recognized = lines.contains(&"server_name _;")
+            && lines.contains(&"root /opt/archipelago/web-ui;")
+            && lines.contains(&"ssl_certificate /etc/archipelago/ssl/archipelago.crt;")
+            && lines.contains(&"ssl_certificate_key /etc/archipelago/ssl/archipelago.key;")
+            && lines.iter().any(|line| wildcard(line))
+            && !lines.iter().any(|line| {
+                line.starts_with("listen ")
+                    && (line.contains(":443") || line.starts_with("listen 443"))
+                    && !wildcard(line)
+            });
+        if !recognized {
+            out.push_str(block);
+            continue;
+        }
+        let mut wrote = false;
+        for line in block.split_inclusive('\n') {
+            if wildcard(line) {
+                if !wrote {
+                    let indent = &line[..line.len() - line.trim_start().len()];
+                    for address in present {
+                        out.push_str(&format!("{indent}listen {address}:443 ssl;\n"));
+                    }
+                    wrote = true;
+                }
+            } else {
+                out.push_str(line);
+            }
+        }
+        changed = true;
+    }
+    changed.then_some(out)
+}
+
+/// `systemctl reload` returns before nginx tries its new binds. A new worker
+/// generation proves the master accepted the reload; a successful signal alone
+/// does not. Keep old connections alive and bound this check to ten seconds.
+async fn reload_nginx_checked() -> Result<()> {
+    let script = r#"set -eu
+master="$(systemctl show -p MainPID --value nginx)"
+case "$master" in ''|*[!0-9]*|0|1) exit 1 ;; esac
+workers() { ps --ppid "$master" -o pid=,args= | awk '$2 == "nginx:" && $3 == "worker" && $4 == "process" && $5 != "is" {print $1}' | sort -n | tr '\n' ' '; }
+before="$(workers)"
+test -n "$before"
+nginx -t
+systemctl reload nginx
+attempt=0
+while [ "$attempt" -lt 10 ]; do
+    after="$(workers)"
+    for worker in $after; do
+        case " $before " in *" $worker "*) ;; *) exit 0 ;; esac
+    done
+    attempt=$((attempt + 1))
+    sleep 1
+done
+echo 'nginx reload did not produce a new worker generation' >&2
+exit 1
+"#;
+    let status = host_sudo(&["sh", "-c", script]).await?;
+    anyhow::ensure!(
+        status.success(),
+        "nginx did not accept the reloaded configuration"
+    );
+    Ok(())
+}
+
+fn retarget_pinned_https_listeners(text: &str, present: &[String]) -> Option<String> {
     let listen_of = |l: &str| -> Option<String> {
         let t = l.trim();
         let rest = t.strip_prefix("listen ")?.strip_suffix(":443 ssl;")?;
@@ -1078,12 +1265,37 @@ async fn run_nginx_listener_repair() -> Result<bool> {
     if present.is_empty() {
         return Ok(false); // no network yet; a later boot pass will do it
     }
+    // Preserve wildcard/IPv6 service on nodes without a competing tailnet
+    // listener. Only the observed address-specific bind conflict warrants
+    // migrating the managed wildcard profile to LAN-only IPv4 listeners.
+    let repair_wildcards = tokio::process::Command::new("ss")
+        .args(["-H", "-4", "-ltn"])
+        .output()
+        .await
+        .ok()
+        .filter(|output| output.status.success())
+        .is_some_and(|output| has_tailnet_https_listener(&String::from_utf8_lossy(&output.stdout)));
     let mut changed = false;
+    let mut seen = std::collections::HashSet::new();
+    let repair_id = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)?
+        .as_nanos();
     for site in NGINX_SITES {
-        let Ok(text) = tokio::fs::read_to_string(site).await else {
+        let Ok(target) = tokio::fs::canonicalize(site).await else {
             continue;
         };
-        let Some(healed) = retarget_https_listeners(&text, &present) else {
+        if !seen.insert(target.clone()) {
+            continue;
+        }
+        let Ok(text) = tokio::fs::read_to_string(&target).await else {
+            continue;
+        };
+        let healed = if repair_wildcards {
+            retarget_https_listeners(&text, &present)
+        } else {
+            retarget_pinned_https_listeners(&text, &present)
+        };
+        let Some(healed) = healed else {
             continue;
         };
         let staged = "/var/lib/archipelago/nginx-listeners.staged";
@@ -1096,9 +1308,16 @@ async fn run_nginx_listener_repair() -> Result<bool> {
         // Install behind `nginx -t`, and roll back if the test fails — a bad
         // config here would take the dashboard down, which is the very
         // failure this repair exists to prevent.
+        // Backups must never be written in sites-enabled: nginx includes every
+        // file there, and a backup would introduce duplicate server directives.
+        let backup = format!(
+            "/var/lib/archipelago/support/nginx-listeners/{repair_id}-{}.conf",
+            seen.len()
+        );
+        let target = format!("'{}'", target.to_string_lossy().replace('\'', "'\\''"));
         let script = format!(
-            "set -eu\ncp {site} {site}.bak-listeners\ninstall -m 0644 {staged} {site}\n\
-             if ! nginx -t 2>/dev/null; then cp {site}.bak-listeners {site}; exit 3; fi\nexit 0\n"
+            "set -eu\ninstall -d -m 0700 /var/lib/archipelago/support/nginx-listeners\ncp -- {target} {backup}\nchmod 0600 {backup}\ninstall -m 0644 {staged} {target}\n\
+             if ! nginx -t 2>/dev/null; then install -m 0644 {backup} {target}; exit 3; fi\nexit 0\n"
         );
         let status = host_sudo(&["sh", "-lc", &script]).await?;
         match status.code() {
@@ -1118,13 +1337,14 @@ async fn run_nginx_listener_repair() -> Result<bool> {
          cat > {dropin} <<'EOF'\n[Service]\nRestart=on-failure\nRestartSec=5\n\
          [Unit]\nStartLimitIntervalSec=300\nStartLimitBurst=10\nEOF\n\
          systemctl daemon-reload\n\
-         if ! systemctl is-active --quiet nginx; then systemctl reset-failed nginx 2>/dev/null || true; systemctl start nginx 2>/dev/null || true; \
-         elif [ \"${{RELOAD:-1}}\" = 1 ]; then systemctl reload nginx 2>/dev/null || true; fi\nexit 0\n",
+         if ! systemctl is-active --quiet nginx; then systemctl reset-failed nginx 2>/dev/null || true; systemctl start nginx; fi\nexit 0\n",
         dropin = NGINX_RESTART_DROPIN
     );
-    host_sudo(&["sh", "-lc", &script])
+    let status = host_sudo(&["sh", "-lc", &script])
         .await
         .context("nginx restart policy + start")?;
+    anyhow::ensure!(status.success(), "nginx restart policy or start failed");
+    reload_nginx_checked().await?;
     Ok(changed)
 }
 
@@ -1355,17 +1575,7 @@ async fn run() -> Result<bool> {
     let mut changed = false;
 
     // 1. Script — lives in the canonical OTA runtime scripts directory.
-    if needs_write(DOCTOR_SH_PATH, DOCTOR_SH).await {
-        fs::write(DOCTOR_SH_PATH, DOCTOR_SH)
-            .await
-            .with_context(|| format!("write {}", DOCTOR_SH_PATH))?;
-        let _ = tokio::process::Command::new("chmod")
-            .args(["+x", DOCTOR_SH_PATH])
-            .status()
-            .await;
-        info!("Updated {}", DOCTOR_SH_PATH);
-        changed = true;
-    }
+    changed |= sync_doctor_script().await?;
 
     // 2. Systemd unit files — /etc is restricted; route through host_sudo.
     let service_changed = write_root_if_needed(DOCTOR_SERVICE_PATH, DOCTOR_SERVICE).await?;
@@ -1390,6 +1600,20 @@ async fn needs_write(path: &str, expected: &str) -> bool {
         Ok(current) => current != expected,
         Err(_) => true,
     }
+}
+
+async fn sync_doctor_script() -> Result<bool> {
+    if !Path::new(DOCTOR_SH_PATH).parent().is_some_and(Path::exists) {
+        return Ok(false);
+    }
+    sync_root_executable(DOCTOR_SH_PATH, DOCTOR_SH).await
+}
+
+async fn sync_root_executable(path: &str, content: &str) -> Result<bool> {
+    let changed = write_root_if_needed(path, content).await?;
+    let status = host_sudo(&["chmod", "755", path]).await?;
+    anyhow::ensure!(status.success(), "doctor chmod failed: {status}");
+    Ok(changed)
 }
 
 /// Write content to a root-owned path via `sudo mv` of a user-owned tmp file.
@@ -1673,8 +1897,12 @@ async fn run_nginx() -> Result<bool> {
         if patched_paths.iter().any(|p| p == &canonical) {
             continue;
         }
+        // Rewrite the target, preserving the enabled symlink itself.
+        let target = canonical
+            .to_str()
+            .context("nginx config path is not UTF-8")?;
+        changed |= patch_nginx_conf(target).await?;
         patched_paths.push(canonical);
-        changed |= patch_nginx_conf(path).await?;
     }
     Ok(changed)
 }
@@ -1759,6 +1987,32 @@ fn heal_missing_nostr_signer(content: &str) -> Option<String> {
         .then(|| content.replace(anchor, &format!("{}{}", NGINX_NOSTR_SIGNER_BLOCK, anchor)))
 }
 
+/// Keep both authenticated catalog endpoints on the backend in every vhost.
+fn heal_rental_playback_route(content: &str) -> String {
+    let anchor = "    location /lnd-connect-info {";
+    let mut output = String::new();
+    for part in content.split_inclusive(anchor) {
+        if let Some(prefix) = part.strip_suffix(anchor) {
+            let current_server = prefix.rsplit("server {").next().unwrap_or(prefix);
+            output.push_str(prefix);
+            if !current_server.contains("location /api/rental-playback/ {") {
+                output.push_str(NGINX_RENTAL_PLAYBACK_BLOCK);
+            }
+            output.push_str(anchor);
+        } else {
+            output.push_str(part);
+        }
+    }
+    output
+}
+
+fn heal_node_catalog_route(content: &str) -> String {
+    content.replace(
+        "location /api/app-catalog {",
+        "location ~ ^/api/(?:app-catalog|node-app-catalog)$ {",
+    )
+}
+
 async fn patch_nginx_conf(path: &str) -> Result<bool> {
     let content = fs::read_to_string(path)
         .await
@@ -1771,7 +2025,8 @@ async fn patch_nginx_conf(path: &str) -> Result<bool> {
         || content.contains("    location /electrs-status {");
     let missing_app_catalog = content
         .contains("    # DWN endpoints — peer access over Tor (no auth)")
-        && !content.contains("location /api/app-catalog");
+        && !content.contains("location /api/app-catalog")
+        && !content.contains("location ~ ^/api/(?:app-catalog|node-app-catalog)$ {");
     let missing_bitcoin_status = content.contains("    location /electrs-status {")
         && !content.contains("location /bitcoin-status");
     let missing_lnd_proxy = has_lnd_anchor && !content.contains("location /proxy/lnd/");
@@ -1792,7 +2047,13 @@ async fn patch_nginx_conf(path: &str) -> Result<bool> {
     let missing_source_proxy = heal_missing_source_proxy(&content).is_some();
     let missing_source_prefix = heal_source_forwarded_prefix(&content).is_some();
     let missing_nostr_signer = heal_missing_nostr_signer(&content).is_some();
-    if !missing_app_catalog
+    let missing_rental_playback = heal_rental_playback_route(&content) != content;
+    let missing_maintenance = heal_indeehub_maintenance_guards(&content) != content;
+    let legacy_catalog_route = content.contains("location /api/app-catalog {");
+    if !missing_maintenance
+        && !missing_rental_playback
+        && !missing_app_catalog
+        && !legacy_catalog_route
         && !missing_bitcoin_status
         && !missing_lnd_proxy
         && !missing_peer_content
@@ -1809,7 +2070,9 @@ async fn patch_nginx_conf(path: &str) -> Result<bool> {
         return Ok(false);
     }
 
-    let mut patched = content.clone();
+    let mut patched = heal_indeehub_maintenance_guards(&heal_rental_playback_route(
+        &heal_node_catalog_route(&content),
+    ));
 
     if let Some(p) = heal_stale_web_search_block(&patched) {
         patched = p;
@@ -1979,16 +2242,83 @@ async fn patch_nginx_conf(path: &str) -> Result<bool> {
 
     // Reload nginx so the new block takes effect immediately. Reload (not
     // restart) keeps in-flight connections alive.
-    if let Err(e) = host_sudo(&["systemctl", "reload", "nginx"]).await {
-        warn!("nginx reload failed (non-fatal): {:#}", e);
-    }
+    // Retain the backup if the master rejects the reload (for example because
+    // Tailscale owns a wildcard bind). A later listener repair may resolve it.
+    reload_nginx_checked().await?;
     let _ = host_sudo(&["rm", "-f", &backup]).await;
     Ok(true)
 }
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn rental_playback_route_repairs_each_vhost_without_enabling_cache() {
+        let original = "server {\n    location /lnd-connect-info { proxy_pass http://127.0.0.1:5678; }\n}\nserver {\n    location /lnd-connect-info { proxy_pass http://127.0.0.1:5678; }\n}";
+        let fixed = super::heal_rental_playback_route(original);
+        assert_eq!(fixed.matches("location /api/rental-playback/ {").count(), 2);
+        assert_eq!(super::heal_rental_playback_route(&fixed), fixed);
+        assert_eq!(fixed.matches("proxy_cache off;").count(), 2);
+        assert_eq!(
+            fixed.matches("proxy_set_header Range $http_range;").count(),
+            2
+        );
+        let partial = fixed.replacen(super::NGINX_RENTAL_PLAYBACK_BLOCK, "", 1);
+        assert_eq!(super::heal_rental_playback_route(&partial), fixed);
+    }
+
+    #[test]
+    fn catalog_routes_upgrade_both_vhosts_without_changing_access_guards() {
+        let old = "server { if ($guard) { return 404; } location /api/app-catalog { proxy_pass http://127.0.0.1:5678; } }\nserver { location /api/app-catalog { proxy_set_header Cookie $http_cookie; } }";
+        let fixed = super::heal_node_catalog_route(old);
+        assert_eq!(
+            fixed
+                .matches("location ~ ^/api/(?:app-catalog|node-app-catalog)$ {")
+                .count(),
+            2
+        );
+        assert!(fixed.contains("if ($guard) { return 404; }"));
+        assert!(fixed.contains("proxy_set_header Cookie $http_cookie;"));
+        assert_eq!(super::heal_node_catalog_route(&fixed), fixed);
+        let route = regex::Regex::new(r"^/api/(?:app-catalog|node-app-catalog)$").unwrap();
+        assert!(route.is_match("/api/node-app-catalog"));
+        assert!(route.is_match("/api/app-catalog"));
+        assert!(!route.is_match("/api/node-app-catalog/extra"));
+        assert!(!route.is_match("/api/unrelated"));
+    }
+
     use super::*;
+
+    #[tokio::test]
+    async fn executable_sync_replaces_stale_payload_and_repairs_mode_idempotently() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("doctor-test.sh");
+        fs::write(&path, "stale payload").await.unwrap();
+        fs::set_permissions(&path, std::fs::Permissions::from_mode(0o444))
+            .await
+            .unwrap();
+        let path_str = path.to_str().unwrap();
+        assert!(sync_root_executable(path_str, DOCTOR_SH).await.unwrap());
+        assert_eq!(fs::read_to_string(&path).await.unwrap(), DOCTOR_SH);
+        fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644))
+            .await
+            .unwrap();
+        assert!(!sync_root_executable(path_str, DOCTOR_SH).await.unwrap());
+        assert_eq!(
+            fs::metadata(&path).await.unwrap().permissions().mode() & 0o777,
+            0o755
+        );
+    }
+
+    #[tokio::test]
+    async fn executable_sync_reports_unwritable_destination() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("missing-parent/missing-doctor-test.sh");
+        assert!(sync_root_executable(path.to_str().unwrap(), DOCTOR_SH)
+            .await
+            .is_err());
+        assert!(!path.exists());
+    }
 
     #[test]
     fn doctor_service_uses_the_canonical_ota_script_path() {
@@ -2103,6 +2433,46 @@ mod tests {
     }
 
     #[test]
+    fn tailnet_https_conflict_requires_an_actual_specific_socket() {
+        assert!(has_tailnet_https_listener(
+            "LISTEN 0 4096 100.72.136.7:443 0.0.0.0:*\n"
+        ));
+        for sockets in [
+            "LISTEN 0 511 0.0.0.0:443 0.0.0.0:*\n",
+            "LISTEN 0 4096 100.72.136.7:8443 0.0.0.0:*\n",
+            "LISTEN 0 511 192.168.1.50:443 0.0.0.0:*\n",
+            "",
+        ] {
+            assert!(!has_tailnet_https_listener(sockets));
+        }
+    }
+
+    #[test]
+    fn managed_wildcard_tls_migration_preserves_other_vhosts() {
+        let profile = "server {\n    listen 443 ssl default_server;\n    listen [::]:443 ssl default_server;\n    server_name _;\n    ssl_certificate /etc/archipelago/ssl/archipelago.crt;\n    ssl_certificate_key /etc/archipelago/ssl/archipelago.key;\n    root /opt/archipelago/web-ui;\n}\n";
+        let custom = "server {\n    listen 443 ssl default_server;\n    server_name public.example;\n    ssl_certificate /custom.crt;\n}\n";
+        let present = vec!["192.168.1.50".into(), "10.44.0.1".into()];
+        let original = format!("{custom}{profile}{custom}");
+        let healed = retarget_managed_https_wildcards(&original, &present).unwrap();
+        assert!(healed.starts_with(custom));
+        assert!(healed.ends_with(custom));
+        assert_eq!(healed.matches("listen 192.168.1.50:443 ssl;").count(), 1);
+        assert_eq!(healed.matches("listen 10.44.0.1:443 ssl;").count(), 1);
+        assert_eq!(healed.matches("listen 443 ssl default_server;").count(), 2);
+        assert!(!healed.contains("listen [::]:443"));
+        assert!(retarget_managed_https_wildcards(&healed, &present).is_none());
+        assert!(retarget_managed_https_wildcards(profile, &[]).is_none());
+        for changed in [
+            profile.replace("archipelago.crt", "custom.crt"),
+            profile.replace("server_name _;", "server_name public.example;"),
+            profile.replace("listen 443 ssl default_server;", "listen 443 ssl http2;"),
+            profile.replace("server {", "  server {"),
+        ] {
+            assert!(retarget_managed_https_wildcards(&changed, &present).is_none());
+        }
+    }
+
+    #[test]
     fn wildcard_only_configs_and_cgnat_are_left_alone() {
         // No address-pinned listener → nothing to heal (the ISO's own config).
         assert!(retarget_https_listeners(
@@ -2184,5 +2554,21 @@ pub async fn ensure_restart_policy() {
         }
         Ok(false) => {}
         Err(e) => tracing::warn!(error = %e, "could not repair archipelago.service restart policy"),
+    }
+}
+
+#[cfg(test)]
+mod indeehub_maintenance_tests {
+    #[test]
+    fn legacy_routes_are_fenced_independently_and_repair_is_idempotent() {
+        let source="server {\n    location /app/indeedhub/ {\n        proxy_pass http://127.0.0.1:7778;\n    }\n    location /app/indeedhub/ws/ {\n        proxy_pass http://127.0.0.1:7778;\n    }\n    location /app/other/ {\n        proxy_pass http://127.0.0.1:7777;\n    }\n}\n";
+        let repaired = super::heal_indeehub_maintenance_guards(source);
+        assert_eq!(
+            repaired.matches(super::INDEEHUB_MAINTENANCE_GUARD).count(),
+            2
+        );
+        assert_eq!(super::heal_indeehub_maintenance_guards(&repaired), repaired);
+        assert!(repaired.contains("location /app/other/ {\n        proxy_pass"));
+        assert_eq!(repaired.matches("proxy_pass").count(), 3);
     }
 }

@@ -358,6 +358,16 @@ pub fn is_truncated_v2_keyset_id(id: &str) -> bool {
     id.len() == 16 && id.starts_with("01") && hex::decode(id).is_ok()
 }
 
+/// Match a compact token's ID against the full ID already bound to a specific
+/// proof/operation. This is not discovery of an unknown mint keyset.
+pub(super) fn matches_stored_keyset_id(wire: &str, stored: &str) -> bool {
+    wire.eq_ignore_ascii_case(stored)
+        || (is_truncated_v2_keyset_id(wire)
+            && stored.len() == 66
+            && hex::decode(stored).is_ok()
+            && stored[..16].eq_ignore_ascii_case(wire))
+}
+
 /// Decode a token's base64 payload, trying URL-safe-no-pad first (the spec
 /// default) and falling back to other alphabets some implementations use.
 fn decode_token_base64(payload: &str) -> Result<Vec<u8>, base64::DecodeError> {

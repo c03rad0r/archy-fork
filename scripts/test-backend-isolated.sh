@@ -15,7 +15,7 @@ case "${ARCHY_TEST_PACKAGE:-archipelago}" in
   *) echo 'Unsupported isolated test package' >&2; exit 2 ;;
 esac
 if ! cargo test --manifest-path "$REPO/core/Cargo.toml" "${test_target[@]}" \
-  --locked --no-run --message-format=json --config 'profile.test.package.archipelago.opt-level=0' > "$metadata"; then
+  --locked --no-run --message-format=json --config 'profile.test.package.archipelago.opt-level=0' --config 'profile.test.package.archipelago.debug=0' > "$metadata"; then
     python3 - "$metadata" <<'PYDIAG'
 import json,sys
 for line in open(sys.argv[1]):

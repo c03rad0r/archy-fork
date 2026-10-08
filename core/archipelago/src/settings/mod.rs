@@ -9,3 +9,5 @@ pub mod session_policy;
 pub mod transport;
 
 pub mod bitcoin_storage;
+
+pub mod model_provider;

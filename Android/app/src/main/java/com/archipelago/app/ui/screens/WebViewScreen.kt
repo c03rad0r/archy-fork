@@ -144,6 +144,29 @@ private fun openExternalUrl(context: android.content.Context, url: String) {
  *  this when the task is genuinely finishing. */
 fun releaseKioskWebView() = KioskWebView.drop()
 
+/** A playing session is owned by the foreground media service after task close. */
+fun finishKioskActivity() {
+    val view = KioskWebView.instance ?: return
+    if (!CompanionAudioBridge.retains(view)) { KioskWebView.drop(); return }
+    (view.parent as? ViewGroup)?.removeView(view)
+    KioskWebView.backgroundOwned = true
+    KioskWebView.clearDelegates()
+    view.setOnTouchListener(null)
+    view.setOnApplyWindowInsetsListener(null)
+    view.setDownloadListener(null)
+    view.webChromeClient = null
+    view.webViewClient = object : WebViewClient() {
+        override fun onPageStarted(web: WebView?, url: String?, favicon: Bitmap?) {
+            web?.let { CompanionAudioBridge.release(it) }
+        }
+    }
+    (view.context as? android.content.MutableContextWrapper)?.baseContext = view.context.applicationContext
+}
+
+internal fun releaseDetachedKioskWebView() {
+    if (KioskWebView.backgroundOwned && !CompanionAudioBridge.retains(KioskWebView.instance)) KioskWebView.drop()
+}
+
 /** Restart the app in place: throw away the retained page and relaunch the
  *  task from scratch. The mesh/VPN service is deliberately left running — this
  *  is the "give me a clean app" button (hub menu), not a process kill. */
@@ -294,6 +317,7 @@ private fun isSameHost(url: String, base: String): Boolean {
 data class InAppLaunch(val url: String, val icon: String? = null, val name: String? = null)
 
 private object KioskWebView {
+    var backgroundOwned = false
     var instance: WebView? = null
     var url: String? = null
 
@@ -306,13 +330,19 @@ private object KioskWebView {
     var onQrStatus: (String, Boolean) -> Unit = { _, _ -> }
     var onQrClose: () -> Unit = {}
 
+    fun clearDelegates() {
+        onRouteOutbound = {}; onOpenInApp = {}; onQrOpen = {}
+        onQrStatus = { _, _ -> }; onQrClose = {}
+    }
     fun drop() {
-        instance?.let {
+        val old = instance
+        instance = null; url = null; backgroundOwned = false
+        clearDelegates()
+        old?.let {
+            CompanionAudioBridge.release(it)
             (it.parent as? ViewGroup)?.removeView(it)
             it.destroy()
         }
-        instance = null
-        url = null
     }
 }
 
@@ -612,6 +642,7 @@ fun WebViewScreen(
     meshFallbackUrl: String? = null,
 ) {
     val fullscreen = rememberWebViewFullscreen()
+    val cloudPip = rememberCloudVideoPip(fullscreen)
     val downloads = rememberWebViewDownloads()
     var isLoading by remember { mutableStateOf(true) }
     // First kiosk load (often over the FIPS mesh) gets the full branded
@@ -900,7 +931,9 @@ fun WebViewScreen(
                     // stale closures from the previous visit are replaced.
                     if (KioskWebView.url != serverUrl) KioskWebView.drop()
                     val reused = KioskWebView.instance
-                    (reused ?: WebView(context)).apply {
+                    (reused ?: WebView(android.content.MutableContextWrapper(context))).apply {
+                        (this.context as? android.content.MutableContextWrapper)?.baseContext = context
+                        KioskWebView.backgroundOwned = false
                         (parent as? ViewGroup)?.removeView(this)
                         layoutParams = ViewGroup.LayoutParams(
                             ViewGroup.LayoutParams.MATCH_PARENT,
@@ -915,6 +948,8 @@ fun WebViewScreen(
                         cookieManager.setAcceptThirdPartyCookies(this, true)
 
                         applyArchipelagoSettings()
+                        cloudPip.attach(this, listOfNotNull(serverUrl, meshFallbackUrl))
+                        CompanionAudioBridge.attach(this, listOfNotNull(serverUrl, meshFallbackUrl))
                         setDownloadListener(downloads)
                         settings.apply {
                             setSupportMultipleWindows(true)  // enables onCreateWindow for window.open
@@ -1089,6 +1124,8 @@ fun WebViewScreen(
 
                         webViewClient = object : WebViewClient() {
                             override fun onPageStarted(view: WebView?, url: String?, favicon: Bitmap?) {
+                                CompanionAudioBridge.release(view ?: return)
+                                cloudPip.reset()
                                 isLoading = true
                                 hasError = false
                                 // New document — the injected safe-area style is
@@ -1188,7 +1225,7 @@ fun WebViewScreen(
                                 fullscreen.show(view, callback)
                             }
 
-                            override fun onHideCustomView() = fullscreen.hide()
+                            override fun onHideCustomView() { cloudPip.reset(); fullscreen.hide() }
 
                             override fun onProgressChanged(view: WebView?, newProgress: Int) {
                                 loadProgress = newProgress

@@ -72,6 +72,21 @@ impl NodeIdentity {
         })
     }
 
+    /// Load an existing identity for outbound requests. Never create or repair a
+    /// key as a side effect of accessing another node.
+    pub async fn load_existing(identity_dir: &Path) -> Result<Self> {
+        let bytes = fs::read(identity_dir.join(NODE_KEY_FILE))
+            .await
+            .context("Existing node identity unavailable")?;
+        let key: [u8; 32] = bytes
+            .try_into()
+            .map_err(|_| anyhow::anyhow!("Invalid node key length"))?;
+        Ok(Self {
+            signing_key: SigningKey::from_bytes(&key),
+            _identity_dir: identity_dir.to_owned(),
+        })
+    }
+
     /// Create node identity from a BIP-39 master seed (deterministic derivation).
     /// Writes derived key to disk in the same format as load_or_create.
     /// Also derives and persists the FIPS mesh transport key so the

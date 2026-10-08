@@ -93,13 +93,20 @@
 
       <!-- Panel mode app session — renders alongside current page content -->
       <Transition name="panel-slide">
-        <div v-if="appLauncher.panelAppId" class="app-panel-container">
+        <div v-if="appLauncher.panelAppId && appLauncher.panelAppId !== appLauncher.mediaAppId" class="app-panel-container">
           <AppSession
+            v-if="appLauncher.panelAppId !== appLauncher.mediaAppId"
+            :key="appLauncher.panelAppId"
             :app-id-prop="appLauncher.panelAppId"
             :path-prop="appLauncher.panelPath ?? undefined"
             @close="appLauncher.closePanel()"
           />
         </div>
+      </Transition>
+      <Transition name="panel-slide">
+      <div v-if="appLauncher.mediaAppId" v-show="appLauncher.panelAppId === appLauncher.mediaAppId" class="app-panel-container">
+        <AppSession :key="appLauncher.mediaAppId" :app-id-prop="appLauncher.mediaAppId" :suspended="appLauncher.panelAppId !== appLauncher.mediaAppId" @close="appLauncher.closePanel()" />
+      </div>
       </Transition>
     </main>
 
@@ -110,7 +117,7 @@
     <HealthNotifications />
 
     <!-- First-use companion intro overlay -->
-    <CompanionIntroOverlay />
+    <CompanionIntroOverlay :defer-automatic="!!appLauncher.panelAppId || appLauncher.isOpen || route.name === 'app-session'" />
   </div>
 </template>
 
@@ -130,7 +137,7 @@ import DashboardRouterView from '@/views/dashboard/DashboardRouterView.vue'
 import ConnectionBanner from '@/views/dashboard/ConnectionBanner.vue'
 import HealthNotifications from '@/views/dashboard/HealthNotifications.vue'
 import CompanionIntroOverlay from '@/components/CompanionIntroOverlay.vue'
-import { isDetailRoute, ROUTE_BACKGROUNDS } from '@/views/dashboard/useRouteTransitions'
+import { isDetailRoute, backgroundForRoute } from '@/views/dashboard/useRouteTransitions'
 import { useIbdFinishWatcher } from '@/composables/useIbdFinishWatcher'
 import '@/views/dashboard/dashboard-styles.css'
 
@@ -156,20 +163,9 @@ const showAltBackground = ref(false)
 const isHomeRoute = computed(() => route.path === '/dashboard' || route.path === '/dashboard/')
 const isGlitching = ref(false)
 
-const backgroundImage = computed(() => {
-  const mapped = ROUTE_BACKGROUNDS[route.path]
-  if (mapped) return mapped
-  // Detail/sub pages inherit their parent tab's background so they stay
-  // visually "inside" the section instead of snapping to the home backdrop.
-  if (route.path.startsWith('/dashboard/cloud/')) return 'bg-cloud.webp'
-  if (route.path.startsWith('/dashboard/web5/')) return 'bg-web5.jpg'
-  if (route.path.startsWith('/dashboard/server/')) return 'bg-web5.jpg'
-  if (route.path.startsWith('/dashboard/settings/')) return 'bg-settings.webp'
-  if (isDetailRoute(route.path)) return 'bg-intro.jpg'
-  return 'bg-home.webp'
-})
+const backgroundImage = computed(() => backgroundForRoute(route.path))
 
-// bg-web5.jpg (web5 + server sections) is bright — the scrim overlay deepens
+// bg-web5.jpg (Web5 and its explicitly mapped detail screens) is bright — the scrim overlay deepens
 // while it's showing so light text keeps its contrast.
 const isWeb5Bg = computed(() => backgroundImage.value === 'bg-web5.jpg')
 
@@ -398,3 +394,7 @@ async function handleLogout() {
 </script>
 
 <!-- Styles extracted to dashboard/dashboard-styles.css -->
+
+<style scoped>
+@media (prefers-reduced-motion: reduce) { .panel-slide-enter-active, .panel-slide-leave-active { transition: none !important; } }
+</style>

@@ -1,4 +1,6 @@
 mod handlers;
+#[cfg(test)]
+mod handshake_tests;
 
 use anyhow::Result;
 

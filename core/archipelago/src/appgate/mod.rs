@@ -146,6 +146,16 @@ impl AppGate {
         // snapshot when the port momentarily leaves the map mid-refresh.
         let live = self.port_map.read().await.gated(app.port).cloned();
         let app = live.as_ref().unwrap_or(app);
+        if maintenance_active(&self.data_dir, &app.app_id) {
+            return Response::builder()
+                .status(StatusCode::SERVICE_UNAVAILABLE)
+                .header(header::CACHE_CONTROL, "no-store")
+                .header(header::RETRY_AFTER, "60")
+                .body(Body::from(
+                    "This app is temporarily unavailable while its update is recovered.",
+                ))
+                .unwrap();
+        }
 
         let path = req.uri().path().to_string();
         // A dashboard same-origin proxy strips `/app/<id>/` before this gate
@@ -700,6 +710,14 @@ fn strip_gate_cookies(headers: &mut hyper::HeaderMap) {
 }
 
 async fn set_session_cookie(resp: &mut Response<Body>, token: &str) {
+    // The dashboard RPC layer requires a readable CSRF cookie as well as the
+    // HttpOnly session cookie. An app-gate login is a complete node login, so
+    // it must establish the same pair as auth.login; otherwise a fresh browser
+    // can open the signer broker but every identity/signing RPC is rejected
+    // with `has_session=true, has_header=false`.
+    if !set_csrf_cookie(resp, token).await {
+        return;
+    }
     // No Domain attribute, so the cookie is host-only. Cookies ignore port,
     // which is what makes one sign-in cover the dashboard and every app port
     // on the same host — and equally why an app on a *different* host (its
@@ -709,22 +727,29 @@ async fn set_session_cookie(resp: &mut Response<Body>, token: &str) {
     {
         resp.headers_mut().append(header::SET_COOKIE, value);
     }
-
-    // The dashboard RPC layer requires a readable CSRF cookie as well as the
-    // HttpOnly session cookie. An app-gate login is a complete node login, so
-    // it must establish the same pair as auth.login; otherwise a fresh browser
-    // can open the signer broker but every identity/signing RPC is rejected
-    // with `has_session=true, has_header=false`.
-    set_csrf_cookie(resp, token).await;
 }
 
-async fn set_csrf_cookie(resp: &mut Response<Body>, token: &str) {
-    let csrf = crate::api::rpc::derive_csrf_token(token).await;
+async fn set_csrf_cookie(resp: &mut Response<Body>, token: &str) -> bool {
+    let csrf = match crate::api::rpc::derive_csrf_token(token).await {
+        Ok(csrf) => csrf,
+        Err(error) => {
+            tracing::error!(%error, "App login could not load persistent session signing key");
+            *resp = Response::builder()
+                .status(StatusCode::SERVICE_UNAVAILABLE)
+                .header(header::CACHE_CONTROL, "no-store")
+                .body(Body::from(
+                    "Sign-in temporarily unavailable. Check server session storage.",
+                ))
+                .expect("static error response");
+            return false;
+        }
+    };
     if let Ok(value) =
         header::HeaderValue::from_str(&format!("csrf_token={csrf}; SameSite=Lax; Path=/"))
     {
         resp.headers_mut().append(header::SET_COOKIE, value);
     }
+    true
 }
 
 fn cookie_value(headers: &HeaderMap, name: &str) -> Option<String> {
@@ -821,6 +846,16 @@ dashboard and check {name} under My Apps.</p>"#,
     resp.headers_mut()
         .insert("Refresh", header::HeaderValue::from_static("5"));
     resp
+}
+
+fn maintenance_active(data_dir: &std::path::Path, app_id: &str) -> bool {
+    if app_id != "indeedhub" && !app_id.starts_with("indeedhub-") {
+        return false;
+    }
+    match std::fs::symlink_metadata(data_dir.join("app-maintenance/indeedhub")) {
+        Ok(_) => true,
+        Err(error) => error.kind() != std::io::ErrorKind::NotFound,
+    }
 }
 
 fn not_found() -> Response<Body> {
@@ -1691,7 +1726,7 @@ mod tests {
             .iter()
             .filter_map(|value| value.to_str().ok())
             .collect();
-        let expected_csrf = crate::api::rpc::derive_csrf_token(token).await;
+        let expected_csrf = crate::api::rpc::derive_csrf_token(token).await.unwrap();
         assert!(cookies
             .iter()
             .any(|cookie| cookie.starts_with(&format!("session={token};"))));
@@ -1840,5 +1875,25 @@ mod tests {
             LoginRateLimiter::new(),
             dir,
         )
+    }
+}
+
+#[cfg(test)]
+mod maintenance_tests {
+    #[test]
+    fn held_indee_ingress_never_reaches_upstream_or_another_app() {
+        let root = tempfile::tempdir().unwrap();
+        assert!(!super::maintenance_active(root.path(), "indeedhub"));
+        std::fs::create_dir(root.path().join("app-maintenance")).unwrap();
+        std::fs::write(
+            root.path().join("app-maintenance/indeedhub"),
+            uuid::Uuid::new_v4().to_string(),
+        )
+        .unwrap();
+        assert!(super::maintenance_active(root.path(), "indeedhub"));
+        assert!(super::maintenance_active(root.path(), "indeedhub-api"));
+        assert!(!super::maintenance_active(root.path(), "node-demo-v4v"));
+        std::fs::remove_file(root.path().join("app-maintenance/indeedhub")).unwrap();
+        assert!(!super::maintenance_active(root.path(), "indeedhub"));
     }
 }

@@ -2,10 +2,11 @@
   <div class="glass-card p-5 mb-6">
     <h3 class="text-sm font-medium text-white/80 mb-4">Fleet Alerts</h3>
 
+    <p v-if="errorMessage" role="status" class="text-sm text-amber-200 mb-3">{{ errorMessage }}</p>
     <div v-if="alertsLoading" class="text-white/40 text-sm py-4 text-center">
       Loading alerts...
     </div>
-    <div v-else-if="!alerts.length" class="text-white/40 text-sm py-4 text-center">
+    <div v-else-if="!alerts.length && !errorMessage" class="text-white/40 text-sm py-4 text-center">
       No alerts across the fleet.
     </div>
     <div v-else class="space-y-2 max-h-80 overflow-y-auto">
@@ -19,8 +20,9 @@
           :class="alertSeverityDot(alert.rule)"
         ></span>
         <div class="flex-1 min-w-0">
-          <div class="flex items-center gap-2 mb-0.5">
+          <div class="flex flex-wrap items-center gap-x-2 gap-y-1 mb-0.5">
             <span class="fleet-node-badge">{{ alert.node_id.slice(0, 8) }}</span>
+            <span class="text-xs text-white/50">{{ fleetSourceLabel(alert) }}</span>
             <span class="text-xs text-white/40">{{ alertTypeLabel(alert.rule) }}</span>
           </div>
           <p class="text-sm text-white/80">{{ alert.message }}</p>
@@ -32,10 +34,11 @@
 </template>
 
 <script setup lang="ts">
-import { type FleetAlert, alertSeverityDot, alertTypeLabel, formatTimestamp } from './useFleetData'
+import { type FleetAlert, alertSeverityDot, alertTypeLabel, formatTimestamp, fleetSourceLabel } from './useFleetData'
 
 defineProps<{
   alerts: FleetAlert[]
   alertsLoading: boolean
+  errorMessage?: string
 }>()
 </script>

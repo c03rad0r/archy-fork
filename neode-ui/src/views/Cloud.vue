@@ -197,9 +197,9 @@
       </div>
       <template v-else>
         <div v-if="peerNodes.length === 0" class="glass-card p-8 text-center">
-          <p class="text-white/60 mb-3">No peers yet. Set up federation to browse files shared by other nodes.</p>
-          <RouterLink to="/dashboard/server/federation" class="glass-button inline-flex items-center gap-2 px-5 py-2.5 rounded-lg text-sm font-medium">
-            Open Federation
+          <p class="text-white/60 mb-3">No peers yet. Connect with nodes to browse the files they share.</p>
+          <RouterLink :to="connectionEntry" class="glass-button inline-flex items-center gap-2 px-5 py-2.5 rounded-lg text-sm font-medium">
+            Connect with Nodes
           </RouterLink>
         </div>
         <div v-else-if="filteredPeerFiles.length === 0 && peerFilesPending === 0" class="glass-card p-8 text-center text-white/40 text-sm">
@@ -359,7 +359,7 @@
         data-controller-container
         tabindex="0"
         class="glass-card p-6 cursor-pointer transition-all hover:-translate-y-1 hover:bg-white/10"
-        @click="router.push('/dashboard/server/federation')"
+        @click="router.push(connectionEntry)"
       >
         <div class="flex items-center gap-4 mb-4">
           <div class="flex-shrink-0 w-12 h-12 rounded-xl flex items-center justify-center bg-purple-500/15">
@@ -438,7 +438,8 @@
 
 <script setup lang="ts">
 import { computed, ref, watch, onActivated, onMounted, onUnmounted } from 'vue'
-import { useRouter, RouterLink } from 'vue-router'
+import { useRouter, useRoute, RouterLink } from 'vue-router'
+import { cloudSelection } from './federation/connectionNavigation'
 import { useAppStore } from '../stores/app'
 import { useCloudStore } from '../stores/cloud'
 import { useResourcesStore } from '../stores/resources'
@@ -453,6 +454,7 @@ import ShareModal from '../components/cloud/ShareModal.vue'
 import MediaLightbox from '../components/cloud/MediaLightbox.vue'
 
 const router = useRouter()
+const route = useRoute()
 const store = useAppStore()
 const cloudStore = useCloudStore()
 const resources = useResourcesStore()
@@ -487,7 +489,7 @@ const CATEGORIES: Array<{ id: CategoryId; name: string }> = [
   { id: 'documents', name: 'Documents' },
 ]
 
-const activeTab = ref<TabId>('folders')
+const activeTab = ref<TabId>(cloudSelection(route.query).tab as TabId)
 
 // ── Paid Files tab ──────────────────────────────────────────────────────────
 interface PaidItem { onion: string; content_id: string; filename: string; mime_type: string; size_bytes: number; paid_sats: number; purchased_at: string }
@@ -515,7 +517,14 @@ async function viewPaidItem(it: PaidItem) {
 }
 watch(activeTab, (t) => { if (t === 'paid') void loadPaidItems() })
 
-const selectedCategory = ref<CategoryId>('all')
+const selectedCategory = ref<CategoryId>(cloudSelection(route.query).category as CategoryId)
+watch(() => route.query, query => {
+  if (route.name !== 'cloud') return
+  const selection = cloudSelection(query)
+  activeTab.value = selection.tab as TabId
+  selectedCategory.value = selection.category as CategoryId
+})
+const connectionEntry = computed(() => ({ name: 'federation', query: { view: 'discover', from: 'cloud', tab: activeTab.value, category: selectedCategory.value } }))
 const searchQuery = ref('')
 const searchActive = computed(() => searchQuery.value.trim().length > 0)
 // Categories narrow file LISTS; the Folders tab is already organized by kind.
@@ -1069,7 +1078,11 @@ async function syncOnEntry() {
   // quick revisits don't refetch.
   void loadPeerFiles()
 }
-onMounted(() => { void syncOnEntry() })
+onMounted(() => {
+  if (activeTab.value === 'mine') void loadMyFiles()
+  if (activeTab.value === 'paid') void loadPaidItems()
+  void syncOnEntry()
+})
 onActivated(() => {
   if (cloudFreshMount) { cloudFreshMount = false; return }
   void syncOnEntry()

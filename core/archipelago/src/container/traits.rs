@@ -45,6 +45,12 @@ pub trait ContainerOrchestrator: Send + Sync {
         Ok(0)
     }
 
+    /// Read-only admission for explicit start/restart. Managed implementations
+    /// validate saved units and locally available images before any stack stop.
+    async fn validate_start(&self, _app_id: &str) -> Result<()> {
+        Ok(())
+    }
+
     /// Start an already-created container.
     async fn start(&self, app_id: &str) -> Result<()>;
 
@@ -61,6 +67,11 @@ pub trait ContainerOrchestrator: Send + Sync {
 
     /// Pull/rebuild the image and recreate the container from scratch.
     async fn upgrade(&self, app_id: &str) -> Result<()>;
+
+    /// Exact image prepared by a stopped upgrade; no running container is claimed.
+    async fn staged_upgrade_image(&self, _app_id: &str) -> Result<Option<String>> {
+        Ok(None)
+    }
 
     /// Current state of a single container.
     async fn status(&self, app_id: &str) -> Result<ContainerStatus>;

@@ -1,104 +1,105 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
-import { RouterLink } from 'vue-router'
+import { computed, onActivated, onDeactivated, onMounted, onUnmounted, ref } from 'vue'
+import { RouterLink, useRouter } from 'vue-router'
+import BackButton from '@/components/BackButton.vue'
 import { rpcClient } from '@/api/rpc-client'
-
-interface TunnelStatus {
-  connected?: boolean
-  provider?: string
-  ip_address?: string
-  wg_ip?: string
-}
-
-interface FipsStatus {
-  installed?: boolean
-  service_active?: boolean
-  anchor_connected?: boolean
-  authenticated_peer_count?: number
-}
-
-interface Forward { [key: string]: unknown }
-
+import VpnDeviceSettings from './VpnDeviceSettings.vue'
+interface TunnelStatus { peer_management_verified?: boolean; connected?: boolean; configured?: boolean; configured_provider?: string; provider?: string; ip_address?: string | null; wg_ip?: string | null }
+interface FipsStatus { installed?: boolean; service_active?: boolean; authenticated_peer_count?: number }
+interface RouterStatus { configured?: boolean; router_type?: string; address?: string }
+interface Forward { id: string; service_name: string; internal_port: number; external_port: number; protocol: string }
+const navigation = useRouter()
 const loading = ref(true)
 const error = ref('')
 const tunnel = ref<TunnelStatus | null>(null)
 const fips = ref<FipsStatus | null>(null)
-const forwards = ref<Forward[]>([])
-
-const tunnelLabel = computed(() => {
-  if (!tunnel.value) return 'Unknown'
-  return tunnel.value.connected ? 'Connected' : 'Not connected'
-})
-const firewallLabel = computed(() => {
-  if (!fips.value) return 'Unknown'
-  if (fips.value.service_active === false) return 'Inactive'
-  return 'Protected'
-})
-
+const router = ref<RouterStatus | null>(null)
+const forwards = ref<Forward[] | null>(null)
+let active = true
+let generation = 0
+const tunnelLabel = computed(() => tunnel.value?.connected === true ? 'Connected' : tunnel.value?.connected === false ? 'Not connected' : 'Could not check')
+const meshLabel = computed(() => fips.value?.service_active === true ? 'Running' : fips.value?.service_active === false ? 'Stopped' : 'Could not check')
+const serviceNames: Record<string, string> = { tailscale: 'Tailscale', wireguard: 'WireGuard', 'nostr-vpn': 'Nostr VPN', nostrvpn: 'Nostr VPN' }
+const provider = computed(() => serviceNames[tunnel.value?.provider ?? ''] ?? 'Private connection')
 async function refresh() {
-  loading.value = true
-  error.value = ''
+  const current = ++generation
+  loading.value = true; error.value = ''
   const results = await Promise.allSettled([
     rpcClient.vpnStatus(),
     rpcClient.call<FipsStatus>({ method: 'fips.status', dedup: true, maxRetries: 1 }),
-    rpcClient.call<{ forwards?: Forward[] }>({ method: 'router.list-forwards', dedup: true, maxRetries: 1 }),
+    rpcClient.call<{ forwards: Forward[] }>({ method: 'router.list-forwards', dedup: true, maxRetries: 1 }),
+    rpcClient.call<RouterStatus>({ method: 'router.info', dedup: true, maxRetries: 1 }),
   ])
-  const failures = results.filter((result) => result.status === 'rejected')
-  if (results[0]?.status === 'fulfilled') tunnel.value = results[0].value
-  if (results[1]?.status === 'fulfilled') fips.value = results[1].value
-  if (results[2]?.status === 'fulfilled') forwards.value = results[2].value.forwards ?? []
-  if (failures.length === results.length) error.value = 'Could not load network protection status'
-  else if (failures.length) error.value = 'Some checks are unavailable; verify each route before changing it'
+  if (!active || current !== generation) return
+  tunnel.value = results[0].status === 'fulfilled' ? results[0].value : null
+  fips.value = results[1].status === 'fulfilled' ? results[1].value : null
+  const rows = results[2].status === 'fulfilled' ? results[2].value?.forwards : null
+  forwards.value = Array.isArray(rows) && rows.every(r => r && typeof r.id === 'string' && typeof r.service_name === 'string' && Number.isInteger(r.internal_port) && Number.isInteger(r.external_port) && typeof r.protocol === 'string') ? rows : null
+  router.value = results[3].status === 'fulfilled' ? results[3].value : null
+  if (results.some(r => r.status === 'rejected') || forwards.value === null) error.value = 'Some information could not be checked. Try refreshing.'
   loading.value = false
 }
-
 onMounted(refresh)
+function leave() { active = false; generation++; tunnel.value = null }
+onDeactivated(leave)
+onUnmounted(leave)
+onActivated(() => { if (!active) { active = true; void refresh() } })
 </script>
 
 <template>
-  <main class="max-w-5xl mx-auto px-4 sm:px-6 py-6">
-    <div class="flex items-start justify-between gap-4 mb-6">
-      <div>
-        <RouterLink to="/dashboard/server" class="text-xs text-white/50 hover:text-white">← Network</RouterLink>
-        <h1 class="text-2xl font-semibold text-white mt-2">Firewall &amp; tunnels</h1>
-        <p class="text-sm text-white/60 mt-1">Review reachability before exposing a service. Transport access and app authentication are separate controls.</p>
-      </div>
-      <button class="glass-button px-3 py-2 text-sm shrink-0" :disabled="loading" @click="refresh">
-        <span v-if="loading" class="inline-flex items-center gap-2"><span class="h-3.5 w-3.5 rounded-full border-2 border-white/30 border-t-white animate-spin" /> Checking…</span>
-        <span v-else>Refresh checks</span>
-      </button>
+  <main class="w-full min-w-0 pb-6 text-white" data-testid="firewall-settings">
+    <div class="flex items-center gap-3 mb-6" data-testid="firewall-header">
+      <BackButton desktop-margin="mb-0" @click="navigation.push({ name: 'server' })" />
+      <h1 class="text-lg font-semibold text-white">Firewalls &amp; tunnels</h1>
     </div>
-
-    <div v-if="error" class="mb-4 rounded-lg border border-orange-400/30 bg-orange-500/10 px-4 py-3 text-sm text-orange-200">{{ error }}</div>
-
-    <section class="grid gap-4 md:grid-cols-2 mb-6">
-      <div class="glass-card p-5">
-        <h2 class="text-lg font-medium text-white">Firewall</h2>
-        <p class="text-sm text-white/60 mt-1">Node protection status and mesh reachability.</p>
-        <div class="mt-4 flex items-center justify-between"><span class="text-white/70">Node firewall</span><span :class="firewallLabel === 'Protected' ? 'text-green-300' : 'text-orange-300'">{{ firewallLabel }}</span></div>
-        <div class="mt-2 flex items-center justify-between"><span class="text-white/70">Authenticated mesh peers</span><span class="text-white">{{ fips?.authenticated_peer_count ?? 'Unknown' }}</span></div>
-      </div>
-      <div class="glass-card p-5">
-        <h2 class="text-lg font-medium text-white">Tunnel</h2>
-        <p class="text-sm text-white/60 mt-1">Connection and handshake status.</p>
-        <div class="mt-4 flex items-center justify-between"><span class="text-white/70">Tunnel</span><span :class="tunnel?.connected ? 'text-green-300' : 'text-orange-300'">{{ tunnelLabel }}</span></div>
-        <div class="mt-2 flex items-center justify-between"><span class="text-white/70">Address</span><span class="text-white font-mono text-xs">{{ tunnel?.wg_ip || tunnel?.ip_address || 'Unknown' }}</span></div>
-      </div>
+    <div class="flex flex-wrap items-start justify-between gap-4 mb-6">
+      <p class="text-sm text-white/60">Choose how your devices and apps connect to this node.</p>
+      <button class="glass-button text-sm" :disabled="loading" @click="refresh">{{ loading ? 'Checking…' : 'Refresh status' }}</button>
+    </div>
+    <p v-if="error" role="alert" class="mb-4 rounded-lg border border-orange-400/30 bg-orange-500/10 p-4 text-sm text-orange-200">{{ error }}</p>
+    <div class="grid gap-4 xl:grid-cols-2 mb-6">
+      <section class="glass-card p-5 min-w-0" aria-labelledby="firewall-title">
+        <h2 id="firewall-title" class="text-lg font-medium text-white">Firewall</h2>
+        <p class="text-sm text-white/60 mt-1">A firewall controls which connections can reach your node.</p>
+        <dl class="mt-4 space-y-3 text-sm">
+          <div class="status-row"><dt>Node firewall</dt><dd>Not checked</dd></div>
+          <div class="status-row"><dt>Private mesh</dt><dd>{{ meshLabel }}</dd></div>
+          <div class="status-row"><dt>Verified mesh connections</dt><dd>{{ fips?.authenticated_peer_count ?? 'Could not check' }}</dd></div>
+        </dl>
+        <p class="mt-4 text-sm text-white/50">This screen cannot yet check or change the node's firewall rules. A running mesh does not confirm firewall protection.</p>
+      </section>
+      <section class="glass-card p-5 min-w-0" aria-labelledby="tunnel-title">
+        <h2 id="tunnel-title" class="text-lg font-medium text-white">Private connections</h2>
+        <p class="text-sm text-white/60 mt-1">Tunnels let your devices reach this node through a private connection.</p>
+        <dl class="mt-4 space-y-3 text-sm">
+          <div class="status-row"><dt>Connection</dt><dd :class="tunnel?.connected === true ? 'text-green-300' : ''">{{ tunnelLabel }}</dd></div>
+          <div class="status-row"><dt>Detected service</dt><dd>{{ tunnel ? provider : 'Could not check' }}</dd></div>
+          <div class="status-row"><dt>WireGuard device address</dt><dd>{{ tunnel?.wg_ip || (tunnel ? 'Not ready' : 'Could not check') }}</dd></div>
+        </dl>
+        <p v-if="tunnel?.wg_ip" class="mt-4 text-sm text-white/60">Your device tunnel is already set up.</p>
+      </section>
+    </div>
+    <VpnDeviceSettings :status-known="tunnel !== null" :configured="!!tunnel?.wg_ip" :management-verified="tunnel?.peer_management_verified === true" />
+    <section class="glass-card p-5 mt-6 min-w-0" aria-labelledby="router-title">
+      <h2 id="router-title" class="text-lg font-medium text-white">Your router</h2>
+      <p class="text-sm text-white/60 mt-1">Manage a supported OpenWrt router, including its Wi-Fi and internet connection.</p>
+      <dl class="mt-4 text-sm"><div class="status-row"><dt>Router connection saved here</dt><dd>{{ router?.configured === true ? 'Saved' : router?.configured === false ? 'Not saved here' : 'Could not check' }}</dd></div></dl>
+      <p v-if="router?.configured === false" class="mt-3 text-sm text-white/50">No router connection is saved in this section. Your router and tunnels may already be configured elsewhere.</p>
+      <RouterLink to="/dashboard/server/openwrt" class="glass-button mt-4 text-sm">Open router settings</RouterLink>
     </section>
-
-    <section class="glass-card p-5 mb-6">
-      <div class="flex items-start justify-between gap-3"><div><h2 class="text-lg font-medium text-white">Public access checks</h2><p class="text-sm text-white/60 mt-1">Existing router forwards are shown for review. No route is changed from this screen yet.</p></div><span class="text-sm text-white/60">{{ forwards.length }} forward{{ forwards.length === 1 ? '' : 's' }}</span></div>
-      <div class="mt-4 grid gap-2 sm:grid-cols-2">
-        <div v-for="(forward, index) in forwards" :key="index" class="rounded-lg bg-white/5 p-3 text-xs text-white/70 font-mono break-all">{{ JSON.stringify(forward) }}</div>
-        <div v-if="!forwards.length" class="text-sm text-white/45">No router forwards reported.</div>
-      </div>
-      <p class="text-xs text-white/45 mt-4">Public forwarding, node firewall, service listener and external reachability are independent checks. A local pass does not claim public access.</p>
-    </section>
-
-    <section class="glass-card p-5">
-      <h2 class="text-lg font-medium text-white">App exposure</h2>
-      <p class="text-sm text-white/60 mt-1">App manifests and owned exposure rules will be added here after validation and rollback support are qualified.</p>
-      <div class="mt-4 rounded-lg border border-white/10 bg-white/5 p-3 text-sm text-white/60">No changes are available yet. Existing app access remains untouched.</div>
+    <section class="glass-card p-5 mt-6 min-w-0" aria-labelledby="public-title">
+      <h2 id="public-title" class="text-lg font-medium text-white">Saved public access entries</h2>
+      <p class="text-sm text-white/60 mt-1">These saved entries describe ports for apps. They do not confirm that your router has opened them.</p>
+      <ul v-if="forwards?.length" class="mt-4 grid gap-3 sm:grid-cols-2">
+        <li v-for="forward in forwards" :key="forward.id" class="rounded-lg bg-white/5 p-3 min-w-0"><h3 class="text-sm text-white break-words">{{ forward.service_name }}</h3><p class="mt-1 text-sm text-white/60">Outside port {{ forward.external_port }} → app port {{ forward.internal_port }} ({{ forward.protocol }})</p></li>
+      </ul>
+      <p v-else class="mt-4 text-sm text-white/50">{{ forwards ? 'No entries are saved here.' : 'Could not check saved entries.' }}</p>
+      <p class="mt-4 text-sm text-white/50">Use your router's settings to change public access. Opening an app to the internet may also require that app's own access settings.</p>
     </section>
   </main>
 </template>
+<style scoped>
+.status-row { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); align-items: start; gap: 1rem; }
+.status-row dt { color: rgb(255 255 255 / 0.65); }
+.status-row dd { margin: 0; text-align: right; overflow-wrap: anywhere; }
+</style>

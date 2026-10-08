@@ -4,15 +4,15 @@
 //! remove old container(s) → recreate (orchestrator-first, legacy fallback) → verify running.
 //! Data volumes are preserved (bind mounts, not stored in container).
 
-use super::config::get_containers_for_app;
+use super::config::{all_container_names, get_containers_for_app};
 use super::install::install_log;
 use super::progress::parse_pull_progress;
-use super::runtime::stop_timeout_secs;
 use super::validation::validate_app_id;
 use crate::api::rpc::RpcHandler;
 use crate::container::image_versions;
 use crate::data_model::{InstallPhase, PackageState};
 use anyhow::{Context, Result};
+use std::{collections::HashSet, path::Path};
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tracing::{error, info, warn};
 
@@ -31,6 +31,9 @@ impl RpcHandler {
             .and_then(|v| v.as_str())
             .ok_or_else(|| anyhow::anyhow!("Missing package id"))?;
         validate_app_id(package_id)?;
+        let lifecycle_guard =
+            crate::container::update_transaction::Guard::acquire(&self.config.data_dir)?;
+        lifecycle_guard.require_clear()?;
 
         // An Update click must not act on an hourly cache that predates the
         // button. Fetch and verify first; failure leaves running containers alone.
@@ -60,9 +63,24 @@ impl RpcHandler {
         let targets = pinned
             .as_ref()
             .map(|target| self.resolve_images_to_pull(package_id, target));
+        // A stopped Quadlet normally removes its --rm container. Absence is
+        // not an install decision: only a known single managed app with durable
+        // installed AND stopped evidence may enter the recreate path.
+        let known_managed =
+            if should_try_orchestrator_update(package_id, self.orchestrator.is_some()) {
+                self.orchestrator
+                    .as_ref()
+                    .expect("orchestrator presence checked")
+                    .knows_app(orchestrator_update_app_id(package_id))
+                    .await
+            } else {
+                false
+            };
+        let markers = UpdateMarkers::load(&self.config.data_dir, package_id).await?;
+        let installed = inspect_update_images(package_id).await?;
+        validate_update_presence(package_id, known_managed, !installed.is_empty(), &markers)?;
         if let Some(targets) = &targets {
-            let installed = inspect_update_images(package_id).await?;
-            if !update_targets_need_change(targets, &installed)? {
+            if !update_targets_need_change(targets, &installed)? && !markers.stopped {
                 install_log(&format!(
                     "UPDATE SKIP: {} — target versions already installed",
                     package_id
@@ -111,6 +129,19 @@ impl RpcHandler {
             if let Some(orchestrator) = self.orchestrator.as_ref() {
                 match orchestrator.upgrade(orchestrator_app_id).await {
                     Ok(()) => {
+                        if let Some(image) = orchestrator
+                            .staged_upgrade_image(orchestrator_app_id)
+                            .await?
+                        {
+                            // The orchestrator proved the pinned image exists and
+                            // persisted its reviewed manifest. No running container
+                            // or healthy service is claimed for a stopped update.
+                            self.clear_install_progress(package_id).await;
+                            return Ok(serde_json::json!({
+                                "status": "staged", "state": "stopped",
+                                "package_id": package_id, "image": image,
+                            }));
+                        }
                         if let Some(targets) = &targets {
                             verify_update_targets(
                                 targets,
@@ -173,17 +204,48 @@ impl RpcHandler {
         let images_to_pull =
             targets.unwrap_or_else(|| self.resolve_images_to_pull(package_id, &pinned));
 
-        // Get all containers for this app
-        let containers = get_containers_for_app(package_id).await?;
-        if containers.is_empty() {
-            self.clear_update_state(package_id).await;
-            return Err(anyhow::anyhow!("No containers found for {}", package_id));
+        // Managed imports are intentionally private. Resolve the trusted catalog
+        // against the reviewed local digest plan before any registry preparation;
+        // never pull mutable dependency tags over an approved local plan. Every
+        // preparation refusal clears Updating, including inventory/plan failures.
+        let preparation = async {
+            let containers = get_containers_for_app(package_id).await?;
+            anyhow::ensure!(
+                !containers.is_empty(),
+                "No containers found for {}",
+                package_id
+            );
+            let images = self
+                .reviewed_managed_image_references(
+                    package_id,
+                    &containers,
+                    &images_to_pull,
+                    &lifecycle_guard,
+                )
+                .await?;
+            Ok::<_, anyhow::Error>((containers, images))
         }
+        .await;
+        let (containers, images_to_pull) = match preparation {
+            Ok(prepared) => prepared,
+            Err(error) => {
+                self.clear_install_progress(package_id).await;
+                self.clear_update_state(package_id).await;
+                return Err(error);
+            }
+        };
 
-        // Execute update — on failure, attempt rollback by restarting old containers
-        match self
-            .execute_update(package_id, &containers, &images_to_pull)
-            .await
+        // Resolve every image while the old stack is still available. A
+        // registry outage or missing private import must not stop the app or
+        // enter rollback (which could start a deliberately stopped member).
+        self.set_install_phase(package_id, InstallPhase::PullingImage)
+            .await;
+        match preflighted_stack_update(
+            &images_to_pull,
+            |image| async move { self.pull_update_image(package_id, &image).await },
+            || self.execute_update(package_id, &containers, &images_to_pull, &lifecycle_guard),
+        )
+        .await
         {
             Ok(()) => {
                 install_log(&format!("UPDATE OK: {}", package_id)).await;
@@ -193,17 +255,26 @@ impl RpcHandler {
                     "package_id": package_id,
                 }))
             }
-            Err(e) => {
+            Err(UpdateFailure::Preparation(error)) => {
+                self.clear_install_progress(package_id).await;
+                self.clear_update_state(package_id).await;
+                Err(error)
+            }
+            Err(UpdateFailure::Execution(e)) => {
                 error!("Update {} failed: {}. Attempting rollback.", package_id, e);
                 install_log(&format!(
                     "UPDATE FAIL: {} — {}. Rolling back.",
                     package_id, e
                 ))
                 .await;
-                self.rollback_update(package_id, &containers).await;
+                // Transaction executor already recovered original identities or
+                // returned an explicit unresolved state. Never guess/reinstall.
                 self.clear_install_progress(package_id).await;
                 self.clear_update_state(package_id).await;
-                Err(e.context(format!("Update {} failed, rolled back", package_id)))
+                Err(e.context(format!(
+                    "Update {} failed; see retained-runtime recovery result",
+                    package_id
+                )))
             }
         }
     }
@@ -248,137 +319,110 @@ impl RpcHandler {
         }
     }
 
-    /// Core update execution: stop → pull → remove → recreate → verify.
+    /// Images are prepared first. The transaction preserves original identities,
+    /// creates stopped replacements, and restores the exact old states on failure.
     async fn execute_update(
         &self,
         package_id: &str,
         containers: &[String],
         images_to_pull: &[(String, String)],
+        guard: &crate::container::update_transaction::Guard,
     ) -> Result<()> {
-        // Phase: Preparing — about to stop the running container(s) so
-        // we can swap images. Fast.
+        use crate::container::update_transaction::{self, Podman};
+        let mut supervised = 0;
+        for name in containers {
+            if crate::container::quadlet::unit_exists(name).await {
+                supervised += 1;
+            }
+        }
+        anyhow::ensure!(
+            supervised == 0 || supervised == containers.len(),
+            "Mixed managed/unmanaged stack requires an explicit recovery plan; originals unchanged"
+        );
+        let managed = supervised != 0;
+        anyhow::ensure!(
+            !managed || package_id == "indeedhub",
+            "This managed app has no qualified maintenance controller; originals unchanged"
+        );
+        let targets = Podman::targets(images_to_pull, !managed).await?;
+        let names: HashSet<_> = containers.iter().map(String::as_str).collect();
+        anyhow::ensure!(
+            targets.len() == names.len()
+                && targets
+                    .iter()
+                    .all(|target| names.contains(target.name.as_str())),
+            "Update target membership differs from installed stack; no containers changed"
+        );
         self.set_install_phase(package_id, InstallPhase::Preparing)
             .await;
+        if managed {
+            use crate::container::supervised_runtime::{
+                load_reviewed_plans, LegacyIndeeMaintenance, SystemdSupervisor,
+            };
+            let plans = load_reviewed_plans(&self.config.data_dir, package_id)?;
+            let adapter = SystemdSupervisor::new(
+                self.config.data_dir.clone(),
+                plans,
+                LegacyIndeeMaintenance::new(guard)?,
+            )
+            .await?;
+            let targets = adapter.reviewed_targets(&targets).await?;
+            crate::container::supervised_update::execute(guard, package_id, &targets, &adapter)
+                .await
+        } else {
+            update_transaction::execute(guard, package_id, &targets, &Podman).await
+        }
+    }
 
-        // 1. Graceful stop all containers (reverse order for dependencies)
-        info!(
-            "Update {}: stopping {} containers",
-            package_id,
-            containers.len()
+    async fn reviewed_managed_image_references(
+        &self,
+        package_id: &str,
+        containers: &[String],
+        images: &[(String, String)],
+        guard: &crate::container::update_transaction::Guard,
+    ) -> Result<Vec<(String, String)>> {
+        use crate::container::supervised_runtime::{
+            load_reviewed_plans, LegacyIndeeMaintenance, SystemdSupervisor,
+        };
+        use crate::container::supervised_update::Supervisor;
+        use crate::container::update_transaction::Podman;
+        let mut managed = 0;
+        for name in containers {
+            if crate::container::quadlet::unit_exists(name).await {
+                managed += 1;
+            }
+        }
+        if managed == 0 {
+            return Ok(images.to_vec());
+        }
+        anyhow::ensure!(
+            managed == containers.len() && package_id == "indeedhub",
+            "Managed stack requires its complete qualified maintenance plan; originals unchanged"
         );
-        for name in containers.iter().rev() {
-            let timeout = stop_timeout_secs(name);
-            info!(
-                "Update {}: stopping {} (timeout: {}s)",
-                package_id, name, timeout
-            );
-            let out = tokio::process::Command::new("podman")
-                .args(["stop", "-t", timeout, name])
-                .output()
-                .await
-                .context(format!("Failed to stop {}", name))?;
-            if !out.status.success() {
-                let stderr = String::from_utf8_lossy(&out.stderr);
-                warn!(
-                    "Update {}: stop {} failed: {}",
-                    package_id,
-                    name,
-                    stderr.trim()
-                );
-                // Continue — container might already be stopped
-            }
-        }
-
-        // Phase: PullingImage — about to fetch each pinned image in turn.
-        self.set_install_phase(package_id, InstallPhase::PullingImage)
-            .await;
-
-        // 2. Pull new images with progress
-        info!(
-            "Update {}: pulling {} images",
-            package_id,
-            images_to_pull.len()
+        let catalog = Podman::targets(images, false).await?;
+        let names: HashSet<_> = containers.iter().map(String::as_str).collect();
+        anyhow::ensure!(
+            catalog.len() == names.len()
+                && catalog
+                    .iter()
+                    .all(|target| names.contains(target.name.as_str())),
+            "Reviewed managed target membership differs from installed stack"
         );
-        for (i, (name, image)) in images_to_pull.iter().enumerate() {
-            info!(
-                "Update {}: pulling image {}/{} ({})",
-                package_id,
-                i + 1,
-                images_to_pull.len(),
-                image
-            );
-            self.pull_update_image(package_id, image)
-                .await
-                .context(format!("Failed to pull {} for {}", image, name))?;
+        let adapter = SystemdSupervisor::new(
+            self.config.data_dir.clone(),
+            load_reviewed_plans(&self.config.data_dir, package_id)?,
+            LegacyIndeeMaintenance::new(guard)?,
+        )
+        .await?;
+        let targets = adapter.reviewed_targets(&catalog).await?;
+        for target in &targets {
+            let original = adapter.capture(&target.name).await?;
+            adapter.prepare_target(target, &original).await?;
         }
-
-        // 3. Remove old containers
-        info!("Update {}: removing old containers", package_id);
-        for name in containers {
-            let out = tokio::process::Command::new("podman")
-                .args(["rm", name])
-                .output()
-                .await
-                .context(format!("Failed to remove {}", name))?;
-            if !out.status.success() {
-                let stderr = String::from_utf8_lossy(&out.stderr);
-                // Force remove as fallback
-                warn!(
-                    "Update {}: rm {} failed ({}), forcing",
-                    package_id,
-                    name,
-                    stderr.trim()
-                );
-                let _ = tokio::process::Command::new("podman")
-                    .args(["rm", "-f", name])
-                    .output()
-                    .await;
-            }
-        }
-
-        // Phase: CreatingContainer — about to recreate each container.
-        self.set_install_phase(package_id, InstallPhase::CreatingContainer)
-            .await;
-
-        // 4. Recreate containers (orchestrator-first, reconcile fallback)
-        info!("Update {}: recreating containers", package_id);
-        for name in containers {
-            self.recreate_container_for_update(package_id, name).await?;
-            // Brief delay between containers for dependency initialization
-            tokio::time::sleep(std::time::Duration::from_secs(2)).await;
-        }
-
-        // Phase: WaitingHealthy — reconcile has started every container,
-        // now verifying each reached running state.
-        self.set_install_phase(package_id, InstallPhase::WaitingHealthy)
-            .await;
-
-        // 5. Verify containers reached running state
-        tokio::time::sleep(std::time::Duration::from_secs(5)).await;
-        for name in containers {
-            let status = tokio::process::Command::new("podman")
-                .args(["inspect", name, "--format", "{{.State.Status}}"])
-                .output()
-                .await;
-            if let Ok(o) = status {
-                let state = String::from_utf8_lossy(&o.stdout).trim().to_string();
-                anyhow::ensure!(
-                    o.status.success() && state == "running",
-                    "Update {}: container {} is not running after recreate",
-                    package_id,
-                    name
-                );
-            } else {
-                anyhow::bail!(
-                    "Update {}: cannot inspect recreated container {}",
-                    package_id,
-                    name
-                );
-            }
-        }
-
-        verify_update_targets(images_to_pull, &inspect_update_images(package_id).await?)?;
-        Ok(())
+        Ok(targets
+            .into_iter()
+            .map(|target| (target.name, target.reference))
+            .collect())
     }
 
     async fn recreate_container_for_update(
@@ -429,6 +473,32 @@ impl RpcHandler {
     /// Pull a single image with progress broadcasting (reuses install progress pattern).
     async fn pull_update_image(&self, package_id: &str, image: &str) -> Result<()> {
         self.set_install_progress(package_id, 0, 0).await;
+
+        if immutable_update_image(image) {
+            // A digest-addressed lookup asks Podman for these exact bytes,
+            // unlike a mutable tag lookup. Private imports need no registry.
+            let local = tokio::time::timeout(
+                std::time::Duration::from_secs(30),
+                tokio::process::Command::new("podman")
+                    .args(["image", "exists", image])
+                    .kill_on_drop(true)
+                    .output(),
+            )
+            .await
+            .context("Local image lookup timed out; existing app remains unchanged")??;
+            match local.status.code() {
+                Some(0) => {
+                    self.set_install_progress(package_id, 100, 100).await;
+                    return Ok(());
+                }
+                Some(1) => {}
+                _ => anyhow::bail!("Cannot inspect local image storage; update cancelled"),
+            }
+        }
+        anyhow::ensure!(
+            !image.starts_with("localhost/"),
+            "The exact private image must be imported before updating this app"
+        );
 
         let mut cmd = tokio::process::Command::new("podman");
         cmd.arg("pull");
@@ -511,61 +581,84 @@ impl RpcHandler {
         stack_images
     }
 
-    /// Rollback: restart old containers if they still exist.
-    /// Called when update fails partway through.
-    async fn rollback_update(&self, package_id: &str, containers: &[String]) {
-        warn!("Rolling back update for {}", package_id);
-        for name in containers {
-            // Try to start — works if container still exists (wasn't removed yet)
-            let out = tokio::process::Command::new("podman")
-                .args(["start", name])
-                .output()
-                .await;
-            match out {
-                Ok(o) if o.status.success() => {
-                    info!("Rollback: restarted {}", name);
-                }
-                Ok(o) => {
-                    let stderr = String::from_utf8_lossy(&o.stderr);
-                    warn!("Rollback: could not restart {}: {}", name, stderr.trim());
-                    // Container was already removed (forward path ran `podman rm`).
-                    // Recreate via orchestrator-first path with legacy fallback.
-                    if let Err(recreate_err) =
-                        self.recreate_container_for_update(package_id, name).await
-                    {
-                        error!(
-                            "Rollback: failed to recreate {} during rollback of {}: {}",
-                            name, package_id, recreate_err
-                        );
-                    }
-                }
-                Err(e) => {
-                    error!("Rollback: failed to restart {}: {}", name, e);
-                }
-            }
-        }
-    }
-
     /// Clear the Updating state (used on failure/rollback).
     async fn clear_update_state(&self, package_id: &str) {
         let (mut data, _) = self.state_manager.get_snapshot().await;
         if let Some(entry) = data.package_data.get_mut(package_id) {
             // Don't overwrite state from scanner — just clear if still Updating
             if entry.state == PackageState::Updating {
-                entry.state = PackageState::Stopped;
+                // Unknown is not stopped: the authoritative scanner will
+                // refresh actual retained runtime immediately in the wrapper.
+                entry.state = PackageState::Installed;
             }
         }
         self.state_manager.update_data(data).await;
     }
 }
 
-async fn inspect_update_images(package_id: &str) -> Result<Vec<(String, String)>> {
-    let containers = get_containers_for_app(package_id).await?;
+#[derive(Default)]
+struct UpdateMarkers {
+    installed: bool,
+    stopped: bool,
+    uninstalled: bool,
+}
+
+impl UpdateMarkers {
+    async fn load(data_dir: &Path, package_id: &str) -> Result<Self> {
+        let mut names = all_container_names(package_id);
+        names.push(package_id.to_string());
+        names.push(orchestrator_update_app_id(package_id).to_string());
+        let installed = read_update_markers(data_dir, "installed-apps.json").await?;
+        let stopped = read_update_markers(data_dir, "user-stopped.json").await?;
+        let uninstalled = read_update_markers(data_dir, "user-uninstalled.json").await?;
+        Ok(Self {
+            installed: names.iter().any(|name| installed.contains(name)),
+            stopped: names.iter().any(|name| stopped.contains(name)),
+            uninstalled: names.iter().any(|name| uninstalled.contains(name)),
+        })
+    }
+}
+
+// The recovery loaders intentionally return empty on malformed state. An update
+// must instead distinguish unavailable evidence from a proven absence of an
+// uninstall decision before it can recreate a removed Quadlet container.
+async fn read_update_markers(data_dir: &Path, filename: &str) -> Result<HashSet<String>> {
+    match tokio::fs::read(data_dir.join(filename)).await {
+        Ok(bytes) => serde_json::from_slice(&bytes)
+            .with_context(|| format!("Cannot read {filename}; update cancelled")),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(HashSet::new()),
+        Err(error) => {
+            Err(error).with_context(|| format!("Cannot read {filename}; update cancelled"))
+        }
+    }
+}
+
+fn validate_update_presence(
+    package_id: &str,
+    known_managed: bool,
+    has_containers: bool,
+    markers: &UpdateMarkers,
+) -> Result<()> {
     anyhow::ensure!(
-        !containers.is_empty(),
-        "No containers found for {}",
+        !markers.uninstalled,
+        "{} was uninstalled; use an explicit install instead of update",
         package_id
     );
+    anyhow::ensure!(
+        has_containers || (known_managed && markers.installed && markers.stopped),
+        "No containers or durable stopped installation found for {}",
+        package_id
+    );
+    Ok(())
+}
+
+async fn inspect_update_images(package_id: &str) -> Result<Vec<(String, String)>> {
+    let containers = get_containers_for_app(package_id).await?;
+    if containers.is_empty() {
+        // The caller decides whether durable installation evidence authorizes
+        // a missing runtime. Never invoke bare `podman inspect` here.
+        return Ok(Vec::new());
+    }
     let mut command = tokio::process::Command::new("podman");
     command.arg("inspect").args(&containers).kill_on_drop(true);
     let output = tokio::time::timeout(std::time::Duration::from_secs(30), command.output())
@@ -611,6 +704,7 @@ fn verify_update_targets(
     targets: &[(String, String)],
     installed: &[(String, String)],
 ) -> Result<()> {
+    anyhow::ensure!(!targets.is_empty(), "No update targets resolved");
     for (app_id, target) in targets {
         let running = installed_image_for_target(app_id, installed).ok_or_else(|| {
             anyhow::anyhow!("Update {}: target container missing after recreate", app_id)
@@ -636,6 +730,7 @@ fn update_targets_need_change(
     installed: &[(String, String)],
 ) -> Result<bool> {
     use std::cmp::Ordering;
+    anyhow::ensure!(!targets.is_empty(), "No update targets resolved");
     let mut changed = false;
     for (app_id, target) in targets {
         let running = installed_image_for_target(app_id, installed);
@@ -653,6 +748,44 @@ fn update_targets_need_change(
 
 fn should_try_orchestrator_update(package_id: &str, orchestrator_available: bool) -> bool {
     orchestrator_available && !uses_legacy_update_flow(package_id)
+}
+
+fn immutable_update_image(image: &str) -> bool {
+    image.rsplit_once("@sha256:").is_some_and(|(name, digest)| {
+        !name.is_empty()
+            && !name.contains('@')
+            && digest.len() == 64
+            && digest.bytes().all(|byte| byte.is_ascii_hexdigit())
+    })
+}
+
+#[derive(Debug)]
+enum UpdateFailure {
+    Preparation(anyhow::Error),
+    Execution(anyhow::Error),
+}
+
+/// A preparation failure never enters the lifecycle/rollback path. Keep this
+/// sequencing injectable so failed second-image pulls are tested without apps.
+async fn preflighted_stack_update<P, PF, E, EF>(
+    images: &[(String, String)],
+    mut prepare: P,
+    execute: E,
+) -> std::result::Result<(), UpdateFailure>
+where
+    P: FnMut(String) -> PF,
+    PF: std::future::Future<Output = Result<()>>,
+    E: FnOnce() -> EF,
+    EF: std::future::Future<Output = Result<()>>,
+{
+    for (name, image) in images {
+        prepare(image.clone()).await.map_err(|error| {
+            UpdateFailure::Preparation(error.context(format!(
+                "Cannot prepare image for {name}; existing containers were left unchanged"
+            )))
+        })?;
+    }
+    execute().await.map_err(UpdateFailure::Execution)
 }
 
 fn orchestrator_update_app_id(package_id: &str) -> &str {
@@ -716,10 +849,181 @@ fn candidate_app_ids_for_container(container_name: &str) -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::{
-        candidate_app_ids_for_container, orchestrator_update_app_id,
+        candidate_app_ids_for_container, immutable_update_image, orchestrator_update_app_id,
         should_try_orchestrator_update, update_targets_need_change, uses_legacy_update_flow,
-        verify_update_targets,
+        validate_update_presence, verify_update_targets, UpdateMarkers,
     };
+
+    #[tokio::test]
+    async fn stopped_installed_managed_app_updates_after_quadlet_container_disappears() {
+        let root = tempfile::tempdir().unwrap();
+        crate::crash_recovery::mark_installed(root.path(), "node-demo-music").await;
+        crate::crash_recovery::mark_user_stopped(root.path(), "node-demo-music").await;
+        let markers = UpdateMarkers::load(root.path(), "node-demo-music")
+            .await
+            .unwrap();
+        validate_update_presence("node-demo-music", true, false, &markers).unwrap();
+        let target = vec![("node-demo-music".into(), "localhost/music:2".into())];
+        assert!(super::update_targets_need_change(&target, &[]).unwrap());
+        // Success must still prove that upgrade actually created the target.
+        assert!(verify_update_targets(&target, &[]).is_err());
+        assert!(verify_update_targets(&target, &target).is_ok());
+        assert!(crate::crash_recovery::load_user_stopped(root.path())
+            .await
+            .contains("node-demo-music"));
+    }
+
+    #[test]
+    fn absent_catalog_app_or_unmanaged_runtime_is_not_an_update_installation() {
+        for (managed, installed, stopped) in [
+            (true, false, false),
+            (true, false, true),
+            (true, true, false),
+            (false, true, true),
+        ] {
+            let markers = UpdateMarkers {
+                installed,
+                stopped,
+                uninstalled: false,
+            };
+            assert!(validate_update_presence("optional", managed, false, &markers).is_err());
+        }
+        // Existing legacy containers remain updateable without modern markers.
+        assert!(validate_update_presence("legacy", false, true, &UpdateMarkers::default()).is_ok());
+        assert!(super::update_targets_need_change(&[], &[]).is_err());
+        assert!(verify_update_targets(&[], &[]).is_err());
+    }
+
+    #[tokio::test]
+    async fn uninstall_tombstone_beats_stale_installed_and_stopped_markers() {
+        let root = tempfile::tempdir().unwrap();
+        crate::crash_recovery::mark_installed(root.path(), "node-demo-music").await;
+        crate::crash_recovery::mark_user_stopped(root.path(), "node-demo-music").await;
+        crate::crash_recovery::mark_user_uninstalled(root.path(), "archy-node-demo-music").await;
+        let markers = UpdateMarkers::load(root.path(), "node-demo-music")
+            .await
+            .unwrap();
+        for present in [false, true] {
+            assert!(validate_update_presence("node-demo-music", true, present, &markers).is_err());
+        }
+    }
+
+    #[tokio::test]
+    async fn damaged_lifecycle_markers_cannot_authorize_recreation() {
+        let root = tempfile::tempdir().unwrap();
+        let absent = UpdateMarkers::load(root.path(), "optional").await.unwrap();
+        assert!(validate_update_presence("optional", true, false, &absent).is_err());
+        for name in [
+            "installed-apps.json",
+            "user-stopped.json",
+            "user-uninstalled.json",
+        ] {
+            tokio::fs::write(root.path().join(name), b"not-json")
+                .await
+                .unwrap();
+            assert!(UpdateMarkers::load(root.path(), "optional").await.is_err());
+            tokio::fs::remove_file(root.path().join(name))
+                .await
+                .unwrap();
+        }
+    }
+
+    #[test]
+    fn indeehub_update_resolves_every_member_in_dependency_order() {
+        let members = crate::container::image_versions::containers_for_stack("indeedhub");
+        let expected = super::all_container_names("indeedhub");
+        assert_eq!(
+            members.iter().map(|(name, _)| *name).collect::<Vec<_>>(),
+            expected
+        );
+        let source = include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../scripts/image-versions.sh"
+        ));
+        for (_, variable) in members {
+            assert!(
+                source
+                    .lines()
+                    .any(|line| line.starts_with(&format!("{variable}="))),
+                "Missing image pin {variable}"
+            );
+        }
+        assert!(super::uses_legacy_update_flow("indeedhub"));
+    }
+
+    #[tokio::test]
+    async fn stack_image_failure_precedes_every_lifecycle_action() {
+        use std::sync::{Arc, Mutex};
+        for failed_second in [true, false] {
+            let calls = Arc::new(Mutex::new(Vec::new()));
+            let preparing = calls.clone();
+            let executing = calls.clone();
+            let images = vec![
+                ("web".into(), "web-image".into()),
+                ("api".into(), "api-image".into()),
+            ];
+            let result = super::preflighted_stack_update(
+                &images,
+                move |image| {
+                    let preparing = preparing.clone();
+                    async move {
+                        preparing.lock().unwrap().push(format!("prepare:{image}"));
+                        anyhow::ensure!(!(failed_second && image == "api-image"), "import missing");
+                        Ok(())
+                    }
+                },
+                move || async move {
+                    executing.lock().unwrap().extend([
+                        "stop".into(),
+                        "remove".into(),
+                        "start".into(),
+                    ]);
+                    Ok(())
+                },
+            )
+            .await;
+            if failed_second {
+                assert!(matches!(result, Err(super::UpdateFailure::Preparation(_))));
+                assert_eq!(
+                    *calls.lock().unwrap(),
+                    ["prepare:web-image", "prepare:api-image"]
+                );
+            } else {
+                assert!(result.is_ok());
+                assert_eq!(
+                    *calls.lock().unwrap(),
+                    [
+                        "prepare:web-image",
+                        "prepare:api-image",
+                        "stop",
+                        "remove",
+                        "start"
+                    ]
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn only_exact_digest_refs_may_skip_update_registry_pull() {
+        let digest = "ab".repeat(32);
+        assert!(immutable_update_image(&format!(
+            "localhost/lfg2025/indeedhub:1.0.1@sha256:{digest}"
+        )));
+        assert!(immutable_update_image(&format!(
+            "registry.example/app@sha256:{digest}"
+        )));
+        for mutable_or_invalid in [
+            "localhost/lfg2025/indeedhub:1.0.1".to_string(),
+            "registry.example/app:latest".to_string(),
+            format!("registry.example/app@sha256:{}", "g".repeat(64)),
+            "registry.example/app@sha256:abcd".to_string(),
+            format!("@sha256:{digest}"),
+            format!("registry.example/app@other@sha256:{digest}"),
+        ] {
+            assert!(!immutable_update_image(&mutable_or_invalid));
+        }
+    }
 
     #[test]
     fn mempool_update_preflight_rejects_stale_catalog_without_reinstalling() {

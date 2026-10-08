@@ -1,0 +1,250 @@
+# IndeeHub node media registration
+
+Status: node preparation primitive compiled and qualified locally; RPC/serving
+integration, deployment and actual-node acceptance remain open. App-side v1 intent/receipt implementation is qualified in the
+separate IndeeHub checkout at `c4b920f` (190 backend tests, production build).
+This document records the integration contract, not a completed publishing flow.
+
+## Implemented boundary
+
+`core/archipelago/src/media_registration.rs` accepts an existing `NodeIdentity`,
+an installer-owned node DID/app-instance audience pin, an authenticated v1 app
+intent, the operator-approved relative Cloud selection and receiving methods,
+trusted current UTC seconds, a byte limit, cancellation flag and progress callback.
+It does not create/recover keys, select files for the operator, expose an RPC,
+change existing content policies, publish a catalog entry or grant playback.
+
+Call `prepare` on a blocking worker: it performs filesystem I/O and waits for a
+cross-process per-request filesystem lock. Lock acquisition polls cancellation
+and stops at the earlier of 30 seconds or an unexpired intent's deadline. An
+exact completed retry after expiry may still wait at most 30 seconds; caller
+cancellation can end that wait earlier. Root has declared the module in `main.rs` for the queued combined isolated
+backend qualification. RPC/UI and serving integration remain unwired. The public Rust
+selection structure is a caller assertion, not an authorization token.
+
+The implementation validates canonical v4 request IDs, lowercase nonce/producer
+keys, ASCII project/audience IDs, identity and installed audience equality,
+JavaScript-safe numbers, ten-minute maximum intent lifetime, bounded viewing
+windows and sorted distinct supported methods. It checks the existing node key's
+DID against the installation pin, never a browser-supplied replacement key.
+
+Linux `openat2` with `RESOLVE_BENEATH|RESOLVE_NO_SYMLINKS` resolves the approved
+relative path from a held Cloud-root descriptor. An `O_PATH` descriptor is checked
+for regular-file type before reopening that same held file for reading; devices
+and FIFOs are not opened for I/O. Unsupported kernels fail explicitly. Source
+inode/device, size and modification/change times must remain stable through the
+streaming copy. The original Cloud file is never altered by preparation.
+
+Each request gets its own private 0700 directory under
+`<node-data>/media-registration/<request-id>/`. Files are not placed under a
+web-served Cloud or content directory. The durable records are:
+
+- `operation.json`: original intent, exact selection/methods/root and original
+  file identity/metadata, plus original receipt issue time.
+- `snapshot.json`: SHA256 and uint64 byte size committed before snapshot publication.
+- `media`: private 0400 snapshot retaining the approved original bytes.
+- `receipt.json`: exact fixed-domain Ed25519 receipt after all preceding commits.
+
+Records and snapshots are fsynced; no-replace hard-link publication and directory
+fsync establish durable names. Intermediate files are named `pending-<uuid>` in
+the private operation directory. Interrupted staging is retained for controlled
+recovery/cleanup, never served. Future cleanup must distinguish these private
+partials from a completed snapshot or outstanding receipt and must not remove
+original Cloud data or published/rented bytes.
+
+An identical completed retry verifies the saved signature, snapshot byte commitment
+and all original terms, then returns the same receipt even after its initial
+expiry. A pending operation cannot issue its first receipt after expiry. Changed
+terms, selection, audience, node identity or receiving methods reject reuse.
+Pending snapshot recovery requires either the committed immutable snapshot or
+unchanged source metadata/bytes. Damaged records or missing completed bytes fail
+without recreating the operation or rewriting its commitment.
+
+The wire schema and fixed ordered JSON array match
+`/home/archipelago/Projects/indeehub-followup/docs/archipelago-registration-wire-v1.md`.
+`sizeBytes` is a decimal string; the receipt contains exactly the 16 v1 fields.
+The signature uses the already-loaded node's existing Ed25519 identity.
+
+## Caller work required before enabling this feature
+
+1. Obtain the intent through the authenticated installed IndeeHub bridge and its
+   owner-authenticated API. A browser merely presenting matching-looking JSON does
+   not prove that the app persisted an intent or owns the project. Bind app origin,
+   installation identity, native dashboard session and CSRF protections.
+2. Show project/producer identity, the actual Cloud selection, price, viewing time
+   and supported receiving methods for explicit operator consent. Pass only the
+   configured Cloud root and the exact selected relative path. Neither filesystem
+   root nor installation pins may come from arbitrary request fields.
+3. Supply a configured per-file quota, cancellation/progress and actual UTC time;
+   preserve backpressure and track cumulative private storage use. File size is
+   streamed and checked rather than read into memory. Private staging retention
+   needs a separate reviewed quota/cleanup policy.
+4. Persist the opaque `contentId` → immutable snapshot mapping and complete content
+   policy under the same original request ID. Authenticate all content access and
+   keep the pending item private throughout setup. Do not use the mutable Cloud
+   filename as the serving identity or temporarily make it free/public.
+5. Only after durable serving and entitlement linkage succeeds may the caller
+   return the prepared receipt to the app for intent consumption. If this step
+   fails, retry the same prepared request/receipt; do not create another content
+   ID, silently change rental terms or return a success notification.
+6. Complete purchase recovery and seller receipt settlement, timed FIPS playback,
+   full immutable-byte/expiry enforcement and real node UAT before enabling the
+   app's registration/publication flags. A registration receipt is neither payment
+   proof nor a playback entitlement. Nothing in this primitive advertises serving
+   availability or receives funds.
+
+The returned `snapshot` descriptor is positioned at zero and read-only. The
+`snapshot_path` is private node storage for the caller's persistent mapping;
+it must never be sent to the app or used as a browser-controlled path. Any future
+serving reopen must preserve descriptor containment/integrity and authorization.
+
+## Local qualification
+
+Eleven isolated tests cover original-key signing and exact wire preimage,
+private durable snapshot/retry after source removal and expiry, changed bindings,
+traversal/symlink/directory/FIFO rejection, cancellation/retry, source modification
+during copying, concurrent callers, recovery at the snapshot/receipt boundary,
+corrupt snapshot/missing commitment, invalid terms/expiry/quota and damaged-record
+preservation. Identity fixtures use the existing node identity test helper only.
+
+`media_registration/fixtures/v1.json` is a deterministic golden wire artifact
+created with Node.js crypto from the public fixed test seed `07` repeated 32 times.
+It contains independent canonical array bytes, expected public key/DID, signature,
+receipt and media. A byte-identical copy lives in the IndeeHub app's test fixtures;
+Rust preparation and signature verification and the app receipt parser both check
+it. Fixture SHA256:
+`8fbfcbc3beb0b4758fadf677c39c688d55a89ed200d8a7cd8741de0da569feb3`.
+No live node identity or user key is included. A separate test checks expired lock
+deadline and pre-cancelled acquisition without waiting.
+
+The combined `scripts/test-backend-isolated.sh` run passed 1,808 tests with
+zero failures and five existing skips, including all eleven media-registration
+tests and the independent Node.js golden wire/signature fixture. Compilation
+took 9m07s and execution 15.01s. Source hashes matched the frozen build inputs.
+Log: `/tmp/archy-resumed-combined-backend-tests.log`; source provenance:
+`/tmp/archy-resumed-combined-source-provenance.json`.
+
+Later integration tests must also exercise caller origin/CSRF/consent, bridge interruption,
+serving linkage failure/retry, receiving-method availability and real paid FIPS
+playback. No live file, wallet, public relay, service or app was changed here.
+
+### Existing app parser golden check
+
+The lightweight Node check passed using the existing production-compiled IndeeHub
+receipt parser, with no rebuild, Jest worker, database or network. It checks fixed
+node DID, exact UTF-8 signature preimage, acceptance of the golden pinned-key
+signature and rejection after changing `sizeBytes`.
+
+Log: `/tmp/indeehub-registration-golden-dist-check.log`.
+
+- Fixture SHA256:
+  `8fbfcbc3beb0b4758fadf677c39c688d55a89ed200d8a7cd8741de0da569feb3`.
+- Existing `backend/dist/archipelago/media-registration.protocol.js` SHA256:
+  `8e4a9f17649381c0b6bd8b9e187bd266b94743f40c63f5bc384ade204114b98b`,
+  built at 2026-10-06T22:23:09.597Z by the successful resumed backend build.
+- Its unchanged source protocol SHA256:
+  `ec5b614516dcbd9918ff8fdecfc980f4430ff20362aced4ab348197e284337d7`,
+  source modification time 2026-10-06T22:07:50.141Z.
+
+This verifies the actual compiled app parser against the shared artifact. The
+subsequent combined isolated Rust run also passed its independent golden fixture
+test, establishing agreement across both implementations. Node caller/serving
+integration and live acceptance remain open. No fixture or Rust source changed
+between the frozen compilation inputs and the successful run.
+
+## Immutable serving and rental caller work
+
+The next local source connects explicit producer/project approval to the fixed
+`indeedhub-api` installation pin and stores a separate immutable serving mapping
+before returning the signed registration receipt. It does not insert filenames
+into the legacy mutable share catalog. Its canonical ordered-array terms hash has
+an independently generated Node.js fixture. Original Cloud source deletion does
+not change the saved snapshot, registration receipt or rental terms.
+
+A peer GET to `/content/{registered_id}/rental/{purchase_uuid}` now requires the
+existing node proof signed for that exact path and the original
+`X-Content-Capability`. The node verifies its own durable seller `ReceiptSaved`
+record, authenticated buyer, immutable content/hash/size/terms and settlement
+amount. Invalid ranges reject before a rental starts. First successful durable
+stream authorization records one rental window; reopen and range requests keep
+that same deadline. Stream reads use bounded 64 KiB buffers, reject clock rollback
+and stop new reads at expiry. HEAD and preflight do not start a window.
+
+This is a server access window, not DRM. Bytes already delivered cannot be
+revoked. A crash after the lease is fsynced but before the first network byte still
+consumes elapsed time: local persistence and remote byte delivery are not one
+atomic operation. The player must display the persisted expiry and reuse the
+original purchase/capability on reconnect, not create another payment.
+
+Seven registered-media tests and three route/stream tests passed in
+`/tmp/archy-registration-rental-batch-tests.log`; its overall result was 1,834
+passed, one failed legacy missing-file expectation, and five existing skips.
+All 383 captured source/build/fixture hashes remained unchanged. The expectation
+was corrected separately; the later full run passed 1,848 tests, zero failures
+and five existing skips with all 385 captured hashes unchanged. Do not describe that earlier batch
+as a clean combined suite or live playback acceptance.
+
+The subsequent performance refinement, qualified in the later clean 1,848-test
+backend run, persists the already
+verified snapshot's signed hash and inode/device/ctime/size attestation during
+registration. Ordinary first-open/range requests reuse it. A missing cache streams
+the original signed hash under a per-registration lock; buyer leases use separate
+per-purchase locks. Large verification reads do not hold the global metadata lock
+or start a rental while queued. An identical concurrent cache writer is accepted
+only after exact readback and file/directory fsync. Three additional tests cover
+lock independence, cache reconstruction and mismatched-cache refusal.
+
+Owner-session/CSRF approval RPC, producer-signed exact selection, native Cloud
+picker/consent bridge, app receipt consumption, and player reconnect/expiry UI are
+being connected next. Their source is not yet deployed; app registration and
+publication flags remain disabled pending complete qualification. No real payment,
+announcement, media publication or node deployment was performed by this work.
+
+
+## Applied native caller and terminal recovery — 7 October UTC
+
+The next source batch now connects the dashboard Cloud picker, exact producer
+signature, owner-session/CSRF RPC, shared snapshot reservation budget and Backstage
+receipt consumption. It is local and uncommitted; the deployed b52214f7 backend
+candidate does not contain these caller changes. Registration/publication flags
+remain disabled.
+
+An interrupted operation can now be resolved under its original operation lock:
+return and verify its completed receipt, or durably retire an expired incomplete
+request. Retirement is node-signed against the entire original intent. It prevents
+late preparation and cannot replace a completed receipt. App pending lookup and
+retirement consumption authenticate the current producer/project owner and pinned
+installation; an expired unknown intent cannot silently become a fresh one.
+Backstage retains signatures/receipts across lost replies and offers explicit
+resume/resolve actions. Completed media remains available without the Cloud source.
+
+Focused qualification: PostgreSQL registration/retirement and migrations plus
+HTTP identity routes passed 54 tests in two suites; app caller passed seven tests;
+dashboard native bridge passed six tests. App frontend typecheck passed. Logs:
+`/tmp/indeehub-terminal-registration-focused.log`,
+`/tmp/indeehub-terminal-registration-client-rerun.log`,
+`/tmp/archy-native-registration-bridge-tests.log`, and
+`/tmp/indeehub-terminal-registration-typecheck.log`.
+The first client test command found zero tests because the new file was outside
+the repository include pattern; it was moved to `tests/backstage-registration.test.ts`
+and the rerun passed. No zero-test run is counted as qualification.
+
+The backend all-source noEmit check reports two unchanged legacy test-mock errors:
+missing Subscription.flashId and User.libraryItems. Its production-config noEmit
+check passed; the all-source failure remains recorded separately. Combined new Rust primitive/RPC/caller tests and
+real native registration/rental acceptance remain pending. No new payment,
+announcement, media publication or deployment was performed by this batch.
+
+
+The connected app rental player passed eight mounted-Vue lifecycle/status tests
+and frontend typecheck. Opening the dialog creates no purchase or media request;
+video uses preload=none and does not autoplay. Native response generations reject
+late close/reopen or changed-offer results. The actual playing event starts a
+read-only status(handle) request and non-overlapping five-second checks; pause,
+ended, error and close stop polling. Only the server expires_at is displayed;
+null never starts a local rental clock. A status error retains the original
+purchase handle and offers recovery without another payment. Logs:
+`/tmp/indeehub-rental-player-status-tests.log` and
+`/tmp/indeehub-rental-player-status-typecheck.log`.
+Host broker and Rust proxy/caller qualification are tracked separately; these app
+tests do not claim a live paid-stream acceptance.

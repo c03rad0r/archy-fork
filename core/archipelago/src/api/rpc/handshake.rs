@@ -276,6 +276,11 @@ impl RpcHandler {
             }
             Err(e) => tracing::debug!("background handshake poll failed: {e:#}"),
         }
+        if load_discovery_state(&self.config.data_dir).await.enabled {
+            if let Err(error) = self.retry_peer_approval_replies().await {
+                tracing::warn!("Peer approval retry could not complete: {error:#}");
+            }
+        }
     }
 
     pub(super) async fn handle_handshake_poll(&self) -> Result<serde_json::Value> {
@@ -340,6 +345,7 @@ impl RpcHandler {
                     }
                 }
                 HandshakeMessage::PeerInvite { invite_code } => {
+                    let _decision = pending::outbound_decision_guard().await;
                     // Match against an outbound Sent request from this nostr
                     // pubkey. If we never sent them anything, ignore — we
                     // don't accept unsolicited invites over Nostr.
@@ -355,6 +361,16 @@ impl RpcHandler {
                             "Ignoring unsolicited PeerInvite — no matching Sent request"
                         );
                         continue;
+                    };
+                    let scoped_invite = match crate::federation::restrict_discovery_invite(
+                        invite_code,
+                        &row.from_did,
+                    ) {
+                        Ok(code) => code,
+                        Err(_) => {
+                            tracing::warn!("Rejected peer invite with mismatched identity");
+                            continue;
+                        }
                     };
                     let row_id = row.id.clone();
                     let (data, _) = self.state_manager.get_snapshot().await;
@@ -373,7 +389,7 @@ impl RpcHandler {
                     let local_name = data.server_info.name.clone();
                     match crate::federation::accept_invite(
                         &self.config.data_dir,
-                        invite_code,
+                        &scoped_invite,
                         &local_did,
                         &local_onion,
                         &local_pubkey,
@@ -416,10 +432,11 @@ impl RpcHandler {
                                 .await;
                             }
 
-                            pending::set_state(
+                            pending::complete_outbound(
                                 &self.config.data_dir,
                                 &row_id,
-                                PendingState::Approved,
+                                &hs.from_nostr_pubkey,
+                                &node.did,
                             )
                             .await?;
                             applied_invites.push(node.did);
@@ -434,6 +451,7 @@ impl RpcHandler {
                     }
                 }
                 HandshakeMessage::PeerReject { reason } => {
+                    let _decision = pending::outbound_decision_guard().await;
                     let pendings = pending::load_pending(&self.config.data_dir).await?;
                     if let Some(row) = pendings.iter().find(|r| {
                         r.outbound

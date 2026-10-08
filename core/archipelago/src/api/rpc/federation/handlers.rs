@@ -602,14 +602,39 @@ impl RpcHandler {
             None
         };
 
+        // Reuse the minute collector instead of running expensive probes for
+        // every peer. An absent/stalled collector is unknown, never zero load.
+        let now = chrono::Utc::now().timestamp();
+        let latest = self
+            .metrics_store
+            .latest()
+            .await
+            .filter(|sample| (0..=180).contains(&now.saturating_sub(sample.timestamp)));
+        let metrics = latest.as_ref().map(|sample| &sample.system);
+        let uptime = tokio::fs::read_to_string("/proc/uptime")
+            .await
+            .ok()
+            .and_then(|s| s.split_whitespace().next()?.parse::<f64>().ok())
+            .filter(|v| v.is_finite() && *v >= 0.0)
+            .map(|v| v as u64);
         let state = federation::build_local_state(
             apps,
-            0.0,
-            0,
-            0,
-            0,
-            0,
-            0,
+            metrics
+                .map(|m| m.cpu_percent)
+                .filter(|v| v.is_finite() && (0.0..=100.0).contains(v)),
+            metrics
+                .filter(|m| m.mem_total_bytes > 0)
+                .map(|m| m.mem_used_bytes),
+            metrics
+                .filter(|m| m.mem_total_bytes > 0)
+                .map(|m| m.mem_total_bytes),
+            metrics
+                .filter(|m| m.disk_total_bytes > 0)
+                .map(|m| m.disk_used_bytes),
+            metrics
+                .filter(|m| m.disk_total_bytes > 0)
+                .map(|m| m.disk_total_bytes),
+            uptime,
             tor_active,
             server_name,
             nostr_npub,
@@ -1254,76 +1279,120 @@ impl RpcHandler {
             );
         }
 
+        let reply = self.prepare_peer_approval_reply(&req).await?;
+        // Persist the operator decision before transport. A relay outage must
+        // not require another approval or lose the already-authorized reply.
+        pending::decide(&self.config.data_dir, id, pending::PendingState::Approved).await?;
+        let delivered = self.deliver_peer_approval_reply(&reply).await?;
+        Ok(serde_json::json!({ "approved": true, "id": id, "delivery_pending": !delivered }))
+    }
+
+    async fn prepare_peer_approval_reply(
+        &self,
+        req: &pending::PendingPeerRequest,
+    ) -> Result<federation::handshake_delivery::ApprovalReply> {
+        use federation::handshake_delivery::{self, ApprovalReply};
+        if let Some(reply) = handshake_delivery::find(&self.config.data_dir, &req.id).await? {
+            anyhow::ensure!(
+                reply.recipient == req.from_nostr_pubkey && reply.expected_did == req.from_did,
+                "Approval recipient changed"
+            );
+            return Ok(reply);
+        }
         let (data, _) = self.state_manager.get_snapshot().await;
         let local_did = identity::did_key_from_pubkey_hex(&data.server_info.pubkey)?;
         let local_onion = data
             .server_info
             .tor_address
-            .clone()
+            .as_deref()
             .ok_or_else(|| anyhow::anyhow!("Tor address not available"))?;
-        let local_pubkey = data.server_info.pubkey.clone();
-
-        // Generate a one-shot federation invite. The code embeds OUR onion
-        // and OUR pubkey, but it leaves this box only inside the NIP-44
-        // ciphertext below.
-        let identity_dir = self.config.data_dir.join("identity");
-        let local_fips_npub = identity::fips_npub(&identity_dir).await.unwrap_or(None);
-        // Discovery/connection-request approvals admit the requester as
-        // Observer — the invite itself now carries that level, so both
-        // sides converge on Observer without post-hoc demotion.
+        let local_fips_npub = identity::fips_npub(&self.config.data_dir.join("identity"))
+            .await
+            .unwrap_or(None);
         let invite_code = federation::create_invite(
             &self.config.data_dir,
             &local_did,
-            &local_onion,
-            &local_pubkey,
+            local_onion,
+            &data.server_info.pubkey,
             local_fips_npub.as_deref(),
             TrustLevel::Observer,
         )
         .await?;
+        handshake_delivery::stage(
+            &self.config.data_dir,
+            ApprovalReply {
+                request_id: req.id.clone(),
+                recipient: req.from_nostr_pubkey.clone(),
+                expected_did: req.from_did.clone(),
+                invite_code,
+                attempts: 0,
+                next_attempt: 0,
+            },
+        )
+        .await
+    }
 
-        // Pre-add the requester to OUR federation list as Observer so that
-        // when their `federation.peer-joined` callback arrives over Tor we
-        // already trust their pubkey enough to accept the join. Their DID
-        // and pubkey come from the request — we'll cross-check the pubkey
-        // against the eventual peer-joined signature in the existing
-        // verification path (handlers.rs line ~365).
-        if !req.from_did.is_empty() {
-            // We don't know the requester's onion or ed25519 pubkey yet —
-            // they'll send those in the federation.peer-joined callback
-            // after they apply our invite. Until then we can't add a real
-            // FederatedNode entry. We just store the pending row as
-            // Approved so the UI shows progress, and trust the existing
-            // peer-joined handler to admit them as Observer when they call.
-            //
-            // Caveat: peer-joined currently hardcodes TrustLevel::Trusted.
-            // We override that below by demoting on success.
-            debug!(
-                requester_did = %req.from_did,
-                "Approval pending — waiting for federation.peer-joined callback over Tor"
-            );
-        }
-
-        // Encrypt + send the invite over NIP-44 to the requester.
-        let identity_dir = self.config.data_dir.join("identity");
-        nostr_handshake::send_peer_invite(
-            &identity_dir,
-            &req.from_nostr_pubkey,
-            &invite_code,
-            &self.config.nostr_relays,
+    async fn deliver_peer_approval_reply(
+        &self,
+        reply: &federation::handshake_delivery::ApprovalReply,
+    ) -> Result<bool> {
+        let Some(claimed) = federation::handshake_delivery::claim(
+            &self.config.data_dir,
+            &reply.request_id,
+            chrono::Utc::now().timestamp(),
+        )
+        .await?
+        else {
+            return Ok(false);
+        };
+        let result = nostr_handshake::send_peer_invite(
+            &self.config.data_dir.join("identity"),
+            &claimed.recipient,
+            &claimed.invite_code,
+            &self.handshake_relays().await,
             self.config.nostr_tor_proxy.as_deref(),
         )
-        .await?;
+        .await;
+        if result.is_err() {
+            warn!(request_id = %reply.request_id, "Peer approval delivery deferred; durable retry scheduled");
+        }
+        Ok(result.is_ok())
+    }
 
-        pending::set_state(&self.config.data_dir, id, pending::PendingState::Approved).await?;
-        info!(
-            id = %id,
-            from = %req.from_nostr_pubkey,
-            "Approved peer request and shipped invite over NIP-44"
-        );
-        Ok(serde_json::json!({
-            "approved": true,
-            "id": id,
-        }))
+    /// Recover relay loss and legacy approvals without changing trust or
+    /// resurrecting a node that the operator explicitly removed.
+    pub(in crate::api::rpc) async fn retry_peer_approval_replies(&self) -> Result<()> {
+        let requests = pending::load_pending(&self.config.data_dir).await?;
+        let nodes = federation::load_nodes(&self.config.data_dir).await?;
+        let removed = federation::load_removed_dids(&self.config.data_dir).await?;
+        let cutoff = chrono::Utc::now() - chrono::Duration::days(30);
+        let mut sent = 0;
+        for req in requests {
+            if req.outbound || req.state != pending::PendingState::Approved {
+                federation::handshake_delivery::remove(&self.config.data_dir, &req.id).await?;
+                continue;
+            }
+            let expired = chrono::DateTime::parse_from_rfc3339(&req.received_at)
+                .map(|time| time < cutoff)
+                .unwrap_or(true);
+            if expired
+                || removed.contains(&req.from_did)
+                || nodes.iter().any(|node| node.did == req.from_did)
+            {
+                federation::handshake_delivery::remove(&self.config.data_dir, &req.id).await?;
+                continue;
+            }
+            if req.from_did.is_empty() || sent >= 4 {
+                continue;
+            }
+            let reply = self.prepare_peer_approval_reply(&req).await?;
+            if reply.next_attempt > chrono::Utc::now().timestamp() {
+                continue;
+            }
+            self.deliver_peer_approval_reply(&reply).await?;
+            sent += 1;
+        }
+        Ok(())
     }
 
     /// federation.reject-request — drop a pending request and, if requested,
@@ -1353,19 +1422,19 @@ impl RpcHandler {
             );
         }
 
+        pending::decide(&self.config.data_dir, id, pending::PendingState::Rejected).await?;
         if notify {
             let identity_dir = self.config.data_dir.join("identity");
             let _ = nostr_handshake::send_peer_reject(
                 &identity_dir,
                 &req.from_nostr_pubkey,
                 reason,
-                &self.config.nostr_relays,
+                &self.handshake_relays().await,
                 self.config.nostr_tor_proxy.as_deref(),
             )
             .await;
         }
 
-        pending::set_state(&self.config.data_dir, id, pending::PendingState::Rejected).await?;
         info!(id = %id, from = %req.from_nostr_pubkey, "Rejected peer request");
         Ok(serde_json::json!({ "rejected": true, "id": id }))
     }
@@ -1391,16 +1460,7 @@ impl RpcHandler {
             .and_then(|v| v.as_bool())
             .unwrap_or(true);
 
-        let req = pending::find_by_id(&self.config.data_dir, id)
-            .await?
-            .ok_or_else(|| anyhow::anyhow!("Pending request not found: {}", id))?;
-        if !req.outbound || !matches!(req.state, pending::PendingState::Sent) {
-            anyhow::bail!(
-                "Can only cancel outbound requests in Sent state (outbound={}, state={:?})",
-                req.outbound,
-                req.state
-            );
-        }
+        let req = pending::cancel_outbound(&self.config.data_dir, id).await?;
 
         if notify {
             let identity_dir = self.config.data_dir.join("identity");
@@ -1410,7 +1470,7 @@ impl RpcHandler {
                 &identity_dir,
                 &req.from_nostr_pubkey,
                 reason,
-                &self.config.nostr_relays,
+                &self.handshake_relays().await,
                 self.config.nostr_tor_proxy.as_deref(),
             )
             .await
@@ -1423,7 +1483,6 @@ impl RpcHandler {
             }
         }
 
-        pending::delete(&self.config.data_dir, id).await?;
         info!(id = %id, to = %req.from_nostr_pubkey, notified = notify, "Cancelled outbound peer request");
         Ok(serde_json::json!({ "cancelled": true, "id": id, "notified": notify }))
     }

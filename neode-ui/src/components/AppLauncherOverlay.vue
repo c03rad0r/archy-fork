@@ -92,6 +92,9 @@
               @error="onIframeError"
             />
 
+            <AppSlowLoadNotice v-if="slowLoad && !iframeBlocked" :title="store.title || 'App'"
+              @refresh="refreshIframe" @dismiss-slow-load="slowLoad = false" />
+
             <!-- Iframe blocked fallback -->
             <Transition name="content-fade">
               <div v-if="iframeBlocked && !iframeLoading" class="absolute inset-0 z-10 flex flex-col items-center justify-center">
@@ -178,6 +181,10 @@
               </div>
             </Transition>
 
+            <RentalPurchaseConsent v-if="!store.showConsent && !showIdentityPicker && !store.registrationRequest" :request="store.rentalRequest" :quote="store.rentalQuote" :phase="store.rentalPhase" :progress="store.rentalProgress" :error="store.rentalError" @cancel-unpaid="store.cancelUnpaidRental" @review="store.reviewRental" @approve="store.approveRental" @cancel="store.cancelRental" />
+            <MediaRegistrationConsent v-if="!store.showConsent"
+              :request="store.registrationRequest" :phase="store.registrationPhase" :error="store.registrationError"
+              @approve="store.approveRegistration" @resolve="store.approveRegistrationResolution" @cancel="store.cancelRegistration" />
             <NostrSignConsent
               :show="store.showConsent"
               :app-name="store.consentRequest?.appName ?? ''"
@@ -208,8 +215,11 @@
 import { ref, computed, watch, onMounted, onBeforeUnmount } from 'vue'
 import { useAppLauncherStore } from '@/stores/appLauncher'
 import NostrSignConsent from '@/components/NostrSignConsent.vue'
+import MediaRegistrationConsent from '@/components/MediaRegistrationConsent.vue'
+import RentalPurchaseConsent from '@/components/RentalPurchaseConsent.vue'
 import NostrIdentityPicker from '@/components/NostrIdentityPicker.vue'
 import AppLoadingScreen from '@/components/AppLoadingScreen.vue'
+import AppSlowLoadNotice from '@/components/AppSlowLoadNotice.vue'
 import PaymentSuccessPane, { type SuccessRow } from '@/components/PaymentSuccessPane.vue'
 import { DEFAULT_APP_ICON } from '@/views/apps/appsConfig'
 import { rpcClient } from '@/api/rpc-client'
@@ -229,10 +239,12 @@ interface PaymentRequest {
 const store = useAppLauncherStore()
 const closeBtnRef = ref<HTMLButtonElement | null>(null)
 const iframeRef = ref<HTMLIFrameElement | null>(null)
+watch(iframeRef, frame => store.setNostrFrame(frame?.contentWindow || null), { flush: 'post' })
 const iframeRefreshKey = ref(0)
 const isRefreshing = ref(false)
 const iframeLoading = ref(true)
 const iframeBlocked = ref(false)
+const slowLoad = ref(false)
 
 // Best-guess icon for the loading screen — resolved from the /app/{id}/ path
 // when present; AppLoadingScreen's <img> falls back to the default icon if the
@@ -269,6 +281,7 @@ watch(iframeLoading, (loading) => {
 
 // Nostr identity picker state
 const showIdentityPicker = ref(false)
+watch(showIdentityPicker, value => store.setNativeIdentityBusy(value), { flush: 'sync' })
 const IDENTITY_STORAGE_KEY = 'archipelago_app_identity_'
 
 interface SelectedIdentity {
@@ -365,12 +378,14 @@ function refreshIframe() {
   isRefreshing.value = true
   iframeLoading.value = true
   iframeBlocked.value = false
+  slowLoad.value = false
   clearTimers()
   iframeRefreshKey.value++
   loadTimeoutId = setTimeout(() => {
     if (iframeLoading.value) {
       iframeLoading.value = false
-      iframeBlocked.value = true
+      isRefreshing.value = false
+      slowLoad.value = true
     }
   }, 15000)
 }
@@ -399,6 +414,8 @@ function openInNewTabAndClose() {
 }
 
 function onIframeLoad() {
+  slowLoad.value = false
+  iframeBlocked.value = false
   injectScrollbarHideIfSameOrigin()
   isRefreshing.value = false
   iframeLoading.value = false
@@ -412,6 +429,8 @@ function onIframeLoad() {
 }
 
 function onIframeError() {
+  slowLoad.value = false
+  isRefreshing.value = false
   clearTimers()
   iframeLoading.value = false
   iframeBlocked.value = true
@@ -653,12 +672,14 @@ watch(
     if (open) {
       iframeLoading.value = true
       iframeBlocked.value = false
+      slowLoad.value = false
       clearTimers()
-      // Set max load timeout — if iframe never fires load, show fallback
+      // Keep a slow navigation alive; its eventual load clears this notice.
       loadTimeoutId = setTimeout(() => {
         if (iframeLoading.value) {
           iframeLoading.value = false
-          iframeBlocked.value = true
+          isRefreshing.value = false
+          slowLoad.value = true
         }
       }, 15000)
       closeBtnRef.value?.focus()
@@ -666,6 +687,7 @@ watch(
       isRefreshing.value = false
       iframeLoading.value = true
       iframeBlocked.value = false
+      slowLoad.value = false
       clearTimers()
       // Clear any pending payment when closing
       if (pendingPayment.value) {
@@ -682,6 +704,7 @@ onMounted(() => {
 })
 
 onBeforeUnmount(() => {
+  store.setNostrFrame(null)
   clearTimers()
   stopProgress()
   window.removeEventListener('keydown', onKeyDown, true)

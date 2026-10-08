@@ -39,7 +39,8 @@
         :must-open-new-tab="mustOpenNewTab"
         :auto-retry-count="autoRetryCount"
         :refresh-key="refreshKey"
-        :ui-ready-blocked="packageEntry?.['ui-ready'] === false"
+        :ui-ready-blocked="uiReadyBlocked"
+        :slow-load="slowLoad"
         :blocked-reason="blockedReason"
         :blocked-title="blockedTitle"
         :warming-up="warmingUp"
@@ -48,6 +49,7 @@
         @iframe-error="onError"
         @refresh="refresh"
         @open-new-tab-and-back="openNewTabAndBack"
+        @dismiss-slow-load="slowLoad = false"
       />
 
       <!-- Mobile: gamepad for botfights (with utility buttons), browser bar for everything else -->
@@ -89,6 +91,10 @@
 
       <!-- Host-owned signer stays inside the active app surface. This keeps
            the context visible and works unchanged in the companion WebView. -->
+      <RentalPurchaseConsent v-if="!nostrBridge.showConsent.value && !showIdentityPicker && !registrationBridge.request.value" :request="rentalBridge.request.value" :quote="rentalBridge.quote.value" :phase="rentalBridge.phase.value" :progress="rentalBridge.progress.value" :error="rentalBridge.error.value" @cancel-unpaid="rentalBridge.cancelUnpaid" @review="rentalBridge.review" @approve="rentalBridge.approve" @cancel="rentalBridge.cancel" />
+      <MediaRegistrationConsent v-if="!nostrBridge.showConsent.value"
+        :request="registrationBridge.request.value" :phase="registrationBridge.phase.value"
+        :error="registrationBridge.error.value" @approve="registrationBridge.approve" @resolve="registrationBridge.approveResolution" @cancel="registrationBridge.cancel" />
       <NostrSignConsent
         :show="nostrBridge.showConsent.value"
         :app-name="nostrBridge.consentRequest.value?.appName ?? appTitle"
@@ -121,16 +127,21 @@ import { useAppStore } from '@/stores/app'
 import { useScreensaverStore } from '@/stores/screensaver'
 import NostrIdentityPicker from '@/components/NostrIdentityPicker.vue'
 import NostrSignConsent from '@/components/NostrSignConsent.vue'
+import MediaRegistrationConsent from '@/components/MediaRegistrationConsent.vue'
+import RentalPurchaseConsent from '@/components/RentalPurchaseConsent.vue'
+import { useMediaRegistrationBridge } from '@/composables/useMediaRegistrationBridge'
+import { useRentalPurchaseBridge } from '@/composables/useRentalPurchaseBridge'
 import { isAutoTabApp, rememberAutoTabApp, forgetAutoTabApp } from '@/utils/autoTabApps'
 import AppSessionHeader from './appSession/AppSessionHeader.vue'
 import AppSessionFrame from './appSession/AppSessionFrame.vue'
 import MobileGamepad from './appSession/MobileGamepad.vue'
 import {
   type DisplayMode, DISPLAY_MODE_KEY, NEW_TAB_APPS, IFRAME_BLOCKED_APPS,
-  initialDisplayMode, resolveAppUrl, resolveAppTitle,
+  initialDisplayMode, resolveAppUrl, resolveAppTitle, canonicalAppUrl,
 } from './appSession/appSessionConfig'
 import { launchBlockedReason, resolveAppIcon } from './apps/appsConfig'
 import { PackageState } from '@/types/api'
+import { useAppMediaBridge } from '@/composables/useAppMediaBridge'
 import { useAppIdentity } from './appSession/useAppIdentity'
 import { useNostrBridge } from './appSession/useNostrBridge'
 import { openExternalUrl, openInAppOrNewTab } from '@/utils/openExternal'
@@ -141,6 +152,7 @@ const props = defineProps<{
   appIdProp?: string
   /** Deep-link path inside the app (store-driven sessions), e.g. /tx/<hash> */
   pathProp?: string
+  suspended?: boolean
 }>()
 
 const emit = defineEmits<{
@@ -160,6 +172,8 @@ const frameRef = ref<InstanceType<typeof AppSessionFrame> | null>(null)
 const loading = ref(true)
 const isRefreshing = ref(false)
 const iframeBlocked = ref(false)
+const slowLoad = ref(false)
+const loadedAppUrl = ref('')
 const refreshKey = ref(0)
 const showIdentityPicker = ref(false)
 const autoRetryCount = ref(0)
@@ -179,8 +193,8 @@ const appId = computed(() => {
 // Display mode -- per-app user choice → per-app default → last global → panel
 const displayMode = ref<DisplayMode>(initialDisplayMode(appId.value))
 
-const appTitle = computed(() => resolveAppTitle(appId.value))
 const packageEntry = computed(() => store.data?.['package-data']?.[appId.value] || null)
+const appTitle = computed(() => packageEntry.value?.manifest?.title || resolveAppTitle(appId.value))
 const appIcon = computed(() =>
   packageEntry.value
     ? resolveAppIcon(appId.value, packageEntry.value)
@@ -222,7 +236,7 @@ const mustOpenNewTab = computed(() =>
   (IS_DEMO && isDemoExternal(appId.value))
 )
 
-// The auto-tab detector: the load-timeout marked the frame blocked, the
+// The auto-tab detector: an actual frame error marked the frame blocked, the
 // warming-up retry loop has given up, and the backend says the app is
 // actually RUNNING — that combination is the embed-refusal signature (a
 // down app is "warming up" or shows a blocked reason instead). Remember it
@@ -265,8 +279,14 @@ const screensaverSuppressedApps = new Set([
 const appUrl = computed(() => {
   const runtimeUrl = store.data?.['package-data']?.[appId.value]?.installed?.['interface-addresses']?.main?.['lan-address'] || undefined
   const deepPath = props.pathProp ?? (route.query.path as string | undefined)
-  return resolveAppUrl(appId.value, deepPath, runtimeUrl)
+  return canonicalAppUrl(resolveAppUrl(appId.value, deepPath, runtimeUrl))
 })
+
+// Readiness protects a first load. A transient background probe must not tear
+// down an already loaded login, upload or player and discard its session state.
+const uiReadyBlocked = computed(() =>
+  packageEntry.value?.['ui-ready'] === false && loadedAppUrl.value !== appUrl.value
+)
 
 function closeRouteSession() {
   const fallback = route.query.returnTo
@@ -279,14 +299,35 @@ function closeRouteSession() {
 // --- Identity & Nostr bridge ---
 
 const iframeRef = computed(() => frameRef.value?.iframeRef ?? null)
+const mediaBridge = useAppMediaBridge(appId, appUrl, iframeRef, computed(() => !props.suspended))
 
+const registrationBridge = useMediaRegistrationBridge({
+  consentBusy: (): boolean => rentalBridge.isBusy(),
+  appId: () => appId.value, appUrl: () => appUrl.value,
+  frameWindow: () => props.suspended ? null : iframeRef.value?.contentWindow ?? null,
+})
+const rentalBridge = useRentalPurchaseBridge({
+  consentBusy: (): boolean => nostrBridge.showConsent.value || showIdentityPicker.value || registrationBridge.isBusy(),
+  appId: () => appId.value, appUrl: () => appUrl.value,
+  frameWindow: () => props.suspended ? null : iframeRef.value?.contentWindow ?? null,
+})
 const identity = useAppIdentity(appId, iframeRef, showIdentityPicker)
 const nostrBridge = useNostrBridge(identity.getStoredIdentity, {
   appId: () => appId.value,
   appName: () => appTitle.value,
   appUrl: () => appUrl.value,
-  frameWindow: () => iframeRef.value?.contentWindow ?? null,
+  frameWindow: () => props.suspended ? null : iframeRef.value?.contentWindow ?? null,
 })
+
+// An actual destination change invalidates consent queued for the previous app page.
+watch(() => props.suspended, suspended => { if (suspended) { nostrBridge.cancelPending(); registrationBridge.cancel(); rentalBridge.cancel() } }, { flush: 'sync' })
+
+watch(appUrl, () => {
+  loadedAppUrl.value = ''
+  slowLoad.value = false
+  nostrBridge.cancelPending()
+  registrationBridge.cancel(); rentalBridge.cancel()
+}, { flush: 'sync' })
 
 // --- Display mode ---
 
@@ -342,6 +383,7 @@ function syncInlineRect() {
 }
 
 const inlineRectStyle = computed<Record<string, string> | undefined>(() => {
+  if (props.suspended) return { display: 'none' }
   if (!inlinePanelMode.value) return undefined
   const r = inlineRect.value
   // Never paint the inline backdrop over the whole viewport while unmeasured.
@@ -378,13 +420,13 @@ const panelClasses = computed(() => {
 
 // A cold/restarting upstream is held outside the iframe. Start one fresh
 // load when the scanner observes HTTP readiness; no manual refresh required.
-watch(() => packageEntry.value?.['ui-ready'], (ready, previous) => {
-  if (ready === false) {
+watch(uiReadyBlocked, (blocked, previous) => {
+  if (blocked) {
     if (loadTimeoutId) clearTimeout(loadTimeoutId)
     if (autoRetryId) clearTimeout(autoRetryId)
     if (iframeCheckId) clearTimeout(iframeCheckId)
     loading.value = false
-  } else if (previous === false && ready === true) {
+  } else if (previous === true && !blocked) {
     autoRetryCount.value = 0
     refresh()
   }
@@ -393,6 +435,10 @@ watch(() => packageEntry.value?.['ui-ready'], (ready, previous) => {
 // --- Lifecycle handlers ---
 
 function onLoad() {
+  loadedAppUrl.value = appUrl.value
+  slowLoad.value = false
+  iframeBlocked.value = false
+  mediaBridge.connect()
   if (loadTimeoutId) { clearTimeout(loadTimeoutId); loadTimeoutId = null }
   if (autoRetryId) { clearTimeout(autoRetryId); autoRetryId = null }
   loading.value = false
@@ -404,7 +450,7 @@ function onLoad() {
   forgetAutoTabApp(appId.value)
   // TV/keyboard: hand focus to the app so keys (incl. the gamepad bridge's
   // virtual keyboard) flow into the iframe without needing a pointer click.
-  try { frameRef.value?.iframeRef?.focus() } catch { /* cross-origin is fine */ }
+  try { if (!props.suspended) frameRef.value?.iframeRef?.focus() } catch { /* cross-origin is fine */ }
   // Check if iframe actually loaded content (same-origin only)
   iframeCheckId = setTimeout(() => {
     try {
@@ -424,6 +470,8 @@ function onLoad() {
 }
 
 function onError() {
+  loadedAppUrl.value = ''
+  slowLoad.value = false
   if (loadTimeoutId) { clearTimeout(loadTimeoutId); loadTimeoutId = null }
   loading.value = false
   isRefreshing.value = false
@@ -438,6 +486,8 @@ function onError() {
 }
 
 function refresh() {
+  loadedAppUrl.value = ''
+  slowLoad.value = false
   if (autoRetryId) { clearTimeout(autoRetryId); autoRetryId = null }
   isRefreshing.value = true
   loading.value = true
@@ -448,23 +498,26 @@ function refresh() {
 
 function startLoadTimeout() {
   if (loadTimeoutId) clearTimeout(loadTimeoutId)
-  if (packageEntry.value?.['ui-ready'] === false) return
+  if (uiReadyBlocked.value) return
   loadTimeoutId = setTimeout(() => {
     if (loading.value) {
       loading.value = false
-      iframeBlocked.value = true
+      isRefreshing.value = false
+      // Removing the iframe here aborted slow navigation before its load event
+      // could recover it. Keep the actual frame and offer non-blocking feedback.
+      slowLoad.value = true
     }
   }, 12000)
 }
 
 function openNewTabAndBack() {
-  if (packageEntry.value?.['ui-ready'] === false) return
+  if (uiReadyBlocked.value) return
   if (appUrl.value) openExternalUrl(appUrl.value)
   closeSession()
 }
 
 function openNewTab() {
-  if (packageEntry.value?.['ui-ready'] === false) return
+  if (uiReadyBlocked.value) return
   if (appUrl.value) openExternalUrl(appUrl.value)
 }
 
@@ -481,13 +534,15 @@ function handleBackdropClick() {
 }
 
 function closeSession() {
-  if (nostrBridge.showConsent.value) nostrBridge.denyConsent()
+  nostrBridge.cancelPending()
+  registrationBridge.cancel(); rentalBridge.cancel()
   if (document.fullscreenElement) document.exitFullscreen().catch(() => {})
   if (isInlinePanel.value) emit('close')
   else closeRouteSession()
 }
 
 function onKeyDown(e: KeyboardEvent) {
+  if (props.suspended) return
   if (e.key === 'Escape') {
     if (nostrBridge.showConsent.value) {
       nostrBridge.denyConsent()
@@ -508,6 +563,10 @@ function onFullscreenChange() {
 }
 
 function onMessage(e: MessageEvent) {
+  if (e.source !== iframeRef.value?.contentWindow) return
+  mediaBridge.handle(e)
+  if (props.suspended) return
+  void registrationBridge.handle(e); void rentalBridge.handle(e)
   if (e.data?.type === 'nostr-request') nostrBridge.handleNostrRequest(e)
   if (e.data?.type === 'archipelago:identity:request') identity.handleIdentityRequest(e.data?.force === true)
   if (e.data?.type === 'archipelago:media:playing') screensaverStore.suppress(screensaverReason.value)
@@ -569,6 +628,8 @@ onMounted(() => {
 })
 
 onBeforeUnmount(() => {
+  nostrBridge.dispose()
+  registrationBridge.dispose(); rentalBridge.dispose()
   if (loadTimeoutId) clearTimeout(loadTimeoutId)
   if (autoRetryId) clearTimeout(autoRetryId)
   if (iframeCheckId) clearTimeout(iframeCheckId)

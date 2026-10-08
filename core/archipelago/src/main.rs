@@ -40,11 +40,20 @@ mod ceremony;
 mod config;
 mod constants;
 mod container;
+mod content_auth;
 mod content_hash;
 mod content_indeehub;
 mod content_invoice;
+mod content_lightning;
+mod content_onchain;
+mod content_onchain_plan;
+mod content_onchain_seller;
 mod content_owned;
+mod content_payment_admission;
+mod content_purchase;
+mod content_purchase_executor;
 mod content_server;
+mod content_snapshot;
 mod crash_recovery;
 mod credentials;
 mod data_model;
@@ -60,6 +69,8 @@ mod host_ip;
 mod identity;
 mod identity_manager;
 mod marketplace;
+mod media_registration;
+mod media_stream;
 mod mesh;
 mod mesh_ports;
 mod monitoring;
@@ -74,11 +85,16 @@ mod nostr_relays;
 mod nostr_security_tests;
 mod peers;
 mod port_allocator;
+mod prepared_media;
 mod rate_limit;
+mod registered_media;
+mod rental_chunk_index;
+mod rental_readiness;
 pub mod seed;
 mod server;
 mod session;
 mod settings;
+mod snapshot_budget;
 mod state;
 mod storage_crypto;
 mod streaming;
@@ -108,6 +124,34 @@ async fn main() -> Result<()> {
         return ceremony::run();
     }
 
+    if std::env::args().nth(1).as_deref() == Some("prepare-indeehub-update") {
+        let args: Vec<_> = std::env::args_os().skip(2).collect();
+        anyhow::ensure!(
+            args.len() == 1,
+            "Usage: archipelago prepare-indeehub-update DATA_DIR"
+        );
+        container::supervised_runtime::preserve_reviewed_indeehub_originals(std::path::Path::new(
+            &args[0],
+        ))
+        .await?;
+        println!("Seven original IndeeHub recipes preserved; no services or catalog changed");
+        return Ok(());
+    }
+
+    if std::env::args().nth(1).as_deref() == Some("prepare-indeehub-registration") {
+        let args: Vec<_> = std::env::args_os().skip(2).collect();
+        anyhow::ensure!(args.len() == 3,
+            "Usage: archipelago prepare-indeehub-registration DATA_DIR MANIFEST_JSON PRIVATE_OUTPUT_JSON");
+        container::registration_pin::prepare_indeehub_manifest(
+            std::path::Path::new(&args[0]),
+            std::path::Path::new(&args[1]),
+            std::path::Path::new(&args[2]),
+        )
+        .await?;
+        println!("IndeeHub manifest prepared; registration and publication remain disabled");
+        return Ok(());
+    }
+
     // Plain CLI flags must never boot the daemon (a stray `--version` used to
     // start a second instance next to the systemd one). Handled before any
     // tracing/state init so stdout stays clean.
@@ -129,6 +173,10 @@ async fn main() -> Result<()> {
             println!();
             println!("Commands:");
             println!("  ceremony <gen|pubkey|sign|verify>  Release-root signing ceremony");
+            println!("  prepare-indeehub-registration DATA_DIR MANIFEST_JSON PRIVATE_OUTPUT_JSON");
+            println!(
+                "  prepare-indeehub-update DATA_DIR  Preserve reviewed original managed recipes"
+            );
             println!();
             println!("Options:");
             println!("  -V, --version  Print version and exit");
@@ -236,7 +284,7 @@ async fn main() -> Result<()> {
                 "🔧 Recovering {} containers from previous crash...",
                 containers.len()
             );
-            let report = crash_recovery::recover_containers(&containers).await;
+            let report = crash_recovery::recover_containers(&config.data_dir, &containers).await;
             info!(
                 "🔧 Recovery complete: {}/{} containers restarted (failed: {:?})",
                 report.recovered, report.total, report.failed
@@ -576,3 +624,15 @@ async fn main() -> Result<()> {
     // crash in `systemctl status`.
     std::process::exit(0);
 }
+
+mod content_purchase_protocol;
+
+mod content_purchase_caller;
+
+mod content_purchase_transport;
+
+mod content_purchase_download;
+
+mod content_cloud_offer;
+
+mod playback_handles;

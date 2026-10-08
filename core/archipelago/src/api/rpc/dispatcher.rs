@@ -322,6 +322,8 @@ impl RpcHandler {
             // Content catalog management
             "content.list-mine" => self.handle_content_list_mine().await,
             "content.add" => self.handle_content_add(params).await,
+            "content.publish" => self.handle_content_publish(params).await,
+            "content.configure" => self.handle_content_configure(params).await,
             "content.remove" => self.handle_content_remove(params).await,
             "content.set-pricing" => self.handle_content_set_pricing(params).await,
             "content.set-availability" => self.handle_content_set_availability(params).await,
@@ -330,6 +332,43 @@ impl RpcHandler {
             "content.download-peer-paid" => self.handle_content_download_peer_paid(params).await,
             "content.indeehub-projects" => self.handle_content_indeehub_projects().await,
             "content.browse-all-peers" => self.handle_content_browse_all_peers().await,
+            "content.playback-handle" => self.handle_playback_handle(params, session_token).await,
+            "content.playback-prepare" => self.handle_playback_prepare(params, session_token).await,
+            "content.playback-start" => self.handle_playback_start(params, session_token).await,
+            "content.playback-status" => self.handle_playback_status(params, session_token).await,
+            "content.rental-purchase" => self.handle_content_rental_purchase(params).await,
+            "content.onchain-cancel" => self.handle_onchain_operation(params, "cancel").await,
+            "content.onchain-attempt" => self.handle_onchain_operation(params, "lookup").await,
+            "content.onchain-create" => self.handle_onchain_operation(params, "create").await,
+            "content.onchain-expose" => self.handle_onchain_operation(params, "expose").await,
+            "content.onchain-prepare" => self.handle_onchain_operation(params, "prepare").await,
+            "content.onchain-pay" => self.handle_onchain_operation(params, "pay").await,
+            "content.onchain-recover" => self.handle_onchain_operation(params, "status").await,
+            "content.onchain-download" => self.handle_onchain_operation(params, "download").await,
+            "content.invoice-pay" => self.handle_lightning_operation(params, "pay").await,
+            "content.invoice-download" => self.handle_lightning_operation(params, "download").await,
+            "content.invoice-attempt" => self.handle_lightning_operation(params, "lookup").await,
+            "content.invoice-retry-native" => {
+                self.handle_lightning_operation(params, "retry").await
+            }
+            "content.invoice-create" => self.handle_lightning_operation(params, "create").await,
+            "content.invoice-recover" => self.handle_lightning_operation(params, "status").await,
+            "content.invoice-cancel" => self.handle_lightning_operation(params, "cancel").await,
+            "content.purchase" => self.handle_content_purchase(params).await,
+            "content.cancel-purchase" => self.handle_content_cancel_purchase(params).await,
+            "content.payment-status" => self.handle_content_payment_status(params).await,
+            "media.registration.context" => {
+                self.handle_media_registration_context(params.unwrap_or_default())
+                    .await
+            }
+            "media.registration.prepare" => {
+                self.handle_media_registration_prepare(params.unwrap_or_default())
+                    .await
+            }
+            "media.registration.resolve" => {
+                self.handle_media_registration_resolve(params.unwrap_or_default())
+                    .await
+            }
             "content.owned-list" => self.handle_content_owned_list().await,
             "content.owned-get" => self.handle_content_owned_get(params).await,
             "content.request-invoice" => self.handle_content_request_invoice(params).await,

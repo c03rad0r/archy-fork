@@ -1,5 +1,9 @@
 <template>
-  <div class="space-y-4">
+  <div v-if="embedded" class="space-y-3">
+    <p class="text-sm">AI connections and private keys are managed by this node.</p>
+    <button class="rounded-lg px-3 py-2 bg-white/10 text-sm" @click="archyBridge.requestAISetup()">Manage AI connection</button>
+  </div>
+  <div v-else class="space-y-4">
     <h3 class="text-sm font-bold" :class="isDark ? 'text-white/90' : 'text-gray-900'">
       API Keys
     </h3>
@@ -93,10 +97,12 @@
 </template>
 
 <script setup lang="ts">
+import { archyBridge } from '@/services/archyBridge'
 import { ref, onMounted } from 'vue'
 import { useTheme } from '@/composables/useTheme'
 import { storeApiKey, getApiKey, deleteApiKey, listProviders, maskApiKey } from '@/utils/key-vault'
 
+const embedded = archyBridge.isInArchy()
 const { isDark } = useTheme()
 
 interface ProviderInfo {
@@ -156,5 +162,5 @@ async function removeKey(provider: string) {
   await loadProviders()
 }
 
-onMounted(loadProviders)
+onMounted(() => { if (!embedded) void loadProviders() })
 </script>

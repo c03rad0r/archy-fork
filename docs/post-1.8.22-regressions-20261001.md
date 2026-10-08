@@ -68,6 +68,12 @@ acceptance; this is a new paid-file incident.
       below, with explicit additional/total fee preview, budget, live eligibility,
       RBF/CPFP distinction and durable operation tracking. Include in next-update
       scope alongside Fast defaults; do not infer completion from this plan.
+- [ ] **Bump-quote wallet-change failure UX:** Framework's read-only check on
+      2026-10-07 returned `Not enough wallet change for this fee; choose a lower
+      rate` three times and did not submit a transaction. Preflight must calculate
+      spendable change against the requested rate and budget, explain the shortfall,
+      suggest a viable rate/budget, and stop duplicate quote retries without
+      altering the wallet or original transaction.
 
 - [x] Resolve the tester's missing-file recovery request: operator confirmed on
       2026-10-02 that the tester received the file from Amish Paradise and accepts

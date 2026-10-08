@@ -20,8 +20,13 @@ impl RpcHandler {
                     .package_data
                     .entry(package_id.to_string())
                     .or_insert_with(|| create_installing_entry(package_id));
-                entry.ui_ready = Some(false);
-                entry.state = PackageState::Installing;
+                // Image pulls also report byte progress during updates, including
+                // the local immutable-image shortcut. Preserve the RPC owner so
+                // update failure cleanup can release its transitional state.
+                if entry.state != PackageState::Updating {
+                    entry.ui_ready = Some(false);
+                    entry.state = PackageState::Installing;
+                }
                 let existing_phase = entry.install_progress.as_ref().and_then(|p| p.phase);
                 entry.install_progress = Some(InstallProgress {
                     size,
@@ -145,9 +150,9 @@ impl RpcHandler {
     }
 }
 
-/// Create a minimal PackageDataEntry for a package being installed.
-fn create_installing_entry(package_id: &str) -> PackageDataEntry {
-    PackageDataEntry {
+/// Seed an Installing entry from its manifest before any container exists.
+pub(super) fn create_installing_entry(package_id: &str) -> PackageDataEntry {
+    let mut entry = PackageDataEntry {
         ui_ready: None,
         state: PackageState::Installing,
         health: None,
@@ -155,10 +160,8 @@ fn create_installing_entry(package_id: &str) -> PackageDataEntry {
         static_files: StaticFiles {
             license: String::new(),
             instructions: String::new(),
-            // Empty icon: hardcoding `<id>.png` is wrong for apps that use
-            // `.svg` or `.webp` assets and produces a broken-image flicker.
-            // The frontend's `icon` computed falls through to the curated
-            // map which has correct extensions for known apps.
+            // Filled below from the manifest, without guessing the extension.
+            // Unmanifested apps can still use the frontend catalog fallback.
             icon: String::new(),
         },
         manifest: Manifest {
@@ -185,7 +188,9 @@ fn create_installing_entry(package_id: &str) -> PackageDataEntry {
         install_progress: None,
         uninstall_stage: None,
         available_update: None,
-    }
+    };
+    crate::container::docker_packages::apply_manifest_presentation(package_id, &mut entry);
+    entry
 }
 
 /// Parse podman pull progress output.

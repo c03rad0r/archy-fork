@@ -58,6 +58,12 @@
       </div>
     </div>
 
+    <div class="glass-card p-4 mb-6 flex flex-wrap items-center gap-3">
+      <RouterLink :to="{ name: 'federation', query: { view: 'discover', from: 'fleet' } }" class="glass-button px-4 py-2 rounded-lg text-sm">Connect with Nodes</RouterLink>
+      <RouterLink :to="{ name: 'federation', query: { view: 'discover', from: 'fleet', intent: 'own' } }" class="glass-button px-4 py-2 rounded-lg text-sm">Link your own nodes</RouterLink>
+      <p class="w-full text-xs text-white/60">Peer connections use Observer access. Linking your own nodes requires the existing ownership confirmation for Trusted access.</p>
+    </div>
+
     <!-- Loading State -->
     <div v-if="fleet.loading.value" class="flex items-center justify-center py-20">
       <div class="glass-card p-8 max-w-md text-center">
@@ -71,17 +77,24 @@
     </div>
 
     <!-- Error State -->
-    <div v-else-if="fleet.errorMessage.value" class="glass-card p-6 mb-6">
+    <div v-else-if="fleet.errorMessage.value && !fleet.nodes.value.length" class="glass-card p-6 mb-6">
       <div class="alert-error rounded-lg mb-4">{{ fleet.errorMessage.value }}</div>
       <button class="glass-button text-sm px-4 py-2" @click="fleet.refreshAll">Retry</button>
     </div>
 
     <!-- Dashboard Content -->
     <template v-else>
+      <div v-if="fleet.errorMessage.value" role="status" class="glass-card p-4 mb-4 flex flex-wrap items-center gap-3">
+        <p class="text-sm text-white/80 flex-1 min-w-0">{{ fleet.errorMessage.value }}</p>
+        <button class="glass-button text-sm px-4 py-2 disabled:opacity-50" :disabled="fleet.refreshing.value" @click="fleet.refreshAll">
+          {{ fleet.refreshing.value ? 'Retrying...' : 'Retry' }}
+        </button>
+      </div>
       <FleetOverviewCards
         :node-count="fleet.nodes.value.length"
         :online-count="fleet.onlineCount.value"
         :offline-count="fleet.offlineCount.value"
+        :unknown-count="fleet.unknownCount.value"
         :fleet-health-pct="fleet.fleetHealthPct.value"
         :healthy-count="fleet.healthyCount.value"
         :avg-cpu="fleet.avgCpu.value"
@@ -98,6 +111,7 @@
       </div>
 
       <FleetNodeGrid
+        :now="fleet.now.value"
         :nodes="fleet.nodes.value"
         :sorted-nodes="fleet.sortedNodes.value"
         :sort-by="fleet.sortBy.value"
@@ -109,6 +123,7 @@
       <FleetAlerts
         :alerts="fleet.fleetAlerts.value"
         :alerts-loading="fleet.alertsLoading.value"
+        :error-message="fleet.alertsErrorMessage.value"
       />
 
       <FleetNodeDetail
@@ -116,6 +131,7 @@
         :node="fleet.selectedNode.value"
         :node-id="fleet.selectedNodeId.value"
         :history-loading="fleet.nodeHistoryLoading.value"
+        :history-message="fleet.nodeHistoryMessage.value"
         :history-labels="fleet.nodeHistoryLabels.value"
         :cpu-datasets="fleet.nodeHistoryCpuDatasets.value"
         :mem-datasets="fleet.nodeHistoryMemDatasets.value"
@@ -132,14 +148,14 @@
 
       <p class="text-xs text-white/30 mt-4 text-center">
         {{ fleet.autoRefresh.value ? 'Auto-refreshing every 60s' : 'Auto-refresh paused' }}
-        &middot; Last updated {{ fleet.lastRefreshed.value ? timeAgo(fleet.lastRefreshed.value) : 'never' }}
+        &middot; Last updated {{ fleet.lastRefreshed.value ? timeAgo(fleet.lastRefreshed.value, fleet.now.value) : 'never' }}
       </p>
     </template>
   </div>
 </template>
 
 <script setup lang="ts">
-import { useRouter } from 'vue-router'
+import { RouterLink, useRouter } from 'vue-router'
 import BackButton from '@/components/BackButton.vue'
 import FleetOverviewCards from './fleet/FleetOverviewCards.vue'
 import FleetNodeGrid from './fleet/FleetNodeGrid.vue'

@@ -14,7 +14,7 @@
   var providerScript = document.currentScript;
   var autoNip98 = !(providerScript && providerScript.hasAttribute('data-no-nip98'));
   var embedded = window !== window.top;
-  var pending = {}, nextId = 1, queuedMessages = [];
+  var pending = {}, rentalPending = {}, mediaPending = {}, nextId = 1, queuedMessages = [];
   var identitySelection = null;
   var selectedIdentity = null, identitySubscribers = [];
   var selectedPublicKey = null, selectedPublicKeyTimer = null;
@@ -211,7 +211,16 @@
       selectedPublicKeyTimer = null;
       return Promise.resolve(publicKey);
     }
-    if (navigator.userActivation && navigator.userActivation.isActive) {
+    // The picker click itself leaves transient user activation active. A second
+    // public-key lookup in the same login must not open another picker.
+    var restoringSession = false;
+    try {
+      var sessionHint = sessionStorage.getItem('nostr_token');
+      restoringSession = !!sessionHint && sessionHint.indexOf('mock-') !== 0;
+    } catch (_) {}
+    // This is only a UI hint: the broker still verifies the node session and
+    // signing permissions. A restored app token never authorizes a signature.
+    if (!restoringSession && !selectedIdentity && navigator.userActivation && navigator.userActivation.isActive) {
       return selectIdentity().then(function () {
         return getPublicKey();
       });
@@ -279,6 +288,21 @@
       cancelIdentitySelection();
       return;
     }
+    if (e.data.type === 'archipelago-rental-response') {
+      var rental = rentalPending[e.data.id];
+      if (!rental) return;
+      delete rentalPending[e.data.id]; clearTimeout(rental.timer); rental.cleanup();
+      e.data.error ? rental.reject(new Error(e.data.error)) : rental.resolve(e.data.result);
+      return;
+    }
+    if (e.data.type === 'archipelago-media-registration-response') {
+      var media = mediaPending[e.data.id];
+      if (!media) return;
+      delete mediaPending[e.data.id];
+      clearTimeout(media.timer);
+      e.data.error ? media.reject(new Error(e.data.error)) : media.resolve(e.data.result);
+      return;
+    }
     if (e.data.type !== 'nostr-response') return;
     var handler = pending[e.data.id];
     if (!handler) return;
@@ -298,6 +322,68 @@
     nip44: {
       encrypt: function (pubkey, plaintext) { return request('nip44.encrypt', { pubkey: pubkey, plaintext: plaintext }); },
       decrypt: function (pubkey, ciphertext) { return request('nip44.decrypt', { pubkey: pubkey, ciphertext: ciphertext }); },
+    },
+  };
+
+  // Exact owner-approved Cloud registration. The dashboard checks the installed
+  // app origin/audience and displays the native picker before any preparation.
+  function nativeRequestId() {
+    if (typeof crypto.randomUUID === 'function') return crypto.randomUUID();
+    // Secure randomness remains available on ordinary HTTP node/LAN origins.
+    var bytes = new Uint8Array(16); crypto.getRandomValues(bytes);
+    bytes[6] = (bytes[6] & 15) | 64; bytes[8] = (bytes[8] & 63) | 128;
+    var hex = Array.from(bytes, function (value) { return value.toString(16).padStart(2, '0'); }).join('');
+    return hex.slice(0,8)+'-'+hex.slice(8,12)+'-'+hex.slice(12,16)+'-'+hex.slice(16,20)+'-'+hex.slice(20);
+  }
+
+  function rentalRequest(action, payload, timeout, signal) {
+    return new Promise(function (resolve, reject) {
+      if (signal && (typeof signal.addEventListener !== 'function' || typeof signal.removeEventListener !== 'function' || typeof signal.aborted !== 'boolean')) { reject(new Error('Invalid rental cancellation signal.')); return; }
+      if (signal && signal.aborted) { reject(new Error('Rental request closed.')); return; }
+      var id = nativeRequestId();
+      function cleanup() { if (signal) signal.removeEventListener('abort', abort); }
+      function fail(message) {
+        var pending = rentalPending[id]; if (!pending) return;
+        delete rentalPending[id]; clearTimeout(pending.timer); cleanup();
+        if (action === 'request') postToSigner({type:'archipelago-rental-request',id:id,action:'cancel',playbackProtocol:2});
+        reject(new Error(message));
+      }
+      function abort() { fail('Rental request closed. Recover any dispatched payment using the original purchase.'); }
+      rentalPending[id] = { resolve: resolve, reject: reject, cleanup: cleanup, timer: setTimeout(function () {
+        fail('Rental response unavailable. Recover the same purchase without paying again.');
+      }, timeout) };
+      if (signal) signal.addEventListener('abort', abort, {once:true});
+      postToSigner(Object.assign({ type: 'archipelago-rental-request', id: id, action: action, playbackProtocol: 2 }, payload));
+    });
+  }
+  window.archipelagoRental = {
+    status: function (handle) { return rentalRequest('status', { handle: handle }, 35000); },
+    prepare: function (handle, retry) { return rentalRequest('prepare', { handle: handle, retry: retry === true }, 35000); },
+    start: function (handle, readyId) { return rentalRequest('start', { handle: handle, ready_id: readyId }, 35000); },
+    request: function (offer, options) {
+      if (!options || options.playbackProtocol !== 2) return Promise.reject(new Error('Playback protocol 2 is required before requesting a rental.'));
+      return rentalRequest('request', { offer: offer }, 600000, options.signal);
+    }
+  };
+  Object.defineProperty(window.archipelagoRental, 'playbackProtocol', { value: 2, writable: false, configurable: false, enumerable: true });
+
+  window.archipelagoMediaRegistration = {
+    request: function (action, payload) {
+      if (['select', 'resume', 'submit', 'complete', 'resolve', 'resolve-submit'].indexOf(action) === -1 || !payload || typeof payload !== 'object') {
+        return Promise.reject(new Error('Invalid native media registration request'));
+      }
+      return new Promise(function (resolve, reject) {
+        var id = nativeRequestId();
+        mediaPending[id] = { resolve: resolve, reject: reject, timer: setTimeout(function () {
+          var item = mediaPending[id];
+          if (!item) return;
+          delete mediaPending[id];
+          item.reject(new Error('Registration was not confirmed. Resume the same saved operation.'));
+        }, 600000) };
+        postToSigner({ type: 'archipelago-media-registration-request', id: id, action: action,
+          intent: payload.intent, selection: payload.selection, approvalId: payload.approvalId,
+          producerEvent: payload.producerEvent });
+      });
     },
   };
 

@@ -559,7 +559,7 @@ async fn ecash_phrase(data_dir: &Path) -> Result<(String, [u8; 64])> {
 /// so a node that restores the same ecash phrase recovers the same address.
 pub async fn lnaddress(data_dir: &Path) -> Result<serde_json::Value> {
     let _state_guard = MINIBITS_STATE_LOCK.lock().await;
-    let network = ecash::load_network(data_dir).await;
+    let network = ecash::load_network(data_dir).await?;
     if network == EcashNetwork::Testnet {
         return Err(anyhow!(
             "Minibits Lightning addresses are mainnet-only — switch the ecash network to mainnet to set one up"
@@ -901,7 +901,7 @@ async fn ensure_mint_accepted(data_dir: &Path, mint_url: &str) -> Result<()> {
 /// so it isn't purely a log-line event.
 pub async fn claim_and_redeem(data_dir: &Path) -> Result<ClaimOutcome> {
     let _state_guard = MINIBITS_STATE_LOCK.lock().await;
-    let network = ecash::load_network(data_dir).await;
+    let network = ecash::load_network(data_dir).await?;
     if network == EcashNetwork::Testnet {
         return Ok(NO_CLAIMS);
     }

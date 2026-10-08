@@ -1,12 +1,18 @@
 mod blob;
 mod cdp;
+mod cloud_purchase;
 mod content;
 mod dwn;
+pub(crate) mod lightning_purchase;
 mod model_proxy;
 mod node_message;
+pub(crate) mod onchain_purchase;
 mod proxy;
+mod purchase;
+mod registered_media;
 mod remote_input;
 mod remote_relay;
+mod rental_playback;
 mod routstr_proxy;
 mod websocket;
 
@@ -384,6 +390,12 @@ impl ApiHandler {
         let path = req.uri().path().to_string();
         let method = req.method().clone();
 
+        if path.starts_with("/api/rental-playback/") {
+            return self
+                .handle_local_rental_request(&method, &path, req.headers())
+                .await;
+        }
+
         // Handle CORS preflight for all routes
         if method == Method::OPTIONS {
             let mut builder = Response::builder()
@@ -442,6 +454,32 @@ impl ApiHandler {
                 self.cdp_bridge.clone(),
             )
             .await;
+        }
+
+        if method == Method::POST && path == lightning_purchase::ROUTE {
+            return self.handle_lightning_purchase(req).await;
+        }
+        // Purchase routes bound the original body before the generic buffer.
+        if method == Method::POST
+            && matches!(
+                path.as_str(),
+                crate::content_purchase_protocol::PREPARE_OFFER_ROUTE
+                    | crate::content_purchase_protocol::OFFER_ROUTE
+                    | crate::content_purchase_protocol::ACCEPT_ROUTE
+                    | crate::content_purchase_protocol::SETTLE_ROUTE
+                    | crate::content_purchase_protocol::STATUS_ROUTE
+                    | crate::content_purchase_protocol::CANCEL_ROUTE
+            )
+        {
+            return self.handle_purchase_request(req).await;
+        }
+
+        if method == Method::POST
+            && path.starts_with("/content/registered_")
+            && path.contains("/rental/")
+            && (path.ends_with("/prepare") || path.ends_with("/start"))
+        {
+            return self.handle_rental_control(req).await;
         }
 
         // Convert body to bytes for non-WS routes
@@ -584,6 +622,15 @@ impl ApiHandler {
                 Self::handle_blob_download(&self.blob_store, p, &query_string).await
             }
 
+            // Immutable registered rentals use durable seller receipts and their
+            // first-open window, never legacy mutable filename shares.
+            (Method::GET, p) if p.starts_with("/content/") && p.contains("/purchase/") => {
+                self.handle_cloud_purchase(p, &headers).await
+            }
+            (Method::GET, p) if p.starts_with("/content/registered_") && p.contains("/rental/") => {
+                self.handle_registered_rental(p, &headers).await
+            }
+
             // Content preview — degraded previews for paid content (no auth, no payment)
             (Method::GET, p) if p.starts_with("/content/") && p.ends_with("/preview") => {
                 Self::handle_content_preview(p, &self.config).await
@@ -591,7 +638,7 @@ impl ApiHandler {
 
             // Lightning-invoice peer-file sale (#46): mint invoice / poll settlement
             (Method::GET, p) if p.starts_with("/content/") && p.ends_with("/invoice") => {
-                self.handle_content_invoice(p).await
+                self.handle_content_invoice(p, &headers).await
             }
             (Method::GET, p) if p.starts_with("/content/") && p.contains("/invoice-status/") => {
                 self.handle_content_invoice_status(p).await
@@ -602,7 +649,7 @@ impl ApiHandler {
                 self.handle_content_onchain_status(p).await
             }
             (Method::GET, p) if p.starts_with("/content/") && p.ends_with("/onchain") => {
-                self.handle_content_onchain(p).await
+                self.handle_content_onchain(p, &headers).await
             }
 
             // Content serving — peers access shared content over Tor (no session auth);
@@ -612,7 +659,7 @@ impl ApiHandler {
             }
 
             // Content catalog — list available content (no session auth, for peers)
-            (Method::GET, "/content") => Self::handle_content_catalog(&self.config).await,
+            (Method::GET, "/content") => self.handle_content_catalog(&headers).await,
 
             // Electrs status — unauthenticated (read-only sync status)
             (Method::GET, "/electrs-status") => Self::handle_electrs_status().await,
@@ -623,6 +670,34 @@ impl ApiHandler {
             // (upstream Gitea has no ACAO header) or CSP (IP-port upstream
             // falls outside `connect-src`). Session-authenticated so only
             // the logged-in node owner can spin up fetches.
+            (Method::GET, "/api/node-app-catalog") => {
+                if !self.is_authenticated(&headers).await {
+                    return Ok(Self::unauthorized());
+                }
+                let data_dir = self.config.data_dir.clone();
+                let result = tokio::task::spawn_blocking(move || {
+                    crate::container::node_catalog::verified_body(&data_dir)
+                })
+                .await
+                .unwrap_or_else(|error| Err(anyhow::anyhow!(error)));
+                let (status, body) = match result {
+                    Ok(Some(body)) => (StatusCode::OK, body),
+                    Ok(None) => (StatusCode::NOT_FOUND, "{}".to_owned()),
+                    Err(error) => {
+                        tracing::warn!("Node demo catalog rejected: {error}");
+                        (
+                            StatusCode::CONFLICT,
+                            "{\"error\":\"Node demo catalog is unavailable\"}".to_owned(),
+                        )
+                    }
+                };
+                Ok(Response::builder()
+                    .status(status)
+                    .header("Content-Type", "application/json")
+                    .header("Cache-Control", "private, no-store")
+                    .body(hyper::Body::from(body))?)
+            }
+
             (Method::GET, "/api/app-catalog") => {
                 if !self.is_authenticated(&headers).await {
                     return Ok(Self::unauthorized());

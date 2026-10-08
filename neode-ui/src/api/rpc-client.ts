@@ -125,6 +125,7 @@ class RPCClient {
   private async callInner<T>(options: RPCOptions): Promise<T> {
     const { method, params = {}, timeout = 15000, signal: external } = options
     const maxRetries = Math.max(1, options.maxRetries ?? 3)
+    let csrfRefreshed = false
 
     for (let attempt = 0; attempt < maxRetries; attempt++) {
       if (external?.aborted) throw new Error('Aborted')
@@ -187,6 +188,16 @@ class RPCClient {
             } catch { /* body parse failed */ }
 
             const isCsrf = !reason || reason.toLowerCase().includes('csrf')
+            const refreshedToken = getCsrfToken()
+            if (isCsrf && !csrfRefreshed && refreshedToken && refreshedToken !== csrfToken) {
+              // The server rejected the action before dispatch and refreshed
+              // the cookie for this authenticated session. Allow exactly one
+              // retry even for single-attempt reads; never replay on ambiguous
+              // network failures or a permissions rejection.
+              csrfRefreshed = true
+              attempt--
+              continue
+            }
             if (isCsrf && attempt < maxRetries - 1) {
               // CSRF mismatch — cookie may have been updated by a concurrent
               // Set-Cookie response not yet visible to JS. Retry after delay.
@@ -479,18 +490,27 @@ class RPCClient {
       status?: string
       payment_hash?: string
       amount_sats?: number
+      failure_reason?: string
     }>({
       method: 'lnd.payinvoice',
       params,
       // Above the backend's 120s wait so the backend always answers first.
       timeout: 130000,
+      maxRetries: 1,
     })
 
     const hash = res.payment_hash || ''
     const amount = res.amount_sats || 0
-    // Older backends have no status field — a plain response was a success.
-    if (res.status !== 'pending') {
+    if (res.status === 'failed') {
+      return { status: 'failed', payment_hash: hash, amount_sats: amount, failure_reason: res.failure_reason || 'Payment failed' }
+    }
+    // Legacy success must include the canonical payment hash. An unknown,
+    // malformed or newly introduced status must never become invented success.
+    if (res.status === 'succeeded' || (res.status === undefined && /^[a-f0-9]{64}$/i.test(hash))) {
       return { status: 'succeeded', payment_hash: hash, amount_sats: amount }
+    }
+    if (res.status !== 'pending' && res.status !== 'in_flight') {
+      return { status: 'pending', payment_hash: hash, amount_sats: amount }
     }
     if (!hash) return { status: 'pending', payment_hash: '', amount_sats: amount }
 

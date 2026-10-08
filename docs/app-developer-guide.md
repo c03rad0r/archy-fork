@@ -665,6 +665,20 @@ sudo cp apps/my-app/manifest.yml /opt/archipelago/web-ui/archipelago-runtime/app
 sudo systemctl restart archipelago   # manifests are loaded at startup
 ```
 
+Stage the other files declared by the manifest too. A local-build app needs its
+build context under the corresponding runtime payload `docker/<app-id>/`
+directory, so boot sync can promote it to `/opt/archipelago/docker/<app-id>/`.
+Copy the normalized icon to its declared public path under
+`/opt/archipelago/web-ui/` for a local test; the normal frontend bundle must carry
+that asset for release. Do not replace the signed catalog to make a local test
+app appear in the store.
+
+Check the **My Apps** tile while installation is in progress and after it
+finishes: name, icon and UI classification come from the manifest. An API-only
+app belongs in Services. A UI app must remain in My Apps while installing, with
+launch disabled until it is ready. Verify the real Launch button opens the
+embedded app, rather than testing only its direct port URL.
+
 Watch `journalctl -u archipelago` after the restart — the orchestrator
 validates every manifest on load and tells you about problems immediately
 (for example a host-port collision with another installed app).
@@ -775,3 +789,54 @@ adapter instead of reporting a successful installation with no usable backend.
 For example, Angor Indexer requires `mempool-api` (shown to users as its owning
 Mempool app), shares that index and declares only an `api` interface. API-only
 interfaces belong in Services and do not generate browser launch buttons.
+
+
+## Launch acceptance: credentials, signer, and HTTP nodes
+
+An app is not ready just because its container is healthy. Before submission,
+verify its first launch from My Apps, app details, a browser tab and Companion:
+
+- Declare a real UI interface and stage the app icon in the web UI assets. Check
+  the installing tile as well as the completed installation: a UI app belongs
+  in My Apps and must not appear as an iconless service.
+- If the app needs a password or first-run token, provide the shared credential
+  interstitial **before** launch, with copy controls and setup instructions.
+  Generating a secret in the manifest does not register this screen. Implement
+  `package.credentials` in `core/archipelago/src/api/rpc/package/install.rs`
+  and register the app in `CREDENTIAL_INTERSTITIAL_APPS` in
+  `neode-ui/src/stores/appLauncher.ts`. Both changes require a platform update;
+  app-only sideloads cannot add this RPC integration. File Browser and DATUM
+  are examples. Read generated secrets from the node's configured data directory;
+  never put them in a manifest, static browser bundle, default-password fallback,
+  logs, screenshots, or test reports. Keep the RPC dashboard-authenticated.
+- Explain initial configuration and client connection details. For DATUM this
+  includes its administrator password, Bitcoin payout address, and the node's
+  Stratum address on port 23334. App-to-app connections use container DNS
+  (`http://datum:7152`), never a container IP address.
+- Native Nostr apps should open the host identity chooser once on an explicit
+  app launch when unauthenticated, then finish the app's ordinary NIP-07 login.
+  The app may call `archipelagoNostr.selectIdentity()` at initial mount for this
+  first-launch flow; this is the exception to the routine-signing rule above.
+  Do not assume the platform's eager-picker app list contains a new app ID.
+  Consume an already selected identity through `getSelectedIdentity()` or the
+  sticky `onIdentitySelected()` subscription to avoid a second chooser.
+  Preserve manual login/account switching, external extensions and remote
+  signers. Cancellation must leave a usable login screen without reopening a
+  prompt loop; signing still requires the platform's normal consent.
+- Test the actual HTTP LAN/Tailscale address, not only localhost or HTTPS.
+  `crypto.subtle` and clipboard APIs may be unavailable on those addresses.
+  Keep authenticated encryption: use a vetted compatible implementation when
+  WebCrypto is absent, and secure randomness (`crypto.getRandomValues`). Test
+  existing-message decryption, tamper rejection and an HTTP round trip.
+- Verify first launch, cancellation/retry, reload, owner/viewer authorization,
+  and persisted data after app recreation. Use the shared browser-check suite
+  outside the repository; record which nodes and browser engines were tested.
+
+## Native audio player and video integration
+
+Audio apps can integrate with the native bottom player while retaining their own
+playback engine, queue and authenticated media. Follow the
+[audio message protocol, manifest example and acceptance checklist](app-media-integration.md).
+V4V is the reference implementation for close/reopen, artwork and queue controls.
+That guide also tracks the separate companion Cloud video PiP work; audio bridge
+support must not be advertised as already providing native video PiP.

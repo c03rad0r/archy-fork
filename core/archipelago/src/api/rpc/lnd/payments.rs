@@ -34,6 +34,33 @@ fn payment_failure_reason(reason: &str) -> &'static str {
     }
 }
 
+/// Preserve terminal LND state as structured data. An RPC exception is an
+/// ambiguous outcome to callers and must not hide a verified unpaid failure.
+pub(super) fn router_payment_outcome(
+    payment: &serde_json::Value,
+    hash: &str,
+    decoded_amt: i64,
+) -> serde_json::Value {
+    let status = match payment.get("status").and_then(|value| value.as_str()) {
+        Some("SUCCEEDED") => "succeeded",
+        Some("FAILED") => "failed",
+        _ => "pending",
+    };
+    let mut result = serde_json::json!({
+        "status": status, "payment_hash": hash,
+        "amount_sats": json_i64(payment, "value_sat").unwrap_or(decoded_amt),
+    });
+    if status == "failed" {
+        result["failure_reason"] = serde_json::json!(payment_failure_reason(
+            payment
+                .get("failure_reason")
+                .and_then(|value| value.as_str())
+                .unwrap_or("")
+        ));
+    }
+    result
+}
+
 fn json_i64(value: &serde_json::Value, key: &str) -> Option<i64> {
     value.get(key).and_then(|v| {
         v.as_str()
@@ -190,33 +217,7 @@ impl RpcHandler {
             return Err(payment_error(msg));
         }
         let payment = body.get("result").unwrap_or(&body);
-        match payment.get("status").and_then(|v| v.as_str()).unwrap_or("") {
-            "SUCCEEDED" => {}
-            "FAILED" => {
-                let reason = payment
-                    .get("failure_reason")
-                    .and_then(|v| v.as_str())
-                    .map(payment_failure_reason)
-                    .unwrap_or("Payment failed");
-                return Err(anyhow::anyhow!("Payment failed: {reason}"));
-            }
-            _ => {
-                return Ok(serde_json::json!({
-                    "status": "pending",
-                    "payment_hash": decoded_hash,
-                    "amount_sats": decoded_amt,
-                }));
-            }
-        }
-
-        let amount_sat = json_i64(payment, "value_sat").unwrap_or(decoded_amt);
-        Ok(serde_json::json!({
-            "status": "succeeded",
-            // The decode endpoint returns the canonical hex hash used by our
-            // polling/list APIs. Router's bytes field is base64 in REST JSON.
-            "payment_hash": decoded_hash,
-            "amount_sats": amount_sat,
-        }))
+        Ok(router_payment_outcome(payment, &decoded_hash, decoded_amt))
     }
 
     /// Status of an outgoing Lightning payment by hex payment hash. Lets the
@@ -244,6 +245,10 @@ impl RpcHandler {
             .send()
             .await
             .context("LND REST connection failed")?;
+        anyhow::ensure!(
+            resp.status().is_success(),
+            "LND payment status is unavailable"
+        );
         let body: serde_json::Value = resp
             .json()
             .await
@@ -563,6 +568,29 @@ mod tests {
         });
         let msg = router_error_message(&body).unwrap();
         assert!(payment_error(msg).to_string().contains("fresh invoice"));
+    }
+
+    #[test]
+    fn terminal_router_failures_remain_distinct_from_ambiguous_payment_outcomes() {
+        let failed = router_payment_outcome(
+            &serde_json::json!({"status":"FAILED", "failure_reason":"FAILURE_REASON_INSUFFICIENT_BALANCE", "value_sat":"2"}),
+            &"ab".repeat(32),
+            0,
+        );
+        assert_eq!(failed["status"], "failed");
+        assert_eq!(failed["failure_reason"], "Insufficient channel balance");
+        assert_eq!(failed["amount_sats"], 2);
+        assert_eq!(failed["payment_hash"], "ab".repeat(32));
+        for status in ["IN_FLIGHT", "INITIATED", "UNKNOWN", ""] {
+            assert_eq!(
+                router_payment_outcome(&serde_json::json!({"status":status}), "", 2)["status"],
+                "pending"
+            );
+        }
+        assert_eq!(
+            router_payment_outcome(&serde_json::json!({"status":"SUCCEEDED"}), "", 2)["status"],
+            "succeeded"
+        );
     }
 
     #[test]

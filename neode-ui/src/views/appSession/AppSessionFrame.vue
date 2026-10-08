@@ -61,6 +61,9 @@
       />
     </div>
 
+    <AppSlowLoadNotice v-if="slowLoad && !iframeBlocked && !uiReadyBlocked" :title="appTitle"
+      @refresh="$emit('refresh')" @dismiss-slow-load="$emit('dismissSlowLoad')" />
+
     <!-- Iframe blocked fallback. Suppressed while the ElectrumX sync screen
          (the "pre UI") is showing: a still-syncing Electrum server isn't
          reachable yet, so the "App not reachable / retry" overlay would just
@@ -120,6 +123,7 @@
 </template>
 
 <script setup lang="ts">
+import AppSlowLoadNotice from '@/components/AppSlowLoadNotice.vue'
 import { nextTick, onBeforeUnmount, ref, watch } from 'vue'
 import type { ElectrsSyncStatus } from '@/composables/useElectrsSync'
 import AppLoadingScreen from '@/components/AppLoadingScreen.vue'
@@ -136,6 +140,7 @@ const props = defineProps<{
   autoRetryCount: number
   refreshKey: number
   uiReadyBlocked?: boolean
+  slowLoad?: boolean
   blockedReason?: string
   blockedTitle?: string
   // True while the container is up but its probe hasn't answered yet and the
@@ -151,6 +156,7 @@ const emit = defineEmits<{
   iframeError: []
   refresh: []
   openNewTabAndBack: []
+  dismissSlowLoad: []
 }>()
 
 const iframeRef = ref<HTMLIFrameElement | null>(null)

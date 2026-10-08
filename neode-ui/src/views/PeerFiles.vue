@@ -37,6 +37,10 @@
       </div>
     </div>
 
+    <div class="mb-4">
+      <RouterLink :to="{ name: 'federation', query: { view: 'connected', from: 'peer-files', peer: peerOnion, node: currentPeer?.did } }" class="glass-button inline-flex px-4 py-2 rounded-lg text-sm">Node connections</RouterLink>
+    </div>
+
     <!-- Loading -->
     <div v-if="loading && catalogItems.length === 0" class="glass-card p-8 text-center">
       <svg class="animate-spin h-6 w-6 text-purple-400 mx-auto mb-2" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
@@ -377,9 +381,10 @@
           class="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-4"
           @click.self="closePayModal"
         >
-          <div class="glass-card w-full max-w-md p-5 rounded-2xl relative">
+          <div class="glass-card w-full max-w-md max-h-[calc(100dvh-2rem)] overflow-y-auto p-5 rounded-2xl relative">
             <button
-              class="absolute top-3 right-3 text-white/50 hover:text-white transition-colors"
+              class="absolute top-1 right-1 min-h-11 min-w-11 flex items-center justify-center text-white/50 hover:text-white transition-colors"
+              aria-label="Close payment"
               @click="closePayModal"
             >
               <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -392,13 +397,17 @@
               {{ payItem.filename.split('/').pop() }} · {{ getItemPrice(payItem.access) }} sats
             </p>
 
+            <button v-if="lnReceiptReadError && invoiceOperationId" type="button" class="glass-button w-full min-h-11 rounded-xl mb-3" :disabled="paymentActionBusy" @click="recoverOriginalInvoice">Recover original invoice</button>
+            <p v-if="lnReceipt?.operation_id" class="text-xs text-white/60 mb-3">Original Lightning purchase · {{ lnReceipt.price_sats }} sats</p>
+            <button v-if="lnReceipt?.operation_id && lnReceipt.state !== 'succeeded' && lnReceipt.state !== 'failed'" class="glass-button w-full min-h-11 rounded-xl mb-3" :disabled="paymentActionBusy" @click="cancelExternalInvoice">Cancel original unpaid invoice</button>
             <!-- Step 1: choose a payment method — only the methods the SELLER
                  accepts for this item are offered -->
             <div v-if="payMode === 'choose'" class="space-y-3">
+              <p v-if="acceptsMethod(payItem.access, 'fedimint')" class="text-xs text-white/60">Fedimint file purchases are temporarily unavailable. Choose another accepted payment method; previously purchased files remain available.</p>
               <button
-                v-if="!lnReceipt && (acceptsMethod(payItem.access, 'ecash') || acceptsMethod(payItem.access, 'fedimint'))"
+                v-if="!hasBlockingLightningReceipt && acceptsMethod(payItem.access, 'ecash')"
                 class="w-full glass-button px-4 py-3 rounded-xl flex items-center justify-start gap-3 text-left"
-                :disabled="ecashPreparing || downloading === payItem.id"
+                :disabled="paymentActionBusy"
                 @click="prepareEcashPay"
               >
                 <svg class="w-6 h-6 text-green-400 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -406,29 +415,29 @@
                 </svg>
                 <span>
                   <span class="block text-base text-white">{{ ecashPreparing ? 'Checking your wallets…' : 'Pay from this node’s ecash wallet' }}</span>
-                  <span class="block text-sm text-white/50">Instant, using your Cashu or Fedimint balance</span>
+                  <span class="block text-sm text-white/50">Using your Cashu balance</span>
                 </span>
               </button>
 
               <button
                 v-if="acceptsMethod(payItem.access, 'lightning')"
                 class="w-full glass-button px-4 py-3 rounded-xl flex items-center justify-start gap-3 text-left"
-                :disabled="lnPaying"
+                :disabled="paymentActionBusy"
                 @click="payWithLightning"
               >
                 <svg class="w-6 h-6 text-yellow-400 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z" />
                 </svg>
                 <span>
-                  <span class="block text-base text-white">{{ lnPaying ? (lnReceipt ? 'Checking payment…' : 'Paying…') : (lnReceipt ? 'Retry paid download' : 'Pay with my Lightning node') }}</span>
-                  <span class="block text-sm text-white/50">{{ lnReceipt ? 'Uses the saved payment; does not send more sats' : 'Pays the seller’s invoice from your node’s Lightning wallet' }}</span>
+                  <span class="block text-base text-white">{{ lnPaying ? (hasBlockingLightningReceipt ? 'Checking payment…' : 'Paying…') : (canRetryNative ? `Retry Lightning · ${lnReceipt?.price_sats} sats` : hasBlockingLightningReceipt ? (lnReceipt?.operation_id ? 'Resume original Lightning purchase' : 'Check payment / retry download') : 'Pay with my Lightning node') }}</span>
+                  <span class="block text-sm text-white/50">{{ canRetryNative ? 'Creates a new attempt only after the original failed' : hasBlockingLightningReceipt ? (lnReceipt?.operation_id ? 'Recovers or completes the same purchase without creating another invoice' : 'Checks the saved attempt; does not send more sats') : 'Pays the seller’s invoice from your node’s Lightning wallet' }}</span>
                 </span>
               </button>
 
               <button
                 v-if="acceptsMethod(payItem.access, 'lightning') || acceptsMethod(payItem.access, 'onchain')"
                 class="w-full glass-button px-4 py-3 rounded-xl flex items-center justify-start gap-3 text-left"
-                :disabled="lnPaying || onchainPaying"
+                :disabled="paymentActionBusy"
                 @click="openQrPay"
               >
                 <svg class="w-6 h-6 text-amber-400 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -443,42 +452,54 @@
               <button
                 v-if="acceptsMethod(payItem.access, 'onchain')"
                 class="w-full glass-button px-4 py-3 rounded-xl flex items-center justify-start gap-3 text-left"
-                :disabled="lnPaying || onchainPaying"
+                :disabled="paymentActionBusy || getItemPrice(payItem.access) < 546"
                 @click="payOnchain"
               >
                 <svg class="w-6 h-6 text-orange-400 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1" />
                 </svg>
                 <span>
-                  <span class="block text-base text-white">{{ onchainPaying ? 'Sending…' : 'Pay on-chain from my node' }}</span>
-                  <span class="block text-sm text-white/50">Sends Bitcoin on-chain from your node’s wallet (slower)</span>
+                  <span class="block text-base text-white">{{ onchainPaying ? 'Recovering original transaction…' : onchainAttempt?.paid ? 'Recover original download' : (onchainAttempt?.plan_sha256 || onchainAttempt?.template_sha256) ? 'Confirm / resume original transaction' : onchainAttempt?.external_exposure ? 'Check original Bitcoin payment' : 'Review on-chain payment' }}</span>
+                  <span class="block text-sm text-white/50">Reviews the current Fast fee before sending the saved transaction</span>
                 </span>
               </button>
 
+              <label v-if="acceptsMethod(payItem.access, 'onchain') && !(onchainAttempt?.plan_sha256 || onchainAttempt?.template_sha256)" class="block text-sm text-white/70">Maximum network fee (sats)
+                <input v-model="onchainFeeCap" type="number" min="1" step="1" class="mt-1 w-full min-h-11 rounded-xl bg-white/10 px-3" :disabled="paymentActionBusy" />
+              </label>
+              <p v-if="(onchainAttempt?.plan_sha256 || onchainAttempt?.template_sha256)" class="text-sm text-white/70 break-words">Original Bitcoin payment: {{ onchainAttempt.price_sats }} sats + {{ onchainAttempt.fee_sats }} sats network fee · {{ onchainAttempt.network }}. Confirming resumes this same funding plan; the seller address is allocated only after Pay.</p>
+              <button v-if="onchainAttempt && ['address_requested', 'offer_prepared', 'plan_prepared'].includes(onchainAttempt.phase) && !onchainAttempt.change_allocation_ambiguous" type="button" class="glass-button w-full min-h-11 rounded-xl px-3 py-2" :disabled="paymentActionBusy" @click="cancelOriginalOnchain">Cancel if no address was issued</button>
+              <p v-if="onchainAttempt?.change_allocation_ambiguous" class="text-sm text-amber-300">The original change-address reply was lost. This saved operation needs recovery; no replacement address or payment will be created.</p>
               <p v-if="lnError" class="text-xs text-red-400 px-1">{{ lnError }}</p>
             </div>
 
             <!-- Step 1b: ecash confirmation — show which wallet will be spent -->
             <div v-else-if="payMode === 'ecash-confirm' && ecashPlan" class="space-y-4">
               <div class="text-center py-2">
-                <div class="text-3xl font-bold text-white">{{ getItemPrice(payItem.access) }} <span class="text-lg text-white/50">sats</span></div>
+                <div class="text-3xl font-bold text-white">{{ ecashPlan.chosen === 'cashu' && cashuQuote ? cashuQuote.wallet_debit_sats : getItemPrice(payItem.access) }} <span class="text-lg text-white/50">sats</span></div>
                 <div class="text-xs text-white/50 mt-1">from your node’s ecash wallet</div>
               </div>
 
-              <!-- Backend selector: the chosen one is highlighted; the user can
-                   switch to the other if it has enough balance. -->
+              <p v-if="ecashPlan.chosen === 'cashu' && cashuQuote" class="text-sm text-white/70 text-center">
+                <span class="block">Cashu · {{ cashuQuote.network === 'testnet' ? 'Testnet' : 'Mainnet' }}</span>
+                <span class="block break-all">Mint: {{ cashuQuote.mint_url }}</span>
+                File: {{ cashuQuote.seller_net_sats }} sats · fees/rounding: {{ cashuQuote.wallet_debit_sats - cashuQuote.seller_net_sats }} sats
+              </p>
+              <p v-if="hasBlockingCashuPurchase" class="text-xs text-white/60">The original purchase is saved on your node. Retry recovers it without starting another payment.</p>
+              <!-- Display other balances without offering unsafe payment paths. -->
               <div class="space-y-2">
                 <button
-                  v-for="b in (['cashu', 'fedimint', 'ark'] as const)"
+                  v-for="b in (['cashu', 'fedimint'] as const)"
                   :key="b"
-                  @click="ecashPlan.chosen = b"
-                  :disabled="ecashBalanceOf(b) < getItemPrice(payItem.access)"
+                  @click="selectEcashBackend(b)"
+                  :disabled="paymentActionBusy || b !== 'cashu'"
                   class="w-full px-4 py-3 rounded-xl flex items-center gap-3 text-left border transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
                   :class="ecashPlan.chosen === b ? 'border-green-400/70 bg-green-400/10' : 'border-white/10 bg-white/5 hover:bg-white/10'"
                 >
-                  <span class="text-xl shrink-0">{{ b === 'cashu' ? '🥜' : b === 'fedimint' ? '🤝' : '⚓' }}</span>
+                  <span class="text-xl shrink-0">{{ b === 'cashu' ? '🥜' : '🤝' }}</span>
                   <span class="flex-1 min-w-0">
-                    <span class="block text-base text-white">{{ b === 'cashu' ? 'Cashu' : b === 'fedimint' ? 'Fedimint' : 'Ark' }}</span>
+                    <span class="block text-base text-white">{{ b === 'cashu' ? 'Cashu' : 'Fedimint' }}</span>
+                    <span v-if="b === 'fedimint'" class="block text-xs text-white/60">File purchases temporarily unavailable</span>
                     <span class="block text-xs text-white/50">Balance: {{ ecashBalanceOf(b).toLocaleString() }} sats<span v-if="ecashBalanceOf(b) < getItemPrice(payItem.access)"> · not enough</span></span>
                   </span>
                   <svg v-if="ecashPlan.chosen === b" class="w-5 h-5 text-green-400 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -489,17 +510,18 @@
 
               <p v-if="purchaseError" class="text-sm text-red-400">{{ purchaseError }}</p>
 
+              <button v-if="cashuQuote" class="w-full glass-button px-4 py-2.5 rounded-xl text-sm text-white/70" :disabled="paymentActionBusy" @click="cancelCashuPurchase">Cancel unpaid quote</button>
               <div class="flex gap-2 pt-1">
                 <button
                   class="flex-1 glass-button px-4 py-2.5 rounded-xl text-sm text-white/70"
-                  :disabled="downloading === payItem.id"
+                  :disabled="paymentActionBusy"
                   @click="payMode = 'choose'"
                 >Back</button>
                 <button
                   class="flex-1 px-4 py-2.5 rounded-xl text-sm font-semibold text-black bg-green-400 hover:bg-green-300 transition-colors disabled:opacity-50"
-                  :disabled="!ecashPlan.chosen || downloading === payItem.id"
+                  :disabled="!ecashPlan.chosen || paymentActionBusy"
                   @click="confirmEcashPay"
-                >{{ downloading === payItem.id ? 'Paying…' : 'Pay' }}</button>
+                >{{ paymentActionBusy ? 'Working…' : ecashPlan.chosen === 'cashu' && !cashuQuote ? 'Check original purchase' : 'Pay' }}</button>
               </div>
             </div>
 
@@ -577,7 +599,9 @@
                     </button>
                   </div>
                 </div>
+                <p v-if="invoiceOperationId" class="mt-3 text-xs text-white/50">Saved request {{ invoiceOperationId.slice(0, 8) }} · recovery uses this same invoice</p>
                 <p v-if="invoiceError" class="text-sm text-red-400 mt-3">{{ invoiceError }}</p>
+                <button v-if="invoiceError && !invoiceWaiting" type="button" class="glass-button min-h-11 w-full mt-3 rounded-lg" :disabled="paymentActionBusy" @click="payWithInvoice">Recover original invoice</button>
               </div>
 
               <button
@@ -595,8 +619,11 @@
 </template>
 
 <script setup lang="ts">
+import { parseOnchainAttempt, type OnchainAttempt } from '@/composables/peerOnchainPurchase'
+import { parseCashuQuote, readCashuAttempt, keepCashuAttempt, keepAuthoritativeCashuQuote, archiveMalformedCashuAttempt, clearCashuAttempt, type CashuQuote } from '@/composables/peerCashuPurchase'
+import { usePeerPaymentOperations } from '@/composables/peerPaymentOperations'
 import { ref, computed, reactive, watch, onMounted, onUnmounted } from 'vue'
-import { useRouter } from 'vue-router'
+import { RouterLink, useRouter } from 'vue-router'
 import QRCode from 'qrcode'
 import { rpcClient } from '@/api/rpc-client'
 import { useResourcesStore } from '@/stores/resources'
@@ -701,7 +728,7 @@ function base64ToBlob(base64: string, mime: string): Blob {
 }
 
 // In-app viewer (lightbox) for owned content AND free images. Owned content is
-// loaded as a blob URL from the purchase cache; free images point straight at
+// loaded through local cached streaming; free images point straight at
 // the Range-capable streaming proxy (no base64 round-trip).
 const viewerItem = ref<CatalogItem | null>(null)
 const viewerUrl = ref<string | null>(null)
@@ -717,22 +744,23 @@ async function viewOwned(item: CatalogItem) {
   playing.value = item.id
   purchaseError.value = null
   try {
-    const res = await rpcClient.call<{ data?: string; mime_type?: string; error?: string }>({
+    const res = await rpcClient.call<{ data?: string; owned?: boolean; owned_content_id?: string; mime_type?: string; error?: string }>({
       method: 'content.owned-get',
-      params: { onion, content_id: item.id },
+      params: { onion, content_id: item.id, filename: item.filename, cache_only: true },
       timeout: 60000,
     })
-    if (!res?.data) { purchaseError.value = res?.error || 'Could not open your purchased file'; return }
+    if (res?.data === undefined && res?.owned !== true) { purchaseError.value = res?.error || 'Could not open your purchased file'; return }
     const mime = res.mime_type || item.mime_type
+    const url = res.data !== undefined ? URL.createObjectURL(base64ToBlob(res.data, mime))
+      : `/api/peer-content/${encodeURIComponent(onion)}/${encodeURIComponent(res.owned_content_id || item.id)}`
     // Audio always plays in the global bottom-bar player — never the lightbox
     // (the blob URL is intentionally not revoked while the bar plays it).
     if (mime.startsWith('audio/')) {
-      const url = URL.createObjectURL(base64ToBlob(res.data, mime))
       audioPlayer.play(url, item.filename.split('/').pop() || item.filename)
       return
     }
     releaseViewerUrl()
-    viewerUrl.value = URL.createObjectURL(base64ToBlob(res.data, mime))
+    viewerUrl.value = url
     viewerMime.value = mime
     viewerItem.value = item
   } catch (e: unknown) {
@@ -797,12 +825,13 @@ async function saveOwned(item: CatalogItem) {
   const onion = props.peerId || currentPeer.value?.onion
   if (!onion) return
   try {
-    const res = await rpcClient.call<{ data?: string; mime_type?: string; error?: string }>({
+    const res = await rpcClient.call<{ data?: string; owned?: boolean; owned_content_id?: string; mime_type?: string; error?: string }>({
       method: 'content.owned-get',
-      params: { onion, content_id: item.id },
+      params: { onion, content_id: item.id, filename: item.filename, cache_only: true },
       timeout: 60000,
     })
-    if (res?.data) triggerDownload(res.data, item)
+    if (res?.owned === true) streamDownload(`/api/peer-content/${encodeURIComponent(onion)}/${encodeURIComponent(res.owned_content_id || item.id)}`, item)
+    else if (res?.data) triggerDownload(res.data, item)
     else purchaseError.value = res?.error || 'Could not save your purchased file'
   } catch (e: unknown) {
     purchaseError.value = e instanceof Error ? e.message : 'Could not save your purchased file'
@@ -814,11 +843,16 @@ async function saveOwned(item: CatalogItem) {
 // wallet (instant), or a Lightning invoice drawn on the SELLER's node that
 // they can pay from any external wallet by scanning a QR.
 const payItem = ref<CatalogItem | null>(null)
+const paymentGeneration = ref(0)
+const paymentOperations = usePeerPaymentOperations(() => {
+  const peer = props.peerId || currentPeer.value?.onion
+  return payItem.value && peer ? { peer, item: payItem.value.id, generation: paymentGeneration.value } : null
+})
 const payMode = ref<'choose' | 'ecash-confirm' | 'qr'>('choose')
 // Ecash confirmation step: after the user picks "pay from this node's ecash",
 // we look at both balances, decide which backend covers the price, and show a
 // confirm screen so they see (and can switch) which ecash is spent (#3).
-type EcashBackend = 'cashu' | 'fedimint' | 'ark'
+type EcashBackend = 'cashu' | 'fedimint'
 const ecashPlan = ref<{
   cashu: number
   fedimint: number
@@ -827,6 +861,61 @@ const ecashPlan = ref<{
   chosen: EcashBackend | null
 } | null>(null)
 const ecashPreparing = ref(false)
+const cashuQuote = ref<CashuQuote | null>(null)
+const cashuRecoveryRequired = ref(false)
+const cashuRecoveryError = ref(false)
+const hasBlockingCashuPurchase = computed(() => cashuRecoveryRequired.value || cashuRecoveryError.value)
+let cashuLookup: Promise<void> = Promise.resolve()
+async function lookupCashuPurchase(onion: string, item: CatalogItem, generation: number) {
+  const selected = () => paymentGeneration.value === generation && activePaymentMatches(onion, item.id)
+  try {
+    const state = await rpcClient.call<{attempts?: Array<{operation_id?: string;state?: string}>}>({method:'content.payment-status',params:{onion,content_id:item.id},timeout:15000})
+    if (!Array.isArray(state?.attempts)) throw new Error('Could not verify saved purchases; recover the original payment before choosing another method.')
+    if (selected() && state.attempts.some(attempt => attempt.state !== 'cancelled_unspent')) {
+      cashuRecoveryRequired.value=true
+      lnError.value='A Cashu purchase is saved on this node. Choose ecash to recover or cancel that operation.'
+    }
+  } catch (error) {
+    if (selected()) { cashuRecoveryError.value=true;lnError.value=error instanceof Error?error.message:'Could not verify saved purchases' }
+  }
+}
+async function lookupNodeInvoice(onion:string,item:CatalogItem,generation:number) {
+  const selected=()=>paymentGeneration.value===generation&&activePaymentMatches(onion,item.id)
+  try {
+    const result=await rpcClient.call<{attempt:null|{operation_id:string;price_sats:number;external_exposure:boolean;native_failed?:boolean;native_succeeded?:boolean;status:null|{payment_hash:string;bolt11:string|null;state:string;can_switch_method:boolean}}}>({method:'content.invoice-attempt',params:{onion,content_id:item.id},timeout:15000})
+    if(!selected())return
+    if(!Object.prototype.hasOwnProperty.call(result,'attempt'))throw Error('Could not verify saved invoice operations')
+    const attempt=result.attempt;if(!attempt)return
+    if (!/^[a-f0-9-]{36}$/i.test(attempt.operation_id) || !Number.isSafeInteger(attempt.price_sats) || attempt.price_sats <= 0) throw Error('Saved invoice identity is invalid; do not pay again')
+    invoiceOperationId.value=attempt.operation_id
+    if(!attempt.status?.payment_hash){lnReceiptReadError.value=true;lnError.value='An invoice operation is saved on this node. Open the original invoice to recover it before choosing another method.';return}
+    if (!/^[a-f0-9]{64}$/i.test(attempt.status.payment_hash) || !['prepared','dispatched','issued','cancel_requested','canceled_unpaid','settled'].includes(attempt.status.state)) throw Error('Saved invoice status is invalid; do not pay again')
+    const state=attempt.status.state==='settled'||attempt.native_succeeded===true?'succeeded':(attempt.status.state==='canceled_unpaid'&&attempt.status.can_switch_method)||(!attempt.external_exposure&&attempt.native_failed===true)?'failed':'pending'
+    const receipt:LightningReceipt={operation_id:attempt.operation_id,external_exposure:attempt.external_exposure,origin:attempt.external_exposure?'external':'native',bolt11:attempt.status.bolt11 || undefined,payment_hash:attempt.status.payment_hash,price_sats:attempt.price_sats,state}
+    try { readReceipt(onion,item.id) } catch {
+      const key=receiptKey(onion,item.id), raw=localStorage.getItem(key)
+      if(raw!==null){
+        if(new TextEncoder().encode(raw).length>65536) throw Error('Saved browser receipt is too large to reconcile automatically; the original node operation is retained')
+        localStorage.setItem(`${key}:unreadable`,raw)
+        // A valid owner-node operation is durable before replacing this supplemental copy.
+        localStorage.setItem(key,JSON.stringify(receipt))
+      }
+    }
+    const previous=readReceipt(onion,item.id)
+    keepReceipt(onion,item.id,receipt,selected,previous?.state==='failed'?previous.operation_id:undefined);lnReceiptReadError.value=false
+  }catch(error){if(selected()){lnReceiptReadError.value=true;lnError.value=error instanceof Error?error.message:'Could not verify original invoice; do not pay again'}}
+}
+async function permitFreshOtherRail(item: CatalogItem, onion: string, recoverInvoice = false, recoverOnchain = false) {
+  const generation=paymentGeneration.value
+  await cashuLookup
+  if (paymentGeneration.value!==generation || !activePaymentMatches(onion,item.id)) return false
+  if (!recoverOnchain && (onchainAttempt.value || onchainLookupError.value)) { lnError.value='Recover the original on-chain purchase before choosing another method.'; return false }
+  if (hasBlockingCashuPurchase.value) { lnError.value='Recover or cancel the saved Cashu purchase before choosing another method.'; return false }
+  if (!recoverInvoice && hasBlockingLightningReceipt.value) {lnError.value='Recover or cancel the original invoice before choosing another method.';return false}
+  return true
+}
+
+
 // Pay-from-another-wallet QR view: tabbed like the wallet's Send/Receive modal,
 // on-chain first (the default).
 const qrTab = ref<'onchain' | 'lightning'>('onchain')
@@ -835,7 +924,11 @@ const invoiceQr = ref('')
 const invoiceWaiting = ref(false)
 const invoiceError = ref('')
 const invoiceCopied = ref(false)
+const invoiceOperationId = ref<string | null>(null)
 // On-chain QR (pay the seller's address from any external wallet).
+const onchainAttempt = ref<OnchainAttempt | null>(null)
+const onchainLookupError = ref(false)
+const onchainFeeCap = ref('1000')
 const onchainData = ref<{ address: string; amount_sats: number } | null>(null)
 const onchainQr = ref('')
 const onchainWaiting = ref(false)
@@ -843,21 +936,76 @@ const onchainError = ref('')
 const onchainCopied = ref(false)
 const lnPaying = ref(false)
 const lnError = ref('')
-type LightningReceipt = { bolt11: string; payment_hash: string; price_sats: number }
+type LightningReceipt = { operation_id?: string; external_exposure?: boolean; origin?: 'native' | 'external'; bolt11?: string; payment_hash: string; price_sats: number; state?: 'pending' | 'succeeded' | 'failed'; failure_reason?: string }
 const lnReceipt = ref<LightningReceipt | null>(null)
+const lnReceiptReadError = ref(false)
+const canRetryNative = computed(()=>Boolean(lnReceipt.value?.operation_id && lnReceipt.value.state==='failed' && lnReceipt.value.origin==='native' && lnReceipt.value.external_exposure===false))
+const hasBlockingLightningReceipt = computed(() => lnReceiptReadError.value || Boolean(lnReceipt.value && lnReceipt.value.state !== 'failed'))
+const paymentActionBusy = computed(() => paymentOperations.busy.value || lnPaying.value || onchainPaying.value || ecashPreparing.value || downloading.value === payItem.value?.id)
+function activePaymentMatches(onion: string, id: string) {
+  return payItem.value?.id === id && (props.peerId || currentPeer.value?.onion) === onion
+}
 function receiptKey(onion: string, id: string) { return `peer-file-lightning:${onion}:${id}` }
 function readReceipt(onion: string, id: string): LightningReceipt | null {
   const raw = localStorage.getItem(receiptKey(onion, id))
   if (!raw) return null
   const receipt = JSON.parse(raw) as LightningReceipt
-  if (!receipt.bolt11 || !/^[a-f0-9]{64}$/i.test(receipt.payment_hash)) throw new Error('Saved payment needs recovery. Do not pay again.')
+  if ((!receipt.bolt11 && !receipt.operation_id) || !/^[a-f0-9]{64}$/i.test(receipt.payment_hash) || (receipt.state !== undefined && !['pending', 'succeeded', 'failed'].includes(receipt.state))) throw new Error('Saved payment needs recovery. Do not pay again.')
   return receipt
 }
-function keepReceipt(onion: string, id: string, receipt: LightningReceipt) {
+function keepReceipt(onion: string, id: string, receipt: LightningReceipt, selected = () => activePaymentMatches(onion, id), replaceFailedOperation?: string) {
   // Must succeed before handing an invoice to a payer. A failed transfer or
   // navigation must never turn Retry into a second payment.
+  const previous = readReceipt(onion, id)
+  if (previous?.operation_id && previous.operation_id !== receipt.operation_id && !(previous.state === 'failed' && replaceFailedOperation === previous.operation_id)) {
+    if (selected()) lnReceipt.value=previous
+    return previous
+  }
+  if (previous?.state === 'succeeded') {
+    if (previous.payment_hash !== receipt.payment_hash || previous.price_sats !== receipt.price_sats) throw new Error('A succeeded payment already exists. Recover its original file before replacing this receipt.')
+    receipt = { ...receipt, state: 'succeeded' }
+  }
+  if (previous?.payment_hash === receipt.payment_hash && previous.external_exposure === true) receipt = { ...receipt, external_exposure: true, origin: 'external' }
   localStorage.setItem(receiptKey(onion, id), JSON.stringify(receipt))
-  lnReceipt.value = receipt
+  if (selected()) lnReceipt.value = receipt
+  return receipt
+}
+function keepFailedLightningAttempt(onion: string, id: string, receipt: LightningReceipt, reason: string, selected = () => activePaymentMatches(onion, id)) {
+  const kept=keepReceipt(onion, id, { ...receipt, state: 'failed', failure_reason: reason }, selected)
+  if(kept.operation_id!==receipt.operation_id)return
+  if (selected()) lnError.value = `Lightning attempt failed: ${reason}. No sats were sent by this attempt. You can choose another payment method.`
+}
+type InvoiceLifecycle = { paid?: boolean; state?: string; can_switch_method?: boolean }
+function keepCanceledInvoice(onion: string, id: string, receipt: LightningReceipt, result: InvoiceLifecycle | undefined, selected: () => boolean) {
+  if (receipt.state === 'succeeded' || result?.paid !== false || result.state !== 'canceled' || result.can_switch_method !== true) return false
+  const kept=keepReceipt(onion, id, { ...receipt, state: 'failed', failure_reason: 'Seller confirmed the invoice is canceled and unpaid' }, selected)
+  if(kept.operation_id!==receipt.operation_id||kept.payment_hash!==receipt.payment_hash||kept.state!=='failed')return false
+  if (selected()) lnError.value = 'The seller confirmed this invoice is canceled and unpaid. You can choose another payment method.'
+  return true
+}
+async function recoverFailedLightningAttempt(onion: string, id: string, receipt: LightningReceipt, selected = () => activePaymentMatches(onion, id)): Promise<'failed' | 'pending' | 'other'> {
+  if (receipt.state === 'succeeded') return 'other'
+  // Old backends throw for terminal failures. Only LND's matching payment status
+  // can distinguish that from a lost reply; never infer failure from error text.
+  try {
+    const result = await rpcClient.call<{ status?: string; failure_reason?: string }>({
+      method: 'lnd.paymentstatus', params: { payment_hash: receipt.payment_hash }, timeout: 15000,
+    })
+    if (result?.status === 'failed' && receipt.origin === 'native' && receipt.external_exposure === false) {
+      keepFailedLightningAttempt(onion, id, receipt, result.failure_reason || 'Payment failed', selected)
+      return 'failed'
+    }
+    if (result?.status === 'pending' || result?.status === 'in_flight') return 'pending'
+  } catch { /* unavailable/unknown is still recoverable, never permission to pay again */ }
+  try {
+    const result = await rpcClient.call<InvoiceLifecycle>({
+      method: receipt.operation_id ? 'content.invoice-recover' : 'content.invoice-status', params: receipt.operation_id ? { onion, content_id: id, operation_id: receipt.operation_id } : { onion, content_id: id, payment_hash: receipt.payment_hash }, timeout: 15000,
+    })
+    if (keepCanceledInvoice(onion, id, receipt, result, selected)) return 'failed'
+    if (result?.paid === true) keepReceipt(onion, id, { ...receipt, state: 'succeeded' }, selected)
+    else if (result?.state === 'open' || result?.state === 'accepted') return 'pending'
+  } catch { /* Seller outage or old boolean-only response cannot authorize another payment. */ }
+  return 'other'
 }
 const onchainPaying = ref(false)
 let onchainPollTimer: ReturnType<typeof setTimeout> | null = null
@@ -925,7 +1073,7 @@ function loadCatalog(): Promise<void> {
 // The fan-out is capped (3 concurrent) and aborts on unmount — it used to
 // fire one 30s RPC per media item all at once, unbounded.
 const previewAborter = new AbortController()
-onUnmounted(() => previewAborter.abort())
+onUnmounted(() => { previewAborter.abort(); closePayModal() })
 const previewQueued = new Set<string>()
 let previewQueue: CatalogItem[] = []
 let previewWorkers = 0
@@ -1096,6 +1244,14 @@ async function downloadFile(item: CatalogItem) {
 }
 
 function openPayModal(item: CatalogItem) {
+  paymentGeneration.value++
+  cashuQuote.value = null
+  cashuRecoveryRequired.value = false
+  cashuRecoveryError.value = false
+  try {
+    const saved = readCashuAttempt(props.peerId || currentPeer.value?.onion || '', item.id)
+    if (saved) { cashuQuote.value = saved.quote; cashuRecoveryRequired.value = true }
+  } catch { cashuRecoveryError.value = true }
   payItem.value = item
   payMode.value = 'choose'
   qrTab.value = 'onchain'
@@ -1104,6 +1260,9 @@ function openPayModal(item: CatalogItem) {
   invoiceWaiting.value = false
   invoiceError.value = ''
   invoiceCopied.value = false
+  invoiceOperationId.value = null
+  onchainAttempt.value = null
+  onchainLookupError.value = false
   onchainData.value = null
   onchainQr.value = ''
   onchainWaiting.value = false
@@ -1111,17 +1270,26 @@ function openPayModal(item: CatalogItem) {
   onchainCopied.value = false
   lnPaying.value = false
   lnError.value = ''
-  try { lnReceipt.value = readReceipt(props.peerId || currentPeer.value?.onion || '', item.id) }
-  catch { lnError.value = 'Saved payment could not be read. Do not pay again.' }
+  lnReceipt.value = null
+  lnReceiptReadError.value = false
+  try {
+    lnReceipt.value = readReceipt(props.peerId || currentPeer.value?.onion || '', item.id)
+    if (lnReceipt.value?.state === 'failed') lnError.value = `Previous Lightning attempt failed: ${lnReceipt.value.failure_reason || 'Payment failed'}. You can choose another method.`
+  } catch { lnReceiptReadError.value = true; lnError.value = 'Saved payment could not be read. Do not pay again.' }
   onchainPaying.value = false
+  cashuLookup = Promise.all([lookupCashuPurchase(props.peerId || currentPeer.value?.onion || '', item, paymentGeneration.value),lookupNodeInvoice(props.peerId || currentPeer.value?.onion || '', item, paymentGeneration.value),lookupOnchainPurchase(props.peerId || currentPeer.value?.onion || '', item, paymentGeneration.value)]).then(()=>undefined)
 }
 
 function closePayModal() {
+  paymentGeneration.value++
   if (invoicePollTimer) { clearTimeout(invoicePollTimer); invoicePollTimer = null }
   if (onchainPollTimer) { clearTimeout(onchainPollTimer); onchainPollTimer = null }
   payItem.value = null
   payMode.value = 'choose'
   ecashPlan.value = null
+  cashuQuote.value = null
+  cashuRecoveryRequired.value = false
+  cashuRecoveryError.value = false
   ecashPreparing.value = false
   invoiceWaiting.value = false
   onchainWaiting.value = false
@@ -1135,7 +1303,7 @@ function closePayModal() {
  */
 function openQrPay() {
   payMode.value = 'qr'
-  if (lnReceipt.value) { qrTab.value = 'lightning'; void payWithInvoice(); return }
+  if (hasBlockingLightningReceipt.value) { qrTab.value = 'lightning'; void payWithInvoice(); return }
   payMode.value = 'qr'
   invoiceData.value = null
   invoiceQr.value = ''
@@ -1145,7 +1313,7 @@ function openQrPay() {
   onchainQr.value = ''
   onchainError.value = ''
   // Start on the first tab the seller actually accepts.
-  if (payItem.value && !acceptsMethod(payItem.value.access, 'onchain')) {
+  if (payItem.value && (!acceptsMethod(payItem.value.access, 'onchain') || getItemPrice(payItem.value.access) < 546)) {
     qrTab.value = 'lightning'
     payWithInvoice()
   } else {
@@ -1159,7 +1327,7 @@ function openQrPay() {
  * forth doesn't silently stop watching for payment). */
 function selectQrTab(tab: 'onchain' | 'lightning') {
   if (qrTab.value === tab) return
-  if (tab === 'onchain' && lnReceipt.value) {
+  if (tab === 'onchain' && hasBlockingLightningReceipt.value) {
     invoiceError.value = 'A Lightning payment is saved. Recover it before choosing another payment method.'
     return
   }
@@ -1170,7 +1338,7 @@ function selectQrTab(tab: 'onchain' | 'lightning') {
       loadOnchainQr()
     } else if (onchainData.value && !onchainPaying.value) {
       onchainPaying.value = true
-      pollOnchain(onchainData.value.address)
+      onchainAttempt.value && pollOnchain(onchainAttempt.value.operation_id)
     }
   } else {
     if (onchainPollTimer) { clearTimeout(onchainPollTimer); onchainPollTimer = null }
@@ -1188,140 +1356,146 @@ function selectQrTab(tab: 'onchain' | 'lightning') {
  * `bitcoin:` QR for any external wallet, and poll the seller until the payment
  * lands, then release the file (the address is the gate token).
  */
-async function loadOnchainQr() {
-  const item = payItem.value
-  const onion = props.peerId || currentPeer.value?.onion
-  if (!item || !onion) return
-  onchainError.value = ''
-  onchainData.value = null
-  onchainQr.value = ''
-  onchainWaiting.value = true
+async function lookupOnchainPurchase(onion: string, item: CatalogItem, generation: number) {
+  const selected=()=>generation===paymentGeneration.value && activePaymentMatches(onion,item.id)
   try {
-    const req = await rpcClient.call<{ address?: string; amount_sats?: number; error?: string }>({
-      method: 'content.request-onchain',
-      params: { onion, content_id: item.id },
-      timeout: 45000,
-    })
-    if (!req?.address || !req?.amount_sats) {
-      onchainError.value = req?.error || 'The seller could not provide an on-chain address.'
-      onchainWaiting.value = false
-      return
-    }
-    onchainData.value = { address: req.address, amount_sats: req.amount_sats }
-    const btc = (req.amount_sats / 1e8).toFixed(8)
-    try {
-      onchainQr.value = await QRCode.toDataURL(`bitcoin:${req.address}?amount=${btc}`, { margin: 1, width: 240 })
-    } catch {
-      onchainQr.value = '' // fall back to showing the raw address
-    }
-    onchainWaiting.value = false
-    onchainPaying.value = true // "waiting for payment" — drives the poll loop
-    pollOnchain(req.address)
-  } catch (e: unknown) {
-    onchainError.value = e instanceof Error ? e.message : 'Could not request an on-chain address'
-    onchainWaiting.value = false
-  }
+    const result=await rpcClient.call<{attempt?:unknown}>({method:'content.onchain-attempt',params:{onion,content_id:item.id},timeout:15000,maxRetries:1})
+    if(!selected()) return
+    if(!result || !Object.prototype.hasOwnProperty.call(result,'attempt')) throw Error('Could not verify original on-chain operation; do not pay again')
+    onchainAttempt.value=result.attempt===null?null:parseOnchainAttempt(result.attempt)
+    onchainLookupError.value=false
+  } catch(error) {if(selected()){onchainLookupError.value=true;lnError.value=error instanceof Error?error.message:'Could not verify original on-chain purchase'}}
+}
+async function cancelOriginalOnchain() {
+  const item=payItem.value,onion=props.peerId||currentPeer.value?.onion,original=onchainAttempt.value
+  if(!item||!onion||!original||paymentActionBusy.value)return
+  const operation=paymentOperations.begin('onchain-cancel',onion,item.id);if(!operation)return
+  try {
+    const result=parseOnchainAttempt(await rpcClient.call({method:'content.onchain-cancel',params:{onion,content_id:item.id,operation_id:original.operation_id},timeout:60000,maxRetries:1}))
+    if(result.operation_id!==original.operation_id || !result.retired_unallocated || !result.can_switch_method)throw Error('Seller has not confirmed that no address was allocated. Keep the original operation.')
+    if(!paymentOperations.selected(operation))return
+    onchainAttempt.value=null;onchainLookupError.value=false;lnError.value='Unallocated on-chain request canceled. You can choose another method.'
+  }catch(error){if(paymentOperations.selected(operation))lnError.value=error instanceof Error?error.message:'Original address allocation is unresolved; do not pay again'}
+  finally{paymentOperations.finish(operation)}
+}
+async function loadOnchainQr() {
+  const item=payItem.value,onion=props.peerId || currentPeer.value?.onion
+  if(!item || !onion || !await permitFreshOtherRail(item,onion,false,true)) return
+  if(!onchainAttempt.value && getItemPrice(item.access)<546){onchainError.value='On-chain payment requires at least 546 sats.';return}
+  const operation=paymentOperations.begin('onchain-qr',onion,item.id);if(!operation)return
+  onchainWaiting.value=true;onchainError.value=''
+  try {
+    if(onchainLookupError.value) throw Error('Recover original on-chain state before displaying another address')
+    const result=await rpcClient.call<unknown>({method:'content.onchain-expose',params:{onion,content_id:item.id,price_sats:onchainAttempt.value?.price_sats ?? getItemPrice(item.access),...(onchainAttempt.value?{operation_id:onchainAttempt.value.operation_id}:{})},timeout:60000,maxRetries:1})
+    const attempt=parseOnchainAttempt(result)
+    if(!onchainAttempt.value && attempt.price_sats!==getItemPrice(item.access))throw Error('The seller changed the payment amount; do not pay')
+    if(!paymentOperations.selected(operation))return
+    onchainAttempt.value=attempt.retired_unallocated?null:attempt
+    if(attempt.retired_unallocated){onchainPaying.value=false;return}
+    if(attempt.paid){await recoverOnchainDownload(item,onion,attempt,paymentGeneration.value);return}
+    if(!attempt.address || !attempt.external_exposure) throw Error('Original address allocation is unresolved; recover this operation without requesting another address')
+    const image=await QRCode.toDataURL(`bitcoin:${attempt.address}?amount=${(attempt.price_sats/1e8).toFixed(8)}`,{margin:1,width:240})
+    if(!paymentOperations.selected(operation))return
+    onchainData.value={address:attempt.address,amount_sats:attempt.price_sats};onchainQr.value=image
+    onchainPaying.value=true;void pollOnchain(attempt.operation_id)
+  }catch(error){if(paymentOperations.selected(operation))onchainError.value=error instanceof Error?error.message:'Recover the original on-chain operation; do not pay again'}
+  finally {if(paymentOperations.finish(operation))onchainWaiting.value=false}
 }
 
 async function copyOnchain() {
-  if (!onchainData.value) return
+  const original = onchainData.value
+  const generation = paymentGeneration.value
+  if (!original) return
+  const selected = () => generation === paymentGeneration.value && onchainData.value === original && payItem.value !== null
   try {
-    await navigator.clipboard.writeText(onchainData.value.address)
+    await navigator.clipboard.writeText(original.address)
+    if (!selected()) return
     onchainCopied.value = true
-    setTimeout(() => { onchainCopied.value = false }, 1500)
+    setTimeout(() => { if (selected()) onchainCopied.value = false }, 1500)
   } catch { /* clipboard denied */ }
 }
 
-/**
- * Pay on-chain from THIS node's wallet: ask the seller for a fresh address +
- * amount, broadcast with lnd.sendcoins, then poll the seller until it detects
- * the payment and release the file (address is the gate token). Slower than LN
- * because the seller waits for the tx to appear/confirm.
- */
+/** Review and confirm the node's saved transaction; never call generic sendcoins. */
 async function payOnchain() {
-  const item = payItem.value
-  const onion = props.peerId || currentPeer.value?.onion
-  if (!item || !onion || onchainPaying.value) return
-
-  onchainPaying.value = true
-  lnError.value = ''
+  const item=payItem.value,onion=props.peerId || currentPeer.value?.onion
+  if(!item || !onion || paymentActionBusy.value || !await permitFreshOtherRail(item,onion,false,true))return
+  if(!onchainAttempt.value && getItemPrice(item.access)<546){lnError.value='On-chain payment requires at least 546 sats.';return}
+  const operation=paymentOperations.begin('onchain-send',onion,item.id);if(!operation)return
+  const selected=()=>paymentOperations.selected(operation)
+  onchainPaying.value=true;lnError.value='';let polling=false
   try {
-    const req = await rpcClient.call<{ address?: string; amount_sats?: number; error?: string }>({
-      method: 'content.request-onchain',
-      params: { onion, content_id: item.id },
-      timeout: 45000,
-    })
-    if (!req?.address || !req?.amount_sats) {
-      lnError.value = req?.error || 'The seller could not provide an on-chain address.'
-      onchainPaying.value = false
-      return
+    if(onchainLookupError.value)throw Error('Original on-chain lookup failed. Reopen this file to recover before paying.')
+    let attempt=onchainAttempt.value
+    if(attempt?.paid){await recoverOnchainDownload(item,onion,attempt,paymentGeneration.value);return}
+    if(attempt?.external_exposure) {polling=true;void pollOnchain(attempt.operation_id);return}
+    if(!attempt || attempt.phase==='address_requested') {
+      attempt=parseOnchainAttempt(await rpcClient.call({method:'content.onchain-create',params:{onion,content_id:item.id,price_sats:attempt?.price_sats ?? getItemPrice(item.access),...(attempt?{operation_id:attempt.operation_id}:{})},timeout:60000,maxRetries:1}))
+      if(!onchainAttempt.value && attempt.price_sats!==getItemPrice(item.access))throw Error('The seller changed the payment amount; do not pay')
+      if(!selected())return
+      onchainAttempt.value=attempt.retired_unallocated?null:attempt
+      if(attempt.retired_unallocated)return
+      if(attempt.phase==='address_requested')throw Error('The original seller offer is unresolved. Preserve this operation; no replacement address will be requested.')
     }
-    const addr = req.address
-    const send = await rpcClient.call<{ txid?: string; error?: string }>({
-      method: 'lnd.sendcoins',
-      params: { addr, amount: req.amount_sats },
-      timeout: 60000,
-    })
-    if (!send?.txid) {
-      lnError.value = send?.error || 'On-chain send failed (insufficient on-chain balance?).'
-      onchainPaying.value = false
-      return
+    if(!attempt.plan_sha256 && !attempt.template_sha256) {
+      const cap=Number(onchainFeeCap.value)
+      if(!Number.isSafeInteger(cap)||cap<=0)throw Error('Enter a positive whole-sat maximum fee')
+      attempt=parseOnchainAttempt(await rpcClient.call({method:'content.onchain-prepare',params:{onion,content_id:item.id,operation_id:attempt.operation_id,max_fee_sats:cap},timeout:60000,maxRetries:1}))
+      if(selected())onchainAttempt.value=attempt.retired_unallocated?null:attempt
+      return // A separate click confirms the actual saved fee and transaction.
     }
-    // Broadcast — now wait for the seller to see it and release.
-    pollOnchain(addr)
-  } catch (e: unknown) {
-    lnError.value = e instanceof Error ? e.message : 'Could not pay on-chain'
-    onchainPaying.value = false
-  }
+    if(!selected())return
+    attempt=parseOnchainAttempt(await rpcClient.call({method:'content.onchain-pay',params:{onion,content_id:item.id,operation_id:attempt.operation_id,template_sha256:attempt.template_sha256,plan_sha256:attempt.plan_sha256},timeout:120000,maxRetries:1}))
+    if(!selected())return
+    onchainAttempt.value=attempt.retired_unallocated?null:attempt;if(attempt.retired_unallocated)return;polling=true;void pollOnchain(attempt.operation_id)
+  }catch(error){if(selected())lnError.value=error instanceof Error?error.message:'Original on-chain result is unresolved; do not pay again'}
+  finally{if(paymentOperations.finish(operation)&&!polling)onchainPaying.value=false}
 }
-
-async function pollOnchain(address: string) {
-  const item = payItem.value
-  const onion = props.peerId || currentPeer.value?.onion
-  if (!item || !onion) { onchainPaying.value = false; return }
+type OnchainPollScope={item:CatalogItem;onion:string;operationId:string;generation:number}
+function onchainScopeSelected(scope:OnchainPollScope){return paymentGeneration.value===scope.generation&&activePaymentMatches(scope.onion,scope.item.id)}
+async function recoverOnchainDownload(item:CatalogItem,onion:string,attempt:OnchainAttempt,generation:number) {
+  const dl=await rpcClient.call<{owned?:boolean;owned_content_id?:string;mime_type?:string}>({method:'content.onchain-download',params:{onion,content_id:item.id,operation_id:attempt.operation_id},timeout:960000,maxRetries:1})
+  if(generation!==paymentGeneration.value||!activePaymentMatches(onion,item.id))return
+  onchainPaying.value=false
+  if(dl.owned===true)openPurchased(item,undefined,dl.mime_type,onion,dl.owned_content_id)
+  else lnError.value='Payment is confirmed; recover its original download without paying again.'
+}
+async function pollOnchain(operationId:string,original?:OnchainPollScope) {
+  const item=original?.item||payItem.value,onion=original?.onion||props.peerId||currentPeer.value?.onion
+  if(!item||!onion)return
+  const scope=original||{item,onion,operationId,generation:paymentGeneration.value}
+  if(!onchainScopeSelected(scope))return
   try {
-    const res = await rpcClient.call<{ paid?: boolean }>({
-      method: 'content.onchain-status',
-      params: { onion, content_id: item.id, address },
-      timeout: 30000,
-    })
-    if (res?.paid) {
-      const dl = await rpcClient.call<{ data?: string; mime_type?: string; error?: string }>({
-        method: 'content.download-peer-onchain',
-        params: { onion, content_id: item.id, address },
-        timeout: 120000,
-      })
-      onchainPaying.value = false
-      if (dl?.data) {
-        openPurchased(item, dl.data, dl.mime_type)
-      } else {
-        lnError.value = dl?.error || 'Paid, but the download failed. Try again shortly.'
-      }
-      return
-    }
-  } catch {
-    // transient — keep polling
-  }
-  if (payItem.value && onchainPaying.value) {
-    onchainPollTimer = setTimeout(() => pollOnchain(address), 5000)
-  }
+    const attempt=parseOnchainAttempt(await rpcClient.call({method:'content.onchain-recover',params:{onion,content_id:item.id,operation_id:scope.operationId},timeout:60000,maxRetries:1}))
+    if(!onchainScopeSelected(scope))return
+    onchainAttempt.value=attempt.retired_unallocated?null:attempt
+    if(attempt.retired_unallocated){onchainPaying.value=false;return}
+    if(attempt.paid){await recoverOnchainDownload(item,onion,attempt,scope.generation);return}
+  }catch(error){if(onchainScopeSelected(scope))lnError.value=error instanceof Error?error.message:'Original payment verification unavailable; do not pay again'}
+  if(onchainScopeSelected(scope)&&onchainPaying.value)onchainPollTimer=setTimeout(()=>pollOnchain(scope.operationId,scope),5000)
 }
 
 /** Spendable balance for a given ecash backend in the current plan. */
 function ecashBalanceOf(b: EcashBackend): number {
   if (!ecashPlan.value) return 0
-  return b === 'cashu' ? ecashPlan.value.cashu : b === 'fedimint' ? ecashPlan.value.fedimint : ecashPlan.value.ark
+  return b === 'cashu' ? ecashPlan.value.cashu : ecashPlan.value.fedimint
 }
 
 /**
- * Step 1b: look at BOTH ecash balances, pick the backend that covers the price
- * (Cashu preferred, else Fedimint), and show a confirmation screen so the user
- * sees exactly which wallet is spent and can switch before committing (#3).
+ * Read balances and obtain the durable Cashu quote for explicit confirmation.
+ * Other ecash balances are informative and never selected as a fallback.
  */
 async function prepareEcashPay() {
   const item = payItem.value
-  if (!item) return
-  const price = getItemPrice(item.access)
+  const onion = props.peerId || currentPeer.value?.onion
+  if (!item || !onion || paymentActionBusy.value) return
+  if (hasBlockingLightningReceipt.value) { lnError.value = 'Check the saved Lightning attempt before choosing another method.'; return }
+  const generation = paymentGeneration.value
+  await cashuLookup
+  if (paymentGeneration.value !== generation || !activePaymentMatches(onion, item.id)) return
+  if (hasBlockingLightningReceipt.value) {lnError.value='Recover or cancel the original invoice before choosing another method.';return}
+  if(onchainAttempt.value || onchainLookupError.value){lnError.value='Recover the original on-chain purchase first.';return}
+  const operation = paymentOperations.begin('prepare-ecash', onion, item.id)
+  if (!operation) return
   ecashPreparing.value = true
   purchaseError.value = null
   try {
@@ -1338,18 +1512,22 @@ async function prepareEcashPay() {
     } catch {
       // Couldn't read balances — let the user try anyway (auto backend).
     }
-    const total = cashu + fedimint + ark
-    // Prefer Cashu when it covers the price, else Fedimint, else Ark, else
-    // leave null (insufficient — shown in the confirm screen, Confirm disabled).
+    if (!paymentOperations.selected(operation)) return
+    const total = cashu + fedimint
+    // Only Cashu currently has recoverable ecash peer-file payments.
+    // Never fall through to another wallet when its quote cannot be funded.
     const chosen: EcashBackend | null =
-      cashu >= price ? 'cashu' : fedimint >= price ? 'fedimint' : ark >= price ? 'ark' : null
+      acceptsMethod(item.access, 'ecash') || hasBlockingCashuPurchase.value ? 'cashu' : null
     ecashPlan.value = { cashu, fedimint, ark, total, chosen }
     if (!chosen) {
-      purchaseError.value = `Not enough funds: Cashu ${cashu} + Fedimint ${fedimint} + Ark ${ark} sats, need ${price}. Fund a wallet, or pay another way.`
+      purchaseError.value = 'Fedimint file purchases are temporarily unavailable. Ark cannot pay for peer files yet. Choose another accepted payment method.'
     }
     payMode.value = 'ecash-confirm'
+    if (chosen === 'cashu') await requestCashuPurchase(item, onion, operation, false)
+  } catch (error) {
+    if (paymentOperations.selected(operation)) purchaseError.value = error instanceof Error ? error.message : 'Could not recover the Cashu purchase'
   } finally {
-    ecashPreparing.value = false
+    if (paymentOperations.finish(operation)) ecashPreparing.value = false
   }
 }
 
@@ -1362,11 +1540,11 @@ async function prepareEcashPay() {
  * mobile companion ("paid but never unlocked"); the viewer's Save button
  * still offers an explicit download.
  */
-function openPurchased(item: CatalogItem, base64Data: string | undefined, mimeType?: string, seller?: string) {
+function openPurchased(item: CatalogItem, base64Data: string | undefined, mimeType?: string, seller?: string, cachedId?: string) {
   const onion = seller || props.peerId || currentPeer.value?.onion
   const url = base64Data !== undefined
     ? URL.createObjectURL(base64ToBlob(base64Data, mimeType || item.mime_type))
-    : `/api/peer-content/${encodeURIComponent(onion || "")}/${encodeURIComponent(item.id)}`
+    : `/api/peer-content/${encodeURIComponent(onion || "")}/${encodeURIComponent(cachedId || item.id)}`
   if (onion) {
     try { localStorage.removeItem(receiptKey(onion, item.id)) } catch { /* owned cache remains authoritative */ }
     lnReceipt.value = null
@@ -1390,33 +1568,89 @@ function openPurchased(item: CatalogItem, base64Data: string | undefined, mimeTy
   void loadOwned()
 }
 
-/** Confirm the ecash payment with the backend the user selected. */
+type CashuPurchaseReply = Partial<Omit<CashuQuote, 'state'>> & { state?: string; owned?: boolean; owned_content_id?: string; mime_type?: string; error?: string }
+async function requestCashuPurchase(item: CatalogItem, onion: string, operation: NonNullable<ReturnType<typeof paymentOperations.begin>>, confirm: boolean) {
+  const selected = () => paymentOperations.selected(operation)
+  let saved: ReturnType<typeof readCashuAttempt> = null
+  let unreadable = false
+  try { saved = readCashuAttempt(onion, item.id) } catch { unreadable = true }
+  // A corrupt browser marker may query/recover node-owned state, but cannot
+  // supply consent or authorize a newly selected payment.
+  const quote = unreadable ? null : saved?.quote || (selected() ? cashuQuote.value : null)
+  if (confirm && quote) keepCashuAttempt(onion, item.id, quote, true)
+  const result = await rpcClient.call<CashuPurchaseReply>({
+    method: 'content.purchase',
+    params: { onion, content_id: item.id, filename: item.filename,
+      max_wallet_debit: confirm && quote ? quote.wallet_debit_sats : Number.MAX_SAFE_INTEGER,
+      ...(confirm && quote ? { consent: { operation_id: quote.operation_id, envelope_sha256: quote.envelope_sha256, wallet_debit_sats: quote.wallet_debit_sats } } : {}) },
+    timeout: 960000, maxRetries: 1,
+  })
+  if (result?.state === 'confirmation_required') {
+    const next = parseCashuQuote(result)
+    keepAuthoritativeCashuQuote(onion, item.id, next)
+    if (selected()) { cashuQuote.value = next; cashuRecoveryRequired.value = true; cashuRecoveryError.value = false }
+    return
+  }
+  if (result?.state === 'delivered' && result.owned === true && result.owned_content_id) {
+    archiveMalformedCashuAttempt(onion, item.id)
+    clearCashuAttempt(onion, item.id)
+    if (selected()) openPurchased(item, undefined, result.mime_type, onion, result.owned_content_id)
+    return
+  }
+  if (result?.state === 'cancelled_unspent') {
+    archiveMalformedCashuAttempt(onion, item.id)
+    clearCashuAttempt(onion, item.id)
+    if (selected()) { cashuQuote.value = null; cashuRecoveryRequired.value = false; cashuRecoveryError.value = false; payMode.value = 'choose' }
+    return
+  }
+  throw new Error(result?.error || 'The original Cashu purchase is not confirmed yet. Retry recovers it; do not pay using another method.')
+}
+async function selectEcashBackend(backend: EcashBackend) {
+  if (!ecashPlan.value || paymentActionBusy.value) return
+  if (backend !== 'cashu') { purchaseError.value = 'This wallet cannot pay for peer files yet. Fedimint file purchases are temporarily unavailable.'; return }
+  ecashPlan.value.chosen = backend
+  if (backend === 'cashu') await prepareEcashPay()
+}
+async function cancelCashuPurchase() {
+  const item = payItem.value
+  const onion = props.peerId || currentPeer.value?.onion
+  const quote = cashuQuote.value
+  if (!item || !onion || !quote || paymentActionBusy.value) return
+  const generation = paymentGeneration.value
+  await cashuLookup
+  if (paymentGeneration.value !== generation || !activePaymentMatches(onion,item.id)) return
+  const operation = paymentOperations.begin('cashu-cancel', onion, item.id)
+  if (!operation) return
+  try {
+    const result = await rpcClient.call<{state?: string;operation_id?: string}>({ method:'content.cancel-purchase',
+      params:{onion,operation_id:quote.operation_id}, timeout:60000,maxRetries:1 })
+    if (result?.state !== 'cancelled_unspent' || result.operation_id !== quote.operation_id) throw new Error('Cancellation is not confirmed. Recover the original purchase before paying another way.')
+    clearCashuAttempt(onion,item.id)
+    if (paymentOperations.selected(operation)) {
+      cashuQuote.value=null;cashuRecoveryRequired.value=false;cashuRecoveryError.value=false
+      purchaseError.value=null;payMode.value='choose'
+    }
+  } catch (error) {
+    if (paymentOperations.selected(operation)) purchaseError.value=error instanceof Error?error.message:'Could not confirm cancellation'
+  } finally { paymentOperations.finish(operation) }
+}
+
+/** Confirm the reviewed Cashu quote; other ecash rails are not recoverable yet. */
 async function confirmEcashPay() {
   const item = payItem.value
   const onion = props.peerId || currentPeer.value?.onion
   const method = ecashPlan.value?.chosen
-  if (!item || !onion || !method) return
-  const price = getItemPrice(item.access)
-
-  downloading.value = item.id
+  if (!item || !onion || !method || paymentActionBusy.value || hasBlockingLightningReceipt.value) return
+  if (method !== 'cashu') { purchaseError.value = 'This wallet cannot pay for peer files yet. Fedimint file purchases are temporarily unavailable.'; return }
+  const operation = paymentOperations.begin('ecash-send', onion, item.id)
+  if (!operation) return
   purchaseError.value = null
   try {
-    const result = await rpcClient.call<{ data?: string; error?: string; ecash_backend?: string; mime_type?: string }>({
-      method: 'content.download-peer-paid',
-      params: { onion, content_id: item.id, price_sats: price, method, filename: item.filename },
-      timeout: 120000,
-    })
-    if (result?.data) {
-      // The purchase is now cached + owned by this node (backend persisted it).
-      openPurchased(item, result.data, result.mime_type)
-    } else if (result?.error) {
-      // Keep the confirm screen open so the user can switch backend and retry.
-      purchaseError.value = result.error
-    }
+    await requestCashuPurchase(item, onion, operation, true)
   } catch (e: unknown) {
-    purchaseError.value = e instanceof Error ? e.message : 'Download failed'
+    if (paymentOperations.selected(operation)) purchaseError.value = e instanceof Error ? e.message : 'Download failed'
   } finally {
-    downloading.value = null
+    paymentOperations.finish(operation)
   }
 }
 
@@ -1425,33 +1659,88 @@ async function payWithInvoice() {
   const item = payItem.value
   const onion = props.peerId || currentPeer.value?.onion
   if (!item || !onion) return
-
+  if (!await permitFreshOtherRail(item, onion, true)) return
+  const operation = paymentOperations.begin('invoice', onion, item.id)
+  if (!operation) return
   payMode.value = 'qr'
   invoiceError.value = ''
   invoiceWaiting.value = true
   try {
-    const res = readReceipt(onion, item.id) as (LightningReceipt & { error?: string }) | null || await rpcClient.call<{ bolt11?: string; payment_hash?: string; price_sats?: number; error?: string }>({
-      method: 'content.request-invoice',
-      params: { onion, content_id: item.id },
-      timeout: 45000,
-    })
-    if (!res?.bolt11 || !res?.payment_hash) {
-      invoiceError.value = res?.error || 'The seller could not create an invoice (is its Lightning node running?).'
-      invoiceWaiting.value = false
-      return
-    }
-    invoiceData.value = { bolt11: res.bolt11, payment_hash: res.payment_hash, price_sats: res.price_sats ?? getItemPrice(item.access) }
-    keepReceipt(onion, item.id, invoiceData.value)
-    try {
-      invoiceQr.value = await QRCode.toDataURL(res.bolt11.toUpperCase(), { margin: 1, width: 240 })
-    } catch {
-      invoiceQr.value = '' // fall back to showing the raw invoice string
-    }
+    const saved = readReceipt(onion, item.id)
+    const res = saved?.operation_id && saved.state !== 'failed'
+      ? await rpcClient.call<LightningReceipt & {paid?:boolean;error?:string}>({method:'content.invoice-recover',params:{onion,content_id:item.id,operation_id:saved.operation_id,external_exposure:true},timeout:45000,maxRetries:1})
+      : (saved?.state === 'failed' ? null : saved) || await rpcClient.call<LightningReceipt & {paid?:boolean;error?:string}>({method:'content.invoice-create',params:{onion,content_id:item.id,price_sats:getItemPrice(item.access),external_exposure:true},timeout:45000,maxRetries:1})
+    if (paymentOperations.selected(operation) && res?.operation_id) invoiceOperationId.value=res.operation_id
+    if (!res?.bolt11 || !res?.payment_hash) throw new Error(res && 'error' in res && typeof res.error === 'string' ? res.error : 'The seller could not recover the original invoice.')
+    const receipt = keepReceipt(onion,item.id,{...saved,...res,origin:'external',external_exposure:true,state:saved?.state==='succeeded'||('paid' in res && res.paid===true)?'succeeded':'pending'},()=>paymentOperations.selected(operation))
+    // Preserve this request even if the modal closed; never expose it in a new modal.
+    if (!paymentOperations.selected(operation)) return
+    lnReceiptReadError.value=false
+    lnReceipt.value = receipt
+    invoiceData.value = {...receipt,bolt11:res.bolt11}
+    let image = ''
+    try { image = await QRCode.toDataURL(res.bolt11.toUpperCase(), { margin: 1, width: 240 }) } catch { /* raw invoice remains usable */ }
+    if (!paymentOperations.selected(operation)) return
+    invoiceQr.value = image
     scheduleInvoicePoll()
-  } catch (e: unknown) {
-    invoiceError.value = e instanceof Error ? e.message : 'Could not request an invoice'
-    invoiceWaiting.value = false
+  } catch (error) {
+    if (paymentOperations.selected(operation)) invoiceError.value = error instanceof Error ? error.message : 'Could not request an invoice'
+  } finally {
+    if (paymentOperations.finish(operation)) invoiceWaiting.value = false
   }
+}
+
+/** A separate user gesture creates a new attempt only after proven native failure. */
+async function retryNativeLightning() {
+  const item=payItem.value,onion=props.peerId||currentPeer.value?.onion,original=lnReceipt.value
+  if(!item||!onion||!original?.operation_id||original.state!=='failed'||original.external_exposure!==false||original.origin!=='native'||paymentActionBusy.value)return
+  const generation=paymentGeneration.value
+  await cashuLookup
+  if(generation!==paymentGeneration.value||!activePaymentMatches(onion,item.id)||hasBlockingCashuPurchase.value)return
+  const operation=paymentOperations.begin('native-retry',onion,item.id);if(!operation)return
+  const selected=()=>paymentOperations.selected(operation)
+  try {
+    const result=await rpcClient.call<LightningReceipt & {paid?:boolean;error?:string}>({method:'content.invoice-retry-native',params:{onion,content_id:item.id,operation_id:original.operation_id,price_sats:original.price_sats},timeout:45000,maxRetries:1})
+    if(!result.operation_id||!result.payment_hash||result.operation_id===original.operation_id||result.price_sats!==original.price_sats)throw Error(result.error||'The replacement invoice is saved but still needs recovery; no new payment sent')
+    const kept=keepReceipt(onion,item.id,{...result,origin:result.external_exposure?'external':'native',external_exposure:result.external_exposure??false,state:result.paid?'succeeded':'pending'},selected,original.operation_id)
+    if(!selected()||kept.operation_id!==result.operation_id)return
+    if(kept.external_exposure){lnError.value='The replacement invoice was already opened in another wallet. Recover or cancel that invoice first.';return}
+    invoiceOperationId.value=result.operation_id;lnReceiptReadError.value=false
+    paymentOperations.finish(operation)
+    await payWithLightning()
+  }catch(error){
+    if(selected()){
+      await lookupNodeInvoice(onion,item,generation)
+      if(selected())lnError.value=error instanceof Error?error.message:'Could not recover the explicit retry; do not start another payment'
+    }
+  }finally{paymentOperations.finish(operation)}
+}
+
+/** Reconcile a saved request without paying it or exposing its invoice. */
+async function recoverOriginalInvoice() {
+  const item=payItem.value,onion=props.peerId||currentPeer.value?.onion,id=invoiceOperationId.value
+  if(!item||!onion||!id||paymentActionBusy.value)return
+  const operation=paymentOperations.begin('invoice-recovery',onion,item.id);if(!operation)return
+  try {
+    await rpcClient.call({method:'content.invoice-create',params:{onion,content_id:item.id,operation_id:id,external_exposure:false},timeout:45000,maxRetries:1})
+    if(paymentOperations.selected(operation))await lookupNodeInvoice(onion,item,operation.generation)
+  }catch(error){if(paymentOperations.selected(operation))lnError.value=error instanceof Error?error.message:'Could not recover the original invoice; no payment sent'}
+  finally{paymentOperations.finish(operation)}
+}
+
+/** Only authenticated seller terminal evidence releases an externally payable invoice. */
+async function cancelExternalInvoice() {
+  const item=payItem.value,onion=props.peerId||currentPeer.value?.onion,receipt=lnReceipt.value
+  if(!item||!onion||!receipt?.operation_id||receipt.state==='succeeded'||paymentActionBusy.value)return
+  const operation=paymentOperations.begin('invoice-cancel',onion,item.id);if(!operation)return
+  const selected=()=>paymentOperations.selected(operation)
+  try {
+    const result=await rpcClient.call<InvoiceLifecycle>({method:'content.invoice-cancel',params:{onion,content_id:item.id,operation_id:receipt.operation_id},timeout:45000,maxRetries:1})
+    if(keepCanceledInvoice(onion,item.id,receipt,result,selected)){if(selected()){invoiceData.value=null;invoiceQr.value='';payMode.value='choose'}}
+    else if(result.paid===true){keepReceipt(onion,item.id,{...receipt,state:'succeeded'},selected);if(selected())lnError.value='This invoice settled before cancellation. Recover its paid file.'}
+    else if(selected())lnError.value='Cancellation is not confirmed. Recover this original invoice before choosing another payment method.'
+  }catch(error){if(selected())lnError.value=error instanceof Error?error.message:'Could not confirm invoice cancellation'}
+  finally{paymentOperations.finish(operation)}
 }
 
 /**
@@ -1460,88 +1749,119 @@ async function payWithInvoice() {
  * retry seller verification and delivery without sending a second payment.
  */
 async function payWithLightning() {
+  if(canRetryNative.value){await retryNativeLightning();return}
   const item = payItem.value
   const onion = props.peerId || currentPeer.value?.onion
-  if (!item || !onion || lnPaying.value) return
+  if (!item || !onion || paymentActionBusy.value || lnReceiptReadError.value) return
+  if (!await permitFreshOtherRail(item, onion, true)) return
+  const operation = paymentOperations.begin('lightning', onion, item.id)
+  if (!operation) return
+  const selected = () => paymentOperations.selected(operation)
   lnPaying.value = true
   lnError.value = ''
+  let inv: LightningReceipt | null = null
   try {
-    let inv = readReceipt(onion, item.id)
-    if (!inv) {
-      const result = await rpcClient.call<{ bolt11?: string; payment_hash?: string; error?: string }>({
-        method: 'content.request-invoice', params: { onion, content_id: item.id }, timeout: 45000,
-      })
-      if (!result?.bolt11 || !result.payment_hash) throw new Error(result?.error || 'The seller could not create an invoice.')
-      inv = { bolt11: result.bolt11, payment_hash: result.payment_hash, price_sats: getItemPrice(item.access) }
-      keepReceipt(onion, item.id, inv)
-      const pay = await rpcClient.payLightningInvoice({ payment_request: inv.bolt11 })
-      if (pay.status === 'failed') {
-        localStorage.removeItem(receiptKey(onion, item.id)); lnReceipt.value = null
-        lnError.value = `Payment failed: ${pay.failure_reason || 'unknown reason'}`
-        return
-      }
-      if (pay.status === 'pending') {
-        lnError.value = 'Payment is still settling. Retry checks this payment without sending more sats.'
+    inv = readReceipt(onion, item.id)
+    if (inv && inv.state !== 'failed') {
+      const state = await recoverFailedLightningAttempt(onion, item.id, inv, selected)
+      if (state === 'failed') return
+      if (state === 'pending' && (!inv.operation_id || inv.external_exposure)) {
+        if (selected()) lnError.value = 'Payment is still settling. You can close this window; check this saved attempt later without sending more sats.'
         return
       }
     }
-    lnReceipt.value = inv
-    const dl = await rpcClient.call<{ data?: string; owned?: boolean; mime_type?: string; error?: string }>({
-      method: 'content.download-peer-invoice',
-      params: { onion, content_id: item.id, payment_hash: inv.payment_hash, filename: item.filename, price_sats: inv.price_sats, cache_only: true },
+    if (!selected()) return
+    if (!inv || inv.state === 'failed') {
+      const result = await rpcClient.call<{ bolt11?: string; payment_hash?: string; operation_id?: string; external_exposure?: boolean; price_sats?: number; paid?: boolean; state?: string; error?: string }>({
+        method: 'content.invoice-create', params: { onion, content_id: item.id, price_sats: getItemPrice(item.access), external_exposure:false }, timeout: 45000, maxRetries: 1,
+      })
+      if (!result?.operation_id || !result.payment_hash) throw new Error(result?.error || 'The original invoice operation needs recovery.')
+      if (!selected()) return
+      if(result.price_sats!==undefined && result.price_sats!==getItemPrice(item.access) && result.paid!==true)throw Error('The original invoice has different terms. Review its saved price before paying.')
+      inv = { operation_id: result.operation_id, origin:'native', external_exposure:result.external_exposure ?? false, payment_hash:result.payment_hash, price_sats:result.price_sats ?? getItemPrice(item.access), state:result.paid===true?'succeeded':'pending' }
+      keepReceipt(onion,item.id,inv,selected)
+    }
+    if(inv.operation_id && inv.state!=='succeeded') {
+      if(!selected())return
+      const pay=await rpcClient.call<{status:string;failure_reason?:string}>({method:'content.invoice-pay',params:{onion,content_id:item.id,operation_id:inv.operation_id},timeout:120000,maxRetries:1})
+      if(pay.status==='failed' && inv.external_exposure===false){keepFailedLightningAttempt(onion,item.id,inv,pay.failure_reason||'Payment failed',selected);return}
+      if(pay.status!=='succeeded'){if(selected())lnError.value='The original payment is still unresolved. Retry recovers it without sending again.';return}
+      inv={...inv,state:'succeeded'};keepReceipt(onion,item.id,inv,selected)
+    }
+    const dl = await rpcClient.call<{ data?: string; owned?: boolean; owned_content_id?: string; mime_type?: string; error?: string }>({
+      method: inv.operation_id ? 'content.invoice-download' : 'content.download-peer-invoice',
+      params: inv.operation_id ? {onion,content_id:item.id,operation_id:inv.operation_id} : { onion, content_id: item.id, payment_hash: inv.payment_hash, filename: item.filename, price_sats: inv.price_sats, cache_only: true },
       timeout: 960000,
     })
+    if (!selected()) return
     if (dl?.data !== undefined || dl?.owned === true) openPurchased(item, dl.data, dl.mime_type, onion)
     else lnError.value = dl?.error || 'Download unavailable. Retry uses this payment without sending more sats.'
   } catch (e: unknown) {
-    lnError.value = (e instanceof Error ? e.message : 'Payment or download could not be confirmed') + ' Retry checks the saved payment; do not pay again.'
-  } finally { lnPaying.value = false }
+    if (inv && inv.state !== 'failed' && inv.state !== 'succeeded' && await recoverFailedLightningAttempt(onion, item.id, inv, selected) === 'failed') return
+    if (selected()) lnError.value = (e instanceof Error ? e.message : 'Payment or download could not be confirmed') + ' Retry checks the saved payment; do not pay again.'
+  } finally { if (paymentOperations.finish(operation)) lnPaying.value = false }
 }
 
-function scheduleInvoicePoll() {
+type InvoicePollScope = { item: CatalogItem; onion: string; invoice: LightningReceipt; generation: number }
+function invoiceScopeSelected(scope: InvoicePollScope) {
+  return paymentGeneration.value === scope.generation && activePaymentMatches(scope.onion, scope.item.id)
+    && invoiceData.value?.payment_hash === scope.invoice.payment_hash
+}
+function scheduleInvoicePoll(scope?: InvoicePollScope) {
+  if (!scope) {
+    const item = payItem.value
+    const onion = props.peerId || currentPeer.value?.onion
+    const invoice = invoiceData.value
+    if (!item || !onion || !invoice) return
+    scope = { item, onion, invoice, generation: paymentGeneration.value }
+  }
+  if (!invoiceScopeSelected(scope)) return
   if (invoicePollTimer) clearTimeout(invoicePollTimer)
-  invoicePollTimer = setTimeout(pollInvoice, 1000)
+  const original = scope
+  invoicePollTimer = setTimeout(() => pollInvoice(original), 1000)
 }
-
-async function pollInvoice() {
-  const item = payItem.value
-  const inv = invoiceData.value
-  const onion = props.peerId || currentPeer.value?.onion
-  if (!item || !inv || !onion) return
+async function pollInvoice(scope: InvoicePollScope) {
+  if (!invoiceScopeSelected(scope)) return
+  const { item, onion, invoice: inv } = scope
   try {
-    const res = await rpcClient.call<{ paid?: boolean }>({
-      method: 'content.invoice-status',
-      params: { onion, content_id: item.id, payment_hash: inv.payment_hash, filename: item.filename, price_sats: inv.price_sats, cache_only: true },
-      timeout: 30000,
+    const res = await rpcClient.call<InvoiceLifecycle>({
+      method: inv.operation_id ? 'content.invoice-recover' : 'content.invoice-status',
+      params: inv.operation_id ? {onion,content_id:item.id,operation_id:inv.operation_id} : { onion, content_id: item.id, payment_hash: inv.payment_hash, filename: item.filename, price_sats: inv.price_sats, cache_only: true }, timeout: 30000,
     })
-    if (res?.paid) {
-      // Settled — pull the file using the payment hash as the gate token.
+    if (!invoiceScopeSelected(scope)) return
+    if (keepCanceledInvoice(onion, item.id, inv, res, () => invoiceScopeSelected(scope))) {
       invoiceWaiting.value = false
-      const dl = await rpcClient.call<{ data?: string; owned?: boolean; mime_type?: string; error?: string }>({
-        method: 'content.download-peer-invoice',
-        params: { onion, content_id: item.id, payment_hash: inv.payment_hash, filename: item.filename, price_sats: inv.price_sats, cache_only: true },
-        timeout: 960000,
-      })
-      if (dl?.data !== undefined || dl?.owned === true) {
-        openPurchased(item, dl.data, dl.mime_type, onion)
-      } else {
-        invoiceError.value = dl?.error || 'Paid, but the download failed. Try again shortly.'
-      }
+      invoiceData.value = null
+      invoiceQr.value = ''
+      payMode.value = 'choose'
       return
     }
-  } catch {
-    // Transient — keep polling.
-  }
-  if (payItem.value && invoiceData.value) scheduleInvoicePoll()
+    if (res?.paid === true) {
+      localStorage.setItem(receiptKey(onion, item.id), JSON.stringify({ ...inv, state: 'succeeded' }))
+      const dl = await rpcClient.call<{ data?: string; owned?: boolean; owned_content_id?: string; mime_type?: string; error?: string }>({
+        method: inv.operation_id ? 'content.invoice-download' : 'content.download-peer-invoice',
+        params: inv.operation_id ? {onion,content_id:item.id,operation_id:inv.operation_id} : { onion, content_id: item.id, payment_hash: inv.payment_hash, filename: item.filename, price_sats: inv.price_sats, cache_only: true }, timeout: 960000, maxRetries: 1,
+      })
+      if (!invoiceScopeSelected(scope)) return
+      if (dl?.data !== undefined || dl?.owned === true) openPurchased(item, dl.data, dl.mime_type, onion, dl.owned_content_id)
+      else invoiceError.value = dl?.error || 'Payment is confirmed; delivery is still recoverable with this invoice.'
+      return
+    }
+  } catch { /* A transient status failure never permits a new payment. */ }
+  if (invoiceScopeSelected(scope)) scheduleInvoicePoll(scope)
 }
 
 async function copyInvoice() {
-  if (!invoiceData.value) return
+  const original = invoiceData.value
+  const generation = paymentGeneration.value
+  if (!original) return
+  const selected = () => generation === paymentGeneration.value && invoiceData.value === original && payItem.value !== null
   try {
-    await navigator.clipboard.writeText(invoiceData.value.bolt11)
+    await navigator.clipboard.writeText(original.bolt11)
+    if (!selected()) return
     invoiceCopied.value = true
-    setTimeout(() => { invoiceCopied.value = false }, 2000)
-  } catch { /* clipboard blocked */ }
+    setTimeout(() => { if (selected()) invoiceCopied.value = false }, 2000)
+  } catch { /* clipboard denied */ }
 }
 
 /** Play audio/video inline. For free items, downloads full file; for paid, uses the preview. */

@@ -71,6 +71,88 @@ pub async fn load_nodes(data_dir: &Path) -> Result<Vec<FederatedNode>> {
     load_nodes_inner(data_dir).await
 }
 
+/// Every persisted relationship identity, before display-only onion deduplication.
+/// Callers excluding unsigned claims must not lose an observer/untrusted DID
+/// merely because another record currently shares its route.
+pub(crate) async fn load_node_identities(
+    data_dir: &Path,
+) -> Result<std::collections::HashSet<String>> {
+    let _guard = FEDERATION_STORE_LOCK.lock().await;
+    let content = match fs::read(data_dir.join(FEDERATION_DIR).join(NODES_FILE)).await {
+        Ok(content) => content,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Default::default()),
+        Err(error) => return Err(error).context("Could not read federation identities"),
+    };
+    let file: NodesFile = serde_json::from_slice(&content)
+        .context("Invalid federation identities; unsigned claims cannot replace them")?;
+    Ok(file.nodes.into_iter().map(|node| node.did).collect())
+}
+
+/// Resolve payment identity from persisted records before display deduplication
+/// can merge fields from different identities sharing an address.
+pub(crate) async fn load_unique_payment_peer(
+    data_dir: &Path,
+    onion: &str,
+) -> Result<FederatedNode> {
+    let _guard = FEDERATION_STORE_LOCK.lock().await;
+    let content = fs::read(data_dir.join(FEDERATION_DIR).join(NODES_FILE))
+        .await
+        .context("Could not read payment peer bindings")?;
+    let file: NodesFile =
+        serde_json::from_slice(&content).context("Invalid payment peer bindings")?;
+    let target = onion.strip_suffix(".onion").unwrap_or(onion);
+    anyhow::ensure!(!target.is_empty(), "Missing payment peer address");
+    let mut matches = file
+        .nodes
+        .into_iter()
+        .filter(|peer| peer.onion.strip_suffix(".onion").unwrap_or(&peer.onion) == target);
+    let peer = matches.next().context("Payment peer binding is missing")?;
+    anyhow::ensure!(
+        matches.next().is_none(),
+        "Payment peer binding is ambiguous"
+    );
+    anyhow::ensure!(
+        crate::identity::did_key_from_pubkey_hex(&peer.pubkey)? == peer.did,
+        "Payment peer identity does not match its public key"
+    );
+    Ok(peer)
+}
+
+/// Resolve a purchase seller by raw identity before any display deduplication.
+pub(crate) async fn load_unique_payment_peer_by_did(
+    data_dir: &Path,
+    did: &str,
+) -> Result<FederatedNode> {
+    let _guard = FEDERATION_STORE_LOCK.lock().await;
+    let content = fs::read(data_dir.join(FEDERATION_DIR).join(NODES_FILE))
+        .await
+        .context("Could not read payment peer bindings")?;
+    let file: NodesFile =
+        serde_json::from_slice(&content).context("Invalid payment peer bindings")?;
+    let matching: Vec<_> = file.nodes.iter().filter(|peer| peer.did == did).collect();
+    anyhow::ensure!(
+        matching.len() == 1,
+        "Payment seller identity binding is missing or ambiguous"
+    );
+    let peer = matching[0];
+    let onion = peer.onion.strip_suffix(".onion").unwrap_or(&peer.onion);
+    anyhow::ensure!(
+        !onion.is_empty()
+            && file
+                .nodes
+                .iter()
+                .filter(|node| node.onion.strip_suffix(".onion").unwrap_or(&node.onion) == onion)
+                .count()
+                == 1,
+        "Payment seller address binding is missing or ambiguous"
+    );
+    anyhow::ensure!(
+        crate::identity::did_key_from_pubkey_hex(&peer.pubkey)? == peer.did,
+        "Payment seller identity does not match its public key"
+    );
+    Ok(peer.clone())
+}
+
 /// Lock-free body of `load_nodes`. Callers that already hold
 /// `FEDERATION_STORE_LOCK` (i.e. other functions in this module composing a
 /// multi-step critical section) must call this instead of `load_nodes` to
@@ -84,7 +166,8 @@ async fn load_nodes_inner(data_dir: &Path) -> Result<Vec<FederatedNode>> {
     let content = fs::read_to_string(&path)
         .await
         .context("Failed to read federation nodes")?;
-    let file: NodesFile = serde_json::from_str(&content).unwrap_or_default();
+    let file: NodesFile = serde_json::from_str(&content)
+        .context("Invalid federation nodes; existing peer records were preserved")?;
     Ok(dedup_nodes_by_onion(file.nodes))
 }
 
@@ -514,6 +597,41 @@ mod tests {
             last_sync_error: None,
             last_sync_error_at: None,
         }
+    }
+
+    #[tokio::test]
+    async fn payment_did_resolution_rejects_duplicates_hidden_by_display_merging() {
+        let dir = tempfile::tempdir().unwrap();
+        let key = hex::encode([1u8; 32]);
+        let did = crate::identity::did_key_from_pubkey_hex(&key).unwrap();
+        let mut original = make_node(&did, "a.onion");
+        original.pubkey = key;
+        save_nodes(dir.path(), &[original.clone()]).await.unwrap();
+        assert_eq!(
+            load_unique_payment_peer_by_did(dir.path(), &did)
+                .await
+                .unwrap()
+                .onion,
+            "a.onion"
+        );
+        let mut alternate = original.clone();
+        alternate.onion = "b.onion".into();
+        save_nodes(dir.path(), &[original.clone(), alternate])
+            .await
+            .unwrap();
+        assert!(load_unique_payment_peer_by_did(dir.path(), &did)
+            .await
+            .is_err());
+        let mut collision = original.clone();
+        collision.did = crate::identity::did_key_from_pubkey_hex(&hex::encode([2u8; 32])).unwrap();
+        collision.pubkey = hex::encode([2u8; 32]);
+        save_nodes(dir.path(), &[collision, original])
+            .await
+            .unwrap();
+        assert_eq!(load_nodes(dir.path()).await.unwrap().len(), 1);
+        assert!(load_unique_payment_peer_by_did(dir.path(), &did)
+            .await
+            .is_err());
     }
 
     #[test]

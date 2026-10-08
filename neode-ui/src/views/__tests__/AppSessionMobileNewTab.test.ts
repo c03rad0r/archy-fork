@@ -20,7 +20,7 @@ vi.mock('vue-router', () => ({
 }))
 
 vi.mock('@/stores/appLauncher', () => ({
-  useAppLauncherStore: () => ({ panelAppId: null }),
+  useAppLauncherStore: () => ({ panelAppId: null, mediaSessionGeneration: () => null, retainMediaSession: () => false }),
 }))
 
 vi.mock('@/stores/app', () => ({
@@ -49,6 +49,8 @@ vi.mock('../appSession/useNostrBridge', () => ({
     consentError: { value: '' },
     approveConsent: vi.fn(),
     denyConsent: vi.fn(),
+    cancelPending: vi.fn(),
+    dispose: vi.fn(),
   }),
 }))
 

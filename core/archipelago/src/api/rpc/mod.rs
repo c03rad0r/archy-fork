@@ -17,8 +17,13 @@ mod fips;
 mod handshake;
 mod identity;
 mod interfaces;
+mod lightning_purchase;
+mod onchain_purchase;
 pub(crate) mod lnd;
 mod marketplace;
+mod media_registration;
+mod playback;
+mod purchase;
 // pub(crate): 13-10's `assistant::backends::select_backend` reuses
 // `mesh::assistant::detect_ollama()` (D-04) rather than re-probing —
 // matches the existing `pub(crate) mod bitcoin_relay;`/`pub(crate) mod
@@ -97,6 +102,40 @@ fn nostr_signing_origin_allowed(headers: &hyper::HeaderMap, dev_mode: bool) -> b
     matches!(url.port_or_known_default(), Some(80 | 443))
 }
 
+fn native_consent_origin_allowed(method: &str, headers: &hyper::HeaderMap, dev_mode: bool) -> bool {
+    !matches!(
+        method,
+        "node.nostr-sign"
+            | "identity.nostr-sign"
+            | "media.registration.prepare"
+            | "media.registration.context"
+            | "media.registration.resolve"
+            | "content.rental-purchase"
+
+            | "content.onchain-cancel"
+            | "content.onchain-attempt"
+            | "content.onchain-create"
+            | "content.onchain-expose"
+            | "content.onchain-prepare"
+            | "content.onchain-pay"
+            | "content.onchain-recover"
+            | "content.onchain-download"
+            | "content.invoice-pay"
+            | "content.invoice-download"
+            | "content.invoice-attempt"
+            | "content.invoice-retry-native"
+            | "content.invoice-create"
+            | "content.invoice-recover"
+            | "content.invoice-cancel"
+            | "content.purchase"
+            | "content.cancel-purchase"
+            | "content.playback-handle"
+            | "content.playback-status"
+            | "content.playback-prepare"
+            | "content.playback-start"
+    ) || nostr_signing_origin_allowed(headers, dev_mode)
+}
+
 /// Read-only authenticated methods may skip CSRF, but they must still exist in
 /// the dispatcher. The tab signer uses `system.get-hostname` as its lightweight
 /// session probe, so keeping the policy in one testable function protects that
@@ -148,6 +187,7 @@ pub struct RpcHandler {
     pub(crate) app_gate: Arc<crate::appgate::AppGate>,
     endpoint_rate_limiter: EndpointRateLimiter,
     response_cache: ResponseCache,
+    playback_handles: crate::playback_handles::PlaybackHandles,
     mesh_service: Arc<tokio::sync::RwLock<Option<crate::mesh::MeshService>>>,
     /// LoRa radio firmware-flash job state, sibling to `mesh_service` — one
     /// job at a time, since flashing needs exclusive access to the port.
@@ -172,6 +212,10 @@ pub struct RpcHandler {
 }
 
 impl RpcHandler {
+    pub(crate) fn playback_handles(&self) -> &crate::playback_handles::PlaybackHandles {
+        &self.playback_handles
+    }
+
     pub async fn new(
         config: Config,
         state_manager: Arc<StateManager>,
@@ -231,6 +275,7 @@ impl RpcHandler {
             app_gate,
             endpoint_rate_limiter,
             response_cache: ResponseCache::new(5),
+            playback_handles: Default::default(),
             mesh_service: Arc::new(tokio::sync::RwLock::new(None)),
             flash_job: crate::mesh::flash::new_job_handle(),
             transport_router: Arc::new(tokio::sync::RwLock::new(None)),
@@ -333,20 +378,26 @@ impl RpcHandler {
 
         debug!("RPC method: {}", rpc_req.method);
 
-        if matches!(
-            rpc_req.method.as_str(),
-            "node.nostr-sign" | "identity.nostr-sign"
-        ) && !nostr_signing_origin_allowed(&parts.headers, self.config.dev_mode)
-        {
+        if !native_consent_origin_allowed(&rpc_req.method, &parts.headers, self.config.dev_mode) {
             return Ok(self.error_response(
                 403,
-                "Nostr signing from app origins requires the dashboard consent bridge",
+                "Native signing and Cloud registration from app origins require the dashboard consent bridge",
                 StatusCode::FORBIDDEN,
             ));
         }
 
         // Enforce authentication for non-allowlisted methods
         let is_unauthenticated = UNAUTHENTICATED_METHODS.contains(&rpc_req.method.as_str());
+        if !is_unauthenticated || rpc_req.method.starts_with("auth.") {
+            if let Err(error) = SessionStore::load_or_create_remember_secret().await {
+                tracing::error!(%error, "Persistent session signing key unavailable");
+                return Ok(self.error_response(
+                    503,
+                    "Sign-in temporarily unavailable. Check server session storage.",
+                    StatusCode::SERVICE_UNAVAILABLE,
+                ));
+            }
+        }
         let mut new_session_cookies: Option<(String, String)> = None;
         if !is_unauthenticated {
             let mut authenticated = match &session_token {
@@ -359,7 +410,7 @@ impl RpcHandler {
                 if let Some(remember) = extract_cookie(&parts.headers, "remember") {
                     if crate::session::SessionStore::validate_remember_token(&remember).await {
                         let new_token = self.session_store.create().await;
-                        let new_csrf = derive_csrf_token(&new_token).await;
+                        let new_csrf = derive_csrf_token(&new_token).await?;
                         tracing::info!("Auto-restored session from remember-me token");
                         new_session_cookies = Some((new_token, new_csrf));
                         authenticated = true;
@@ -407,7 +458,7 @@ impl RpcHandler {
                     use hmac::{Hmac, Mac};
                     use sha2::Sha256;
                     type HmacSha256 = Hmac<Sha256>;
-                    let secret = SessionStore::load_or_create_remember_secret().await;
+                    let secret = SessionStore::load_or_create_remember_secret().await?;
                     let mut mac = match HmacSha256::new_from_slice(&secret) {
                         Ok(m) => m,
                         Err(_) => {
@@ -424,29 +475,28 @@ impl RpcHandler {
             };
 
             if !csrf_valid {
-                // Debug: log expected vs received for diagnosis
-                if let (Some(token), Some(header)) = (&session_token, &csrf_header) {
-                    let expected = derive_csrf_token(token).await;
-                    tracing::warn!(
-                        method = %rpc_req.method,
-                        session_prefix = %&token[..8.min(token.len())],
-                        csrf_prefix = %&header[..8.min(header.len())],
-                        expected_prefix = %&expected[..8.min(expected.len())],
-                        "403 CSRF mismatch — session/csrf/expected prefixes shown"
-                    );
-                } else {
-                    tracing::warn!(
-                        method = %rpc_req.method,
-                        has_session = session_token.is_some(),
-                        has_header = csrf_header.is_some(),
-                        "403 CSRF validation failed — rejecting RPC call"
-                    );
-                }
-                return Ok(self.error_response(
+                tracing::warn!(method = %rpc_req.method, "CSRF mismatch; rejecting action and refreshing authenticated session token");
+                let mut response = self.error_response(
                     403,
                     "CSRF token missing or invalid",
                     StatusCode::FORBIDDEN,
-                ));
+                );
+                // Authentication and RBAC have already passed. Reject this
+                // request without dispatch, but refresh the deterministic CSRF
+                // cookie so the browser can retry normally after a key rotation
+                // or a stale companion cookie. Never return a token to an
+                // unauthenticated client or relax CSRF validation on retry.
+                if let Some(token) = &session_token {
+                    self.set_csrf_cookie(
+                        &mut response,
+                        &derive_csrf_token(token).await?,
+                        secure_suffix,
+                    );
+                }
+                response
+                    .headers_mut()
+                    .insert("Cache-Control", cookie_header("private, no-store"));
+                return Ok(response);
             }
         }
 
@@ -551,7 +601,7 @@ impl RpcHandler {
             client_ip,
             secure_suffix,
         )
-        .await;
+        .await?;
 
         Ok(response)
     }
@@ -603,7 +653,7 @@ impl RpcHandler {
         new_session_cookies: &Option<(String, String)>,
         client_ip: std::net::IpAddr,
         secure_suffix: &str,
-    ) {
+    ) -> Result<()> {
         // Track failed login attempts for rate limiting
         if method == "auth.login" && rpc_resp.error.is_some() {
             self.login_rate_limiter.record_failure(client_ip).await;
@@ -643,7 +693,7 @@ impl RpcHandler {
                 if let Ok(Some(totp_data)) = self.auth_manager.get_totp_data().await {
                     if let Ok(secret) = crate::totp::decrypt_secret(&totp_data, password) {
                         let token = self.session_store.create_pending(secret).await;
-                        let csrf_token = derive_csrf_token(&token).await;
+                        let csrf_token = derive_csrf_token(&token).await?;
                         self.set_session_cookie(response, &token, secure_suffix);
                         self.set_csrf_cookie(response, &csrf_token, secure_suffix);
                         let totp_body = serde_json::json!({
@@ -656,8 +706,8 @@ impl RpcHandler {
                 }
             } else {
                 let token = self.session_store.create().await;
-                let csrf_token = derive_csrf_token(&token).await;
-                let remember_token = self.session_store.create_remember_token().await;
+                let csrf_token = derive_csrf_token(&token).await?;
+                let remember_token = self.session_store.create_remember_token().await?;
                 self.set_session_cookie(response, &token, secure_suffix);
                 self.set_csrf_cookie(response, &csrf_token, secure_suffix);
                 self.set_remember_cookie(response, &remember_token, secure_suffix);
@@ -676,8 +726,8 @@ impl RpcHandler {
                 .map(|s| s.to_string());
 
             if let Some(new_token) = new_token_opt {
-                let csrf_token = derive_csrf_token(&new_token).await;
-                let remember_token = self.session_store.create_remember_token().await;
+                let csrf_token = derive_csrf_token(&new_token).await?;
+                let remember_token = self.session_store.create_remember_token().await?;
                 self.set_session_cookie(response, &new_token, secure_suffix);
                 self.set_csrf_cookie(response, &csrf_token, secure_suffix);
                 self.set_remember_cookie(response, &remember_token, secure_suffix);
@@ -696,7 +746,7 @@ impl RpcHandler {
         if method == "auth.changePassword" && rpc_resp.error.is_none() {
             if let Some(token) = session_token {
                 let new_token = self.session_store.rotate(token).await;
-                let csrf_token = derive_csrf_token(&new_token).await;
+                let csrf_token = derive_csrf_token(&new_token).await?;
                 self.set_session_cookie(response, &new_token, secure_suffix);
                 self.set_csrf_cookie(response, &csrf_token, secure_suffix);
             }
@@ -728,6 +778,7 @@ impl RpcHandler {
             self.set_session_cookie(response, new_session, secure_suffix);
             self.set_csrf_cookie(response, new_csrf, secure_suffix);
         }
+        Ok(())
     }
 
     fn set_session_cookie(
@@ -790,6 +841,43 @@ mod nostr_signing_origin_tests {
     }
 
     #[test]
+    fn native_registration_and_purchase_use_dashboard_origin_and_keep_authentication_and_csrf() {
+        for method in [
+            "media.registration.prepare",
+            "media.registration.context",
+            "media.registration.resolve",
+            "content.rental-purchase",
+            "content.onchain-cancel",
+            "content.onchain-attempt",
+            "content.onchain-create",
+            "content.onchain-expose",
+            "content.onchain-prepare",
+            "content.onchain-pay",
+            "content.onchain-recover",
+            "content.onchain-download",
+            "content.purchase",
+            "content.cancel-purchase",
+            "content.playback-handle",
+            "content.playback-status",
+            "content.playback-prepare",
+            "content.playback-start",
+        ] {
+            assert!(!native_consent_origin_allowed(
+                method,
+                &headers(Some("http://node.local:7778")),
+                false
+            ));
+            assert!(native_consent_origin_allowed(
+                method,
+                &headers(Some("https://node.local")),
+                false
+            ));
+            assert!(!UNAUTHENTICATED_METHODS.contains(&method));
+            assert!(!csrf_exempt_method(method));
+        }
+    }
+
+    #[test]
     fn signing_accepts_dashboard_and_authenticated_non_browser_clients() {
         assert!(nostr_signing_origin_allowed(&headers(None), false));
         assert!(nostr_signing_origin_allowed(
@@ -832,5 +920,94 @@ mod session_probe_contract_tests {
         assert!(!UNAUTHENTICATED_METHODS.contains(&PROBE));
         assert!(DISPATCHER.contains("\"system.get-hostname\" =>"));
         assert!(!DISPATCHER.contains("\"system.get-version\" =>"));
+    }
+}
+
+#[cfg(test)]
+mod csrf_recovery_tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn stale_csrf_is_refreshed_without_executing_action_or_authenticating_strangers() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut config = crate::config::Config::default();
+        config.data_dir = dir.path().to_path_buf();
+        config.dev_mode = false;
+        let sessions =
+            crate::session::SessionStore::new_for_tests(dir.path().join("sessions.json"));
+        let token = sessions.create().await;
+        let handler = Arc::new(
+            RpcHandler::new(
+                config,
+                Arc::new(crate::state::StateManager::new()),
+                Arc::new(crate::monitoring::MetricsStore::new()),
+                sessions,
+                None,
+                None,
+            )
+            .await
+            .unwrap(),
+        );
+        let request = |session: &str, csrf: Option<&str>, secure: bool| {
+            let mut builder = Request::builder()
+                .method("POST")
+                .uri("/rpc/v1")
+                .header("Cookie", format!("session={session}"));
+            if let Some(csrf) = csrf {
+                builder = builder.header("X-CSRF-Token", csrf);
+            }
+            if secure {
+                builder = builder.header("X-Forwarded-Proto", "https");
+            }
+            builder.body(hyper::Body::from(serde_json::json!({
+                "jsonrpc":"2.0", "id":1, "method":"system.settings.set",
+                "params":{"key":"ai_provider", "value":"{\"provider\":\"local\",\"openai_model\":\"\"}"}
+            }).to_string())).unwrap()
+        };
+        let settings = dir.path().join("settings/model-provider.json");
+        for stale in [None, Some("stale-token"), Some("00")] {
+            let response = handler
+                .clone()
+                .handle(request(&token, stale, true))
+                .await
+                .unwrap();
+            assert_eq!(response.status(), StatusCode::FORBIDDEN);
+            assert!(!settings.exists(), "rejected action must not have run");
+            let cookies: Vec<_> = response
+                .headers()
+                .get_all("set-cookie")
+                .iter()
+                .map(|v| v.to_str().unwrap())
+                .collect();
+            assert_eq!(cookies.len(), 1);
+            let expected = derive_csrf_token(&token).await.unwrap();
+            assert_eq!(
+                cookies[0],
+                format!("csrf_token={expected}; SameSite=Lax; Path=/; Secure")
+            );
+            assert_eq!(response.headers()["cache-control"], "private, no-store");
+        }
+        let stranger = handler
+            .clone()
+            .handle(request("not-a-session", None, true))
+            .await
+            .unwrap();
+        assert_eq!(stranger.status(), StatusCode::UNAUTHORIZED);
+        assert!(!stranger.headers().contains_key("set-cookie"));
+        assert!(!settings.exists());
+        let valid = derive_csrf_token(&token).await.unwrap();
+        let response = handler
+            .handle(request(&token, Some(&valid), false))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let body: serde_json::Value =
+            serde_json::from_slice(&hyper::body::to_bytes(response.into_body()).await.unwrap())
+                .unwrap();
+        assert!(
+            body["error"].is_null(),
+            "valid retry must reach the handler"
+        );
+        assert!(settings.exists());
     }
 }

@@ -40,7 +40,7 @@ impl RpcHandler {
     /// balance sitting in the *other* one so the UI can say what switching
     /// would reveal rather than appearing to lose money.
     pub(super) async fn handle_wallet_ecash_network(&self) -> Result<serde_json::Value> {
-        let current = ecash::load_network(&self.config.data_dir).await;
+        let current = ecash::load_network(&self.config.data_dir).await?;
         let wallet = ecash::load_wallet(&self.config.data_dir).await?;
         Ok(serde_json::json!({
             "network": current,

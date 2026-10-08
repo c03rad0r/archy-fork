@@ -1,12 +1,12 @@
 <template>
-  <div v-if="visibleRequests.length > 0" class="glass-card p-6 mb-6">
+  <div id="connection-requests" v-if="showEmpty || visibleRequests.length > 0" class="glass-card p-6 mb-6">
     <div class="flex items-center justify-between mb-4">
       <div>
-        <h2 class="text-base font-semibold text-white">Pending Peer Requests</h2>
+        <h2 class="text-base font-semibold text-white">Nostr Connection Requests</h2>
         <p class="text-xs text-white/60">
           Inbound requests await your approval. Outbound requests show what you've sent.
-          Approved peers are added as <span class="text-orange-300">Observer</span> — promote
-          to Trusted manually if you want them to receive state syncs.
+          Connections become <span class="text-orange-300">Observer</span> peers.
+          Approval delivery retries automatically while the other node connects.
         </p>
       </div>
       <button
@@ -18,6 +18,7 @@
       </button>
     </div>
 
+    <p v-if="visibleRequests.length === 0" class="text-sm text-white/60" role="status">No current requests. Discover a node or share an invite to get started.</p>
     <div class="space-y-3">
       <div
         v-for="req in visibleRequests"
@@ -80,6 +81,8 @@ const props = defineProps<{
   requests: PendingPeerRequest[]
   polling: boolean
   busyId: string | null
+  peerDids?: string[]
+  showEmpty?: boolean
 }>()
 
 defineEmits<{
@@ -96,6 +99,7 @@ const visibleRequests = computed(() => {
   const cutoff = Date.now() - 24 * 60 * 60 * 1000
   return props.requests.filter((r) => {
     if (r.state === 'pending' || r.state === 'sent') return true
+    if (r.state === 'approved' && !props.peerDids?.includes(r.from_did)) return true
     const ts = new Date(r.received_at).getTime()
     return Number.isFinite(ts) && ts >= cutoff
   })
@@ -104,14 +108,21 @@ const visibleRequests = computed(() => {
 function badgeClass(r: PendingPeerRequest): string {
   if (r.state === 'pending') return 'bg-yellow-500/20 text-yellow-300'
   if (r.state === 'sent') return 'bg-blue-500/20 text-blue-300'
-  if (r.state === 'approved') return 'bg-green-500/20 text-green-300'
+  if (r.state === 'approved') return props.peerDids?.includes(r.from_did)
+    ? 'bg-green-500/20 text-green-300' : 'bg-yellow-500/20 text-yellow-300'
   if (r.state === 'rejected') return 'bg-red-500/20 text-red-300'
   return 'bg-white/10 text-white/50'
 }
 
 function badgeLabel(r: PendingPeerRequest): string {
   if (r.outbound && r.state === 'sent') return 'Sent'
-  if (r.outbound && r.state === 'approved') return 'They approved'
+  if (r.state === 'approved') {
+    if (props.peerDids?.includes(r.from_did)) return 'Peer added'
+    const age = Date.now() - new Date(r.received_at).getTime()
+    if (!Number.isFinite(age)) return 'Approved — status unavailable'
+    if (age > 30 * 24 * 60 * 60 * 1000) return 'Approval expired — reconnect'
+    return r.outbound ? 'They approved — connecting' : 'Approved — connecting'
+  }
   if (r.outbound && r.state === 'rejected') return 'They rejected'
   if (r.outbound) return r.state
   if (r.state === 'pending') return 'Inbound'
@@ -126,7 +137,7 @@ function shortNpub(npub: string): string {
 function relative(iso: string): string {
   const ts = new Date(iso).getTime()
   if (!Number.isFinite(ts)) return iso
-  const diff = Date.now() - ts
+  const diff = Math.max(0, Date.now() - ts)
   const sec = Math.floor(diff / 1000)
   if (sec < 60) return `${sec}s ago`
   const min = Math.floor(sec / 60)

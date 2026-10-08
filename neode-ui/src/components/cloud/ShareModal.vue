@@ -400,33 +400,25 @@ async function save() {
         (i) => matchesThisFile(i.filename)
       )?.id
 
-      // Add if not in catalog
+      const policy: Record<string, unknown> = { access: accessType.value, availability: 'all_peers' }
+      if (accessType.value === 'paid') {
+        policy.price_sats = priceSats.value
+        policy.accepted_methods = [...acceptedSet.value]
+      }
       if (!itemId) {
         const ext = props.filename.split('.').pop()?.toLowerCase() || ''
-        const addRes = await rpcClient.call<{ item: { id: string } }>({
-          method: 'content.add',
+        await rpcClient.call({
+          method: 'content.publish',
           params: {
             filename: (props.filepath || props.filename).replace(/^\/+/, ''),
             mime_type: SHARE_MIME_MAP[ext] || 'application/octet-stream',
             description: '',
+            ...policy,
           },
         })
-        itemId = addRes.item.id
+      } else {
+        await rpcClient.call({ method: 'content.configure', params: { id: itemId, ...policy } })
       }
-
-      // Set pricing
-      const pricingParams: Record<string, unknown> = { id: itemId, access: accessType.value }
-      if (accessType.value === 'paid') {
-        pricingParams.price_sats = priceSats.value
-        pricingParams.accepted_methods = [...acceptedSet.value]
-      }
-      await rpcClient.call({ method: 'content.set-pricing', params: pricingParams })
-
-      // Set availability to all peers
-      await rpcClient.call({
-        method: 'content.set-availability',
-        params: { id: itemId, availability: 'all_peers' },
-      })
 
       const label =
         accessType.value === 'paid'

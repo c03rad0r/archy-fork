@@ -242,6 +242,7 @@
 
     <AppsUninstallModal
       :show="uninstallModal.show"
+      :app-id="uninstallModal.appId"
       :app-title="uninstallModal.appTitle"
       :uninstalling="actions.uninstalling.value"
       @close="closeUninstallModal"

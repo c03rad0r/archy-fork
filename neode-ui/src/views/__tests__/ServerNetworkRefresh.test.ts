@@ -43,6 +43,32 @@ function mountServer(options: { renderTorServices?: boolean } = {}) {
 }
 
 describe('Server network refresh states', () => {
+  it('shows an interface fetch failure without claiming hardware is absent, then retries', async () => {
+    sessionStorage.clear()
+    let failed = true
+    vi.mocked(rpcClient.call).mockImplementation((request: { method: string }) => {
+      if (request.method === 'network.list-interfaces') {
+        if (failed) return Promise.reject(new Error('CSRF token missing or invalid'))
+        return Promise.resolve({ interfaces: [{ name: 'wlp3s0', type: 'wifi', state: 'up', mac: '', ipv4: ['192.0.2.10'] }] })
+      }
+      return Promise.resolve({})
+    })
+    vi.mocked(rpcClient.vpnStatus).mockResolvedValue({ connected: false } as never)
+    vi.mocked(rpcClient.dnsStatus).mockResolvedValue({ provider: 'system', resolv_conf_servers: [], doh_enabled: false } as never)
+    vi.mocked(rpcClient.diskStatus).mockResolvedValue({ encrypted: false, warnings: [] } as never)
+    const wrapper = mountServer()
+    await flushPromises()
+    expect(wrapper.text()).toContain('Couldn’t load network interfaces.')
+    expect(wrapper.text()).not.toContain('No physical interfaces detected')
+    failed = false
+    const retry = wrapper.findAll('button').find(button => button.text() === 'Retry')!
+    await retry.trigger('click')
+    await flushPromises()
+    expect(wrapper.text()).toContain('wlp3s0')
+    expect(wrapper.text()).not.toContain('Couldn’t load network interfaces.')
+    wrapper.unmount()
+    sessionStorage.clear()
+  })
   it('keeps network overview visible while refresh is pending', async () => {
     vi.mocked(rpcClient.call).mockImplementation((request: { method: string }) => {
       if (request.method === 'network.diagnostics') {

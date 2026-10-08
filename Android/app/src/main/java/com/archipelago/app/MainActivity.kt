@@ -9,11 +9,18 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
 import com.archipelago.app.ui.navigation.AppNavHost
-import com.archipelago.app.ui.screens.releaseKioskWebView
+import com.archipelago.app.ui.screens.finishKioskActivity
 import com.archipelago.app.ui.theme.ArchipelagoTheme
 import kotlinx.coroutines.flow.MutableStateFlow
 
 class MainActivity : ComponentActivity() {
+    internal var cloudVideoPip: com.archipelago.app.ui.screens.CloudVideoPip? = null
+    override fun onPictureInPictureModeChanged(active: Boolean, config: android.content.res.Configuration) {
+        super.onPictureInPictureModeChanged(active, config)
+        cloudVideoPip?.modeChanged(active)
+    }
+    override fun onStop() { cloudVideoPip?.stopped(); super.onStop() }
+
 
     // Pairing deep link (archipelago://pair?...) from the launch intent or a
     // later one (launchMode=singleTask). Consumed by AppNavHost.
@@ -49,11 +56,8 @@ class MainActivity : ComponentActivity() {
 
     override fun onDestroy() {
         super.onDestroy()
-        // Swiped out of recents (or otherwise finished) — let go of the
-        // retained kiosk WebView so the next launch starts clean. Without
-        // this the FIPS service keeps the process (and the static WebView)
-        // alive, and "close the app" no longer restarted it. isFinishing
-        // keeps config changes (rotation) on the fast reattach path.
-        if (isFinishing) releaseKioskWebView()
+        // Keep an authorized playing WebView owned by the media service;
+        // discard ordinary dashboard state when the task is finished.
+        if (isFinishing) finishKioskActivity()
     }
 }

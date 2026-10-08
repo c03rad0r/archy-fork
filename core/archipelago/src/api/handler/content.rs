@@ -7,14 +7,48 @@ use hyper::{Response, StatusCode};
 use super::{is_valid_app_id, ApiHandler};
 
 impl ApiHandler {
-    pub(super) async fn handle_content_catalog(config: &Config) -> Result<Response<hyper::Body>> {
-        match content_server::load_catalog(&config.data_dir).await {
+    fn verified_content_peer(
+        &self,
+        path: &str,
+        headers: &hyper::HeaderMap,
+    ) -> Result<Option<String>> {
+        let audience = crate::identity::did_key_from_pubkey_hex(&self.self_pubkey_hex)?;
+        crate::content_auth::incoming(headers, &audience, path, chrono::Utc::now().timestamp())
+    }
+
+    async fn content_access_context(
+        &self,
+        path: &str,
+        headers: &hyper::HeaderMap,
+    ) -> Result<(Option<String>, bool, bool)> {
+        let peer = self.verified_content_peer(path, headers)?;
+        let known = if let Some(did) = &peer {
+            crate::federation::load_nodes(&self.config.data_dir)
+                .await?
+                .iter()
+                .any(|node| &node.did == did)
+        } else {
+            false
+        };
+        let owner = match crate::session::extract_session_cookie(headers) {
+            Some(token) => self.session_store.validate(&token).await,
+            None => false,
+        };
+        Ok((peer, known, owner))
+    }
+
+    pub(super) async fn handle_content_catalog(
+        &self,
+        headers: &hyper::HeaderMap,
+    ) -> Result<Response<hyper::Body>> {
+        let (peer, known, owner) = self.content_access_context("/content", headers).await?;
+        match content_server::load_catalog(&self.config.data_dir).await {
             Ok(catalog) => {
                 // Only expose public metadata for available items
                 let items: Vec<serde_json::Value> = catalog
                     .items
                     .iter()
-                    .filter(|i| !matches!(i.availability, content_server::Availability::Nobody))
+                    .filter(|item| content_server::visible_to(item, peer.as_deref(), known, owner))
                     .map(|i| {
                         serde_json::json!({
                             "id": i.id,
@@ -82,11 +116,18 @@ impl ApiHandler {
                     .map(|s| s.to_string())
             });
 
-        // Extract federation peer DID from X-Federation-DID header
-        let peer_did = headers
-            .get("x-federation-did")
-            .and_then(|v| v.to_str().ok())
-            .map(|s| s.to_string());
+        let peer_did = match self.verified_content_peer(path, headers) {
+            Ok(peer) => peer,
+            Err(_) => {
+                return Ok(build_response(
+                    StatusCode::FORBIDDEN,
+                    "application/json",
+                    hyper::Body::from(
+                        r#"{"error":"Peer authentication failed. Check both nodes are updated and their clocks are correct."}"#,
+                    ),
+                ))
+            }
+        };
 
         // The authenticated local operator never pays for their own node's
         // content: validate the session cookie (same discipline as the model
@@ -139,10 +180,23 @@ impl ApiHandler {
         }
 
         // Parse Range header for streaming support
-        let range = headers
-            .get("range")
-            .and_then(|v| v.to_str().ok())
-            .and_then(content_server::parse_range_header);
+        let range = match headers.get("range") {
+            None => None,
+            Some(value) => match value
+                .to_str()
+                .ok()
+                .and_then(content_server::parse_range_header)
+            {
+                Some(range) => Some(range),
+                None => {
+                    return Ok(build_response(
+                        StatusCode::BAD_REQUEST,
+                        "text/plain",
+                        hyper::Body::from("Invalid byte range"),
+                    ))
+                }
+            },
+        };
 
         match content_server::serve_content(
             &config.data_dir,
@@ -155,6 +209,7 @@ impl ApiHandler {
         )
         .await
         {
+            Ok(content_server::ServeResult::Stream(body)) => body.into_response(),
             Ok(content_server::ServeResult::Ok(bytes, mime_type)) => {
                 let len = bytes.len();
                 Ok(Response::builder()
@@ -235,7 +290,11 @@ impl ApiHandler {
     /// Seller side (#46): mint a Lightning invoice for a paid catalog item so a
     /// buyer can pay from any external wallet. Path: GET /content/{id}/invoice.
     /// Records a pending entitlement keyed by the invoice's payment hash.
-    pub(super) async fn handle_content_invoice(&self, path: &str) -> Result<Response<hyper::Body>> {
+    pub(super) async fn handle_content_invoice(
+        &self,
+        path: &str,
+        headers: &hyper::HeaderMap,
+    ) -> Result<Response<hyper::Body>> {
         let content_id = path
             .strip_prefix("/content/")
             .and_then(|s| s.strip_suffix("/invoice"))
@@ -248,6 +307,7 @@ impl ApiHandler {
             ));
         }
 
+        let (peer, known, owner) = self.content_access_context(path, headers).await?;
         let catalog = content_server::load_catalog(&self.config.data_dir)
             .await
             .unwrap_or_default();
@@ -261,6 +321,13 @@ impl ApiHandler {
                 ))
             }
         };
+        if !content_server::visible_to(item, peer.as_deref(), known, owner) {
+            return Ok(build_response(
+                StatusCode::NOT_FOUND,
+                "text/plain",
+                hyper::Body::from("Content not found"),
+            ));
+        }
         let price_sats = match &item.access {
             content_server::AccessControl::Paid { price_sats, .. } => *price_sats,
             _ => {
@@ -279,6 +346,18 @@ impl ApiHandler {
                 hyper::Body::from(
                     r#"{"error":"The seller does not accept Lightning for this item"}"#,
                 ),
+            ));
+        }
+
+        if let Err(error) =
+            content_server::ensure_payment_source_available(&self.config.data_dir, item).await
+        {
+            return Ok(build_response(
+                StatusCode::CONFLICT,
+                "application/json",
+                hyper::Body::from(serde_json::to_vec(
+                    &serde_json::json!({ "error": error.to_string(), "payment_started": false }),
+                )?),
             ));
         }
 
@@ -337,7 +416,7 @@ impl ApiHandler {
         path: &str,
     ) -> Result<Response<hyper::Body>> {
         Ok(invoice_status_response(path, |hash, id| async move {
-            self.rpc_handler.settle_content_invoice(&hash, &id).await
+            self.rpc_handler.content_invoice_lifecycle(&hash, &id).await
         })
         .await)
     }
@@ -345,7 +424,11 @@ impl ApiHandler {
     /// Seller side (#46): issue a fresh on-chain address for a paid catalog item
     /// so a buyer can pay on-chain. Path: GET /content/{id}/onchain. Records a
     /// pending entitlement keyed by the address; price doubles as expected amount.
-    pub(super) async fn handle_content_onchain(&self, path: &str) -> Result<Response<hyper::Body>> {
+    pub(super) async fn handle_content_onchain(
+        &self,
+        path: &str,
+        headers: &hyper::HeaderMap,
+    ) -> Result<Response<hyper::Body>> {
         let content_id = path
             .strip_prefix("/content/")
             .and_then(|s| s.strip_suffix("/onchain"))
@@ -357,47 +440,78 @@ impl ApiHandler {
                 hyper::Body::from("Invalid content ID"),
             ));
         }
+        let (peer, known, owner) = self.content_access_context(path, headers).await?;
         let catalog = content_server::load_catalog(&self.config.data_dir)
             .await
             .unwrap_or_default();
-        let price_sats = match catalog.items.iter().find(|i| i.id == content_id) {
-            Some(i) => match &i.access {
-                content_server::AccessControl::Paid { price_sats, .. } => {
-                    if !content_server::method_accepted(&i.access, "onchain") {
-                        return Ok(build_response(
-                            StatusCode::BAD_REQUEST,
-                            "application/json",
-                            hyper::Body::from(
-                                r#"{"error":"The seller does not accept on-chain payment for this item"}"#,
-                            ),
-                        ));
-                    }
-                    *price_sats
-                }
-                _ => {
+        let Some(item) = catalog.items.iter().find(|item| item.id == content_id) else {
+            return Ok(build_response(
+                StatusCode::NOT_FOUND,
+                "text/plain",
+                hyper::Body::from("Content not found"),
+            ));
+        };
+        if !content_server::visible_to(item, peer.as_deref(), known, owner) {
+            return Ok(build_response(
+                StatusCode::NOT_FOUND,
+                "text/plain",
+                hyper::Body::from("Content not found"),
+            ));
+        }
+        let price_sats = match &item.access {
+            content_server::AccessControl::Paid { price_sats, .. } => {
+                if !content_server::method_accepted(&item.access, "onchain") {
                     return Ok(build_response(
                         StatusCode::BAD_REQUEST,
                         "application/json",
-                        hyper::Body::from(r#"{"error":"Item is not paid"}"#),
-                    ))
+                        hyper::Body::from(
+                            r#"{"error":"The seller does not accept on-chain payment for this item"}"#,
+                        ),
+                    ));
                 }
-            },
-            None => {
+                *price_sats
+            }
+            _ => {
                 return Ok(build_response(
-                    StatusCode::NOT_FOUND,
-                    "text/plain",
-                    hyper::Body::from("Content not found"),
+                    StatusCode::BAD_REQUEST,
+                    "application/json",
+                    hyper::Body::from(r#"{"error":"Item is not paid"}"#),
                 ))
             }
         };
 
+        // Match the node wallet's existing sendcoins minimum before exposing a
+        // payable address for an amount its own payment flow cannot broadcast.
+        if let Err(error) = content_server::validate_onchain_payment_price(price_sats) {
+            return Ok(build_response(
+                StatusCode::BAD_REQUEST,
+                "application/json",
+                hyper::Body::from(serde_json::to_vec(
+                    &serde_json::json!({ "error": error.to_string(), "payment_started": false }),
+                )?),
+            ));
+        }
+
+        if let Err(error) =
+            content_server::ensure_payment_source_available(&self.config.data_dir, item).await
+        {
+            return Ok(build_response(
+                StatusCode::CONFLICT,
+                "application/json",
+                hyper::Body::from(serde_json::to_vec(
+                    &serde_json::json!({ "error": error.to_string(), "payment_started": false }),
+                )?),
+            ));
+        }
+
         match self.rpc_handler.new_onchain_address().await {
             Ok(address) if !address.is_empty() => {
-                crate::content_invoice::record_pending(
+                crate::content_invoice::record_pending_method(
                     &self.config.data_dir,
                     &address,
                     content_id,
                     price_sats,
+                    crate::content_invoice::PaymentMethod::Onchain,
                 )
                 .await?;
                 let body = serde_json::json!({
@@ -463,9 +577,21 @@ impl ApiHandler {
         let mut paid =
             crate::content_invoice::is_paid_for(&self.config.data_dir, address, content_id).await;
         if !paid {
-            if let Ok(true) = self.rpc_handler.onchain_received(address, price).await {
-                crate::content_invoice::mark_paid(&self.config.data_dir, address).await?;
-                paid = true;
+            match self.rpc_handler.onchain_received(address, price).await {
+                Ok(true) => {
+                    crate::content_invoice::mark_paid(&self.config.data_dir, address).await?;
+                    paid = true;
+                }
+                Ok(false) => {}
+                Err(_) => return Ok(build_response(
+                    StatusCode::OK,
+                    "application/json",
+                    hyper::Body::from(serde_json::to_vec(&serde_json::json!({
+                        "paid": false,
+                        "status": "unknown",
+                        "error": "Exact on-chain outputs could not be verified. Keep the original payment address and do not pay again."
+                    }))?),
+                )),
             }
         }
         let body = serde_json::json!({ "paid": paid });
@@ -496,6 +622,7 @@ impl ApiHandler {
         }
 
         match content_server::serve_content_preview(&config.data_dir, content_id).await {
+            Ok(content_server::PreviewResult::Stream(body)) => body.into_response(),
             Ok(content_server::PreviewResult::FullContent(bytes, mime_type)) => {
                 let len = bytes.len();
                 Ok(Response::builder()
@@ -548,7 +675,7 @@ impl ApiHandler {
 async fn invoice_status_response<F, Fut>(path: &str, settle: F) -> Response<hyper::Body>
 where
     F: FnOnce(String, String) -> Fut,
-    Fut: std::future::Future<Output = Result<bool>>,
+    Fut: std::future::Future<Output = Result<serde_json::Value>>,
 {
     let parsed = path
         .strip_prefix("/content/")
@@ -567,10 +694,10 @@ where
         );
     };
     match settle(hash.to_ascii_lowercase(), id.to_owned()).await {
-        Ok(paid) => build_response(
+        Ok(body) => build_response(
             StatusCode::OK,
             "application/json",
-            hyper::Body::from(serde_json::json!({"paid": paid}).to_string()),
+            hyper::Body::from(body.to_string()),
         ),
         Err(_) => {
             tracing::warn!("Peer-file payment status verification is temporarily unavailable");
@@ -606,7 +733,7 @@ mod invoice_status_tests {
             let response = invoice_status_response(path, |_, _| async {
                 panic!("Invalid request reached wallet");
                 #[allow(unreachable_code)]
-                Ok(false)
+                Ok(serde_json::json!({"paid":false}))
             })
             .await;
             assert_eq!(response.status(), StatusCode::BAD_REQUEST);
@@ -626,7 +753,7 @@ mod invoice_status_tests {
             let response = invoice_status_response(&path, |hash, id| async move {
                 assert_eq!(hash, "ab".repeat(32));
                 assert_eq!(id, "file");
-                Ok(paid)
+                Ok(serde_json::json!({"paid":paid}))
             })
             .await;
             assert_eq!(response.status(), StatusCode::OK);

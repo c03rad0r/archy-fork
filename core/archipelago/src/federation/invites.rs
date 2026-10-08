@@ -134,6 +134,35 @@ pub fn parse_invite(code: &str) -> Result<ParsedInvite> {
     })
 }
 
+/// Bind a Nostr-discovery reply to the node the operator requested, and cap
+/// its grant before any local node entry or callback is written. Legacy invites
+/// default to Trusted, which must never transiently authorize discovery peers.
+/// An npub-only outbound request has no DID yet: its caller must already have
+/// matched the authenticated Nostr sender to the stored requested public key.
+/// In that case the reply establishes the DID, which must still match its key.
+pub(crate) fn restrict_discovery_invite(code: &str, expected_did: &str) -> Result<String> {
+    use base64::Engine;
+    let parsed = parse_invite(code)?;
+    anyhow::ensure!(
+        expected_did.is_empty() || parsed.did == expected_did,
+        "Peer invite does not match the requested node"
+    );
+    anyhow::ensure!(
+        crate::identity::did_key_from_pubkey_hex(&parsed.pubkey)? == parsed.did,
+        "Peer invite DID does not match its identity key"
+    );
+    let bytes = base64::engine::general_purpose::URL_SAFE_NO_PAD.decode(
+        code.strip_prefix("fed1:")
+            .context("Invalid invite prefix")?,
+    )?;
+    let mut payload: serde_json::Value = serde_json::from_slice(&bytes)?;
+    payload["trust"] = serde_json::json!("observer");
+    Ok(format!(
+        "fed1:{}",
+        base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(serde_json::to_vec(&payload)?)
+    ))
+}
+
 /// Accept an invite: parse code, verify the remote node, add to federation.
 pub async fn accept_invite(
     data_dir: &Path,
@@ -619,5 +648,42 @@ mod tests {
 
         let nodes = load_nodes(dir2.path()).await.unwrap();
         assert_eq!(nodes.len(), 1, "re-accept should not duplicate");
+    }
+}
+
+#[cfg(test)]
+mod discovery_invite_scope_tests {
+    use super::*;
+    use base64::Engine;
+    #[test]
+    fn discovery_reply_binds_identity_and_caps_legacy_trust_before_acceptance() {
+        let key = "33".repeat(32);
+        let did = crate::identity::did_key_from_pubkey_hex(&key).unwrap();
+        let payload =
+            serde_json::json!({"did":did,"pubkey":key,"onion":"test.onion","token":"test-token"});
+        let code = format!(
+            "fed1:{}",
+            base64::engine::general_purpose::URL_SAFE_NO_PAD
+                .encode(serde_json::to_vec(&payload).unwrap())
+        );
+        let restricted = restrict_discovery_invite(&code, &did).unwrap();
+        let parsed = parse_invite(&restricted).unwrap();
+        assert_eq!(parsed.trust_level, TrustLevel::Observer);
+        assert_eq!(parsed.token, "test-token");
+        assert!(restrict_discovery_invite(&code, "did:key:someone-else").is_err());
+        let first_contact = restrict_discovery_invite(&code, "").unwrap();
+        assert_eq!(
+            parse_invite(&first_contact).unwrap().trust_level,
+            TrustLevel::Observer
+        );
+        let mut forged = payload;
+        forged["pubkey"] = serde_json::json!("44".repeat(32));
+        let forged = format!(
+            "fed1:{}",
+            base64::engine::general_purpose::URL_SAFE_NO_PAD
+                .encode(serde_json::to_vec(&forged).unwrap())
+        );
+        assert!(restrict_discovery_invite(&forged, &did).is_err());
+        assert!(restrict_discovery_invite(&forged, "").is_err());
     }
 }

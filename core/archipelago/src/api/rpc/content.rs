@@ -19,6 +19,81 @@ fn is_valid_v3_onion(addr: &str) -> bool {
 
 const FILE_CATALOG_PROTOCOL: &str = "https://archipelago.dev/protocols/file-catalog/v1";
 
+fn parse_content_access(params: &serde_json::Value) -> Result<AccessControl> {
+    let access_type = match params.get("access") {
+        None => "free",
+        Some(value) => value.as_str().context("Invalid access type")?,
+    };
+
+    match access_type {
+        "free" => Ok(AccessControl::Free),
+        "peers_only" => Ok(AccessControl::PeersOnly),
+        "paid" => {
+            let price = params
+                .get("price_sats")
+                .and_then(|v| v.as_u64())
+                .unwrap_or(0);
+            if price == 0 {
+                return Err(anyhow::anyhow!("Paid content requires price_sats > 0"));
+            }
+            // Optional list of payment methods the sharer accepts.
+            // Absent/empty = all methods (backward compatible).
+            const KNOWN_METHODS: [&str; 4] = ["lightning", "onchain", "ecash", "fedimint"];
+            let accepted = match params.get("accepted_methods") {
+                None => Vec::new(),
+                Some(value) => value
+                    .as_array()
+                    .context("Invalid accepted methods")?
+                    .iter()
+                    .map(|method| {
+                        let method = method.as_str().context("Invalid payment method")?;
+                        anyhow::ensure!(
+                            KNOWN_METHODS.contains(&method),
+                            "Unsupported payment method"
+                        );
+                        Ok(method.to_owned())
+                    })
+                    .collect::<Result<Vec<_>>>()?,
+            };
+            Ok(AccessControl::Paid {
+                price_sats: price,
+                accepted,
+            })
+        }
+        _ => return Err(anyhow::anyhow!("Invalid access type: {}", access_type)),
+    }
+}
+
+fn parse_content_availability(params: &serde_json::Value, default: &str) -> Result<Availability> {
+    let availability_type = match params.get("availability") {
+        None => default,
+        Some(value) => value.as_str().context("Invalid availability")?,
+    };
+
+    match availability_type {
+        "nobody" => Ok(Availability::Nobody),
+        "all_peers" => Ok(Availability::AllPeers),
+        "specific" => {
+            let peers = params
+                .get("peers")
+                .and_then(|v| v.as_array())
+                .map(|arr| {
+                    arr.iter()
+                        .filter_map(|v| v.as_str().map(|s| s.to_string()))
+                        .collect::<Vec<_>>()
+                })
+                .unwrap_or_default();
+            Ok(Availability::Specific { peers })
+        }
+        _ => {
+            return Err(anyhow::anyhow!(
+                "Invalid availability: {}",
+                availability_type
+            ))
+        }
+    }
+}
+
 /// Best-effort reclaim of an ecash payment token that was minted but the sale
 /// didn't complete (seller unreachable or couldn't redeem it), so the buyer
 /// doesn't lose the value. For Fedimint the spender can reissue its own
@@ -41,6 +116,42 @@ async fn reclaim_spent_ecash(data_dir: &std::path::Path, token: &str, backend: &
             "Your refund could not be confirmed. The seller may have received the payment. Do not pay again until this is checked.".to_string()
         }
     }
+}
+
+// Inline RPC responses are for previews/small legacy downloads. Films use the
+// Range-capable HTTP path; never let a peer force whole-film base64 allocation.
+async fn bounded_content_bytes(mut response: reqwest::Response, limit: usize) -> Result<Vec<u8>> {
+    anyhow::ensure!(
+        response
+            .content_length()
+            .is_none_or(|size| size <= limit as u64),
+        "Content exceeds the inline limit; open it through the streaming viewer"
+    );
+    let mut bytes = Vec::new();
+    while let Some(chunk) = response.chunk().await? {
+        anyhow::ensure!(
+            chunk.len() <= limit.saturating_sub(bytes.len()),
+            "Content exceeds the inline limit; use streaming"
+        );
+        bytes.extend_from_slice(&chunk);
+    }
+    Ok(bytes)
+}
+
+async fn bounded_seller_error(mut response: reqwest::Response) -> String {
+    let mut bytes = Vec::new();
+    let _ = tokio::time::timeout(std::time::Duration::from_secs(5), async {
+        while bytes.len() < 4096 {
+            match response.chunk().await {
+                Ok(Some(chunk)) => {
+                    bytes.extend_from_slice(&chunk[..chunk.len().min(4096 - bytes.len())])
+                }
+                _ => break,
+            }
+        }
+    })
+    .await;
+    String::from_utf8_lossy(&bytes).into_owned()
 }
 
 /// Only pass through the peer's bounded, printable explanation; refund status
@@ -80,6 +191,7 @@ async fn existing_paid_content(
     onion: &str,
     content_id: &str,
     filename: Option<&str>,
+    cache_only: bool,
 ) -> Result<Option<serde_json::Value>> {
     let owned = crate::content_owned::list_owned_checked(data_dir)
         .await
@@ -93,35 +205,80 @@ async fn existing_paid_content(
     }) else {
         return Ok(None);
     };
-    let (mime, bytes) = crate::content_owned::read_owned(data_dir, &item.onion, &item.content_id)
-        .await.context("This purchase is recorded, but its cached file is unavailable. No new payment was sent. Restore the cached file or contact the seller.")?;
-    let mut response = paid_content_response(&bytes, &mime, 0);
+    let mut response = cached_purchase_response(data_dir, &item.onion, &item.content_id, cache_only, 0).await
+        .context("This purchase is recorded, but its cached file is unavailable. No new payment was sent. Recover delivery without paying again.")?;
     response["already_owned"] = serde_json::json!(true);
     response["filename"] = serde_json::json!(item.filename);
     Ok(Some(response))
 }
 
-// Updated clients open the persisted file through the Range-capable HTTP
-// endpoint. Avoid putting two base64 copies of a large video in a JSON reply.
-// Keep older clients compatible until both sides have upgraded.
-fn invoice_download_response(bytes: &[u8], mime: &str, cache_only: bool) -> serde_json::Value {
-    if cache_only {
-        serde_json::json!({ "owned": true, "mime_type": mime, "size_bytes": bytes.len() })
-    } else {
-        paid_content_response(bytes, mime, 0)
+async fn cached_purchase_response(
+    data_dir: &std::path::Path,
+    onion: &str,
+    content_id: &str,
+    cache_only: bool,
+    paid_sats: u64,
+) -> Result<serde_json::Value> {
+    use tokio::io::AsyncReadExt;
+    let (mime, file) = crate::content_owned::open_owned(data_dir, onion, content_id)
+        .await?
+        .context("Purchased content is not cached")?;
+    let size = file.metadata().await?.len();
+    if cache_only || size > 16 * 1024 * 1024 {
+        return Ok(
+            serde_json::json!({"owned":true,"mime_type":mime,"size":size,"size_bytes":size,"paid_sats":paid_sats,"owned_content_id":content_id}),
+        );
     }
+    let mut bytes = Vec::with_capacity(size as usize);
+    file.take(16 * 1024 * 1024 + 1)
+        .read_to_end(&mut bytes)
+        .await?;
+    anyhow::ensure!(
+        bytes.len() as u64 == size,
+        "Purchased file changed during reading"
+    );
+    let mut result = paid_content_response(&bytes, &mime, paid_sats);
+    result["owned_content_id"] = serde_json::json!(content_id);
+    Ok(result)
 }
 
-/// File purchases through an atomic no-clobber write in Files' own namespace.
-async fn file_purchase_in_files(
+async fn cache_peer_response(
     data_dir: &std::path::Path,
+    onion: &str,
+    content_id: &str,
     filename: &str,
     mime: &str,
-    bytes: &[u8],
+    paid_sats: u64,
+    backend: &str,
+    response: reqwest::Response,
+) -> Result<crate::content_owned::OwnedItem> {
+    let expected = response.content_length();
+    crate::content_owned::record_purchase_stream(
+        data_dir,
+        crate::content_owned::OwnedItem {
+            onion: onion.into(),
+            content_id: content_id.into(),
+            filename: filename.into(),
+            mime_type: mime.into(),
+            size_bytes: expected.unwrap_or(0),
+            paid_sats,
+            ecash_backend: backend.into(),
+            purchased_at: chrono::Utc::now().to_rfc3339(),
+            download_complete: false,
+        },
+        response.bytes_stream(),
+        expected,
+    )
+    .await
+}
+
+async fn file_cached_purchase_in_files(
+    data_dir: &std::path::Path,
+    item: &crate::content_owned::OwnedItem,
 ) -> Result<String> {
-    let folder = if mime.starts_with("image/") || mime.starts_with("video/") {
+    let folder = if item.mime_type.starts_with("image/") || item.mime_type.starts_with("video/") {
         "Photos"
-    } else if mime.starts_with("audio/") {
+    } else if item.mime_type.starts_with("audio/") {
         "Music"
     } else {
         "Documents"
@@ -131,17 +288,20 @@ async fn file_purchase_in_files(
         tokio::fs::metadata(&root).await?.is_dir(),
         "Files storage is unavailable"
     );
-    let name = std::path::Path::new(filename)
+    let name = std::path::Path::new(&item.filename)
         .file_name()
         .and_then(|n| n.to_str())
         .filter(|n| !n.is_empty())
         .unwrap_or("download");
+    let (_, file) = crate::content_owned::open_owned(data_dir, &item.onion, &item.content_id)
+        .await?
+        .context("Purchase unavailable")?;
     let path =
-        crate::container::filebrowser::save_new_file(&root.join(folder), name, bytes).await?;
+        crate::container::filebrowser::save_new_file_from(&root.join(folder), name, file).await?;
     Ok(format!(
         "{folder}/{}",
         path.file_name()
-            .and_then(|n| n.to_str())
+            .and_then(|name| name.to_str())
             .context("Invalid Files name")?
     ))
 }
@@ -151,6 +311,20 @@ impl RpcHandler {
     pub(super) async fn handle_content_list_mine(&self) -> Result<serde_json::Value> {
         let catalog = content_server::load_catalog(&self.config.data_dir).await?;
         Ok(serde_json::json!({ "items": catalog.items }))
+    }
+
+    /// Explicit atomic publication endpoint. Older servers reject this method
+    /// instead of accepting an add request while ignoring its pricing fields.
+    pub(super) async fn handle_content_publish(
+        &self,
+        params: Option<serde_json::Value>,
+    ) -> Result<serde_json::Value> {
+        let policy = params.as_ref().context("Missing params")?;
+        anyhow::ensure!(
+            policy.get("access").is_some() && policy.get("availability").is_some(),
+            "A complete sharing policy is required"
+        );
+        self.handle_content_add(params).await
     }
 
     /// Add content to my catalog.
@@ -197,8 +371,10 @@ impl RpcHandler {
             mime_type: mime_type.to_string(),
             size_bytes: 0,
             description: description.to_string(),
-            access: AccessControl::Free,
-            availability: Availability::default(),
+            access: parse_content_access(&params)?,
+            // Legacy multi-call clients must configure visibility explicitly;
+            // an interrupted setup must not publish a paid file as free.
+            availability: parse_content_availability(&params, "nobody")?,
             added_at: chrono::Utc::now().to_rfc3339(),
         };
 
@@ -208,34 +384,45 @@ impl RpcHandler {
             item.size_bytes = metadata.len();
         }
 
-        content_server::add_item(&self.config.data_dir, item.clone()).await?;
+        let catalog = content_server::add_item(&self.config.data_dir, item.clone()).await?;
+        let item = catalog
+            .items
+            .into_iter()
+            .find(|saved| saved.filename == item.filename)
+            .context("Saved content item is unavailable")?;
 
-        // Also store as DWN message for interoperable file catalog
-        if let Ok(store) = DwnStore::new(&self.config.data_dir).await {
-            let did = crate::identity::did_key_from_pubkey_hex(
-                &self.state_manager.get_snapshot().await.0.server_info.pubkey,
-            )
-            .unwrap_or_default();
-            let dwn_data = serde_json::json!({
-                "id": item.id,
-                "title": item.filename,
-                "description": item.description,
-                "content_type": item.mime_type,
-                "size_bytes": item.size_bytes,
-                "access": format!("{:?}", item.access).to_lowercase(),
-                "created_at": item.added_at,
-            });
-            if let Err(e) = store
-                .write_message(
-                    &did,
-                    Some(FILE_CATALOG_PROTOCOL),
-                    Some("https://archipelago.dev/schemas/file-entry/v1"),
-                    Some("application/json"),
-                    Some(dwn_data),
+        // Export only explicitly public metadata. A staged or peer-restricted
+        // share must not leak its filename through the public DWN catalog.
+        if matches!(&item.availability, Availability::AllPeers)
+            && !matches!(&item.access, AccessControl::PeersOnly)
+        {
+            // Also store as DWN message for interoperable file catalog
+            if let Ok(store) = DwnStore::new(&self.config.data_dir).await {
+                let did = crate::identity::did_key_from_pubkey_hex(
+                    &self.state_manager.get_snapshot().await.0.server_info.pubkey,
                 )
-                .await
-            {
-                debug!("DWN file catalog write (non-fatal): {}", e);
+                .unwrap_or_default();
+                let dwn_data = serde_json::json!({
+                    "id": item.id,
+                    "title": item.filename,
+                    "description": item.description,
+                    "content_type": item.mime_type,
+                    "size_bytes": item.size_bytes,
+                    "access": format!("{:?}", item.access).to_lowercase(),
+                    "created_at": item.added_at,
+                });
+                if let Err(e) = store
+                    .write_message(
+                        &did,
+                        Some(FILE_CATALOG_PROTOCOL),
+                        Some("https://archipelago.dev/schemas/file-entry/v1"),
+                        Some("application/json"),
+                        Some(dwn_data),
+                    )
+                    .await
+                {
+                    debug!("DWN file catalog write (non-fatal): {}", e);
+                }
             }
         }
 
@@ -257,6 +444,26 @@ impl RpcHandler {
         Ok(serde_json::json!({ "removed": true }))
     }
 
+    /// Save a complete sharing policy without an intermediate public/free state.
+    pub(super) async fn handle_content_configure(
+        &self,
+        params: Option<serde_json::Value>,
+    ) -> Result<serde_json::Value> {
+        let params = params.context("Missing params")?;
+        let id = params
+            .get("id")
+            .and_then(|v| v.as_str())
+            .context("Missing id")?;
+        anyhow::ensure!(
+            params.get("access").is_some() && params.get("availability").is_some(),
+            "A complete sharing policy is required"
+        );
+        let access = parse_content_access(&params)?;
+        let availability = parse_content_availability(&params, "nobody")?;
+        content_server::configure_item(&self.config.data_dir, id, access, availability).await?;
+        Ok(serde_json::json!({"updated":true}))
+    }
+
     /// Set pricing for a content item.
     pub(super) async fn handle_content_set_pricing(
         &self,
@@ -267,43 +474,7 @@ impl RpcHandler {
             .get("id")
             .and_then(|v| v.as_str())
             .ok_or_else(|| anyhow::anyhow!("Missing id"))?;
-        let access_type = params
-            .get("access")
-            .and_then(|v| v.as_str())
-            .unwrap_or("free");
-
-        let access = match access_type {
-            "free" => AccessControl::Free,
-            "peers_only" => AccessControl::PeersOnly,
-            "paid" => {
-                let price = params
-                    .get("price_sats")
-                    .and_then(|v| v.as_u64())
-                    .unwrap_or(0);
-                if price == 0 {
-                    return Err(anyhow::anyhow!("Paid content requires price_sats > 0"));
-                }
-                // Optional list of payment methods the sharer accepts.
-                // Absent/empty = all methods (backward compatible).
-                const KNOWN_METHODS: [&str; 4] = ["lightning", "onchain", "ecash", "fedimint"];
-                let accepted: Vec<String> = params
-                    .get("accepted_methods")
-                    .and_then(|v| v.as_array())
-                    .map(|arr| {
-                        arr.iter()
-                            .filter_map(|m| m.as_str())
-                            .filter(|m| KNOWN_METHODS.contains(m))
-                            .map(str::to_string)
-                            .collect()
-                    })
-                    .unwrap_or_default();
-                AccessControl::Paid {
-                    price_sats: price,
-                    accepted,
-                }
-            }
-            _ => return Err(anyhow::anyhow!("Invalid access type: {}", access_type)),
-        };
+        let access = parse_content_access(&params)?;
 
         content_server::set_access(&self.config.data_dir, id, access).await?;
         Ok(serde_json::json!({ "updated": true }))
@@ -319,33 +490,7 @@ impl RpcHandler {
             .get("id")
             .and_then(|v| v.as_str())
             .ok_or_else(|| anyhow::anyhow!("Missing id"))?;
-        let availability_type = params
-            .get("availability")
-            .and_then(|v| v.as_str())
-            .unwrap_or("all_peers");
-
-        let availability = match availability_type {
-            "nobody" => Availability::Nobody,
-            "all_peers" => Availability::AllPeers,
-            "specific" => {
-                let peers = params
-                    .get("peers")
-                    .and_then(|v| v.as_array())
-                    .map(|arr| {
-                        arr.iter()
-                            .filter_map(|v| v.as_str().map(|s| s.to_string()))
-                            .collect::<Vec<_>>()
-                    })
-                    .unwrap_or_default();
-                Availability::Specific { peers }
-            }
-            _ => {
-                return Err(anyhow::anyhow!(
-                    "Invalid availability: {}",
-                    availability_type
-                ))
-            }
-        };
+        let availability = parse_content_availability(&params, "all_peers")?;
 
         content_server::set_availability(&self.config.data_dir, id, availability).await?;
         Ok(serde_json::json!({ "updated": true }))
@@ -381,10 +526,11 @@ impl RpcHandler {
         let (response, transport) =
             crate::fips::dial::PeerRequest::new(fips_npub.as_deref(), onion, &path)
                 .service(crate::settings::transport::PeerService::PeerFiles)
+                .require_fips()
                 .header("X-Federation-DID", local_did)
                 .timeout(std::time::Duration::from_secs(120))
                 .fips_timeout(std::time::Duration::from_secs(8))
-                .send_get()
+                .send_content_get(&self.config.data_dir)
                 .await
                 .context("Failed to connect to peer")?;
         // Record which transport actually reached the peer (B14) so the UI
@@ -426,10 +572,9 @@ impl RpcHandler {
             return Err(anyhow::anyhow!("Peer returned: {}", response.status()));
         }
 
-        let bytes = response
-            .bytes()
+        let bytes = bounded_content_bytes(response, 16 * 1024 * 1024)
             .await
-            .context("Failed to read response body")?;
+            .context("Failed to read bounded content")?;
 
         use base64::Engine;
         let encoded = base64::engine::general_purpose::STANDARD.encode(&bytes);
@@ -474,7 +619,7 @@ impl RpcHandler {
                 // against the UI's 30s deadline — users saw errors, not
                 // fallback.
                 .fips_timeout(std::time::Duration::from_secs(6))
-                .send_get()
+                .send_content_get(&self.config.data_dir)
                 .await
                 .context("Failed to connect to peer")?;
         // Record which transport actually reached the peer (B14).
@@ -513,7 +658,7 @@ impl RpcHandler {
         Ok(body)
     }
 
-    /// Download paid content from a peer: mint ecash token, send with request.
+    /// Legacy entry point: serve already-owned bytes, never start a new payment.
     pub(super) async fn handle_content_download_peer_paid(
         &self,
         params: Option<serde_json::Value>,
@@ -539,6 +684,9 @@ impl RpcHandler {
             return Err(anyhow::anyhow!("Invalid v3 onion address"));
         }
 
+        crate::content_owned::validate_identity(onion, content_id)?;
+        let _purchase_lock = crate::content_owned::lock_seller_purchases(onion).await;
+
         // NEVER pay twice for content we already own (2026-07-22: a file
         // shared twice produced two catalog ids for the same bytes and the
         // buyer paid both). Guard BEFORE any ecash is minted, matching both
@@ -550,261 +698,81 @@ impl RpcHandler {
             onion,
             content_id,
             params.get("filename").and_then(|v| v.as_str()),
+            params
+                .get("cache_only")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false),
         )
         .await?
         {
             return Ok(cached);
         }
 
-        // `method` pins the backend the user confirmed in the UI ("cashu" |
-        // "fedimint"); absent = auto (Cashu first, then Fedimint). The seller's
-        // verify_payment_token accepts either, so a node whose balance lives in
-        // one system can still pay (#3).
-        let method = params.get("method").and_then(|v| v.as_str());
-
-        let mint_cashu = || ecash::send_token(&self.config.data_dir, price_sats);
-        let mint_fedimint =
-            || crate::wallet::fedimint_client::spend_from_any(&self.config.data_dir, price_sats);
-
-        let (token_str, used_backend) = match method {
-            Some("cashu") => match mint_cashu().await {
-                Ok(t) => (t, "cashu"),
-                Err(e) => {
-                    tracing::warn!("paid download: cashu mint failed for {price_sats} sats: {e:#}");
-                    return Ok(serde_json::json!({ "error": format!(
-                        "Couldn't pay {price_sats} sats from your Cashu wallet: {e}. \
-                         Fund it, or choose Fedimint."
-                    ) }));
-                }
-            },
-            Some("fedimint") => match mint_fedimint().await {
-                Ok((notes, fed)) => {
-                    tracing::info!(
-                        "paid download: spending {price_sats} sats Fedimint notes from {fed}"
-                    );
-                    (notes, "fedimint")
-                }
-                Err(e) => {
-                    tracing::warn!(
-                        "paid download: fedimint spend failed for {price_sats} sats: {e:#}"
-                    );
-                    return Ok(serde_json::json!({ "error": format!(
-                        "Couldn't pay {price_sats} sats from your Fedimint wallet: {e}. \
-                         Fund it, or choose Cashu."
-                    ) }));
-                }
-            },
-            _ => match mint_cashu().await {
-                Ok(t) => (t, "cashu"),
-                Err(cashu_err) => match mint_fedimint().await {
-                    Ok((notes, _fed)) => (notes, "fedimint"),
-                    Err(fedi_err) => {
-                        tracing::warn!(
-                            "paid download: no ecash backend could pay {price_sats} sats \
-                             (cashu: {cashu_err:#}; fedimint: {fedi_err:#})"
-                        );
-                        return Ok(serde_json::json!({ "error": format!(
-                            "Couldn't pay {price_sats} sats from your ecash wallet \
-                             (Cashu or Fedimint). Fund either wallet and try again."
-                        ) }));
-                    }
-                },
-            },
-        };
-        tracing::info!(
-            "paid download: paying {price_sats} sats to {onion} via {used_backend} ecash"
-        );
-
-        let (data, _) = self.state_manager.get_snapshot().await;
-        let local_did = crate::identity::did_key_from_pubkey_hex(&data.server_info.pubkey)?;
-        let fips_npub = crate::federation::fips_npub_for_onion(&self.config.data_dir, onion).await;
-
-        let path = format!("/content/{}", content_id);
-        // Surface a real reason instead of the generic sanitized error (#30):
-        // A bearer token must not be replayed after an ambiguous delivery.
-        // A transport error can mean the seller received it without replying.
-        let (response, transport) =
-            match crate::fips::dial::PeerRequest::new(fips_npub.as_deref(), onion, &path)
-                .service(crate::settings::transport::PeerService::PeerFiles)
-                .header("X-Federation-DID", local_did)
-                .header("X-Payment-Token", token_str.clone())
-                .single_delivery()
-                .timeout(std::time::Duration::from_secs(900))
-                .send_get()
-                .await
-            {
-                Ok(v) => v,
-                Err(e) => {
-                    tracing::warn!("paid peer download dial failed for {}: {:#}", onion, e);
-                    // The token was already minted/spent — reclaim it so the buyer
-                    // doesn't lose the value when the seller was simply unreachable.
-                    let refund =
-                        reclaim_spent_ecash(&self.config.data_dir, &token_str, used_backend).await;
-                    return Ok(serde_json::json!({
-                        "error": format!("The purchase could not be completed. {refund}")
-                    }));
-                }
-            };
-        // Record which transport actually reached the peer (B14).
-        if let Err(e) = crate::federation::record_peer_transport(
-            &self.config.data_dir,
-            None,
-            Some(onion),
-            &transport.to_string(),
-        )
-        .await
-        {
-            tracing::warn!("Failed to persist peer transport badge: {e:#}");
-        }
-
-        if response.status() == reqwest::StatusCode::PAYMENT_REQUIRED {
-            // A 402 can mean mint validation, network failure, underpayment,
-            // or an unaccepted mint. Do not invent a mint-mismatch diagnosis.
-            let body = response.text().await.unwrap_or_default();
-            tracing::warn!(
-                "paid download: seller {onion} rejected {used_backend} payment of {price_sats} sats: {body}"
-            );
-            // Seller couldn't redeem the token — reclaim it so the buyer keeps
-            // their funds (the spent-but-unredeemed-notes case the user hit).
-            let refund = reclaim_spent_ecash(&self.config.data_dir, &token_str, used_backend).await;
-            return Ok(serde_json::json!({
-                "error": format!("The seller could not verify the payment. {refund}")
-            }));
-        }
-
-        if !response.status().is_success() {
-            let status = response.status();
-            let body = response.text().await.unwrap_or_default();
-            tracing::warn!("paid download: seller {onion} returned {status}: {body}");
-            let refund = reclaim_spent_ecash(&self.config.data_dir, &token_str, used_backend).await;
-            return Ok(serde_json::json!({
-                "error": format!("{} {refund}", seller_error_message(status, &body))
-            }));
-        }
-
-        // Capture the content type BEFORE consuming the body so the local cache
-        // can render the right viewer (image vs video) later.
-        let mime_type = response
-            .headers()
-            .get(reqwest::header::CONTENT_TYPE)
-            .and_then(|v| v.to_str().ok())
-            .map(|s| s.split(';').next().unwrap_or(s).trim().to_string())
-            .filter(|s| !s.is_empty())
-            .unwrap_or_else(|| "application/octet-stream".to_string());
-
-        let bytes = match response.bytes().await {
-            Ok(bytes) => bytes,
-            Err(error) => {
-                tracing::warn!("paid download: response body failed: {error}");
-                let refund =
-                    reclaim_spent_ecash(&self.config.data_dir, &token_str, used_backend).await;
-                return Ok(serde_json::json!({
-                    "error": format!("The file transfer was interrupted after payment was sent. {refund}")
-                }));
-            }
-        };
-
-        // Persist the purchase so it "stays unlocked" for this buyer: cache the
-        // bytes + metadata keyed by (onion, content_id). The gallery then renders
-        // it unblurred and views it in-app from this cache — no re-payment and no
-        // reliance on a browser download (which silently fails on the mobile
-        // companion, the original "paid but never unlocked" report). Best-effort:
-        // a cache-write failure must not fail an already-paid download.
-        let filename = params
-            .get("filename")
-            .and_then(|v| v.as_str())
-            .unwrap_or(content_id)
-            .to_string();
-        let purchased_at = chrono::Utc::now().to_rfc3339();
-        if let Err(e) = crate::content_owned::record_purchase(
-            &self.config.data_dir,
-            onion,
-            content_id,
-            &filename,
-            &mime_type,
-            &bytes,
-            price_sats,
-            used_backend,
-            &purchased_at,
-        )
-        .await
-        {
-            tracing::warn!("paid download: failed to cache purchased content (non-fatal): {e:#}");
-        }
-
-        // The durable purchased-content cache above is primary. A Files copy
-        // remains optional: a stopped FileBrowser must not undo a paid download.
-        let filed =
-            file_purchase_in_files(&self.config.data_dir, &filename, &mime_type, &bytes).await;
-        match filed {
-            Ok(path) => tracing::info!("paid download: filed into Files/{path}"),
-            Err(error) => tracing::warn!(
-                "paid download: optional Files copy failed; purchase cache retained: {error}"
-            ),
-        }
-
-        tracing::info!("paid download: received {} bytes from {onion} (paid {price_sats} sats via {used_backend})", bytes.len());
-        let mut result = paid_content_response(&bytes, &mime_type, price_sats);
-        result["ecash_backend"] = serde_json::json!(used_backend);
-        Ok(result)
+        anyhow::bail!("This legacy payment route cannot safely recover interrupted purchases. Open the file in Peers and use Cashu, Lightning or Bitcoin. Fedimint file purchases are unavailable until recoverable payments are supported. No payment was sent.")
     }
 
-    /// Buyer side (#46): ask the selling node to mint a Lightning invoice for a
-    /// paid item so the buyer can pay from any external wallet. Returns the
-    /// bolt11 invoice + payment hash to render as a QR and poll for settlement.
-    pub(super) async fn handle_content_request_invoice(
+    /// Owner-authenticated local recovery lookup. No mint, peer request or
+    /// wallet mutation occurs here, and private tokens/capabilities are omitted.
+    pub(super) async fn handle_content_payment_status(
         &self,
         params: Option<serde_json::Value>,
     ) -> Result<serde_json::Value> {
-        let params = params.ok_or_else(|| anyhow::anyhow!("Missing params"))?;
+        let params = params.context("Missing payment lookup parameters")?;
         let onion = params
             .get("onion")
             .and_then(|v| v.as_str())
-            .ok_or_else(|| anyhow::anyhow!("Missing onion address"))?;
+            .context("Missing seller address")?;
         let content_id = params
             .get("content_id")
             .and_then(|v| v.as_str())
-            .ok_or_else(|| anyhow::anyhow!("Missing content_id"))?;
-        if !is_valid_v3_onion(onion) {
-            return Err(anyhow::anyhow!("Invalid v3 onion address"));
-        }
-
+            .context("Missing content identifier")?;
+        anyhow::ensure!(is_valid_v3_onion(onion), "Invalid seller address");
+        crate::content_owned::validate_identity(onion, content_id)?;
+        let peer =
+            crate::federation::load_unique_payment_peer(&self.config.data_dir, onion).await?;
         let (data, _) = self.state_manager.get_snapshot().await;
-        let local_did = crate::identity::did_key_from_pubkey_hex(&data.server_info.pubkey)?;
-        let fips_npub = crate::federation::fips_npub_for_onion(&self.config.data_dir, onion).await;
-
-        // Minting a bolt11 is a tiny request/response — keep it snappy. Cap the
-        // FIPS attempt hard so a cold overlay can't burn the whole budget, and
-        // give Tor a short-but-real window (onion circuits need a few seconds).
-        let path = format!("/content/{}/invoice", content_id);
-        let (response, _transport) =
-            match crate::fips::dial::PeerRequest::new(fips_npub.as_deref(), onion, &path)
-                .service(crate::settings::transport::PeerService::PeerFiles)
-                .header("X-Federation-DID", local_did)
-                .timeout(std::time::Duration::from_secs(25))
-                .fips_timeout(std::time::Duration::from_secs(6))
-                .send_get()
-                .await
-            {
-                Ok(v) => v,
-                Err(e) => {
-                    tracing::warn!("request-invoice dial failed for {}: {:#}", onion, e);
-                    return Ok(serde_json::json!({
-                        "error": "Could not reach the peer over mesh or Tor — it may be offline."
-                    }));
+        let buyer_did = crate::identity::did_key_from_pubkey_hex(&data.server_info.pubkey)?;
+        let journal = crate::content_purchase::Journal::open(&self.config.data_dir).await?;
+        let records = if let Some(id) = params.get("operation_id") {
+            let id = id
+                .as_str()
+                .context("Invalid purchase operation identifier")?;
+            match journal.buyer(id).await? {
+                Some(record) => {
+                    anyhow::ensure!(
+                        record.contract.buyer_did == buyer_did
+                            && record.contract.seller_did == peer.did
+                            && record.contract.content_id == content_id,
+                        "Purchase belongs to another buyer, seller or content item"
+                    );
+                    vec![record]
                 }
-            };
+                None => Vec::new(),
+            }
+        } else {
+            journal
+                .find_buyers(&buyer_did, &peer.did, content_id)
+                .await?
+        };
+        let attempts: Vec<_> = records
+            .iter()
+            .map(|record| record.public_status())
+            .collect();
+        Ok(serde_json::json!({
+            "state": if attempts.is_empty() { "unknown" } else { "recorded" },
+            "attempts": attempts,
+            // Absence is not evidence that a legacy payment failed/reclaimed.
+            "can_start_new_payment": false,
+            "legacy_recovery_unresolved": attempts.is_empty(),
+        }))
+    }
 
-        if !response.status().is_success() {
-            return Ok(serde_json::json!({
-                "error": format!("Seller could not create an invoice ({}).", response.status())
-            }));
-        }
-        let body: serde_json::Value = response
-            .json()
-            .await
-            .context("Failed to parse invoice response")?;
-        Ok(body)
+    /// Retired creation route; existing invoice status and delivery stay available.
+    pub(super) async fn handle_content_request_invoice(
+        &self,
+        _params: Option<serde_json::Value>,
+    ) -> Result<serde_json::Value> {
+        anyhow::bail!("Legacy invoice creation is unavailable. Open the file in Peers to use the saved Lightning purchase flow. Recover any existing payment instead of paying again.")
     }
 
     /// Buyer side (#46): poll the selling node for invoice settlement.
@@ -847,7 +815,7 @@ impl RpcHandler {
                 .service(crate::settings::transport::PeerService::PeerFiles)
                 .timeout(std::time::Duration::from_secs(15))
                 .fips_timeout(std::time::Duration::from_secs(6))
-                .send_get()
+                .send_content_get(&self.config.data_dir)
                 .await
             {
                 Ok(v) => v,
@@ -892,14 +860,27 @@ impl RpcHandler {
             return Err(anyhow::anyhow!("Invalid payment_hash"));
         }
 
+        crate::content_owned::validate_identity(onion, content_id)?;
+        let _purchase_lock = crate::content_owned::lock_seller_purchases(onion).await;
         let cache_only = params
             .get("cache_only")
             .and_then(|v| v.as_bool())
             .unwrap_or(false);
-        if let Some((mime, bytes)) =
-            crate::content_owned::read_owned(&self.config.data_dir, onion, content_id).await
+        if crate::content_owned::list_owned_checked(&self.config.data_dir)
+            .await?
+            .iter()
+            .any(|item| {
+                item.onion == onion && item.content_id == content_id && item.download_complete
+            })
         {
-            return Ok(invoice_download_response(&bytes, &mime, cache_only));
+            return cached_purchase_response(
+                &self.config.data_dir,
+                onion,
+                content_id,
+                cache_only,
+                0,
+            )
+            .await;
         }
         // Older sellers only mark settlement during status polling. Always
         // perform that handshake before requesting bytes; retries never pay.
@@ -922,17 +903,18 @@ impl RpcHandler {
             &path,
         )
         .service(crate::settings::transport::PeerService::PeerFiles)
+        .require_fips()
         .header("X-Federation-DID", local_did)
         .header("X-Invoice-Hash", payment_hash.to_string())
         .timeout(std::time::Duration::from_secs(900))
-        .send_get()
+        .send_content_get(&self.config.data_dir)
         .await
         {
             Ok(v) => v,
             Err(e) => {
                 tracing::warn!("invoice download dial failed for {}: {:#}", onion, e);
                 return Ok(serde_json::json!({
-                    "error": "Could not reach the peer over mesh or Tor — it may be offline. Please try again."
+                    "error": "The peer’s FIPS connection is unavailable. Retry when it reconnects; do not pay again."
                 }));
             }
         };
@@ -967,90 +949,37 @@ impl RpcHandler {
             .next()
             .unwrap_or("application/octet-stream")
             .to_string();
-        let bytes = response
-            .bytes()
-            .await
-            .context("Paid file transfer interrupted; retry the download without paying again")?;
         let filename = params
             .get("filename")
             .and_then(|v| v.as_str())
             .unwrap_or(content_id);
-        crate::content_owned::record_purchase(
+        let item = cache_peer_response(
             &self.config.data_dir,
             onion,
             content_id,
             filename,
             &mime,
-            &bytes,
             params
                 .get("price_sats")
                 .and_then(|v| v.as_u64())
                 .unwrap_or(0),
             "lightning",
-            &chrono::Utc::now().to_rfc3339(),
+            response,
         )
         .await
-        .context("Paid file could not be saved; retry the download without paying again")?;
-        if let Err(error) =
-            file_purchase_in_files(&self.config.data_dir, filename, &mime, &bytes).await
-        {
+        .context("Paid file could not be saved; retry delivery without paying again")?;
+        if let Err(error) = file_cached_purchase_in_files(&self.config.data_dir, &item).await {
             tracing::warn!("Lightning purchase cached; optional Files copy failed: {error:#}");
         }
-        Ok(invoice_download_response(&bytes, &mime, cache_only))
+        cached_purchase_response(&self.config.data_dir, onion, content_id, cache_only, 0).await
     }
 
     /// Buyer side (#46): ask the seller for a fresh on-chain address to pay.
     pub(super) async fn handle_content_request_onchain(
         &self,
-        params: Option<serde_json::Value>,
+        _params: Option<serde_json::Value>,
     ) -> Result<serde_json::Value> {
-        let params = params.ok_or_else(|| anyhow::anyhow!("Missing params"))?;
-        let onion = params
-            .get("onion")
-            .and_then(|v| v.as_str())
-            .ok_or_else(|| anyhow::anyhow!("Missing onion address"))?;
-        let content_id = params
-            .get("content_id")
-            .and_then(|v| v.as_str())
-            .ok_or_else(|| anyhow::anyhow!("Missing content_id"))?;
-        if !is_valid_v3_onion(onion) {
-            return Err(anyhow::anyhow!("Invalid v3 onion address"));
-        }
-
-        let (data, _) = self.state_manager.get_snapshot().await;
-        let local_did = crate::identity::did_key_from_pubkey_hex(&data.server_info.pubkey)?;
-        let fips_npub = crate::federation::fips_npub_for_onion(&self.config.data_dir, onion).await;
-
-        // Issuing an address is a tiny request/response — fast-fail FIPS, short
-        // Tor window (same budget shape as the invoice path, #6).
-        let path = format!("/content/{}/onchain", content_id);
-        let (response, _transport) =
-            match crate::fips::dial::PeerRequest::new(fips_npub.as_deref(), onion, &path)
-                .service(crate::settings::transport::PeerService::PeerFiles)
-                .header("X-Federation-DID", local_did)
-                .timeout(std::time::Duration::from_secs(25))
-                .fips_timeout(std::time::Duration::from_secs(6))
-                .send_get()
-                .await
-            {
-                Ok(v) => v,
-                Err(e) => {
-                    tracing::warn!("request-onchain dial failed for {}: {:#}", onion, e);
-                    return Ok(serde_json::json!({
-                        "error": "Could not reach the peer over mesh or Tor — it may be offline."
-                    }));
-                }
-            };
-        if !response.status().is_success() {
-            return Ok(serde_json::json!({
-                "error": format!("Seller could not provide an address ({}).", response.status())
-            }));
-        }
-        let body: serde_json::Value = response
-            .json()
-            .await
-            .context("Failed to parse onchain response")?;
-        Ok(body)
+        anyhow::bail!("Legacy payment-address creation is unavailable. Open the file in Peers to use the saved Bitcoin purchase flow. Recover any existing payment instead of paying again.")
     }
 
     /// Buyer side (#46): poll the selling node for on-chain payment detection.
@@ -1089,14 +1018,14 @@ impl RpcHandler {
                 .service(crate::settings::transport::PeerService::PeerFiles)
                 .timeout(std::time::Duration::from_secs(15))
                 .fips_timeout(std::time::Duration::from_secs(6))
-                .send_get()
+                .send_content_get(&self.config.data_dir)
                 .await
             {
                 Ok(v) => v,
-                Err(_) => return Ok(serde_json::json!({ "paid": false, "unreachable": true })),
+                Err(_) => return Ok(serde_json::json!({ "paid": false, "unreachable": true, "status": "unknown", "error": "Payment verification is unavailable. Keep the original address and do not pay again." })),
             };
         if !response.status().is_success() {
-            return Ok(serde_json::json!({ "paid": false }));
+            return Ok(serde_json::json!({ "paid": false, "status": "unknown", "error": "The seller could not verify this payment. Keep the original address and do not pay again." }));
         }
         let body: serde_json::Value = response
             .json()
@@ -1131,6 +1060,28 @@ impl RpcHandler {
             return Err(anyhow::anyhow!("Invalid address"));
         }
 
+        crate::content_owned::validate_identity(onion, content_id)?;
+        let _purchase_lock = crate::content_owned::lock_seller_purchases(onion).await;
+        let cache_only = params
+            .get("cache_only")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
+        if crate::content_owned::list_owned_checked(&self.config.data_dir)
+            .await?
+            .iter()
+            .any(|item| {
+                item.onion == onion && item.content_id == content_id && item.download_complete
+            })
+        {
+            return cached_purchase_response(
+                &self.config.data_dir,
+                onion,
+                content_id,
+                cache_only,
+                0,
+            )
+            .await;
+        }
         let (data, _) = self.state_manager.get_snapshot().await;
         let local_did = crate::identity::did_key_from_pubkey_hex(&data.server_info.pubkey)?;
         let fips_npub = crate::federation::fips_npub_for_onion(&self.config.data_dir, onion).await;
@@ -1142,17 +1093,18 @@ impl RpcHandler {
             &path,
         )
         .service(crate::settings::transport::PeerService::PeerFiles)
+        .require_fips()
         .header("X-Federation-DID", local_did)
         .header("X-Onchain-Address", address.to_string())
         .timeout(std::time::Duration::from_secs(900))
-        .send_get()
+        .send_content_get(&self.config.data_dir)
         .await
         {
             Ok(v) => v,
             Err(e) => {
                 tracing::warn!("onchain download dial failed for {}: {:#}", onion, e);
                 return Ok(serde_json::json!({
-                    "error": "Could not reach the peer over mesh or Tor — it may be offline. Please try again."
+                    "error": "The peer’s FIPS connection is unavailable. Retry when it reconnects; do not pay again."
                 }));
             }
         };
@@ -1178,16 +1130,38 @@ impl RpcHandler {
             }));
         }
 
-        let bytes = response
-            .bytes()
-            .await
-            .context("Failed to read response body")?;
-        use base64::Engine;
-        let encoded = base64::engine::general_purpose::STANDARD.encode(&bytes);
-        Ok(serde_json::json!({
-            "data": encoded,
-            "size": bytes.len(),
-        }))
+        let mime = response
+            .headers()
+            .get(reqwest::header::CONTENT_TYPE)
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or("application/octet-stream")
+            .split(';')
+            .next()
+            .unwrap_or("application/octet-stream")
+            .to_string();
+        let filename = params
+            .get("filename")
+            .and_then(|v| v.as_str())
+            .unwrap_or(content_id);
+        let item = cache_peer_response(
+            &self.config.data_dir,
+            onion,
+            content_id,
+            filename,
+            &mime,
+            params
+                .get("price_sats")
+                .and_then(|v| v.as_u64())
+                .unwrap_or(0),
+            "onchain",
+            response,
+        )
+        .await
+        .context("Paid file could not be saved; retry delivery without paying again")?;
+        if let Err(error) = file_cached_purchase_in_files(&self.config.data_dir, &item).await {
+            tracing::warn!("On-chain purchase cached; optional Files copy failed: {error:#}");
+        }
+        cached_purchase_response(&self.config.data_dir, onion, content_id, cache_only, 0).await
     }
 
     /// Fetch a preview of paid content from a peer (no payment required).
@@ -1222,9 +1196,10 @@ impl RpcHandler {
         let (response, transport) =
             crate::fips::dial::PeerRequest::new(fips_npub.as_deref(), onion, &path)
                 .service(crate::settings::transport::PeerService::PeerFiles)
+                .require_fips()
                 .timeout(std::time::Duration::from_secs(30))
                 .fips_timeout(std::time::Duration::from_secs(6))
-                .send_get()
+                .send_content_get(&self.config.data_dir)
                 .await
                 .context("Failed to connect to peer for preview")?;
         // Record which transport actually reached the peer (B14).
@@ -1260,10 +1235,9 @@ impl RpcHandler {
             .unwrap_or("application/octet-stream")
             .to_string();
 
-        let bytes = response
-            .bytes()
+        let bytes = bounded_content_bytes(response, 8 * 1024 * 1024)
             .await
-            .context("Failed to read preview response")?;
+            .context("Failed to read bounded preview")?;
 
         use base64::Engine;
         let encoded = base64::engine::general_purpose::STANDARD.encode(&bytes);
@@ -1451,20 +1425,18 @@ impl RpcHandler {
             .and_then(|v| v.as_str())
             .ok_or_else(|| anyhow::anyhow!("Missing content_id"))?;
 
-        match crate::content_owned::read_owned(&self.config.data_dir, onion, content_id).await {
-            Some((mime_type, bytes)) => {
-                use base64::Engine;
-                let encoded = base64::engine::general_purpose::STANDARD.encode(&bytes);
-                Ok(serde_json::json!({
-                    "data": encoded,
-                    "size": bytes.len(),
-                    "mime_type": mime_type,
-                }))
-            }
-            None => Ok(serde_json::json!({
-                "error": "You don't own this item yet, or its cached copy is missing."
-            })),
-        }
+        existing_paid_content(
+            &self.config.data_dir,
+            onion,
+            content_id,
+            params.get("filename").and_then(|v| v.as_str()),
+            params
+                .get("cache_only")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false),
+        )
+        .await?
+        .context("Purchased content is not cached")
     }
 }
 
@@ -1475,15 +1447,62 @@ mod tests;
 #[cfg(test)]
 mod invoice_delivery_response_tests {
     use super::*;
-    #[test]
-    fn cached_delivery_avoids_base64_but_keeps_old_clients_compatible() {
-        let cached = invoice_download_response(b"paid bytes", "video/mp4", true);
+    #[tokio::test]
+    async fn cached_delivery_avoids_base64_and_legacy_small_reads_remain_compatible() {
+        let dir = tempfile::tempdir().unwrap();
+        crate::content_owned::record_purchase(
+            dir.path(),
+            "seller.onion",
+            "film",
+            "film",
+            "video/mp4",
+            b"paid bytes",
+            1,
+            "cashu",
+            "now",
+        )
+        .await
+        .unwrap();
+        let cached = cached_purchase_response(dir.path(), "seller.onion", "film", true, 0)
+            .await
+            .unwrap();
         assert_eq!(cached["owned"], true);
         assert_eq!(cached["size_bytes"], 10);
         assert!(cached.get("data").is_none());
         assert!(cached.get("data_base64").is_none());
-        let legacy = invoice_download_response(b"paid bytes", "video/mp4", false);
+        let alias = existing_paid_content(
+            dir.path(),
+            "seller.onion",
+            "new-catalog-id",
+            Some("film"),
+            true,
+        )
+        .await
+        .unwrap()
+        .unwrap();
+        assert_eq!(alias["owned_content_id"], "film");
+        let legacy = cached_purchase_response(dir.path(), "seller.onion", "film", false, 0)
+            .await
+            .unwrap();
         assert_eq!(legacy["data"], "cGFpZCBieXRlcw==");
         assert_eq!(legacy["data"], legacy["data_base64"]);
+        let mut entry = crate::content_owned::list_owned_checked(dir.path())
+            .await
+            .unwrap()
+            .remove(0);
+        entry.content_id = "incomplete".into();
+        let stream = futures_util::stream::iter([Ok::<_, std::io::Error>(
+            bytes::Bytes::from_static(b"part"),
+        )]);
+        assert!(
+            crate::content_owned::record_purchase_stream(dir.path(), entry, stream, Some(10))
+                .await
+                .is_err()
+        );
+        assert!(
+            existing_paid_content(dir.path(), "seller.onion", "incomplete", None, true)
+                .await
+                .is_err()
+        );
     }
 }

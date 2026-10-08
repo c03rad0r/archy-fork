@@ -208,7 +208,7 @@ impl DockerPackageScanner {
                 crate::container::app_catalog::available_update_for_app(&app_id, &container.image)
             };
 
-            let package = PackageDataEntry {
+            let mut package = PackageDataEntry {
                 ui_ready: Some(false),
                 state: package_state.clone(),
                 health: container.health.clone(),
@@ -218,7 +218,7 @@ impl DockerPackageScanner {
                     None
                 },
                 static_files: StaticFiles {
-                    license: "MIT".to_string(),
+                    license: String::new(),
                     instructions: metadata.description.clone(),
                     icon: manifest_icon.unwrap_or_else(|| metadata.icon.clone()),
                 },
@@ -231,7 +231,7 @@ impl DockerPackageScanner {
                         long: metadata.description.clone(),
                     },
                     release_notes: "Docker container".to_string(),
-                    license: "MIT".to_string(),
+                    license: String::new(),
                     wrapper_repo: metadata.repo.clone(),
                     upstream_repo: metadata.repo.clone(),
                     support_site: metadata.repo.clone(),
@@ -298,6 +298,22 @@ impl DockerPackageScanner {
                 uninstall_stage: None,
             };
 
+            match super::staged_update::installed_manifest(data_dir, &app_id, &container.image)
+                .await
+            {
+                Ok(Some(manifest)) => {
+                    apply_manifest_value(&serde_json::to_value(manifest)?, &mut package)
+                }
+                Ok(None) => apply_manifest_presentation(&app_id, &mut package),
+                Err(error) => {
+                    tracing::warn!(app_id, error = %error, "Cannot verify retained installed manifest entry point");
+                    // Do not invent a launch path from a later catalog when its
+                    // binding to the running version cannot be established.
+                    if let Some(installed) = package.installed.as_mut() {
+                        installed.interface_addresses.clear();
+                    }
+                }
+            }
             packages.insert(app_id.clone(), package);
             info!(
                 "Detected container: {} ({})",
@@ -445,6 +461,173 @@ async fn launch_http_ready(candidate: &str) -> bool {
 mod lifecycle_regression_tests {
     use super::*;
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+    fn installing_fixture() -> PackageDataEntry {
+        serde_json::from_value(serde_json::json!({
+            "state": "installing", "ui-ready": false,
+            "static-files": {"license":"", "instructions":"", "icon":""},
+            "manifest": {
+                "id":"new-app", "title":"new-app", "version":"running-version",
+                "description":{"short":"Installing...", "long":""},
+                "release-notes":"", "license":"", "wrapper-repo":"",
+                "upstream-repo":"", "support-site":"", "marketing-site":""
+            }
+        }))
+        .unwrap()
+    }
+
+    #[test]
+    fn manifest_presentation_keeps_unpublished_ui_in_apps_during_install() {
+        let mut entry = installing_fixture();
+        let manifest = serde_json::json!({"app": {
+            "name":"New App", "version":"different-catalog-version", "description":"Setup and monitor",
+            "metadata":{"icon":"/assets/img/app-icons/new-app.svg", "tier":"optional"},
+            "interfaces":{"main":{"type":"ui", "port":7152}}
+        }});
+        apply_manifest_value(&manifest, &mut entry);
+        assert_eq!(entry.manifest.title, "New App");
+        assert_eq!(entry.static_files.icon, "/assets/img/app-icons/new-app.svg");
+        assert_eq!(entry.manifest.description.short, "Setup and monitor");
+        assert_eq!(
+            entry
+                .manifest
+                .interfaces
+                .unwrap()
+                .main
+                .unwrap()
+                .ui
+                .as_deref(),
+            Some("true")
+        );
+        assert_eq!(entry.ui_ready, Some(false));
+        assert_eq!(entry.state, PackageState::Installing);
+        assert_eq!(entry.manifest.version, "running-version");
+        assert!(entry.installed.is_none());
+    }
+
+    #[test]
+    fn manifest_presentation_does_not_promote_api_to_ui_or_discard_addresses() {
+        let mut entry = installing_fixture();
+        entry.manifest.interfaces = Some(Interfaces {
+            main: Some(MainInterface {
+                ui: Some("true".to_owned()),
+                tor_config: Some("kept.onion".to_owned()),
+                lan_config: Some("kept".to_owned()),
+            }),
+        });
+        apply_manifest_value(
+            &serde_json::json!({"app":{
+                "interfaces":{"main":{"type":"api", "port":3000}}
+            }}),
+            &mut entry,
+        );
+        let main = entry.manifest.interfaces.unwrap().main.unwrap();
+        assert_eq!(main.ui, None);
+        assert_eq!(main.tor_config.as_deref(), Some("kept.onion"));
+        assert_eq!(main.lan_config.as_deref(), Some("kept"));
+    }
+
+    #[test]
+    fn manifest_presentation_only_reports_declared_licenses() {
+        let mut entry = installing_fixture();
+        for (metadata, expected) in [
+            (serde_json::json!({"license":"MIT"}), "MIT"),
+            (
+                serde_json::json!({"license":" BSD-3-Clause "}),
+                "BSD-3-Clause",
+            ),
+            (serde_json::json!({}), ""),
+            (serde_json::json!({"license":null}), ""),
+            (serde_json::json!({"license":true}), ""),
+            (serde_json::json!({"license":"  "}), ""),
+        ] {
+            apply_manifest_value(
+                &serde_json::json!({"app":{"metadata":metadata}}),
+                &mut entry,
+            );
+            assert_eq!(entry.manifest.license, expected);
+            assert_eq!(entry.static_files.license, expected);
+        }
+        apply_manifest_value(&serde_json::json!({"app":{}}), &mut entry);
+        assert_eq!(entry.manifest.license, "");
+        assert_eq!(entry.static_files.license, "");
+    }
+
+    #[test]
+    fn installed_manifest_entry_path_survives_scans_without_changing_runtime_origin() {
+        let mut entry = installing_fixture();
+        entry.state = PackageState::Stopped;
+        entry.installed = Some(InstalledPackageDataEntry {
+            current_dependents: HashMap::new(),
+            current_dependencies: HashMap::new(),
+            last_backup: None,
+            interface_addresses: HashMap::from([(
+                "main".into(),
+                InterfaceAddress {
+                    lan_address: Some("https://localhost:7443/old?gate=retained#position".into()),
+                    tor_address: "existing.onion".into(),
+                },
+            )]),
+            status: ServiceStatus::Stopped,
+        });
+        let manifest = serde_json::json!({"app":{"interfaces":{"main":{
+            "type":"ui", "port":80, "protocol":"http", "path":"/browse"
+        }}}});
+        for _ in 0..2 {
+            apply_manifest_value(&manifest, &mut entry);
+            let main = &entry.installed.as_ref().unwrap().interface_addresses["main"];
+            assert_eq!(
+                main.lan_address.as_deref(),
+                Some("https://localhost:7443/browse?gate=retained#position")
+            );
+            assert_eq!(main.tor_address, "existing.onion");
+            assert_eq!(entry.state, PackageState::Stopped);
+            assert_eq!(entry.ui_ready, Some(false));
+        }
+        entry
+            .installed
+            .as_mut()
+            .unwrap()
+            .interface_addresses
+            .get_mut("main")
+            .unwrap()
+            .lan_address = None;
+        apply_manifest_value(&manifest, &mut entry);
+        assert!(
+            entry.installed.as_ref().unwrap().interface_addresses["main"]
+                .lan_address
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn manifest_entry_path_preserves_authority_and_optional_query() {
+        assert_eq!(
+            manifest_launch_path("http://localhost:7475", "/browse"),
+            Some("http://localhost:7475/browse".into())
+        );
+        assert_eq!(
+            manifest_launch_path(
+                "https://localhost:7443/old?keep=1#old",
+                "/browse?view=all#new"
+            ),
+            Some("https://localhost:7443/browse?view=all#new".into())
+        );
+        for path in [
+            "https://foreign.invalid/",
+            "//foreign.invalid/",
+            "/\\foreign.invalid/",
+            "browse",
+            "/bad\npath",
+        ] {
+            assert!(
+                manifest_launch_path("https://localhost:7443", path).is_none(),
+                "{path:?}"
+            );
+        }
+        assert!(manifest_launch_path("", "/browse").is_none());
+        assert!(manifest_launch_path("file:///tmp/local", "/browse").is_none());
+    }
 
     #[test]
     fn btcpay_aliases_share_one_package_without_promoting_dependencies() {
@@ -613,12 +796,28 @@ fn is_transient_podman_helper(app_id: &str, ports: &[String]) -> bool {
 /// every surface (My Apps, Services, launcher, companion) instead of the
 /// generic A-mark — the exact regression Cuprate exposed on install.
 fn real_manifest_metadata(app_id: &str) -> Option<serde_json::Value> {
+    real_manifest_value(app_id)?
+        .get("app")?
+        .get("metadata")
+        .cloned()
+}
+
+fn real_manifest_value(app_id: &str) -> Option<serde_json::Value> {
     for (id, value) in crate::container::app_catalog::catalog_manifest_values() {
         if id == app_id {
-            return value.get("app").and_then(|a| a.get("metadata")).cloned();
+            return Some(value);
         }
     }
     let mut candidates = Vec::new();
+    if let Ok(dir) = std::env::var("ARCHIPELAGO_APPS_DIR") {
+        if !dir.trim().is_empty() {
+            candidates.push(
+                std::path::PathBuf::from(dir)
+                    .join(app_id)
+                    .join("manifest.yml"),
+            );
+        }
+    }
     if let Ok(dir) = std::env::var("ARCHIPELAGO_DATA_DIR") {
         candidates.push(
             std::path::PathBuf::from(dir)
@@ -639,12 +838,140 @@ fn real_manifest_metadata(app_id: &str) -> Option<serde_json::Value> {
         let Ok(value) = serde_yaml::from_str::<serde_json::Value>(&content) else {
             continue;
         };
-        let meta = value.get("app").and_then(|a| a.get("metadata")).cloned();
-        if meta.is_some() {
-            return meta;
+        if value.get("app").is_some() {
+            return Some(value);
         }
     }
     None
+}
+
+/// Keep disk-only apps presentable before their first container exists.
+/// The signed catalog wins wherever it supplies a manifest.
+pub(crate) fn apply_manifest_presentation(app_id: &str, entry: &mut PackageDataEntry) {
+    if let Some(value) = real_manifest_value(app_id) {
+        apply_manifest_value(&value, entry);
+    }
+}
+
+fn apply_manifest_value(value: &serde_json::Value, entry: &mut PackageDataEntry) {
+    let Some(app) = value.get("app") else { return };
+    let text = |value: Option<&serde_json::Value>| {
+        value
+            .and_then(|v| v.as_str())
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(str::to_owned)
+    };
+    // Absence is not a license grant. Empty strings are omitted by the UI.
+    let license = text(
+        app.get("metadata")
+            .and_then(|metadata| metadata.get("license")),
+    )
+    .unwrap_or_default();
+    entry.manifest.license = license.clone();
+    entry.static_files.license = license;
+    if let Some(name) = text(app.get("name")) {
+        entry.manifest.title = name;
+    }
+    if let Some(description) = text(app.get("description")) {
+        entry.manifest.description.short = description.clone();
+        entry.manifest.description.long = description.clone();
+        entry.static_files.instructions = description;
+    }
+    if let Some(metadata) = app.get("metadata") {
+        if let Some(icon) = text(metadata.get("icon")) {
+            entry.static_files.icon = icon;
+        }
+        if let Some(tier) = text(metadata.get("tier")) {
+            entry.manifest.tier = Some(tier);
+        }
+    }
+    // Runtime discovery owns origins, ports and availability; the reviewed
+    // manifest owns the UI's entry path. Otherwise every scan resets a declared
+    // /browse or /admin entry point to the container root.
+    if let (Some(installed), Some(interfaces)) = (
+        entry.installed.as_mut(),
+        app.get("interfaces").and_then(|v| v.as_object()),
+    ) {
+        for (id, address) in &mut installed.interface_addresses {
+            let Some(interface) = interfaces.get(id) else {
+                continue;
+            };
+            if interface
+                .get("type")
+                .and_then(|v| v.as_str())
+                .unwrap_or("ui")
+                != "ui"
+            {
+                continue;
+            }
+            let Some(path) = interface.get("path").and_then(|v| v.as_str()) else {
+                continue;
+            };
+            if let Some(lan) = address.lan_address.as_mut() {
+                if let Some(updated) = manifest_launch_path(lan, path) {
+                    *lan = updated;
+                }
+            }
+            if let Some(updated) = manifest_launch_path(&address.tor_address, path) {
+                address.tor_address = updated;
+            }
+        }
+    }
+    // Once installed, the scanner owns UI detection (including companion UIs).
+    // Only seed classification while there is no observed runtime package.
+    if entry.installed.is_some() {
+        return;
+    }
+    if let Some(interfaces) = app.get("interfaces").and_then(|v| v.as_object()) {
+        if !interfaces.is_empty() {
+            let has_ui = interfaces.values().any(|interface| {
+                interface
+                    .get("type")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("ui")
+                    == "ui"
+            });
+            // Preserve scanner-owned addresses; a declared UI does not imply readiness.
+            let interfaces = entry
+                .manifest
+                .interfaces
+                .get_or_insert(Interfaces { main: None });
+            let main = interfaces.main.get_or_insert(MainInterface {
+                ui: None,
+                tor_config: None,
+                lan_config: None,
+            });
+            main.ui = has_ui.then(|| "true".to_owned());
+        }
+    }
+}
+
+/// Apply a local entry path without changing the scanner-confirmed authority.
+fn manifest_launch_path(address: &str, path: &str) -> Option<String> {
+    if !path.starts_with('/')
+        || path.starts_with("//")
+        || path.contains('\\')
+        || path.chars().any(char::is_control)
+    {
+        return None;
+    }
+    let base = reqwest::Url::parse(address).ok()?;
+    if !matches!(base.scheme(), "http" | "https") {
+        return None;
+    }
+    let mut updated = base.join(path).ok()?;
+    if updated.origin() != base.origin() {
+        return None;
+    }
+    // A plain path must not discard an existing gate/deep-link query.
+    if !path.contains('?') {
+        updated.set_query(base.query());
+    }
+    if !path.contains('#') {
+        updated.set_fragment(base.fragment());
+    }
+    Some(updated.into())
 }
 
 fn get_app_metadata(app_id: &str) -> AppMetadata {

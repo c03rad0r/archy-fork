@@ -13,9 +13,11 @@ pub mod image_policy;
 pub mod image_versions;
 pub mod lnd;
 pub mod migration_backup;
+pub mod node_catalog;
 pub mod npm;
 pub mod prod_orchestrator;
 pub mod quadlet;
+pub mod registration_pin;
 pub mod registry;
 pub mod secrets;
 pub mod traits;
@@ -27,3 +29,10 @@ pub use dev_orchestrator::DevContainerOrchestrator;
 pub use docker_packages::DockerPackageScanner;
 pub use prod_orchestrator::ProdContainerOrchestrator;
 pub use traits::ContainerOrchestrator;
+
+mod staged_update;
+
+pub(crate) mod update_transaction;
+
+pub(crate) mod supervised_runtime;
+pub(crate) mod supervised_update;

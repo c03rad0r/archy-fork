@@ -1,5 +1,94 @@
 # Archipelago 1.9.0-alpha release acceptance
 
+
+## Post-1.9.0 source acceptance checkpoint — 8 October 2026
+
+### Reviewed private-delivery source candidate
+
+Source review is complete at candidate `5e737fac`: all 536 production backend
+inputs exactly match the 2,031-test qualification and passed optimized build;
+all 781 dashboard inputs match the passed combined app typecheck/build and
+reviewed 36-input delta gate. This approves source integration for private Yaya
+testing, not a new OTA/ISO or completion of the open release regression matrix.
+Production backend SHA256:
+`75d4562ba606c48704ffe886f31de2b2fbe6fee81a5eb2d46371118df29ef50b`.
+Dashboard archive SHA256:
+`eba26d22e5137caac0277df80f88f7e0e10e5dde14f027df8dde587ab2a7e1e8`.
+
+Fresh Yaya plan review verifies all seven original unit hashes. Unit changes are
+image pins plus the API's two disabled publication/registration flags and three
+node-bound public identity fields. Dependency images resolve to their unchanged
+live IDs. Plan SHA256:
+`f26b469a84833121db8df7e23e709d08eb6f40d9d12ddcb1b4263b685b398816`.
+All 31 running containers, including the separately added JustWorks app, remain
+preserved. The plan is not installed and no catalog or backend activation has run.
+
+The final ngit proposal disposition, resulting accepted merge commit and exact
+post-push main/tag checks must be recorded before activation in the private
+acceptance ledger at
+`~/.local/state/archipelago/release-qualification/post190-source-acceptance-20261008/`.
+This directory holds the resulting commit receipt without creating a self-referential
+commit hash in this document. Both mirrors and local main must agree. Preserve
+all earlier failed/partial publication evidence. The historical checkpoint below
+records the pre-acceptance draft and must not substitute for that final receipt.
+
+
+The original 1.9.0-alpha publication is recorded later in this ledger. The old
+release summary below is historical. This checkpoint concerns the new private
+IndeeHub delivery candidate; it is **not accepted main or catalog activation**.
+
+- Existing ngit proposal `8f394251` remains draft. Its advertised tip is verified
+  as `6e3fea0abb41bdd0688614d9f6fe02f69c00703f`; receipt:
+  `/tmp/archy-post190-draft-tip-20261008.txt`. The push published the revision but
+  returned failure on its local raw-SHA ref update; the independent remote check
+  establishes publication of that exact draft only. Do not blindly retry or
+  describe it as a successful accepted-main merge. Later documentation commits
+  are not implicitly part of that advertised tip.
+- Fresh Gitea open-PR GET returned `[]` for page 1, limit 100:
+  `/tmp/archy-open-prs-20261008.json`. There are no open legacy Gitea PRs in this
+  snapshot. Historical #161/#162 were reviewed, repaired, merged and closed:
+  `3daea662` and `b02ba410`; see [their review](pr-review-20260930.md). Do not reopen
+  or create duplicate PRs merely to mirror accepted source.
+- The app-launch proposal `5dbf04b7` has cached bundle tip `e66440aa`, following
+  `6f693162`. Those original commits are not candidate ancestors. Their changes
+  are included exactly as `2fad10c8` and `3fc37642`, respectively, through merge
+  `6c985b8d`: stable patch IDs are
+  `749b2b4c1c923e82fa4ae0f77825f388c3823b07` and
+  `4d5ddd579f51c4e80eae6ecfeb9059e59b1400e2`. This is patch-equivalence evidence,
+  not proof that ngit already marked the proposal applied. Record its actual
+  accepted result and update its disposition through the canonical review flow.
+- DATUM proposal `15ff5fb9`, cached tip `febdda968`, and Gashboard `acd65f3c`,
+  cached tips `6650ae2c` and later `4e167cbc`, are not candidate ancestors. The
+  candidate contains neither `apps/datum` nor `apps/gashboard`. These app packages
+  are outside this delivery; retain their open proposals and distinguish them
+  from the shared app-launch fixes above. Evidence sources:
+  `/tmp/archy-mining-proposals.bundle`, `/tmp/archy-gashboard-021.bundle`,
+  `/tmp/archy-gashboard-cover-021.json`, `/tmp/archy-open-proposals-20261008.json`.
+  These are cached proposal snapshots, not a fresh assertion about remote heads.
+- Cached origin/ngit main both point to `cedfbb2b`; local main remains `c57119e9`.
+  Candidate merge `8d70d031` retains local main as a parent; it does not update
+  accepted main. Latest required mirror check still fails local main equality:
+  `/tmp/archy-post190-mirror-check-20261008-latest.log`.
+
+Before private signed catalog activation, finish review of the exact intended
+candidate through the existing ngit proposal, record its accepted main commit and
+proposal dispositions, and mirror **the same resulting commits** to Gitea and
+ngit without rewriting published history. Recheck current remote main before
+integration. Preserve annotated `v1.9.0-alpha` object
+`5817f476e7901a1b4cb34f4e2c0176de69012bc7` and target
+`7abd04a7f680e72105ae783cecbe2268e3c8e71b`.
+
+Run `python3 scripts/check-git-mirrors.py --local --ref refs/tags/v1.9.0-alpha`
+after accepted source publication, adding any other applicable shared release
+refs explicitly. Record the result together with PR metadata; the script does
+not verify reviews or dispositions. Prior passing tag/main receipts concern
+older snapshots. Historical unrelated branch drift remains inventoried in
+`/tmp/archy-190-historical-mirror-audit.log`; its missing 1.8.16/17/18 tags were
+subsequently repaired as recorded below. Do not claim full historical parity or
+rewrite unrelated proposal branches to clear this delivery gate.
+
+## Original release summary (historical)
+
 Status: **OPEN — unpublished.** Operator requires the `-alpha` suffix: final version
 `1.9.0-alpha`, tag `v1.9.0-alpha`, and matching OTA/ISO artifact names. Earlier
 unsuffixed candidate evidence below is historical, not a final artifact pass.
@@ -978,6 +1067,44 @@ and companion0.5.34 APK all passed full download byte-count and SHA256 checks:
 locally verified pinned-root signatures. Promote those exact bytes to the live
 metadata paths; no artifact or signature changed. ISO upload and demo deployment
 are separate ongoing operations, not inferred passed from OTA asset publication.
+
+
+### Missing ngit ISO release entry published — 7 October 2026
+
+The operator correctly identified that the1.9.0 tag existed on ngit, but its
+software release entry did not. Gitea already contained the original ISO and both
+checksum assets. Published the missing [ngit1.9.0-alpha release](https://gitworkshop.dev/nevent1qqsfy0xpwnn9y423x6vnxxqtfrplm0n3fyfz9fzcheru2a42gj368sqzyp6xqpkcw7daqn3jry69t99yfzdyy3h8gqv0zhjhte8azny4v6746qcyqqq82mc22hxen) using the
+existing Archipelago application/publisher, original tag commit7abd04a7 and alpha
+channel. This adds release metadata; no ISO, signature, source ref or OTA/catalog
+bytes were replaced.
+
+Release event:`923cc174e6525551369933180b48c3fdbe71491222a458be47c576aa44a3a3c0`.
+Both `wss://relay.ngit.dev` and `wss://gitnostr.com` acknowledged the three asset
+records and release publication. Independent online `ngit release view` resolves
+all three files with exact hashes/sizes and no unresolved asset IDs:
+
+- ISO:2,695,954,432 bytes, SHA256`aad5f0350428976969043079a63b0e7a8264dcee2574526bd34719c798c750af`.
+- Plain checksum:121 bytes; exact existing public/local bytes.
+- Signed checksum:405 bytes; exact existing public/local bytes, pinned-root
+  signature verified again.
+
+The direct URL-backed ngit attempt failed its built-in1800-second acquisition
+timeout and published no release result. Retained that failure. Reused the
+established1.8.22 workflow: freshly hash the complete local ISO, verify its signed
+checksum, sign its public asset records using the existing configured identity,
+and attach those records with ngit's supported `--asset-event` interface. The
+previous complete public-download hash receipt remains separate from today's
+successful public range/sidecar checks; today's full URL attempt did not pass.
+
+Publication used an isolated repository whose local main and annotated release
+tag match both remote mirrors. Existing development main/candidate refs were
+not rewritten. The complete advertised audit inventories12 unrelated branch
+differences; main/release-tag parity does not establish full historical parity.
+
+Durable public receipts and failed-attempt evidence:
+`~/.local/state/archipelago/release-qualification/ngit-iso-190-20261007/`.
+Existing known limitations are retained in the release notes. Current IndeeHub,
+artwork and payment follow-ups are not included in this original ISO.
 
 ### Publication status and subsequent storage regression
 

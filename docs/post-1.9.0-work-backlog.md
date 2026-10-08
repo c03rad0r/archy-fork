@@ -1,8 +1,19 @@
 # Work requested after 1.9.0-alpha
 
-Status: queued by the operator on 2026-10-05. Complete the current release first;
-these requests do not silently expand its artifact scope. No implementation or
-acceptance is claimed by this backlog.
+Status: implementation and qualification in progress. 1.9.0-alpha was published
+separately; these follow-ups are not in its immutable artifacts. The list below
+remains the complete acceptance scope, not a claim that every item is finished.
+
+Current evidence is recorded in [Fleet metrics](fleet-metrics-followup.md),
+[peering reliability](peering-reliability-followup.md), and the
+[IndeeHub design review](indeehub-distribution-current-design.md). Monitoring and
+the tested signer/dashboard candidate are deployed to dev and Yaya with rollback
+backups; actual IndeeHub image publication is deferred until the end as requested.
+Framework's authenticated Monitoring check awaits an operator dashboard login.
+Streaming, storage-source integrations, AIUI setup, V4V packaging/player,
+companion hardware checks and the full Fleet acceptance matrix remain open.
+
+Current implementation and qualification evidence: [2026-10-06 checkpoint](post-1.9.0-progress-20261006.md). The scope below remains authoritative.
 
 ## 1. Distributed IndeeHub publishing and paid viewing
 
@@ -75,6 +86,95 @@ acceptance is claimed by this backlog.
   application-managed storage to bypass its API.
 - Test installation/removal, permissions, unavailable apps, overlapping filenames,
   duplicate detection and category accuracy before enabling an integration.
+
+### Required File Browser replacement behavior — operator clarification, 8 October
+
+- Cloud currently depends on File Browser for its own local files, photos, music
+  and documents. Installing Nextcloud or Immich alone does not replace that
+  connection. Do not imply that the integrations are already enabled.
+- Add a specific warning to every File Browser removal entry in the UI, including
+  the legacy container details route. Explain the Cloud impact, offer Keep File
+  Browser and explicit removal, and preserve app data by default. A display name
+  alone must not identify the dependency. No forced reinstall after removal.
+- The completed connectors MUST let Cloud browse/preview/download the configured
+  source without File Browser installed or running. Nextcloud supplies permitted
+  files/folders; Immich supplies permitted photos/videos. Connectors must be
+  authorized for the intended upstream account; installation alone is not setup.
+- Model each Cloud source independently: a missing File Browser must not block a
+  working connector, and a failed connector must not hide another working source.
+  Show unavailable local storage truthfully, with setup/reinstall guidance.
+- Qualify File Browser absent and stopped, each connector alone, both connectors,
+  unavailable/revoked upstream access, and removing/reinstalling each app. Preserve
+  account boundaries, app data, user uninstall decisions and unaffected sources.
+- Existing File Browser files are not automatically moved to a replacement.
+  Any future transfer requires a separate explicit operation preserving originals;
+  do not advertise migration or expose them through another account by default.
+- Track this under task5 and its removal safeguard now; keep notification artwork
+  task23 last as requested. No connector or no-File-Browser acceptance is claimed.
+
+Removal safeguard source checkpoint: `96259f0e` integrates the independently
+reviewed warning in My Apps, app details and legacy container details. All seven
+focused modal/removal checks pass, including cancel without removal, canonical
+and legacy IDs, preserved files by default, explicit delete-data opt-in and reset
+on reopening or switching apps. Four changed Vue scripts/templates compile.
+Log: `/tmp/archy-filebrowser-warning-tests.log`. Combined typecheck/artifact/live
+acceptance remains pending; no File Browser was stopped or removed. The actual
+Nextcloud/Immich connectors and no-File-Browser acceptance remain unfinished.
+
+### Task 5 assessment — source and version checks, 7 October
+
+Cloud currently sends every category through File Browser, using `/Photos`,
+`/Music`, `/Documents` and `/`. Its client obtains a File Browser token from
+`app.filebrowser-token`; that credential is not an Immich or Nextcloud identity.
+An installed application therefore cannot safely become a new filesystem mount
+or inherit access to all of that application's accounts.
+
+The candidate catalog declares Immich2.7.4 and Nextcloud29. This is catalog
+metadata, not verification of each installed node's actual image/version.
+Before enabling a connector, probe the running version and supported API.
+
+| Source | Verified interface for the catalog version | Proposed initial behavior |
+| --- | --- | --- |
+| Immich |2.7.4 `POST /api/search/metadata` accepts page/size and returns `nextPage`; asset metadata, original and thumbnail endpoints require `asset.read`, `asset.download` and `asset.view`; `/api/users/me` requires `user.read` | Explicitly connect the intended user's scoped key; list photographs/videos, stream permitted thumbnails/originals; preserve albums and original asset identifiers |
+| Nextcloud | Authenticated WebDAV under `/remote.php/dav/files/{user}/`; PROPFIND exposes stable file ID, MIME, ETag and permissions; GET downloads bytes | Use the user's Login Flow/app-password authorization; navigate folders without copying storage; apply source permissions on every request |
+
+Primary references checked against the catalog versions:
+[Immich2.7.4 API schema](https://raw.githubusercontent.com/immich-app/immich/v2.7.4/open-api/immich-openapi-specs.json),
+[Nextcloud29 WebDAV](https://docs.nextcloud.com/server/29/developer_manual/client_apis/WebDAV/basic.html),
+[Nextcloud29 Login Flow](https://docs.nextcloud.com/server/29/developer_manual/client_apis/LoginFlow/index.html).
+The Immich specification SHA256 was
+`d6378294dcddcf772ffdefe470da17d62a5503a74fe1bd6a28f921196901d121`.
+Current upstream docs can describe newer APIs; do not substitute them silently.
+
+Proposed implementation boundaries (design, not enabled features):
+
+- Add source adapters behind owner-authenticated node endpoints, keeping scoped
+  upstream credentials in private node storage. Bind every connection to the
+  selected upstream account and installation; never use administrator-wide
+  enumeration or expose keys in browser storage, URLs or logs. Resolve only
+  installed service endpoints; reject redirected credential forwarding.
+- Represent each item by `(source, installation, account, upstream ID)`, with
+  display path, MIME, size, revision and operation capabilities. Identical names
+  across sources remain separate; a matching name is not proof of duplicate
+  bytes or ownership. Display a source label beside integrated category results.
+- Start with browse/preview/download and Open in source. Editing, rename, move,
+  delete, trash and versions remain source-owned until individually implemented
+  and tested through its API; never modify its data directory directly. No public
+  or paid sharing is implied by importing a source listing.
+- Stream bytes through authenticated bounded endpoints, preserving valid range
+  and revision semantics. Recheck authorization for both previews and originals;
+  encrypted/unavailable content must not fall through to privileged disk reads.
+- Page Immich results and lazily expand Nextcloud folders. A bounded, cancellable
+  per-account metadata index can support whole-library category/search results;
+  do not claim WebDAV folder enumeration is a global paginated search API.
+  Label incomplete indexing and stale results, and invalidate on revocation,
+  disconnect, uninstall or source revision changes. Never duplicate original
+  file storage merely to populate Cloud.
+- Before enablement, qualify two users with disjoint/private/shared libraries,
+  expired/revoked credentials, denied preview/download, install/remove/reinstall,
+  source outage/recovery, duplicate names, renamed items, large libraries,
+  bounded cancellation, MIME classification and account-scoped cache deletion.
+  These cases have not been executed; no source connector is accepted yet.
 
 ## 6. Web5 header and node connection flow planning
 
@@ -227,7 +327,10 @@ ahead of that work or as an untested addition to the current release.
 
 - After the current release, deploy/package the existing V4V Portainer deployment
   as a demo app on Yaya, showcasing how an ordinary third-party app works on a
-  node **without native Nostr signer integration**, as explicitly requested.
+  node. Updated operator instruction on6October supersedes the original
+  no-native-signer brief: use Nostr sign-in and the native signer, replacing the
+  alpha password gate for this demo. Preserve explicit signing consent and
+  cryptographic authentication; newly registered users gain no operator powers.
 - Inspect the actual existing Portainer source, branch/image revision, Compose
   stack, access/authentication and data before changes; retain the working V4V
   site, stack and persistent state. Do not confuse this with the public Archipelago
@@ -235,7 +338,7 @@ ahead of that work or as an untested addition to the current release.
 - Follow the current app-development guide and supported app packaging/gate/
   lifecycle conventions. Define the app card/icon/category, launch URL/readiness,
   network/auth boundaries, health, configuration and persistent mounts properly.
-  Do not expose the native signer or implicitly grant signing permissions.
+  Integrate the supported native signer without implicitly granting permissions.
 - Qualify fresh installation in isolation, then Yaya deployment, desktop/mobile/
   companion launch, normal app functionality, restart, update/rollback and safe
   removal behavior. Verify the deployed app actually runs the intended V4V source
@@ -249,8 +352,12 @@ ahead of that work or as an untested addition to the current release.
 - Source is on the existing Gitea on the146 server; locate the actual V4V repo,
   branch and deployment revision there rather than guessing a replacement source.
 - Add a **Sovereign Music** banner for V4V on Yaya, following the existing
-  Sovereign Streaming banner treatment and using the app's own login background.
-  Retrieve and inspect the real asset; do not invent a replacement illustration.
+  Sovereign Streaming banner treatment. Updated request: use the final intro
+  cymatic still as the background and a music/play graphic on the right, or adapt
+  the app's For You banner treatment. Inspect the actual intro ending and assets.
+- Fix the reported real managed-app regression: closing V4V leaves playback
+  running without the native bottom player. Qualify against the signed catalog
+  and real installed app, not only browser-injected package fixtures.
 - Both demo app availability and its promotion must be confined to Yaya. Evaluate
   a signed per-node/DID-scoped demo catalog or existing supported node-specific
   candidate mechanism. Do not publish the demo to the global catalog or let
@@ -261,6 +368,15 @@ ahead of that work or as an untested addition to the current release.
 - This may become a real app later; preserve an explicit tested promotion path
   from node-only demo to proper public app release without duplicate app IDs,
   conflicting state, lost configuration or automatic exposure before approval.
+
+### Private demo distribution correction
+
+The operator authorized removal of the publicly downloadable V4V demo container
+on 6 October. Preserve Yaya's working installed demo, its data, and a private
+recovery image. V4V application source and images must remain private until the
+operator explicitly approves publication. Audience restriction on a signed node
+catalog does not make the referenced registry image private. Updated deployment
+must use a qualified private delivery path; do not republish the demo image.
 
 ### V4V persistent playback and existing demo music catalog
 
@@ -275,7 +391,7 @@ ahead of that work or as an untested addition to the current release.
   system termination/background restrictions require separate qualification.
 - Inspect supported app/player integration before choosing an implementation.
   Maintain one playback session, prevent duplicate audio on reopen, authenticate
-  app-to-shell messages, and preserve the requirement of no native Nostr signer.
+  app-to-shell messages, and support the updated native Nostr sign-in requirement.
 - Test navigation, repeated close/reopen, pause/resume/seek, track changes,
   disconnect/recovery and unavailable media on desktop and the actual companion.
   Check track, queue and position continuity, accessible compact controls and
@@ -316,3 +432,331 @@ ahead of that work or as an untested addition to the current release.
 - Instrument transport selection and verify it in headless multi-node integration
   tests and actual mobile/desktop playback. Keep technical diagnostics available
   without burdening normal playback with implementation details.
+
+## 15. MeshCore public-channel reliability and settings clarity — perform last
+
+Added by the operator on 2026-10-06, explicitly at the end of this backlog.
+Framework is Heltec V4; Archi dev is Heltec V3. The operator configured both for
+UK in Frequency Plan but reports no messages between them, no other radios
+visible, Framework reporting “mesh listener isn't running”, and intermittent
+502 Bad Gateway on the mesh page. This request reopens Framework radio
+investigation for this scoped task; earlier hardware deferral is not a pass.
+
+- Diagnose actual firmware/protocol, device identity and serial ownership,
+  listener lifecycle, channel identity/key and every relevant RF parameter on
+  both radios. Matching regional labels alone does not prove matching settings.
+  Preserve radio identity and existing settings; do not flash or reset merely
+  because discovery is empty. Use the authorized UK plan and verify applicable
+  hardware/firmware constraints before transmitting.
+- Trace public-channel transmission and reception end to end on both nodes:
+  UI acknowledgement, serial command/result, radio delivery and listener event,
+  persisted message and rendered conversation. Distinguish sent from received;
+  report listener/USB/RF failures accurately. Do not claim no nearby radios means
+  broken discovery without a known transmitting peer.
+- Investigate the missing-listener error and intermittent 502 separately.
+  Cover service readiness, process ownership, competing serial clients, USB
+  detach/reconnect, background/resume, stale connections, backend/radio restart,
+  bounded retries and recovery without duplicate listeners/messages.
+- Compare current official MeshCore documentation and established MeshCore apps
+  when needed. Qualify actual public-channel behavior and interoperability;
+  do not substitute another protocol's radio settings or infer compatibility.
+- Simplify the satellite/settings tab using the existing design system. Explain
+  and organize Radio Settings versus Frequency Plan, show actual applied/read-back
+  values, and distinguish a proposed change from one confirmed on the radio.
+- After earlier backlog work: implement, deploy, test real messages in both
+  directions between Framework and dev, investigate failures, repair and repeat.
+  Include desktop and companion, private-key-safe diagnostics, long-running
+  listener stability, restart/reconnect and meaningful negative cases. Record
+  firmware/builds, radios, conditions and results. Simulated or headless checks
+  alone do not constitute RF acceptance or a claim of flawless operation.
+
+### MeshCore channel scope clarification
+
+The operator explicitly requires the standard MeshCore public channel(s) used
+by the wider community, not an Archipelago-specific/custom channel. Verify the
+current official default channel identity/key/configuration and interoperability
+with standard MeshCore clients on the selected UK RF plan. Two Archipelago radios
+agreeing with each other on a private/custom channel is not acceptance. Custom
+channel creation/configuration is deferred to later work and must not be added
+as a substitute for repairing the standard public-channel experience.
+
+
+## 16. Web5 card footer alignment
+
+**Done — 2026-10-07 browser/deployment acceptance:** Monitoring, Identities and
+Federation cards passed on dev/Yaya at390px/1440px, including tall/shrinking
+neighbours, long action labels, bottom geometry, no overlap/overflow, keyboard
+focus and Monitoring navigation. Stress content existed only in the disposable
+browser DOM. Evidence:`~/.local/state/archipelago/release-qualification/web5-footer-20261007/`.
+The separate Framework Monitoring owner-browser check remains open.
+
+- Keep Monitoring buttons anchored to the bottom of their card when adjacent
+  cards grow, including search/loading/results changes. Apply the same footer
+  behaviour to matching cards without changing the design system or adding
+  unnecessary minimum height.
+- Preserve normal document flow and space between content and actions; avoid
+  absolute positioning that overlaps content. Verify tall neighbours, shrinking
+  results, long labels, keyboard access and mobile/desktop layouts.
+- Record actual browser geometry checks and deployment acceptance separately.
+
+## 17. HTTPS embedded app authentication (reported 6 October)
+
+- User reports opening apps inside an iframe on an HTTPS node shows the app gate, while opening the same app in a separate tab works. Reproduce both modes with the same authenticated session before identifying a cause.
+- Trace generated launch origins, cookie attributes and scope, bootstrap redirects, iframe navigation and gate session exchange. Preserve authentication and public-management access restrictions; do not bypass the gate or expose credentials to embedded apps.
+- Test HTTPS iframe and tab, HTTP LAN compatibility, desktop/mobile companion, reload, expired sessions, denied access and logout. Record actual-node evidence separately from fixtures. This remains open, not a confirmed diagnosis.
+
+### Task 17 progress
+
+Yaya's app gate could not read its root-only TLS leaf key; logs confirmed
+permission denied. Correcting only its group/mode restored authenticated HTTPS
+iframe loading, while unauthenticated requests still return401. Source fixes
+cover startup migration, hostname regeneration, first boot and explicit rotation;
+tests pass. Exact operator hostname/app, trusted TLS and companion acceptance
+remain open. See `docs/https-app-gate-followup-20261006.md`.
+
+## 18. Firewall and tunnel UI/settings
+
+Operator refinements on 8 October, retained as acceptance requirements:
+
+- Keep status values aligned to the right edge with the other rows. Do not
+  present the mesh service as proof that the node firewall is protected.
+- Fill the main content width and inherit the Network tab background; opening
+  Firewalls & tunnels must not switch to a different page background.
+- Match the established header and shared back button, including desktop title
+  alignment and mobile back placement. Use the OpenWrt Gateway sibling pattern.
+- Use the standard black primary button at the bottom of the Local Network
+  container, matching other container actions.
+- Use plain language throughout and provide real, supported configuration
+  management. Recognize existing connections; a missing saved router entry is
+  not proof that the node's tunnels or manually repaired firewall are absent.
+- Verify changes against the actual saved configuration. Controls must not
+  claim to apply firewall rules when a backend only writes a local entry.
+
+Status: in progress. The central read-only Firewall & tunnels screen, local
+network entry points, independent status/error handling and responsive route
+tests are implemented (ef6c10f0, 3f96be2c). Scoped configuration, persistence,
+reboot and rollback acceptance remain open. The private handover and
+acknowledgement live in the separate mining review checkout; do not commit its
+deployment addresses or operational details here.
+
+- Keep this task after the previously deferred MeshCore work. The subsequent
+  connection UX additions below follow all other tasks and their acceptance.
+- Network → Local network: make the Firewall Active row clickable and add a
+  bottom-anchored Firewall & tunnels button. Both open one central settings
+  screen; app pages may link to it, but are not the primary configuration UI.
+- Show firewall services/ports, protocols, allowed sources and effective state;
+  tunnel connection/handshake status, peers and endpoints; manifest-backed app
+  and service selection, existing tunnel, public port and domain when relevant.
+- Treat transport reachability separately from browser/app-gate authentication.
+  Raw TCP services need a copyable protocol endpoint, not an HTTP proxy host or
+  certificate requirement. Keep mining service exposure separate from admin UI.
+- Own the complete route: public forwarding, container/host listener and node
+  tunnel firewall, restricted to the tunnel peer. Show independent checks and
+  name the precise failing stage. Unmanaged/unreachable VPS must show VPS setup
+  required with concrete instructions, never a misleading success indication.
+- Preserve unrelated rules/tunnels/apps; validate before applying, persist scoped
+  changes, roll back failures, remove only owned exposure rules on disable, and
+  provide repair/reconcile for detected drift.
+- Preserve the manual node repair. The handover's later external mining success
+  supersedes its earlier unverified-forwarding notes. Treat this as received
+  evidence, not newly performed validation. Reboot/persistence gates remain open.
+- Use the requested shared browser-check skill when located; it is not available
+  in this session's skill catalog. Keep its browser scenarios outside repositories
+  as requested, while retaining repository regression and release requirements.
+- Review and integrate once through ngit, preserve the already integrated mining
+  work, and mirror accepted commits to Gitea. No release gate is waived.
+
+## Deferred expansion of tasks 3/6: connection UX and final functional review
+
+Operator sequencing on6October: finish all other tasks, related deployments,
+tests, app deployments and UAT first. Then perform this expansion and the final
+functional/UX review. These are additions to existing groups, not closed work.
+
+- Distinguish peer relationships from federation membership in labels, actions
+  and removal confirmations, including nodes with both relationships. Remove only
+  the selected relationship; describe exactly what changed.
+- Anchor removal buttons at card bottoms. Show an immediate per-action spinner,
+  prevent duplicate submissions, and show an accurate completion/error toast.
+- Add a bottom-anchored Network map button to the Connected Nodes container,
+  linking directly to the network map screen on desktop and mobile.
+- Include peer and trusted-node counts in the Connected Nodes top summary row,
+  with explicit labels and a compact responsive layout. Derive counts from the
+  authoritative relationship/trust state, update them automatically, and avoid
+  double-counting identities in the overall node total when categories overlap.
+- Lay out these card-footer actions for mobile as well as desktop: maintain
+  bottom alignment within the card, clear labels, comfortable tap targets and
+  consistent spacing. Stack actions when needed instead of squeezing them;
+  prevent clipping, overlap and horizontal overflow. Check narrow phone widths,
+  enlarged text and loading states while preserving the existing design system.
+- Measure and reduce removal latency. Verify whether an authenticated existing
+  FIPS connection is preferred; implement that priority where supported, with
+  bounded fallback and no weakening of identity or authorization checks.
+- Hide rejected, expired and otherwise resolved Nostr requests from actionable
+  lists. Prevent relay replay or stale refresh results from resurrecting them;
+  retain any history needed for diagnostics separately.
+- Give incoming peer requests useful notifications linking directly to the
+  correct Federation/Peers request and its accept/reject actions.
+- Update relationship, request, availability and operation states automatically
+  across screens without routine manual sync. Handle reconnect, missed events,
+  out-of-order replies and failed refreshes without invented success states.
+- Federated Nodes sync is currently reported as unreliable and slow. Diagnose
+  the actual transport, queue and reconciliation path; prevent indefinite
+  waits; show a loader with a useful phase/status message and elapsed progress;
+  provide bounded retry and a truthful success, partial-success or failure
+  result. Preserve the last known state while a refresh is in flight and make
+  the next retry safe and idempotent.
+- When a request changes the 3D map layout, rotate its node to the front, top
+  centre and clearly expose the request action. Cover multiple requests,
+  completion, user camera interaction, reduced motion and mobile viewports.
+- Review complete desktop/mobile connection flows after the other work passes:
+  put useful node capabilities and actions first, reduce unnecessary navigation
+  and scrolling, and assess direct links to permitted peer Cloud files. Preserve
+  the design system, trust boundaries and meaningful loading/error feedback.
+- Qualify real reciprocal removal/requests, offline and reconnect behavior,
+  duplicate/replayed events, automatic UI convergence, notifications/deep links,
+  map positioning and responsive card geometry before claiming acceptance.
+
+## 19. Reusable media developer guide and companion Cloud video PiP
+
+Added by the operator after the V4V player refinements. Preserve the earlier
+instruction to complete the other work before the deferred final connection UX
+review; this new media task is part of that preceding work.
+
+- Document the reusable audio manifest, handshake/state/control protocol,
+  security boundaries, login redirects, queue ownership, artwork, lifecycle,
+  mobile layout and reproducible test/deployment steps for developers and agents.
+  Use V4V as the reference; distinguish implemented source from live acceptance.
+- Implement companion picture-in-picture for Cloud videos first. Investigate
+  viewer controls and native Android support together, preserving the same video
+  and authorized/FIPS transport rather than opening an unauthenticated second URL.
+- Scope PiP to video, never expose the dashboard/management UI in the PiP window.
+  Test entry/exit, play/pause/close, return, aspect ratio, rotation, background,
+  completion, unsupported/disabled PiP, session expiry and network interruption.
+- Require physical Android companion acceptance and signed APK distribution.
+  Document the supported video/PiP contract for other apps after qualification;
+  do not claim the audio postMessage bridge already implements video PiP.
+
+**Nearly finished:** Cloud PiP is implemented and was delivered in companion
+0.5.35/build55; the operator accepted the reported Cloud PiP flow on 2026-10-07.
+The reusable audio adapter and developer guide are implemented in
+[app-media-integration.md](app-media-integration.md). Remaining physical edge
+checks include disabled/unsupported PiP, session expiry, FIPS interruption and
+process recreation. The accepted flow does not establish that complete matrix.
+The task19 guide now also documents
+reusable adapter callbacks and authentication teardown, dashboard-only companion
+PiP integration, browser adoption/release differences, and a tested-versus-physical
+acceptance matrix. This documentation review adds no runtime or phone acceptance;
+the remaining physical checks above keep task19 nearly finished.
+
+## 20. Companion background media for V4V and other apps
+
+**In progress — background playback operator-confirmed on APK0.5.37 (2026-10-07):**
+The earlier APK0.5.36 failed after locking/switching apps. After installing0.5.37,
+the operator reports playback now works and the notification is present; song
+artwork is missing. Record this as acceptance of the reported background flow,
+not proof of the complete controls/queue/reconnect matrix or a confirmed root
+cause. Artwork correction and remaining lifecycle checks are ongoing. USB access
+is unavailable.
+
+Later media-platform task requested by the operator. When a user closes an
+embedded V4V demo or another authorized media app on the companion, playback
+must continue through the phone's native media session instead of stopping or
+playing invisibly without controls. Apply the same lifecycle contract to audio
+and video, with video using picture-in-picture where the device supports it.
+
+- Keep the current track/video, position, queue, artwork and authorization when
+  the app surface closes; reopening resumes the same session without a second
+  stream or duplicate payment.
+- Expose native notification/lock-screen/headset controls for play/pause,
+  previous/next, seek where supported, shuffle and stop, with controls kept in
+  sync with the app and the dashboard bottom player.
+- For video, move to a native PiP surface on close or explicit PiP request when
+  supported, preserve aspect/orientation and return to the same WebView session;
+  fall back to audio-only/background rules when PiP is unavailable.
+- Enforce origin, session, entitlement and transport boundaries during
+  background playback; expiry, logout, network loss and user stop must halt or
+  degrade truthfully and release media resources.
+- Qualify V4V on physical Android at phone, lock-screen, background, rotation,
+  reconnect, completion and reopen states, then publish the reusable contract
+  for other audio/video apps. No live app deployment or payment is accepted
+  from browser-only tests.
+
+
+## 21. Public files and folders — deferred end-of-list task
+
+Added by the operator on 2026-10-07. Perform after the existing tasks, including
+previously deferred work. Status: queued; no public visibility has been changed.
+
+- Add **Make public** to the More menus for both files and folders. Public means
+  discoverable by any node, including nodes with no peering or federation
+  relationship to the owner. Relationship approval must not be required merely
+  to discover a public item.
+- Reuse the existing **Share with peers pricing interface**, including optional
+  charging and its supported pricing/payment choices. Use the existing brand
+  **blue tints instead of orange** for this public-sharing variant; do not create
+  a separate pricing interaction or change the peer-sharing colour treatment.
+- Place a very small blue public-state marker at the **top-left of the file or
+  folder icon**. Keep the marker readable and accessible without covering the
+  thumbnail or replacing the existing icon.
+- Separate public discoverability from paid access: listed paid content must
+  still enforce its price/entitlement. Reuse settlement and recovery protections
+  so retries do not charge twice.
+- Make folder scope explicit in the reused flow, including existing/new children,
+  nested items and individual visibility/pricing overrides. Preserve private
+  items until the owner actually applies the action; provide a way to withdraw
+  public sharing and reflect that state in menus, listings and markers.
+- Qualify file/folder menus, shared pricing UI with blue styling, tiny marker,
+  unrelated-node discovery, paid access, withdrawal and mobile/desktop layouts.
+  No live file publication or real payment is authorized merely by adding this
+  task to the backlog.
+
+
+## 22. Mesh Share file: node/computer picker and paid delivery — final task
+
+Added by the operator after task21 on 2026-10-07. Append after public sharing;
+status: queued. Plan the node-to-node sharing design before implementation.
+Preparation: [source-grounded sharing plan](mesh-node-file-sharing-plan-20261007.md);
+no implementation or public visibility change is enabled.
+
+- Clicking **Share file** in Mesh opens a source-choice modal with **From node**
+  and **From computer**. From computer opens the local device file picker;
+  plan upload/staging and delivery within the same send flow.
+- **From node** opens a polished file-browser modal using the existing design
+  system, with folder-tree navigation and search across **all of the user's own
+  files**, not just the currently open folder. Preserve ownership/permissions;
+  show useful paths for matching names and truthful loading/empty/error states.
+- Allow multiple file selections. Retain selections across tree navigation and
+  searches, collect them in a selection area at the bottom, allow individual
+  removal, and provide a clear **Send** action with a selected-file count.
+  Keep the browser and selection area usable on mobile and desktop.
+- Plan and compare the supported node-to-node delivery paths before choosing
+  the implementation: reuse existing authenticated file sharing, discovery and
+  FIPS transports where suitable. Determine what the Mesh message carries,
+  how recipient identity/access is checked, where file bytes reside, and how
+  local-computer files become available without duplicate uploads or exposing
+  unrelated/private files. Distinguish Mesh messaging from bulk-file transport;
+  cover sender offline, recipient offline, reconnect, expiry and resumable
+  delivery with explicit progress and failure/retry behaviour.
+- Support sharing an existing paid file and configuring a paid share through
+  the existing pricing flow. When a recipient opens a paid file, present the
+  **usual purchase/payment interface** and supported payment methods; verify
+  settlement/entitlement before releasing paid content. Reuse ownership and
+  recovery logic so repeat opens, retries and lost replies do not charge again.
+- Define mixed free/paid multi-file messages, recipient previews, per-file price
+  and delivery states, existing entitlements and source deletion/withdrawal.
+  Selecting or sending a file must not silently make it globally public;
+  preserve the distinction from task21 public discovery.
+- Qualify both source choices, tree navigation, whole-library search, retained
+  multi-selection/removal, Send, cross-node receipt/open/download, free and paid
+  access, duplicate/reconnect recovery and responsive/accessibility behaviour.
+
+
+## 23. Companion notification artwork — operator-deferred until all other tasks
+
+The operator retested APK0.5.37 with the deployed Yaya artwork UI and reports
+that the song image still does not show. On 2026-10-07 they explicitly asked to
+park this until the end of all tasks. Background playback and notification
+presence remain accepted; artwork is failed/open, not completed by fixture tests.
+Do not spend further investigation/build/deployment work on artwork ahead of
+the other tasks. Resume the actual-track authentication/CORS/thumbnail/native
+notification investigation only at the deferred end, preserving playback.

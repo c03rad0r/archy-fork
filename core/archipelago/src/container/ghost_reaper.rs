@@ -27,6 +27,8 @@
 //! the live managed container, which is the opposite of the fix.
 
 use std::collections::HashSet;
+use std::os::unix::fs::MetadataExt;
+use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use tracing::{info, warn};
@@ -67,11 +69,16 @@ fn all_pids() -> Vec<i32> {
 
 /// Container ids podman currently knows about (running or stopped).
 async fn podman_known_ids() -> Option<HashSet<String>> {
-    let out = tokio::process::Command::new("podman")
-        .args(["ps", "-a", "--no-trunc", "-q"])
-        .output()
-        .await
-        .ok()?;
+    let out = tokio::time::timeout(
+        Duration::from_secs(15),
+        tokio::process::Command::new("podman")
+            .args(["ps", "-a", "--no-trunc", "-q"])
+            .kill_on_drop(true)
+            .output(),
+    )
+    .await
+    .ok()?
+    .ok()?;
     if !out.status.success() {
         // A failed listing must NEVER be read as "podman knows nothing" —
         // that would make every running container look like a ghost and reap
@@ -86,6 +93,37 @@ async fn podman_known_ids() -> Option<HashSet<String>> {
             .filter(|l| !l.is_empty())
             .collect(),
     )
+}
+
+/// A different storage root is a different Podman inventory, even for the same
+/// user. Its healthy containers must never be classified using our `podman ps`.
+async fn podman_graph_root() -> Option<PathBuf> {
+    let out = tokio::time::timeout(
+        Duration::from_secs(15),
+        tokio::process::Command::new("podman")
+            .args(["info", "--format", "{{.Store.GraphRoot}}"])
+            .kill_on_drop(true)
+            .output(),
+    )
+    .await
+    .ok()?
+    .ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    let path = PathBuf::from(std::str::from_utf8(&out.stdout).ok()?.trim());
+    if !path.is_absolute() || path == Path::new("/") {
+        return None;
+    }
+    Some(path)
+}
+
+fn belongs_to_store(argv: &[String], id: &str, root: &Path) -> bool {
+    let expected = root.join("overlay-containers").join(id).join("userdata");
+    // Require exactly one explicit bundle argument, bound to this exact id.
+    // Unknown or future conmon layouts are skipped rather than guessed.
+    let bundles: Vec<_> = argv.windows(2).filter(|pair| pair[0] == "-b").collect();
+    bundles.len() == 1 && Path::new(&bundles[0][1]) == expected
 }
 
 /// Parse a conmon argv into (container_id, name), if it is a conmon at all.
@@ -118,16 +156,25 @@ fn parse_conmon(argv: &[String]) -> Option<(String, Option<String>)> {
 /// All ghost process trees on this host. Empty when podman cannot be listed
 /// (fail-closed: unknown state reaps nothing).
 pub async fn find_ghosts() -> Vec<Ghost> {
+    let Some(root) = podman_graph_root().await else {
+        return Vec::new();
+    };
     let Some(known) = podman_known_ids().await else {
         return Vec::new();
     };
     let mut ghosts = Vec::new();
     for pid in all_pids() {
+        // Never touch another user's container supervisor.
+        if !std::fs::metadata(format!("/proc/{pid}"))
+            .is_ok_and(|metadata| metadata.uid() == unsafe { libc::geteuid() })
+        {
+            continue;
+        }
         let Some(argv) = proc_argv(pid) else { continue };
         let Some((container_id, name)) = parse_conmon(&argv) else {
             continue;
         };
-        if known.contains(&container_id) {
+        if known.contains(&container_id) || !belongs_to_store(&argv, &container_id, &root) {
             continue;
         }
         ghosts.push(Ghost {
@@ -233,7 +280,22 @@ async fn reap_matching(pred: impl Fn(&Ghost) -> bool) -> usize {
     if ghosts.is_empty() {
         return 0;
     }
+    let mut reaped = 0;
     for ghost in &ghosts {
+        // Recheck inventory after discovery: a start may have registered the
+        // container while this pass was collecting processes.
+        let Some(known) = podman_known_ids().await else {
+            continue;
+        };
+        if known.contains(&ghost.container_id) {
+            continue;
+        }
+        let still_same = proc_argv(ghost.conmon_pid)
+            .and_then(|argv| parse_conmon(&argv))
+            .is_some_and(|(id, _)| id == ghost.container_id);
+        if !still_same {
+            continue;
+        }
         warn!(
             container_id = %&ghost.container_id[..12],
             name = ?ghost.name,
@@ -242,12 +304,10 @@ async fn reap_matching(pred: impl Fn(&Ghost) -> bool) -> usize {
              hold the app's ports and data locks; reaping"
         );
         kill_ghost(ghost).await;
+        reaped += 1;
     }
-    info!(
-        count = ghosts.len(),
-        "ghost reaper: reaped ghost containers"
-    );
-    ghosts.len()
+    info!(count = reaped, "ghost reaper: reaped ghost containers");
+    reaped
 }
 
 #[cfg(test)]
@@ -293,6 +353,24 @@ mod tests {
             parse_conmon(&argv(&["/usr/bin/conmon", "-c", "8ea2fc65", "-n", "gitea"])).is_none()
         );
         assert!(parse_conmon(&argv(&["/usr/bin/conmon", "--api-version", "1"])).is_none());
+    }
+
+    #[test]
+    fn other_storage_roots_and_ambiguous_bundles_are_not_reapable() {
+        let root = Path::new("/home/user/.local/share/containers/storage");
+        let bundle = root.join("overlay-containers").join(ID).join("userdata");
+        let own = argv(&["/usr/bin/conmon", "-c", ID, "-b", bundle.to_str().unwrap()]);
+        assert!(belongs_to_store(&own, ID, root));
+        assert!(!belongs_to_store(&own, ID, Path::new("/tmp/another-store")));
+        assert!(!belongs_to_store(&own, &"f".repeat(64), root));
+        assert!(!belongs_to_store(
+            &argv(&["/usr/bin/conmon", "-c", ID]),
+            ID,
+            root
+        ));
+        let mut ambiguous = own.clone();
+        ambiguous.extend(argv(&["-b", bundle.to_str().unwrap()]));
+        assert!(!belongs_to_store(&ambiguous, ID, root));
     }
 
     #[test]

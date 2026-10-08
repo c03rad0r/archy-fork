@@ -1,5 +1,7 @@
 # Archipelago Developer Guide
 
+For new apps, start with `docs/app-developer-guide.md` and complete its **Launch acceptance: credentials, signer, and HTTP nodes** checklist. Packaging includes My Apps presentation, login/first-run credential handoff, native signer startup, and real HTTP-node testing—not only a working container.
+
 ## Project Structure
 
 ```

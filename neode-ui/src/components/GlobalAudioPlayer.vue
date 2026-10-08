@@ -2,13 +2,15 @@
   <Teleport to="body">
     <Transition name="slide-up">
       <div
-        v-if="audioPlayer.currentName.value"
+        v-if="audioPlayer.currentName.value && !audioPlayer.externalVisible.value"
         ref="barEl"
         class="fixed left-0 right-0 z-40 audio-player-bar"
       >
+        <img v-if="audioPlayer.externalArtwork.value" :src="audioPlayer.externalArtwork.value" alt="" class="player-artwork" referrerpolicy="no-referrer" />
+        <div class="player-artwork-shade" aria-hidden="true" />
         <!-- Progress bar (clickable) -->
         <div
-          class="h-1 bg-white/10 cursor-pointer"
+          class="relative h-1 bg-white/10 cursor-pointer"
           @click="onProgressClick"
         >
           <div
@@ -17,10 +19,12 @@
           />
         </div>
 
-        <div class="flex items-center gap-3 px-4 py-2.5">
+        <div class="player-controls relative flex items-center gap-2 px-3 py-2.5">
+          <button v-if="audioPlayer.externalApp.value" class="player-control" aria-label="Previous track" @click="audioPlayer.previousExternal()"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M6 5h2v14H6zm13 0v14L9 12z" /></svg></button>
           <!-- Play/Pause -->
           <button
             class="flex-shrink-0 w-9 h-9 rounded-full bg-white/10 hover:bg-white/20 flex items-center justify-center transition-colors"
+            :aria-label="audioPlayer.playing.value ? 'Pause audio' : 'Play audio'"
             @click="togglePlay"
           >
             <svg v-if="audioPlayer.loading.value" class="w-5 h-5 animate-spin text-white" fill="none" viewBox="0 0 24 24">
@@ -35,6 +39,7 @@
             </svg>
           </button>
 
+          <button v-if="audioPlayer.externalApp.value" class="player-control" aria-label="Next track" @click="audioPlayer.nextExternal()"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M16 5h2v14h-2zM5 5l10 7-10 7z" /></svg></button>
           <!-- Track info -->
           <div class="flex-1 min-w-0">
             <p v-if="audioPlayer.error.value" class="text-sm text-red-400 truncate">{{ audioPlayer.error.value }}</p>
@@ -42,9 +47,13 @@
             <p class="text-xs text-white/40">{{ formatTime(audioPlayer.currentTime.value) }} / {{ formatTime(audioPlayer.duration.value) }}</p>
           </div>
 
+          <button v-if="audioPlayer.externalApp.value" class="player-control" aria-label="Shuffle" :aria-pressed="audioPlayer.externalShuffle.value" @click="audioPlayer.shuffleExternal()"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="m17 3 4 4-4 4M3 17h3c4 0 8-10 12-10h3M17 13l4 4-4 4M3 7h3c1.5 0 3 1.4 4.5 3.3M14 14c1.4 1.7 2.7 3 4 3h3" /></svg></button>
+          <button v-if="audioPlayer.externalApp.value" class="glass-button px-3 py-2 rounded-lg text-sm text-white shrink-0" @click="audioPlayer.openExternal()" aria-label="Open playing app"><span class="hidden sm:inline">Open app</span><svg class="w-5 h-5 sm:hidden" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M14 3h7v7m0-7L10 14M9 3H3v18h18v-6" /></svg></button>
+
           <!-- Close -->
           <button
             class="flex-shrink-0 w-8 h-8 rounded-full hover:bg-white/10 flex items-center justify-center transition-colors"
+            aria-label="Stop audio"
             @click="audioPlayer.stop()"
           >
             <svg class="w-4 h-4 text-white/60" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -60,8 +69,10 @@
 <script setup lang="ts">
 import { ref, watch, nextTick, onBeforeUnmount } from 'vue'
 import { useAudioPlayer } from '@/composables/useAudioPlayer'
+import { useCompanionAudio } from '@/composables/useCompanionAudio'
 
 const audioPlayer = useAudioPlayer()
+useCompanionAudio(audioPlayer)
 const barEl = ref<HTMLElement | null>(null)
 
 // Publish the player's height as a CSS variable so page scroll containers can
@@ -81,7 +92,7 @@ function clearPlayerHeightVar() {
   document.documentElement.classList.remove('audio-active')
 }
 
-watch(() => audioPlayer.currentName.value, (name) => {
+watch(() => audioPlayer.currentName.value && !audioPlayer.externalVisible.value, (name) => {
   if (name) {
     nextTick(setPlayerHeightVar)
   } else {
@@ -116,6 +127,13 @@ function formatTime(seconds: number): string {
 </script>
 
 <style scoped>
+.player-artwork { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; opacity: .45; pointer-events: none; }
+.player-artwork-shade { position: absolute; inset: 0; background: rgba(8,10,14,.65); pointer-events: none; }
+.player-control { width: 36px; height: 44px; display: grid; place-items: center; flex-shrink: 0; color: white; border-radius: 8px; }
+.player-control svg { width: 20px; height: 20px; }
+.player-control[aria-pressed="true"] { color: #fb923c; background: rgba(251,146,60,.15); }
+@media (max-width: 400px) { .player-controls { gap: 2px; padding-inline: 6px; } .player-control { width: 32px; } }
+@media (prefers-reduced-motion: reduce) { .slide-up-enter-active, .slide-up-leave-active { transition: none !important; } }
 .audio-player-bar {
   /* Sit directly above the mobile tab bar (its height is published as
      --mobile-tab-bar-height). On desktop the tab bar is hidden so the variable

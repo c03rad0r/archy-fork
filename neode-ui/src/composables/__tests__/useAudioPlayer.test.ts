@@ -61,6 +61,29 @@ describe('useAudioPlayer', () => {
     if (lastMockAudio) lastMockAudio.shouldRejectPlay = false
   })
 
+  it('controls an app player without copying its stream or losing its position', () => {
+    const player = useAudioPlayer()
+    player.play('/local.mp3', 'Local')
+    const controller = { id: 'demo-session', play: vi.fn(), pause: vi.fn(), seek: vi.fn(), open: vi.fn(), close: vi.fn() }
+    player.updateExternal(controller, { title: 'Demo', artist: 'Artist', playing: true, position: 42, duration: 100 }, true)
+    expect(lastMockAudio?.paused).toBe(true)
+    expect(player.currentSrc.value).toBe('app:demo-session')
+    lastMockAudio?.simulateEvent('pause')
+    expect(player.playing.value).toBe(true)
+    expect(player.currentTime.value).toBe(42)
+    player.setExternalVisible('demo-session', false)
+    expect(player.externalVisible.value).toBe(false)
+    player.pause(); player.seek(55); player.openExternal()
+    expect(controller.pause).toHaveBeenCalledOnce()
+    expect(controller.seek).toHaveBeenCalledWith(55)
+    expect(controller.open).toHaveBeenCalledOnce()
+    player.play('app:demo-session', 'Demo')
+    expect(controller.play).toHaveBeenCalledOnce()
+    player.stop()
+    expect(controller.close).toHaveBeenCalledOnce()
+    expect(player.currentName.value).toBe('')
+  })
+
   it('returns all expected properties', () => {
     const player = useAudioPlayer()
     expect(player.play).toBeTypeOf('function')

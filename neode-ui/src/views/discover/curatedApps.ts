@@ -59,6 +59,7 @@ export interface SignedAppCatalog {
 
 export interface SignedAppEntry {
   version: string
+  digest?: string
   image?: string
   manifest?: {
     app?: {
@@ -68,7 +69,7 @@ export interface SignedAppEntry {
       description?: string
       category?: string
       container?: { image?: string }
-      metadata?: { icon?: string; author?: string; repo?: string }
+      metadata?: { icon?: string; author?: string; repo?: string; launch?: { media_controls?: string; requires_host_frame?: boolean; open_in_new_tab?: boolean } }
       ports?: { host?: number | string; container?: number | string; auth?: string }[]
     }
   }
@@ -104,6 +105,92 @@ export function signedCatalogToApps(catalog: SignedAppCatalog): MarketplaceApp[]
 /** The daemon-verified signed catalog, kept for synchronous port-auth lookups
  *  after fetchAppCatalog() has run. Test-hookable. */
 let signedCatalogCache: SignedAppCatalog | null = null
+let nodeCatalogCache: SignedAppCatalog | null = null
+let nodeCatalogExpires = 0
+let nodeCatalogRequest: Promise<SignedAppCatalog | null> | null = null
+export function nodeAppIsAvailable(id: string): boolean {
+  return nodeCatalogExpires > Date.now() && Boolean(nodeCatalogCache?.apps[id])
+}
+function verifiedLaunchEntry(id: string): SignedAppEntry | undefined {
+  // Node-only app names never acquire authority from the public catalog.
+  const entry = id.startsWith('node-demo-')
+    ? (nodeAppIsAvailable(id) ? nodeCatalogCache?.apps[id] : undefined)
+    : signedCatalogCache?.apps[id]
+  return entry?.manifest?.app?.id === id ? entry : undefined
+}
+/** Older package scanners expose the inspected image digest as manifest.version.
+ * Accept that identity only when it matches the verified immutable image pin;
+ * a tag, abbreviated digest or conflicting catalog field cannot substitute. */
+function installedEntryMatches(entry: SignedAppEntry, installedVersion?: string): boolean {
+  if (installedVersion === undefined || entry.version === installedVersion) return true
+  if (!/^[a-f0-9]{64}$/i.test(installedVersion)) return false
+  const image = entry.image ?? entry.manifest?.app?.container?.image
+  const pin = image?.match(/@sha256:([a-f0-9]{64})$/i)?.[1]?.toLowerCase()
+  if (!pin || pin !== installedVersion.toLowerCase()) return false
+  if (entry.digest !== undefined && entry.digest.toLowerCase() !== `sha256:${pin}`) return false
+  const manifestImage = entry.manifest?.app?.container?.image
+  return manifestImage === undefined || manifestImage.match(/@sha256:([a-f0-9]{64})$/i)?.[1]?.toLowerCase() === pin
+}
+export function appHasMediaBridge(id: string, installedVersion?: string): boolean {
+  const entry = verifiedLaunchEntry(id)
+  if (!entry || !installedEntryMatches(entry, installedVersion)) return false
+  const launch = entry.manifest?.app?.metadata?.launch
+  return launch?.media_controls === 'archipelago-v1' && launch.open_in_new_tab !== true
+}
+export function appRequiresHostFrame(id: string, installedVersion?: string): boolean {
+  const entry = verifiedLaunchEntry(id)
+  return Boolean(entry && installedEntryMatches(entry, installedVersion)
+    && entry.manifest?.app?.metadata?.launch?.requires_host_frame === true
+    && entry.manifest.app.metadata.launch.open_in_new_tab !== true)
+}
+let launchPolicyRequest: Promise<boolean> | null = null
+export function appLaunchPolicyLoaded(): boolean { return signedCatalogCache !== null }
+/** Read only the authenticated daemon-verified catalog; community fallback
+ * metadata must never grant a native integration. */
+export async function ensureAppLaunchPolicy(): Promise<boolean> {
+  if (signedCatalogCache) return true
+  if (!launchPolicyRequest) launchPolicyRequest = (async () => {
+    try {
+      const response = await fetch('/api/app-catalog', {credentials:'include',signal:AbortSignal.timeout(5000)})
+      if (!response.ok) return false
+      const value = await response.json() as SignedAppCatalog
+      if (!value.apps || typeof value.apps !== 'object' || Array.isArray(value.apps)) return false
+      signedCatalogCache = value
+      return true
+    } catch { return false /* Unavailable policy cannot authorize a new integration. */ }
+    finally { launchPolicyRequest = null }
+  })()
+  return await launchPolicyRequest
+}
+
+/** Resolve node-owned launch policy independently of the public storefront.
+ * Home/companion launches must not depend on visiting Discover first. */
+async function fetchNodeCatalog(): Promise<SignedAppCatalog | null> {
+  if (nodeCatalogRequest) return nodeCatalogRequest
+  nodeCatalogRequest = (async () => {
+    try {
+      const response = await fetch('/api/node-app-catalog', { credentials: 'include', signal: AbortSignal.timeout(5000) })
+      const node = response.ok ? await response.json() : null
+      if (node?.scope !== 'single-node-demo' || !node.apps || Array.isArray(node.apps)
+        || !Object.keys(node.apps).every(id => id.startsWith('node-demo-'))
+        || !(Date.parse(node.expires_at) > Date.now())) throw new Error('Unavailable node catalog')
+      nodeCatalogCache = node as SignedAppCatalog
+      nodeCatalogExpires = Date.parse(node.expires_at)
+      return nodeCatalogCache
+    } catch {
+      nodeCatalogCache = null
+      nodeCatalogExpires = 0
+      return null
+    } finally { nodeCatalogRequest = null }
+  })()
+  return nodeCatalogRequest
+}
+
+export async function ensureNodeAppAvailable(id: string): Promise<boolean> {
+  if (!nodeAppIsAvailable(id)) await fetchNodeCatalog()
+  return nodeAppIsAvailable(id)
+}
+
 
 /** Launch aliases → the catalog app id that OWNS the UI port.
  *
@@ -141,7 +228,7 @@ const CATALOG_APP_ID_ALIASES: Record<string, string> = {
  *  answered `gated`, or an https frame URL would point at a port that never
  *  serves TLS. */
 export function portAuth(appId: string, hostPort: number | string): string | null {
-  const apps = signedCatalogCache?.apps
+  const apps = { ...signedCatalogCache?.apps, ...nodeCatalogCache?.apps }
   if (!apps) return null
   const alias: string | undefined = CATALOG_APP_ID_ALIASES[appId]
   const ids: string[] = alias === undefined || alias === appId ? [appId] : [appId, alias]
@@ -188,9 +275,26 @@ const CATALOG_URLS = [
   '/catalog.json',
 ]
 
+/** Node demos are requested separately and never persisted in browser fallback
+ * storage or the global release catalog. A copied catalog is rejected by the
+ * daemon unless its release signature and exact node audience match. */
+export async function fetchAppCatalog(): Promise<AppCatalog | null> {
+  const [base, node] = await Promise.all([fetchBaseAppCatalog(), fetchNodeCatalog()])
+  if (!base || !node) return base
+  const known = new Set(base.apps.map(app => app.id))
+  const additions = signedCatalogToApps(node).filter(app => !known.has(app.id))
+  const demoIds = new Set(additions.map(app => app.id))
+  const promotions = (Array.isArray(node.storefront?.promotions) ? node.storefront.promotions : [])
+    .filter((promotion: CatalogPromotion | null) => promotion && demoIds.has(promotion.id))
+  return { ...base, apps: [...base.apps, ...additions], storefront: {
+    popular: base.storefront?.popular ?? [],
+    promotions: [...(base.storefront?.promotions ?? []), ...promotions],
+  } }
+}
+
 /** Fetch app catalog from remote registry, with local fallback.
  *  Caches for 1 hour. Returns null only if ALL sources fail. */
-export async function fetchAppCatalog(): Promise<AppCatalog | null> {
+async function fetchBaseAppCatalog(): Promise<AppCatalog | null> {
   // Return cache if fresh
   if (cachedCatalog && Date.now() - catalogFetchedAt < CATALOG_TTL) return { ...cachedCatalog, apps: normalizeStoreApps(cachedCatalog.apps) }
 

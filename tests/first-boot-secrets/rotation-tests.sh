@@ -414,6 +414,9 @@ grep -q 'reload nginx' "$WORK/rotate.systemctl" 2>/dev/null || c="$c nginx-not-r
 [ "$(sha256sum "$R/etc/archipelago/ssl/archipelago.key" | cut -d' ' -f1)" = "$OLD_TLS_SHA" ] && c="$c tls-key-not-replaced"
 ls "$R"/etc/ssh/ssh_host_*_key >/dev/null 2>&1 || c="$c NO-HOST-KEYS-LEFT"
 ls "$R"/etc/archipelago/ssl/*.rotnew >/dev/null 2>&1 && c="$c staging-leftover"
+if getent passwd archipelago >/dev/null 2>&1; then
+    [ "$(stat -c '%a:%g' "$R/etc/archipelago/ssl/archipelago.key")" = "640:$(id -g archipelago)" ] || c="$c app-gate-cannot-read-rotated-key"
+fi
 # The verdict file must reflect the post-rotation state, not the pre-rotation one.
 [ "$(verdict_of "$J" 2>/dev/null)" = "per-node" ] || c="$c post-rotation-verdict=$(verdict_of "$J" 2>/dev/null)"
 if [ -z "$c" ]; then
