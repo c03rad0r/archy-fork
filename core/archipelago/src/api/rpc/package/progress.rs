@@ -20,8 +20,13 @@ impl RpcHandler {
                     .package_data
                     .entry(package_id.to_string())
                     .or_insert_with(|| create_installing_entry(package_id));
-                entry.ui_ready = Some(false);
-                entry.state = PackageState::Installing;
+                // Image pulls also report byte progress during updates, including
+                // the local immutable-image shortcut. Preserve the RPC owner so
+                // update failure cleanup can release its transitional state.
+                if entry.state != PackageState::Updating {
+                    entry.ui_ready = Some(false);
+                    entry.state = PackageState::Installing;
+                }
                 let existing_phase = entry.install_progress.as_ref().and_then(|p| p.phase);
                 entry.install_progress = Some(InstallProgress {
                     size,

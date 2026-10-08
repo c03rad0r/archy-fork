@@ -617,6 +617,74 @@ fn finish_failed_update(entry: &mut crate::data_model::PackageDataEntry) {
 #[cfg(test)]
 mod update_completion_tests {
     use super::*;
+    #[tokio::test]
+    async fn update_image_byte_progress_preserves_owner_and_failure_releases_retry_gate() {
+        let directory = tempfile::tempdir().unwrap();
+        let mut config = crate::config::Config::default();
+        config.data_dir = directory.path().to_path_buf();
+        let state = Arc::new(StateManager::new());
+        let handler = RpcHandler::new(
+            config,
+            Arc::clone(&state),
+            Arc::new(crate::monitoring::MetricsStore::new()),
+            crate::session::SessionStore::new_for_tests(directory.path().join("sessions.json")),
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+        state
+            .mutate_data(|data| {
+                let mut entry = super::super::progress::create_installing_entry("movie");
+                entry.state = PackageState::Running;
+                entry.ui_ready = Some(true);
+                data.package_data.insert("movie".into(), entry);
+            })
+            .await;
+        flip_package_state(&state, "movie", PackageState::Updating).await;
+        // Both calls happen even when an immutable image already exists locally.
+        for (downloaded, total) in [(0, 0), (100, 100)] {
+            handler
+                .set_install_progress("movie", downloaded, total)
+                .await;
+            let (snapshot, _) = state.get_snapshot().await;
+            let entry = &snapshot.package_data["movie"];
+            assert_eq!(entry.state, PackageState::Updating);
+            assert_eq!(entry.ui_ready, Some(true));
+            assert_eq!(
+                entry.install_progress.as_ref().unwrap().downloaded,
+                downloaded
+            );
+        }
+        RpcHandler::update_install_progress(&state, "movie", 50, 100).await;
+        handler
+            .set_install_phase("movie", crate::data_model::InstallPhase::Preparing)
+            .await;
+        handler
+            .set_install_message("movie", "Checking original services")
+            .await;
+        assert_eq!(
+            state.get_snapshot().await.0.package_data["movie"].state,
+            PackageState::Updating
+        );
+        state
+            .mutate_data(|data| finish_failed_update(data.package_data.get_mut("movie").unwrap()))
+            .await;
+        let (snapshot, _) = state.get_snapshot().await;
+        let entry = &snapshot.package_data["movie"];
+        assert_eq!(
+            entry.state,
+            PackageState::Installed,
+            "Failed update must release RPC transition ownership for scanner/retry admission"
+        );
+        assert!(entry.install_progress.is_none());
+        handler.set_install_progress("fresh-install", 1, 10).await;
+        let (snapshot, _) = state.get_snapshot().await;
+        let entry = &snapshot.package_data["fresh-install"];
+        assert_eq!(entry.state, PackageState::Installing);
+        assert_eq!(entry.ui_ready, Some(false));
+        assert_eq!(entry.install_progress.as_ref().unwrap().downloaded, 1);
+    }
     #[test]
     fn failure_releases_spinner_without_inventing_stopped_or_restored_runtime() {
         let mut entry = super::super::progress::create_installing_entry("movie");
