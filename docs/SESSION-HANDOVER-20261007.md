@@ -25,20 +25,28 @@ Read **Current live checkpoint** first. Older receipts below apply only to their
   stable input hashes; SHA3cbe5a5c3a74e6463ab0874c74e23dfca68f0bfc3fe54883f0edf69abb37ac0d.
   Its seven-service VM manager-start acceptance passed. It predates the rental
   and Fleet changes and is not an optimized release artifact.
-- VM update/rollback acceptance is still open. Earlier attempts were refused
-  by the lifecycle lock; a traced attempt acquired it successfully, but diagnostic
-  teardown preceded async preflight completion. No persistent lock/Podman defect
-  has yet been established. Indee agent owns the bounded repeat and tracer cleanup.
-  Do not claim missing-plan or rollback acceptance from these attempts.
+- VM update/rollback acceptance is still open. Properly awaited missing-plan
+  refusal passed; temporary tracing was removed. Reviewed-plan execution reached
+  Prepared/Editing/Restoring, but stopped before target startup because nginx -T
+  inherited the manager's read-only mount context. Proven helper fix b03d3c89
+  invokes that fixed inspection through a root system service;25 focused Python
+  tests pass. Candidate-helper standalone drain/backup qualification is underway
+  against the synthetic held operation before another embedded-hash backend build.
+  No controller hash bypass; original recovery images/journals/holds retained.
+  Earlier lock refusals were periodic reconciliation contention, not a proven
+  persistent source defect. Do not claim full rollback/update acceptance yet.
 - The exact selected demo is Yaya Cloud `/Photos/web54321-balanced-2.mp4`,
   203331877 bytes, SHA256766f5f6b9d2a6fd90cb7541447fbba666773635bd90def145bcd479a1b8b0591.
   Read-only hash and Chromium metadata (1920x1080,249.766667s) pass. Preserve source.
   Backstage publication, cross-node paid viewing and bounded payment authorization
   remain separate open gates; do not spend or select another personal file.
-- Fleet alert-error/provenance UI is isolated (`a7e82ae5` plus history follow-up),
-  not live. Its first delta passes28 focused tests, app typecheck and390/1440 browser
-  fixtures. Integrate only after its history follow-up is qualified; deploy with
-  the corrected backend, never treat an older server's report claims as proof.
+- Fleet alert-error/provenance/history UI is integrated f5a1806a+fd98b383,
+  not live:29 focused tests and app typecheck pass;390/1440 browser checks cover
+  alert/provenance, while history has a real component regression. Frozen combined
+  UI suite passed1459tests/177files with all771input hashes stable. A subsequent
+  alert-row provenance label is being qualified separately before artifact build;
+  do not claim the full suite covered that later delta. Deploy Fleet UI with its
+  corrected backend, never treat an older server's report claims as proof.
 - Task21 public UI groundwork `6bcdd106` (37 tests + app typecheck) and task22
   Mesh picker groundwork `3360354a` (10 tests) remain isolated/unintegrated. They
   do not enable live menus or complete backend/global search/paid delivery/folders.
