@@ -516,6 +516,20 @@ remain open. See `docs/https-app-gate-followup-20261006.md`.
 
 ## 18. Firewall and tunnel UI/settings
 
+Operator refinements on 8 October, retained as acceptance requirements:
+
+- Keep status values aligned to the right edge with the other rows. Do not
+  present the mesh service as proof that the node firewall is protected.
+- Fill the main content width and inherit the Network tab background; opening
+  Firewalls & tunnels must not switch to a different page background.
+- Use the standard black primary button at the bottom of the Local Network
+  container, matching other container actions.
+- Use plain language throughout and provide real, supported configuration
+  management. Recognize existing connections; a missing saved router entry is
+  not proof that the node's tunnels or manually repaired firewall are absent.
+- Verify changes against the actual saved configuration. Controls must not
+  claim to apply firewall rules when a backend only writes a local entry.
+
 Status: in progress. The central read-only Firewall & tunnels screen, local
 network entry points, independent status/error handling and responsive route
 tests are implemented (ef6c10f0, 3f96be2c). Scoped configuration, persistence,

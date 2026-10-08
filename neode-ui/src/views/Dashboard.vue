@@ -137,7 +137,7 @@ import DashboardRouterView from '@/views/dashboard/DashboardRouterView.vue'
 import ConnectionBanner from '@/views/dashboard/ConnectionBanner.vue'
 import HealthNotifications from '@/views/dashboard/HealthNotifications.vue'
 import CompanionIntroOverlay from '@/components/CompanionIntroOverlay.vue'
-import { isDetailRoute, ROUTE_BACKGROUNDS } from '@/views/dashboard/useRouteTransitions'
+import { isDetailRoute, backgroundForRoute } from '@/views/dashboard/useRouteTransitions'
 import { useIbdFinishWatcher } from '@/composables/useIbdFinishWatcher'
 import '@/views/dashboard/dashboard-styles.css'
 
@@ -163,20 +163,9 @@ const showAltBackground = ref(false)
 const isHomeRoute = computed(() => route.path === '/dashboard' || route.path === '/dashboard/')
 const isGlitching = ref(false)
 
-const backgroundImage = computed(() => {
-  const mapped = ROUTE_BACKGROUNDS[route.path]
-  if (mapped) return mapped
-  // Detail/sub pages inherit their parent tab's background so they stay
-  // visually "inside" the section instead of snapping to the home backdrop.
-  if (route.path.startsWith('/dashboard/cloud/')) return 'bg-cloud.webp'
-  if (route.path.startsWith('/dashboard/web5/')) return 'bg-web5.jpg'
-  if (route.path.startsWith('/dashboard/server/')) return 'bg-web5.jpg'
-  if (route.path.startsWith('/dashboard/settings/')) return 'bg-settings.webp'
-  if (isDetailRoute(route.path)) return 'bg-intro.jpg'
-  return 'bg-home.webp'
-})
+const backgroundImage = computed(() => backgroundForRoute(route.path))
 
-// bg-web5.jpg (web5 + server sections) is bright — the scrim overlay deepens
+// bg-web5.jpg (Web5 and its explicitly mapped detail screens) is bright — the scrim overlay deepens
 // while it's showing so light text keeps its contrast.
 const isWeb5Bg = computed(() => backgroundImage.value === 'bg-web5.jpg')
 

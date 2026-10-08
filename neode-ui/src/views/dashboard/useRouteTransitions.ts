@@ -38,6 +38,16 @@ export const ROUTE_BACKGROUNDS: Record<string, string> = {
   '/dashboard/chat': 'bg-aiui.jpg',
 }
 
+/** Detail screens share the parent tab image unless explicitly mapped above. */
+export function backgroundForRoute(path: string): string {
+  const mapped = ROUTE_BACKGROUNDS[path]
+  if (mapped) return mapped
+  for (const parent of ['/dashboard/cloud', '/dashboard/web5', '/dashboard/server', '/dashboard/settings']) {
+    if (path.startsWith(`${parent}/`)) return ROUTE_BACKGROUNDS[parent]!
+  }
+  return isDetailRoute(path) ? 'bg-intro.jpg' : 'bg-home.webp'
+}
+
 export function isDetailRoute(path: string): boolean {
   return (path.includes('/apps/') && !path.endsWith('/apps')) ||
     (path.includes('/marketplace/') && !path.endsWith('/marketplace'))
