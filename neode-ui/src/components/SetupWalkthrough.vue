@@ -45,10 +45,10 @@ function move(offset: number) {
             <span class="flex-1 min-w-0"><span class="block text-base font-semibold text-white/90 mb-1">{{ step.title }}</span><span class="block text-sm text-white/55 leading-relaxed">{{ step.description }}</span></span>
           </button>
           <div v-if="active === step.id" :id="`setup-step-${step.id}`" class="mt-5 sm:ml-10">
-            <fieldset :disabled="busy" class="space-y-6 min-w-0"><slot :name="step.id" /></fieldset>
-            <div class="flex flex-wrap justify-between gap-3 mt-6 pt-4 border-t border-white/10">
+            <fieldset :disabled="busy" class="space-y-8 min-w-0"><slot :name="step.id" /></fieldset>
+            <div class="flex flex-wrap items-center gap-3 mt-8 pt-6 border-t border-white/10">
               <button v-if="stepIndex > 0" type="button" class="glass-button glass-button-sm rounded-lg px-5 py-2 text-sm font-medium" :disabled="busy" @click="move(-1)">Back</button>
-              <button v-if="stepIndex < steps.length - 1" type="button" class="path-action-button path-action-button--continue ml-auto" :disabled="busy || continueDisabled" @click="emit('next', steps[stepIndex + 1]!.id)">{{ continueLabel || (step.id === 'storage' ? 'Continue without installing' : 'Continue') }}<span aria-hidden="true">→</span></button>
+              <button v-if="stepIndex < steps.length - 1" type="button" class="glass-button glass-button-sm rounded-lg px-5 py-2 text-sm font-medium" :disabled="busy || continueDisabled" @click="emit('next', steps[stepIndex + 1]!.id)">{{ continueLabel || (step.id === 'storage' ? 'Continue without installing' : 'Continue') }}<span aria-hidden="true">→</span></button>
             </div>
           </div>
         </div>

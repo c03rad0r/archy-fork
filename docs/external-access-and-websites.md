@@ -268,3 +268,19 @@ were then unpublished and the smoke unit stopped. Only system Tor PID 1449
 remained; no website listeners or owned FIPS drop-in remained. Both onion identity
 directories were preserved. The final state-directory durability change passed
 the 12-test isolated backend suite as well.
+
+### Walkthrough layout correction — 2026-10-08
+
+The publishing guides now use the same available width and step alignment as
+GoalDetail, with the existing small glass action buttons throughout. Step
+navigation and grouped actions align left with consistent wrapping and gaps.
+The external-access guide no longer renders the entire app inventory. A native
+searchable app dropdown offers only guest-enabled apps and reveals grant controls
+after a valid selection; installations without eligible apps show a short empty
+state and a Browse apps link.
+
+The UI-only update was deployed to Framework with the previous UI retained at
+`/opt/archipelago/web-ui.before-guide-layout-uat`. Production build and ten
+walkthrough tests passed. Live browser comparisons at 1440px and 390px confirmed
+matching original-guide widths/alignment and no horizontal overflow. Management
+and wallet services were not restarted for this update.
