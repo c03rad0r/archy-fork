@@ -1,17 +1,9 @@
 import { onBeforeUnmount, watch } from 'vue'
 import { useAudioPlayer } from './useAudioPlayer'
+import { secureUuid } from '@/utils/secureUuid'
 
 type AudioBridge = { postMessage: (message: string) => void; onmessage: ((event: { data: string }) => void) | null }
 type NativeWindow = Window & { ArchipelagoAudio?: AudioBridge }
-
-/** LAN HTTP WebViews expose getRandomValues, but not secure-context randomUUID. */
-function audioSessionId(): string {
-  const bytes = crypto.getRandomValues(new Uint8Array(16))
-  bytes[6] = (bytes[6]! & 0x0f) | 0x40
-  bytes[8] = (bytes[8]! & 0x3f) | 0x80
-  const hex = Array.from(bytes, byte => byte.toString(16).padStart(2, '0')).join('')
-  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`
-}
 
 /** Send a small decoded thumbnail, never a protected URL or authorization data. */
 async function thumbnail(url: string, admittedOrigin: string, signal: AbortSignal): Promise<string> {
@@ -100,7 +92,7 @@ export function useCompanionAudio(player = useAudioPlayer()) {
     if (!player.currentSrc.value || !player.currentName.value) { release(); return }
     if (!session || source !== player.currentSrc.value) {
       if (!player.playing.value) { release(); return }
-      release(); session = audioSessionId(); source = player.currentSrc.value; sequence = 0
+      release(); session = secureUuid(); source = player.currentSrc.value; sequence = 0
       loadArtwork()
     }
     const duration = Number.isFinite(player.duration.value) ? Math.max(0, Math.min(player.duration.value, 604800)) : 0
