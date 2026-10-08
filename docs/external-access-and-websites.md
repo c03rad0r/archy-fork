@@ -444,3 +444,23 @@ No paid inference, new API-key save, or public content publication was performed
 Real paid-provider responses and physical companion confirmation remain separate
 acceptance items. The earlier routing, Nostr, 2FA-restoration and release gates
 remain open; this is a private Framework UAT update, not a general release.
+
+### Existing Claude credential clarity — 2026-10-08
+
+Framework already reports `claude_configured: true`. The chooser now explicitly
+recognizes the Settings credential, hides the empty key form, and offers Use
+Claude; Change API key deliberately reveals an empty replacement input. The form
+also waits for credential status before asking for a missing key. Existing OpenAI
+credentials use the same presentation. Selecting an existing key writes only the
+provider choice, never reads back or rewrites the credential. Seven focused tests
+and the production build pass. The UI-only update is deployed on Framework, with
+rollback at `/opt/archipelago/web-ui.before-existing-claude-uat`. Actual browser
+checks at 390px and 1440px pass recognition, enabled Use Claude, hidden secret
+input and explicit empty replacement field. Live checks did not change provider,
+allowance or keys and did not run inference. Refresh the dashboard to load it.
+
+For the remaining end-to-end AIUI journey, also check that a provider chosen in
+Setup is synchronized into an already-cached Chat iframe on return. Source
+inspection shows configuration synchronization on iframe readiness; reactivation
+currently arms listeners without explicitly refreshing the provider. This is a
+follow-up acceptance concern, not a confirmed live inference result.
