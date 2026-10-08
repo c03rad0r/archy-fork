@@ -680,3 +680,40 @@ signals, exit status and a separate QMP event stream. Post-restart image/unit/da
 checks must be labeled separately from the missed same-boot final assertions.
 Do not create another baseline or reinterpret failed historical transactions as
 recovered. Successful cutover and live IndeeHub delivery remain open.
+
+
+### Same-boot rollback accepted; stale fixture hook isolated (2026-10-08)
+
+The same v3 overlay was restarted under the owned persistent foreground QEMU
+unit `archy-indee-v3-qualification-20261008.service`, with separate QMP event
+capture, stderr, signal and exit receipts. The prior unexplained process exit
+remains unclassified; this controlled restart does not retroactively prove the
+missed same-boot final checks for operation `386004df`.
+
+On boot `b2e0e6c3-2fc9-42be-aaa9-f0131090f417`, actual operation
+`5bd06edc-dd6b-423e-8b90-37eeeb6ddae2` reached target startup, then safely
+returned to **Restored, cleanup_done=true**, with maintenance **Released**.
+An independent same-boot verifier passed all seven recovered runtime/image and
+unit pins, removed original AutoRemove IDs, frontend/API writable-layer
+sentinels, database and four-volume restore proofs, cleared holds/fence, and
+package Running with cleared progress. The full rollback gate is now passed;
+successful cutover is still pending.
+
+The attempted success failed in a stale frontend post-install hook inherited
+from the fixture's original catalog: the sed address `/location = /sw.js {/i`
+failed with `sed: unmatched 'w'`. The authoritative source already corrected
+this in `49703d7e`. No recovery relaxation or backend rebuild was required.
+The current hooks passed fresh, existing literal-script and legacy sub_filter
+cases in disposable networkless containers using the actual frontend image's
+BusyBox and nginx; each ran twice with `nginx -t` and byte-idempotency checks.
+Canonical hook SHA-256:
+`64015f79ca84c604cecd22e9e4a892644d485988f163c01e3d47277a64282747`.
+
+The failed reviewed plan was archived unchanged. A replacement refreshed the
+restored original unit hashes and changed only the target frontend hooks to
+those qualified authoritative bytes. Reviewed plan SHA-256:
+`f415e21a1e41c0bbcdbf8544e1decfe9e16377958f2174fee7d27e78e2d9056f`.
+Actual success qualification `f39bd824-1d3e-49dc-a0ad-d2a90523bdb0` is in
+progress; no success or deployment is claimed by this checkpoint. Historical
+published catalog bytes remain unchanged. The separately prepared unsigned
+candidate catalog already has the correct hooks (see worker runtime receipt).
