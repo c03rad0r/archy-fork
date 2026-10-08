@@ -53,13 +53,23 @@ pub(super) fn response_for(
     else {
         return simple(StatusCode::NOT_FOUND, "Website is not published");
     };
+    // Only the selected immutable snapshot is exposed, never the Blossom backend.
+    // No listing, upload, arbitrary hash lookup, filesystem access or credentials.
+    let asset = publication.public_archive.as_ref().is_some_and(|hash| {
+        req.uri().path() == format!("/{hash}") && *hash == super::nsite::hash(publication.html.as_bytes())
+    });
+    if asset && req.method() == Method::OPTIONS {
+        let mut response = simple(StatusCode::NO_CONTENT, "");
+        asset_headers(&mut response);
+        return response;
+    }
     if req.method() != Method::GET && req.method() != Method::HEAD {
         return simple(
             StatusCode::METHOD_NOT_ALLOWED,
             "Only GET and HEAD are supported",
         );
     }
-    if !matches!(req.uri().path(), "/" | "/index.html") {
+    if !asset && !matches!(req.uri().path(), "/" | "/index.html") {
         return simple(StatusCode::NOT_FOUND, "Not found");
     }
     let mut response = simple(StatusCode::OK, "");
@@ -70,10 +80,19 @@ pub(super) fn response_for(
         "content-length",
         publication.html.len().to_string().parse().unwrap(),
     );
+    if asset { asset_headers(&mut response); }
     if req.method() == Method::GET {
         *response.body_mut() = Body::from(publication.html.clone());
     }
     response
+}
+fn asset_headers(response: &mut Response<Body>) {
+    for (name, value) in [
+        ("access-control-allow-origin", "*"),
+        ("access-control-allow-methods", "GET, HEAD, OPTIONS"),
+        ("access-control-expose-headers", "Content-Length, Content-Type"),
+        ("content-disposition", "attachment; filename=\"index.html\""),
+    ] { response.headers_mut().insert(name, value.parse().unwrap()); }
 }
 fn simple(status: StatusCode, body: &str) -> Response<Body> {
     let mut r = Response::new(Body::from(body.to_owned()));
@@ -241,6 +260,50 @@ pub(super) async fn listen(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[tokio::test]
+    async fn public_archive_is_exact_explicit_route_scoped_and_revocable() {
+        use crate::publishing::{Change, LocalArchive, Route};
+        let mut state = State::default();
+        let id = state.apply(Change::Create { name: "Archive".into() }).unwrap().unwrap();
+        state.apply(Change::Save { id: id.clone(), name: "Archive".into(), routes: [Route::Fips, Route::Tor].into_iter().collect(), domain: None, html: "public snapshot".into() }).unwrap();
+        state.apply(Change::PublishFips { id: id.clone(), acknowledge_public: true }).unwrap();
+        state.apply(Change::PublishTor { id: id.clone(), acknowledge_public: true }).unwrap();
+        let port = state.projects[&id].fips_publication.as_ref().unwrap().port;
+        let tor_port = state.projects[&id].tor_publication.as_ref().unwrap().port;
+        let hash = crate::publishing::nsite::hash(b"public snapshot");
+        let req = Request::builder().uri(format!("/{hash}")).body(Body::empty()).unwrap();
+        assert_eq!(response(&state, &id, port, &req).status(), StatusCode::NOT_FOUND);
+        assert!(state.apply(Change::ShareArchive { id: id.clone(), route: Route::Fips, acknowledge_public: true }).is_err());
+        state.apply(Change::RecordLocalArchive { id: id.clone(), receipt: LocalArchive { sha256: hash.clone(), size: 15, pubkey: "a".repeat(64), created_at: "now".into() } }).unwrap();
+        assert!(state.apply(Change::ShareArchive { id: id.clone(), route: Route::Fips, acknowledge_public: false }).is_err());
+        state.apply(Change::ShareArchive { id: id.clone(), route: Route::Fips, acknowledge_public: true }).unwrap();
+        assert_eq!(response_for(&state, &id, tor_port, Route::Tor, &req).status(), StatusCode::NOT_FOUND);
+        let r = response(&state, &id, port, &req);
+        assert_eq!(r.status(), StatusCode::OK);
+        assert_eq!(r.headers()["access-control-allow-origin"], "*");
+        assert!(r.headers()["content-disposition"].to_str().unwrap().starts_with("attachment"));
+        assert_eq!(r.headers()["content-security-policy"], CSP);
+        assert_eq!(hyper::body::to_bytes(r.into_body()).await.unwrap().as_ref(), b"public snapshot");
+        for path in ["/upload", "/list", "/0000000000000000000000000000000000000000000000000000000000000000", "/../state.json"] {
+            let r = Request::builder().uri(path).body(Body::empty()).unwrap();
+            assert_eq!(response(&state, &id, port, &r).status(), StatusCode::NOT_FOUND);
+        }
+        let head = Request::builder().method(Method::HEAD).uri(format!("/{hash}")).body(Body::empty()).unwrap();
+        let r = response(&state, &id, port, &head);
+        assert_eq!(r.headers()["content-length"], "15");
+        assert!(hyper::body::to_bytes(r.into_body()).await.unwrap().is_empty());
+        let post = Request::builder().method(Method::PUT).uri(format!("/{hash}")).body(Body::empty()).unwrap();
+        assert_eq!(response(&state, &id, port, &post).status(), StatusCode::METHOD_NOT_ALLOWED);
+        state.projects.get_mut(&id).unwrap().draft = "private later edits".into();
+        assert_eq!(hyper::body::to_bytes(response(&state, &id, port, &req).into_body()).await.unwrap().as_ref(), b"public snapshot");
+        state.apply(Change::UnshareArchive { id: id.clone(), route: Route::Fips }).unwrap();
+        assert_eq!(response(&state, &id, port, &req).status(), StatusCode::NOT_FOUND);
+        state.apply(Change::ShareArchive { id: id.clone(), route: Route::Fips, acknowledge_public: true }).unwrap();
+        state.apply(Change::PublishFips { id: id.clone(), acknowledge_public: true }).unwrap();
+        assert_eq!(response(&state, &id, port, &req).status(), StatusCode::NOT_FOUND);
+        assert!(state.apply(Change::ShareArchive { id, route: Route::Fips, acknowledge_public: true }).is_err());
+    }
+
     #[tokio::test]
     async fn draft_changes_never_leak_and_unpublish_revokes() {
         use crate::publishing::{Change, Route};

@@ -64,6 +64,9 @@ pub struct LocalArchive {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Publication {
+    /// Exact archived bytes explicitly approved for public hash-addressed reads.
+    #[serde(default)]
+    pub public_archive: Option<String>,
     pub port: u16,
     pub html: String,
     pub created_at: String,
@@ -121,6 +124,15 @@ pub enum Change {
         routes: BTreeSet<Route>,
         domain: Option<Domain>,
         html: String,
+    },
+    ShareArchive {
+        id: String,
+        route: Route,
+        acknowledge_public: bool,
+    },
+    UnshareArchive {
+        id: String,
+        route: Route,
     },
     PublishFips {
         id: String,
@@ -268,6 +280,31 @@ impl State {
                 p.local_archive = Some(receipt);
                 Ok(Some(id))
             }
+            Change::ShareArchive { id, route, acknowledge_public } => {
+                if !acknowledge_public { bail!("Confirm public access to the exact archived website bytes"); }
+                let p = self.projects.get_mut(&id).context("Website project not found")?;
+                let archive = p.local_archive.as_ref().context("Store this website in local Blossom first")?;
+                let publication = match route {
+                    Route::Fips => p.fips_publication.as_mut(),
+                    Route::Tor => p.tor_publication.as_mut(),
+                    _ => bail!("Choose the FIPS/public-web or Tor publication"),
+                }.context("Publish this connection before sharing its archived file")?;
+                if archive.sha256 != nsite::hash(publication.html.as_bytes()) || archive.size != publication.html.len() {
+                    bail!("The archive differs from this published version. Store and publish the same version first");
+                }
+                publication.public_archive = Some(archive.sha256.clone());
+                Ok(Some(id))
+            }
+            Change::UnshareArchive { id, route } => {
+                let p = self.projects.get_mut(&id).context("Website project not found")?;
+                let publication = match route {
+                    Route::Fips => p.fips_publication.as_mut(),
+                    Route::Tor => p.tor_publication.as_mut(),
+                    _ => bail!("Choose the FIPS/public-web or Tor publication"),
+                }.context("This connection is not published")?;
+                publication.public_archive = None;
+                Ok(Some(id))
+            }
             Change::RecordNsite { id, receipt } => {
                 receipt.validate(&id)?;
                 let p = self
@@ -379,6 +416,7 @@ impl State {
                         .context("No website ports available")?,
                 };
                 p.fips_publication = Some(Publication {
+                    public_archive: None,
                     port,
                     html: p.draft.clone(),
                     created_at: chrono::Utc::now().to_rfc3339(),
@@ -411,6 +449,7 @@ impl State {
                         .context("No onion website ports available")?,
                 };
                 p.tor_publication = Some(Publication {
+                    public_archive: None,
                     port,
                     html: p.draft.clone(),
                     created_at: chrono::Utc::now().to_rfc3339(),
@@ -481,7 +520,8 @@ pub async fn load(root: &Path) -> Result<State> {
             (&project.tor_publication, 32100..32132),
         ] {
             if let Some(p) = publication {
-                if !range.contains(&p.port) || !ports.insert(p.port) || p.html.len() > MAX_HTML {
+                if !range.contains(&p.port) || !ports.insert(p.port) || p.html.len() > MAX_HTML
+                    || p.public_archive.as_ref().is_some_and(|hash| *hash != nsite::hash(p.html.as_bytes())) {
                     bail!("Invalid stored website publication; existing state has been preserved");
                 }
             }

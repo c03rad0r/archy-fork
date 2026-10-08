@@ -34,14 +34,17 @@ async function auth(action: string, hash?: string) {
   if (signed.pubkey !== pubkey) throw new Error('Signer returned another identity. Nothing was sent.');
   return 'Nostr ' + btoa(JSON.stringify(signed));
 }
-element('identity').onclick = () => perform(async () => {
+async function chooseIdentity() { await perform(async () => {
+  pubkey = ''; approve.checked = false; element('files').replaceChildren();
+  element('pubkey').textContent = 'Choose a profile in the Archipelago signer…';
   if (!window.nostr) throw new Error('Archipelago signer is unavailable');
   await window.archipelagoNostr?.selectIdentity?.();
   const key = await window.nostr.getPublicKey();
   if (!/^[a-f0-9]{64}$/.test(key)) throw new Error('Invalid signer identity');
   pubkey = key; approve.checked = false;
   element('pubkey').textContent = key; element('files').replaceChildren();
-});
+}); }
+element('identity').onclick = chooseIdentity;
 fileInput.onchange = () => {
   approve.checked = false;
   const file = fileInput.files?.[0];
@@ -78,3 +81,7 @@ refresh.onclick = () => perform(async () => {
     item.append(link); list.append(item);
   }
 });
+
+// Request the canonical chooser once on opening. Cancellation leaves the page
+// usable with a retry button; this never signs an upload or publishes an event.
+void chooseIdentity();

@@ -86,3 +86,17 @@ reboot, integrated website archive acceptance, then reviewed source/mirror parit
 and signed catalogue gates. Selective public asset routes remain separate work;
 the authenticated app address must never be advertised as a public Blossom URL.
 Restore dashboard 2FA with the operator after live testing.
+
+### Companion follow-up — 2026-10-08
+
+Blossom now requests the canonical identity chooser once when opened, identifies
+itself explicitly to the tab signer, and disables the provider's unrelated
+NIP-98 web-app login. Cancelled selection leaves a retry button; uploads still
+require file review and signer approval. A host signer bug sent a Vue reactive
+Proxy through postMessage after selection, closing the picker but stranding the
+app behind an empty signer. The host now copies only public identity fields.
+The reactive-object regression test and a real direct-app mobile-width browser
+check pass: automatic chooser, closed signer, visible app, denied upload and
+approved local upload. Physical companion confirmation remains pending.
+The corrected image is a private rebuild of the existing candidate tag; assign
+an updated package/image version before reviewed catalogue publication.

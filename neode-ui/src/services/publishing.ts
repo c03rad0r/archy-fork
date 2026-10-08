@@ -7,8 +7,8 @@ export interface WebsiteRevision { id: string; created_at: string; html: string 
 export interface WebsiteProject {
   id: string; name: string; routes: PublishRoute[]; domain: PublishDomain | null
   draft: string; revisions: WebsiteRevision[]
-  fips_publication?: { port: number; html: string; created_at: string } | null
-  tor_publication?: { port: number; html: string; created_at: string } | null
+  fips_publication?: { port: number; html: string; created_at: string; public_archive?: string | null } | null
+  tor_publication?: { port: number; html: string; created_at: string; public_archive?: string | null } | null
   nsite_receipt?: NsiteReceipt | null
   local_archive?: { sha256: string; size: number; pubkey: string; created_at: string } | null
 }
@@ -16,7 +16,7 @@ export interface PublishingState {
   schema: number; version: number; connections: PublishRoute[]; projects: Record<string, WebsiteProject>
 }
 export interface PublishingStatus {
-  state: PublishingState; fips_address: string | null; publication_enabled: boolean; notice: string
+  state: PublishingState; fips_address: string | null; publication_enabled: boolean; public_archive_enabled?: boolean; notice: string
   listeners?: { project_id: string; address: string | null; listening: boolean; externally_verified: boolean; error: string | null }[]
   onions?: { project_id: string; onion_address: string | null; listening: boolean; externally_verified: boolean; error: string | null }[]
   nostr_relays?: string[]

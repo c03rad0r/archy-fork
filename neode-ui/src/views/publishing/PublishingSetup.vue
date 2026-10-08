@@ -11,6 +11,8 @@ import type { NsiteIdentity, PreparedNsite } from '@/services/nsitePublishing'
 
 import BackButton from '@/components/BackButton.vue'
 import SetupWalkthrough from '@/components/SetupWalkthrough.vue'
+import WebsiteArchiveSharing from '@/components/WebsiteArchiveSharing.vue'
+import SearchableAppSelect from '@/components/SearchableAppSelect.vue'
 
 const router = useRouter()
 const route = useRoute()
@@ -41,16 +43,12 @@ const relays = ref('')
 const gateway = ref('')
 const nsiteUrl = ref('')
 const guestApp = ref('')
-const guestSearch = ref('')
 const guestLabel = ref('Guest')
 const guestHours = ref(24)
 const issuedAccess = ref<{ id: string; token: string; app_id: string; expires_at: number } | null>(null)
 onDeactivated(() => { issuedAccess.value = null })
 onBeforeUnmount(() => { issuedAccess.value = null })
 const shareableApps = computed(() => status.value?.apps.filter(a => a.guest_access).filter((a, i, all) => all.findIndex(b => b.id === a.id) === i) ?? [])
-watch(guestSearch, value => {
-  guestApp.value = shareableApps.value.find(app => `${app.name} (${app.id})` === value)?.id ?? ''
-})
 const guestTarget = computed(() => shareableApps.value.find(a => a.id === guestApp.value))
 const acknowledgeNostr = ref(false)
 const acknowledgeUpload = ref(false)
@@ -193,6 +191,16 @@ async function setFipsPublication(enable: boolean) {
     status.value = await publishing.status()
     acknowledgeFips.value = false
     message.value = enable ? 'Saved version selected for FIPS publication. Check listener status, firewall and access from another FIPS device.' : 'FIPS website unpublished. Your draft and revisions are retained.'
+  })
+}
+async function setArchiveSharing(route: 'fips' | 'tor', enable: boolean) {
+  await perform(async () => {
+    if (!status.value || !current.value) return
+    const result = await publishing.update(status.value.state.version, enable
+      ? { action: 'share-archive', id: projectId.value, route, acknowledge_public: true }
+      : { action: 'unshare-archive', id: projectId.value, route })
+    status.value.state = result.state
+    message.value = enable ? 'This archived snapshot is available on the selected website connection. Other Blossom files remain private.' : 'File sharing stopped on this connection. Copies already downloaded may remain.'
   })
 }
 async function generate() {
@@ -471,9 +479,7 @@ onMounted(refresh)
           <p v-if="!shareableApps.length" class="rounded-xl border border-white/10 bg-white/5 p-4 text-sm text-white/70">No installed apps currently support guest sharing. <RouterLink to="/dashboard/marketplace" class="underline">Browse apps</RouterLink></p>
           <p v-if="shareableApps.length" class="text-sm text-white/60">Give someone access to one application without sharing your dashboard login. Only apps that explicitly support guest sharing are offered. Their own account permissions still apply.</p>
           <template v-if="shareableApps.length">
-          <label class="block">Application<input v-model="guestSearch" list="guest-sharing-apps" autocomplete="off" class="field mt-2" placeholder="Search or choose an app" aria-describedby="guest-app-help" /></label>
-          <datalist id="guest-sharing-apps"><option v-for="app in shareableApps" :key="app.id" :value="`${app.name} (${app.id})`" /></datalist>
-          <p id="guest-app-help" class="text-sm text-white/60">Choose a supported app from the suggestions to continue.</p>
+          <SearchableAppSelect v-model="guestApp" :options="shareableApps" :disabled="busy" />
           <template v-if="guestTarget">
           <label class="block">Who is this for?<input v-model="guestLabel" maxlength="64" class="field mt-2" /></label>
           <label class="block">Access expires<select v-model.number="guestHours" class="field mt-2"><option :value="1">After one hour</option><option :value="24">After one day</option><option :value="168">After one week</option><option :value="720">After 30 days</option></select></label>
@@ -519,6 +525,7 @@ onMounted(refresh)
             <p v-if="listener?.address" class="font-mono select-all break-all">{{ listener.address }}</p>
             <p class="text-white/60">Open this address from another FIPS device to check visitor access.</p>
             <button v-if="selected.includes('public-web')" class="glass-button glass-button-sm rounded-lg px-5 py-2 text-sm font-medium" @click="walkthroughStep = 'domain'">Connect or check my HTTPS domain</button>
+            <WebsiteArchiveSharing v-if="status.public_archive_enabled" :publication="current.fips_publication" :archive="current.local_archive" :address="selected.includes('public-web') && current.domain?.hostname ? `https://${current.domain.hostname}/` : listener?.address" :busy="busy" @change="setArchiveSharing('fips', $event)" />
             <details class="text-xs text-white/50"><summary>Connection details</summary><p class="mt-2">Website port {{ current.fips_publication.port }}. A local listener does not confirm access from another device.</p></details>
           </div>
         </section>
@@ -534,6 +541,7 @@ onMounted(refresh)
             <p v-if="onion?.error" role="alert">{{ onion.error }}</p>
             <p v-if="onion?.onion_address" class="font-mono select-all break-all">http://{{ onion.onion_address }}/</p>
             <p>{{ onion?.listening ? 'Local website listener is ready. Open the address in Tor Browser to check external access.' : 'Waiting for the website listener. Reload to check.' }}</p>
+            <WebsiteArchiveSharing v-if="status.public_archive_enabled" :publication="current.tor_publication" :archive="current.local_archive" :address="onion?.onion_address ? `http://${onion.onion_address}/` : null" :busy="busy" @change="setArchiveSharing('tor', $event)" />
             <p class="text-amber-200">An address alone does not confirm that Tor has connected or that visitors can reach the page.</p>
           </div>
         </section>

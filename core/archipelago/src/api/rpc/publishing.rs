@@ -349,6 +349,7 @@ impl RpcHandler {
             "grants": grants,
             "nostr_relays": self.config.nostr_relays,
             "publication_enabled": true,
+            "public_archive_enabled": true,
             "listeners": publishing::serving::status().await,
             "onions": publishing::tor::status().await,
             "notice": "FIPS and Tor static publishing are available for testing. Existing public proxies can be configured manually. Nostr publishing requires an explicit identity, Blossom server and relay selection. Automated gateway setup is not enabled yet. Saving choices does not change app access; external verification is separate.",

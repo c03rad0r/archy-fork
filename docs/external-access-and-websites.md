@@ -304,3 +304,66 @@ Immich, rejection for dashboard login, and revocation of both bearer and cookie
 access. One-hour expiry metadata was checked; elapsed expiry remains covered by
 unit tests, not a one-hour live wait. The temporary grant was removed. No Nostr
 events were posted and no other app data was changed.
+
+### Controlled Framework reboot — 2026-10-08
+
+The operator confirmed physical recovery access and authorized remaining
+qualification. A fresh native LND snapshot and static channel backup were retained
+privately on the node before reboot; no pending HTLCs were present. A changed boot
+ID confirms the full reboot. Native wallet identity, channel set, on-chain and
+channel balances matched exactly afterward, and LND reported chain sync without
+manual unlock/restart. Backend and signed-catalogue hashes matched. All app
+running/stopped states, exact publishing/project/archive state, FIPS address, onion
+address and guest eligibility survived. Public HTTPS and Tor returned the exact
+synthetic page. Guest scope, dashboard denial and revocation passed again.
+
+Physical companion acceptance remains OPEN: the operator found the native
+`datalist` app picker invisible in the companion, and Blossom blank after choosing
+an identity. These are tracked as current regressions, not successful companion
+acceptance. The picker replacement uses an in-page glass menu; the tab signer
+must copy public identity fields instead of passing a Vue reactive Proxy through
+postMessage. Blossom also requests the canonical chooser once on opening and
+disables the unrelated generic NIP-98 web-app login. Deployment and actual-device
+retest are required before closing these reports. Operator will restore 2FA after
+the remaining installer/signer tests.
+
+### Selective public archive implementation — 2026-10-08
+
+Each FIPS/public-web or Tor publication can separately expose its exact archived
+HTML snapshot at `/<sha256>`, only after an acknowledged action verifies the
+local archive receipt matches the published bytes. This is a read-only
+hash-addressed snapshot route, not a publicly opened Blossom app or upload API.
+GET/HEAD and CORS reads serve only the selected immutable bytes with sandbox and
+attachment headers. Unknown hashes, listings and uploads remain unavailable.
+Later drafts cannot change the served bytes; publishing an update resets archive
+sharing, and removing sharing does not unpublish the page or remove private files.
+
+The focused harness and isolated platform suite each passed 12 publishing tests.
+The candidate backend is deployed on Framework with its preceding executable and
+publishing state retained under `~/external-access-uat/`. Live trusted HTTPS
+readback matched the exact snapshot; unknown hashes/list/upload returned 404.
+Revocation returned the selected hash to 404 while the website still served.
+The synthetic archive was unshared after the test. No external replica or Nostr
+announcement was made. UI deployment and live UI acceptance are still pending.
+
+Stored Publication now has an optional `public_archive` field. Before rolling back
+to the preceding binary, account for its deny-unknown-fields parser: retain the
+latest state and migrate only this field away, or restore the pre-test state only
+if no user changes would be lost. Do not blindly restore an older project file.
+
+### Companion corrections deployed — 2026-10-08
+
+The final dashboard build includes the in-page searchable glass app picker and
+the tab signer's explicit cloneable identity fields. Sixteen UI tests passed,
+including a structuredClone regression test using a reactive picker identity.
+Live touch-browser checks at 390px and 1440px opened all six choices, filtered to
+Immich, selected it and exposed the grant controls without horizontal overflow.
+The normal Blossom lifecycle rebuilt/restarted the private candidate with
+`data-app-id="blossom"`, `data-no-nip98` and one automatic chooser request. Its
+previous image and build context are retained for rollback. The live direct app
+window reproduced the blank frame before the signer correction; after deployment,
+automatic selection returned to the visible file page, the signer iframe was
+hidden, no generic login request occurred, refusal prevented upload and explicit
+approval stored the synthetic file. Actual phone confirmation is still pending.
+The archive UI is deployed with backend capability gating; UI tests cover fresh
+consent on snapshot changes and independent revocation. No public release made.
