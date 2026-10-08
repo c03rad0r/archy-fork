@@ -195,3 +195,34 @@ and fresh v2 synthetic transaction. The older held synthetic transaction remains
 unaccepted and preserved in its parent VM lineage; it is not silently rewritten.
 Actual-node initial-payment response-loss acceptance remains open. No real or
 repeat payment and no live-node lifecycle mutation occurred in this suite.
+
+## 2026-10-08: combined qualification including owned restart overrides
+
+The latest full isolated backend suite passed **2,025 tests, zero failures, five
+existing ignores** against source frozen at `dc84a8b6`. All **532 tracked
+backend/helper/catalog inputs** remained unchanged. The required receipt checks
+now also explicitly include all four native restart-override regression groups,
+alongside the existing payment, rental, Fleet, pre-target preservation and launch
+v2 regressions. Isolated execution used 320.5 MiB peak memory, no swap, and exited
+successfully in approximately 16 seconds.
+
+Native commits `884ea492` and `f78ee252` recognize only the current held
+operation's exact API/relay restart override. They verify distinct role records,
+matching native/controller identities, admission fence, source ownership,
+canonical operation path, exact bytes/hash, private file mode and effective
+restart policy. Arbitrary overrides, cross-role borrowing, changed/released
+ownership, symlinks and writable ownership paths remain refused. The source also
+includes the helper's actual TypeORM history-table correction and qualified
+relay shutdown path; full runtime transaction acceptance remains separate.
+
+The isolated VM was retained and then paused through QMP during compilation,
+rather than rebooted, to preserve its original PostgreSQL identity and held
+recovery state. No VM transactions ran concurrently with the compiler. The
+compiler slot was released immediately for the matching normal executable,
+followed by resuming that exact guest for recovery acceptance.
+
+Durable SHA-verified evidence:
+`~/.local/state/archipelago/release-qualification/paid-file-recovery-20261007/final-combined-dc84a8b6/`.
+Temporary original: `/tmp/archy-paid-final-combined-9lHLvVsA/`.
+No real/repeated payment or live-node lifecycle change occurred. Actual-node
+initial-payment response-loss acceptance remains open.
