@@ -29,6 +29,9 @@ export interface FleetNode {
 }
 
 export interface FleetAlert {
+  source?: string
+  trust_level?: string
+  identity_authenticated?: boolean
   node_id: string
   rule: string
   message: string
@@ -140,7 +143,7 @@ export function fleetNodeDisplayName(node: FleetNode): string {
   return name || node.node_id.slice(0, 8)
 }
 
-export function fleetSourceLabel(node: FleetNode): string {
+export function fleetSourceLabel(node: Pick<FleetNode, 'source' | 'trust_level' | 'identity_authenticated'>): string {
   if (node.source === 'collector') return 'Collector · identity unverified'
   if (node.source === 'federation' && node.trust_level === 'trusted' && node.identity_authenticated === true) return 'Trusted federation'
   return 'Source unverified'
@@ -237,6 +240,19 @@ type FleetCache = {
 
 const FLEET_CACHE_KEY = 'archipelago.fleet.cache.v2'
 
+function isFleetAlert(alert: unknown): alert is FleetAlert {
+  if (!alert || typeof alert !== 'object') return false
+  const value = alert as Partial<FleetAlert>
+  return typeof value.node_id === 'string' && typeof value.rule === 'string' &&
+    typeof value.message === 'string' && typeof value.timestamp === 'string'
+}
+
+function withoutCachedProvenance<T extends object>(report: T) {
+  // Historical collector payloads could claim provenance. Only a fresh
+  // corrected server response may assign authenticated identity labels.
+  return { ...report, source: 'unknown', trust_level: 'unverified', identity_authenticated: false }
+}
+
 function readFleetCache(): Partial<FleetCache> {
   if (typeof window === 'undefined') return {}
   try {
@@ -244,8 +260,8 @@ function readFleetCache(): Partial<FleetCache> {
     if (!raw) return {}
     const parsed = JSON.parse(raw) as Partial<FleetCache>
     return {
-      nodes: Array.isArray(parsed.nodes) ? parsed.nodes.map(normalizeFleetNode) : [],
-      fleetAlerts: Array.isArray(parsed.fleetAlerts) ? parsed.fleetAlerts : [],
+      nodes: Array.isArray(parsed.nodes) ? parsed.nodes.map(normalizeFleetNode).map(withoutCachedProvenance) : [],
+      fleetAlerts: Array.isArray(parsed.fleetAlerts) ? parsed.fleetAlerts.filter(isFleetAlert).map(withoutCachedProvenance) : [],
       lastRefreshed: typeof parsed.lastRefreshed === 'string' ? parsed.lastRefreshed : '',
       selectedNodeId: typeof parsed.selectedNodeId === 'string' ? parsed.selectedNodeId : null,
       sortBy: parsed.sortBy === 'last-seen' || parsed.sortBy === 'name' ? parsed.sortBy : 'status',
@@ -393,9 +409,7 @@ export function useFleetData() {
         method: 'telemetry.fleet-alerts',
       })
       if (disposed || request !== alertsRequest) return
-      if (!Array.isArray(data?.alerts) || data.alerts.some(alert => !alert ||
-        typeof alert.node_id !== 'string' || typeof alert.rule !== 'string' ||
-        typeof alert.message !== 'string' || typeof alert.timestamp !== 'string')) {
+      if (!Array.isArray(data?.alerts) || !data.alerts.every(isFleetAlert)) {
         throw new Error('Invalid fleet alerts response')
       }
       {

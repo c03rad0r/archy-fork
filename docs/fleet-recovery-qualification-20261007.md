@@ -165,3 +165,25 @@ The exact app-project typecheck also passed again after the history follow-up,
 with the same 2 GB bound; log `/tmp/archy-fleet-history-typecheck.log`.
 Completed logs and browser fixture sources are archived at
 `~/.local/state/archipelago/release-qualification/fleet-acceptance-20261007/`.
+
+## Alert provenance and cache migration follow-up
+
+Alert rows now reuse the same explicit provenance label as node cards, with a
+wrapping header for narrow displays. Collector alerts do not inherit trust from
+the claimed/truncated node ID. Existing cached node and alert provenance is
+stripped on read: historical unsigned collector responses could supply those
+fields. Content, metrics and staleness remain available; only a fresh corrected
+backend response may restore authenticated labels. Invalid cached alert rows
+are discarded. Regression checks cover cached claimed trust and a later fresh
+response, as well as actual alert-panel labels. This does not authenticate a
+collector identity or replace the required backend gate.
+
+The unchanged combined baseline passed **1,459 tests in 177 files** from a frozen
+771-input copy, all hashes unchanged, at
+`~/.local/state/archipelago/release-qualification/fleet-combined-ui-20261007/`.
+The subsequent three-file alert/cache delta passed **31 focused tests in five
+files** and the exact app-project typecheck (2 GB cap, exit 0), logs
+`/tmp/archy-fleet-alert-cache-corrected.log` and
+`/tmp/archy-fleet-alert-cache-typecheck.log`. This is full baseline plus focused
+delta evidence, not a full-suite rerun after the delta. No production deployment
+or additional artwork investigation occurred.

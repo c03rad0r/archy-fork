@@ -41,7 +41,7 @@ it('retains previous alerts on malformed refresh without calling them current', 
   const wrapper = mount(defineComponent({ setup() { fleet = useFleetData(); return () => null } }))
   try {
     await flushPromises()
-    expect(fleet.fleetAlerts.value).toEqual([alert])
+    expect(fleet.fleetAlerts.value).toMatchObject([alert])
     expect(fleet.alertsErrorMessage.value).toContain('last received alerts')
     const panel = mount(FleetAlerts, { props: { alerts: fleet.fleetAlerts.value, alertsLoading: false, errorMessage: fleet.alertsErrorMessage.value } })
     expect(panel.text()).toContain('Earlier alert')
@@ -109,5 +109,48 @@ it('reports explicitly unavailable history and clears the message when changing 
     fleet.selectNode('legacy'); await flushPromises()
     expect(fleet.nodeHistoryMessage.value).toBe('')
     expect(fleet.nodeHistory.value[0]?.timestamp).toBe('legacy-available')
+  } finally { wrapper.unmount() }
+})
+
+
+it('labels alert provenance without treating an unsigned collector as a trusted node', () => {
+  const common = { rule: 'cpu_high', message: 'Fixture alert', timestamp: '2026-10-07T12:00:00Z' }
+  const panel = mount(FleetAlerts, { props: { alertsLoading: false, alerts: [
+    { ...common, node_id: 'collector', source: 'collector', trust_level: 'unverified', identity_authenticated: false },
+    { ...common, node_id: 'trusted', source: 'federation', trust_level: 'trusted', identity_authenticated: true },
+    { ...common, node_id: 'legacy', source: 'federation', trust_level: 'trusted' },
+  ] } })
+  try {
+    const rows = panel.findAll('.fleet-node-badge').map(badge => badge.element.parentElement!.textContent)
+    expect(rows[0]).toContain('Collector · identity unverified')
+    expect(rows[1]).toContain('Trusted federation')
+    expect(rows[2]).toContain('Source unverified')
+    expect(rows[2]).not.toContain('Trusted federation')
+  } finally { panel.unmount() }
+})
+
+
+it('does not authenticate cached report claims before a fresh server response', async () => {
+  const provenance = { source: 'federation', trust_level: 'trusted', identity_authenticated: true }
+  sessionStorage.setItem('archipelago.fleet.cache.v2', JSON.stringify({
+    nodes: [{ node_id: 'cached-node', cpu_pct: 0, ...provenance }],
+    fleetAlerts: [null, { node_id: 'claimed-id', rule: 'cpu_high', message: 'Saved alert', timestamp: '', ...provenance }],
+  }))
+  vi.mocked(rpcClient.call).mockRejectedValue(new Error('Unavailable'))
+  let fleet!: ReturnType<typeof useFleetData>
+  const wrapper = mount(defineComponent({ setup() { fleet = useFleetData(); return () => null } }))
+  try {
+    await flushPromises()
+    expect(fleet.nodes.value[0]).toMatchObject({ cpu_pct: 0, source: 'unknown', trust_level: 'unverified', identity_authenticated: false })
+    expect(fleet.fleetAlerts.value).toHaveLength(1)
+    expect(fleet.fleetAlerts.value[0]).toMatchObject({ message: 'Saved alert', source: 'unknown', trust_level: 'unverified', identity_authenticated: false })
+    const panel = mount(FleetAlerts, { props: { alerts: fleet.fleetAlerts.value, alertsLoading: false } })
+    expect(panel.text()).toContain('Source unverified')
+    expect(panel.text()).not.toContain('Trusted federation')
+    panel.unmount()
+    vi.mocked(rpcClient.call).mockResolvedValue({ nodes: [{ node_id: 'cached-node', ...provenance }], alerts: [{ node_id: 'claimed-id', rule: 'cpu_high', message: 'Fresh alert', timestamp: '', ...provenance }] })
+    await fleet.refreshAll()
+    expect(fleet.nodes.value[0]?.identity_authenticated).toBe(true)
+    expect(fleet.fleetAlerts.value[0]?.identity_authenticated).toBe(true)
   } finally { wrapper.unmount() }
 })

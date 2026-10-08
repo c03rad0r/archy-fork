@@ -20,8 +20,9 @@
           :class="alertSeverityDot(alert.rule)"
         ></span>
         <div class="flex-1 min-w-0">
-          <div class="flex items-center gap-2 mb-0.5">
+          <div class="flex flex-wrap items-center gap-x-2 gap-y-1 mb-0.5">
             <span class="fleet-node-badge">{{ alert.node_id.slice(0, 8) }}</span>
+            <span class="text-xs text-white/50">{{ fleetSourceLabel(alert) }}</span>
             <span class="text-xs text-white/40">{{ alertTypeLabel(alert.rule) }}</span>
           </div>
           <p class="text-sm text-white/80">{{ alert.message }}</p>
@@ -33,7 +34,7 @@
 </template>
 
 <script setup lang="ts">
-import { type FleetAlert, alertSeverityDot, alertTypeLabel, formatTimestamp } from './useFleetData'
+import { type FleetAlert, alertSeverityDot, alertTypeLabel, formatTimestamp, fleetSourceLabel } from './useFleetData'
 
 defineProps<{
   alerts: FleetAlert[]
