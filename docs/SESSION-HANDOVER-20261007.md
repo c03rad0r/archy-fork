@@ -10,33 +10,25 @@ Read **Current live checkpoint** first. Older receipts below apply only to their
 ## Current live checkpoint — 2026-10-08, supersedes historical entries below
 
 - Candidate: `archy-session-key`, branch `work/post-190-session-key`.
-  Latest combined isolated backend suite: **2,028 passed, zero failures, five
-  ignored**, all **536 tracked inputs stable at `1dbca844`**. This includes
-  latest helper `1a409900`, rental/Fleet guards and the new separate-process
-  paid recovery fixture: committed settlement response lost, both processes
-  restarted, original operation and exact bytes recovered, one fake-mint
-  redemption. No real funds. Actual authenticated FIPS/live-node response-loss
-  acceptance remains open. See `docs/paid-process-recovery-20261008.md`.
-  Matching IndeeHub normal executable build is next; this suite is not a claim
-  that post-target rollback/cutover or live deployment passed.
-- IndeeHub remains the immediate delivery priority. Actual VM manager startup
-  retains all seven runtimes. Real missing-plan refusal, complete seven-member
-  drain/backup, logical PostgreSQL restore comparison, all four volume archive
-  checks, and several pre-target recovery paths have passed. Mixed recovery
-  preserves intact original runtimes and recreates only stopped originals.
-  Latest actual RPC also returns package state to Running with progress cleared;
-  the stuck Installing regression is fixed and accepted on that manager path.
-- **Post-target rollback and successful cutover remain unpassed.** Matching
-  fixture executable for `66c7a22d` built and retained all seven IDs at startup.
-  Warmed read-only API/Redis/PostgreSQL probes passed without identity changes.
-  Actual operation6432d320 then passed complete drain/backup, but its temporary
-  database restore instance did not become ready within90seconds. Recovery is
-  terminal Restored with cleanup complete and package Running/progress cleared.
-  Exact recovery-image startup diagnostics are underway; production timeouts
-  remain unchanged. Earlier failed parent fixtures remain archived/unrecovered;
-  never rewrite their journals or adopt unproven replacement identities.
-  See `docs/managed-update-recovery-implementation.md` for current detailed
-  evidence. No migration or app/catalog changes have been made on live Yaya.
+  Latest combined isolated backend suite: **2,031 passed, zero failures, five
+  ignored**, all **536 tracked inputs stable at `6a342f66`**. This includes the
+  lifecycle-admission recovery fix, rental/Fleet guards and separate-process
+  paid recovery fixture. No real funds or production FIPS acceptance claimed.
+  Receipt: `/tmp/archy-paid-final-combined-LxkyEuYT/receipt.json`.
+- IndeeHub remains the immediate delivery priority. Prior actual VM checks
+  established missing-plan refusal, seven-member drain/backup, logical database
+  restore comparison, four volume archives and several pre-target recovery paths.
+  These earlier receipts do not establish a successful complete update.
+- **Post-target rollback and successful cutover remain unpassed.** Operation
+  `23550e9e…` exposed automatic crash recovery restarting a held worker during
+  update. Recovery correctly refused the changed live identity; that fixture is
+  held/unrecovered and preserved, not repaired by rewriting its journal. Source
+  `6a342f66` now checks whole-stack holds, saved runtime ownership and operator
+  stopped/uninstalled intent, holding the lifecycle lock across automatic
+  mutations. Health-monitor restart uses the same lock. Three new regressions
+  passed within the full suite. Matching executable and fresh VM rehearsal are
+  next. No live Yaya migration or app/catalog activation has occurred.
+  See `docs/managed-update-recovery-implementation.md` for detailed evidence.
 - Future Indee worker shutdown fix is app-repository commit `29627fc`, four
   focused tests passed. Its new private worker image is now built and verified:
   image9b3ef4116d4b998820e25e09eda7ca14f23e9e264158629451b81e32b47d9c8e,
@@ -73,6 +65,19 @@ Read **Current live checkpoint** first. Older receipts below apply only to their
   Publication, two-node discovery, producer payout/payment-method binding, timed
   viewing and bounded payment authorization remain separate open gates. Never
   send a repeat payment to recover delivery.
+- Task6 connection flow source is qualified in isolated commit `75d6f6ed`:
+  twelve focused checks and app typecheck pass. Browser checks, return paths
+  and live delivery remain in progress; do not treat it as deployed.
+- Task18 firewall/tunnel UI: 21 focused checks pass in its isolated worktree.
+  Full width, aligned status, standard black button, plain language and actual
+  device-management work are in progress. User also requires the page retain
+  the Network tab background. Backend peer mutations/startup restore are being
+  corrected before enabling controls; no live firewall/tunnel mutation occurred.
+- Task5 now explicitly requires supported Nextcloud/Immich connections to work
+  without File Browser installed/running, with account boundaries and independent
+  source availability. Removing File Browser currently disables local Cloud
+  access. Removal-warning UI is in progress, preserves files by default and does
+  not imply automatic file migration. Requirement integrated as `8c282871`.
 - Task21 public UI groundwork `6bcdd106` and task22 Mesh picker groundwork
   `3360354a` remain isolated/unintegrated, after earlier tasks. They do not enable
   live menus or complete backend/global search/paid delivery/folders.
