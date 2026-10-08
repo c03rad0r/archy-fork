@@ -41,6 +41,7 @@
 </template>
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
+import { secureUuid } from '@/utils/secureUuid'
 import { fileBrowserClient, type FileBrowserItem } from '@/api/filebrowser-client'
 import { useModalKeyboard } from '@/composables/useModalKeyboard'
 import type { RegistrationRequest, CloudSelection } from '@/composables/useMediaRegistrationBridge'
@@ -48,7 +49,7 @@ const props = defineProps<{ request: RegistrationRequest | null; phase: 'select'
 const emit = defineEmits<{ approve: [selection: CloudSelection]; cancel: []; resolve: [] }>()
 const modal = ref<HTMLElement | null>(null), directory = ref('/'), files = ref<FileBrowserItem[]>([])
 const selected = ref<FileBrowserItem | null>(null), loading = ref(false), localError = ref('')
-const titleId = `media-registration-${crypto.randomUUID()}`
+const titleId = `media-registration-${secureUuid()}`
 let generation = 0
 const visible = computed(() => files.value.filter(item => item.isDir || /\.(mp4|m4v|webm|mov)$/i.test(item.name)))
 const duration = computed(() => { const seconds = props.request?.intent.viewingSeconds ?? 0; return seconds % 3600 === 0 ? `${seconds / 3600} hours` : `${Math.ceil(seconds / 60)} minutes` })

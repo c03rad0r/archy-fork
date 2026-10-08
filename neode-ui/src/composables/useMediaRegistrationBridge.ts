@@ -1,4 +1,5 @@
 import { ref, shallowRef } from 'vue'
+import { secureUuid } from '@/utils/secureUuid'
 import { rpcClient } from '@/api/rpc-client'
 import { appPortIsGateFronted } from '@/views/appSession/appSessionConfig'
 
@@ -102,7 +103,7 @@ export function useMediaRegistrationBridge(context: FrameContext) {
       const old = savedApproval(pending.intent)
       if (old && !exact(old.selection, selection)) throw new Error('This operation already approved another file. Resume its original selection.')
       const saved: SavedApproval = old ?? { version: 1, intent: pending.intent, selection: structuredClone(selection),
-        approvalId: crypto.randomUUID(), event: { kind: 27236, created_at: Math.floor(Date.now() / 1000),
+        approvalId: secureUuid(), event: { kind: 27236, created_at: Math.floor(Date.now() / 1000),
           tags: [['d', REGISTRATION_SCOPE]], content: JSON.stringify(approvalContent(pending.intent, selection), null, 2) } }
       // Persist owner approval before replying. Storage failure cannot silently
       // turn a later retry into a newly approved file or a replacement operation.
@@ -114,7 +115,7 @@ export function useMediaRegistrationBridge(context: FrameContext) {
   }
   function approveResolution() {
     if (!pending || pending.mode !== 'resolve' || phase.value !== 'resolve' || !current(pending)) return
-    const approved = { intent: pending.intent, approvalId: crypto.randomUUID(), event: {
+    const approved = { intent: pending.intent, approvalId: secureUuid(), event: {
       kind: 27237, created_at: Math.floor(Date.now() / 1000), tags: [['d', 'archipelago.media-registration.resolution.v1']],
       content: JSON.stringify({ action: 'Recover prepared video or retire this expired incomplete registration',
         scope: 'archipelago.media-registration.resolution.v1', intent: pending.intent }, null, 2),
