@@ -639,3 +639,21 @@ work/rental-admission-20261007, awaiting current executable input-hash capture
 before integration and isolated execution. Public-sharing UI groundwork is
 separately isolated on work/public-sharing-ui-groundwork; no public menu is
 activated or legacy policy remapped.
+
+
+### Optional historical-copy helper cancelled safely
+
+The archival helper PID1347627 is no longer paused or queued. Root verified its
+exact stopped command, all three original directories still intact as real
+directories, no relocation rename staging and no completed relocation receipt,
+then terminated only that helper. Do not resume/restart the PID (it may be reused).
+Partial disk copy is retained with
+`release-qualification/retained-tmp-snapshots/cancelled-helper.json`; no original
+was deleted or replaced. This optional maintenance no longer delays builds/VM
+acceptance. The five earlier successfully relocated UI archives remain intact.
+
+The selected Yaya demo source hash is now independently verified read-only:
+`766f5f6b9d2a6fd90cb7541447fbba666773635bd90def145bcd479a1b8b0591`,
+203331877 bytes; before/after metadata matched. No video duplicate was retained,
+no publication or payment occurred. Receipt: the selected-demo directory's
+`source-hash.json`.
