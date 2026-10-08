@@ -6,6 +6,13 @@ services, build directories, artifacts and publication refs are not work areas.
 
 ## Product contract
 
+AI creation uses Routstr by default, with Claude and OpenAI API-key choices in
+the trusted dashboard. The operator explicitly approved these optional API
+providers. Reuse the node's ecash receive flow for top-ups; funding must not change
+the spending allowance or trigger inference. Preserve saved provider choices.
+Ollama is deprioritized and its live-model test is not a release prerequisite for
+this work; older progress entries below describe the superseded local-model path.
+
 Setup offers Allow external connections and Publish a website. Both use node-owned
 connection state. Each app or site can select FIPS, public HTTPS, Tor, and (static
 sites only) Nostr publication together. Each route has independent status and
@@ -405,3 +412,7 @@ default from a saved legacy Auto choice, and the Routstr adapter now rejects zer
 allowance before even discovering providers. A rerun is required; no passing full
 suite or deployment is claimed yet. Final dashboard and AIUI production builds
 have both passed.
+
+Final isolated backend rerun: **1,719 passed, zero failed, four explicit ignores**.
+This includes the default Routstr zero-allowance stop and saved Auto behavior.
+The deployable backend build is in progress; Framework deployment remains pending.
