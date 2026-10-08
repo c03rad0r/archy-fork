@@ -11,6 +11,18 @@ Read **Current live checkpoint** first. Older receipts below apply only to their
 
 ### Latest continuation checkpoint (read before older bullets)
 
+- **Combined dashboard qualification now passes:** v2 snapshot at `dd097b95`,
+  all 781 tracked inputs unchanged; app typecheck and production build exit 0.
+  The delta gate covers 36 changed inputs using the qualified 1,459-case baseline
+  and reviewed focused slices, including six retained PiP tests. This is not a
+  new full-suite run. Private artifact and receipts:
+  `~/.local/state/archipelago/release-qualification/integrated-ui-final-20261008/`.
+  `neode-ui.tar.gz`: 59,549,234 bytes, SHA256
+  `eba26d22e5137caac0277df80f88f7e0e10e5dde14f027df8dde587ab2a7e1e8`;
+  index SHA256 `14f811eb504d6e0048420bf908047beae002d7af7ac71701421029a76eaaab22`.
+  Not deployed. Existing browser-data age warning remains; no dependencies changed.
+  Optimized backend compilation is still running; no finished artifact claimed.
+
 - **Newest continuation:** controlled native cutover `8b53579c` and same-boot
   post-target rollback `5bd06edc` both passed, including independent final checks.
   Cutover committed with cleanup complete, maintenance Released, all seven exact
