@@ -19,6 +19,8 @@ use std::path::PathBuf;
 /// An app port the gate is responsible for.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct GatedPort {
+    /// Explicit manifest permission to offer app-only external credentials.
+    pub guest_access: bool,
     pub port: u16,
     pub app_id: String,
     /// Display name for the login page. Falls back to the id when a manifest
@@ -215,10 +217,24 @@ pub fn build_port_map() -> PortMap {
     map
 }
 
+#[cfg(test)]
+pub(super) fn test_port_map(port: GatedPort) -> PortMap {
+    let mut map = PortMap::default();
+    map.gated.insert(port.port, port);
+    map
+}
+
 /// Classify one manifest's ports into the map. Split from [`build_port_map`]
 /// so the catalog-overlay pass and the disk pass cannot diverge.
 fn classify_manifest(manifest: &AppManifest, map: &mut PortMap) {
     let app_id = manifest.app.id.clone();
+    let guest_access = manifest
+        .app
+        .extensions
+        .get("metadata")
+        .and_then(|m| m.get("guest_access"))
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
     let icon = manifest_icon(manifest);
     let app_name = if manifest.app.name.trim().is_empty() {
         app_id.clone()
@@ -260,6 +276,9 @@ fn classify_manifest(manifest: &AppManifest, map: &mut PortMap) {
                 map.gated.insert(
                     port.host,
                     GatedPort {
+                        guest_access: guest_access
+                            && !port.session_passthrough
+                            && port.auth_policy() == PortAuth::Gated,
                         port: port.host,
                         app_id: app_id.clone(),
                         app_name: app_name.clone(),
@@ -309,6 +328,7 @@ fn classify_manifest(manifest: &AppManifest, map: &mut PortMap) {
                 map.gated.insert(
                     port.host,
                     GatedPort {
+                        guest_access: false,
                         port: port.host,
                         app_id: app_id.clone(),
                         app_name: app_name.clone(),
@@ -371,6 +391,23 @@ app:
   container:
     image: example.org/testapp:1.0
 "#;
+
+    #[test]
+    fn guest_access_requires_explicit_gate_and_never_allows_session_passthrough() {
+        for (auth, passthrough, expected) in [
+            ("gated", false, true),
+            ("gated", true, false),
+            ("session", false, false),
+        ] {
+            let text = format!("{BASE}  metadata:\n    guest_access: true\n  ports:\n    - host: 8090\n      container: 7777\n      protocol: tcp\n      bind: 0.0.0.0\n      auth: {auth}\n      session_passthrough: {passthrough}\n");
+            let mut map = PortMap::default();
+            classify_manifest(&manifest(&text), &mut map);
+            assert_eq!(map.gated(8090).unwrap().guest_access, expected);
+        }
+        let mut map = PortMap::default();
+        classify_manifest(&manifest(&format!("{BASE}  ports:\n    - host: 8090\n      container: 7777\n      protocol: tcp\n      bind: 127.0.0.1\n      auth: gated\n")), &mut map);
+        assert!(!map.gated(8090).unwrap().guest_access);
+    }
 
     /// `auth: gated` is the only classification allowed to redirect traffic —
     /// torrc repoints, relay stand-down, and the 127.0.0.2 bind all key on

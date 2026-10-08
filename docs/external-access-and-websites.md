@@ -37,8 +37,11 @@ FIPS/onion addresses do not require a purchased domain. No automatic purchases.
 AIUI creates node-owned static website projects with isolated previews, revisions,
 download, publish, rollback and unpublish. Local/open model operation is supported;
 no silent fallback to a proprietary model. A published website has a separate
-origin from management and cannot receive dashboard cookies, signing authority or
-RPC access. Public copies may survive unpublishing from Nostr/Blossom.
+origin from management and cannot read dashboard cookies or access signing
+authority or RPC. Direct FIPS ports share a hostname, so a browser may send
+host cookies to the trusted static handler; it neither reflects nor forwards
+them, and published HTML runs under a script-blocking sandbox policy. Public
+copies may survive unpublishing from Nostr/Blossom.
 
 The user also requested removal of the File Browser Setup card because the app
 is already bundled in the ISO. Keep the installed app and launcher unchanged.
@@ -59,12 +62,59 @@ is already bundled in the ISO. Keep the installed app and launcher unchanged.
 - [ ] Framework acceptance with confirmed identity, access and release coordination.
 - [ ] ngit review and exact accepted-commit mirror parity before any release.
 
-The user authorized Framework as a test node if deployment is needed. Access and
-current release-agent reservation must be confirmed before live work. Preserve all
+The user authorized Framework as a free test node and a separate test proxy route
+on Yaya. Access has been verified on both actual nodes. Preserve all
 wallet/channel/app data. Source tests are not node acceptance. Backend unit tests
 run only through `scripts/test-backend-isolated.sh`; use a worktree-local target.
 
+### Current integration checkpoint
+
+Blossom is installed and healthy on Framework through the normal app installer.
+Protocol, real HTTP/HTTPS tab signing and lifecycle/data-preservation evidence is
+recorded in `apps/blossom/README.md`. The combined dashboard/backend candidate has
+not yet been deployed. No public Nostr test events or external file replicas have
+been created. The temporary public proxy route and certificate were removed after
+their standalone acceptance checks.
+
+New source work includes local Blossom website archives, explicit app-only guest
+credentials, and an on-demand HTTPS check against exact published page bytes.
+Guest tokens cannot authenticate to node login; scope/expiry are checked on each
+request, and revocation affects subsequent requests, not established streams.
+Only opted-in gated app manifests expose guest access. Persistent credentials use
+serialized, atomic 0600 writes and refuse corruption/capacity without evicting an
+existing device. HTTPS checks pin validated public DNS addresses, validate TLS,
+refuse redirects/proxies and bound response reads. They are point-in-time checks
+from the node, not proof of outside-device access or future certificate renewal.
+
+Public-web projects can explicitly publish a FIPS upstream for an existing proxy
+without selecting FIPS again. The confirmation still explains its FIPS visibility.
+Automated frp enrollment/end-to-node TLS and selective local public Blossom assets
+remain unfinished. Source validation and standalone routes must not be described
+as acceptance of those features or of the complete dashboard journey.
+
+The current dashboard production build and supported AIUI build both pass and
+are staged separately on Framework. The original backend and full web tree are
+backed up for rollback; the live dashboard has not been switched. The selected
+dashboard suite passed 36 tests; subsequent HTTPS UI coverage passed six tests,
+and tightened Nostr signing/receipt coverage passed 12 tests. The latest combined
+18-test run, TypeScript check and dashboard rebuild passed. Catalog drift is zero
+(37 catalog entries, 64 manifests). Full isolated backend validation now passes
+1,699 tests, zero failures and four explicit ignores. The focused app-gate run
+passes 53 tests, and all three credential tests pass. The deployable backend build
+is still pending at this checkpoint; passing tests is not live-node acceptance.
+
 ## Development evidence (2026-10-08, not release acceptance)
+
+Latest addition: [Blossom candidate package and acceptance ledger](../apps/blossom/README.md).
+Setup offers catalogue installation and skips that prompt for installed Blossom.
+The candidate is built and protocol-tested on Framework, and normal installation
+and the real HTTPS tab signer work. Further lifecycle acceptance is in progress.
+The operator temporarily disabled dashboard 2FA for tests; restore it afterwards.
+Nostr publication now includes a local
+preparation/review step showing exact HTML, hash, identity, manifest and destinations;
+upload and announcement require explicit consent. No public Nostr events or external
+Blossom uploads have been performed. Local Blossom website-asset integration remains
+outstanding. Earlier evidence below records its own point in development.
 
 The isolated branch now contains versioned node-owned projects, multi-route
 preferences, both Setup screens, local Ollama draft generation, sandboxed static

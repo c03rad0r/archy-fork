@@ -84,5 +84,6 @@ app:
       path: /
 
   metadata:
+    guest_access: true  # Explicit app-only sharing through AppGate; app accounts still apply.
     launch:
       open_in_new_tab: true

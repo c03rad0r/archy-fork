@@ -93,6 +93,12 @@ impl EndpointRateLimiter {
         // Identity/credential operations
         limits.insert("identity.create".to_string(), (10, 300));
         limits.insert("identity.issue-credential".to_string(), (20, 300));
+        // Explicit publishing actions can allocate credentials or perform
+        // bounded network I/O. Saving/previewing never invokes these actions.
+        limits.insert("publishing.access-create".to_string(), (10, 60));
+        limits.insert("publishing.verify-https".to_string(), (10, 60));
+        limits.insert("publishing.blossom-store".to_string(), (10, 60));
+        limits.insert("publishing.generate".to_string(), (5, 300));
         // Backup operations (resource-intensive)
         limits.insert("backup.create".to_string(), (10, 600));
         limits.insert("backup.restore".to_string(), (5, 600));

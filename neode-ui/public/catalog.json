@@ -673,6 +673,19 @@
       "tier": "optional",
       "icon": "/assets/img/app-icons/angor-green.png",
       "repoUrl": "https://github.com/hoytech/strfry"
+    },
+    {
+      "id": "blossom",
+      "author": "hzrd149 / Archipelago",
+      "requires": [],
+      "tier": "optional",
+      "title": "Blossom",
+      "version": "6.4.1-archy.1",
+      "description": "Local file storage for Nostr and websites, using your Archipelago signer. External publishing is a separate explicit choice.",
+      "dockerImage": "localhost/archipelago-blossom:6.4.1-archy.1",
+      "category": "data",
+      "repoUrl": "https://github.com/hzrd149/blossom-server",
+      "icon": "/assets/img/app-icons/blossom.svg"
     }
   ]
 }

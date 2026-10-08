@@ -1,4 +1,5 @@
 import { rpcClient } from '@/api/rpc-client'
+import type { NsiteReceipt } from './nsitePublishing'
 
 export type PublishRoute = 'fips' | 'public-web' | 'tor' | 'nostr'
 export interface PublishDomain { hostname: string; destination: string | null }
@@ -8,6 +9,8 @@ export interface WebsiteProject {
   draft: string; revisions: WebsiteRevision[]
   fips_publication?: { port: number; html: string; created_at: string } | null
   tor_publication?: { port: number; html: string; created_at: string } | null
+  nsite_receipt?: NsiteReceipt | null
+  local_archive?: { sha256: string; size: number; pubkey: string; created_at: string } | null
 }
 export interface PublishingState {
   schema: number; version: number; connections: PublishRoute[]; projects: Record<string, WebsiteProject>
@@ -16,12 +19,15 @@ export interface PublishingStatus {
   state: PublishingState; fips_address: string | null; publication_enabled: boolean; notice: string
   listeners?: { project_id: string; address: string | null; listening: boolean; externally_verified: boolean; error: string | null }[]
   onions?: { project_id: string; onion_address: string | null; listening: boolean; externally_verified: boolean; error: string | null }[]
-  apps: { id: string; name: string; port: number; authentication: string; listener_claimed: boolean }[]
+  nostr_relays?: string[]
+  apps: { id: string; name: string; port: number; authentication: string; listener_claimed: boolean; guest_access?: boolean }[]
+  grants?: { id: string; label: string; apps: string[]; expires_at: number | null }[]
 }
 export interface DnsPlan {
   records: { record_type: string; name: string; value: string; ttl: number }[]
   verified: boolean; notes: string[]; instructions_url: string
 }
+export interface HttpsCheck { hostname: string; sha256: string; checked_at: string }
 export const PUBLISH_ROUTES: { id: PublishRoute; title: string; description: string }[] = [
   { id: 'fips', title: 'FIPS network', description: 'Reach your node through FIPS. Visitors need a FIPS connection or a configured LAN gateway.' },
   { id: 'public-web', title: 'Public web', description: 'An HTTPS address for ordinary browsers, using your selected gateway or a direct public connection.' },
@@ -30,6 +36,7 @@ export const PUBLISH_ROUTES: { id: PublishRoute; title: string; description: str
 ]
 export const publishing = {
   status: () => rpcClient.call<PublishingStatus>({ method: 'publishing.status', maxRetries: 1 }),
+  verifyHttps: (id: string, version: number) => rpcClient.call<HttpsCheck>({ method: 'publishing.verify-https', params: { id, version }, timeout: 30000, maxRetries: 0 }),
   update: (version: number, change: Record<string, unknown>) => rpcClient.call<{state: PublishingState; project_id: string | null}>({
     method: 'publishing.update', params: { version, change }, maxRetries: 0,
   }),

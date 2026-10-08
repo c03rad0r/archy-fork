@@ -7,6 +7,7 @@ use std::path::Path;
 use tokio::sync::Mutex;
 
 mod firewall;
+pub mod nsite;
 pub mod serving;
 pub mod tor;
 
@@ -45,6 +46,19 @@ pub struct Project {
     pub fips_publication: Option<Publication>,
     #[serde(default)]
     pub tor_publication: Option<Publication>,
+    #[serde(default)]
+    pub nsite_receipt: Option<nsite::Receipt>,
+    #[serde(default)]
+    pub local_archive: Option<LocalArchive>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct LocalArchive {
+    pub sha256: String,
+    pub size: usize,
+    pub pubkey: String,
+    pub created_at: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -85,6 +99,16 @@ impl Default for State {
 #[derive(Debug, Deserialize)]
 #[serde(tag = "action", rename_all = "kebab-case", deny_unknown_fields)]
 pub enum Change {
+    // Only the local storage adapter can claim a verified archive receipt.
+    #[serde(skip_deserializing)]
+    RecordLocalArchive {
+        id: String,
+        receipt: LocalArchive,
+    },
+    RecordNsite {
+        id: String,
+        receipt: nsite::Receipt,
+    },
     Connections {
         routes: BTreeSet<Route>,
     },
@@ -158,7 +182,7 @@ fn name(value: &str) -> Result<String> {
     Ok(value.to_owned())
 }
 
-fn public_ip(ip: std::net::IpAddr) -> bool {
+pub(crate) fn public_ip(ip: std::net::IpAddr) -> bool {
     match ip {
         std::net::IpAddr::V4(a) => {
             let o = a.octets();
@@ -173,12 +197,15 @@ fn public_ip(ip: std::net::IpAddr) -> bool {
                 && o[0] < 240
                 && !(o[0] == 100 && (64..=127).contains(&o[1]))
                 && !(o[0] == 198 && (o[1] == 18 || o[1] == 19))
+                && !(o[0] == 192 && o[1] == 0 && o[2] == 0)
         }
         std::net::IpAddr::V6(a) => {
             let s = a.segments();
             // Only global unicast; excludes ULA/FIPS, mapped-v4, loopback,
             // multicast and link-local, plus documentation allocations.
             (s[0] & 0xe000) == 0x2000
+                && !(s[0] == 0x2001 && s[1] < 0x200)
+                && s[0] != 0x2002
                 && !(s[0] == 0x2001 && s[1] == 0x0db8)
                 && !(s[0] == 0x3fff && s[1] < 0x1000)
         }
@@ -228,6 +255,28 @@ pub fn dns_records(domain: &Domain) -> Result<Vec<DnsRecord>> {
 impl State {
     pub fn apply(&mut self, change: Change) -> Result<Option<String>> {
         match change {
+            Change::RecordLocalArchive { id, receipt } => {
+                let p = self
+                    .projects
+                    .get_mut(&id)
+                    .context("Website project not found")?;
+                if receipt.sha256 != nsite::hash(p.draft.as_bytes())
+                    || receipt.size != p.draft.len()
+                {
+                    bail!("The draft changed while storing it. The stored file is retained; review the current draft");
+                }
+                p.local_archive = Some(receipt);
+                Ok(Some(id))
+            }
+            Change::RecordNsite { id, receipt } => {
+                receipt.validate(&id)?;
+                let p = self
+                    .projects
+                    .get_mut(&id)
+                    .context("Website project not found")?;
+                p.nsite_receipt = Some(receipt);
+                Ok(Some(id))
+            }
             Change::Connections { routes } => {
                 self.connections = routes;
                 Ok(None)
@@ -249,6 +298,8 @@ impl State {
                         revisions: vec![],
                         fips_publication: None,
                         tor_publication: None,
+                        nsite_receipt: None,
+                        local_archive: None,
                     },
                 );
                 Ok(Some(id))
@@ -275,7 +326,10 @@ impl State {
                     .projects
                     .get_mut(&id)
                     .context("Website project not found")?;
-                if p.fips_publication.is_some() && !routes.contains(&Route::Fips) {
+                if p.fips_publication.is_some()
+                    && !routes.contains(&Route::Fips)
+                    && !routes.contains(&Route::PublicWeb)
+                {
                     bail!("Unpublish the FIPS website before removing its route");
                 }
                 if p.tor_publication.is_some() && !routes.contains(&Route::Tor) {
@@ -313,8 +367,10 @@ impl State {
                     .projects
                     .get_mut(&id)
                     .context("Website project not found")?;
-                if !p.routes.contains(&Route::Fips) || p.draft.trim().is_empty() {
-                    bail!("Save a website draft and select FIPS before publishing");
+                if (!p.routes.contains(&Route::Fips) && !p.routes.contains(&Route::PublicWeb))
+                    || p.draft.trim().is_empty()
+                {
+                    bail!("Save a website draft and select FIPS or public web before publishing");
                 }
                 let port = match &p.fips_publication {
                     Some(old) => old.port,
@@ -482,6 +538,45 @@ pub async fn update(root: &Path, request: Update) -> Result<(State, Option<Strin
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn local_archive_receipts_cannot_be_claimed_by_clients_or_publish_routes() {
+        assert!(serde_json::from_value::<Change>(
+            serde_json::json!({"action":"record-local-archive", "id":"x", "receipt":{}})
+        )
+        .is_err());
+        let mut state = State::default();
+        let id = state
+            .apply(Change::Create {
+                name: "Local archive".into(),
+            })
+            .unwrap()
+            .unwrap();
+        state.projects.get_mut(&id).unwrap().draft = "<p>Private draft</p>".into();
+        let draft = &state.projects[&id].draft;
+        let mut receipt = LocalArchive {
+            sha256: nsite::hash(draft.as_bytes()),
+            size: draft.len(),
+            pubkey: "a".repeat(64),
+            created_at: chrono::Utc::now().to_rfc3339(),
+        };
+        state
+            .apply(Change::RecordLocalArchive {
+                id: id.clone(),
+                receipt: receipt.clone(),
+            })
+            .unwrap();
+        let p = &state.projects[&id];
+        assert!(
+            p.routes.is_empty()
+                && p.fips_publication.is_none()
+                && p.tor_publication.is_none()
+                && p.nsite_receipt.is_none()
+        );
+        receipt.sha256 = "b".repeat(64);
+        assert!(state
+            .apply(Change::RecordLocalArchive { id, receipt })
+            .is_err());
+    }
     #[tokio::test]
     async fn concurrent_edit_is_rejected_and_project_survives_reload() {
         let d = tempfile::tempdir().unwrap();
@@ -545,6 +640,9 @@ mod tests {
             "::1",
             "192.168.1.2",
             "::ffff:8.8.8.8",
+            "2002:7f00:1::1",
+            "2001::1",
+            "192.0.0.1",
             "node.fips",
             "a.onion",
             "example.com; bad",
@@ -568,6 +666,43 @@ mod tests {
         ] {
             assert!(hostname(host).is_err());
         }
+    }
+    #[test]
+    fn public_web_reuses_fips_upstream_without_requiring_a_second_route_choice() {
+        let mut state = State::default();
+        state.connections.insert(Route::PublicWeb);
+        let id = state
+            .apply(Change::Create {
+                name: "Public site".into(),
+            })
+            .unwrap()
+            .unwrap();
+        state.projects.get_mut(&id).unwrap().draft = "<h1>Public</h1>".into();
+        assert!(state
+            .apply(Change::PublishFips {
+                id: id.clone(),
+                acknowledge_public: false
+            })
+            .is_err());
+        state
+            .apply(Change::PublishFips {
+                id: id.clone(),
+                acknowledge_public: true,
+            })
+            .unwrap();
+        assert!(state.projects[&id].fips_publication.is_some());
+        assert!(!state.projects[&id].routes.contains(&Route::Fips));
+        let save = |routes| Change::Save {
+            id: id.clone(),
+            name: "Public site".into(),
+            routes,
+            domain: None,
+            html: "<h1>Public</h1>".into(),
+        };
+        state
+            .apply(save([Route::PublicWeb].into_iter().collect()))
+            .unwrap();
+        assert!(state.apply(save(BTreeSet::new())).is_err());
     }
     #[test]
     fn multiple_routes_and_restore_do_not_publish() {

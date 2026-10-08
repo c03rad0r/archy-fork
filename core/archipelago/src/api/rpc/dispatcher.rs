@@ -12,9 +12,15 @@ impl RpcHandler {
     ) -> Result<serde_json::Value> {
         match method {
             "publishing.status" => self.handle_publishing_status().await,
+            "publishing.verify-https" => self.handle_publishing_verify_https(params).await,
             "publishing.update" => self.handle_publishing_update(params).await,
             "publishing.dns" => self.handle_publishing_dns(params).await,
             "publishing.generate" => self.handle_publishing_generate(params).await,
+            "publishing.nsite-prepare" => self.handle_publishing_nsite_prepare(params).await,
+            "publishing.blossom-prepare" => self.handle_publishing_blossom_prepare(params).await,
+            "publishing.blossom-store" => self.handle_publishing_blossom_store(params).await,
+            "publishing.access-create" => self.handle_publishing_access_create(params).await,
+            "publishing.access-revoke" => self.handle_publishing_access_revoke(params).await,
             "echo" => self.handle_echo(params).await,
             "server.echo" => self.handle_echo(params).await,
             "server.get-state" => self.handle_server_get_state().await,

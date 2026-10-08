@@ -60,6 +60,7 @@ app:
       path: /
 
   metadata:
+    guest_access: true  # Explicit app-only sharing through AppGate; app accounts still apply.
     icon: /assets/img/app-icons/photoprism.svg
     category: data
     author: PhotoPrism
