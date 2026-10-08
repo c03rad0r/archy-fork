@@ -42,6 +42,7 @@ PY
 unit="archy-isolated-tests-$(date +%s)-$$"
 sudo -n systemd-run --unit="$unit" --wait --pipe --collect \
   --property="WorkingDirectory=$REPO/core" \
+  --property="BindReadOnlyPaths=$REPO" \
   --property=PrivateNetwork=yes --property=PrivateTmp=yes --property=PrivateDevices=yes \
   --property=ProtectSystem=strict --property=ProtectHome=read-only \
   --property=NoNewPrivileges=yes \
