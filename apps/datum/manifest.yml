@@ -1,0 +1,84 @@
+app:
+  id: datum
+  name: DATUM
+  version: 0.4.1-beta.1
+  description: Build Bitcoin mining templates on your own node and connect your miners to OCEAN through DATUM.
+  upstream:
+    kind: github
+    repo: OCEAN-xyz/datum_gateway
+  container_name: datum
+  container:
+    build:
+      context: /opt/archipelago/docker/datum
+      dockerfile: Dockerfile
+      tag: localhost/archipelago-datum:0.4.1-beta.1
+    network: archy-net
+    network_aliases: [datum]
+    data_uid: "1000:1000"
+    derived_env:
+      - key: BITCOIN_RPC_HOST
+        template: "{{BITCOIN_HOST}}"
+    generated_secrets:
+      - name: datum-admin-password
+        kind: hex32
+    secret_env:
+      - key: BITCOIN_RPC_PASSWORD
+        secret_file: bitcoin-rpc-password
+      - key: DATUM_ADMIN_PASSWORD
+        secret_file: datum-admin-password
+  dependencies:
+    - app_id: bitcoin-knots
+    - storage: 1Gi
+  resources:
+    cpu_limit: 2
+    memory_limit: 512m
+    disk_limit: 1Gi
+  security:
+    capabilities: []
+    readonly_root: true
+    no_new_privileges: true
+    network_policy: isolated
+  ports:
+    - host: 7152
+      container: 7152
+      protocol: tcp
+      bind: 127.0.0.1
+      auth: gated
+    - host: 23334
+      container: 23334
+      protocol: tcp
+      auth: none
+      auth_rationale: Stratum mining clients require a raw TCP connection and cannot complete a browser login. Payout worker names are handled by DATUM; the administration UI uses a separate gated port.
+  volumes:
+    - type: bind
+      source: /var/lib/archipelago/datum
+      target: /data
+      options: [rw]
+    - type: tmpfs
+      target: /tmp
+      tmpfs_options: rw,noexec,nosuid,size=16m
+  health_check:
+    type: http
+    endpoint: http://localhost:7152
+    path: /
+    interval: 30s
+    timeout: 5s
+    retries: 3
+  interfaces:
+    main:
+      name: DATUM Gateway
+      type: ui
+      port: 7152
+      protocol: http
+      path: /
+  bitcoin_integration:
+    rpc_access: admin
+    sync_required: true
+    pruning_support: true
+  metadata:
+    icon: /assets/img/app-icons/datum.svg
+    category: bitcoin
+    tier: optional
+    repo: https://github.com/OCEAN-xyz/datum_gateway
+    launch:
+      open_in_new_tab: false
