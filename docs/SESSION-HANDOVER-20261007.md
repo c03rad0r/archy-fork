@@ -9,6 +9,32 @@ Read **Current live checkpoint** first. Older receipts below apply only to their
 
 ## Current live checkpoint — 2026-10-08, supersedes historical entries below
 
+### Latest continuation checkpoint (read before older bullets)
+
+- Actual operation `386004df…` reached target startup, injected failure, and
+  recorded native `Restored`, cleanup complete, maintenance Released and verified
+  database/volume recovery. Independent offline read-only evidence agrees. The
+  QEMU process exited unexpectedly before final same-boot runtime assertions;
+  cause remains unknown. Same preserved overlay is now booting under owned
+  persistent unit `archy-indee-v3-qualification-20261008.service`, with exit and
+  QMP logging. Restored runtime checks and successful cutover remain required.
+  Detailed evidence: `b2ecd940`; no Yaya activation yet.
+- Connection UI slices are reviewed and integrated as `2ca50ae3` and `63e21bb1`.
+  Focused coverage passes (33 cases across the affected files), app typecheck
+  passes, and source-browser checks pass at 390/1440px. Receipt:
+  `~/.local/state/archipelago/release-qualification/connection-journey-20261008/second-slice-receipt.json`.
+  This is not deployed or live reciprocal-handshake/phone acceptance.
+- Firewalls/tunnels UI has passed its initial responsive/layout/background tests;
+  final review additionally gates legacy-backend secret fetching. Operator added
+  matching the standard page header and back button to this same task. Changes
+  remain isolated pending that follow-up; not deployed.
+- File Browser removal warning is integrated (`96259f0e`), seven focused tests
+  passed. Independent Nextcloud/Immich source adapters remain in implementation;
+  Cloud replacement is not yet available. Companion artwork remains last.
+- IndeeHub retains the runtime resource slot. Other agents continue independent
+  source work; no competing heavy compile/build is authorized for this slot.
+
+
 - Candidate: `archy-session-key`, branch `work/post-190-session-key`.
   Latest combined isolated backend suite: **2,031 passed, zero failures, five
   ignored**, all **536 tracked inputs stable at `6a342f66`**. This includes the
