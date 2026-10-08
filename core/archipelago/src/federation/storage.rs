@@ -71,6 +71,23 @@ pub async fn load_nodes(data_dir: &Path) -> Result<Vec<FederatedNode>> {
     load_nodes_inner(data_dir).await
 }
 
+/// Every persisted relationship identity, before display-only onion deduplication.
+/// Callers excluding unsigned claims must not lose an observer/untrusted DID
+/// merely because another record currently shares its route.
+pub(crate) async fn load_node_identities(
+    data_dir: &Path,
+) -> Result<std::collections::HashSet<String>> {
+    let _guard = FEDERATION_STORE_LOCK.lock().await;
+    let content = match fs::read(data_dir.join(FEDERATION_DIR).join(NODES_FILE)).await {
+        Ok(content) => content,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Default::default()),
+        Err(error) => return Err(error).context("Could not read federation identities"),
+    };
+    let file: NodesFile = serde_json::from_slice(&content)
+        .context("Invalid federation identities; unsigned claims cannot replace them")?;
+    Ok(file.nodes.into_iter().map(|node| node.did).collect())
+}
+
 /// Resolve payment identity from persisted records before display deduplication
 /// can merge fields from different identities sharing an address.
 pub(crate) async fn load_unique_payment_peer(
