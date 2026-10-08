@@ -685,23 +685,100 @@ impl Runtime for Podman {
         Ok(())
     }
     async fn healthy(&self, id: &str) -> Result<bool> {
-        // Missing healthcheck is not fabricated health. Running-only containers
-        // can pass runtime readiness; healthchecked members must report healthy.
-        for _ in 0..30 {
+        wait_for_container_health(|| async {
             let raw = Self::command(&["inspect", id]).await?;
             let rows: Vec<serde_json::Value> = serde_json::from_str(&raw)?;
-            let row = rows.first().context("Missing updated container")?;
-            if row.pointer("/State/Status").and_then(|v| v.as_str()) != Some("running") {
-                return Ok(false);
+            rows.into_iter().next().context("Missing updated container")
+        })
+        .await
+    }
+}
+
+// A healthcheck may not run until its interval elapses. The former 30 samples
+// could reject a service immediately before its first successful scheduled check.
+const HEALTH_MAX_WAIT: std::time::Duration = std::time::Duration::from_secs(300);
+const HEALTH_POLL: std::time::Duration = std::time::Duration::from_secs(1);
+
+fn health_wait_budget(row: &serde_json::Value) -> std::time::Duration {
+    let config = row.pointer("/Config/Healthcheck");
+    let positive = |field: &str, default: u64| {
+        config
+            .and_then(|v| v.get(field))
+            .and_then(|v| v.as_u64())
+            .filter(|v| *v > 0)
+            .unwrap_or(default) as u128
+    };
+    // Zero/missing interval and timeout use conservative 30-second defaults;
+    // zero/missing retries uses three. Never let malformed/huge metadata extend
+    // the global ceiling, and never extend the deadline on subsequent polls.
+    let interval = positive("Interval", 30_000_000_000);
+    let timeout = positive("Timeout", 30_000_000_000);
+    let retries = positive("Retries", 3);
+    let start = config
+        .and_then(|v| v.get("StartPeriod"))
+        .and_then(|v| v.as_u64())
+        .unwrap_or(0) as u128;
+    let nanos = start
+        .saturating_add(retries.saturating_mul(interval.saturating_add(timeout)))
+        .saturating_add(HEALTH_POLL.as_nanos())
+        .clamp(30_000_000_000, HEALTH_MAX_WAIT.as_nanos());
+    std::time::Duration::from_nanos(nanos as u64)
+}
+
+fn container_health(row: &serde_json::Value) -> Option<bool> {
+    if row.pointer("/State/Status").and_then(|v| v.as_str()) != Some("running") {
+        return Some(false);
+    }
+    match row.pointer("/State/Health/Status").and_then(|v| v.as_str()) {
+        Some("healthy") => Some(true),
+        Some("unhealthy") => Some(false),
+        None | Some("") => {
+            let configured = match row.pointer("/Config/Healthcheck") {
+                None | Some(serde_json::Value::Null) => false,
+                Some(config) => match config.get("Test").and_then(|v| v.as_array()) {
+                    Some(test) => {
+                        !test.is_empty() && test.first().and_then(|v| v.as_str()) != Some("NONE")
+                    }
+                    None => true, // malformed/incomplete check config is not proof of no check
+                },
+            };
+            if configured {
+                None
+            } else {
+                Some(true)
             }
-            match row.pointer("/State/Health/Status").and_then(|v| v.as_str()) {
-                None | Some("") | Some("healthy") => return Ok(true),
-                Some("unhealthy") => return Ok(false),
-                _ => {}
-            }
-            tokio::time::sleep(std::time::Duration::from_secs(1)).await;
         }
-        Ok(false)
+        _ => None,
+    }
+}
+
+async fn wait_for_container_health<F, Fut>(mut inspect: F) -> Result<bool>
+where
+    F: FnMut() -> Fut,
+    Fut: Future<Output = Result<serde_json::Value>>,
+{
+    let started = tokio::time::Instant::now();
+    let mut row = match tokio::time::timeout_at(started + HEALTH_MAX_WAIT, inspect()).await {
+        Ok(result) => result?,
+        Err(_) => return Ok(false),
+    };
+    let deadline = started + health_wait_budget(&row);
+    loop {
+        if tokio::time::Instant::now() > deadline {
+            return Ok(false);
+        }
+        if let Some(healthy) = container_health(&row) {
+            return Ok(healthy);
+        }
+        let now = tokio::time::Instant::now();
+        if now >= deadline {
+            return Ok(false);
+        }
+        tokio::time::sleep_until((now + HEALTH_POLL).min(deadline)).await;
+        row = match tokio::time::timeout_at(deadline, inspect()).await {
+            Ok(result) => result?,
+            Err(_) => return Ok(false),
+        };
     }
 }
 
@@ -1134,5 +1211,130 @@ mod tests {
         assert!(Guard::acquire(root.path()).is_err());
         drop(guard);
         assert!(Guard::acquire(root.path()).is_ok());
+    }
+}
+
+#[cfg(test)]
+mod health_readiness_tests {
+    use super::*;
+    use serde_json::json;
+    use std::time::Duration;
+
+    fn checked(status: &str) -> serde_json::Value {
+        json!({"State":{"Status":"running","Health":{"Status":status}},
+            "Config":{"Healthcheck":{"Test":["CMD","probe"],"Interval":30_000_000_000u64,
+                "Timeout":5_000_000_000u64,"Retries":5}}})
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn scheduled_health_at_31_seconds_is_not_rejected_at_30() {
+        let started = tokio::time::Instant::now();
+        let result = wait_for_container_health(|| async {
+            Ok(checked(if started.elapsed() >= Duration::from_secs(31) {
+                "healthy"
+            } else {
+                "starting"
+            }))
+        })
+        .await
+        .unwrap();
+        assert!(result);
+        assert_eq!(started.elapsed(), Duration::from_secs(31));
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn unhealthy_and_exited_fail_immediately() {
+        for row in [checked("unhealthy"), json!({"State":{"Status":"exited"}})] {
+            let started = tokio::time::Instant::now();
+            assert!(
+                !wait_for_container_health(|| std::future::ready(Ok(row.clone())))
+                    .await
+                    .unwrap()
+            );
+            assert_eq!(started.elapsed(), Duration::ZERO);
+        }
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn starting_is_bounded_by_initial_config_even_if_later_config_grows() {
+        let started = tokio::time::Instant::now();
+        let mut first = true;
+        assert!(!wait_for_container_health(|| {
+            let mut row = checked("starting");
+            if first {
+                first = false;
+            } else {
+                row["Config"]["Healthcheck"]["StartPeriod"] = json!(u64::MAX);
+            }
+            std::future::ready(Ok(row))
+        })
+        .await
+        .unwrap());
+        assert_eq!(started.elapsed(), Duration::from_secs(176));
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn blocked_initial_inspect_cannot_exceed_global_ceiling() {
+        let started = tokio::time::Instant::now();
+        assert!(!wait_for_container_health(|| std::future::pending())
+            .await
+            .unwrap());
+        assert_eq!(started.elapsed(), HEALTH_MAX_WAIT);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn blocked_later_inspect_cannot_exceed_initial_deadline() {
+        let started = tokio::time::Instant::now();
+        let mut calls = 0;
+        assert!(!wait_for_container_health(|| {
+            calls += 1;
+            let call = calls;
+            async move {
+                if call == 1 {
+                    Ok(checked("starting"))
+                } else {
+                    std::future::pending().await
+                }
+            }
+        })
+        .await
+        .unwrap());
+        assert_eq!(started.elapsed(), Duration::from_secs(176));
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn missing_status_is_not_success_for_configured_healthcheck() {
+        let mut row = checked("starting");
+        row["State"].as_object_mut().unwrap().remove("Health");
+        let started = tokio::time::Instant::now();
+        assert!(
+            !wait_for_container_health(|| std::future::ready(Ok(row.clone())))
+                .await
+                .unwrap()
+        );
+        assert_eq!(started.elapsed(), Duration::from_secs(176));
+        assert!(wait_for_container_health(|| std::future::ready(Ok(
+            json!({"State":{"Status":"running"}})
+        )))
+        .await
+        .unwrap());
+    }
+
+    #[test]
+    fn health_budget_defaults_start_period_and_extreme_values_are_bounded() {
+        assert_eq!(
+            health_wait_budget(&checked("starting")),
+            Duration::from_secs(176)
+        );
+        let mut row = checked("starting");
+        row["Config"]["Healthcheck"]["StartPeriod"] = json!(20_000_000_000u64);
+        assert_eq!(health_wait_budget(&row), Duration::from_secs(196));
+        for value in [json!(0), json!("bad"), json!(-1)] {
+            row["Config"]["Healthcheck"] =
+                json!({"Interval":value,"Timeout":value,"Retries":value});
+            assert_eq!(health_wait_budget(&row), Duration::from_secs(181));
+        }
+        row["Config"]["Healthcheck"] = json!({"StartPeriod":u64::MAX,"Interval":u64::MAX,"Timeout":u64::MAX,"Retries":u64::MAX});
+        assert_eq!(health_wait_budget(&row), HEALTH_MAX_WAIT);
     }
 }
