@@ -633,3 +633,50 @@ regressions and all retained payment/Fleet/lifecycle gates passed. Evidence:
 `/tmp/archy-paid-final-combined-LxkyEuYT/receipt.json` and adjacent log/manifest.
 This proves isolated regression behavior, not recovery of operation23550e9e.
 A matching fixture executable and fresh actual transaction remain required.
+
+### Actual post-target native recovery completed; QEMU exit interrupted final observer
+
+The matching `6a342f66` executable built with all inputs unchanged (7m09s):
+full SHA256 `331125f45859edec177bfa3d12c7d7ab8cb438a44b75362b3573ddbf858388e6`,
+stripped `dd94dc6d2de045b9390d47f47efde48f79be68cf995b3a58c10d3786d0026010`,
+helper `6fc3f978cb88dbf022dc5bc07eaf0337c6b6b79ff42b20cee7b33ed7c100b879`.
+The prior23550e9e child was preserved explicitly unrecovered and powered off.
+A separate synthetic overlay `indeehub-v3-20261008T060000` passed fresh seven-member
+registration, qualified manager startup and read-only API/Redis/PostgreSQL probes.
+QEMU used best-effort I/O class2 priority0, only for this owned fixture; no live
+service priorities changed. Launch socket-length/KVM-group prerequisites were
+corrected before guest qualification, without account or device ACL changes.
+
+Actual RPC operation `386004df-de3b-424f-9edc-830417a85520` completed all seven
+writer drains, backup, fresh PostgreSQL restore proof and all four volume archive
+restore comparisons, then reached target startup and native recovery. It reached
+**Restored, cleanup_done=true, maintenance Released, recovery_data_verified=true,
+all holds removed**, on the same observed guest boot. This is the first completed
+post-target native recovery in this qualification chain.
+
+The observer saw the expected update-failure notification during the interval
+between Restored phase publication and cleanup completion, so its first run
+exited before final independent identity/sentinel assertions. A follow-up read
+confirmed the native clean terminal state. Before independent final acceptance,
+QEMU then exited unexpectedly and SSH refused. No same-boot final UAT pass is
+claimed. The guest's last persisted boot journal contains no shutdown/reboot
+markers or panic; host evidence contains an unrelated publishing compiler's
+memory-cgroup OOM, and no QEMU OOM. The QEMU exit cause remains unproven.
+
+The exact overlay was inspected through unused nbd15 strictly read-only, with
+ext4 journal replay disabled. The encrypted synthetic data was opened read-only
+using its own fixture key file without exposing/copying that key. Independent
+post-exit journal reads confirmed the terminal phase, completed backup/data
+proofs and absent holds. Copied private native journal SHA256:
+`6b4851debc2e1d0445a733a665fbf05c817283b7063b21d445ef6d07e69ca165`;
+maintenance journal:
+`4bb3ae259ab95e8b006b6a0cb784e5061c9b929018b927cbbc6fa3037b6ea051`.
+Receipt is `release-qualification/indeehub-admission-artifacts-20261008/posttarget-rollback-offline.receipt.json`.
+All diagnostic mounts/mappings were closed and nbd15 disconnected afterward.
+
+Next is a controlled restart of this same overlay under a persistent owned
+foreground-QEMU systemd service, retaining `-no-reboot` and recording stderr,
+signals, exit status and a separate QMP event stream. Post-restart image/unit/data
+checks must be labeled separately from the missed same-boot final assertions.
+Do not create another baseline or reinterpret failed historical transactions as
+recovered. Successful cutover and live IndeeHub delivery remain open.
