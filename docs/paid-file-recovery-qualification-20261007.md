@@ -108,3 +108,20 @@ retained under
 The combined run qualifies source/isolated behavior. It does not claim a new
 production payment, initial-payment outage/restart acceptance or deployment of
 this backend to either node.
+
+## Later source checkpoints: validation pending
+
+The 2,006-test stable-input pass above predates Indee scope-launch correction
+`01a55d2d` and rental admission fix `4dde14bf`; it remains valid historical
+qualification, not a full-suite pass for current source. The corrected Indee
+fixture executable SHA256
+`3cbe5a5c3a74e6463ab0874c74e23dfca68f0bfc3fe54883f0edf69abb37ac0d`
+contains the scope-launch correction but predates the rental guard. Its VM
+runtime acceptance must not imply rental guard deployment.
+
+Rental quote, consent and recovery now take the same buyer/seller/content lock
+and on-chain/Lightning journal guards as permanent purchases. Two new actual
+RPC regressions cover concurrent alternate-rail commit, subsequent quote and
+consent retries, exposed Lightning refusal and preserved original records.
+Formatting/syntax checks pass; isolated execution waits for the VM-free compiler
+slot. No real or repeated payment was sent.
