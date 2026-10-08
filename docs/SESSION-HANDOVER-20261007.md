@@ -7,63 +7,62 @@ node, wallet, session or registry data.
 
 Read **Current live checkpoint** first. Older receipts below apply only to their named source/artifacts; later entries retain detailed evidence and corrections.
 
-## Current live checkpoint — supersedes historical entries below
+## Current live checkpoint — 2026-10-08, supersedes historical entries below
 
-- Work continues in `archy-session-key`, branch `work/post-190-session-key`.
-  Latest backend changes: rental guard `4dde14bf`, Fleet collector provenance
-  `9268930c`; both await the next combined isolated backend run. The previous
-  2,006-pass suite predates those changes and the maintenance user-scope fix.
-- Live dev/Yaya dashboard index is
+- Candidate: `archy-session-key`, branch `work/post-190-session-key`.
+  Latest combined isolated backend suite: **2,026 passed, zero failures, five
+  ignored**, all 532 tracked inputs stable at `105454bd`; receipt `361ba45f`.
+  This includes paid/rental/Fleet fixes and update-state ownership. It predates
+  helper-only `66c7a22d`, whose 59 Python controller tests and actual read-only
+  preserved-relay ownership-chain check pass. Final combined qualification is
+  still required after the remaining transaction fixes stabilize.
+- IndeeHub remains the immediate delivery priority. Actual VM manager startup
+  retains all seven runtimes. Real missing-plan refusal, complete seven-member
+  drain/backup, logical PostgreSQL restore comparison, all four volume archive
+  checks, and several pre-target recovery paths have passed. Mixed recovery
+  preserves intact original runtimes and recreates only stopped originals.
+  Latest actual RPC also returns package state to Running with progress cleared;
+  the stuck Installing regression is fixed and accepted on that manager path.
+- **Post-target rollback and successful cutover remain unpassed.** Matching
+  fixture executable build for `66c7a22d` is running while child
+  `indeehub-v2-20261008T012000` remains QMP-paused, preserving runtime identity.
+  Four operations in that child are terminal Restored with cleanup complete and
+  no holds/fence. Earlier failed parent fixtures remain archived/unrecovered;
+  never rewrite their journals or adopt unproven replacement identities.
+  See `docs/managed-update-recovery-implementation.md` for current detailed
+  evidence. No migration or app/catalog changes have been made on live Yaya.
+- Future Indee worker shutdown fix is app-repository commit `29627fc`, four
+  focused tests passed. It still needs a rebuilt worker image and image pin;
+  legacy image compatibility does not mean this future image is delivered.
+- Live dev/Yaya dashboard index remains
   `92050cbda69954f57f4b0bdd73d89623f6aae9fc66e4c074ee4f46bdcb9c3b2a`.
-  Guarded preservation and browser checks passed. **Phone artwork still failed**;
-  the operator explicitly parked it until all other tasks finish (task23).
-  APK0.5.37 background playback/notification presence remain accepted.
-- Original1.9.0 ISO software release is now published on ngit with all three
-  original assets; see the publication receipt below. No next OTA/ISO/catalog
-  release is accepted or published.
-- IndeeHub's corrected integration executable (scope/lifecycle fixes) built with
-  stable input hashes; SHA3cbe5a5c3a74e6463ab0874c74e23dfca68f0bfc3fe54883f0edf69abb37ac0d.
-  Its seven-service VM manager-start acceptance passed. It predates the rental
-  and Fleet changes and is not an optimized release artifact.
-- VM update/rollback acceptance is still open. Properly awaited missing-plan
-  refusal passed; temporary tracing was removed. Reviewed-plan execution reached
-  Prepared/Editing/Restoring, but stopped before target startup because nginx -T
-  inherited the manager's read-only mount context. Proven helper fix b03d3c89
-  invokes that fixed inspection through a root system service;25 focused Python
-  tests pass. Candidate-helper standalone drain/backup qualification is underway
-  against the synthetic held operation before another embedded-hash backend build.
-  Standalone helper then passed fence closure, queue pause and frontend stop,
-  but refused the legacy worker exit137. Original worker lacks signal shutdown
-  handlers; safe drain compatibility is under investigation. No database backup
-  or target startup was reached. Do not classify forced exit as graceful.
-  No controller hash bypass; original recovery images/journals/holds retained.
-  Earlier lock refusals were periodic reconciliation contention, not a proven
-  persistent source defect. Do not claim full rollback/update acceptance yet.
-- The exact selected demo is Yaya Cloud `/Photos/web54321-balanced-2.mp4`,
-  203331877 bytes, SHA256766f5f6b9d2a6fd90cb7541447fbba666773635bd90def145bcd479a1b8b0591.
-  Read-only hash and Chromium metadata (1920x1080,249.766667s) pass. Preserve source.
-  Backstage publication, cross-node paid viewing and bounded payment authorization
-  remain separate open gates; do not spend or select another personal file.
-- Fleet alert-error/provenance/history UI is integrated f5a1806a+fd98b383,
-  not live:29 focused tests and app typecheck pass;390/1440 browser checks cover
-  alert/provenance, while history has a real component regression. Frozen combined
-  UI suite passed1459tests/177files with all771input hashes stable. A subsequent
-  alert-row/cache provenance delta is integrated as ff522086:31 focused tests
-  and exact app typecheck pass. Cached nodes and alerts retain content but lose
-  identity claims until a fresh server response. Final artifact build is next;
-  do not claim the full suite covered that later delta. Deploy Fleet UI with its
-  corrected backend, never treat an older server's report claims as proof.
-- Task21 public UI groundwork `6bcdd106` (37 tests + app typecheck) and task22
-  Mesh picker groundwork `3360354a` (10 tests) remain isolated/unintegrated. They
-  do not enable live menus or complete backend/global search/paid delivery/folders.
-  Their end-of-backlog delivery order remains in force.
-- Paid-file agent owns the next full isolated backend run, after VM shutdown and
-  explicit final input freeze. Never run unrestricted cargo tests on a live node.
-- Optional snapshot helper1347627 was cancelled with all three originals intact;
-  do not resume its PID. Five earlier UI archive relocations remain completed.
-- Private Android debug.keystore remains untracked; never stage it. Preserve
-  wallets, app data, stopped/uninstalled choices. Framework startup incident is
-  closed separately from the still-open paid-file regression.
+  Final Fleet UI artifact **is built**, not deployed: archive
+  `063752912fdcae2d1abf2abaccd53bfad39acce23c9a5d896ce52ba1e1996080`,
+  index `2469e5f2ea2f16598982174e6a0944b3bddadc2e0e587e2f6b3a4253366f0078`.
+  Full baseline 1,459 tests/177 files plus exact three-file delta 31 focused
+  tests/typecheck pass; 771 inputs stayed stable during build. Narrow frozen
+  source layout checks pass at 390/1440px, distinct from production-dist/live
+  acceptance. Receipt: `docs/fleet-final-ui-artifact-20261007.md` (`470d4f39`).
+  Guarded coupled backend/UI deployment preparation is underway; not released.
+- APK0.5.37 background playback and notification presence are operator accepted.
+  Phone artwork still failed; operator explicitly parked it until **task23,
+  after all other tasks**. No further artwork investigation/builds now.
+- Original 1.9.0 ISO software release is published on ngit with its three original
+  assets. No next OTA/ISO/catalog release is accepted or published.
+- Selected demo: Yaya Cloud `/Photos/web54321-balanced-2.mp4`, 203331877 bytes,
+  SHA256 `766f5f6b9d2a6fd90cb7541447fbba666773635bd90def145bcd479a1b8b0591`.
+  Read-only hash and browser metadata (1920x1080, 249.766667s) pass. Preserve source.
+  Publication, two-node discovery, producer payout/payment-method binding, timed
+  viewing and bounded payment authorization remain separate open gates. Never
+  send a repeat payment to recover delivery.
+- Task21 public UI groundwork `6bcdd106` and task22 Mesh picker groundwork
+  `3360354a` remain isolated/unintegrated, after earlier tasks. They do not enable
+  live menus or complete backend/global search/paid delivery/folders.
+- Framework LND startup incident is closed with operator acceptance; separate
+  paid-file release regression remains open. Preserve wallets, app data and
+  stopped/uninstalled choices. Backend tests only through isolated runner.
+- Private Android `debug.keystore` remains untracked: never stage. Optional
+  snapshot helper1347627 was cancelled with originals intact: never resume PID.
 
 ## Historical starting candidate
 
