@@ -32,6 +32,10 @@ Read **Current live checkpoint** first. Older receipts below apply only to their
   invokes that fixed inspection through a root system service;25 focused Python
   tests pass. Candidate-helper standalone drain/backup qualification is underway
   against the synthetic held operation before another embedded-hash backend build.
+  Standalone helper then passed fence closure, queue pause and frontend stop,
+  but refused the legacy worker exit137. Original worker lacks signal shutdown
+  handlers; safe drain compatibility is under investigation. No database backup
+  or target startup was reached. Do not classify forced exit as graceful.
   No controller hash bypass; original recovery images/journals/holds retained.
   Earlier lock refusals were periodic reconciliation contention, not a proven
   persistent source defect. Do not claim full rollback/update acceptance yet.
@@ -44,7 +48,9 @@ Read **Current live checkpoint** first. Older receipts below apply only to their
   not live:29 focused tests and app typecheck pass;390/1440 browser checks cover
   alert/provenance, while history has a real component regression. Frozen combined
   UI suite passed1459tests/177files with all771input hashes stable. A subsequent
-  alert-row provenance label is being qualified separately before artifact build;
+  alert-row/cache provenance delta is integrated as ff522086:31 focused tests
+  and exact app typecheck pass. Cached nodes and alerts retain content but lose
+  identity claims until a fresh server response. Final artifact build is next;
   do not claim the full suite covered that later delta. Deploy Fleet UI with its
   corrected backend, never treat an older server's report claims as proof.
 - Task21 public UI groundwork `6bcdd106` (37 tests + app typecheck) and task22
