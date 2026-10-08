@@ -694,3 +694,14 @@ no implementation or public visibility change is enabled.
 - Qualify both source choices, tree navigation, whole-library search, retained
   multi-selection/removal, Send, cross-node receipt/open/download, free and paid
   access, duplicate/reconnect recovery and responsive/accessibility behaviour.
+
+
+## 23. Companion notification artwork — operator-deferred until all other tasks
+
+The operator retested APK0.5.37 with the deployed Yaya artwork UI and reports
+that the song image still does not show. On 2026-10-07 they explicitly asked to
+park this until the end of all tasks. Background playback and notification
+presence remain accepted; artwork is failed/open, not completed by fixture tests.
+Do not spend further investigation/build/deployment work on artwork ahead of
+the other tasks. Resume the actual-track authentication/CORS/thumbnail/native
+notification investigation only at the deferred end, preserving playback.

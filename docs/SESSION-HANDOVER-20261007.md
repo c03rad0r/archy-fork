@@ -679,3 +679,19 @@ menu-enabled. Their broader backend/transport/inheritance work remains open and
 their end-of-backlog delivery order is retained. Companion agent is now handling
 Fleet acceptance; paid-file agent owns the next combined isolated backend run
 after the VM window. Optional archive helper was cancelled; never resume its PID.
+
+
+### Operator artwork deferral supersedes pending confirmation
+
+The user reports the notification image still does not appear after deployment,
+and explicitly requests parking it until the end of all tasks. Retain physical
+FAIL/open, background playback accepted, and stop further artwork investigation.
+Backlog task23 records the deferred follow-up after all earlier tasks.
+
+VM update requests so far hit lifecycle-lock admission before reviewed-plan
+validation. They prove no mutation, not the missing-plan gate or rollback. Indee
+agent is tracing actual lock errno/context; startup preservation is still valid.
+Root/paid agent Fleet provenance fix is isolated in
+`/tmp/archy-fleet-provenance-20261007`, companion agent Fleet alert/provenance UI
+is also isolated. Neither is live or compiled into the VM artifact. Their final
+review/integration must precede the next combined backend source freeze.

@@ -12,8 +12,9 @@ the delivered Cloud PiP flow on2026-10-07. Audio and video use separate channels
 Native background audio is operator-confirmed on companion 0.5.37/build57 for
 the reported background playback and notification flow. The full physical
 controls, queue, task-removal and recovery matrix remains open. Notification
-artwork has a qualified dashboard correction deployed on dev and Yaya; physical
-confirmation remains open. It does not require another APK. Browser and Robolectric
+artwork remains failed on the physical phone after the qualified dashboard
+correction was deployed on dev and Yaya. The operator explicitly deferred further
+artwork work until all other tasks are finished. APK57 remains unchanged. Browser and Robolectric
 results do not establish phone acceptance.
 
 ## Declare the audio integration
@@ -194,8 +195,8 @@ remains open. No definitive cause of the earlier failure is established. USB
 access is unavailable. The artwork origin correction passes 26 focused dashboard
 tests, production browser checks at 390/1440px and two native JPEG tests on API
 28/35. Guarded dashboard deployment and deployed browser checks passed on dev
-and Yaya (receipt d23da226). Physical artwork confirmation remains pending;
-these checks do not prove the cover from a particular live track.
+and Yaya (receipt d23da226). Physical artwork acceptance failed: the operator subsequently reported that the actual phone still shows no cover.
+Further artwork work is explicitly deferred until the end of all tasks.
 
 
 Apps continue using the existing version1 app audio protocol above. They do not
