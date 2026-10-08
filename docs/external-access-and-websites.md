@@ -367,3 +367,21 @@ hidden, no generic login request occurred, refusal prevented upload and explicit
 approval stored the synthetic file. Actual phone confirmation is still pending.
 The archive UI is deployed with backend capability gating; UI tests cover fresh
 consent on snapshot changes and independent revocation. No public release made.
+
+### AI provider direction — 2026-10-08
+
+The operator selected Routstr as the default, with Claude and OpenAI API keys as
+alternatives, and deprioritized Ollama. The isolated publishing branch merged the
+already accepted provider setup through commit `83ba98ab`, preserving its history.
+Website design now opens that trusted dashboard setup and its existing ecash
+Receive flow directly. New/missing provider settings default to Routstr; saved
+provider selections remain unchanged. AIUI lists Routstr first. The Ollama draft
+form was removed from the walkthrough; its compatibility RPC remains available.
+The failed Framework Ollama test installation was removed through normal package
+uninstall with `preserve_data: true`; no model was downloaded.
+
+Funding and spending permission remain separate. Opening setup/top-up does not
+change the allowance, send a payment, start inference, or publish content. API
+keys use the existing private node credential store and are not passed to AIUI.
+Focused provider/publishing tests and production qualification are in progress;
+these changes are not yet deployed or publicly released.

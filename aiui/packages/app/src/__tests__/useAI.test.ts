@@ -61,6 +61,12 @@ function mockClaudeResponse(events: string[]) {
   }
 }
 
+it('starts on Routstr before any saved provider selection', () => {
+  setActivePinia(createPinia())
+  const { activeProvider } = useAI()
+  expect(activeProvider.value).toBe('routstr')
+})
+
 describe('useAI', () => {
   beforeEach(() => {
     setActivePinia(createPinia())
@@ -74,11 +80,6 @@ describe('useAI', () => {
   })
 
   describe('provider selection', () => {
-    it('defaults to claude provider', () => {
-      const { activeProvider } = useAI()
-      expect(activeProvider.value).toBe('claude')
-    })
-
     it('switches provider via setProvider', () => {
       const { setProvider, activeProvider, activeModel } = useAI()
       setProvider('openrouter')

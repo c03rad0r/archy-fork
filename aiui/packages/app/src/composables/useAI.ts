@@ -120,9 +120,9 @@ Prioritize Podcasting 2.0–friendly platforms: Fountain.fm, Podcast Index, Cast
 Always include these tags so the UI can render rich cards. Write a brief reason why each is worth checking out.
 ${librarySection}`
 
-const activeProvider = ref<Provider>(archyBridge.isInArchy() ? 'auto' : 'claude')
+const activeProvider = ref<Provider>('routstr')
 
-const activeModel = ref('claude-haiku-4.5')
+const activeModel = ref('routstr-unavailable')
 
 // Credentials require setup; network failures and provider outages require retry.
 const needsApiKey = ref(false)
@@ -160,11 +160,11 @@ async function refreshRoutstrModels() {
 
 const availableProviders = computed(() => {
   if (archyBridge.isInArchy()) return [
-    { id: 'local' as Provider, name: 'Local AI', models: [{ id: 'node', name: 'Node configuration' }] },
-    { id: 'auto' as Provider, name: 'Node AI', models: [{ id: 'node', name: 'Node configuration' }] },
+    { id: 'routstr' as Provider, name: 'Routstr (sats)', models: routstrModels.value.length ? routstrModels.value : [{ id: 'routstr-unavailable', name: 'Models unavailable — retry' }] },
     { id: 'claude' as Provider, name: 'Claude API', models: [{ id: 'node', name: 'Node configuration' }] },
     { id: 'openai' as Provider, name: 'OpenAI API', models: [{ id: activeProvider.value === 'openai' ? activeModel.value : 'node', name: activeProvider.value === 'openai' ? activeModel.value : 'Configure model' }] },
-    { id: 'routstr' as Provider, name: 'Routstr (sats)', models: routstrModels.value.length ? routstrModels.value : [{ id: 'routstr-unavailable', name: 'Models unavailable — retry' }] },
+    { id: 'auto' as Provider, name: 'Node AI', models: [{ id: 'node', name: 'Node configuration' }] },
+    { id: 'local' as Provider, name: 'Local AI', models: [{ id: 'node', name: 'Node configuration' }] },
   ]
   const providers: { id: Provider; name: string; models: { id: string; name: string }[] }[] = [
     {

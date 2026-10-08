@@ -6,6 +6,7 @@ const appStore = vi.hoisted(() => ({ installPackage: vi.fn(), data: { 'package-d
 vi.mock('@/stores/app', () => ({ useAppStore: () => appStore }))
 vi.mock('vue-router', () => ({ useRoute: () => page, useRouter: () => ({ push: vi.fn() }), RouterLink: { props: ['to'], template: '<a :href="to"><slot /></a>' } }))
 vi.mock('@/api/rpc-client', () => ({ rpcClient: { call: vi.fn() } }))
+vi.mock('@/components/AIConnectionModal.vue', () => ({ default: { props: ['show'], template: '<div data-testid="ai-connection" :data-open="show" />', methods: { showRoutstr() {} } } }))
 vi.mock('@/services/publishing', async (original) => ({ ...await original<typeof import('@/services/publishing')>(), publishing: api }))
 import PublishingSetup from '../PublishingSetup.vue'
 import { rpcClient } from '@/api/rpc-client'
@@ -18,6 +19,19 @@ beforeEach(() => {
   api.update.mockResolvedValue({ state: { ...state(), version: 3 }, project_id: null })
 })
 describe('publishing setup', () => {
+  it('offers provider setup and credit from website design without starting generation', async () => {
+    page.name = 'publish-website'
+    appStore.data['package-data'].blossom = { state: 'installed' }
+    const wrapper = mount(PublishingSetup); await flushPromises()
+    expect(wrapper.text()).toContain('Use Routstr by default')
+    expect(wrapper.text()).not.toContain('Installed Ollama model')
+    await wrapper.findAll('button').find(b => b.text() === 'Routstr credit and top up')!.trigger('click')
+    expect(wrapper.get('[data-testid="ai-connection"]').attributes('data-open')).toBe('true')
+    expect(api.generate).not.toHaveBeenCalled()
+    expect(api.update).not.toHaveBeenCalled()
+    wrapper.unmount()
+  })
+
   it('keeps unpublish controls available when a published route is deselected', async () => {
     page.name = 'publish-website'
     appStore.data['package-data'].blossom = { state: 'installed' }

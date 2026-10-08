@@ -20,7 +20,7 @@
     <div v-else-if="mode === 'routstr'" class="space-y-3">
       <p class="text-sm text-white/70">Pay for AI with ecash. Add funds to this node’s wallet and set the most it may spend.</p>
       <p class="text-sm text-white/70">Ecash balance: {{ balance === null ? 'Unavailable' : balance.toLocaleString() + ' sats' }}</p>
-      <button class="glass-button rounded-lg px-4 py-2 text-sm text-white" @click="funding = true">Add ecash</button>
+      <button class="glass-button rounded-lg px-4 py-2 text-sm text-white" @click="funding = true">Top up with ecash</button>
       <RoutstrBudgetSection />
       <button class="glass-button rounded-lg px-4 py-2 text-sm text-white w-full" @click="continueRoutstr">Use Routstr</button>
       <p class="text-xs text-white/50">The selected model’s price and accepted mint still apply. No payment is sent by opening this setup.</p>
@@ -49,8 +49,8 @@ interface ProviderStatus {
 }
 const props = defineProps<{ show: boolean }>()
 const emit = defineEmits<{ close: []; configured: [provider: Choice | 'auto' | 'local', model?: string] }>()
-const choices: { id: Choice; label: string }[] = [{ id: 'claude', label: 'Claude API' }, { id: 'openai', label: 'OpenAI API' }, { id: 'routstr', label: 'Routstr · sats' }]
-const mode = ref<Choice | null>(null)
+const choices: { id: Choice; label: string }[] = [{ id: 'routstr', label: 'Routstr · sats' }, { id: 'claude', label: 'Claude API' }, { id: 'openai', label: 'OpenAI API' }]
+const mode = ref<Choice | null>('routstr')
 const key = ref('')
 const model = ref('')
 const status = ref<ProviderStatus | null>(null)
@@ -129,7 +129,7 @@ async function continueRoutstr() {
   } catch { error.value = 'Could not select Routstr. Try again.' }
 }
 async function finishFunding() { funding.value = false; await refreshBalance() }
-watch(() => props.show, open => { if (open) { error.value = ''; void refresh() } else { key.value = ''; funding.value = false } })
+watch(() => props.show, open => { if (open) { error.value = ''; void refresh(); if (mode.value === 'routstr') void refreshBalance() } else { key.value = ''; funding.value = false } })
 async function syncSelection() { const state = await refresh(); if (state) emit('configured', state.settings.provider, state.settings.provider === 'openai' ? state.settings.openai_model : undefined) }
 defineExpose({ checkNeeded, syncSelection, showRoutstr: () => choose('routstr') })
 </script>

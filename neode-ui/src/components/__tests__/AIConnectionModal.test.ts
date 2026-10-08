@@ -1,6 +1,7 @@
 import { mount, flushPromises } from '@vue/test-utils'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import AIConnectionModal from '../AIConnectionModal.vue'
+import ReceiveBitcoinModal from '../ReceiveBitcoinModal.vue'
 import { rpcClient } from '@/api/rpc-client'
 vi.mock('@/api/rpc-client', () => ({ rpcClient: { call: vi.fn() } }))
 vi.mock('../ReceiveBitcoinModal.vue', () => ({ default: { props: ['show', 'initialMethod'], template: '<div />' } }))
@@ -10,6 +11,16 @@ function mountModal() { return mount(AIConnectionModal, { props: { show: false }
 function button(w: ReturnType<typeof mountModal>, label: string) { return w.findAll('button').find(b => b.text() === label)! }
 beforeEach(() => { vi.clearAllMocks(); vi.mocked(rpcClient.call).mockImplementation(async ({ method }) => method === 'system.settings.get' ? { value: state() } : {}) })
 describe('AI connection setup', () => {
+  it('opens on Routstr with a top-up action without authorizing spending', async () => {
+    const w = mountModal(); await w.setProps({ show: true }); await flushPromises()
+    expect(button(w, 'Routstr · sats').attributes('aria-pressed')).toBe('true')
+    expect(button(w, 'Top up with ecash').exists()).toBe(true)
+    expect(vi.mocked(rpcClient.call).mock.calls.every(([r]) => !['assistant.budget-set', 'system.settings.set'].includes(r.method))).toBe(true)
+    await button(w, 'Top up with ecash').trigger('click')
+    expect(w.findComponent(ReceiveBitcoinModal).props()).toMatchObject({ show: true, initialMethod: 'ecash' })
+    w.unmount()
+  })
+
   it('detects absent configuration without treating a failed status query as missing keys', async () => {
     const w = mountModal()
     expect(await (w.vm as any).checkNeeded()).toBe(true)

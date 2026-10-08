@@ -8,11 +8,11 @@ use tokio::{fs, io::AsyncWriteExt};
 #[derive(Clone, Copy, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum Provider {
-    #[default]
     Auto,
     Claude,
     Openai,
     Local,
+    #[default]
     Routstr,
 }
 
@@ -125,6 +125,33 @@ async fn write_private(path: &Path, bytes: &[u8]) -> Result<()> {
 mod tests {
     use super::*;
     #[tokio::test]
+    async fn fresh_nodes_default_to_routstr_and_saved_choices_are_preserved() {
+        let dir = tempfile::tempdir().unwrap();
+        assert_eq!(
+            ModelProvider::load(dir.path()).await.unwrap().provider,
+            Provider::Routstr
+        );
+        for provider in [
+            Provider::Claude,
+            Provider::Openai,
+            Provider::Auto,
+            Provider::Local,
+        ] {
+            ModelProvider {
+                provider,
+                openai_model: "test-model".into(),
+            }
+            .save(dir.path())
+            .await
+            .unwrap();
+            assert_eq!(
+                ModelProvider::load(dir.path()).await.unwrap().provider,
+                provider
+            );
+        }
+    }
+
+    #[tokio::test]
     async fn private_keys_replace_atomically_and_never_enter_public_settings() {
         use std::os::unix::fs::PermissionsExt;
         let dir = tempfile::tempdir().unwrap();
@@ -168,7 +195,7 @@ mod tests {
         assert!(invalid.save(dir.path()).await.is_err());
         assert_eq!(
             ModelProvider::load(dir.path()).await.unwrap().provider,
-            Provider::Auto
+            Provider::Routstr
         );
         let path = dir.path().join("settings/model-provider.json");
         fs::write(&path, b"broken").await.unwrap();

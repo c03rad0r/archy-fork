@@ -13,6 +13,7 @@ import BackButton from '@/components/BackButton.vue'
 import SetupWalkthrough from '@/components/SetupWalkthrough.vue'
 import WebsiteArchiveSharing from '@/components/WebsiteArchiveSharing.vue'
 import SearchableAppSelect from '@/components/SearchableAppSelect.vue'
+import AIConnectionModal from '@/components/AIConnectionModal.vue'
 
 const router = useRouter()
 const route = useRoute()
@@ -29,8 +30,9 @@ const selected = ref<PublishRoute[]>([])
 const html = ref('')
 const hostname = ref('')
 const destination = ref('')
-const prompt = ref('')
-const model = ref('')
+const showAiConnection = ref(false)
+const aiConnection = ref<InstanceType<typeof AIConnectionModal>>()
+function openAiCredit() { showAiConnection.value = true; aiConnection.value?.showRoutstr() }
 const dns = ref<DnsPlan | null>(null)
 const httpsCheck = ref<HttpsCheck | null>(null)
 watch([projectId, hostname, destination, () => status.value?.state.version], () => { httpsCheck.value = null })
@@ -203,13 +205,6 @@ async function setArchiveSharing(route: 'fips' | 'tor', enable: boolean) {
     message.value = enable ? 'This archived snapshot is available on the selected website connection. Other Blossom files remain private.' : 'File sharing stopped on this connection. Copies already downloaded may remain.'
   })
 }
-async function generate() {
-  await perform(async () => {
-    const result = await publishing.generate(prompt.value, model.value.trim())
-    html.value = result.html
-    message.value = 'Local model draft ready to preview. Save it to keep this revision.'
-  })
-}
 async function setTorPublication(enable: boolean) {
   await perform(async () => {
     if (!status.value || !current.value) return
@@ -372,6 +367,15 @@ onMounted(refresh)
         </section>
       </template>
       <template #design>
+        <section class="space-y-4">
+          <h2 class="text-lg font-semibold">Your AI connection</h2>
+          <p class="text-sm text-white/60">Use Routstr by default, or choose Claude or OpenAI with your API key. Your selected provider creates the draft; you review it here before publishing.</p>
+          <div class="flex flex-wrap items-center gap-3">
+            <button class="glass-button glass-button-sm rounded-lg px-5 py-2 text-sm font-medium" @click="showAiConnection = true">Choose AI provider</button>
+            <button class="glass-button glass-button-sm rounded-lg px-5 py-2 text-sm font-medium" @click="openAiCredit">Routstr credit and top up</button>
+          </div>
+          <p class="text-xs text-white/50">Routstr uses your node’s ecash balance within the spending allowance you set. Topping up and changing the allowance are separate choices.</p>
+        </section>
         <section v-if="websiteMode && pendingWebsiteHtml !== null" class="space-y-3">
           <h2 class="text-lg font-semibold">Continue from AIUI</h2>
           <p class="text-sm text-white/60">Create a new project from the HTML you selected in AIUI. Existing projects remain unchanged.</p>
@@ -397,12 +401,6 @@ onMounted(refresh)
           <h2 class="text-lg font-semibold">Describe and preview</h2>
           <RouterLink to="/dashboard/chat" class="glass-button glass-button-sm rounded-lg px-5 py-2 text-sm font-medium">Create with AIUI <span aria-hidden="true">↗</span></RouterLink>
           <p class="text-sm text-white/60">In AIUI, use “Continue to website setup” on your HTML preview to bring it back here for review.</p>
-          <details class="guide-details"><summary>Generate with a model on this node</summary><div class="space-y-4 pt-4">
-          <p class="text-sm text-white/60">Use an installed Ollama model to create a draft locally.</p>
-          <label class="block">What would you like to make?<textarea v-model="prompt" maxlength="16000" rows="3" class="field mt-2" placeholder="A simple website for my community garden…" /></label>
-          <label class="block">Installed Ollama model<input v-model="model" class="field mt-2" placeholder="Enter the exact installed model name" /></label>
-          <button class="glass-button glass-button-sm rounded-lg px-5 py-2 text-sm font-medium" :disabled="!prompt.trim() || !model.trim()" @click="generate">Generate locally</button>
-          </div></details>
           <details class="guide-details"><summary>Edit or paste HTML</summary><div class="pt-4">
           <label class="block">Website HTML<textarea v-model="html" rows="8" class="field mt-2 font-mono text-xs" spellcheck="false" /></label>
           </div></details>
@@ -584,6 +582,7 @@ onMounted(refresh)
         </section>
       </template>
     </SetupWalkthrough>
+    <AIConnectionModal ref="aiConnection" :show="showAiConnection" @close="showAiConnection = false" />
   </main>
 </template>
 
