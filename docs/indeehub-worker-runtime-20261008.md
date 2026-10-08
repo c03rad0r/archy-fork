@@ -78,3 +78,29 @@ The unsigned catalog remains unchanged at
 `9967d06c8809d69cce6057b9f45a630e9ce21fd5cd33541e352e23336cd8eb07`.
 No historical signed catalog was rewritten. This comparison establishes correct
 staged hooks, not successful cutover or live deployment; those gates remain open.
+
+
+## Private Yaya worker import completed — 8 October
+
+After full native cutover `8b53579c` and same-boot post-target rollback `5bd06edc`
+passed, the root-reviewed worker-only importer was executed with a separate
+explicitly authorized plan binding both exact acceptance receipts. The original
+prepared plan remains unchanged. This inert image staging does not select a
+catalog, start/stop an app or publish a release, so source/signature publication
+gates remain required for activation rather than blocking private import.
+
+The exact qualified OCI archive, all content-addressed blobs, image ID and
+manifest digest were verified before/after load; the reviewed local alias points
+to image `9b3ef4116d4b998820e25e09eda7ca14f23e9e264158629451b81e32b47d9c8e`.
+All30 existing container IDs, start times and statuses, node identity/session,
+operator stop/uninstall choices, management PID/start time and catalogs were
+byte/structure-equal across the import. **No app lifecycle or catalog activation
+occurred.** Receipt:
+`~/.local/state/archipelago/release-qualification/worker-runtime-29627fc-20261008/yaya-worker-import-receipt-20261008.json`.
+
+Fresh read-only Yaya preflight also confirmed all seven legacy members running,
+all original Quadlet hashes unchanged from the retained baseline, and frontend/API
+local alias+digest/image IDs matching their prior import receipt. No API public
+registration-pin receipt exists yet; qualified existing-node pin preparation,
+matching optimized backend, exact signed catalog/source acceptance and actual
+Yaya UI/data acceptance remain open.
