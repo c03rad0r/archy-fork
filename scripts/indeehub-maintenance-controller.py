@@ -167,7 +167,13 @@ class Controller:
     def close_ingress(self):
         # The deployed native AppGate and legacy nginx guards consume this exact
         # sentinel. This code never edits arbitrary nginx configuration.
-        config=self.run(['sudo','-n','nginx','-T']).decode()
+        # nginx -T tests its pid file as well as reading configuration. The
+        # manager's strict mount namespace makes /run/nginx.pid read-only, even
+        # after sudo. Use one fixed read-only command in PID1's fresh service
+        # context; do not broaden the manager's writable paths or detach the
+        # controller that owns the inherited lifecycle lock.
+        config=self.run(['sudo','-n','/usr/bin/systemd-run','--quiet','--wait',
+                         '--pipe','--collect','--','/usr/sbin/nginx','-T']).decode()
         validate_nginx_guards(config)
         self.fence.parent.mkdir(mode=0o755,exist_ok=True)
         self.fence.parent.chmod(0o755)

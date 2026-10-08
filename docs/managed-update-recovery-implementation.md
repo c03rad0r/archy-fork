@@ -261,3 +261,35 @@ recaptured as a new baseline, never described as preserved across that shutdown.
 A direct-kernel initramfs-only recovery boot installed an absent-marker manager
 startup condition before normal boot, and `ConditionResult=no` verified the old
 manager never started. The subsequent diagnostic boot shut down gracefully.
+
+### Actual RPC preflight and nginx namespace evidence (2026-10-08 UTC)
+
+Corrected VM executable built successfully from frozen inputs (normal binary
+SHA256 `3cbe5a5c3a74e6463ab0874c74e23dfca68f0bfc3fe54883f0edf69abb37ac0d`;
+stripped transfer SHA256 `753f8ba6ac342c8f4b9a19c8079a51dfd1da4dcb517d4ea4d0e54035c22f5788`).
+Receipt: `/tmp/archy-indeehub-corrected-executable-20261007.json`. It predates the
+later rental guard and nginx helper correction; not a release artifact.
+
+Actual manager startup completed a62-app reconcile pass with all seven IndeeHub
+members `NoOp`, every baseline container identity preserved, and API/manager
+HTTP200. Subsequent real update attempts initially met the legitimate background
+lifecycle lock. A temporary behavior-preserving fixture tracer confirmed later
+admission succeeded. One early diagnostic teardown interrupted asynchronous
+preflight and is invalid as source-defect evidence. The corrected diagnostic
+waited for its terminal refusal before restoring the deliberately withheld plan
+and removing the tracer; all seven original identities remained, no supervised
+journal existed. No speculative lifecycle-lock patch was made.
+
+The admitted reviewed-plan RPC then reached `Prepared → Editing → Restoring`.
+All seven recovery images exist; target startup never began. The controller
+remained `Prepared` because `sudo nginx -T` attempted to open `/run/nginx.pid`
+inside the manager's read-only mount namespace. Holds and the unresolved journal
+were preserved; this is not a successful rollback or migration receipt.
+
+A manager-equivalent hardened VM probe passed with the fixed command
+`sudo -n /usr/bin/systemd-run --quiet --wait --pipe --collect -- /usr/sbin/nginx -T`.
+It validated the required ingress guards without printing effective configuration
+or widening manager write access. The controller uses that fixed command now;
+25 pure controller tests pass, including refusal before fence creation on dump
+failure. A new helper hash requires a matching backend rebuild. Candidate-helper
+qualification remains separate from actual backend transaction acceptance.

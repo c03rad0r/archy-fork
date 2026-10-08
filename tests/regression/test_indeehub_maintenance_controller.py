@@ -155,6 +155,15 @@ class MaintenanceTests(unittest.TestCase):
   module.atomic(c.data/'update-transactions'/'supervised'/(self.operation+'.json'),{'phase':'Restored','target_startup_began':True})
   with self.assertRaisesRegex(RuntimeError,'Data compatibility'):c.release('restored')
   self.assertTrue(c.fence.exists())
+ def test_nginx_namespace_failure_cannot_create_admission_fence(self):
+  def failed_dump(argv,timeout,output):
+   self.assertEqual(argv,['sudo','-n','/usr/bin/systemd-run','--quiet','--wait',
+                          '--pipe','--collect','--','/usr/sbin/nginx','-T'])
+   raise module.subprocess.CalledProcessError(1,argv)
+  self.controller.runner=failed_dump
+  with self.assertRaises(module.subprocess.CalledProcessError):self.controller.close_ingress()
+  self.assertFalse(self.controller.fence.exists())
+  self.assertIsNone(self.controller.record)
  def test_every_legacy_sublocation_must_be_fenced(self):
   guard='if (-f /var/lib/archipelago/app-maintenance/indeedhub) { return 503; }'
   blocks=[f'location /app/indeedhub/{suffix} {{\n {guard}\n proxy_pass http://127.0.0.1:7778/;\n}}' for suffix in ('','_next/','ws/')]
