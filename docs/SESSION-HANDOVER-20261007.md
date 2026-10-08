@@ -609,3 +609,33 @@ boot, apply the documented GRUB manager mask and validate read-only exec context
   two-node acceptance is pending. Producer wallet binding and rental payment
   method coverage are still substantive gaps; seven-service migration alone
   cannot close the complete IndeeHub task.
+
+
+### Delivered artwork and selected IndeeHub demo
+
+Artwork dashboard delivery is now complete on both dev and Yaya, with index
+92050cbda69954f57f4b0bdd73d89623f6aae9fc66e4c074ee4f46bdcb9c3b2a.
+Yaya preserved all 174 checked paths and 30 container IDs/start times, including
+delayed verification; actual deployed browser checks pass at 390/1440px. Receipt
+and investigation commit d23da226. APK57 unchanged; physical cover confirmation
+remains open.
+
+The operator selected `web54321-balanced-2.mp4` for IndeeHub. Authenticated Yaya
+Cloud metadata confirmed an exact match, 203331877 bytes, without reading video
+bytes or publishing it. Private source path/metadata receipt is retained in
+`release-qualification/indeehub-selected-demo-20261007/source.json`. Preserve the
+original. File-identification blocker is cleared; paid-test authorization is not.
+
+Task11 baseline: 24 actual deployed Apps/Web5/Cloud route-shell checks passed on
+dev/Yaya at 390/1440px, no page errors/overflow/mutation attempts. Single samples
+under concurrent build load: cold document 485–2035ms; warm router 123–1115ms.
+This is not useful-data, tap feedback, phone, distribution or before/after proof.
+Retained initial transition-selector failure and corrected evidence under
+`release-qualification/navigation-baseline-20261007/`.
+
+Rental payment review found missing shared cross-rail admission at
+content.rental-purchase. Reviewed patch c2b22c0a is isolated on
+work/rental-admission-20261007, awaiting current executable input-hash capture
+before integration and isolated execution. Public-sharing UI groundwork is
+separately isolated on work/public-sharing-ui-groundwork; no public menu is
+activated or legacy policy remapped.
