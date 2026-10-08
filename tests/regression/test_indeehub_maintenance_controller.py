@@ -149,6 +149,23 @@ class MaintenanceTests(unittest.TestCase):
   module.atomic(runtime,{'phase':'Restored','target_startup_began':False})
   self.assertEqual(c.release('aborted')['state'],'released')
   self.assertIn('No target startup',c.record['rollback_data_claim'])
+ def test_partial_frontend_recovery_preserves_active_work_without_claiming_a_drain(self):
+  c=self.controller;c.record={'operation_id':self.operation,'original_members':module.validate_members(members()),'phase':'Prepared','queue_was_paused':False,'queue_pause_confirmed':True,'last_queue_counts':{name:(1 if name=='active' else 0) for name in module.QUEUE_COUNTS},'stopped':{'indeedhub':{'confirmed':True}}};c.save()
+  runtime=c.data/'update-transactions'/'supervised'/(self.operation+'.json');module.atomic(runtime,{'phase':'Restoring','target_startup_began':False})
+  c.fence.parent.mkdir(parents=True);c.fence.write_text(self.operation);c.close_ingress=lambda:c.fence_matches()
+  self.assertEqual(c.acquire(members(),recovery=True)['state'],'recovering')
+  self.assertEqual(c.verify()['state'],'held');self.assertFalse(c.record.get('backup_complete',False))
+  self.assertNotIn('indeedhub-ffmpeg',c.record['stopped']);self.assertEqual(self.calls,[])
+  # Native restoration must first verify preserved originals and the restarted
+  # frontend. The helper never fabricates that terminal native decision.
+  with self.assertRaises(RuntimeError):c.release('restored')
+  module.atomic(runtime,{'phase':'Restored','target_startup_began':False})
+  actions=[]
+  def queue(action):actions.append(action);return {'paused':False,'counts':dict(c.record['last_queue_counts'])}
+  c.queue=queue
+  self.assertEqual(c.release('restored')['state'],'released');self.assertEqual(actions,['resume'])
+  self.assertEqual(c.record['last_queue_counts']['active'],1)
+  self.assertFalse(c.record.get('backup_complete',False));self.assertEqual(self.calls,[])
  def test_target_started_rollback_requires_data_compatibility(self):
   c=self.controller;c.record={'operation_id':self.operation,'phase':'Recovering'};c.save()
   c.fence.parent.mkdir(parents=True);c.fence.write_text(self.operation)
@@ -329,6 +346,54 @@ class MaintenanceTests(unittest.TestCase):
   with self.assertRaisesRegex(RuntimeError,'OOM'):c.legacy_api_wrapper_termination(m,p)
   c.runner=lambda argv,timeout,output: b'replacement-id' if argv[:2]==['podman','ps'] and any('name=^' in x for x in argv) else runner(argv,timeout,output)
   with self.assertRaisesRegex(RuntimeError,'writer is still running'):c.legacy_api_wrapper_termination(m,p)
+ def restart_policy_fixture(self):
+  c=self.controller;c.record={'operation_id':self.operation};c.runtime_root=self.root/'runtime';c.runtime_root.mkdir(mode=0o700)
+  c.fence.parent.mkdir(parents=True);c.fence.write_text(self.operation)
+  path=c.api_restart_override_path();state={'original':'always'}
+  def runner(argv,timeout,output):
+   self.calls.append(argv)
+   if argv==['systemctl','--user','daemon-reload']:return b''
+   if argv==['systemctl','--user','show','indeedhub-api.service','--property=Restart','--value']:return ('no' if path.exists() else state['original']).encode()
+   raise AssertionError(argv)
+  c.runner=runner
+  return c,path,state
+ def test_owned_restart_override_restores_always_without_rewriting_unit(self):
+  c,path,state=self.restart_policy_fixture();c.ensure_api_restart_override()
+  self.assertEqual(path.read_bytes(),c.api_restart_override_bytes());self.assertEqual(c.record['api_restart_override']['original_policy'],'always')
+  self.assertEqual(path.stat().st_mode&0o777,0o600)
+  c.ensure_api_restart_override();c.release_api_restart_override();self.assertFalse(path.exists())
+  self.assertTrue(c.record['api_restart_override']['released']);calls=len(self.calls);c.release_api_restart_override();self.assertEqual(len(self.calls),calls)
+  self.assertTrue(all('stop' not in argv and 'revert' not in argv for argv in self.calls))
+ def test_restart_override_conflict_or_tamper_never_overwrites_or_unlinks(self):
+  c,path,state=self.restart_policy_fixture();path.write_text('foreign')
+  with self.assertRaises(RuntimeError):c.ensure_api_restart_override()
+  self.assertEqual(path.read_text(),'foreign');self.assertEqual(self.calls,[])
+  path.unlink();c.ensure_api_restart_override();path.write_text('changed')
+  for action in (c.ensure_api_restart_override,c.release_api_restart_override):
+   with self.assertRaises(RuntimeError):action()
+   self.assertEqual(path.read_text(),'changed')
+ def test_restart_override_lost_create_reply_and_reboot_missing_file_are_reverified(self):
+  c,path,state=self.restart_policy_fixture();c.ensure_api_restart_override();c.record['api_restart_override'].pop('installed');c.save()
+  resumed=module.Controller(c.data,self.operation,0,c.runner);resumed.runtime_root=c.runtime_root;resumed.ensure_api_restart_override()
+  self.assertEqual(resumed.record['api_restart_override']['original_policy'],'always')
+  path.unlink();resumed.ensure_api_restart_override();self.assertTrue(path.exists())
+  self.assertEqual(resumed.record['api_restart_override']['original_policy'],'always')
+ def test_restart_policy_mismatch_retains_obligation_after_override_removal(self):
+  c,path,state=self.restart_policy_fixture();c.ensure_api_restart_override();state['original']='on-failure'
+  with self.assertRaises(RuntimeError):c.release_api_restart_override()
+  self.assertFalse(path.exists());self.assertFalse(c.record['api_restart_override']['released']);self.assertTrue(c.fence.exists())
+  state['original']='always';c.release_api_restart_override();self.assertTrue(c.record['api_restart_override']['released'])
+ def test_restart_override_symlink_or_wrong_mode_is_refused(self):
+  c,path,state=self.restart_policy_fixture();c.ensure_api_restart_override();path.chmod(0o644)
+  with self.assertRaises(RuntimeError):c.release_api_restart_override()
+  path.unlink();other=self.root/'foreign';other.write_text('retain');path.symlink_to(other)
+  with self.assertRaises(RuntimeError):c.ensure_api_restart_override()
+  with self.assertRaises(RuntimeError):c.release_api_restart_override()
+  self.assertEqual(other.read_text(),'retain')
+ def test_restart_override_writable_ancestor_is_refused(self):
+  c,path,state=self.restart_policy_fixture();c.runtime_root.chmod(0o770)
+  with self.assertRaises(RuntimeError):c.ensure_api_restart_override()
+  self.assertFalse(path.exists());self.assertEqual(self.calls,[])
  def test_unacknowledged_api_signal_is_never_retried(self):
   c,m,p,*_=self.legacy_api_fixture();c.record['stopped'][m['name']]['api_signal']['acknowledged']=False
   with self.assertRaisesRegex(RuntimeError,'Unacknowledged'):c.signal_legacy_api(m)

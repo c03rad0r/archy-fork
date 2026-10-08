@@ -177,6 +177,7 @@ def volume_archive_metadata(path):
 class Controller:
     def __init__(self, data, operation, lock_fd, runner=None):
         self.data=pathlib.Path(data);self.operation=operation;self.lock_fd=lock_fd;self.runner=runner
+        self.runtime_root=pathlib.Path('/run/user')/str(os.getuid())
         require(str(uuid.UUID(operation))==operation,'Invalid operation UUID')
         self.root=self.data/'update-transactions'/'indeehub-maintenance'/operation
         self.path=self.root/'journal.json';self.fence=self.data/'app-maintenance'/'indeedhub'
@@ -303,6 +304,48 @@ class Controller:
         require(observed.get('paused') is True and valid_queue_counts(observed.get('counts')) and all(v==0 for v in observed['counts'].values()),'Legacy API queue not paused and empty')
         extra=observed.get('extra');require(isinstance(extra,dict) and set(extra)=={'prioritized','waiting_children'} and all(type(v) is int and v==0 for v in extra.values()),'Legacy API has additional queued work')
         return observed
+    def api_restart_override_path(self):
+        require(self.runtime_root.is_dir() and not self.runtime_root.is_symlink() and self.runtime_root.stat().st_uid==os.getuid() and self.runtime_root.stat().st_mode & 0o022==0,'Unsafe user runtime directory')
+        parent=self.runtime_root
+        for name in ('systemd','user','indeedhub-api.service.d'):
+            parent=parent/name
+            parent.mkdir(mode=0o700,exist_ok=True)
+            require(parent.is_dir() and not parent.is_symlink() and parent.stat().st_uid==os.getuid() and parent.stat().st_mode & 0o022==0,'Unsafe API restart override directory')
+        return parent/('zz-archipelago-maintenance-'+self.operation+'.conf')
+    def api_restart_override_bytes(self):
+        return ('# Archipelago maintenance operation '+self.operation+'\n[Service]\nRestart=no\n').encode()
+    def verify_api_restart_override(self, path):
+        require(path.is_file() and not path.is_symlink() and path.stat().st_uid==os.getuid() and path.stat().st_mode & 0o777==0o600 and path.read_bytes()==self.api_restart_override_bytes(),'API restart override changed; hold retained')
+    def ensure_api_restart_override(self):
+        self.holds();self.fence_matches();path=self.api_restart_override_path();saved=self.record.get('api_restart_override')
+        if saved is None:
+            require(not path.exists() and not path.is_symlink(),'Unowned API restart override exists')
+            policy=self.run(['systemctl','--user','show','indeedhub-api.service','--property=Restart','--value']).decode().strip()
+            require(policy in ('no','always','on-success','on-failure','on-abnormal','on-watchdog','on-abort'),'Unrecognized original restart policy')
+            saved={'operation_id':self.operation,'original_policy':policy,'sha256':hashlib.sha256(self.api_restart_override_bytes()).hexdigest(),'released':False}
+            self.record['api_restart_override']=saved;self.save()
+        require(saved.get('operation_id')==self.operation and saved.get('sha256')==hashlib.sha256(self.api_restart_override_bytes()).hexdigest() and saved.get('released') is False,'API restart override obligation changed')
+        if path.exists() or path.is_symlink():self.verify_api_restart_override(path)
+        else:
+            descriptor=os.open(path,os.O_WRONLY|os.O_CREAT|os.O_EXCL|os.O_NOFOLLOW,0o600)
+            with os.fdopen(descriptor,'wb') as stream:stream.write(self.api_restart_override_bytes());stream.flush();os.fsync(stream.fileno())
+            directory=os.open(path.parent,os.O_RDONLY);os.fsync(directory);os.close(directory)
+        self.run(['systemctl','--user','daemon-reload'])
+        require(self.run(['systemctl','--user','show','indeedhub-api.service','--property=Restart','--value']).decode().strip()=='no','API automatic restart did not close')
+        saved['installed']=True;self.save()
+    def release_api_restart_override(self):
+        saved=self.record.get('api_restart_override')
+        if not saved or saved.get('released') is True:return
+        require(saved.get('operation_id')==self.operation and saved.get('sha256')==hashlib.sha256(self.api_restart_override_bytes()).hexdigest(),'API restart override ownership changed')
+        path=self.api_restart_override_path()
+        if path.exists() or path.is_symlink():
+            self.verify_api_restart_override(path);path.unlink()
+            directory=os.open(path.parent,os.O_RDONLY);os.fsync(directory);os.close(directory)
+        # /run may have been cleared by a reboot, or unlink may have completed
+        # before an interrupted reply. Absence still requires effective-policy verification.
+        self.run(['systemctl','--user','daemon-reload'])
+        require(self.run(['systemctl','--user','show','indeedhub-api.service','--property=Restart','--value']).decode().strip()==saved['original_policy'],'Original API restart policy was not restored; hold retained')
+        saved['released']=True;self.save()
     def signal_legacy_api(self, member):
         stopped=self.record['stopped'][member['name']]
         if stopped.get('api_signal'):
@@ -311,8 +354,7 @@ class Controller:
         image=self.api_recovery_identity(member)
         require(datetime.datetime.fromisoformat(image['Created'].replace('Z','+00:00')).timestamp()<=stopped['intent_at'],'API recovery image was not captured before stop')
         actual=self.inspect(member['name']);require(actual['Id']==member['container_id'] and actual['Image']==member['image_id'] and actual['State']['Running'],'Original API changed before signal')
-        restart=self.run(['systemctl','--user','show',member['name']+'.service','--property=Restart','--value']).decode().strip()
-        require(restart=='no','Legacy API signal requires no automatic restart')
+        self.ensure_api_restart_override()
         binding=self.api_queue_binding(member,actual,image)
         queue=self.queue('status');prefix=queue.get('prefix');before=self.observe_empty_redis_queue(member,prefix,binding)
         self.legacy_api_idle()
@@ -645,6 +687,7 @@ class Controller:
             else:
                 self.record['rollback_data_claim']='No target startup/migration began; only original runtime restored.'
 
+        self.release_api_restart_override()
         if not self.record.get('queue_was_paused',True):
             state=self.queue('resume');require(not state['paused'],'Could not restore queue admission')
         self.record['phase']='Released';self.record['outcome']=outcome;self.save()

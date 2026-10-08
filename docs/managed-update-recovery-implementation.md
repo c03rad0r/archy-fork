@@ -354,3 +354,29 @@ VM fixture directory. This qualifies the primitive, not a full backend update.
 The earlier held API diagnostic lacks the new durable proof and remains
 unaccepted; it must be restored by the matching rebuilt manager before a fresh
 full update/rollback rehearsal. No live Yaya mutation or activation occurred.
+
+### Restart policy and recovery qualification checkpoint
+
+The actual retained Yaya units use `Restart=always`, `StopTimeout=30` and
+`TimeoutStopSec=45`. The earlier synthetic `Restart=no` baseline was not
+sufficient acceptance. The controller now holds automatic API restart through
+an operation-owned runtime drop-in, without rewriting its retained unit body.
+It records creation intent, requires exact owned bytes/mode and safe ancestry,
+recreates a missing runtime override after reboot, verifies effective policy,
+and removes only its own file at terminal release. The reviewed target must
+retain the original Restart policy; a differing terminal policy stays held.
+
+All **45 pure controller tests pass**. The actual hardened VM primitive passed
+`always -> no -> always`, lost-runtime-file recreation, unchanged unit body and
+no API startup (`restart-policy-probe.receipt.json`). This is primitive evidence,
+not full transaction acceptance.
+
+The rebuilt 9964b5c1 fixture executable reached native restoration but refused
+with `Original launch configuration did not recover`. Its raw fingerprint
+includes runtime-generated environment values/order. The manager was stopped;
+all recovery images and the held transaction remain preserved. No old journal
+hash was rewritten and no recovery was declared successful. Stable, versioned
+fingerprints for fresh transactions are being qualified separately; legacy
+records must retain strict comparison. The pre-target writer-preservation fix
+in 07c7eb0f also awaits combined compilation/tests. No Yaya migration or catalog
+activation has occurred.
