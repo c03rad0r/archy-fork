@@ -169,3 +169,29 @@ normal executable `913c6572bf689f8c88d25ac6e7436e978fc88a3c1e0cecf26db159967285a
 predate this fix. The next single combined isolated suite waits for the Indee
 helper's actual-original restart-policy correction and VM shutdown. No live
 node service or payment was changed for this work.
+
+## Combined qualification after pre-target preservation and launch v2
+
+The subsequent full isolated suite passed **2,021 tests, zero failures, five
+existing ignores** against source frozen at `32317236`, including native
+preservation `07c7eb0f` and helper restart-policy ownership `f42f3298`.
+All **532 tracked backend/helper/catalog inputs** remained unchanged across the
+build and execution. The receipt explicitly requires all six new pre-target
+recovery tests, three launch-identity tests, both rental tests, four Fleet tests,
+and eleven selected payment recovery/admission tests. Isolated execution took
+26.17 seconds, peaked at 315.3 MiB, used no swap and exited successfully.
+
+Launch v2 records normalize only unique environment ordering and the generated
+container hostname, while retaining explicit hostname/environment, command,
+mount and other launch semantics. Old raw hashes remain unchanged: no legacy
+journal is promoted or accepted through a relaxed comparison. Invalid or
+ambiguous environment data prevents fresh supervised capture.
+
+Durable verified evidence:
+`~/.local/state/archipelago/release-qualification/paid-file-recovery-20261007/final-combined-32317236/`.
+Original temporary directory: `/tmp/archy-paid-final-combined-3fFXJD1v/`.
+The slot was released immediately to Indee for the matching normal executable
+and fresh v2 synthetic transaction. The older held synthetic transaction remains
+unaccepted and preserved in its parent VM lineage; it is not silently rewritten.
+Actual-node initial-payment response-loss acceptance remains open. No real or
+repeat payment and no live-node lifecycle mutation occurred in this suite.
