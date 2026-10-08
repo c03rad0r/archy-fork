@@ -198,8 +198,25 @@ impl IdentityManager {
         Ok(pubkeys.join(","))
     }
 
+    /// Import a business key without replacing any existing identity or default.
+    pub async fn import_nostr(&self, name: String, nsec: &str, expected_npub: &str) -> Result<IdentityRecord> {
+        anyhow::ensure!(nsec.starts_with("nsec1") && nsec.len() == 63, "Enter a plain nsec owner key");
+        let secret = nostr_sdk::SecretKey::parse(nsec).map_err(|_| anyhow::anyhow!("Invalid owner key"))?;
+        let keys = nostr_sdk::Keys::new(secret);
+        anyhow::ensure!(keys.public_key().to_bech32()? == expected_npub, "Owner key does not match this website");
+        let (existing, _) = self.list().await?;
+        if let Some(record) = existing.into_iter().find(|r| r.purpose == IdentityPurpose::Business && r.nostr_pubkey.as_deref() == Some(keys.public_key().to_hex().as_str())) {
+            return Ok(record);
+        }
+        self.create_with_nostr(name, IdentityPurpose::Business, Some(keys)).await
+    }
+
     /// Create a new identity.
     pub async fn create(&self, name: String, purpose: IdentityPurpose) -> Result<IdentityRecord> {
+        self.create_with_nostr(name, purpose, None).await
+    }
+
+    async fn create_with_nostr(&self, name: String, purpose: IdentityPurpose, imported: Option<nostr_sdk::Keys>) -> Result<IdentityRecord> {
         let signing_key = SigningKey::generate(&mut OsRng);
         let pubkey_hex = hex::encode(signing_key.verifying_key().as_bytes());
         let did = did_key_from_pubkey_hex(&pubkey_hex)?;
@@ -222,8 +239,8 @@ impl IdentityManager {
             pubkey_hex: pubkey_hex.clone(),
             did: did.clone(),
             created_at: created_at.clone(),
-            nostr_secret_hex: None,
-            nostr_pubkey_hex: None,
+            nostr_secret_hex: imported.as_ref().map(|keys| keys.secret_key().display_secret().to_string()),
+            nostr_pubkey_hex: imported.as_ref().map(|keys| keys.public_key().to_hex()),
             profile: Some(default_profile),
             derivation_index: None,
         };
@@ -231,9 +248,15 @@ impl IdentityManager {
         let file_path = self.identities_dir.join(format!("{}.json", id));
         let json =
             serde_json::to_string_pretty(&identity_file).context("Failed to serialize identity")?;
-        fs::write(&file_path, json.as_bytes())
-            .await
+        let mut options = fs::OpenOptions::new();
+        options.write(true).create_new(true);
+        #[cfg(unix)]
+        options.mode(0o600);
+        let mut file = options.open(&file_path).await.context("Failed to create identity file")?;
+        tokio::io::AsyncWriteExt::write_all(&mut file, json.as_bytes()).await
             .context("Failed to write identity file")?;
+        tokio::io::AsyncWriteExt::flush(&mut file).await
+            .context("Failed to flush identity file")?;
 
         #[cfg(unix)]
         {
@@ -245,12 +268,14 @@ impl IdentityManager {
 
         // If this is the first identity, make it the default
         let (existing, _) = self.list().await?;
-        if existing.len() <= 1 {
+        if existing.len() <= 1 && imported.is_none() {
             self.set_default(&id).await?;
         }
 
         // Auto-generate Nostr keypair so every identity has both key types (legacy path)
-        let _ = self.create_nostr_key(&id).await;
+        if imported.is_none() {
+            let _ = self.create_nostr_key(&id).await;
+        }
 
         // Re-read to pick up the Nostr keys
         let record = self.get(&id).await?;
@@ -901,6 +926,31 @@ impl IdentityManager {
 mod tests {
     use super::*;
     use tempfile::tempdir;
+
+    #[tokio::test]
+    async fn import_nostr_preserves_identities_and_rejects_mismatches() {
+        let dir = tempdir().unwrap();
+        let manager = IdentityManager::new(dir.path()).await.unwrap();
+        let original = manager.create("Personal".into(), IdentityPurpose::Personal).await.unwrap();
+        let keys = nostr_sdk::Keys::generate();
+        let nsec = keys.secret_key().to_bech32().unwrap();
+        let npub = keys.public_key().to_bech32().unwrap();
+        assert!(manager.import_nostr("Wrong".into(), &nsec, "npub1wrong").await.is_err());
+        assert_eq!(manager.list().await.unwrap().0.len(), 1);
+        let imported = manager.import_nostr("Website".into(), &nsec, &npub).await.unwrap();
+        assert_eq!(imported.nostr_npub.as_deref(), Some(npub.as_str()));
+        assert_eq!(manager.import_nostr("Again".into(), &nsec, &npub).await.unwrap().id, imported.id);
+        let (records, default) = manager.list().await.unwrap();
+        assert_eq!(records.len(), 2);
+        assert_eq!(default.as_deref(), Some(original.id.as_str()));
+        assert_eq!(manager.get(&original.id).await.unwrap().nostr_pubkey, original.nostr_pubkey);
+        assert_eq!(manager.export_keys(&imported.id).await.unwrap()["nostr_nsec"], nsec);
+        #[cfg(unix)] {
+            use std::os::unix::fs::PermissionsExt;
+            let mode = std::fs::metadata(dir.path().join("identities").join(format!("{}.json", imported.id))).unwrap().permissions().mode();
+            assert_eq!(mode & 0o777, 0o600);
+        }
+    }
 
     #[tokio::test]
     async fn test_create_identity_did_key_format() {

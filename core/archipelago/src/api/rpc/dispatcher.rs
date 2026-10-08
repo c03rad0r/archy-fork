@@ -159,6 +159,8 @@ impl RpcHandler {
 
             // Multi-identity management
             "identity.list" => self.handle_identity_list(params).await,
+            "identity.capabilities" => Ok(serde_json::json!({"import_nostr":true})),
+            "identity.import-nostr" => self.handle_identity_import_nostr(params).await,
             "identity.create" => self.handle_identity_create(params).await,
             "identity.get" => self.handle_identity_get(params).await,
             "identity.delete" => self.handle_identity_delete(params).await,

@@ -92,6 +92,7 @@ impl EndpointRateLimiter {
         limits.insert("lnd.finalize-psbt".to_string(), (5, 300));
         // Identity/credential operations
         limits.insert("identity.create".to_string(), (10, 300));
+        limits.insert("identity.import-nostr".to_string(), (5, 300));
         limits.insert("identity.issue-credential".to_string(), (20, 300));
         // Backup operations (resource-intensive)
         limits.insert("backup.create".to_string(), (10, 600));
