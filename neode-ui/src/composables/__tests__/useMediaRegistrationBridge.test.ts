@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 const rpc = vi.hoisted(() => ({ call: vi.fn() }))
 vi.mock('@/api/rpc-client', () => ({ rpcClient: rpc }))
+import { webcrypto } from 'node:crypto'
 import { installedOriginMatches, useMediaRegistrationBridge } from '../useMediaRegistrationBridge'
 
 const intent = { version: 1 as const, requestId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', nonce: 'a'.repeat(64),
@@ -27,6 +28,17 @@ beforeEach(() => {
 afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals() })
 
 describe('native Cloud registration ownership and interrupted operation boundary', () => {
+  it('persists and resumes the same secure approval on LAN HTTP without randomUUID', async () => {
+    vi.stubGlobal('crypto', { getRandomValues: webcrypto.getRandomValues.bind(webcrypto) })
+    const f = fixture(); await f.send('select'); f.bridge.approve(selection)
+    const approved = f.child.postMessage.mock.lastCall![0].result
+    expect(approved.approvalId).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/)
+    f.bridge.dispose()
+    const resumed = fixture(); await resumed.send('resume')
+    expect(resumed.child.postMessage.mock.lastCall![0].result).toEqual(approved)
+    resumed.bridge.dispose()
+  })
+
   it('ignores other windows/origins and checks installer scope before showing Cloud selection', async () => {
     const f = fixture()
     await f.send('select', {}, 'https://evil.test'); await f.send('select', {}, undefined, {})
@@ -93,6 +105,7 @@ describe('native Cloud registration ownership and interrupted operation boundary
   })
   it('recovers resolution approval across reload and cannot use it to prepare a file', async () => {
     vi.mocked(Date.now).mockReturnValue(1700_000)
+    vi.stubGlobal('crypto', { getRandomValues: webcrypto.getRandomValues.bind(webcrypto) })
     const first = fixture(); await first.send('resolve')
     expect(first.bridge.phase.value).toBe('resolve')
     first.bridge.approveResolution()
