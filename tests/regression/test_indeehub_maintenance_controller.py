@@ -259,6 +259,100 @@ class MaintenanceTests(unittest.TestCase):
   with self.assertRaises(RuntimeError):c.legacy_idle_worker_termination(w,p)
   c.record['ingress_closed']=True;unit.write_text('changed')
   with self.assertRaises(RuntimeError):c.legacy_idle_worker_termination(w,p)
+ def legacy_api_fixture(self):
+  c,worker,props,r,rp,image,observed,state,unit=self.legacy_forced_fixture()
+  api=next(m for m in members() if m['name']=='indeedhub-api');api['unit_sha256']=module.sha(unit)
+  original=r['members'][0]['original'];original.update(name=api['name'],container_id=api['container_id'])
+  r['members'][0]['recovery_image']['source_container_id']=api['container_id'];module.atomic(rp,r)
+  image['Config']['Cmd']=module.LEGACY_API_CMD;image['Config']['Env']=[]
+  observed['extra']={'prioritized':0,'waiting_children':0}
+  c.record['original_members']=[api if m['name']==api['name'] else m for m in members()]
+  c.record['legacy_api_empty_state']={k:0 for k in ('projects','contents','payments','shareholders','subscriptions','library_items','other_active_transactions')}
+  c.record['stopped'][api['name']]={'container_id':api['container_id'],'intent_at':1700000000,'api_signal':{'operation_id':self.operation,'container_id':api['container_id'],'intent_at':1700000001,'acknowledged':True,'prefix':'bull:transcode:','queue_binding':{'container_id':next(x['container_id'] for x in members() if x['name']=='indeedhub-redis'),'image_id':'a'*64,'network_id':'network-id','host':'indeedhub-redis','port':6379}}}
+  c.record['stopped'][api['name']]['api_signal'].update(acknowledged_at=1700000002,proof={'parent':{'pid':1,'ppid':0,'starttime':'10','command':'npm run start:prod\0'},'child':{'pid':35,'ppid':1,'starttime':'20','command':'node\0dist/main\0'}},before_queue=json.loads(json.dumps(observed)))
+  previous=c.runner
+  def runner(argv,timeout,output):
+   if argv[:2]==['podman','inspect']:
+    row=json.loads(self.command_runner(argv,timeout,output))[0];row['NetworkSettings']={'Networks':{'app':{'NetworkID':'network-id','Aliases':['indeedhub-redis']}}};return json.dumps([row]).encode()
+   if argv[:2]==['podman','events']:return b''
+   return previous(argv,timeout,output)
+  c.runner=runner
+  return c,api,'ActiveState=failed\nSubState=failed\nResult=exit-code\nExecMainStatus=1\n',image,observed,state
+ def test_api_wrapper_requires_acknowledged_original_signal_and_empty_queue(self):
+  c,m,p,image,observed,state=self.legacy_api_fixture()
+  proof=c.legacy_api_wrapper_termination(m,p)
+  self.assertFalse(proof['graceful']);self.assertFalse(proof['completed_work_claim']);self.assertTrue(proof['process_dead'])
+  signal=c.record['stopped'][m['name']]['api_signal']
+  for field,value in [('acknowledged',False),('container_id','other'),('operation_id','other'),('intent_at',0)]:
+   original=signal[field];signal[field]=value
+   with self.assertRaises(RuntimeError):c.legacy_api_wrapper_termination(m,p)
+   signal[field]=original
+  for field in ('prioritized','waiting_children'):
+   observed['extra'][field]=1
+   with self.assertRaises(RuntimeError):c.legacy_api_wrapper_termination(m,p)
+   observed['extra'][field]=0
+  for value in ('137','143','0'):
+   with self.assertRaises(RuntimeError):c.legacy_api_wrapper_termination(m,p.replace('ExecMainStatus=1\n','ExecMainStatus='+value+'\n'))
+  state['ps']=m['container_id'].encode()
+  with self.assertRaises(RuntimeError):c.legacy_api_wrapper_termination(m,p)
+ def test_api_queue_observer_rejects_wrong_prefix_missing_counts_and_ambiguous_credentials(self):
+  c,m,p,image,observed,state=self.legacy_api_fixture()
+  with self.assertRaises(RuntimeError):c.observe_empty_redis_queue(m,'wrong:')
+  observed['counts'].pop('active')
+  with self.assertRaises(RuntimeError):c.observe_empty_redis_queue(m,'bull:transcode:')
+  observed['counts']['active']=0
+  for env in (['QUEUE_PASSWORD=one','QUEUE_PASSWORD=two'],['QUEUE_PASSWORD=bad\nframe']):
+   image['Config']['Env']=env
+   with self.assertRaises(RuntimeError):c.observe_empty_redis_queue(m,'bull:transcode:')
+ def test_api_partial_durable_proof_never_substitutes_for_signal_acknowledgement(self):
+  import copy
+  c,m,p,*_=self.legacy_api_fixture();signal=c.record['stopped'][m['name']]['api_signal'];original=copy.deepcopy(signal)
+  for key in ('proof','before_queue','acknowledged_at'):
+   signal.clear();signal.update(copy.deepcopy(original));signal.pop(key)
+   with self.assertRaises(RuntimeError):c.legacy_api_wrapper_termination(m,p)
+  signal.clear();signal.update(original)
+  for counts in ({'projects':0},{'unrelated':0},dict.fromkeys(module.BUSINESS_COUNTS,False)):
+   c.record['legacy_api_empty_state']=counts
+   with self.assertRaises(RuntimeError):c.legacy_api_wrapper_termination(m,p)
+ def test_api_queue_endpoint_must_share_exact_original_redis_alias(self):
+  c,m,p,image,*_=self.legacy_api_fixture()
+  image['Config']['Env']=['QUEUE_HOST=indeedhub-redis','QUEUE_PORT=6379']
+  api={'Config':{'Env':list(image['Config']['Env'])},'NetworkSettings':{'Networks':{'app':{'NetworkID':'network-id'}}}}
+  self.assertEqual(c.api_queue_binding(m,api,image)['host'],'indeedhub-redis')
+  api['NetworkSettings']['Networks']['app']['NetworkID']='different'
+  with self.assertRaises(RuntimeError):c.api_queue_binding(m,api,image)
+  api['NetworkSettings']['Networks']['app']['NetworkID']='network-id';api['Config']['Env']=['QUEUE_HOST=foreign']
+  with self.assertRaises(RuntimeError):c.api_queue_binding(m,api,image)
+ def test_api_oom_or_replacement_keeps_termination_unconfirmed(self):
+  c,m,p,image,observed,state=self.legacy_api_fixture();runner=c.runner
+  c.runner=lambda argv,timeout,output: b'{"Status":"oom"}' if argv[:2]==['podman','events'] else runner(argv,timeout,output)
+  with self.assertRaisesRegex(RuntimeError,'OOM'):c.legacy_api_wrapper_termination(m,p)
+  c.runner=lambda argv,timeout,output: b'replacement-id' if argv[:2]==['podman','ps'] and any('name=^' in x for x in argv) else runner(argv,timeout,output)
+  with self.assertRaisesRegex(RuntimeError,'writer is still running'):c.legacy_api_wrapper_termination(m,p)
+ def test_unacknowledged_api_signal_is_never_retried(self):
+  c,m,p,*_=self.legacy_api_fixture();c.record['stopped'][m['name']]['api_signal']['acknowledged']=False
+  with self.assertRaisesRegex(RuntimeError,'Unacknowledged'):c.signal_legacy_api(m)
+  self.assertEqual(self.calls,[])
+ def test_actual_node_process_selector_rejects_extra_children_reuse_and_failed_signal(self):
+  import subprocess
+  harness=r'''const vm=require('vm'),assert=require('assert'),script=JSON.parse(require('fs').readFileSync(0,'utf8'));
+function run(change={},action='probe',expected){
+ const rows={1:{ppid:0,cmd:'npm run start:prod\0\0',start:'100'},35:{ppid:1,cmd:'node\0dist/main\0',start:'200'},999:{ppid:0,cmd:'node probe\0',start:'300'}};
+ for(const [key,value] of Object.entries(change))rows[key]=value;
+ let output='',killed=[];
+ const fs={readdirSync:()=>Object.keys(rows),readFileSync:p=>{const [,id,file]=p.match(/^\/proc\/(\d+)\/(.*)$/);const r=rows[id];if(!r)throw Error('missing');if(file==='cmdline')return r.cmd;if(file==='status')return `PPid:\t${r.ppid}\n`;return `${id} (node) S `+Array(18).fill('0').join(' ')+' '+r.start+' 0';},writeSync:(_,v)=>{output+=v}};
+ vm.runInNewContext(script,{require:n=>{assert.equal(n,'fs');return fs},process:{argv:['node',action,JSON.stringify(expected)],kill:(p,s)=>{if(change.fail)throw Error('signal rejected');killed.push([p,s])}}});
+ return {proof:JSON.parse(output),killed};
+}
+const proof=run().proof;assert.equal(proof.child.starttime,'200');
+assert.deepEqual(run({},'signal',proof).killed,[[35,'SIGTERM']]);
+assert.throws(()=>run({36:{ppid:1,cmd:'other\0',start:'400'}}));
+assert.throws(()=>run({35:{ppid:1,cmd:'node other\0',start:'200'}}));
+assert.throws(()=>run({35:{ppid:1,cmd:'node\0dist/main\0',start:'201'}},'signal',proof));
+assert.throws(()=>run({1:{ppid:0,cmd:'other\0',start:'100'}}));
+console.log('process identity cases passed');'''
+  result=subprocess.run(['node','-e',harness],input=json.dumps(module.API_PROCESS_SCRIPT),text=True,capture_output=True)
+  self.assertEqual(result.returncode,0,result.stderr)
  def test_legacy_worker_sigterm_requires_proven_paused_idle_queue(self):
   c=self.controller;c.record={'operation_id':self.operation,'phase':'Prepared','original_members':module.validate_members(members())};c.save()
   worker=next(m for m in members() if m['name']=='indeedhub-ffmpeg')

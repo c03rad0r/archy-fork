@@ -325,3 +325,32 @@ private candidate-helper qualification only. Live Yaya remains unchanged.
 Future worker image source now includes idempotent SIGTERM/SIGINT shutdown in app
 commit `29627fc` with four passing Jest tests. Its image has not been built; the
 previous frontend/API-only candidate catalog cannot cover that new worker image.
+
+### API child-signal compatibility — 2026-10-07
+
+The original API wraps `node dist/main` in npm PID1. Directly signalling that exact
+child produces npm exit 1, not a clean exit. The candidate controller now records
+this only as **non-graceful empty-business termination**, never as completed work.
+It requires the exact original/recovery image and saved unit, automatic restart
+policy `no`, fresh complete zero business-table/transaction counts, a paused empty
+queue, and durable operation/container/parent/child PID+starttime+command signal
+intent followed by syscall acknowledgement. Missing acknowledgement retains the
+hold; retries cannot infer one. Extra direct children, reused process identity,
+partial proof, OOM, forced exit 137, or replacement API writers are refused.
+
+Post-stop queue verification now uses atomic, read-only Redis Lua, authenticated
+through stdin rather than secret command arguments. The observed original API
+queue endpoint must bind to the exact original Redis ID/image and shared network
+alias. All six counts, prioritized and waiting-children must remain zero, with
+admission paused. No default or absent field can establish empty state.
+
+All **38 pure controller tests passed**, including actual Node execution of the
+process selector. The actual hardened VM Redis observer passed. A uniquely named
+recovery-image API process probe, with no persistent mounts or published ports,
+passed exact child-starttime/signal-acknowledgement checks and exited 1 without
+OOM; bound Redis observations before/after were paused and entirely zero. The
+probe was removed. Its receipt is `api-process-probe.receipt.json` in the private
+VM fixture directory. This qualifies the primitive, not a full backend update.
+The earlier held API diagnostic lacks the new durable proof and remains
+unaccepted; it must be restored by the matching rebuilt manager before a fresh
+full update/rollback rehearsal. No live Yaya mutation or activation occurred.
