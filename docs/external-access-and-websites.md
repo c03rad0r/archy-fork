@@ -464,3 +464,177 @@ Setup is synchronized into an already-cached Chat iframe on return. Source
 inspection shows configuration synchronization on iframe readiness; reactivation
 currently arms listeners without explicitly refreshing the provider. This is a
 follow-up acceptance concern, not a confirmed live inference result.
+
+### Remaining qualification decisions — 2026-10-08
+
+Operator confirmed all three physical companion checks pass: the app dropdown,
+Blossom identity selection, and AI top-up screen. This closes those manual checks.
+The operator authorized isolated Yaya test ports for the new tunnel. Preserve
+existing ingress on ports 80/443 and the working free.archipelago.builders route.
+Isolated-port TLS qualification must not be described as public ACME issuance.
+Local nsite asset integration and cached Chat provider synchronization are in
+source qualification; they are not yet deployed on Framework.
+
+### Isolated Yaya tunnel qualification — 2026-10-08
+
+Pinned frp0.71.0 and Caddy2.11.7 archives were SHA-256 verified against the
+upstream release digests before use. Separate user services under
+`~/external-access-uat/tunnel` run frps and the enrollment admission plugin on
+Yaya (192.168.63.169:17400/control, :14443/HTTPS, loopback:17700/policy), and
+frpc/Caddy on Framework (Caddy loopback:33443). Existing ports80/443 and NPM
+configuration were not changed. These transient qualification units are not yet
+the finished app installer or reboot-persistent product implementation.
+
+The gateway forwards SNI TLS to Framework. Caddy's test CA and leaf private keys
+were generated on Framework and stayed there; only its public root certificate
+was retrieved for verification. The frpc control connection pins Yaya's test
+certificate and requires TLS plus token authentication. A separate enrollment
+policy restricts Framework to free.archipelago.builders and HTTPS proxies;
+policy checks also apply to new connections and heartbeats. Enrollment values
+remain in private0600 files, outside publishing state and the catalogue.
+
+Actual-node tests passed exact synthetic website bytes (SHA-256
+`6618540be22ec1a7fbdb89ef329ac851d7ddd0391cec8aa847ac8976f9b8598d`),
+404 for management/upload/list paths, rejection of unassigned SNI, revocation of
+new connections to an existing route, restored-enrollment recovery, gateway
+restart/reconnect, and fail-closed admission-plugin outage/recovery. Both the
+isolated route and the existing public HTTPS route returned the exact same
+synthetic bytes. Evidence: `.build/isolated-tunnel-live.log`. Four focused Python
+admission-policy tests pass. The first outage-test cleanup attempted to restart
+a removed transient unit; recreated that owned unit and reran the full live
+sequence successfully. Public ACME issuance on443 remains unqualified by these
+private-certificate tests. No public Nostr events were sent.
+
+The manifest-based router image now builds on Framework and has passed the same
+live isolated-port sequence inside a rootless slirp4netns container with read-only
+root, no capabilities, no published host ports and a256MiB memory limit. Evidence:
+`.build/isolated-container-tunnel-live.log`. The old transient Framework frpc/Caddy
+units were stopped; the owned test container is `archy-uat-public-web-router`.
+Yaya's frps/admission units remain separate from existing public ingress. Actual
+frpc clients were denied for an unassigned domain and a wrong enrollment token;
+a wrong TLS server name also failed login (frpc reported session shutdown).
+
+The new source includes a private enrollment adapter, normal-catalogue installer
+button, shared Setup connection and per-website connection controls. Three gateway
+UI tests,27publishing UI tests, eight gateway/router Python tests and16manifest
+checks pass. Final full backend tests/build, matched UI deployment, trusted
+catalogue signing/install, automatic app-gate routes, public ACME443 acceptance,
+final reboot and release gates remain pending. The current installed management
+backend is unchanged. No paid AI call or public Nostr event was made here.
+
+Container lifecycle qualification also passed removal of configuration, restored
+configuration, and container restart, with the same certificate and exact bytes
+after recovery (`.build/router-lifecycle-live.log`). The first full isolated
+backend run passed1,721tests, zero failed, four ignored; that run predates the new
+gateway integration, so it is not final candidate acceptance. The subsequent
+full build/test pipeline remains in progress. Automatic catalogue-app routes
+and live app-identity/policy enforcement have now been added in source; their
+backend and live qualification remain pending.
+
+### Saved Claude credential: actual inference — 2026-10-08
+
+The authenticated Framework AIUI Claude proxy returned its model list, then
+successfully handled one synthetic HTML request using the existing saved key.
+The selected available model was `claude-haiku-4-5-20251001`, maximum64output
+tokens; actual usage was44input and33output tokens. Returned HTML SHA-256:
+`0c61e55d9f4c80f36d0db9dce2834677ae02a3d1cefa587d60426e6b14b8d6b1`.
+The private result is `~/external-access-uat/claude-live-generated.html` on
+Framework. No tools, private files, prior conversation history, provider-setting
+writes, allowance changes or publications were involved. The key was injected by
+the node proxy and never read back. This verifies real saved-key inference, not
+completion of the separate browser AIUI-to-publishing handoff. This request may
+incur the provider's normal API charge; no top-up or payment transaction was made.
+The first curl-cookie attempt was unauthorized; using the existing qualification
+helper's authenticated cookie handling succeeded without disabling authentication.
+
+### Final candidate deployment and live installer checks — 2026-10-08
+
+Backend SHA-256 `683a02e1cf00d291ee82bcc2e95d159c8cf7f922b9da7e1c72187de5d8595b66`
+is deployed on Framework with the matched dashboard and signed private gateway
+catalogue. Final isolated backend suite: 1,726 passed, zero failed, four ignored;
+focused publishing suite: 21 passed. The dashboard build initially caught a null
+store access; optional chaining fixed it and the production build passes.
+
+Live normal installation exposed the Setup helper's missing `dockerImage`.
+Both Setup install buttons now resolve the image/build tag and version from the
+backend-verified catalogue and use the normal package installer. Sixteen Setup
+component tests and two installation-contract tests pass. The signed catalogue
+listing also resolves build tags. No catalogue signature changed.
+
+Framework restores runtime assets from `web-ui/archipelago-runtime` at startup.
+Staging only `/opt/archipelago/apps` was therefore insufficient: startup restored
+the old manifests. Updated the owned runtime payload for Blossom and Public Web
+Router, then repeated normal installation successfully through the orchestrator.
+The initially bare test installs were stopped/removed; their data was empty.
+The owned manual qualification container was removed after the normal app was
+ready; its existing certificate storage was preserved in the manifest data bind.
+
+Normal Router enrollment through owner RPC, private 0600 configuration, credential
+redaction and exact selected website HTTPS bytes pass. Blossom updated normally
+to 6.4.1-archy.2 and is healthy. Its automatic identity chooser, signing denial and
+approved local upload passed again. Guest app routing through isolated Yaya TLS
+passed anonymous challenge, app-only token login, Secure/HttpOnly/SameSite cookie
+and revocation. Removed the temporary grant/app route and restored the website.
+Existing Yaya public80/443 remains unchanged. Native wallet processes retained
+PID/start time throughout management restarts.
+
+Local nsite live acceptance passed signer-authorized BUD-02 upload into Blossom,
+exact selected hash over public HTTPS, CORS and sandboxed attachment headers,
+denial of upload/list/unknown-hash endpoints, and asset revocation. Restored the
+original synthetic project's routes and left its website available. No manifest
+was signed or sent to relays. Evidence: `.build/local-nsite-live.log`,
+`.build/gateway-app-live.log`, `.build/blossom-archy2-live.log`.
+
+The normal rootless router has read-only root/config, dropped capabilities and
+slirp networking. Framework reports memory cgroup limit zero despite the manifest
+request: resource-limit enforcement is a retained host-runtime limitation, not a
+passed 256MiB boundary. Public ACME443 and general publication remain outside this
+isolated-port acceptance. Final AIUI handoff and reboot checks follow below.
+
+The full browser AIUI path subsequently passed with the saved Claude key: actual
+synthetic HTML generation, Continue to website setup, and explicit import into a
+new private project. The first attempt hit the test's short navigation timeout;
+the rerun with the normal page-load allowance passed. Original AI provider settings
+were restored. No generated site was published. Evidence:
+`.build/aiui-handoff-live.log`. Claude's normal inference charges may apply; no
+Routstr top-up, wallet payment, or allowance change was performed.
+
+### Final controlled Framework reboot — PASS, 2026-10-08
+
+The operator-authorized reboot changed boot ID from
+`1eb5205a-ba5e-46de-a519-89a066bd8aac` to
+`b30e5001-5ca0-4738-9e82-0a29cef0e7a6`. Preflight saved the native LND snapshot
+and static channel backup privately and verified no pending HTLCs. LND initially
+reported locked/not-ready during normal startup; the dashboard RPC correctly
+returned unavailable rather than a false zero. It unlocked automatically without
+manual restart or unlock. Native identity, channel set, on-chain/channel balances,
+and chain sync then passed the saved-snapshot comparison.
+
+The complete installed app set returned. Blossom is healthy; the normally
+installed router started without intervention and retained its certificate.
+Publishing state, gateway settings, onion identity and the absence of temporary
+guest grants matched the pre-reboot snapshot exactly. Both the existing public443
+route and the isolated14443 tunnel returned the original synthetic website hash
+`6618540be22ec1a7fbdb89ef329ac851d7ddd0391cec8aa847ac8976f9b8598d`.
+Backend and dashboard bytes and the shipped router manifest survived restart.
+Dashboard index SHA-256:
+`dbcff02ed9bf8cc6bab4765e1b6f81155a938145f75b3f588bc2154dbb5476a9`.
+
+Repeated the normal router's negative/lifecycle sequence after reboot: management,
+upload/list paths denied; unassigned SNI denied; enrollment revocation denied new
+connections; restore recovered; isolated gateway restart reconnected; policy
+outage failed closed and recovered. Initial attempt could not authenticate to
+Yaya because the old SSH control session had expired; no policy mutation occurred.
+Reauthenticated with the supplied account and the complete sequence passed.
+Evidence: `.build/normal-router-after-reboot-live.log`. Existing public ingress
+was unchanged. Final related UI regression group passed27tests and gateway Python
+group passed10tests. No public Nostr events, source push, catalogue publication,
+OTA or ISO publication occurred.
+
+Framework UAT candidate is ready. Retained boundaries: public ACME443 passthrough
+needs a dedicated public ingress, external Nostr propagation is deliberately not
+claimed, Framework's rootless memory cgroup limit is not enforced, and general
+release remains gated by the separate release checklist and ngit/mirror review.
+The operator was asked to restore the 2FA they temporarily disabled for testing.
+Private catalogue pin and isolated Yaya services remain for UAT; remove/replace
+them only during the reviewed release or explicit rollback.

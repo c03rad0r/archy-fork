@@ -95,6 +95,9 @@ impl EndpointRateLimiter {
         limits.insert("identity.issue-credential".to_string(), (20, 300));
         // Explicit publishing actions can allocate credentials or perform
         // bounded network I/O. Saving/previewing never invokes these actions.
+        limits.insert("publishing.gateway-configure".to_string(), (5, 60));
+        limits.insert("publishing.gateway-app-route".to_string(), (10, 60));
+        limits.insert("publishing.gateway-route".to_string(), (10, 60));
         limits.insert("publishing.access-create".to_string(), (10, 60));
         limits.insert("publishing.verify-https".to_string(), (10, 60));
         limits.insert("publishing.blossom-store".to_string(), (10, 60));

@@ -7,8 +7,8 @@ export interface WebsiteRevision { id: string; created_at: string; html: string 
 export interface WebsiteProject {
   id: string; name: string; routes: PublishRoute[]; domain: PublishDomain | null
   draft: string; revisions: WebsiteRevision[]
-  fips_publication?: { port: number; html: string; created_at: string; public_archive?: string | null } | null
-  tor_publication?: { port: number; html: string; created_at: string; public_archive?: string | null } | null
+  fips_publication?: { port: number; html: string; created_at: string; public_archive?: string | null; nsite_asset?: { html: string; receipt: { sha256: string; size: number } } | null } | null
+  tor_publication?: { port: number; html: string; created_at: string; public_archive?: string | null; nsite_asset?: { html: string; receipt: { sha256: string; size: number } } | null } | null
   nsite_receipt?: NsiteReceipt | null
   local_archive?: { sha256: string; size: number; pubkey: string; created_at: string } | null
 }
@@ -19,6 +19,7 @@ export interface PublishingStatus {
   state: PublishingState; fips_address: string | null; publication_enabled: boolean; public_archive_enabled?: boolean; notice: string
   listeners?: { project_id: string; address: string | null; listening: boolean; externally_verified: boolean; error: string | null }[]
   onions?: { project_id: string; onion_address: string | null; listening: boolean; externally_verified: boolean; error: string | null }[]
+  gateway?: { configured: boolean; host?: string; port?: number; domains?: string[]; certificate_mode?: string; routes: { id: string; domain: string }[]; error?: string }
   nostr_relays?: string[]
   apps: { id: string; name: string; port: number; authentication: string; listener_claimed: boolean; guest_access?: boolean }[]
   grants?: { id: string; label: string; apps: string[]; expires_at: number | null }[]

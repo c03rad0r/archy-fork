@@ -5,7 +5,7 @@ import { publishing } from './publishing'
 export interface SignedNsiteEvent { id: string; pubkey: string; kind: number; created_at: number; tags: string[][]; content: string; sig: string }
 export interface NsiteReceipt { identity_id: string; server: string; event: SignedNsiteEvent; accepted_relays: string[]; deletion_requested: boolean }
 export interface NsiteIdentity { id: string; name: string; nostr_pubkey: string; is_node: boolean }
-export interface PreparedNsite { html: string; sha256: string; server: string; identifier: string; authorization: Record<string, unknown>; manifest: Record<string, unknown> }
+export interface PreparedNsite { local?: boolean; html: string; sha256: string; server: string; identifier: string; authorization: Record<string, unknown>; manifest: Record<string, unknown> }
 
 // Match the platform app signer and its derived Blossom upload allowlist,
 // including older node records that do not carry the explicit is_node flag.
@@ -105,8 +105,8 @@ async function uploadDescriptor(response: Response): Promise<{ sha256: string; s
     return JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(bytes.subarray(0, size)))
   } finally { await reader.cancel() }
 }
-export async function prepareNsite(projectId: string, version: number, server: string, savedHtml: string): Promise<PreparedNsite> {
-  return await rpcClient.call<PreparedNsite>({ method: 'publishing.nsite-prepare', params: { id: projectId, version, server, html: DOMPurify.sanitize(savedHtml, { WHOLE_DOCUMENT: true, FORBID_TAGS: ['meta', 'base', 'iframe', 'object', 'embed', 'form', 'script', 'link'] }) }, maxRetries: 0 })
+export async function prepareNsite(projectId: string, version: number, server: string, savedHtml: string, local = false): Promise<PreparedNsite> {
+  return await rpcClient.call<PreparedNsite>({ method: 'publishing.nsite-prepare', params: { id: projectId, version, server, local, html: DOMPurify.sanitize(savedHtml, { WHOLE_DOCUMENT: true, FORBID_TAGS: ['meta', 'base', 'iframe', 'object', 'embed', 'form', 'script', 'link'] }) }, maxRetries: 0 })
 }
 export async function publishNsite(projectId: string, version: number, identity: NsiteIdentity, relays: string[], p: PreparedNsite): Promise<NsiteReceipt> {
   if (identity.is_node) throw new Error('Use a profile identity, not the operational node identity')
@@ -116,12 +116,17 @@ export async function publishNsite(projectId: string, version: number, identity:
   if (!expiry || Number(expiry) <= Date.now() / 1000) throw new Error('The review expired. Prepare and review the publication again.')
   const authorization = await sign(identity, p.authorization)
   const bytes = new TextEncoder().encode(p.html)
-  const encoded = btoa(String.fromCharCode(...new TextEncoder().encode(JSON.stringify(authorization))))
-  const uploaded = await fetch(`${p.server}/upload`, { method: 'PUT', credentials: 'omit', redirect: 'error', signal: AbortSignal.timeout(30000), headers: { 'Content-Type': 'text/html; charset=utf-8', 'X-SHA-256': p.sha256, Authorization: `Nostr ${encoded}` }, body: p.html })
-  if (uploaded.status === 402) throw new Error('The Blossom server requires payment. No payment was made; choose another server or arrange storage yourself.')
-  if (!uploaded.ok) throw new Error(`Blossom upload failed (${uploaded.status}). The server may retain an uploaded copy.`)
-  const descriptor = await uploadDescriptor(uploaded)
-  if (descriptor.sha256 !== p.sha256 || descriptor.size !== bytes.length) throw new Error('Blossom upload receipt does not match the website. The server may retain a copy.')
+  if (p.local) {
+    await rpcClient.call({ method: 'publishing.blossom-store', params: { id: projectId, version, authorization,
+      nsite: { html: p.html, server: p.server, acknowledge_public: true } }, timeout: 70000, maxRetries: 0 })
+  } else {
+    const encoded = btoa(String.fromCharCode(...new TextEncoder().encode(JSON.stringify(authorization))))
+    const uploaded = await fetch(`${p.server}/upload`, { method: 'PUT', credentials: 'omit', redirect: 'error', signal: AbortSignal.timeout(30000), headers: { 'Content-Type': 'text/html; charset=utf-8', 'X-SHA-256': p.sha256, Authorization: `Nostr ${encoded}` }, body: p.html })
+    if (uploaded.status === 402) throw new Error('The Blossom server requires payment. No payment was made; choose another server or arrange storage yourself.')
+    if (!uploaded.ok) throw new Error(`Blossom upload failed (${uploaded.status}). The server may retain an uploaded copy.`)
+    const descriptor = await uploadDescriptor(uploaded)
+    if (descriptor.sha256 !== p.sha256 || descriptor.size !== bytes.length) throw new Error('Blossom upload receipt does not match the website. The server may retain a copy.')
+  }
   await readback(await fetch(`${p.server}/${p.sha256}`, { credentials: 'omit', redirect: 'error', signal: AbortSignal.timeout(30000) }), bytes)
   const event = await sign(identity, p.manifest)
   const receipt: NsiteReceipt = { identity_id: identity.id, server: p.server, event, accepted_relays: [], deletion_requested: false }
@@ -134,6 +139,16 @@ export async function publishNsite(projectId: string, version: number, identity:
 }
 export async function retryNsite(projectId: string, receipt: NsiteReceipt, relays: string[]): Promise<NsiteReceipt> {
   if (receipt.deletion_requested) throw new Error('Publish explicitly to restore a site after a deletion request')
+  const status = await publishing.status()
+  const project = status.state.projects[projectId]
+  // For this node's origin, revoking the public asset must also stop retries.
+  // An external server is outside the node's control and retains its own copy.
+  if (project?.domain && receipt.server === `https://${project.domain.hostname}`) {
+    const asset = project.fips_publication?.nsite_asset
+    const digest = receipt.event.tags.find(t => t[0] === 'path' && t[1] === '/index.html')?.[2]
+    if (!asset || asset.receipt.sha256 !== digest) throw new Error('The local nsite file is no longer shared. Review and publish it again first.')
+    await readback(await fetch(`${receipt.server}/${digest}`, { credentials: 'omit', redirect: 'error', signal: AbortSignal.timeout(30000) }), new TextEncoder().encode(asset.html))
+  }
   const accepted = await broadcast(receipt.event, relays)
   const next = { ...receipt, accepted_relays: [...new Set([...receipt.accepted_relays, ...accepted])] }
   await record(projectId, next)

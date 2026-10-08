@@ -680,12 +680,24 @@
       "requires": [],
       "tier": "optional",
       "title": "Blossom",
-      "version": "6.4.1-archy.1",
+      "version": "6.4.1-archy.2",
       "description": "Local file storage for Nostr and websites, using your Archipelago signer. External publishing is a separate explicit choice.",
-      "dockerImage": "localhost/archipelago-blossom:6.4.1-archy.1",
+      "dockerImage": "localhost/archipelago-blossom:6.4.1-archy.2",
       "category": "data",
       "repoUrl": "https://github.com/hzrd149/blossom-server",
       "icon": "/assets/img/app-icons/blossom.svg"
+    },
+    {
+      "id": "public-web-router",
+      "author": "Archipelago",
+      "requires": [],
+      "tier": "optional",
+      "title": "Public Web Router",
+      "version": "0.1.0",
+      "description": "Connect explicitly published websites to your own public gateway. HTTPS keys stay on this node. Configure routes through Setup.",
+      "dockerImage": "localhost/archipelago-public-web-router:0.1.0",
+      "category": "networking",
+      "icon": "/assets/img/app-icons/nginx.svg"
     }
   ]
 }

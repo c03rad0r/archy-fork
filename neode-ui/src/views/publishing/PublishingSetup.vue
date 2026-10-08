@@ -3,9 +3,11 @@ import { computed, onDeactivated, onMounted, onBeforeUnmount, ref, watch } from 
 import { RouterLink, useRoute, useRouter } from 'vue-router'
 import { useAppStore } from '@/stores/app'
 import { rpcClient } from '@/api/rpc-client'
+import { installPublishingApp } from '@/services/installPublishingApp'
 import { pendingWebsiteHtml } from '@/services/websiteImport'
 import { publishing, PUBLISH_ROUTES, websitePreview } from '@/services/publishing'
 import type { DnsPlan, HttpsCheck, PublishRoute, PublishingStatus, WebsiteProject } from '@/services/publishing'
+import PublicWebGateway from './PublicWebGateway.vue'
 import { nsiteIdentities, prepareNsite, publishNsite, retryNsite, requestNsiteDeletion, namedNsiteUrl, relayAddresses, storeLocalWebsite } from '@/services/nsitePublishing'
 import type { NsiteIdentity, PreparedNsite } from '@/services/nsitePublishing'
 
@@ -41,6 +43,8 @@ const acknowledgeTor = ref(false)
 const identities = ref<NsiteIdentity[]>([])
 const identityId = ref('')
 const blossom = ref('')
+const localNsite = ref(true)
+const nsiteServer = computed(() => localNsite.value ? (current.value?.domain?.hostname ? `https://${current.value.domain.hostname}` : '') : blossom.value)
 const relays = ref('')
 const gateway = ref('')
 const nsiteUrl = ref('')
@@ -229,7 +233,7 @@ async function verifyHttps() {
 }
 async function installBlossom() {
   await perform(async () => {
-    await appStore.installPackage('blossom', '', 'latest')
+    await installPublishingApp('blossom')
     message.value = 'Blossom installation requested through the app catalogue. This step will be skipped when installation is recorded.'
   })
 }
@@ -259,14 +263,14 @@ async function storeLocally() {
     message.value = 'Saved draft stored in local Blossom and fetched back to verify its bytes. Nothing was announced or replicated externally.'
   })
 }
-watch([projectId, blossom, relays, identityId, html, selected], () => { nsiteReview.value = null; acknowledgeNostr.value = false; acknowledgeUpload.value = false }, { deep: true })
+watch([projectId, blossom, localNsite, relays, identityId, html, selected], () => { nsiteReview.value = null; acknowledgeNostr.value = false; acknowledgeUpload.value = false }, { deep: true })
 async function reviewNsite() {
   await perform(async () => {
     if (!status.value || !current.value) return
     const identity = identities.value.find(i => i.id === identityId.value)
     if (!identity) throw new Error('Choose a profile identity first')
     const targets = relayAddresses(relays.value)
-    const prepared = await prepareNsite(projectId.value, status.value.state.version, blossom.value, current.value.draft)
+    const prepared = await prepareNsite(projectId.value, status.value.state.version, nsiteServer.value, current.value.draft, localNsite.value)
     nsiteReview.value = { projectId: projectId.value, version: status.value.state.version, identity: { ...identity }, relays: [...targets], prepared }
     acknowledgeNostr.value = false; acknowledgeUpload.value = false
   })
@@ -295,6 +299,14 @@ async function handleNsite(action: 'publish' | 'retry' | 'delete') {
       status.value = await publishing.status()
     }
     message.value = action === 'delete' ? 'A relay accepted the deletion request. Other relays, Blossom servers and cached copies may retain the website.' : 'The uploaded bytes were checked and a relay accepted the named-site manifest. Gateway availability still needs checking.'
+  })
+}
+async function unshareNsiteAsset() {
+  await perform(async () => {
+    if (!status.value || !current.value) return
+    await publishing.update(status.value.state.version, { action: 'unshare-nsite-asset', id: projectId.value })
+    status.value = await publishing.status()
+    message.value = 'Local nsite file sharing stopped. Published manifests and downloaded copies may remain.'
   })
 }
 async function showNsiteAddress() {
@@ -339,6 +351,7 @@ onMounted(refresh)
           </label>
           </div>
           <p v-if="selected.includes('fips')" class="text-sm text-white/60">{{ status.fips_address ? 'Your node has a FIPS address. Check visitor access after publishing or sharing an app.' : 'Your node does not have a FIPS address yet. Connect FIPS in Network settings before publishing here.' }}</p>
+          <PublicWebGateway v-if="!websiteMode && selected.includes('public-web') && status.gateway" :gateway="status.gateway" @refresh="refresh" />
           <RouterLink v-if="websiteMode" to="/dashboard/setup/external-access" class="inline-block text-sm underline">Manage shared connections</RouterLink>
         </section>
       </template>
@@ -446,6 +459,7 @@ onMounted(refresh)
           <label class="block">Website hostname<input v-model="hostname" class="field mt-2" placeholder="www.yourdomain.com" /></label>
           <label class="block">Gateway hostname or public IP<input v-model="destination" class="field mt-2" placeholder="Use the destination supplied by your gateway" /></label>
           <p class="text-sm text-white/60">For a tunnel, point DNS at the public gateway. For a direct connection, use the node’s public IP. Do not use a home-network, FIPS or onion address for public web DNS.</p>
+          <PublicWebGateway v-if="selected.includes('public-web') && status.gateway" :gateway="status.gateway" :project="current" @refresh="refresh" />
           <div v-if="selected.includes('public-web') && current?.fips_publication && status.fips_address" class="space-y-2 rounded-lg border border-white/10 p-4">
             <h3 class="font-medium">Use an existing reverse proxy</h3>
             <p class="text-sm text-white/60">If your proxy can reach this node over FIPS, you can reuse that connection. In Nginx Proxy Manager, add a separate Proxy Host with these settings:</p>
@@ -479,6 +493,7 @@ onMounted(refresh)
           <template v-if="shareableApps.length">
           <SearchableAppSelect v-model="guestApp" :options="shareableApps" :disabled="busy" />
           <template v-if="guestTarget">
+          <PublicWebGateway v-if="selected.includes('public-web') && status.gateway?.configured" :gateway="status.gateway" :app="guestTarget" @refresh="refresh" />
           <label class="block">Who is this for?<input v-model="guestLabel" maxlength="64" class="field mt-2" /></label>
           <label class="block">Access expires<select v-model.number="guestHours" class="field mt-2"><option :value="1">After one hour</option><option :value="24">After one day</option><option :value="168">After one week</option><option :value="720">After 30 days</option></select></label>
           <div v-if="guestTarget" class="space-y-2 text-sm">
@@ -545,28 +560,35 @@ onMounted(refresh)
         </section>
         <section v-if="websiteMode && current && (selected.includes('nostr') || current.nsite_receipt)" class="space-y-3">
           <h2 class="text-lg font-semibold">Publish a named nsite</h2>
-          <p class="text-sm text-white/60">Upload a public static copy to a Blossom server, then announce it on your chosen Nostr relays. Your saved source stays on your node. A compatible nsite gateway can give it a browser address without buying a domain.</p>
+          <p class="text-sm text-white/60">Serve a reviewed static copy from your node or another Blossom server, then announce it on your chosen Nostr relays. Your saved source stays on your node. A compatible nsite gateway can give it a browser address without buying a domain.</p>
           <button class="glass-button glass-button-sm rounded-lg px-5 py-2 text-sm font-medium" @click="loadIdentities">Load signing identities</button>
           <label class="block">Profile identity<select v-model="identityId" class="field mt-2"><option value="">Choose an identity</option><option v-for="identity in identities" :key="identity.id" :value="identity.id">{{ identity.name }}</option></select></label>
           <p class="text-xs text-white/50">The node's operational identity is excluded. Your private key stays in the existing signer.</p>
-          <label class="block">Blossom server<input v-model="blossom" class="field mt-2" placeholder="https://your-blossom-server.example" /></label>
+          <label class="flex items-start gap-3"><input v-model="localNsite" type="checkbox" class="mt-1" /><span>Serve the reviewed file from this node’s Blossom storage</span></label>
+          <p v-if="localNsite" class="text-sm text-white/60">Publish and verify this website’s public HTTPS connection first. Only the reviewed file is shared; private Blossom files stay protected. Your node must stay online for nsite gateways to fetch it.</p>
+          <p v-if="localNsite" class="text-sm break-all">File address: {{ nsiteServer || 'Set this website’s domain first' }}</p>
+          <label v-else class="block">External Blossom server<input v-model="blossom" class="field mt-2" placeholder="https://your-blossom-server.example" /></label>
           <label class="block">Relays<textarea v-model="relays" rows="3" class="field mt-2" placeholder="wss://your-relay.example" /></label>
           <p class="text-sm text-white/60">Choose servers you trust or host your own. The Blossom server must allow browser uploads and reads. Paid storage requires a separate arrangement; this flow never pays automatically.</p>
-          <button class="glass-button glass-button-sm rounded-lg px-5 py-2 text-sm font-medium" :disabled="!identityId || !blossom || !current.draft" @click="reviewNsite">Prepare publication review — stays on this node</button>
+          <button class="glass-button glass-button-sm rounded-lg px-5 py-2 text-sm font-medium" :disabled="!identityId || !nsiteServer || !current.draft" @click="reviewNsite">Prepare publication review — stays on this node</button>
           <div v-if="nsiteReview" class="rounded-xl border border-amber-300/30 p-4 space-y-3">
             <h3 class="font-semibold">Review exactly what will leave your node</h3>
             <p class="text-sm">Signing identity: {{ nsiteReview.identity.name }} <span class="font-mono break-all">{{ nsiteReview.identity.nostr_pubkey }}</span></p>
-            <p class="text-sm break-all">Upload destination: {{ nsiteReview.prepared.server }}</p>
+            <p class="text-sm break-all">{{ nsiteReview.prepared.local ? 'Public file origin' : 'Upload destination' }}: {{ nsiteReview.prepared.server }}</p>
             <p class="text-sm break-all">Announcement relays: {{ nsiteReview.relays.join(', ') }}</p>
             <p class="text-xs font-mono break-all">Content SHA-256: {{ nsiteReview.prepared.sha256 }}</p>
             <iframe :srcdoc="websitePreview(nsiteReview.prepared.html)" sandbox="" referrerpolicy="no-referrer" title="Exact nsite publication preview" class="w-full h-64 rounded-xl bg-white" />
             <details><summary>Inspect the exact uploaded HTML</summary><pre class="max-h-64 overflow-auto whitespace-pre-wrap text-xs">{{ nsiteReview.prepared.html }}</pre></details>
             <details><summary>Inspect the public manifest</summary><pre class="max-h-64 overflow-auto whitespace-pre-wrap text-xs">{{ JSON.stringify(nsiteReview.prepared.manifest, null, 2) }}</pre></details>
             <p class="text-sm text-amber-200">Check for personal information, credentials, private addresses and anything you do not want copied. Sanitising HTML does not remove sensitive text. Public copies cannot be guaranteed erased.</p>
-            <label class="flex items-start gap-3"><input v-model="acknowledgeUpload" type="checkbox" class="mt-1" /><span>I approve sending these exact website bytes to this Blossom server.</span></label>
+            <label class="flex items-start gap-3"><input v-model="acknowledgeUpload" type="checkbox" class="mt-1" /><span>{{ localNsite ? 'I approve making these exact website bytes publicly readable from my node.' : 'I approve sending these exact website bytes to this Blossom server.' }}</span></label>
           </div>
           <label class="flex items-start gap-3"><input v-model="acknowledgeNostr" type="checkbox" class="mt-1" /><span>I approve sending the displayed manifest or removal request to the listed relays when I press its action button. It identifies the author, and copies may remain after a deletion request.</span></label>
-          <button class="glass-button glass-button-sm rounded-lg px-5 py-2 text-sm font-medium" :disabled="!acknowledgeNostr || !acknowledgeUpload || !nsiteReview || !current.routes.includes('nostr') || !current.draft || !identityId || !blossom" @click="handleNsite('publish')">Upload and publish saved website</button>
+          <button class="glass-button glass-button-sm rounded-lg px-5 py-2 text-sm font-medium" :disabled="!acknowledgeNostr || !acknowledgeUpload || !nsiteReview || !current.routes.includes('nostr') || !current.draft || !identityId || !nsiteServer" @click="handleNsite('publish')">{{ localNsite ? 'Share file and publish manifest' : 'Upload and publish saved website' }}</button>
+          <div v-if="current.fips_publication?.nsite_asset" class="space-y-2">
+            <p class="text-sm break-all">Local nsite file is publicly readable: {{ current.fips_publication.nsite_asset.receipt.sha256 }}</p>
+            <button class="glass-button glass-button-sm rounded-lg px-5 py-2 text-sm font-medium" @click="unshareNsiteAsset">Stop sharing the local nsite file</button>
+          </div>
           <template v-if="current.nsite_receipt">
             <p class="text-sm">{{ current.nsite_receipt.deletion_requested ? 'Deletion requested; copies may remain.' : current.nsite_receipt.accepted_relays.length ? 'Relay delivery recorded; gateway access not verified.' : 'Signed manifest retained; relay delivery is pending.' }}</p>
             <details><summary>Review retained manifest for retry or removal</summary><pre class="max-h-64 overflow-auto whitespace-pre-wrap text-xs">{{ JSON.stringify(current.nsite_receipt.event, null, 2) }}</pre></details>

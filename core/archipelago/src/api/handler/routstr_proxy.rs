@@ -198,6 +198,17 @@ async fn forward_models() -> Result<Response<Body>> {
 /// OpenAI-shaped completion. Order matters: screen (S3) → budget gate (D-05,
 /// offline) → price quote → pay → forward → redeem change → record net.
 async fn forward_chat(req: Request<Body>, data_dir: &Path) -> Result<Response<Body>> {
+    // An already-open iframe may still show its previous selection. The node's
+    // saved choice is authoritative before any pricing, token or network work.
+    let settings = crate::settings::model_provider::ModelProvider::load(data_dir).await?;
+    if settings.provider != crate::settings::model_provider::Provider::Routstr {
+        return Ok(json_response(
+            StatusCode::CONFLICT,
+            json!({"error": {
+                "code": "provider_changed", "message": "Your AI provider changed. Reopen AIUI before sending this request."
+            }}),
+        ));
+    }
     let payload = hyper::body::to_bytes(req.into_body())
         .await
         .map_err(|e| anyhow::anyhow!("read request payload: {e}"))?;
@@ -443,6 +454,41 @@ mod tests {
         .await
         .unwrap();
         assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    #[tokio::test]
+    async fn stale_routstr_selection_cannot_pay_after_provider_change() {
+        let store = test_store().await;
+        let token = store.create().await;
+        let data_dir = tempfile::tempdir().unwrap();
+        crate::settings::model_provider::ModelProvider {
+            provider: crate::settings::model_provider::Provider::Claude,
+            openai_model: String::new(),
+        }
+        .save(data_dir.path())
+        .await
+        .unwrap();
+        let r = req(
+            "POST",
+            "/aiui/api/routstr/chat/completions",
+            Some(&token),
+            "{}",
+        );
+        let response = route_routstr_proxy(
+            &store,
+            data_dir.path(),
+            r,
+            "/aiui/api/routstr/chat/completions",
+        )
+        .await
+        .unwrap();
+        assert_eq!(response.status(), StatusCode::CONFLICT);
+        assert_eq!(
+            crate::assistant::AssistantBudget::load(data_dir.path())
+                .await
+                .spent_sats,
+            0
+        );
     }
 
     /// D-05: a fresh node (no budget file → zero allowance) refuses the paid

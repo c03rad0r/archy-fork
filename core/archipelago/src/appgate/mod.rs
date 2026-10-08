@@ -172,7 +172,30 @@ impl AppGate {
         // snapshot when the port momentarily leaves the map mid-refresh.
         let live = self.port_map.read().await.gated(app.port).cloned();
         let app = live.as_ref().unwrap_or(app);
+        // A managed public route must still refer to this guest-enabled app.
+        // Refuse stale routes before login actions or public-resource exceptions.
+        if let Some(expected) = req.headers().get("x-archipelago-app") {
+            if expected.to_str().ok() != Some(app.app_id.as_str())
+                || live.is_none()
+                || !app.declared
+                || !app.guest_access
+                || !app.auth_enabled
+                || app.session_passthrough
+            {
+                return Response::builder()
+                    .status(StatusCode::NOT_FOUND)
+                    .body(Body::from("App route is no longer available"))
+                    .unwrap();
+            }
+        }
 
+        // Managed gateway routes are HTTPS-only. Mark cookies Secure even
+        // though the final in-node FIPS hop uses HTTP. A forged header can only
+        // strengthen this cookie attribute, never grant authorization.
+        let mut req = req;
+        if req.headers().contains_key("x-archipelago-app") {
+            req.extensions_mut().insert(SecureTransport(true));
+        }
         let path = req.uri().path().to_string();
         // A dashboard same-origin proxy strips `/app/<id>/` before this gate
         // sees the URI. Carry that trusted proxy mount into the challenge's
@@ -1379,6 +1402,32 @@ fn totp_page(
 
 #[cfg(test)]
 mod tests {
+
+    #[tokio::test]
+    async fn managed_gateway_rejects_stale_identity_or_disabled_guest_policy_before_login() {
+        let gate = test_gate().await;
+        let mut app = app();
+        app.guest_access = true;
+        for (expected, enabled, declared) in [
+            ("another-app", true, true),
+            ("strfry", false, true),
+            ("strfry", true, false),
+        ] {
+            app.auth_enabled = enabled;
+            app.declared = declared;
+            *gate.port_map.write().await = identity::test_port_map(app.clone());
+            for path in ["/", "/manifest.json", "/__archipelago-gate/guest"] {
+                let request = Request::get(path)
+                    .header("x-archipelago-app", expected)
+                    .body(Body::empty())
+                    .unwrap();
+                let response = gate
+                    .handle(request, &app, "127.0.0.1".parse().unwrap())
+                    .await;
+                assert_eq!(response.status(), StatusCode::NOT_FOUND);
+            }
+        }
+    }
 
     #[tokio::test]
     async fn guest_login_is_app_only_and_revocation_blocks_subsequent_requests() {

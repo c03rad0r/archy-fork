@@ -6,6 +6,27 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 
+pub const POLICY: &str = "<!doctype html><meta http-equiv=\"Content-Security-Policy\" content=\"default-src 'none'; style-src 'unsafe-inline'; img-src data:; base-uri 'none'; form-action 'none'\"><meta name=\"referrer\" content=\"no-referrer\">";
+
+pub fn local_server(project: &Project, raw: &str) -> Result<String> {
+    let server = server(raw)?;
+    anyhow::ensure!(
+        project.routes.contains(&Route::Nostr)
+            && project.routes.contains(&Route::PublicWeb)
+            && project.fips_publication.is_some(),
+        "Publish this website over public HTTPS before using local Blossom for an nsite"
+    );
+    let domain = project
+        .domain
+        .as_ref()
+        .ok_or_else(|| anyhow::anyhow!("Set the website domain first"))?;
+    anyhow::ensure!(
+        server == format!("https://{}", domain.hostname),
+        "Local nsite assets must use this website’s HTTPS origin"
+    );
+    Ok(server)
+}
+
 pub fn hash(bytes: &[u8]) -> String {
     format!("{:x}", Sha256::digest(bytes))
 }
@@ -23,7 +44,11 @@ pub fn prepare(project: &Project, blossom: &str) -> Result<Value> {
     let server = server(blossom)?;
     // The first policy remains restrictive even if generated HTML adds another
     // CSP. Hosted nsites use a separate origin, without dashboard privileges.
-    let html = format!("<!doctype html><meta http-equiv=\"Content-Security-Policy\" content=\"default-src 'none'; style-src 'unsafe-inline'; img-src data:; base-uri 'none'; form-action 'none'\"><meta name=\"referrer\" content=\"no-referrer\">{}", project.draft);
+    let html = format!("{POLICY}{}", project.draft);
+    anyhow::ensure!(
+        html.len() <= super::MAX_HTML,
+        "Prepared website exceeds 512 KiB"
+    );
     let digest = hash(html.as_bytes());
     let identifier: String = project.id.chars().filter(|c| *c != '-').take(13).collect();
     let aggregate = hash(format!("{digest} /index.html\n").as_bytes());

@@ -11,7 +11,8 @@ import { KeepAlive, defineComponent, h, ref } from 'vue'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import Chat from '../Chat.vue'
 
-vi.mock('@/components/AIConnectionModal.vue', () => ({ default: { template: '<div />', methods: { checkNeeded: async () => false, syncSelection: async () => {} } } }))
+const providerSync = vi.hoisted(() => vi.fn(async () => {}))
+vi.mock('@/components/AIConnectionModal.vue', () => ({ default: { template: '<div />', methods: { checkNeeded: async () => false, syncSelection: providerSync } } }))
 
 const routerBackMock = vi.fn()
 const routerPushMock = vi.fn()
@@ -66,6 +67,7 @@ function iframeSrc(wrapper: ReturnType<typeof mount>): string | undefined {
 
 describe('Chat / AIUI embed URL stability + D-14 defaults (02-07)', () => {
   beforeEach(() => {
+    providerSync.mockClear()
     vi.stubEnv('VITE_AIUI_URL', 'http://localhost:5173')
   })
 
@@ -206,12 +208,14 @@ describe('Chat / AIUI embed URL stability + D-14 defaults (02-07)', () => {
     expect(wrapper.find('[title="chat.aiuiConnected"]').exists()).toBe(true)
     expect(wrapper.find('.chat-loading').exists()).toBe(false)
 
+    expect(providerSync).toHaveBeenCalledTimes(1)
     show.value = false
     await wrapper.vm.$nextTick()
     show.value = true
     await wrapper.vm.$nextTick()
     await flushPromises()
 
+    expect(providerSync).toHaveBeenCalledTimes(2)
     // No second 'ready' message is sent on reactivation — aiuiConnected must
     // not have been reset to false by the deactivate/reactivate cycle.
     expect(wrapper.find('[title="chat.aiuiConnected"]').exists()).toBe(true)

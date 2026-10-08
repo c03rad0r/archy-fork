@@ -5,6 +5,84 @@ use serde::Deserialize;
 use serde_json::json;
 
 impl RpcHandler {
+    pub(super) async fn handle_publishing_gateway_app_route(
+        &self,
+        params: Option<serde_json::Value>,
+    ) -> Result<serde_json::Value> {
+        #[derive(Deserialize)]
+        #[serde(deny_unknown_fields)]
+        struct Request {
+            app_id: String,
+            domain: String,
+            enabled: bool,
+        }
+        let request: Request = serde_json::from_value(params.context("Missing app route")?)?;
+        let map = crate::appgate::identity::build_port_map();
+        let port = map
+            .gated_ports()
+            .find(|p| {
+                p.app_id == request.app_id
+                    && p.declared
+                    && p.guest_access
+                    && p.auth_enabled
+                    && !p.session_passthrough
+            })
+            .map(|p| p.port);
+        publishing::gateway::app_route(
+            &self.config.data_dir,
+            &request.app_id,
+            &request.domain,
+            request.enabled,
+            crate::fips::iface::fips0_ula(),
+            port,
+        )
+        .await
+    }
+
+    pub(super) async fn handle_publishing_gateway_configure(
+        &self,
+        params: Option<serde_json::Value>,
+    ) -> Result<serde_json::Value> {
+        #[derive(Deserialize)]
+        #[serde(deny_unknown_fields)]
+        struct Request {
+            enrollment: publishing::gateway::Enrollment,
+            certificate_mode: String,
+            acknowledge: bool,
+        }
+        let request: Request =
+            serde_json::from_value(params.context("Missing gateway enrollment")?)?;
+        anyhow::ensure!(
+            request.acknowledge,
+            "Confirm connecting to this gateway first"
+        );
+        publishing::gateway::configure(
+            &self.config.data_dir,
+            request.enrollment,
+            request.certificate_mode,
+        )
+        .await
+    }
+    pub(super) async fn handle_publishing_gateway_route(
+        &self,
+        params: Option<serde_json::Value>,
+    ) -> Result<serde_json::Value> {
+        #[derive(Deserialize)]
+        #[serde(deny_unknown_fields)]
+        struct Request {
+            id: String,
+            enabled: bool,
+        }
+        let request: Request = serde_json::from_value(params.context("Missing website route")?)?;
+        publishing::gateway::route(
+            &self.config.data_dir,
+            &request.id,
+            request.enabled,
+            crate::fips::iface::fips0_ula(),
+        )
+        .await
+    }
+
     pub(super) async fn handle_publishing_verify_https(
         &self,
         params: Option<serde_json::Value>,
@@ -203,10 +281,19 @@ impl RpcHandler {
         use base64::Engine;
         #[derive(Deserialize)]
         #[serde(deny_unknown_fields)]
+        struct NsiteFile {
+            html: String,
+            server: String,
+            acknowledge_public: bool,
+        }
+        #[derive(Deserialize)]
+        #[serde(deny_unknown_fields)]
         struct Request {
             id: String,
             version: u64,
             authorization: nostr_sdk::Event,
+            #[serde(default)]
+            nsite: Option<NsiteFile>,
         }
         let request: Request =
             serde_json::from_value(params.context("Missing local archive authorization")?)?;
@@ -227,7 +314,20 @@ impl RpcHandler {
             !project.draft.trim().is_empty(),
             "Save a website draft first"
         );
-        let digest = publishing::nsite::hash(project.draft.as_bytes());
+        let content = if let Some(nsite) = &request.nsite {
+            publishing::nsite::local_server(project, &nsite.server)?;
+            anyhow::ensure!(
+                nsite.acknowledge_public
+                    && nsite.html.len() <= 512 * 1024
+                    && !nsite.html.contains('\0')
+                    && nsite.html.starts_with(publishing::nsite::POLICY),
+                "Review and confirm the local nsite file before sharing it"
+            );
+            nsite.html.clone()
+        } else {
+            project.draft.clone()
+        };
+        let digest = publishing::nsite::hash(content.as_bytes());
         let event = serde_json::to_value(&request.authorization)?;
         let tags = event["tags"]
             .as_array()
@@ -259,7 +359,7 @@ impl RpcHandler {
             .put(format!("{base}/upload"))
             .header("Authorization", format!("Nostr {auth}"))
             .header("Content-Type", "text/html; charset=utf-8")
-            .body(project.draft.clone())
+            .body(content.clone())
             .send()
             .await
             .context("Local Blossom is not responding. Start it from Apps")?;
@@ -278,7 +378,7 @@ impl RpcHandler {
         }
         let descriptor: serde_json::Value = serde_json::from_slice(&descriptor)?;
         anyhow::ensure!(
-            descriptor["sha256"] == digest && descriptor["size"] == project.draft.len(),
+            descriptor["sha256"] == digest && descriptor["size"] == content.len(),
             "Local Blossom returned another file receipt"
         );
         let mut response = client
@@ -286,7 +386,7 @@ impl RpcHandler {
             .send()
             .await?
             .error_for_status()?;
-        let expected = project.draft.as_bytes();
+        let expected = content.as_bytes();
         let mut offset = 0;
         while let Some(chunk) = response.chunk().await? {
             anyhow::ensure!(
@@ -310,9 +410,19 @@ impl RpcHandler {
             &self.config.data_dir,
             publishing::Update {
                 version: request.version,
-                change: publishing::Change::RecordLocalArchive {
-                    id: request.id,
-                    receipt,
+                change: if let Some(nsite) = request.nsite {
+                    publishing::Change::ShareNsiteAsset {
+                        id: request.id,
+                        server: nsite.server,
+                        html: content,
+                        receipt,
+                        acknowledge_public: nsite.acknowledge_public,
+                    }
+                } else {
+                    publishing::Change::RecordLocalArchive {
+                        id: request.id,
+                        receipt,
+                    }
                 },
             },
         )
@@ -350,6 +460,7 @@ impl RpcHandler {
             "nostr_relays": self.config.nostr_relays,
             "publication_enabled": true,
             "public_archive_enabled": true,
+            "gateway": publishing::gateway::status(&self.config.data_dir).await.unwrap_or_else(|_| json!({"configured":false,"routes":[],"error":"Private gateway configuration needs repair","externally_verified":false})),
             "listeners": publishing::serving::status().await,
             "onions": publishing::tor::status().await,
             "notice": "FIPS and Tor static publishing are available for testing. Existing public proxies can be configured manually. Nostr publishing requires an explicit identity, Blossom server and relay selection. Automated gateway setup is not enabled yet. Saving choices does not change app access; external verification is separate.",
@@ -381,6 +492,8 @@ impl RpcHandler {
             version: u64,
             server: String,
             html: String,
+            #[serde(default)]
+            local: bool,
         }
         let request: Request = serde_json::from_value(params.context("Missing nsite settings")?)?;
         let state = publishing::load(&self.config.data_dir).await?;
@@ -396,7 +509,13 @@ impl RpcHandler {
         }
         let mut prepared = project.clone();
         prepared.draft = request.html;
-        publishing::nsite::prepare(&prepared, &request.server)
+        let mut result = publishing::nsite::prepare(&prepared, &request.server)?;
+        if request.local {
+            publishing::nsite::local_server(project, &request.server)?;
+            result["local"] = json!(true);
+            result["authorization"]["tags"][2] = json!(["server", "127.0.0.1"]);
+        }
+        Ok(result)
     }
 
     pub(super) async fn handle_publishing_dns(

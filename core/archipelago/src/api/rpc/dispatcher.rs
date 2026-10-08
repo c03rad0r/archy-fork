@@ -11,6 +11,16 @@ impl RpcHandler {
         session_token: &Option<String>,
     ) -> Result<serde_json::Value> {
         match method {
+            "publishing.gateway-app-route" => {
+                self.handle_publishing_gateway_app_route(params).await
+            }
+            "publishing.gateway-configure" => {
+                self.handle_publishing_gateway_configure(params).await
+            }
+            "publishing.gateway-route" => self.handle_publishing_gateway_route(params).await,
+            "publishing.gateway-disconnect" => {
+                crate::publishing::gateway::disconnect(&self.config.data_dir).await
+            }
             "publishing.status" => self.handle_publishing_status().await,
             "publishing.verify-https" => self.handle_publishing_verify_https(params).await,
             "publishing.update" => self.handle_publishing_update(params).await,

@@ -67,7 +67,7 @@ export interface SignedAppEntry {
       version?: string
       description?: string
       category?: string
-      container?: { image?: string }
+      container?: { image?: string; build?: { tag?: string } }
       metadata?: { icon?: string; author?: string; repo?: string }
       ports?: { host?: number | string; container?: number | string; auth?: string }[]
     }
@@ -92,7 +92,7 @@ export function signedCatalogToApps(catalog: SignedAppCatalog): MarketplaceApp[]
       description: app?.description || '',
       icon: app?.metadata?.icon || '/assets/icon/favico-black-v2.svg',
       author: app?.metadata?.author,
-      dockerImage: entry.image || app?.container?.image || '',
+      dockerImage: entry.image || app?.container?.image || app?.container?.build?.tag || '',
       repoUrl: app?.metadata?.repo,
       category: app?.category,
       source: 'signed-catalog',

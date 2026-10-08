@@ -32,7 +32,7 @@ async function publishReviewed(html: string) {
 beforeEach(() => {
   vi.clearAllMocks(); accept = true
   vi.stubGlobal('WebSocket', Socket)
-  vi.mocked(publishing.status).mockResolvedValue({ state: { version: 4 } } as never)
+  vi.mocked(publishing.status).mockResolvedValue({ state: { version: 4, projects: {} } } as never)
   vi.mocked(publishing.update).mockResolvedValue({} as never)
   vi.mocked(rpcClient.call).mockImplementation(async request => {
     if (request.method === 'publishing.nsite-prepare') return prepared as never
@@ -43,6 +43,17 @@ beforeEach(() => {
   vi.stubGlobal('fetch', vi.fn().mockResolvedValueOnce(new Response(JSON.stringify({ sha256: prepared.sha256, size: new TextEncoder().encode(prepared.html).length }), { status: 201 })).mockResolvedValueOnce(new Response(prepared.html)))
 })
 describe('named nsite publishing', () => {
+  it('publishes local Blossom bytes through the node adapter and reads the public hash before announcing', async () => {
+    const original = vi.mocked(rpcClient.call).getMockImplementation()!
+    vi.mocked(rpcClient.call).mockImplementation(async request => request.method === 'publishing.blossom-store' ? {} as never : original(request))
+    vi.mocked(fetch).mockReset().mockResolvedValue(new Response(prepared.html))
+    await publishNsite('project', 4, identity, ['wss://relay.example'], { ...prepared, local: true })
+    expect(rpcClient.call).toHaveBeenCalledWith(expect.objectContaining({ method: 'publishing.blossom-store', params: expect.objectContaining({ nsite: { html: prepared.html, server: prepared.server, acknowledge_public: true } }) }))
+    expect(fetch).toHaveBeenCalledTimes(1)
+    expect(fetch).toHaveBeenCalledWith(`${prepared.server}/${prepared.sha256}`, expect.objectContaining({ credentials: 'omit', redirect: 'error' }))
+    expect(publishing.update).toHaveBeenCalledTimes(2)
+  })
+
   it('stores locally through the authenticated node adapter without external uploads or broadcasts', async () => {
     const socket = vi.fn()
     vi.stubGlobal('WebSocket', socket)
@@ -134,6 +145,15 @@ describe('named nsite publishing', () => {
     expect(result.accepted_relays).toHaveLength(1)
     expect(fetch).not.toHaveBeenCalled()
     expect(rpcClient.call).not.toHaveBeenCalled()
+  })
+  it('does not retry announcements after local file sharing is revoked', async () => {
+    vi.mocked(publishing.status).mockResolvedValue({ state: { version: 4, projects: { project: { domain: { hostname: 'blossom.example' }, fips_publication: {} } } } } as never)
+    const socket = vi.fn()
+    vi.stubGlobal('WebSocket', socket)
+    await expect(retryNsite('project', receipt, ['wss://relay.example'])).rejects.toThrow('no longer shared')
+    expect(socket).not.toHaveBeenCalled()
+    expect(fetch).not.toHaveBeenCalled()
+    expect(publishing.update).not.toHaveBeenCalled()
   })
   it('requests deletion with the publishing identity without deleting shared blobs', async () => {
     await requestNsiteDeletion('project', receipt, identity, ['wss://relay.example'])

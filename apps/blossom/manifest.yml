@@ -1,7 +1,7 @@
 app:
   id: blossom
   name: Blossom
-  version: 6.4.1-archy.1
+  version: 6.4.1-archy.2
   upstream:
     kind: github
     repo: hzrd149/blossom-server
@@ -12,7 +12,7 @@ app:
     build:
       context: /opt/archipelago/docker/blossom
       dockerfile: Dockerfile
-      tag: localhost/archipelago-blossom:6.4.1-archy.1
+      tag: localhost/archipelago-blossom:6.4.1-archy.2
     derived_env:
       - key: ARCHY_BLOSSOM_PUBKEYS
         template: '{{NODE_IDENTITY_PUBKEYS}}'

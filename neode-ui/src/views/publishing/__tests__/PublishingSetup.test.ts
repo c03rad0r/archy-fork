@@ -1,3 +1,5 @@
+vi.mock('@/services/installPublishingApp', () => ({ installPublishingApp: vi.fn() }))
+import { installPublishingApp } from '@/services/installPublishingApp'
 import { flushPromises, mount } from '@vue/test-utils'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 const api = vi.hoisted(() => ({ status: vi.fn(), update: vi.fn(), dns: vi.fn(), generate: vi.fn(), verifyHttps: vi.fn() }))
@@ -29,6 +31,20 @@ describe('publishing setup', () => {
     expect(wrapper.get('[data-testid="ai-connection"]').attributes('data-open')).toBe('true')
     expect(api.generate).not.toHaveBeenCalled()
     expect(api.update).not.toHaveBeenCalled()
+    wrapper.unmount()
+  })
+
+  it('revokes a local nsite asset through the publishing action without announcing anything', async () => {
+    page.name = 'publish-website'
+    appStore.data['package-data'].blossom = { state: 'installed' }
+    api.status.mockResolvedValue({ state: { ...state(), projects: { site: { id: 'site', name: 'Site', draft: '<h1>Public</h1>', routes: ['nostr', 'public-web'], domain: { hostname: 'site.example' }, revisions: [], fips_publication: { html: '<h1>Public</h1>', port: 32000, nsite_asset: { html: '<h1>Reviewed</h1>', receipt: { sha256: 'a'.repeat(64), size: 17 } } } } } }, apps: [], publication_enabled: true })
+    const wrapper = mount(PublishingSetup); await flushPromises()
+    await wrapper.get('[aria-controls="setup-step-publish"]').trigger('click')
+    await wrapper.findAll('button').find(b => b.text() === 'Stop sharing the local nsite file')!.trigger('click')
+    await flushPromises()
+    expect(api.update).toHaveBeenCalledWith(2, { action: 'unshare-nsite-asset', id: 'site' })
+    expect(rpcClient.call).not.toHaveBeenCalledWith(expect.objectContaining({ method: 'identity.nostr-sign' }))
+    expect(wrapper.text()).toContain('Local nsite file sharing stopped')
     wrapper.unmount()
   })
 
@@ -114,7 +130,7 @@ describe('publishing setup', () => {
     const wrapper = mount(PublishingSetup); await flushPromises()
     expect(wrapper.get('[data-testid="blossom-setup"]').text()).toContain('Install Blossom')
     await wrapper.findAll('button').find(b => b.text() === 'Install Blossom')!.trigger('click'); await flushPromises()
-    expect(appStore.installPackage).toHaveBeenCalledWith('blossom', '', 'latest')
+    expect(installPublishingApp).toHaveBeenCalledWith('blossom')
     wrapper.unmount()
     appStore.data['package-data'].blossom = { state: 'installed' }
     const installed = mount(PublishingSetup); await flushPromises()

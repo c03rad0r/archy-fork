@@ -53,11 +53,30 @@ pub(super) fn response_for(
     else {
         return simple(StatusCode::NOT_FOUND, "Website is not published");
     };
+    // Bind managed gateway routes to the project, even if a freed listener port
+    // is later assigned to a different published website.
+    if req
+        .headers()
+        .get("x-archipelago-website")
+        .is_some_and(|v| v.to_str().ok() != Some(id))
+    {
+        return simple(StatusCode::NOT_FOUND, "Website route no longer matches");
+    }
     // Only the selected immutable snapshot is exposed, never the Blossom backend.
     // No listing, upload, arbitrary hash lookup, filesystem access or credentials.
-    let asset = publication.public_archive.as_ref().is_some_and(|hash| {
-        req.uri().path() == format!("/{hash}") && *hash == super::nsite::hash(publication.html.as_bytes())
+    let nsite_asset = publication.nsite_asset.as_ref().filter(|asset| {
+        req.uri().path() == format!("/{}", asset.receipt.sha256)
+            && asset.receipt.sha256 == super::nsite::hash(asset.html.as_bytes())
+            && asset.receipt.size == asset.html.len()
     });
+    let html = nsite_asset
+        .map(|asset| asset.html.as_str())
+        .unwrap_or(&publication.html);
+    let asset = nsite_asset.is_some()
+        || publication.public_archive.as_ref().is_some_and(|hash| {
+            req.uri().path() == format!("/{hash}")
+                && *hash == super::nsite::hash(publication.html.as_bytes())
+        });
     if asset && req.method() == Method::OPTIONS {
         let mut response = simple(StatusCode::NO_CONTENT, "");
         asset_headers(&mut response);
@@ -76,13 +95,14 @@ pub(super) fn response_for(
     response
         .headers_mut()
         .insert("content-type", "text/html; charset=utf-8".parse().unwrap());
-    response.headers_mut().insert(
-        "content-length",
-        publication.html.len().to_string().parse().unwrap(),
-    );
-    if asset { asset_headers(&mut response); }
+    response
+        .headers_mut()
+        .insert("content-length", html.len().to_string().parse().unwrap());
+    if asset {
+        asset_headers(&mut response);
+    }
     if req.method() == Method::GET {
-        *response.body_mut() = Body::from(publication.html.clone());
+        *response.body_mut() = Body::from(html.to_owned());
     }
     response
 }
@@ -90,9 +110,14 @@ fn asset_headers(response: &mut Response<Body>) {
     for (name, value) in [
         ("access-control-allow-origin", "*"),
         ("access-control-allow-methods", "GET, HEAD, OPTIONS"),
-        ("access-control-expose-headers", "Content-Length, Content-Type"),
+        (
+            "access-control-expose-headers",
+            "Content-Length, Content-Type",
+        ),
         ("content-disposition", "attachment; filename=\"index.html\""),
-    ] { response.headers_mut().insert(name, value.parse().unwrap()); }
+    ] {
+        response.headers_mut().insert(name, value.parse().unwrap());
+    }
 }
 fn simple(status: StatusCode, body: &str) -> Response<Body> {
     let mut r = Response::new(Body::from(body.to_owned()));
@@ -261,47 +286,265 @@ pub(super) async fn listen(
 mod tests {
     use super::*;
     #[tokio::test]
+    async fn local_nsite_shares_only_reviewed_bytes_and_revokes_independently() {
+        use crate::publishing::{Change, Domain, LocalArchive, Route};
+        let mut state = State::default();
+        let id = state
+            .apply(Change::Create {
+                name: "Nsite".into(),
+            })
+            .unwrap()
+            .unwrap();
+        state
+            .apply(Change::Save {
+                id: id.clone(),
+                name: "Nsite".into(),
+                routes: [Route::PublicWeb, Route::Nostr].into_iter().collect(),
+                domain: Some(Domain {
+                    hostname: "site.example.org".into(),
+                    destination: None,
+                }),
+                html: "<h1>Original</h1>".into(),
+            })
+            .unwrap();
+        state
+            .apply(Change::PublishFips {
+                id: id.clone(),
+                acknowledge_public: true,
+            })
+            .unwrap();
+        let port = state.projects[&id].fips_publication.as_ref().unwrap().port;
+        let html = format!("{}<h1>Reviewed</h1>", crate::publishing::nsite::POLICY);
+        let hash = crate::publishing::nsite::hash(html.as_bytes());
+        let receipt = LocalArchive {
+            sha256: hash.clone(),
+            size: html.len(),
+            pubkey: "a".repeat(64),
+            created_at: "now".into(),
+        };
+        for (server, ack) in [
+            ("https://site.example.org", false),
+            ("https://other.example.org", true),
+        ] {
+            assert!(state
+                .apply(Change::ShareNsiteAsset {
+                    id: id.clone(),
+                    server: server.into(),
+                    html: html.clone(),
+                    receipt: receipt.clone(),
+                    acknowledge_public: ack
+                })
+                .is_err());
+        }
+        state
+            .apply(Change::ShareNsiteAsset {
+                id: id.clone(),
+                server: "https://site.example.org".into(),
+                html: html.clone(),
+                receipt,
+                acknowledge_public: true,
+            })
+            .unwrap();
+        // Persisted snapshots keep the exact selection; a later draft cannot alter it.
+        let mut state: State =
+            serde_json::from_slice(&serde_json::to_vec(&state).unwrap()).unwrap();
+        state.projects.get_mut(&id).unwrap().draft = "private later draft".into();
+        let req = Request::builder()
+            .uri(format!("/{hash}"))
+            .body(Body::empty())
+            .unwrap();
+        let response = response_for(&state, &id, port, Route::Fips, &req);
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(response.headers()["access-control-allow-origin"], "*");
+        assert_eq!(
+            hyper::body::to_bytes(response.into_body()).await.unwrap(),
+            html
+        );
+        for path in ["/list", "/upload", "/rpc", "/other-hash"] {
+            let req = Request::builder().uri(path).body(Body::empty()).unwrap();
+            assert_eq!(
+                response_for(&state, &id, port, Route::Fips, &req).status(),
+                StatusCode::NOT_FOUND
+            );
+        }
+        state
+            .apply(Change::UnshareNsiteAsset { id: id.clone() })
+            .unwrap();
+        assert_eq!(
+            response_for(&state, &id, port, Route::Fips, &req).status(),
+            StatusCode::NOT_FOUND
+        );
+        let root = Request::builder().uri("/").body(Body::empty()).unwrap();
+        assert_eq!(
+            response_for(&state, &id, port, Route::Fips, &root).status(),
+            StatusCode::OK
+        );
+    }
+
+    #[tokio::test]
     async fn public_archive_is_exact_explicit_route_scoped_and_revocable() {
         use crate::publishing::{Change, LocalArchive, Route};
         let mut state = State::default();
-        let id = state.apply(Change::Create { name: "Archive".into() }).unwrap().unwrap();
-        state.apply(Change::Save { id: id.clone(), name: "Archive".into(), routes: [Route::Fips, Route::Tor].into_iter().collect(), domain: None, html: "public snapshot".into() }).unwrap();
-        state.apply(Change::PublishFips { id: id.clone(), acknowledge_public: true }).unwrap();
-        state.apply(Change::PublishTor { id: id.clone(), acknowledge_public: true }).unwrap();
+        let id = state
+            .apply(Change::Create {
+                name: "Archive".into(),
+            })
+            .unwrap()
+            .unwrap();
+        state
+            .apply(Change::Save {
+                id: id.clone(),
+                name: "Archive".into(),
+                routes: [Route::Fips, Route::Tor].into_iter().collect(),
+                domain: None,
+                html: "public snapshot".into(),
+            })
+            .unwrap();
+        state
+            .apply(Change::PublishFips {
+                id: id.clone(),
+                acknowledge_public: true,
+            })
+            .unwrap();
+        state
+            .apply(Change::PublishTor {
+                id: id.clone(),
+                acknowledge_public: true,
+            })
+            .unwrap();
         let port = state.projects[&id].fips_publication.as_ref().unwrap().port;
         let tor_port = state.projects[&id].tor_publication.as_ref().unwrap().port;
         let hash = crate::publishing::nsite::hash(b"public snapshot");
-        let req = Request::builder().uri(format!("/{hash}")).body(Body::empty()).unwrap();
-        assert_eq!(response(&state, &id, port, &req).status(), StatusCode::NOT_FOUND);
-        assert!(state.apply(Change::ShareArchive { id: id.clone(), route: Route::Fips, acknowledge_public: true }).is_err());
-        state.apply(Change::RecordLocalArchive { id: id.clone(), receipt: LocalArchive { sha256: hash.clone(), size: 15, pubkey: "a".repeat(64), created_at: "now".into() } }).unwrap();
-        assert!(state.apply(Change::ShareArchive { id: id.clone(), route: Route::Fips, acknowledge_public: false }).is_err());
-        state.apply(Change::ShareArchive { id: id.clone(), route: Route::Fips, acknowledge_public: true }).unwrap();
-        assert_eq!(response_for(&state, &id, tor_port, Route::Tor, &req).status(), StatusCode::NOT_FOUND);
+        let req = Request::builder()
+            .uri(format!("/{hash}"))
+            .body(Body::empty())
+            .unwrap();
+        assert_eq!(
+            response(&state, &id, port, &req).status(),
+            StatusCode::NOT_FOUND
+        );
+        assert!(state
+            .apply(Change::ShareArchive {
+                id: id.clone(),
+                route: Route::Fips,
+                acknowledge_public: true
+            })
+            .is_err());
+        state
+            .apply(Change::RecordLocalArchive {
+                id: id.clone(),
+                receipt: LocalArchive {
+                    sha256: hash.clone(),
+                    size: 15,
+                    pubkey: "a".repeat(64),
+                    created_at: "now".into(),
+                },
+            })
+            .unwrap();
+        assert!(state
+            .apply(Change::ShareArchive {
+                id: id.clone(),
+                route: Route::Fips,
+                acknowledge_public: false
+            })
+            .is_err());
+        state
+            .apply(Change::ShareArchive {
+                id: id.clone(),
+                route: Route::Fips,
+                acknowledge_public: true,
+            })
+            .unwrap();
+        assert_eq!(
+            response_for(&state, &id, tor_port, Route::Tor, &req).status(),
+            StatusCode::NOT_FOUND
+        );
         let r = response(&state, &id, port, &req);
         assert_eq!(r.status(), StatusCode::OK);
         assert_eq!(r.headers()["access-control-allow-origin"], "*");
-        assert!(r.headers()["content-disposition"].to_str().unwrap().starts_with("attachment"));
+        assert!(r.headers()["content-disposition"]
+            .to_str()
+            .unwrap()
+            .starts_with("attachment"));
         assert_eq!(r.headers()["content-security-policy"], CSP);
-        assert_eq!(hyper::body::to_bytes(r.into_body()).await.unwrap().as_ref(), b"public snapshot");
-        for path in ["/upload", "/list", "/0000000000000000000000000000000000000000000000000000000000000000", "/../state.json"] {
+        assert_eq!(
+            hyper::body::to_bytes(r.into_body()).await.unwrap().as_ref(),
+            b"public snapshot"
+        );
+        for path in [
+            "/upload",
+            "/list",
+            "/0000000000000000000000000000000000000000000000000000000000000000",
+            "/../state.json",
+        ] {
             let r = Request::builder().uri(path).body(Body::empty()).unwrap();
-            assert_eq!(response(&state, &id, port, &r).status(), StatusCode::NOT_FOUND);
+            assert_eq!(
+                response(&state, &id, port, &r).status(),
+                StatusCode::NOT_FOUND
+            );
         }
-        let head = Request::builder().method(Method::HEAD).uri(format!("/{hash}")).body(Body::empty()).unwrap();
+        let head = Request::builder()
+            .method(Method::HEAD)
+            .uri(format!("/{hash}"))
+            .body(Body::empty())
+            .unwrap();
         let r = response(&state, &id, port, &head);
         assert_eq!(r.headers()["content-length"], "15");
-        assert!(hyper::body::to_bytes(r.into_body()).await.unwrap().is_empty());
-        let post = Request::builder().method(Method::PUT).uri(format!("/{hash}")).body(Body::empty()).unwrap();
-        assert_eq!(response(&state, &id, port, &post).status(), StatusCode::METHOD_NOT_ALLOWED);
+        assert!(hyper::body::to_bytes(r.into_body())
+            .await
+            .unwrap()
+            .is_empty());
+        let post = Request::builder()
+            .method(Method::PUT)
+            .uri(format!("/{hash}"))
+            .body(Body::empty())
+            .unwrap();
+        assert_eq!(
+            response(&state, &id, port, &post).status(),
+            StatusCode::METHOD_NOT_ALLOWED
+        );
         state.projects.get_mut(&id).unwrap().draft = "private later edits".into();
-        assert_eq!(hyper::body::to_bytes(response(&state, &id, port, &req).into_body()).await.unwrap().as_ref(), b"public snapshot");
-        state.apply(Change::UnshareArchive { id: id.clone(), route: Route::Fips }).unwrap();
-        assert_eq!(response(&state, &id, port, &req).status(), StatusCode::NOT_FOUND);
-        state.apply(Change::ShareArchive { id: id.clone(), route: Route::Fips, acknowledge_public: true }).unwrap();
-        state.apply(Change::PublishFips { id: id.clone(), acknowledge_public: true }).unwrap();
-        assert_eq!(response(&state, &id, port, &req).status(), StatusCode::NOT_FOUND);
-        assert!(state.apply(Change::ShareArchive { id, route: Route::Fips, acknowledge_public: true }).is_err());
+        assert_eq!(
+            hyper::body::to_bytes(response(&state, &id, port, &req).into_body())
+                .await
+                .unwrap()
+                .as_ref(),
+            b"public snapshot"
+        );
+        state
+            .apply(Change::UnshareArchive {
+                id: id.clone(),
+                route: Route::Fips,
+            })
+            .unwrap();
+        assert_eq!(
+            response(&state, &id, port, &req).status(),
+            StatusCode::NOT_FOUND
+        );
+        state
+            .apply(Change::ShareArchive {
+                id: id.clone(),
+                route: Route::Fips,
+                acknowledge_public: true,
+            })
+            .unwrap();
+        state
+            .apply(Change::PublishFips {
+                id: id.clone(),
+                acknowledge_public: true,
+            })
+            .unwrap();
+        assert_eq!(
+            response(&state, &id, port, &req).status(),
+            StatusCode::NOT_FOUND
+        );
+        assert!(state
+            .apply(Change::ShareArchive {
+                id,
+                route: Route::Fips,
+                acknowledge_public: true
+            })
+            .is_err());
     }
 
     #[tokio::test]

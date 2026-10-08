@@ -7,6 +7,7 @@ use std::path::Path;
 use tokio::sync::Mutex;
 
 mod firewall;
+pub mod gateway;
 pub mod nsite;
 pub mod serving;
 pub mod tor;
@@ -63,7 +64,16 @@ pub struct LocalArchive {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
+pub struct PublicNsiteAsset {
+    pub html: String,
+    pub receipt: LocalArchive,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct Publication {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub nsite_asset: Option<PublicNsiteAsset>,
     /// Exact archived bytes explicitly approved for public hash-addressed reads.
     #[serde(default)]
     pub public_archive: Option<String>,
@@ -124,6 +134,17 @@ pub enum Change {
         routes: BTreeSet<Route>,
         domain: Option<Domain>,
         html: String,
+    },
+    #[serde(skip_deserializing)]
+    ShareNsiteAsset {
+        id: String,
+        server: String,
+        html: String,
+        receipt: LocalArchive,
+        acknowledge_public: bool,
+    },
+    UnshareNsiteAsset {
+        id: String,
     },
     ShareArchive {
         id: String,
@@ -267,6 +288,45 @@ pub fn dns_records(domain: &Domain) -> Result<Vec<DnsRecord>> {
 impl State {
     pub fn apply(&mut self, change: Change) -> Result<Option<String>> {
         match change {
+            Change::ShareNsiteAsset {
+                id,
+                server,
+                html,
+                receipt,
+                acknowledge_public,
+            } => {
+                let project = self
+                    .projects
+                    .get_mut(&id)
+                    .context("Website project not found")?;
+                nsite::local_server(project, &server)?;
+                if !acknowledge_public
+                    || html.len() > MAX_HTML
+                    || html.contains('\0')
+                    || !html.starts_with(nsite::POLICY)
+                    || receipt.sha256 != nsite::hash(html.as_bytes())
+                    || receipt.size != html.len()
+                {
+                    bail!("Review and confirm the exact local nsite file before sharing it");
+                }
+                project
+                    .fips_publication
+                    .as_mut()
+                    .context("Publish the website connection first")?
+                    .nsite_asset = Some(PublicNsiteAsset { html, receipt });
+                Ok(Some(id))
+            }
+            Change::UnshareNsiteAsset { id } => {
+                let project = self
+                    .projects
+                    .get_mut(&id)
+                    .context("Website project not found")?;
+                if let Some(publication) = project.fips_publication.as_mut() {
+                    publication.nsite_asset = None;
+                }
+                Ok(Some(id))
+            }
+
             Change::RecordLocalArchive { id, receipt } => {
                 let p = self
                     .projects
@@ -280,28 +340,47 @@ impl State {
                 p.local_archive = Some(receipt);
                 Ok(Some(id))
             }
-            Change::ShareArchive { id, route, acknowledge_public } => {
-                if !acknowledge_public { bail!("Confirm public access to the exact archived website bytes"); }
-                let p = self.projects.get_mut(&id).context("Website project not found")?;
-                let archive = p.local_archive.as_ref().context("Store this website in local Blossom first")?;
+            Change::ShareArchive {
+                id,
+                route,
+                acknowledge_public,
+            } => {
+                if !acknowledge_public {
+                    bail!("Confirm public access to the exact archived website bytes");
+                }
+                let p = self
+                    .projects
+                    .get_mut(&id)
+                    .context("Website project not found")?;
+                let archive = p
+                    .local_archive
+                    .as_ref()
+                    .context("Store this website in local Blossom first")?;
                 let publication = match route {
                     Route::Fips => p.fips_publication.as_mut(),
                     Route::Tor => p.tor_publication.as_mut(),
                     _ => bail!("Choose the FIPS/public-web or Tor publication"),
-                }.context("Publish this connection before sharing its archived file")?;
-                if archive.sha256 != nsite::hash(publication.html.as_bytes()) || archive.size != publication.html.len() {
+                }
+                .context("Publish this connection before sharing its archived file")?;
+                if archive.sha256 != nsite::hash(publication.html.as_bytes())
+                    || archive.size != publication.html.len()
+                {
                     bail!("The archive differs from this published version. Store and publish the same version first");
                 }
                 publication.public_archive = Some(archive.sha256.clone());
                 Ok(Some(id))
             }
             Change::UnshareArchive { id, route } => {
-                let p = self.projects.get_mut(&id).context("Website project not found")?;
+                let p = self
+                    .projects
+                    .get_mut(&id)
+                    .context("Website project not found")?;
                 let publication = match route {
                     Route::Fips => p.fips_publication.as_mut(),
                     Route::Tor => p.tor_publication.as_mut(),
                     _ => bail!("Choose the FIPS/public-web or Tor publication"),
-                }.context("This connection is not published")?;
+                }
+                .context("This connection is not published")?;
                 publication.public_archive = None;
                 Ok(Some(id))
             }
@@ -416,6 +495,7 @@ impl State {
                         .context("No website ports available")?,
                 };
                 p.fips_publication = Some(Publication {
+                    nsite_asset: None,
                     public_archive: None,
                     port,
                     html: p.draft.clone(),
@@ -449,6 +529,7 @@ impl State {
                         .context("No onion website ports available")?,
                 };
                 p.tor_publication = Some(Publication {
+                    nsite_asset: None,
                     public_archive: None,
                     port,
                     html: p.draft.clone(),
@@ -520,8 +601,20 @@ pub async fn load(root: &Path) -> Result<State> {
             (&project.tor_publication, 32100..32132),
         ] {
             if let Some(p) = publication {
-                if !range.contains(&p.port) || !ports.insert(p.port) || p.html.len() > MAX_HTML
-                    || p.public_archive.as_ref().is_some_and(|hash| *hash != nsite::hash(p.html.as_bytes())) {
+                if !range.contains(&p.port)
+                    || !ports.insert(p.port)
+                    || p.html.len() > MAX_HTML
+                    || p.nsite_asset.as_ref().is_some_and(|a| {
+                        a.html.len() > MAX_HTML
+                            || !a.html.starts_with(nsite::POLICY)
+                            || a.html.contains('\0')
+                            || a.receipt.size != a.html.len()
+                            || a.receipt.sha256 != nsite::hash(a.html.as_bytes())
+                    })
+                    || p.public_archive
+                        .as_ref()
+                        .is_some_and(|hash| *hash != nsite::hash(p.html.as_bytes()))
+                {
                     bail!("Invalid stored website publication; existing state has been preserved");
                 }
             }
