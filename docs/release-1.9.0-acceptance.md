@@ -1,5 +1,64 @@
 # Archipelago 1.9.0-alpha release acceptance
 
+
+## Post-1.9.0 source acceptance checkpoint — 8 October 2026
+
+The original 1.9.0-alpha publication is recorded later in this ledger. The old
+release summary below is historical. This checkpoint concerns the new private
+IndeeHub delivery candidate; it is **not accepted main or catalog activation**.
+
+- Existing ngit proposal `8f394251` remains draft. Its advertised tip is verified
+  as `6e3fea0abb41bdd0688614d9f6fe02f69c00703f`; receipt:
+  `/tmp/archy-post190-draft-tip-20261008.txt`. The push published the revision but
+  returned failure on its local raw-SHA ref update; the independent remote check
+  establishes publication of that exact draft only. Do not blindly retry or
+  describe it as a successful accepted-main merge. Later documentation commits
+  are not implicitly part of that advertised tip.
+- Fresh Gitea open-PR GET returned `[]` for page 1, limit 100:
+  `/tmp/archy-open-prs-20261008.json`. There are no open legacy Gitea PRs in this
+  snapshot. Historical #161/#162 were reviewed, repaired, merged and closed:
+  `3daea662` and `b02ba410`; see [their review](pr-review-20260930.md). Do not reopen
+  or create duplicate PRs merely to mirror accepted source.
+- The app-launch proposal `5dbf04b7` has cached bundle tip `e66440aa`, following
+  `6f693162`. Those original commits are not candidate ancestors. Their changes
+  are included exactly as `2fad10c8` and `3fc37642`, respectively, through merge
+  `6c985b8d`: stable patch IDs are
+  `749b2b4c1c923e82fa4ae0f77825f388c3823b07` and
+  `4d5ddd579f51c4e80eae6ecfeb9059e59b1400e2`. This is patch-equivalence evidence,
+  not proof that ngit already marked the proposal applied. Record its actual
+  accepted result and update its disposition through the canonical review flow.
+- DATUM proposal `15ff5fb9`, cached tip `febdda968`, and Gashboard `acd65f3c`,
+  cached tips `6650ae2c` and later `4e167cbc`, are not candidate ancestors. The
+  candidate contains neither `apps/datum` nor `apps/gashboard`. These app packages
+  are outside this delivery; retain their open proposals and distinguish them
+  from the shared app-launch fixes above. Evidence sources:
+  `/tmp/archy-mining-proposals.bundle`, `/tmp/archy-gashboard-021.bundle`,
+  `/tmp/archy-gashboard-cover-021.json`, `/tmp/archy-open-proposals-20261008.json`.
+  These are cached proposal snapshots, not a fresh assertion about remote heads.
+- Cached origin/ngit main both point to `cedfbb2b`; local main remains `c57119e9`.
+  Candidate merge `8d70d031` retains local main as a parent; it does not update
+  accepted main. Latest required mirror check still fails local main equality:
+  `/tmp/archy-post190-mirror-check-20261008-latest.log`.
+
+Before private signed catalog activation, finish review of the exact intended
+candidate through the existing ngit proposal, record its accepted main commit and
+proposal dispositions, and mirror **the same resulting commits** to Gitea and
+ngit without rewriting published history. Recheck current remote main before
+integration. Preserve annotated `v1.9.0-alpha` object
+`5817f476e7901a1b4cb34f4e2c0176de69012bc7` and target
+`7abd04a7f680e72105ae783cecbe2268e3c8e71b`.
+
+Run `python3 scripts/check-git-mirrors.py --local --ref refs/tags/v1.9.0-alpha`
+after accepted source publication, adding any other applicable shared release
+refs explicitly. Record the result together with PR metadata; the script does
+not verify reviews or dispositions. Prior passing tag/main receipts concern
+older snapshots. Historical unrelated branch drift remains inventoried in
+`/tmp/archy-190-historical-mirror-audit.log`; its missing 1.8.16/17/18 tags were
+subsequently repaired as recorded below. Do not claim full historical parity or
+rewrite unrelated proposal branches to clear this delivery gate.
+
+## Original release summary (historical)
+
 Status: **OPEN — unpublished.** Operator requires the `-alpha` suffix: final version
 `1.9.0-alpha`, tag `v1.9.0-alpha`, and matching OTA/ISO artifact names. Earlier
 unsuffixed candidate evidence below is historical, not a final artifact pass.
