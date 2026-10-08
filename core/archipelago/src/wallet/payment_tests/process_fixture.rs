@@ -249,6 +249,7 @@ async fn buyer(root: &Path, initial: bool) {
         drop(journal);
         let response = reqwest::Client::new()
             .post(format!("{}/delivery", transport.endpoint))
+            .timeout(Duration::from_secs(15))
             .json(&json!({"envelope":envelope,"capability":receipt.capability}))
             .send()
             .await
@@ -309,28 +310,101 @@ async fn synthetic_process_child() {
         _ => panic!("invalid fixture role"),
     }
 }
-fn child(root: &Path, role: &str) -> tokio::process::Child {
-    tokio::process::Command::new(std::env::current_exe().unwrap())
+struct LoggedChild {
+    child: tokio::process::Child,
+    drains: Vec<tokio::task::JoinHandle<()>>,
+}
+impl LoggedChild {
+    async fn wait(&mut self) -> std::io::Result<std::process::ExitStatus> {
+        let result = self.child.wait().await;
+        for drain in self.drains.drain(..) {
+            drain.await.expect("fixture log drain failed");
+        }
+        result
+    }
+    async fn kill(&mut self) -> std::io::Result<()> {
+        self.child.kill().await
+    }
+    fn try_wait(&mut self) -> std::io::Result<Option<std::process::ExitStatus>> {
+        self.child.try_wait()
+    }
+}
+async fn drain_log(mut input: impl tokio::io::AsyncRead + Unpin, path: PathBuf) {
+    use std::io::Write;
+    use std::os::unix::fs::OpenOptionsExt;
+    use tokio::io::AsyncReadExt;
+    let mut output = std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .mode(0o600)
+        .open(path)
+        .unwrap();
+    let mut retained = 0;
+    let mut buffer = [0u8; 4096];
+    loop {
+        let count = input.read(&mut buffer).await.unwrap();
+        if count == 0 {
+            break;
+        }
+        let keep = count.min(65536usize.saturating_sub(retained));
+        output.write_all(&buffer[..keep]).unwrap();
+        retained += keep;
+        // Keep draining beyond the bound so a noisy child cannot deadlock.
+    }
+}
+struct FixtureRoot(Option<tempfile::TempDir>);
+impl FixtureRoot {
+    fn path(&self) -> &Path {
+        self.0.as_ref().unwrap().path()
+    }
+}
+impl Drop for FixtureRoot {
+    fn drop(&mut self) {
+        if std::thread::panicking() {
+            // Retained within the runner's PrivateTmp for bounded diagnosis.
+            let _ = self.0.take().unwrap().keep();
+        }
+    }
+}
+fn child(root: &Path, role: &str) -> LoggedChild {
+    let mut child = tokio::process::Command::new(std::env::current_exe().unwrap())
         .args(["--exact", CHILD, "--nocapture"])
         .env("ARCHY_SYNTHETIC_PAYMENT_ROOT", root)
         .env("ARCHY_SYNTHETIC_PAYMENT_ROLE", role)
         .kill_on_drop(true)
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
         .spawn()
-        .unwrap()
+        .unwrap();
+    let id = child.id().unwrap();
+    let drains = vec![
+        tokio::spawn(drain_log(
+            child.stdout.take().unwrap(),
+            root.join(format!("{role}-{id}.stdout.log")),
+        )),
+        tokio::spawn(drain_log(
+            child.stderr.take().unwrap(),
+            root.join(format!("{role}-{id}.stderr.log")),
+        )),
+    ];
+    LoggedChild { child, drains }
 }
-async fn start_seller(root: &Path) -> tokio::process::Child {
+async fn start_seller(root: &Path) -> LoggedChild {
     let _ = std::fs::remove_file(root.join("endpoint"));
     let mut child = child(root, "seller");
     tokio::time::timeout(Duration::from_secs(20), async {
         while !root.join("endpoint").exists() {
-            assert!(child.try_wait().unwrap().is_none(), "seller child exited");
+            let status = child.try_wait().unwrap();
+            assert!(
+                status.is_none(),
+                "role=seller exit={status:?} logs={}",
+                root.display()
+            );
             tokio::time::sleep(Duration::from_millis(20)).await
         }
     })
     .await
-    .unwrap();
+    .unwrap_or_else(|_| panic!("role=seller exit=timeout logs={}", root.display()));
     child
 }
 #[tokio::test]
@@ -338,7 +412,7 @@ async fn committed_settlement_reply_loss_recovers_after_both_processes_restart()
     use sha2::{Digest, Sha256};
     assert_eq!(std::env::var("ARCHY_TEST_ISOLATED").as_deref(), Ok("1"));
     let mint = Mint::start(0, None).await;
-    let root = tempfile::tempdir().unwrap();
+    let root = FixtureRoot(Some(tempfile::tempdir().unwrap()));
     std::fs::write(
         root.path().join("fixture-only"),
         b"disposable-no-real-funds",
@@ -386,12 +460,19 @@ async fn committed_settlement_reply_loss_recovers_after_both_processes_restart()
     }
     let mut server = start_seller(root.path()).await;
     let mut initial = child(root.path(), "buyer-initial");
+    let status = tokio::time::timeout(Duration::from_secs(45), initial.wait())
+        .await
+        .unwrap_or_else(|_| {
+            panic!(
+                "role=buyer-initial exit=timeout logs={}",
+                root.path().display()
+            )
+        })
+        .unwrap();
     assert!(
-        tokio::time::timeout(Duration::from_secs(45), initial.wait())
-            .await
-            .unwrap()
-            .unwrap()
-            .success()
+        status.success(),
+        "role=buyer-initial exit={status} logs={}",
+        root.path().display()
     );
     assert_eq!(mint.requests.lock().unwrap().len(), 1);
     assert_eq!(
@@ -412,12 +493,19 @@ async fn committed_settlement_reply_loss_recovers_after_both_processes_restart()
     server.wait().await.unwrap();
     let mut restarted = start_seller(root.path()).await;
     let mut resumed = child(root.path(), "buyer-resume");
+    let status = tokio::time::timeout(Duration::from_secs(45), resumed.wait())
+        .await
+        .unwrap_or_else(|_| {
+            panic!(
+                "role=buyer-resume exit=timeout logs={}",
+                root.path().display()
+            )
+        })
+        .unwrap();
     assert!(
-        tokio::time::timeout(Duration::from_secs(45), resumed.wait())
-            .await
-            .unwrap()
-            .unwrap()
-            .success()
+        status.success(),
+        "role=buyer-resume exit={status} logs={}",
+        root.path().display()
     );
     restarted.kill().await.unwrap();
     restarted.wait().await.unwrap();
