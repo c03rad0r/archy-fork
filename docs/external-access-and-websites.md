@@ -284,3 +284,23 @@ The UI-only update was deployed to Framework with the previous UI retained at
 walkthrough tests passed. Live browser comparisons at 1440px and 390px confirmed
 matching original-guide widths/alignment and no horizontal overflow. Management
 and wallet services were not restarted for this update.
+
+### Signed private catalogue and guest access — 2026-10-08
+
+After the operator signed the private candidate, verification against the pinned
+release root passed locally and on Framework. The node accepted the exact signed
+catalogue through `ARCHY_APP_CATALOG_CANDIDATE`; wallet process identities and all
+app container IDs/states were unchanged. This remains a private UAT catalogue,
+not a published release. The owned override is
+`/etc/systemd/system/archipelago.service.d/50-external-access-uat-catalog.conf`;
+remove it after the reviewed catalogue release or rollback to restore normal
+catalogue refresh. The preceding cache is retained in
+`~/external-access-uat/catalog-before-private-candidate.json` on Framework.
+
+Framework now reports guest eligibility for Home Assistant, Immich, Jellyfin,
+Nextcloud, PhotoPrism and Strfry. Actual-node checks with a temporary Home Assistant
+grant passed anonymous challenge, bearer and browser-cookie access, denial at
+Immich, rejection for dashboard login, and revocation of both bearer and cookie
+access. One-hour expiry metadata was checked; elapsed expiry remains covered by
+unit tests, not a one-hour live wait. The temporary grant was removed. No Nostr
+events were posted and no other app data was changed.
