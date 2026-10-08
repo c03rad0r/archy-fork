@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onDeactivated, onMounted, onBeforeUnmount, ref, watch } from 'vue'
-import { RouterLink, useRoute } from 'vue-router'
+import { RouterLink, useRoute, useRouter } from 'vue-router'
 import { useAppStore } from '@/stores/app'
 import { rpcClient } from '@/api/rpc-client'
 import { pendingWebsiteHtml } from '@/services/websiteImport'
@@ -9,6 +9,10 @@ import type { DnsPlan, HttpsCheck, PublishRoute, PublishingStatus, WebsiteProjec
 import { nsiteIdentities, prepareNsite, publishNsite, retryNsite, requestNsiteDeletion, namedNsiteUrl, relayAddresses, storeLocalWebsite } from '@/services/nsitePublishing'
 import type { NsiteIdentity, PreparedNsite } from '@/services/nsitePublishing'
 
+import BackButton from '@/components/BackButton.vue'
+import SetupWalkthrough from '@/components/SetupWalkthrough.vue'
+
+const router = useRouter()
 const route = useRoute()
 const appStore = useAppStore()
 const blossomInstalled = computed(() => !!appStore.data?.['package-data']?.blossom)
@@ -53,6 +57,28 @@ const current = computed(() => status.value?.state.projects[projectId.value])
 const projects = computed(() => Object.values(status.value?.state.projects ?? {}))
 const publicName = computed(() => selected.value.includes('public-web') || selected.value.includes('nostr'))
 const preview = computed(() => websitePreview(html.value))
+const walkthroughStep = ref('connections')
+const walkthroughStarted = ref(false)
+watch(websiteMode, async () => {
+  issuedAccess.value = null
+  walkthroughStarted.value = false
+  walkthroughStep.value = 'connections'
+  await refresh()
+})
+watch(pendingWebsiteHtml, value => {
+  if (value !== null && websiteMode.value) walkthroughStep.value = 'design'
+})
+const walkthroughSteps = computed(() => websiteMode.value ? [
+  { id: 'connections', title: 'Choose your connections', description: status.value?.state.connections.length ? 'Your saved connection choices are ready to reuse. You can change them for this website.' : 'Choose where visitors will find your website. You can use more than one connection.', complete: !!status.value?.state.connections.length },
+  ...(!blossomInstalled.value ? [{ id: 'storage', title: 'Install local website storage', description: 'Optional: install Blossom to keep signed website files on this node.', complete: false }] : []),
+  { id: 'design', title: 'Create your website', description: 'Describe a page, import it from AIUI, or edit your HTML. Preview and save it privately before publishing.', complete: !!current.value?.draft },
+  ...(publicName.value ? [{ id: 'domain', title: 'Choose your address', description: 'Use your own domain, buy one privately, or use a compatible nsite gateway.', complete: !!current.value?.domain }] : []),
+  { id: 'publish', title: 'Review and publish', description: 'Choose exactly what to share, publish each connection separately, and check that visitors can reach it.', complete: false },
+] : [
+  { id: 'connections', title: 'Choose your connections', description: 'Choose FIPS, public HTTPS or Tor. Save your preferences to reuse them when publishing a website.', complete: !!status.value?.state.connections.length },
+  { id: 'sharing', title: 'Choose an app and grant access', description: 'Give a guest access to one supported app with an expiry date. Your dashboard stays private.', complete: false },
+])
+
 const routes = computed(() => PUBLISH_ROUTES.filter(r => websiteMode.value || r.id !== 'nostr'))
 
 async function perform(work: () => Promise<void>) {
@@ -73,14 +99,23 @@ async function refresh() {
     if (!websiteMode.value) selected.value = [...status.value.state.connections]
     else if (current.value) selectProject(current.value)
     else if (projects.value[0]) selectProject(projects.value[0])
+    if (!walkthroughStarted.value) {
+      if (websiteMode.value && status.value.state.connections.length) {
+        if (!current.value) selected.value = [...status.value.state.connections]
+        walkthroughStep.value = blossomInstalled.value ? 'design' : 'storage'
+      }
+      walkthroughStarted.value = true
+      if (websiteMode.value && pendingWebsiteHtml.value !== null) walkthroughStep.value = 'design'
+    }
   })
 }
 async function create() {
   await perform(async () => {
     if (!status.value) return
+    const choices = [...selected.value]
     const result = await publishing.update(status.value.state.version, { action: 'create', name: name.value })
     status.value.state = result.state
-    if (result.project_id) selectProject(result.state.projects[result.project_id]!)
+    if (result.project_id) { selectProject(result.state.projects[result.project_id]!); selected.value = choices }
     message.value = 'Website project created on your node.'
   })
 }
@@ -96,6 +131,14 @@ async function importFromAiui() {
       pendingWebsiteHtml.value = null
       message.value = 'AIUI draft imported into a new project. Preview it, then save before publishing.'
     }
+  })
+}
+async function saveSharedConnections() {
+  await perform(async () => {
+    if (!status.value) return
+    const result = await publishing.update(status.value.state.version, { action: 'connections', routes: selected.value })
+    status.value.state = result.state
+    message.value = 'Connection preferences saved. Continue to create your website; nothing has been published.'
   })
 }
 async function save() {
@@ -160,6 +203,12 @@ async function verifyHttps() {
     httpsCheck.value = null
     if (!status.value) return
     httpsCheck.value = await publishing.verifyHttps(projectId.value, status.value.state.version)
+  })
+}
+async function installBlossom() {
+  await perform(async () => {
+    await appStore.installPackage('blossom', '', 'latest')
+    message.value = 'Blossom installation requested through the app catalogue. This step will be skipped when installation is recorded.'
   })
 }
 async function loadIdentities() { await perform(async () => { identities.value = await nsiteIdentities() }) }
@@ -240,18 +289,34 @@ onMounted(refresh)
 </script>
 
 <template>
-  <main class="max-w-5xl mx-auto px-4 sm:px-6 py-6 space-y-6">
-    <RouterLink to="/dashboard?tab=setup" class="text-sm text-white/60 hover:text-white">← Setup</RouterLink>
-    <div class="flex items-start justify-between gap-4">
-      <div><h1 class="text-2xl font-semibold">{{ websiteMode ? 'Publish a website' : 'Allow external connections' }}</h1>
-        <p class="text-white/60 mt-2">{{ websiteMode ? 'Create a website on your node and choose where people can find it.' : 'Choose how people will connect to selected services on your node.' }}</p></div>
+  <main class="pb-6">
+    <BackButton label="Back to Setup" desktop-margin="mb-6" @click="router.push({ path: '/dashboard', query: { tab: 'setup' } })" />
+    <div class="flex items-start justify-between gap-4 mb-8">
+      <div><h1 class="text-3xl font-bold text-white mb-2 drop-shadow-[0_2px_8px_rgba(0,0,0,0.6)]">{{ websiteMode ? 'Publish a website' : 'Allow external connections' }}</h1>
+        <p class="text-white/70">{{ websiteMode ? 'Create a website on your node and choose where people can find it.' : 'Choose how people will connect to selected services on your node.' }}</p></div>
       <button class="glass-button px-4 py-2" :disabled="busy" @click="refresh">Reload</button>
     </div>
-    <p v-if="error" role="alert" class="rounded-xl p-4 bg-red-500/10 text-red-200">{{ error }}</p>
-    <p v-if="message" role="status" class="rounded-xl p-4 bg-green-500/10 text-green-200">{{ message }}</p>
-    <p v-if="busy" role="status" class="text-white/60">Working…</p>
-      <template v-if="status">
-        <section v-if="websiteMode" class="glass-card p-5 space-y-3" data-testid="blossom-setup">
+    <p v-if="error" role="alert" class="rounded-xl p-4 mb-4 bg-red-500/10 text-red-200">{{ error }}</p>
+    <p v-if="message" role="status" class="rounded-xl p-4 mb-4 bg-green-500/10 text-green-200">{{ message }}</p>
+    <p v-if="busy" role="status" class="text-white/60 mb-4">Working…</p>
+    <SetupWalkthrough v-if="status" v-model="walkthroughStep" :steps="walkthroughSteps" :busy="busy">
+      <template #connections>
+        <section class="space-y-4">
+          <h2 class="text-lg font-semibold">Where should it be available?</h2>
+          <p class="text-sm text-white/60">Choose any combination. Each connection will be checked separately.</p>
+          <label v-for="option in routes" :key="option.id" class="flex items-start gap-3 rounded-xl border border-white/10 p-4 cursor-pointer">
+            <input v-model="selected" type="checkbox" :value="option.id" class="mt-1" />
+            <span><span class="font-medium">{{ option.title }}</span><span class="block text-sm text-white/60 mt-1">{{ option.description }}</span>
+              <span v-if="websiteMode && status.state.connections.includes(option.id)" class="block text-xs text-amber-200 mt-2">Already selected in connection setup; reachability still needs verification.</span>
+            </span>
+          </label>
+          <p v-if="selected.includes('fips')" class="text-sm text-white/60">{{ status.fips_address ? 'A local FIPS address exists. This does not yet verify a website or app route.' : 'No local FIPS address detected. FIPS must be connected before its routes can be verified.' }}</p>
+          <RouterLink v-if="websiteMode" to="/dashboard/setup/external-access" class="inline-block text-sm underline">Manage shared connections</RouterLink>
+        </section>
+        <button class="glass-button px-5 py-3" :disabled="busy || (websiteMode && !current && walkthroughStep !== 'connections')" @click="walkthroughStep === 'connections' && websiteMode && !current ? saveSharedConnections() : save()">{{ walkthroughStep === 'connections' ? 'Save connection choices' : 'Save website draft and choices' }}</button>
+      </template>
+      <template #storage>
+        <section v-if="websiteMode" class="space-y-3" data-testid="blossom-setup">
           <h2 class="text-lg font-semibold">Local website files</h2>
           <template v-if="blossomInstalled">
             <p>Blossom is installed. You can skip installation.</p>
@@ -267,20 +332,21 @@ onMounted(refresh)
           </template>
           <template v-else>
             <p>Install Blossom from the app catalogue to store website files on this node. Create a profile identity first; Blossom uses the normal Archipelago signer.</p>
-            <RouterLink to="/dashboard/marketplace/blossom" class="glass-button inline-block px-4 py-2">Install Blossom</RouterLink>
+            <button class="glass-button glass-button-sm rounded-lg px-5 py-2 text-sm font-medium" :disabled="busy" @click="installBlossom">{{ busy ? 'Installing…' : 'Install Blossom' }}</button>
+            <RouterLink to="/dashboard/marketplace/blossom" class="text-sm underline ml-3">View app details</RouterLink>
             <p class="text-sm text-white/60">Return here after installation. This step is optional for a simple HTML page served directly by the node.</p>
           </template>
           <p class="text-sm text-white/60">Installation and local uploads do not announce anything on Nostr. Publishing files externally requires a separate review of the content and destinations.</p>
         </section>
-      <div class="rounded-xl p-4 border border-amber-300/20 bg-amber-400/10 text-amber-100 text-sm">{{ status.notice }}</div>
-      <fieldset :disabled="busy" class="space-y-6">
-        <section v-if="websiteMode && pendingWebsiteHtml !== null" class="glass-card p-5 space-y-3">
+      </template>
+      <template #design>
+        <section v-if="websiteMode && pendingWebsiteHtml !== null" class="space-y-3">
           <h2 class="text-lg font-semibold">Continue from AIUI</h2>
           <p class="text-sm text-white/60">Create a new project from the HTML you selected in AIUI. Existing projects remain unchanged.</p>
           <button class="glass-button px-4 py-2" @click="importFromAiui">Import into a new website</button>
           <button class="text-sm underline ml-3" @click="pendingWebsiteHtml = null">Discard import</button>
         </section>
-        <section v-if="websiteMode" class="glass-card p-5 space-y-4">
+        <section v-if="websiteMode" class="space-y-4">
           <h2 class="text-lg font-semibold">Your websites</h2>
           <div v-if="projects.length" class="flex flex-wrap gap-2">
             <button v-for="p in projects" :key="p.id" class="glass-button px-3 py-2" :aria-pressed="p.id === projectId" @click="selectProject(p)">{{ p.name }}</button>
@@ -288,8 +354,10 @@ onMounted(refresh)
           <label class="block">Website name<input v-model="name" maxlength="100" class="field mt-2" /></label>
           <button class="glass-button px-4 py-2" @click="create">Create another website</button>
         </section>
-        <section v-if="websiteMode && current" class="glass-card p-5 space-y-4">
+        <section v-if="websiteMode && current" class="space-y-4">
           <h2 class="text-lg font-semibold">Describe and preview</h2>
+          <RouterLink to="/dashboard/chat" class="glass-button glass-button-sm rounded-lg px-5 py-2 text-sm font-medium">Open AIUI to create a website</RouterLink>
+          <p class="text-sm text-white/60">In AIUI, use “Continue to website setup” on your HTML preview to bring it back here for review.</p>
           <p class="text-sm text-white/60">Generate a simple page with a model installed on this node, or paste HTML from AIUI. Generation stays on your node.</p>
           <label class="block">What would you like to make?<textarea v-model="prompt" maxlength="16000" rows="3" class="field mt-2" placeholder="A simple website for my community garden…" /></label>
           <label class="block">Installed Ollama model<input v-model="model" class="field mt-2" placeholder="Enter the exact installed model name" /></label>
@@ -299,19 +367,36 @@ onMounted(refresh)
           <p class="text-xs text-white/50">Preview blocks scripts, forms and external requests. It cannot access your dashboard.</p>
           <button class="glass-button px-4 py-2" :disabled="!html" @click="download">Download HTML</button>
         </section>
-        <section class="glass-card p-5 space-y-4">
-          <h2 class="text-lg font-semibold">Where should it be available?</h2>
-          <p class="text-sm text-white/60">Choose any combination. Each connection will be checked separately.</p>
-          <label v-for="option in routes" :key="option.id" class="flex items-start gap-3 rounded-xl border border-white/10 p-4 cursor-pointer">
-            <input v-model="selected" type="checkbox" :value="option.id" class="mt-1" />
-            <span><span class="font-medium">{{ option.title }}</span><span class="block text-sm text-white/60 mt-1">{{ option.description }}</span>
-              <span v-if="websiteMode && status.state.connections.includes(option.id)" class="block text-xs text-amber-200 mt-2">Already selected in connection setup; reachability still needs verification.</span>
-            </span>
-          </label>
-          <p v-if="selected.includes('fips')" class="text-sm text-white/60">{{ status.fips_address ? 'A local FIPS address exists. This does not yet verify a website or app route.' : 'No local FIPS address detected. FIPS must be connected before its routes can be verified.' }}</p>
-          <RouterLink v-if="websiteMode" to="/dashboard/setup/external-access" class="inline-block text-sm underline">Manage shared connections</RouterLink>
+        <section v-if="websiteMode && blossomInstalled" class="space-y-3" data-testid="blossom-setup">
+          <h2 class="text-lg font-semibold">Local website files</h2>
+          <template v-if="blossomInstalled">
+            <p>Blossom is installed. You can skip installation.</p>
+            <RouterLink to="/dashboard/apps/blossom" class="underline">Manage local Blossom</RouterLink>
+            <template v-if="current">
+              <button class="glass-button px-4 py-2" :disabled="busy" @click="loadIdentities">Choose a storage identity</button>
+              <label class="block">Profile for local files<select v-model="identityId" :disabled="busy" class="field mt-2"><option value="">Choose an identity</option><option v-for="identity in identities" :key="identity.id" :value="identity.id">{{ identity.name }}</option></select></label>
+              <button class="glass-button px-4 py-2" :disabled="busy || !identityId || !current.draft || html !== current.draft" @click="storeLocally">Store saved website in local Blossom</button>
+              <p v-if="html !== current.draft" class="text-sm">Save your edits before storing this version in Blossom.</p>
+              <p v-if="current.local_archive" class="text-sm break-all">Verified local snapshot: {{ current.local_archive.size }} bytes · {{ new Date(current.local_archive.created_at).toLocaleString() }} · SHA-256 {{ current.local_archive.sha256 }}</p>
+              <p class="text-sm text-white/60">This stores the saved draft shown below. Later edits need another explicit store. Local files require node login; this does not create a public Blossom endpoint.</p>
+            </template>
+          </template>
+          <template v-else>
+            <p>Install Blossom from the app catalogue to store website files on this node. Create a profile identity first; Blossom uses the normal Archipelago signer.</p>
+            <button class="glass-button glass-button-sm rounded-lg px-5 py-2 text-sm font-medium" :disabled="busy" @click="installBlossom">{{ busy ? 'Installing…' : 'Install Blossom' }}</button>
+            <RouterLink to="/dashboard/marketplace/blossom" class="text-sm underline ml-3">View app details</RouterLink>
+            <p class="text-sm text-white/60">Return here after installation. This step is optional for a simple HTML page served directly by the node.</p>
+          </template>
+          <p class="text-sm text-white/60">Installation and local uploads do not announce anything on Nostr. Publishing files externally requires a separate review of the content and destinations.</p>
         </section>
-        <section v-if="websiteMode && publicName" class="glass-card p-5 space-y-4">
+        <section v-if="websiteMode && current?.revisions.length" class="space-y-3">
+          <h2 class="text-lg font-semibold">Saved revisions</h2>
+          <div v-for="revision in [...current.revisions].reverse()" :key="revision.id" class="flex justify-between gap-3"><span class="text-sm text-white/60">{{ new Date(revision.created_at).toLocaleString() }}</span><button class="text-sm underline" @click="restore(revision.id)">Restore draft</button></div>
+        </section>
+        <button class="glass-button px-5 py-3" :disabled="busy || (websiteMode && !current && walkthroughStep !== 'connections')" @click="walkthroughStep === 'connections' && websiteMode && !current ? saveSharedConnections() : save()">{{ walkthroughStep === 'connections' ? 'Save connection choices' : 'Save website draft and choices' }}</button>
+      </template>
+      <template #domain>
+        <section v-if="websiteMode && publicName" class="space-y-4">
           <h2 class="text-lg font-semibold">Your domain</h2>
           <p class="text-sm text-white/60">Use a domain you own, or buy one with Bitcoin or Lightning. FIPS and Tor addresses do not need a domain purchase.</p>
           <a href="https://mynymbox.io/domainregistration" target="_blank" rel="noopener noreferrer" class="glass-button inline-block px-4 py-2">Buy a domain through Mynymbox ↗</a>
@@ -343,12 +428,15 @@ onMounted(refresh)
             <a href="https://mynymbox.io/docs?doc=domains/dns-records" target="_blank" rel="noopener noreferrer" class="underline text-sm">Mynymbox’s DNS guide ↗</a>
           </div>
         </section>
-        <section v-if="!websiteMode" class="glass-card p-5 space-y-3">
+        <button class="glass-button px-5 py-3" :disabled="busy || (websiteMode && !current && walkthroughStep !== 'connections')" @click="walkthroughStep === 'connections' && websiteMode && !current ? saveSharedConnections() : save()">{{ walkthroughStep === 'connections' ? 'Save connection choices' : 'Save website draft and choices' }}</button>
+      </template>
+      <template #sharing>
+        <section v-if="!websiteMode" class="space-y-3">
           <h2 class="text-lg font-semibold">Existing app access</h2>
           <p class="text-sm text-white/60">This inventory shows existing access policies. Local-only APIs are excluded. A local listener does not prove external reachability.</p>
           <ul class="space-y-2"><li v-for="app in status.apps" :key="app.id + app.port" class="flex flex-wrap justify-between gap-2 text-sm"><span>{{ app.name }} · {{ app.port }}</span><span class="text-white/60">{{ app.listener_claimed ? 'Local proxy listening' : 'Listener not confirmed' }} · {{ app.authentication === 'node-session' ? 'Node login required' : 'App access policy' }}</span></li></ul>
         </section>
-        <section v-if="!websiteMode" class="glass-card p-5 space-y-3">
+        <section v-if="!websiteMode" class="space-y-3">
           <h2 class="text-lg font-semibold">Grant access to an app</h2>
           <p class="text-sm text-white/60">Give someone access to one application without sharing your dashboard login. Only apps that explicitly support guest sharing are offered. Their own account permissions still apply.</p>
           <label class="block">Application<select v-model="guestApp" class="field mt-2"><option value="">Choose an application</option><option v-for="app in shareableApps" :key="app.id" :value="app.id">{{ app.name }}</option></select></label>
@@ -371,8 +459,9 @@ onMounted(refresh)
             <button class="underline text-sm" @click="revokeGuestAccess(grant.id)">Revoke access</button>
           </div>
         </section>
-        <button class="glass-button px-5 py-3" :disabled="websiteMode && !current" @click="save">{{ websiteMode ? 'Save website draft and choices' : 'Save connection choices' }}</button>
-        <section v-if="websiteMode && current && status.publication_enabled" class="glass-card p-5 space-y-3">
+      </template>
+      <template #publish>
+        <section v-if="websiteMode && current && status.publication_enabled" class="space-y-3">
           <h2 class="text-lg font-semibold">Publish the saved version on FIPS or your proxy</h2>
           <p class="text-sm text-white/60">Anyone who can reach this node through FIPS can view this website. Save your draft first. Scripts and external resources remain blocked in this first static-site version.</p>
           <label class="flex items-start gap-3"><input v-model="acknowledgeFips" type="checkbox" class="mt-1" /><span>I want the saved website to be visible to visitors on FIPS.</span></label>
@@ -385,7 +474,7 @@ onMounted(refresh)
             <p class="text-amber-200">External access is not verified. The FIPS firewall must allow this website’s port, {{ current.fips_publication.port }}.</p>
           </div>
         </section>
-        <section v-if="websiteMode && current && status.publication_enabled && selected.includes('tor')" class="glass-card p-5 space-y-3">
+        <section v-if="websiteMode && current && status.publication_enabled && selected.includes('tor')" class="space-y-3">
           <h2 class="text-lg font-semibold">Publish the saved version on Tor</h2>
           <p class="text-sm text-white/60">Share an onion address without buying a domain. Anyone who knows the address can read the page in Tor Browser. Your node keeps the address keys when you unpublish.</p>
           <label class="flex items-start gap-3"><input v-model="acknowledgeTor" type="checkbox" class="mt-1" /><span>I want the saved website to be visible to visitors using Tor.</span></label>
@@ -398,7 +487,7 @@ onMounted(refresh)
             <p class="text-amber-200">An address alone does not confirm that Tor has connected or that visitors can reach the page.</p>
           </div>
         </section>
-        <section v-if="websiteMode && current && selected.includes('nostr')" class="glass-card p-5 space-y-3">
+        <section v-if="websiteMode && current && selected.includes('nostr')" class="space-y-3">
           <h2 class="text-lg font-semibold">Publish a named nsite</h2>
           <p class="text-sm text-white/60">Upload a public static copy to a Blossom server, then announce it on your chosen Nostr relays. Your saved source stays on your node. A compatible nsite gateway can give it a browser address without buying a domain.</p>
           <button class="glass-button px-4 py-2" @click="loadIdentities">Load signing identities</button>
@@ -433,12 +522,8 @@ onMounted(refresh)
             <a v-if="nsiteUrl" :href="nsiteUrl" target="_blank" rel="noopener noreferrer" class="block break-all underline">{{ nsiteUrl }}</a>
           </template>
         </section>
-        <section v-if="websiteMode && current?.revisions.length" class="glass-card p-5 space-y-3">
-          <h2 class="text-lg font-semibold">Saved revisions</h2>
-          <div v-for="revision in [...current.revisions].reverse()" :key="revision.id" class="flex justify-between gap-3"><span class="text-sm text-white/60">{{ new Date(revision.created_at).toLocaleString() }}</span><button class="text-sm underline" @click="restore(revision.id)">Restore draft</button></div>
-        </section>
-      </fieldset>
-    </template>
+      </template>
+    </SetupWalkthrough>
   </main>
 </template>
 

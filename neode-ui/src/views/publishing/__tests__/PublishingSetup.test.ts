@@ -2,9 +2,9 @@ import { flushPromises, mount } from '@vue/test-utils'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 const api = vi.hoisted(() => ({ status: vi.fn(), update: vi.fn(), dns: vi.fn(), generate: vi.fn(), verifyHttps: vi.fn() }))
 const page = vi.hoisted(() => ({ name: 'external-access' }))
-const appStore = vi.hoisted(() => ({ data: { 'package-data': {} as Record<string, unknown> } }))
+const appStore = vi.hoisted(() => ({ installPackage: vi.fn(), data: { 'package-data': {} as Record<string, unknown> } }))
 vi.mock('@/stores/app', () => ({ useAppStore: () => appStore }))
-vi.mock('vue-router', () => ({ useRoute: () => page, RouterLink: { props: ['to'], template: '<a :href="to"><slot /></a>' } }))
+vi.mock('vue-router', () => ({ useRoute: () => page, useRouter: () => ({ push: vi.fn() }), RouterLink: { props: ['to'], template: '<a :href="to"><slot /></a>' } }))
 vi.mock('@/api/rpc-client', () => ({ rpcClient: { call: vi.fn() } }))
 vi.mock('@/services/publishing', async (original) => ({ ...await original<typeof import('@/services/publishing')>(), publishing: api }))
 import PublishingSetup from '../PublishingSetup.vue'
@@ -18,11 +18,34 @@ beforeEach(() => {
   api.update.mockResolvedValue({ state: { ...state(), version: 3 }, project_id: null })
 })
 describe('publishing setup', () => {
+  it('reuses saved routes and advances the walkthrough without publishing or signing', async () => {
+    page.name = 'publish-website'
+    appStore.data['package-data'].blossom = { state: 'installed' }
+    const wrapper = mount(PublishingSetup); await flushPromises()
+    expect(wrapper.get('[aria-controls="setup-step-design"]').attributes('aria-expanded')).toBe('true')
+    expect(wrapper.get('[aria-controls="setup-step-connections"]').attributes('aria-expanded')).toBe('false')
+    await wrapper.findAll('button').find(b => b.text() === 'Continue')!.trigger('click')
+    expect(wrapper.get('[aria-controls="setup-step-publish"]').attributes('aria-expanded')).toBe('true')
+    expect(api.update).not.toHaveBeenCalled()
+    expect(rpcClient.call).not.toHaveBeenCalled()
+  })
+  it('carries the existing connection choices into a new website draft', async () => {
+    page.name = 'publish-website'
+    appStore.data['package-data'].blossom = { state: 'installed' }
+    api.update.mockResolvedValueOnce({ state: { ...state(), version: 3, projects: { site: { id: 'site', name: 'My website', draft: '', routes: [], domain: null, revisions: [] } } }, project_id: 'site' })
+    const wrapper = mount(PublishingSetup); await flushPromises()
+    await wrapper.findAll('button').find(b => b.text() === 'Create another website')!.trigger('click'); await flushPromises()
+    await wrapper.get('[aria-controls="setup-step-connections"]').trigger('click')
+    expect((wrapper.get('input[value="fips"]').element as HTMLInputElement).checked).toBe(true)
+    expect(api.update).toHaveBeenCalledTimes(1)
+    expect(rpcClient.call).not.toHaveBeenCalled()
+  })
   it('checks public HTTPS only on request and clears verification when the domain changes', async () => {
     page.name = 'publish-website'
     api.status.mockResolvedValue({ state: { ...state(), projects: { site: { id: 'site', name: 'Site', draft: '<h1>Public</h1>', routes: ['public-web'], domain: { hostname: 'www.example.com', destination: '8.8.8.8' }, revisions: [], fips_publication: { html: '<h1>Public</h1>', port: 32000 } } } }, apps: [], fips_address: 'fd00::1', publication_enabled: true, notice: '' })
     api.verifyHttps.mockResolvedValue({ hostname: 'www.example.com', sha256: 'synthetic', checked_at: '2026-10-08T00:00:00Z' })
     const wrapper = mount(PublishingSetup); await flushPromises()
+    await wrapper.get('[aria-controls="setup-step-domain"]').trigger('click')
     expect(api.verifyHttps).not.toHaveBeenCalled()
     await wrapper.findAll('button').find(b => b.text() === 'Check public HTTPS')!.trigger('click'); await flushPromises()
     expect(api.verifyHttps).toHaveBeenCalledWith('site', 2)
@@ -34,6 +57,7 @@ describe('publishing setup', () => {
     api.status.mockResolvedValue({ state: state(), fips_address: null, apps: [{ id: 'nextcloud', name: 'Nextcloud', port: 8080, guest_access: true }], grants: [{ id: 'external:test:Guest', label: 'Guest', apps: ['nextcloud'], expires_at: 2000000000 }], notice: '' })
     vi.mocked(rpcClient.call).mockResolvedValue({ id: 'external:test:Guest', token: 'synthetic-test-token', app_id: 'nextcloud', expires_at: 2000000000 })
     const wrapper = mount(PublishingSetup); await flushPromises()
+    await wrapper.get('[aria-controls="setup-step-sharing"]').trigger('click')
     expect(rpcClient.call).not.toHaveBeenCalled()
     await wrapper.get('select').setValue('nextcloud')
     await wrapper.findAll('button').find(b => b.text() === 'Create app-only access')!.trigger('click'); await flushPromises()
@@ -47,9 +71,13 @@ describe('publishing setup', () => {
     page.name = 'publish-website'
     const wrapper = mount(PublishingSetup); await flushPromises()
     expect(wrapper.get('[data-testid="blossom-setup"]').text()).toContain('Install Blossom')
+    await wrapper.findAll('button').find(b => b.text() === 'Install Blossom')!.trigger('click'); await flushPromises()
+    expect(appStore.installPackage).toHaveBeenCalledWith('blossom', '', 'latest')
     wrapper.unmount()
     appStore.data['package-data'].blossom = { state: 'installed' }
     const installed = mount(PublishingSetup); await flushPromises()
+    expect(installed.find('[aria-controls="setup-step-storage"]').exists()).toBe(false)
+    expect(installed.get('[aria-controls="setup-step-design"]').attributes('aria-expanded')).toBe('true')
     expect(installed.get('[data-testid="blossom-setup"]').text()).toContain('skip installation')
     expect(installed.find('a[href="/dashboard/marketplace/blossom"]').exists()).toBe(false)
   })
@@ -74,8 +102,10 @@ describe('publishing setup', () => {
     page.name = 'publish-website'
     api.status.mockResolvedValue({ state: { ...state(), projects: { site: { id: 'site', name: 'Site', draft: '<script>parent.fetch("/rpc")</script>', routes: ['fips', 'nostr'], domain: null, revisions: [] } } }, apps: [], fips_address: 'fd00::1', publication_enabled: false, notice: 'Saving does not publish.' })
     const wrapper = mount(PublishingSetup); await flushPromises()
+    await wrapper.get('[aria-controls="setup-step-design"]').trigger('click')
     expect(wrapper.get('iframe').attributes('sandbox')).toBe('')
     expect(wrapper.get('iframe').attributes('srcdoc')).toContain("default-src 'none'")
+    await wrapper.get('[aria-controls="setup-step-connections"]').trigger('click')
     expect(wrapper.findAll('input[type="checkbox"][value]')).toHaveLength(4)
     expect(wrapper.text()).toContain('reachability still needs verification')
   })

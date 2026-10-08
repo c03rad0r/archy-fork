@@ -64,6 +64,19 @@ describe('named nsite publishing', () => {
     expect(relayAddresses('wss://relay.example wss://relay.example')).toEqual(['wss://relay.example/'])
     for (const value of ['ws://relay.example', 'wss://user:secret@relay.example', 'wss://relay.example/#key']) expect(() => relayAddresses(value)).toThrow()
   })
+  it('excludes legacy node identities before any local upload signing', async () => {
+    const hidden = [
+      { ...identity, id: ' Node-legacy ', is_node: false },
+      { ...identity, name: '\uFEFFNode ', is_node: false },
+      { ...identity, nostr_pubkey: 'invalid' },
+    ]
+    vi.mocked(rpcClient.call).mockResolvedValueOnce({ identities: [identity, ...hidden] } as never)
+    expect(await nsiteIdentities()).toEqual([identity])
+    vi.mocked(rpcClient.call).mockClear()
+    for (const candidate of hidden) await expect(storeLocalWebsite('project', 4, candidate)).rejects.toThrow('profile identity')
+    expect(rpcClient.call).not.toHaveBeenCalled()
+    expect(fetch).not.toHaveBeenCalled()
+  })
   it('preparation never signs, uploads or broadcasts', async () => {
     await prepareNsite('project', 4, receipt.server, '<h1>Private draft</h1>')
     expect(fetch).not.toHaveBeenCalled()

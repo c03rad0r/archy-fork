@@ -69,12 +69,38 @@ run only through `scripts/test-backend-isolated.sh`; use a worktree-local target
 
 ### Current integration checkpoint
 
+The operator reaffirmed the existing Setup walkthrough design during UAT.
+The follow-up UI uses the existing numbered goal cards, progress styling and
+Back/Continue navigation, with one expanded step. Previously saved connections
+are reused; installed Blossom omits the installation step. Blossom installation
+uses the normal app-store installer. Navigation itself never saves, signs or
+publishes. This UI revision is now active on Framework. The actual dashboard walkthrough
+saved the synthetic draft, archived it in local Blossom with a profile identity,
+fetched it back to verify exact bytes, and published it through FIPS port 32000.
+The 390-pixel mobile layout passed the overflow check. Browser request monitoring
+recorded no external requests during this journey.
+
+Live archive acceptance exposed an older `node-*` identity whose `is_node` flag
+was false. The container correctly rejected its upload because the canonical
+signer allowlist excludes legacy node records. The website identity filter now
+matches that rule, including node-name fallbacks and public-key validation, and
+checks it again before signing. No public Nostr event or external replica was
+created during this failure. The selected 20-test suite covers the regression and
+walkthrough navigation; the production typecheck and Vite build passed. A further
+new-project connection-inheritance check passed, giving eight Setup and thirteen
+Nostr tests for the revised UI.
+
 Blossom is installed and healthy on Framework through the normal app installer.
 Protocol, real HTTP/HTTPS tab signing and lifecycle/data-preservation evidence is
-recorded in `apps/blossom/README.md`. The combined dashboard/backend candidate has
-not yet been deployed. No public Nostr test events or external file replicas have
-been created. The temporary public proxy route and certificate were removed after
-their standalone acceptance checks.
+recorded in `apps/blossom/README.md`. The combined dashboard/backend candidate
+from local commit `28a92fcc` is now deployed privately on Framework. The
+authenticated publishing status probe passes; native Bitcoin/LND process IDs and
+start times are unchanged. Complete browser acceptance is still in progress. No public Nostr test events or external file replicas have
+been created. The earlier standalone proxy route/certificate were removed. A new owned UAT
+route now connects the dashboard-published synthetic site to
+`https://free.archipelago.builders` through Yaya. Trusted TLS, exact page bytes,
+`/rpc` returning 404, and traversal rejection (400) pass. The route remains for UAT;
+full revoke/restart qualification is still in progress.
 
 New source work includes local Blossom website archives, explicit app-only guest
 credentials, and an on-demand HTTPS check against exact published page bytes.
@@ -93,15 +119,19 @@ remain unfinished. Source validation and standalone routes must not be described
 as acceptance of those features or of the complete dashboard journey.
 
 The current dashboard production build and supported AIUI build both pass and
-are staged separately on Framework. The original backend and full web tree are
-backed up for rollback; the live dashboard has not been switched. The selected
+are activated on Framework. The original backend and full web tree remain
+backed up for rollback. The selected
 dashboard suite passed 36 tests; subsequent HTTPS UI coverage passed six tests,
 and tightened Nostr signing/receipt coverage passed 12 tests. The latest combined
 18-test run, TypeScript check and dashboard rebuild passed. Catalog drift is zero
 (37 catalog entries, 64 manifests). Full isolated backend validation now passes
 1,699 tests, zero failures and four explicit ignores. The focused app-gate run
 passes 53 tests, and all three credential tests pass. The deployable backend build
-is still pending at this checkpoint; passing tests is not live-node acceptance.
+passed. Its stripped deployment artifact SHA-256 is
+`11e571a7636779d7a956f9e98dab951f19de12262cf89e5ea478cdc8ba864eae`.
+Passing tests and the initial authenticated activation probe do not establish
+complete live-node acceptance. The private catalogue signing ceremony remains
+pending; six app-sharing policies have not yet been activated.
 
 ## Development evidence (2026-10-08, not release acceptance)
 

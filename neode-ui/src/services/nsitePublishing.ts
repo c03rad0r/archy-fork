@@ -7,6 +7,13 @@ export interface NsiteReceipt { identity_id: string; server: string; event: Sign
 export interface NsiteIdentity { id: string; name: string; nostr_pubkey: string; is_node: boolean }
 export interface PreparedNsite { html: string; sha256: string; server: string; identifier: string; authorization: Record<string, unknown>; manifest: Record<string, unknown> }
 
+// Match the platform app signer and its derived Blossom upload allowlist,
+// including older node records that do not carry the explicit is_node flag.
+function isProfileIdentity(identity: NsiteIdentity): boolean {
+  return !identity.is_node && !identity.id.trim().toLowerCase().startsWith('node-')
+    && identity.name.trim().toLowerCase() !== 'node' && /^[a-f0-9]{64}$/.test(identity.nostr_pubkey)
+}
+
 export function relayAddresses(raw: string): string[] {
   const list = [...new Set(raw.split(/[\s,]+/).filter(Boolean).map(value => {
     const url = new URL(value)
@@ -18,9 +25,10 @@ export function relayAddresses(raw: string): string[] {
 }
 export async function nsiteIdentities(): Promise<NsiteIdentity[]> {
   const data = await rpcClient.call<{ identities: NsiteIdentity[] }>({ method: 'identity.list', maxRetries: 0 })
-  return data.identities.filter(i => !i.is_node && i.nostr_pubkey)
+  return data.identities.filter(isProfileIdentity)
 }
 async function sign(identity: NsiteIdentity, event: Record<string, unknown>): Promise<SignedNsiteEvent> {
+  if (!isProfileIdentity(identity)) throw new Error('Choose a profile identity for website files')
   const signed = await rpcClient.call<SignedNsiteEvent>({ method: 'identity.nostr-sign', params: { id: identity.id, event }, maxRetries: 0 })
   if (signed.pubkey !== identity.nostr_pubkey || signed.kind !== event.kind) throw new Error('Signer returned a different identity or event kind')
   for (const key of ['created_at', 'content', 'tags'] as const) {
@@ -29,7 +37,7 @@ async function sign(identity: NsiteIdentity, event: Record<string, unknown>): Pr
   return signed
 }
 export async function storeLocalWebsite(projectId: string, version: number, identity: NsiteIdentity): Promise<void> {
-  if (identity.is_node) throw new Error('Choose a profile identity for local files')
+  if (!isProfileIdentity(identity)) throw new Error('Choose a profile identity for local files')
   const prepared = await rpcClient.call<{ authorization: Record<string, unknown> }>({ method: 'publishing.blossom-prepare', params: { id: projectId, version }, maxRetries: 0 })
   const authorization = await sign(identity, prepared.authorization)
   await rpcClient.call({ method: 'publishing.blossom-store', params: { id: projectId, version, authorization }, timeout: 70000, maxRetries: 0 })

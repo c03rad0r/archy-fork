@@ -79,7 +79,7 @@ export const HTTPS_PROXY_PATHS: Record<string, string> = {
  * trusted. Once the signed catalog carries the app, portIsGateFronted is the
  * normal source of truth.
  */
-const PRE_CATALOG_GATED_PORTS: Record<string, number> = {
+const PRE_CATALOG_GATED_PORTS: Partial<Record<string, number>> = {
   'archipelago-source': 8337,
   'blossom': GENERATED_APP_PORTS.blossom,
 }
