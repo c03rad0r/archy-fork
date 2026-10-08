@@ -10,12 +10,15 @@ Read **Current live checkpoint** first. Older receipts below apply only to their
 ## Current live checkpoint — 2026-10-08, supersedes historical entries below
 
 - Candidate: `archy-session-key`, branch `work/post-190-session-key`.
-  Latest combined isolated backend suite: **2,026 passed, zero failures, five
-  ignored**, all 532 tracked inputs stable at `105454bd`; receipt `361ba45f`.
-  This includes paid/rental/Fleet fixes and update-state ownership. It predates
-  helper-only `66c7a22d`, whose 59 Python controller tests and actual read-only
-  preserved-relay ownership-chain check pass. Final combined qualification is
-  still required after the remaining transaction fixes stabilize.
+  Latest combined isolated backend suite: **2,028 passed, zero failures, five
+  ignored**, all **536 tracked inputs stable at `1dbca844`**. This includes
+  latest helper `1a409900`, rental/Fleet guards and the new separate-process
+  paid recovery fixture: committed settlement response lost, both processes
+  restarted, original operation and exact bytes recovered, one fake-mint
+  redemption. No real funds. Actual authenticated FIPS/live-node response-loss
+  acceptance remains open. See `docs/paid-process-recovery-20261008.md`.
+  Matching IndeeHub normal executable build is next; this suite is not a claim
+  that post-target rollback/cutover or live deployment passed.
 - IndeeHub remains the immediate delivery priority. Actual VM manager startup
   retains all seven runtimes. Real missing-plan refusal, complete seven-member
   drain/backup, logical PostgreSQL restore comparison, all four volume archive
