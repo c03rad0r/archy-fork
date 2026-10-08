@@ -457,3 +457,41 @@ retain `preserve_original: null`. Relay lineage now distinguishes that verified
 post-target state from pre-target `preserve_original: false`, and rejects missing
 or nonboolean startup markers and inconsistent pairs. The expanded 53 Python
 cases pass; the 2,025-test receipt predates this final helper-only correction.
+
+### Fresh RPC drain and pre-target recovery evidence (2026-10-08)
+
+The prior child unexpectedly rebooted while the manager was barred; its original
+PostgreSQL identity changed, so the recovery preflight correctly refused before
+starting the manager. Child `indeehub-v2-20261007T232717` was powered off with
+operation `3b3c564b-cce6-4727-8be8-369a95c479e4` explicitly **unrecovered**.
+The cause is not proven. The next disposable child has serial kernel logging,
+QEMU `-no-reboot`, boot-ID gates and fixture-only `panic=0`/`hardlockup_panic=0`;
+lockup detection remains enabled. This is application qualification, not kernel
+watchdog or production reboot acceptance.
+
+Fresh child `indeehub-v2-20261008T012000`, matching bca8bad8 executable
+`626afa7563cc3c47f65d31ec6788af18bad2cc3ad057ee008da03440f32ab6cd`,
+passed manager startup with all seven identities retained and the real missing-plan
+RPC refusal with Updating cleared. Operation
+`bfeefcc8-fe33-4925-9252-98cc0c84ac84` then drained all seven members, including
+relay exit 0, and captured the complete backup. Fresh database verification
+refused before target startup. The native controller restored all seven original
+writable layers and exact pinned recipes, restored API/relay Restart=always,
+and released all holds/fence on the same boot. Independent receipt:
+`pretarget-restored-bfeefcc8.receipt.json`. **Pre-target recovery passed; full
+post-target rollback and successful cutover have not passed.**
+
+A separate networkless dump-restore diagnostic confirmed 70 differences, all
+physical PostgreSQL column-slot numbers (`schema.columns[i][0]`). Historical
+DROP COLUMN leaves gaps that pg_dump correctly compacts. The commitment now
+retains `ORDER BY attnum` and every logical column field, but excludes physical
+slot numbers. Actual candidate SQL on the original and freshly restored database
+then matched with **zero differences**. All four real volume archives separately
+passed extraction, comparison and metadata round-trip verification under an
+independent component operation; the real transaction record was not modified.
+
+**55 pure controller tests pass**, including logical column order/type/removal
+refusal. Bounded private failure diagnostics now preserve the controller's reason
+without exposing stderr in the public RPC response. The previously recorded
+2,025 Rust tests predate these final helper changes; a matching executable and
+final combined receipt remain required.

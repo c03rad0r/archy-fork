@@ -132,12 +132,14 @@ ADDITIVE_MIGRATIONS = {
     'AddMediaRegistrationRetirements1791374401000':1791374401000,
 }
 ADDITIVE_TABLES = {'archipelago_media_registrations','archipelago_publications','archipelago_publication_outbox','archipelago_rental_entitlements','archipelago_registration_intents'}
+# Keep logical column order, but not physical attnum values: pg_dump compacts
+# slots left behind by DROP COLUMN while preserving the surviving column order.
 DB_COMMITMENTS_SQL = r'''
 BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY;
 SELECT format($query$
  SELECT jsonb_build_object('table',%L,'schema',
    jsonb_build_object(
-    'columns',(SELECT coalesce(jsonb_agg(jsonb_build_array(a.attnum,a.attname,format_type(a.atttypid,a.atttypmod),a.attnotnull,a.attidentity,a.attgenerated,pg_get_expr(d.adbin,d.adrelid)) ORDER BY a.attnum),'[]'::jsonb) FROM pg_attribute a LEFT JOIN pg_attrdef d ON d.adrelid=a.attrelid AND d.adnum=a.attnum WHERE a.attrelid=%s AND a.attnum>0 AND NOT a.attisdropped),
+    'columns',(SELECT coalesce(jsonb_agg(jsonb_build_array(a.attname,format_type(a.atttypid,a.atttypmod),a.attnotnull,a.attidentity,a.attgenerated,pg_get_expr(d.adbin,d.adrelid)) ORDER BY a.attnum),'[]'::jsonb) FROM pg_attribute a LEFT JOIN pg_attrdef d ON d.adrelid=a.attrelid AND d.adnum=a.attnum WHERE a.attrelid=%s AND a.attnum>0 AND NOT a.attisdropped),
     'constraints',(SELECT coalesce(jsonb_agg(jsonb_build_array(conname,pg_get_constraintdef(oid,true)) ORDER BY conname),'[]'::jsonb) FROM pg_constraint WHERE conrelid=%s),
     'indexes',(SELECT coalesce(jsonb_agg(pg_get_indexdef(indexrelid) ORDER BY indexrelid::regclass::text),'[]'::jsonb) FROM pg_index WHERE indrelid=%s),
     'triggers',(SELECT coalesce(jsonb_agg(pg_get_triggerdef(oid,true) ORDER BY tgname),'[]'::jsonb) FROM pg_trigger WHERE tgrelid=%s AND NOT tgisinternal),
@@ -261,6 +263,11 @@ class Controller:
         self.record=json.loads(self.path.read_text()) if self.path.exists() else None
         if self.record:require(self.record['operation_id']==operation,'Maintenance journal changed')
     def save(self): atomic(self.path,self.record)
+    def save_failure(self, action, error):
+        # The native adapter deliberately withholds stderr from public errors.
+        # Retain bounded diagnostics privately so an operator can inspect refusal.
+        atomic(self.root/'last-failure.private.json',{'operation_id':self.operation,'action':action,
+            'error_type':type(error).__name__,'message':str(error)[:4096],'at':time.time()})
     def run(self, argv, timeout=30, output=None, input_bytes=None, input_file=None):
         if self.runner:return self.runner(argv,timeout,output)
         self.root.mkdir(mode=0o700,parents=True,exist_ok=True)
@@ -826,7 +833,12 @@ def main():
     if 'recovery' in request:require(type(request['recovery']) is bool,'Invalid recovery flag')
     require(os.getuid()==1000,'Expected node service user');fd=int(os.environ['ARCHY_UPDATE_LOCK_FD']);actual=os.fstat(fd);expected=(DATA/'update-transactions'/'lock').stat();require((actual.st_dev,actual.st_ino)==(expected.st_dev,expected.st_ino),'Inherited lifecycle lock is not the expected file')
     controller=Controller(DATA,request['operation_id'],fd)
-    result=controller.acquire(request['original_members'],request.get('recovery',False)) if sys.argv[1]=='acquire' else controller.verify() if sys.argv[1]=='verify' else controller.release(request['outcome'])
+    try:
+        result=controller.acquire(request['original_members'],request.get('recovery',False)) if sys.argv[1]=='acquire' else controller.verify() if sys.argv[1]=='verify' else controller.release(request['outcome'])
+    except Exception as error:
+        try:controller.save_failure(sys.argv[1],error)
+        except Exception:pass  # Diagnostic failure must not replace the original refusal.
+        raise
     encoded=json.dumps(result);require(len(encoded)<=4096,'Maintenance response exceeds bound');print(encoded)
 if __name__=='__main__':
     try:main()

@@ -562,4 +562,17 @@ console.log('process identity cases passed');'''
    if change=='wrong-body':bad['members'][0]['pinned_original_body']='changed'
    if change=='cycle':bad['members'][0]['original']['image']=image
    with self.assertRaises(RuntimeError):module.verify_relay_image_lineage(image,digest,[bad],installed)
+ def test_column_commitments_retain_logical_order_and_every_semantic_field(self):
+  import copy
+  columns=[['first','integer',True,'','',''],['last','text',False,'','','']]
+  before={'operation_id':self.operation,'tables':{'typeorm_migrations':{'schema':{},'rows':0,'rows_sha256':'a'},'items':{'schema':{'columns':columns},'rows':0,'rows_sha256':'b'}},'migrations':[]}
+  module.verify_database_compatibility(before,copy.deepcopy(before))
+  for replacement in (list(reversed(columns)),columns[:-1],[['first','bigint',True,'','',''],columns[1]]):
+   after=copy.deepcopy(before);after['tables']['items']['schema']['columns']=replacement
+   with self.assertRaisesRegex(RuntimeError,'changed original table schema'):module.verify_database_compatibility(before,after)
+ def test_failure_diagnostics_are_private_bounded_and_do_not_change_journal(self):
+  c=self.controller;c.record={'operation_id':self.operation,'phase':'Prepared'};c.save();before=c.path.read_bytes()
+  c.save_failure('acquire',RuntimeError('diagnostic'*1000));path=c.root/'last-failure.private.json';record=json.loads(path.read_text())
+  self.assertEqual(record['operation_id'],self.operation);self.assertEqual(record['action'],'acquire');self.assertEqual(record['error_type'],'RuntimeError');self.assertEqual(len(record['message']),4096)
+  self.assertEqual(path.stat().st_mode&0o777,0o600);self.assertEqual(c.path.read_bytes(),before)
 if __name__=='__main__':unittest.main()
