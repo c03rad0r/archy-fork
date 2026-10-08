@@ -64,6 +64,42 @@ original frame/origin/nonce solely so its existing controls and cleanup remain
 usable if catalog freshness expires. App removal, version or frame replacement
 releases that admission; a new session must qualify again.
 
+## Integrate a new audio app
+
+1. Add the manifest opt-in above and install the reviewed app through the normal
+   catalog path. Confirm that the authenticated daemon reports the installed
+   app/version and that its UI opens in the retained dashboard frame. A manually
+   injected iframe or community listing is not an admission test.
+2. Import the example adapter into the app, configure the exact deployment-owned
+   dashboard origin, and attach it after constructing your player. `snapshot()`
+   must return `title`, `artist`, `playing`, `shuffle`, `position`, `duration` and
+   optional `artwork`; return `null` when no authorized track is available.
+3. Implement `actions.play/pause/seek/next/previous/shuffle` using the app's existing
+   player and queue. `seek` receives seconds; the adapter clamps to the current
+   duration. `snapshot` is a protocol command handled by the adapter, not a second
+   player action. Unsupported actions should remain unavailable in the app's own
+   interface too; do not report controls that merely appear to succeed.
+4. Supply `unlocked()` from actual application authentication/entitlement state.
+   The adapter does not authenticate a user, buy a file or authorize playback.
+   Subscribe `publish()` to player events, queue changes and login/logout state.
+   The adapter has no playback polling timer; without these subscriptions the
+   host will keep showing the last published snapshot.
+5. On logout or entitlement loss, stop the player, clear its authorized source
+   and publish the locked state. `available: false` hides host state but does not
+   itself pause the app's audio element. On permanent teardown, unsubscribe your
+   player callbacks and call `dispose()` (which also requests the app's pause
+   action). Do not dispose simply because the dashboard panel closes.
+6. Attach again in the document reached after an app-local login redirect. The
+   adapter registers its listener before sending ready, reannounces on
+   `pageshow`, and disposes on non-persisted `pagehide`; a back/forward-cache
+   return keeps the live adapter. Preserve these lifecycle rules when wrapping it
+   in a framework component.
+
+The adapter serializes commands and checks the current handshake and unlocked
+state before running each queued action. Authentication can still change while
+an asynchronous app action is running: the application must abort or reject its
+own unauthorized media request. Never use the host nonce as a media access token.
+
 ## Keep a single player and queue
 
 The app continues to own its audio element, queue, authorization and playback
@@ -173,8 +209,10 @@ only after that implementation is qualified.
 
 
 The dashboard uses the main-frame-only `ArchipelagoCloudVideo` channel, admitted
-only for the paired node's exact HTTP(S) origins. Its version1 capability check
-is separate from `archipelago-v1` app audio integration. The Cloud host arms a
+only for the paired node's exact HTTP(S) origins. Its native `capabilities` action reports version 1 separately from the
+`archipelago-v1` app audio integration. The current dashboard composable detects
+the injected bridge and checks readiness during entry; a visible button is not
+a guarantee that Android permits PiP. The Cloud host arms a
 random request/session ID with video dimensions and playing state, then enters
 fullscreen on the existing video in the same user gesture before requesting PiP.
 Native commands and replies carry that session; a different session is ignored.
@@ -183,6 +221,97 @@ returns to the same video; closing requests pause/cleanup. No video URL, cookie,
 bearer token or second player crosses the channel. The entire dashboard must
 never be used as the PiP surface. This is currently a Cloud-host contract, not
 permission for arbitrary embedded apps to call native PiP directly.
+
+## Reuse video PiP in a dashboard-owned viewer
+
+The concrete host reference is
+[`MediaLightbox.vue`](../neode-ui/src/components/cloud/MediaLightbox.vue).
+These are dashboard-side integration points, not an exported video protocol for
+third-party iframe apps. An app author can use the audio adapter above today;
+embedding a new app's video into native PiP still needs a reviewed host integration
+and its own qualification.
+
+For companion entry, create `useCompanionVideoPip(videoRef)` from
+[`useCompanionVideoPip.ts`](../neode-ui/src/composables/useCompanionVideoPip.ts) in the viewer's
+Vue setup using the **existing** `HTMLVideoElement`. Wire an explicit button to
+`enter()`, disable it while `busy.value`, and render `error.value` as an accessible
+alert. Wait for nonzero video dimensions. Keep `enter()` in the original click
+handler: it arms native state and requests that video's fullscreen together,
+then requests native PiP only after both succeed. Do not first await unrelated
+fetches or fullscreen the containing dashboard.
+
+The composable retains the element and listens for play/pause/end/error; native
+commands call that same element. It rejects stale-session events, times out an
+unconfirmed bridge call after five seconds and shows a failure instead of
+claiming entry. Normal native return clears the PiP session without pausing the
+video; native close, end/error, `stop()` and viewer unmount stop it. As Cloud does,
+call `stop()` before changing the item or hiding the viewer. Keep the viewer
+mounted during companion PiP: unmount is intentionally a stop condition.
+
+For browser PiP, check `isPipSupported()` and use `togglePip(video)` from
+[`utils/pip.ts`](../neode-ui/src/utils/pip.ts). The toggle checks support at call
+time and treats permission/transient failures as best effort. Ownership transfers
+only on the actual `enterpictureinpicture` event, not on the button click:
+[`usePipSession().adopt(video)`](../neode-ui/src/composables/usePipSession.ts) moves the original element into a document-level
+host **before** closing/unmounting the viewer. The singleton then owns cleanup.
+Browser `leavepictureinpicture` calls `release()`, pauses and clears/removes the
+video; it does not implement companion's return-to-viewer behavior. Adopting a
+second element releases the previous one. Avoid another cleanup path that clears
+an adopted element's source during handoff.
+
+Neither path refreshes credentials, reopens expired downloads or retries a paid
+purchase. The caller remains responsible for the authorized media source and
+transport. On logout, node switch, revoked access or unrecoverable transport loss,
+stop companion playback and release any browser-owned session, then clear the
+source using the normal viewer flow. Browser adoption outlives the component,
+so component unmount alone is not a logout cleanup mechanism. Re-establish access
+through the normal application flow before offering playback again. Physical
+session-expiry and FIPS reconnection behavior remains unverified below.
+
+The native implementation is
+[`CloudVideoPip.kt`](../Android/app/src/main/java/com/archipelago/app/ui/screens/CloudVideoPip.kt).
+It admits only the current paired dashboard origin and main frame; a matching
+host on another scheme/port or a child iframe is not equivalent. Requests contain
+an ID and action (`capabilities`, `arm`, `enter`, `state`, `release`); `arm` uses its
+request ID as the session, and later actions carry it. Native entry additionally
+requires the actual fullscreen custom view, the device PiP feature and Android
+permission. The aspect ratio is bounded to Android's supported range. Callers
+should reuse the composable rather than duplicate this private bridge protocol.
+
+## Acceptance and reproducible checks
+
+This table separates reported acceptance from source behavior and test coverage.
+It is not a new test receipt. This guide update was a source/documentation review;
+no tests, APK build, deployment or phone checks were run for it.
+
+| Area | Evidence already recorded | Remaining acceptance |
+| --- | --- | --- |
+| Reusable audio adapter | Independent example and protocol tests; V4V reference and existing dashboard qualification recorded above | Qualify each new installed app, its authentication and its own queue; the example is not app certification |
+| Companion Cloud PiP | Delivered 0.5.35/build55 flow accepted by operator on 2026-10-07; source tests cover fullscreen gating, origin/session rejection and unavailable behavior | Disabled/unsupported system PiP, rotation, full close/return/completion matrix, session expiry, FIPS interruption and process recreation on the physical phone |
+| Companion background audio | Operator reports 0.5.37/build57 background playback works and notification appears | Full controls, headset/network interruption, task removal, retained queue/position and recovery matrix; process-kill continuity is not promised |
+| Notification artwork | Local/browser/native image checks recorded below; phone still showed no cover | Explicitly deferred to task 23 after other work; do not treat it as passed |
+| Browser video PiP | Existing source fixtures cover element adoption before viewer close, singleton release and call-time support check | Browser/device and authenticated-source checks for each new viewer; native acceptance does not certify this path |
+
+For a change to these contracts, run only the relevant existing checks in an
+available qualification window. From the repository root:
+
+```sh
+node --test examples/audio-app/archipelago-audio.test.mjs
+cd neode-ui
+./node_modules/.bin/vitest run src/composables/__tests__/useCompanionVideoPip.test.ts src/components/__tests__/MediaLightboxPip.test.ts src/composables/__tests__/usePipSession.test.ts
+cd ../Android
+./gradlew :app:testDebugUnitTest --tests 'com.archipelago.app.ui.screens.CloudVideoPipTest'
+```
+
+The audio-specific checks are listed below. Record the source commit, selected
+checks and result separately from server URL/dashboard revision, APK version and
+physical-device results. Serve the matching reviewed dashboard and signed APK
+through the established deployment process; verify the delivered artifact rather
+than assuming a rebuilt source file reached the phone. On the paired server use
+an already authorized track/video. Neither this guide nor a fixture permits a
+payment, new signing consent or live catalog change just to obtain test media.
+If background playback fails, use **Menu → Playback diagnostics → Copy report**
+on build57; do not request credentials, stream URLs or paid-media details.
 
 ## Companion native audio: build57 background playback operator-confirmed
 

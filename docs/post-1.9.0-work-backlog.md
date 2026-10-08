@@ -642,6 +642,11 @@ The reusable audio adapter and developer guide are implemented in
 [app-media-integration.md](app-media-integration.md). Remaining physical edge
 checks include disabled/unsupported PiP, session expiry, FIPS interruption and
 process recreation. The accepted flow does not establish that complete matrix.
+The task19 guide now also documents
+reusable adapter callbacks and authentication teardown, dashboard-only companion
+PiP integration, browser adoption/release differences, and a tested-versus-physical
+acceptance matrix. This documentation review adds no runtime or phone acceptance;
+the remaining physical checks above keep task19 nearly finished.
 
 ## 20. Companion background media for V4V and other apps
 
