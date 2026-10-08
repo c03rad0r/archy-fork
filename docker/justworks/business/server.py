@@ -155,6 +155,23 @@ def assert_public_https(url):
     return url
 
 
+class NoLnurlRedirect(HTTPRedirectHandler):
+    def redirect_request(self, *args, **kwargs):
+        # A validated public endpoint cannot delegate access to another host or
+        # protocol, especially a private service reachable from this node.
+        raise ValueError("Lightning provider redirects are not permitted")
+
+
+def fetch_lnurl_json(url):
+    endpoint = assert_public_https(url)
+    request = Request(endpoint, headers={"User-Agent": "JustWorks-Business/0.1"})
+    with build_opener(NoLnurlRedirect).open(request, timeout=10) as response:
+        raw = response.read(65537)
+    if len(raw) > 65536:
+        raise ValueError("Lightning provider response too large")
+    return json.loads(raw)
+
+
 def lightning_invoice(lightning_address, amount_msat, comment=""):
     if "@" not in lightning_address:
         raise ValueError("Merchant Lightning address is invalid")
@@ -162,7 +179,7 @@ def lightning_invoice(lightning_address, amount_msat, comment=""):
     if not name or not host or any(char in host for char in "/?#"):
         raise ValueError("Merchant Lightning address is invalid")
     endpoint = assert_public_https(f"https://{host}/.well-known/lnurlp/{name}")
-    pay = fetch_json(endpoint)
+    pay = fetch_lnurl_json(endpoint)
     if pay.get("tag") != "payRequest" or not pay.get("callback"):
         raise ValueError("Lightning address does not support payments")
     minimum, maximum = int(pay.get("minSendable", 0)), int(pay.get("maxSendable", 0))
@@ -186,7 +203,7 @@ def lightning_invoice(lightning_address, amount_msat, comment=""):
         params["comment"] = safe_comment[:int(pay["commentAllowed"])]
     separator = "&" if "?" in callback else "?"
     try:
-        invoice = fetch_json(f"{callback}{separator}{urlencode(params)}")
+        invoice = fetch_lnurl_json(f"{callback}{separator}{urlencode(params)}")
     except HTTPError:
         if not proof:
             raise
@@ -195,7 +212,7 @@ def lightning_invoice(lightning_address, amount_msat, comment=""):
         # the result non-verifiable instead of blocking the customer.
         proof = None
         fallback = {key: value for key, value in params.items() if key not in {"nostr", "lnurl"}}
-        invoice = fetch_json(f"{callback}{separator}{urlencode(fallback)}")
+        invoice = fetch_lnurl_json(f"{callback}{separator}{urlencode(fallback)}")
     if invoice.get("status") == "ERROR" or not invoice.get("pr"):
         raise ValueError(invoice.get("reason", "Lightning invoice unavailable"))
     return {"bolt11": invoice["pr"], "zap_pubkey": proof["pubkey"] if proof else None,
