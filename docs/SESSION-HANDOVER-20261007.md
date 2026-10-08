@@ -11,6 +11,25 @@ Read **Current live checkpoint** first. Older receipts below apply only to their
 
 ### Latest continuation checkpoint (read before older bullets)
 
+- Latest actual attempt `5bd06edc…` reached target startup but failed; native
+  rollback and independent **same-boot** verification passed: all seven restored
+  runtimes, exact image/unit pins, writable-layer sentinels, database/volume
+  recovery proofs, removed old IDs, cleared holds and Running state. This
+  supersedes the earlier missing final-runtime proof, not the successful-cutover
+  gate. Failure was an inherited stale catalog frontend sed hook. Current source
+  already fixes that hook (`49703d7e`); fixture target hooks are being refreshed
+  from authoritative input and validated before retry. No live Yaya changes.
+- Fresh source-mirror check: both remotes agree on main `cedfbb2b…` and
+  `v1.9.0-alpha`; `--local` fails because local main is `c57119e9…` with four
+  additional commits. No refs were overwritten or pushed. Reviewed integration
+  and matching local/remote refs remain a publication gate.
+- User requests continued parallel work without compromising quality/process.
+  Three agents remain assigned to IndeeHub, Cloud source integration, and
+  firewall/tunnel UI/settings. Heavy tests remain coordinated; lightweight
+  independent source reviews continue. Approximate 60% overall was communicated
+  as a judgment including delivery/acceptance, not a measured completion score.
+
+
 - Actual operation `386004df…` reached target startup, injected failure, and
   recorded native `Restored`, cleanup complete, maintenance Released and verified
   database/volume recovery. Independent offline read-only evidence agrees. The
