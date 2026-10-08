@@ -50,7 +50,7 @@ fn owned_record(path: &Path, limit: u64, exact_private: bool) -> Result<Vec<u8>>
     );
     Ok(bytes)
 }
-/// The sole admitted drop-in is the currently held Indee API restart fence.
+/// Only the currently held Indee API or relay restart fence is admitted.
 /// This never grants ownership to arbitrary operator or historical overrides.
 fn validate_maintenance_override(
     data: &Path,
@@ -62,10 +62,12 @@ fn validate_maintenance_override(
     if dropins.is_empty() {
         return Ok(());
     }
-    anyhow::ensure!(
-        name == "indeedhub-api" && restart == "no",
-        "External service override refused"
-    );
+    let obligation = match name {
+        "indeedhub-api" => "api_restart_override",
+        "indeedhub-relay" => "relay_restart_override",
+        _ => anyhow::bail!("External service override refused"),
+    };
+    anyhow::ensure!(restart == "no", "External service override refused");
     owned_directory(data)?;
     for relative in [
         "update-transactions",
@@ -77,7 +79,7 @@ fn validate_maintenance_override(
         owned_directory(&data.join(relative))?;
     }
     let operation = String::from_utf8(owned_record(
-        &data.join("update-transactions/holds/indeedhub-api"),
+        &data.join("update-transactions/holds").join(name),
         128,
         false,
     )?)?;
@@ -131,17 +133,17 @@ fn validate_maintenance_override(
         .iter()
         .filter(|m| m["original"]["name"] == name)
         .collect();
-    anyhow::ensure!(matching.len() == 1, "Ambiguous native API identity");
+    anyhow::ensure!(matching.len() == 1, "Ambiguous native member identity");
     let original = &matching[0]["original"];
     let members = journal["original_members"]
         .as_array()
         .context("Missing maintenance members")?;
     let matching: Vec<_> = members.iter().filter(|m| m["name"] == name).collect();
-    anyhow::ensure!(matching.len() == 1, "Ambiguous maintenance API identity");
+    anyhow::ensure!(matching.len() == 1, "Ambiguous maintenance member identity");
     let member = matching[0];
     let body = original["body"]
         .as_str()
-        .context("Missing original API unit")?;
+        .context("Missing original managed unit")?;
     anyhow::ensure!(
         ["container_id", "image", "config_sha256"]
             .iter()
@@ -154,10 +156,10 @@ fn validate_maintenance_override(
             && original["running"].is_boolean()
             && member["running"] == original["running"]
             && member["unit_sha256"] == hex::encode(Sha256::digest(body.as_bytes())),
-        "Maintenance API binding changed"
+        "Maintenance member binding changed"
     );
     let bytes = format!("# Archipelago maintenance operation {operation}\n[Service]\nRestart=no\n");
-    let saved = &journal["api_restart_override"];
+    let saved = &journal[obligation];
     anyhow::ensure!(
         saved["operation_id"].as_str() == Some(operation.as_str())
             && saved["released"] == false
@@ -165,16 +167,14 @@ fn validate_maintenance_override(
         "Maintenance restart override obligation changed"
     );
     owned_directory(runtime)?;
-    for relative in [
-        "systemd",
-        "systemd/user",
-        "systemd/user/indeedhub-api.service.d",
-    ] {
+    for relative in ["systemd", "systemd/user"] {
         owned_directory(&runtime.join(relative))?;
     }
-    let expected = runtime
-        .join("systemd/user/indeedhub-api.service.d")
-        .join(format!("zz-archipelago-maintenance-{operation}.conf"));
+    let service_dir = runtime
+        .join("systemd/user")
+        .join(format!("{name}.service.d"));
+    owned_directory(&service_dir)?;
+    let expected = service_dir.join(format!("zz-archipelago-maintenance-{operation}.conf"));
     anyhow::ensure!(
         expected.to_str() == Some(dropins),
         "Unexpected or additional service override"
@@ -863,6 +863,7 @@ impl<B: DrainBarrier> Supervisor for SystemdSupervisor<B> {
 mod tests {
     use super::*;
     struct OverrideFixture {
+        name: &'static str,
         _root: tempfile::TempDir,
         data: PathBuf,
         runtime: PathBuf,
@@ -876,6 +877,9 @@ mod tests {
     }
     impl OverrideFixture {
         fn new() -> Self {
+            Self::for_role("indeedhub-api", "api_restart_override")
+        }
+        fn for_role(name: &'static str, obligation: &str) -> Self {
             let root = tempfile::tempdir().unwrap();
             let data = root.path().join("data");
             let runtime = root.path().join("runtime");
@@ -888,26 +892,29 @@ mod tests {
                 data.join("update-transactions/supervised"),
                 maintenance.clone(),
                 data.join("app-maintenance"),
-                runtime.join("systemd/user/indeedhub-api.service.d"),
+                runtime
+                    .join("systemd/user")
+                    .join(format!("{name}.service.d")),
             ] {
                 std::fs::create_dir_all(path).unwrap();
             }
             private_write(
-                &data.join("update-transactions/holds/indeedhub-api"),
+                &data.join("update-transactions/holds").join(name),
                 operation.as_bytes(),
             );
             private_write(
                 &data.join("app-maintenance/indeedhub"),
                 operation.as_bytes(),
             );
-            let body = "[Container]\nContainerName=indeedhub-api\n";
-            let original = serde_json::json!({"name":"indeedhub-api","container_id":"a".repeat(64),"image":"b".repeat(64),"config_sha256":"c".repeat(64),"body":body,"running":true});
+            let body = format!("[Container]\nContainerName={name}\n");
+            let original = serde_json::json!({"name":name,"container_id":"a".repeat(64),"image":"b".repeat(64),"config_sha256":"c".repeat(64),"body":body,"running":true});
             let native = serde_json::json!({"schema":2,"id":operation,"package":"indeedhub","phase":"Restoring","cleanup_done":false,"members":[{"original":original}]});
             let bytes =
                 format!("# Archipelago maintenance operation {operation}\n[Service]\nRestart=no\n");
-            let journal = serde_json::json!({"operation_id":operation,"phase":"Recovering","original_members":[{"name":"indeedhub-api","container_id":original["container_id"],"image_id":original["image"],"config_sha256":original["config_sha256"],"unit_sha256":hex::encode(Sha256::digest(body.as_bytes())),"running":true}],"api_restart_override":{"operation_id":operation,"released":false,"sha256":hex::encode(Sha256::digest(bytes.as_bytes()))}});
+            let journal = serde_json::json!({"operation_id":operation,"phase":"Recovering","original_members":[{"name":name,"container_id":original["container_id"],"image_id":original["image"],"config_sha256":original["config_sha256"],"unit_sha256":hex::encode(Sha256::digest(body.as_bytes())),"running":true}],(obligation):{"operation_id":operation,"released":false,"sha256":hex::encode(Sha256::digest(bytes.as_bytes()))}});
             let override_path = runtime
-                .join("systemd/user/indeedhub-api.service.d")
+                .join("systemd/user")
+                .join(format!("{name}.service.d"))
                 .join(format!("zz-archipelago-maintenance-{operation}.conf"));
             let native_path = data
                 .join("update-transactions/supervised")
@@ -917,6 +924,7 @@ mod tests {
             private_write(&native_path, &serde_json::to_vec(&native).unwrap());
             private_write(&journal_path, &serde_json::to_vec(&journal).unwrap());
             Self {
+                name,
                 _root: root,
                 data,
                 runtime,
@@ -929,7 +937,7 @@ mod tests {
             validate_maintenance_override(
                 &self.data,
                 &self.runtime,
-                "indeedhub-api",
+                self.name,
                 self.override_path.to_str().unwrap(),
                 "no",
             )
@@ -969,6 +977,42 @@ mod tests {
             "always",
         )
         .unwrap();
+    }
+    #[test]
+    fn api_and_relay_overrides_cannot_borrow_each_others_obligation() {
+        for (name, own, other) in [
+            (
+                "indeedhub-api",
+                "api_restart_override",
+                "relay_restart_override",
+            ),
+            (
+                "indeedhub-relay",
+                "relay_restart_override",
+                "api_restart_override",
+            ),
+        ] {
+            let f = OverrideFixture::for_role(name, own);
+            f.validate().unwrap();
+            let bytes = std::fs::read(&f.journal_path).unwrap();
+            let mut journal: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+            let value = journal.as_object_mut().unwrap().remove(own).unwrap();
+            journal[other] = value;
+            private_write(&f.journal_path, &serde_json::to_vec(&journal).unwrap());
+            assert!(f.validate().is_err());
+            private_write(&f.journal_path, &bytes);
+            let borrowed = f.override_path.to_str().unwrap().replace(
+                name,
+                if name == "indeedhub-api" {
+                    "indeedhub-relay"
+                } else {
+                    "indeedhub-api"
+                },
+            );
+            assert!(
+                validate_maintenance_override(&f.data, &f.runtime, name, &borrowed, "no").is_err()
+            );
+        }
     }
     #[test]
     fn restart_override_requires_matching_live_native_and_controller_obligations() {
