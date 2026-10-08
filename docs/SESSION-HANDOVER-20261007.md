@@ -657,3 +657,25 @@ The selected Yaya demo source hash is now independently verified read-only:
 203331877 bytes; before/after metadata matched. No video duplicate was retained,
 no publication or payment occurred. Receipt: the selected-demo directory's
 `source-hash.json`.
+
+
+### Corrected executable and VM manager-start acceptance
+
+The corrected normal/debug executable completed in 18m48s with all captured
+inputs unchanged: SHA3cbe5a5c3a74e6463ab0874c74e23dfca68f0bfc3fe54883f0edf69abb37ac0d,
+420030040 bytes. Stripped same-code VM copy:
+753f8ba6ac342c8f4b9a19c8079a51dfd1da4dcb517d4ea4d0e54035c22f5788.
+This is an integration artifact, not an optimized release, and predates rental
+guard 4dde14bf. VM manager-start acceptance passed: completed 62-app reconcile
+logged all seven IndeeHub members NoOp, all baseline IDs remained running, API
+and manager returned HTTP200. Actual update refusal/rollback/lifecycle tests
+are next; do not infer their results from startup acceptance.
+
+The chosen video also passed authenticated Chromium metadata loading: 1920x1080,
+249.766667 seconds. Source metadata acceptance is separate from rental playback.
+Public-sharing UI groundwork 6bcdd106 (37 tests + app typecheck) and Mesh picker
+groundwork 3360354a (10 tests) remain on isolated branches, not integrated or
+menu-enabled. Their broader backend/transport/inheritance work remains open and
+their end-of-backlog delivery order is retained. Companion agent is now handling
+Fleet acceptance; paid-file agent owns the next combined isolated backend run
+after the VM window. Optional archive helper was cancelled; never resume its PID.
