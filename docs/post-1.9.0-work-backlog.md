@@ -522,6 +522,8 @@ Operator refinements on 8 October, retained as acceptance requirements:
   present the mesh service as proof that the node firewall is protected.
 - Fill the main content width and inherit the Network tab background; opening
   Firewalls & tunnels must not switch to a different page background.
+- Match the established header and shared back button, including desktop title
+  alignment and mobile back placement. Use the OpenWrt Gateway sibling pattern.
 - Use the standard black primary button at the bottom of the Local Network
   container, matching other container actions.
 - Use plain language throughout and provide real, supported configuration

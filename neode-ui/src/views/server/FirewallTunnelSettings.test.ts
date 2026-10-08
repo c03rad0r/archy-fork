@@ -1,9 +1,12 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { flushPromises, mount } from '@vue/test-utils'
+const { navigate } = vi.hoisted(() => ({ navigate: vi.fn() }))
+vi.mock('vue-router', async importOriginal => ({ ...await importOriginal<typeof import('vue-router')>(), useRouter: () => ({ push: navigate }) }))
 vi.mock('@/api/rpc-client', () => ({ rpcClient: { call: vi.fn(), vpnStatus: vi.fn() } }))
 import { rpcClient } from '@/api/rpc-client'
+import BackButton from '@/components/BackButton.vue'
 import FirewallTunnelSettings from './FirewallTunnelSettings.vue'
-const mountPage = () => mount(FirewallTunnelSettings, { global: { stubs: { RouterLink: { template: '<a><slot /></a>' }, VpnDeviceSettings: { props: ['configured', 'managementVerified'], template: '<div data-testid="devices" :data-configured="configured" :data-verified="managementVerified" />' } } } })
+const mountPage = () => mount(FirewallTunnelSettings, { global: { stubs: { BackButton: { props: ['desktopMargin'], template: '<button data-testid="back" @click="$emit(\'click\')">Back</button>' }, RouterLink: { template: '<a><slot /></a>' }, VpnDeviceSettings: { props: ['configured', 'managementVerified'], template: '<div data-testid="devices" :data-configured="configured" :data-verified="managementVerified" />' } } } })
 const vpn = { connected: true, provider: 'tailscale', configured: true, configured_provider: 'nostrvpn', wg_ip: '10.44.0.1' }
 beforeEach(() => {
   vi.resetAllMocks()
@@ -16,6 +19,15 @@ beforeEach(() => {
   })
 })
 describe('Firewall and tunnel settings', () => {
+  it('uses the standard OpenWrt sibling header and shared back control to Network', async () => {
+    const w = mountPage(); await flushPromises()
+    expect(w.get('[data-testid="firewall-header"]').classes()).toEqual(expect.arrayContaining(['flex', 'items-center', 'gap-3', 'mb-6']))
+    expect(w.get('h1').classes()).toEqual(expect.arrayContaining(['text-lg', 'font-semibold']))
+    expect(w.findComponent(BackButton).props('desktopMargin')).toBe('mb-0')
+    await w.get('[data-testid="back"]').trigger('click')
+    expect(navigate).toHaveBeenCalledWith({ name: 'server' })
+    w.unmount()
+  })
   it('recognizes the existing device tunnel independently of router setup and never infers firewall protection from FIPS', async () => {
     const w = mountPage(); await flushPromises()
     expect(w.text()).toContain('Your device tunnel is already set up')
@@ -35,7 +47,7 @@ describe('Firewall and tunnel settings', () => {
     const w = mountPage(); await flushPromises()
     vi.mocked(rpcClient.vpnStatus).mockRejectedValue(new Error('offline'))
     vi.mocked(rpcClient.call).mockRejectedValue(new Error('offline'))
-    await w.get('button').trigger('click'); await flushPromises()
+    await w.findAll('button').find(b => b.text() === 'Refresh status')!.trigger('click'); await flushPromises()
     expect(w.text()).not.toContain('Your device tunnel is already set up')
     expect(w.text()).toContain('Could not check saved entries.')
     expect(w.text()).not.toContain('No entries are saved here.')

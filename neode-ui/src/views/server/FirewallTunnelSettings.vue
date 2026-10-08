@@ -1,12 +1,14 @@
 <script setup lang="ts">
 import { computed, onActivated, onDeactivated, onMounted, onUnmounted, ref } from 'vue'
-import { RouterLink } from 'vue-router'
+import { RouterLink, useRouter } from 'vue-router'
+import BackButton from '@/components/BackButton.vue'
 import { rpcClient } from '@/api/rpc-client'
 import VpnDeviceSettings from './VpnDeviceSettings.vue'
 interface TunnelStatus { peer_management_verified?: boolean; connected?: boolean; configured?: boolean; configured_provider?: string; provider?: string; ip_address?: string | null; wg_ip?: string | null }
 interface FipsStatus { installed?: boolean; service_active?: boolean; authenticated_peer_count?: number }
 interface RouterStatus { configured?: boolean; router_type?: string; address?: string }
 interface Forward { id: string; service_name: string; internal_port: number; external_port: number; protocol: string }
+const navigation = useRouter()
 const loading = ref(true)
 const error = ref('')
 const tunnel = ref<TunnelStatus | null>(null)
@@ -46,12 +48,12 @@ onActivated(() => { if (!active) { active = true; void refresh() } })
 
 <template>
   <main class="w-full min-w-0 pb-6 text-white" data-testid="firewall-settings">
+    <div class="flex items-center gap-3 mb-6" data-testid="firewall-header">
+      <BackButton desktop-margin="mb-0" @click="navigation.push({ name: 'server' })" />
+      <h1 class="text-lg font-semibold text-white">Firewalls &amp; tunnels</h1>
+    </div>
     <div class="flex flex-wrap items-start justify-between gap-4 mb-6">
-      <div class="min-w-0">
-        <RouterLink to="/dashboard/server" class="text-sm text-white/60 hover:text-white">← Network</RouterLink>
-        <h1 class="text-2xl font-semibold text-white mt-2">Firewalls &amp; tunnels</h1>
-        <p class="text-sm text-white/60 mt-1">Choose how your devices and apps connect to this node.</p>
-      </div>
+      <p class="text-sm text-white/60">Choose how your devices and apps connect to this node.</p>
       <button class="glass-button text-sm" :disabled="loading" @click="refresh">{{ loading ? 'Checking…' : 'Refresh status' }}</button>
     </div>
     <p v-if="error" role="alert" class="mb-4 rounded-lg border border-orange-400/30 bg-orange-500/10 p-4 text-sm text-orange-200">{{ error }}</p>
@@ -74,7 +76,7 @@ onActivated(() => { if (!active) { active = true; void refresh() } })
           <div class="status-row"><dt>Detected service</dt><dd>{{ tunnel ? provider : 'Could not check' }}</dd></div>
           <div class="status-row"><dt>WireGuard device address</dt><dd>{{ tunnel?.wg_ip || (tunnel ? 'Not ready' : 'Could not check') }}</dd></div>
         </dl>
-        <p v-if="tunnel?.wg_ip" class="mt-4 text-sm text-white/60">Your device tunnel is already set up. Add or manage devices below.</p>
+        <p v-if="tunnel?.wg_ip" class="mt-4 text-sm text-white/60">Your device tunnel is already set up.</p>
       </section>
     </div>
     <VpnDeviceSettings :status-known="tunnel !== null" :configured="!!tunnel?.wg_ip" :management-verified="tunnel?.peer_management_verified === true" />
