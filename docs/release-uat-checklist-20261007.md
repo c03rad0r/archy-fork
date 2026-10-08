@@ -1,6 +1,6 @@
 # Release UAT checklist — 2026-10-07
 
-This is a read-only acceptance checklist for the current 1.9.0 candidate. It
+This is a read-only acceptance checklist for the post-1.9.0 candidate. It
 does not authorize deployment, payment, catalog activation, wallet mutation or
 service restart. Run backend tests only through the isolated runner.
 
@@ -50,16 +50,21 @@ and desktop widths. Remaining acceptance is physical companion behavior:
 - Launch from the Yaya App Store and confirm `/browse` is the first route.
 - Authenticate through the native Nostr provider; confirm no alpha password
   gate or private development fixture is used.
-- Play a track, close the app, and verify the native phone media session keeps
-  playing with artwork, previous, next, play/pause and shuffle controls.
+- Background playback and notification presence on APK0.5.37 are operator
+  accepted. Verify any remaining individual controls (previous, next, play/pause
+  and shuffle) without treating the general playback report as their acceptance.
+- Notification artwork still failed on the phone after the later dashboard
+  delivery. The operator explicitly deferred investigation to task23, after all
+  other tasks. Do not make it an immediate playback retest or deployment gate.
 - Reopen the app and verify the same queue, position and authorization remain.
 - Stop playback, log out and expire the session; confirm playback and controls
   stop without a duplicate stream or payment.
 - Confirm the Yaya-only catalog remains private and anonymous catalog access
   remains rejected.
 
-Current blocker: physical companion acceptance and generalized background
-audio/video behavior remain open. The V4V image must remain private until its
+Remaining: queue/authorization/session-expiry checks and any individual controls
+without explicit acceptance; background playback itself is accepted. Artwork is
+deferred to the end of the backlog. The V4V image must remain private until its
 registry visibility and catalog policy are independently rechecked.
 
 ## Payment and wallet safety
