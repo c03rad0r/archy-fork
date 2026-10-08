@@ -198,25 +198,76 @@ impl IdentityManager {
         Ok(pubkeys.join(","))
     }
 
-    /// Import a business key without replacing any existing identity or default.
-    pub async fn import_nostr(&self, name: String, nsec: &str, expected_npub: &str) -> Result<IdentityRecord> {
+    /// Import a business key without modifying any existing identity or default.
+    pub async fn import_nostr(
+        &self,
+        name: String,
+        nsec: &str,
+        expected_npub: &str,
+    ) -> Result<IdentityRecord> {
+        anyhow::ensure!(!name.trim().is_empty() && name.len() <= 100, "Invalid identity name");
         anyhow::ensure!(nsec.starts_with("nsec1") && nsec.len() == 63, "Enter a plain nsec owner key");
-        let secret = nostr_sdk::SecretKey::parse(nsec).map_err(|_| anyhow::anyhow!("Invalid owner key"))?;
+        let secret = nostr_sdk::SecretKey::parse(nsec)
+            .map_err(|_| anyhow::anyhow!("Invalid owner key"))?;
         let keys = nostr_sdk::Keys::new(secret);
-        anyhow::ensure!(keys.public_key().to_bech32()? == expected_npub, "Owner key does not match this website");
+        let nostr_pubkey = keys.public_key().to_hex();
+        anyhow::ensure!(keys.public_key().to_bech32()? == expected_npub,
+            "Owner key does not match this website");
+
+        // Serializes imports only; mature creation/signing paths are untouched.
+        static IMPORT_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+        let _guard = IMPORT_LOCK.lock().await;
         let (existing, _) = self.list().await?;
-        if let Some(record) = existing.into_iter().find(|r| r.purpose == IdentityPurpose::Business && r.nostr_pubkey.as_deref() == Some(keys.public_key().to_hex().as_str())) {
+        if let Some(record) = existing.into_iter().find(|record| {
+            record.purpose == IdentityPurpose::Business
+                && record.nostr_pubkey.as_deref() == Some(nostr_pubkey.as_str())
+        }) {
             return Ok(record);
         }
-        self.create_with_nostr(name, IdentityPurpose::Business, Some(keys)).await
+
+        let signing_key = SigningKey::generate(&mut OsRng);
+        let pubkey_hex = hex::encode(signing_key.verifying_key().as_bytes());
+        let id = uuid::Uuid::new_v4().to_string();
+        let record = IdentityFile {
+            id: id.clone(),
+            name,
+            purpose: IdentityPurpose::Business,
+            secret_key: signing_key.to_bytes().to_vec(),
+            did: did_key_from_pubkey_hex(&pubkey_hex)?,
+            profile: Some(IdentityProfile {
+                picture: Some(crate::avatar::identicon(&pubkey_hex)),
+                ..Default::default()
+            }),
+            pubkey_hex,
+            created_at: chrono::Utc::now().to_rfc3339(),
+            nostr_secret_hex: Some(keys.secret_key().display_secret().to_string()),
+            nostr_pubkey_hex: Some(nostr_pubkey),
+            derivation_index: None,
+        };
+        let encoded = serde_json::to_vec_pretty(&record)?;
+        // Hidden staging file is never visible as an incomplete identity to readers.
+        let staging = self.identities_dir.join(format!(".import-{id}.tmp"));
+        let destination = self.identities_dir.join(format!("{id}.json"));
+        let write_result: Result<()> = async {
+            let mut options = fs::OpenOptions::new();
+            options.write(true).create_new(true);
+            #[cfg(unix)]
+            options.mode(0o600);
+            let mut file = options.open(&staging).await?;
+            tokio::io::AsyncWriteExt::write_all(&mut file, &encoded).await?;
+            tokio::io::AsyncWriteExt::flush(&mut file).await?;
+            file.sync_all().await?;
+            // Atomic publication, and unlike rename this cannot replace a file.
+            fs::hard_link(&staging, &destination).await?;
+            Ok(())
+        }.await;
+        let _ = fs::remove_file(&staging).await;
+        write_result.context("Could not save imported identity")?;
+        self.get(&id).await
     }
 
     /// Create a new identity.
     pub async fn create(&self, name: String, purpose: IdentityPurpose) -> Result<IdentityRecord> {
-        self.create_with_nostr(name, purpose, None).await
-    }
-
-    async fn create_with_nostr(&self, name: String, purpose: IdentityPurpose, imported: Option<nostr_sdk::Keys>) -> Result<IdentityRecord> {
         let signing_key = SigningKey::generate(&mut OsRng);
         let pubkey_hex = hex::encode(signing_key.verifying_key().as_bytes());
         let did = did_key_from_pubkey_hex(&pubkey_hex)?;
@@ -239,8 +290,8 @@ impl IdentityManager {
             pubkey_hex: pubkey_hex.clone(),
             did: did.clone(),
             created_at: created_at.clone(),
-            nostr_secret_hex: imported.as_ref().map(|keys| keys.secret_key().display_secret().to_string()),
-            nostr_pubkey_hex: imported.as_ref().map(|keys| keys.public_key().to_hex()),
+            nostr_secret_hex: None,
+            nostr_pubkey_hex: None,
             profile: Some(default_profile),
             derivation_index: None,
         };
@@ -248,15 +299,9 @@ impl IdentityManager {
         let file_path = self.identities_dir.join(format!("{}.json", id));
         let json =
             serde_json::to_string_pretty(&identity_file).context("Failed to serialize identity")?;
-        let mut options = fs::OpenOptions::new();
-        options.write(true).create_new(true);
-        #[cfg(unix)]
-        options.mode(0o600);
-        let mut file = options.open(&file_path).await.context("Failed to create identity file")?;
-        tokio::io::AsyncWriteExt::write_all(&mut file, json.as_bytes()).await
+        fs::write(&file_path, json.as_bytes())
+            .await
             .context("Failed to write identity file")?;
-        tokio::io::AsyncWriteExt::flush(&mut file).await
-            .context("Failed to flush identity file")?;
 
         #[cfg(unix)]
         {
@@ -268,14 +313,12 @@ impl IdentityManager {
 
         // If this is the first identity, make it the default
         let (existing, _) = self.list().await?;
-        if existing.len() <= 1 && imported.is_none() {
+        if existing.len() <= 1 {
             self.set_default(&id).await?;
         }
 
         // Auto-generate Nostr keypair so every identity has both key types (legacy path)
-        if imported.is_none() {
-            let _ = self.create_nostr_key(&id).await;
-        }
+        let _ = self.create_nostr_key(&id).await;
 
         // Re-read to pick up the Nostr keys
         let record = self.get(&id).await?;
@@ -950,6 +993,33 @@ mod tests {
             let mode = std::fs::metadata(dir.path().join("identities").join(format!("{}.json", imported.id))).unwrap().permissions().mode();
             assert_eq!(mode & 0o777, 0o600);
         }
+    }
+
+    #[tokio::test]
+    async fn concurrent_nostr_imports_reuse_one_identity_and_sign_correctly() {
+        let dir = tempdir().unwrap();
+        let manager = IdentityManager::new(dir.path()).await.unwrap();
+        let keys = nostr_sdk::Keys::generate();
+        let nsec = keys.secret_key().to_bech32().unwrap();
+        let npub = keys.public_key().to_bech32().unwrap();
+        let (first, second) = tokio::join!(
+            manager.import_nostr("Website".into(), &nsec, &npub),
+            manager.import_nostr("Website again".into(), &nsec, &npub),
+        );
+        let first = first.unwrap();
+        assert_eq!(first.id, second.unwrap().id);
+        let (records, default) = manager.list().await.unwrap();
+        assert_eq!(records.len(), 1);
+        assert!(default.is_none());
+        let hash = [7u8; 32];
+        let signature = manager.nostr_sign(&first.id, &hex::encode(hash)).await.unwrap();
+        let signature: nostr_sdk::secp256k1::schnorr::Signature = signature.parse().unwrap();
+        let pubkey: nostr_sdk::secp256k1::XOnlyPublicKey = keys.public_key().to_hex().parse().unwrap();
+        nostr_sdk::secp256k1::Secp256k1::verification_only().verify_schnorr(
+            &signature, &nostr_sdk::secp256k1::Message::from_digest(hash), &pubkey,
+        ).unwrap();
+        let entries = std::fs::read_dir(dir.path().join("identities")).unwrap();
+        assert!(entries.map(|entry| entry.unwrap().file_name()).all(|name| !name.to_string_lossy().ends_with(".tmp")));
     }
 
     #[tokio::test]
