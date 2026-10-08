@@ -86,7 +86,25 @@ elif [ "$1" = signal ]; then
 else exit 1; fi
 '''
 LEGACY_RELAY_IMAGE = '061516573b143b44e331f960036a6a3dc43c9b256ef8ca71afedbeb2cf797a4b'
-def verify_relay_image_lineage(image, unit_sha256, records, installed=None):
+def verify_relay_image_lineage(image, unit_sha256, records, installed=None, current=None):
+    preserved_owner=False
+    if image.removeprefix('sha256:')!=LEGACY_RELAY_IMAGE:
+        require(isinstance(installed,dict) and installed.get('schema')==1 and installed.get('name')=='indeedhub-relay','Relay installed recipe missing')
+        owners=[r for r in records if r.get('id')==installed.get('operation')]
+        require(len(owners)==1,'Relay installed owner is missing or ambiguous')
+        owner=owners[0]
+        try:require(str(uuid.UUID(owner['id']))==owner['id'],'Invalid relay installed operation')
+        except (KeyError,ValueError,AttributeError):raise RuntimeError('Invalid relay installed operation')
+        require(owner.get('schema') in (1,2) and owner.get('package')=='indeedhub' and owner.get('phase')=='Restored' and owner.get('cleanup_done') is True,'Relay installed owner is not a completed recovery')
+        members=[m for m in owner.get('members',[]) if m.get('original',{}).get('name')=='indeedhub-relay']
+        require(len(members)==1,'Relay installed owner has ambiguous members')
+        member=members[0];original=member['original']
+        if member.get('preserve_original') is True:
+            require(owner['schema']==2 and owner.get('target_startup_began') is False and original.get('running') is True,'Relay preservation ownership changed')
+            require(isinstance(current,dict) and current.get('name')=='indeedhub-relay' and original.get('container_id')==current.get('container_id') and original.get('config_sha256')==current.get('config_sha256'),'Relay preserved live identity changed')
+            require(re.fullmatch('[0-9a-f]{64}',original.get('container_id','')) is not None and re.fullmatch('[0-9a-f]{64}',original.get('config_sha256','')) is not None,'Invalid preserved relay identity')
+            require(original.get('image','').removeprefix('sha256:')==image.removeprefix('sha256:') and installed.get('body')==original.get('body') and isinstance(original.get('body'),str) and hashlib.sha256(original['body'].encode()).hexdigest()==unit_sha256,'Relay preserved image or recipe changed')
+            preserved_owner=True
     seen=set()
     for _ in range(16):
         image=image.removeprefix('sha256:')
@@ -107,7 +125,7 @@ def verify_relay_image_lineage(image, unit_sha256, records, installed=None):
                 require((record['schema']==1 and (member.get('preserve_original') is None or member.get('preserve_original') is False) or record['schema']==2 and (record.get('target_startup_began') is True and member.get('preserve_original') is None or record.get('target_startup_began') is False and member.get('preserve_original') is False)) and recovery.get('operation_id')==record['id'] and recovery.get('source_container_id')==original.get('container_id'),'Relay recovery ownership changed')
                 require(hashlib.sha256(member['pinned_original_body'].encode()).hexdigest()==unit_sha256,'Relay recovery unit lineage changed')
                 require(re.fullmatch('[0-9a-f]{64}',original.get('container_id','')) is not None,'Invalid relay source identity')
-                if len(seen)==1:require(isinstance(installed,dict) and installed.get('schema')==1 and installed.get('name')=='indeedhub-relay' and installed.get('operation')==record['id'] and installed.get('body')==member['pinned_original_body'],'Relay installed recipe does not own recovery lineage')
+                if len(seen)==1:require(preserved_owner and installed['operation']!=record['id'] or installed.get('operation')==record['id'] and installed.get('body')==member['pinned_original_body'],'Relay installed recipe does not own recovery lineage')
                 matches.append((original['image'],hashlib.sha256(original['body'].encode()).hexdigest()))
         require(len(matches)==1,'Relay image lacks unique completed owned recovery lineage')
         image,unit_sha256=matches[0]
@@ -356,7 +374,7 @@ class Controller:
                 directory=self.data/'update-transactions'/'installed-units';path=directory/'indeedhub-relay.json'
                 require(directory.is_dir() and not directory.is_symlink() and directory.stat().st_uid==os.getuid() and directory.stat().st_mode & 0o077==0 and path.is_file() and not path.is_symlink() and path.stat().st_uid==os.getuid() and path.stat().st_mode & 0o077==0 and path.stat().st_size<=1024*1024,'Unsafe relay installed recipe')
                 installed=json.loads(path.read_text())
-            verify_relay_image_lineage(member['image_id'],member['unit_sha256'],records,installed)
+            verify_relay_image_lineage(member['image_id'],member['unit_sha256'],records,installed,member)
         image=images[0];expected=(LEGACY_API_CMD,['docker-entrypoint.sh']) if role=='api' else (LEGACY_RELAY_CMD,None)
         require((image['Config'].get('Cmd'),image['Config'].get('Entrypoint'))==expected,'Unrecognized legacy signal command')
         source=pathlib.Path(self.run(['systemctl','--user','show',member['name']+'.service','--property=SourcePath','--value']).decode().strip())

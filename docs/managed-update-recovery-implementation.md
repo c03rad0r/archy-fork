@@ -523,3 +523,23 @@ Source review found byte-download progress unconditionally changes Updating to
 Installing; failure cleanup only releases Updating. The narrow progress-state
 fix and regression are pending. This is not full target rollback acceptance.
 The recovered guest is QMP-paused without reboot for serialized validation.
+
+The progress-state fix at 105454bd passed the full isolated suite: **2,026
+tests**, zero failures, five existing ignores, all 532 inputs unchanged. Its
+matching executable retained all seven IDs across manager startup. Actual RPC
+`2d4c8fc9-ee90-4167-a2d3-90647e756df0` safely restored before target startup
+and **returned package state to Running with progress cleared**, accepting the
+state fix on the actual manager path.
+
+That transaction exposed a preserved-relay ownership edge: native pre-target
+recovery publishes the latest operation as installed-recipe owner even when the
+relay container/image is preserved. The helper incorrectly required that owner
+to be the historical image-producing operation. The correction separately
+validates a unique terminal schema-2 preservation owner against exact running
+intent, live container ID, raw configuration hash, image and unit body, then
+retains the existing unique image ancestry to the qualified original. It adds
+no image edge or binary-only fallback. **59 controller tests pass**, and a
+separate candidate verifier passed against the actual preserved guest relay and
+record chain without replacing the installed helper or modifying journals.
+Matching embedded-helper build and full target rollback/cutover remain required;
+the 2,026-test receipt predates this helper-only correction.

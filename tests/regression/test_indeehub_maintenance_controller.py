@@ -562,6 +562,31 @@ console.log('process identity cases passed');'''
    if change=='wrong-body':bad['members'][0]['pinned_original_body']='changed'
    if change=='cycle':bad['members'][0]['original']['image']=image
    with self.assertRaises(RuntimeError):module.verify_relay_image_lineage(image,digest,[bad],installed)
+ def test_preserved_relay_owner_attests_identity_without_replacing_image_ancestry(self):
+  import copy,hashlib
+  image='d'*64;body='[Container]\nImage='+image+'\n';digest=hashlib.sha256(body.encode()).hexdigest()
+  producer={'schema':2,'id':self.operation,'package':'indeedhub','phase':'Restored','cleanup_done':True,'target_startup_began':False,'members':[{'original':{'name':'indeedhub-relay','container_id':'e'*64,'image':module.LEGACY_RELAY_IMAGE,'body':'base'},'pinned_original_body':body,'preserve_original':False,'recovery_image':{'image':image,'operation_id':self.operation,'source_container_id':'e'*64}}]}
+  current={'name':'indeedhub-relay','container_id':'c'*64,'config_sha256':'a'*64}
+  owner={'schema':2,'id':str(uuid.uuid4()),'package':'indeedhub','phase':'Restored','cleanup_done':True,'target_startup_began':False,'members':[{'original':dict(current,image=image,body=body,running=True),'preserve_original':True,'recovery_image':{'image':'f'*64}}]}
+  installed={'schema':1,'name':'indeedhub-relay','operation':owner['id'],'body':body}
+  module.verify_relay_image_lineage(image,digest,[producer,owner],installed,current)
+  newer=copy.deepcopy(owner);newer['id']=str(uuid.uuid4());newer['members'][0]['recovery_image']['image']='b'*64
+  module.verify_relay_image_lineage(image,digest,[producer,owner,newer],dict(installed,operation=newer['id']),current)
+  for records in ([owner],[producer],[producer,owner,owner]):
+   with self.assertRaises(RuntimeError):module.verify_relay_image_lineage(image,digest,records,installed,current)
+  for key,value in [('container_id','b'*64),('config_sha256','b'*64),('name','indeedhub-api')]:
+   with self.assertRaises(RuntimeError):module.verify_relay_image_lineage(image,digest,[producer,owner],installed,dict(current,**{key:value}))
+  for field,value in [('schema',1),('target_startup_began',True),('target_startup_began',0),('cleanup_done',False),('phase','Restoring')]:
+   bad=copy.deepcopy(owner);bad[field]=value
+   with self.assertRaises(RuntimeError):module.verify_relay_image_lineage(image,digest,[producer,bad],installed,current)
+  for field,value in [('preserve_original',False),('preserve_original',1),('preserve_original',None)]:
+   bad=copy.deepcopy(owner);bad['members'][0][field]=value
+   with self.assertRaises(RuntimeError):module.verify_relay_image_lineage(image,digest,[producer,bad],installed,current)
+  for field,value in [('image','b'*64),('body','changed'),('running',False),('running',1),('container_id','bad'),('config_sha256','bad')]:
+   bad=copy.deepcopy(owner);bad['members'][0]['original'][field]=value
+   with self.assertRaises(RuntimeError):module.verify_relay_image_lineage(image,digest,[producer,bad],installed,current)
+  with self.assertRaises(RuntimeError):module.verify_relay_image_lineage(image,digest,[producer,owner],dict(installed,body='changed'),current)
+  with self.assertRaises(RuntimeError):module.verify_relay_image_lineage('b'*64,digest,[producer,owner],installed,current)
  def test_column_commitments_retain_logical_order_and_every_semantic_field(self):
   import copy
   columns=[['first','integer',True,'','',''],['last','text',False,'','','']]
