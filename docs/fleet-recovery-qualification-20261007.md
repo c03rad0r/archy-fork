@@ -150,3 +150,18 @@ DOMContentLoaded/60-second fixture passed both widths. Logs:
 `/tmp/archy-fleet-acceptance-browser-retry.log`. Owned browser/server jobs stopped.
 This is source-browser evidence, not a production build or real identity/transport
 acceptance. Backend provenance qualification and coupled release remain required.
+
+The backend provenance follow-up explicitly returns `history_available=false`
+for federation identities whose collector history cannot be trusted. The UI now
+consumes that flag: it clears any supplied history entries and displays “History
+is unavailable for this node.” Changing selection clears the prior message;
+legacy `history`/`entries` forms remain supported. A failed history refresh marks
+retained history or unavailability instead of silently implying success. A new
+composable plus real detail-component fixture verifies the unavailable flag wins
+even when entries accompany it, and does not leak into a newly selected node.
+Focused Fleet suite after this follow-up: **29 tests in five files passed**;
+log `/tmp/archy-fleet-history-final.log`.
+The exact app-project typecheck also passed again after the history follow-up,
+with the same 2 GB bound; log `/tmp/archy-fleet-history-typecheck.log`.
+Completed logs and browser fixture sources are archived at
+`~/.local/state/archipelago/release-qualification/fleet-acceptance-20261007/`.

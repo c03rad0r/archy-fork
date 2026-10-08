@@ -32,6 +32,7 @@
     </div>
 
     <!-- History Charts -->
+    <p v-if="historyMessage" role="status" class="text-sm text-amber-200 mb-4">{{ historyMessage }}</p>
     <div v-if="historyLoading && !historyLabels.length" class="text-white/40 text-sm py-4 text-center mb-4">
       Loading history...
     </div>
@@ -129,6 +130,7 @@ defineProps<{
   node: FleetNode | null
   nodeId: string
   historyLoading: boolean
+  historyMessage?: string
   historyLabels: string[]
   cpuDatasets: ChartDataset[]
   memDatasets: ChartDataset[]

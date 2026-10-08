@@ -125,6 +125,7 @@
         :node="fleet.selectedNode.value"
         :node-id="fleet.selectedNodeId.value"
         :history-loading="fleet.nodeHistoryLoading.value"
+        :history-message="fleet.nodeHistoryMessage.value"
         :history-labels="fleet.nodeHistoryLabels.value"
         :cpu-datasets="fleet.nodeHistoryCpuDatasets.value"
         :mem-datasets="fleet.nodeHistoryMemDatasets.value"

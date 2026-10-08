@@ -2,8 +2,9 @@ import { afterEach, expect, it, vi } from 'vitest'
 import { defineComponent } from 'vue'
 import { flushPromises, mount } from '@vue/test-utils'
 import { rpcClient } from '@/api/rpc-client'
-import { useFleetData } from '../useFleetData'
+import { useFleetData, normalizeFleetNode } from '../useFleetData'
 import FleetAlerts from '../FleetAlerts.vue'
+import FleetNodeDetail from '../FleetNodeDetail.vue'
 
 vi.mock('@/api/rpc-client', () => ({ rpcClient: { call: vi.fn() } }))
 afterEach(() => { sessionStorage.clear(); vi.clearAllMocks() })
@@ -80,5 +81,33 @@ it('ignores an older alerts failure after a newer successful refresh', async () 
     await flushPromises()
     expect(fleet.alertsErrorMessage.value).toBe('')
     expect(fleet.alertsLoading.value).toBe(false)
+  } finally { wrapper.unmount() }
+})
+
+it('reports explicitly unavailable history and clears the message when changing nodes', async () => {
+  vi.mocked(rpcClient.call).mockImplementation(({ method, params }) => {
+    if (method !== 'telemetry.fleet-node-history') return Promise.resolve({ nodes: [], alerts: [] }) as never
+    return Promise.resolve((params as { node_id: string }).node_id === 'trusted'
+      ? { history_available: false, entries: [{ timestamp: 'must-not-render', cpu_pct: 99 }] }
+      : { entries: [{ timestamp: 'legacy-available', cpu_pct: 12 }] }) as never
+  })
+  let fleet!: ReturnType<typeof useFleetData>
+  const wrapper = mount(defineComponent({ setup() { fleet = useFleetData(); return () => null } }))
+  try {
+    await flushPromises()
+    fleet.selectNode('trusted'); await flushPromises()
+    expect(fleet.nodeHistoryMessage.value).toContain('unavailable')
+    expect(fleet.nodeHistory.value).toEqual([])
+    const detail = mount(FleetNodeDetail, { props: {
+      node: normalizeFleetNode({ node_id: 'trusted' }), nodeId: 'trusted',
+      historyLoading: false, historyMessage: fleet.nodeHistoryMessage.value,
+      historyLabels: [], cpuDatasets: [], memDatasets: [], diskDatasets: [], chartWidth: 300,
+    }, global: { mocks: { $ver: (v: string) => v }, stubs: { LineChart: true } } })
+    expect(detail.get('[role="status"]').text()).toContain('History is unavailable')
+    expect(detail.text()).not.toContain('CPU History')
+    detail.unmount()
+    fleet.selectNode('legacy'); await flushPromises()
+    expect(fleet.nodeHistoryMessage.value).toBe('')
+    expect(fleet.nodeHistory.value[0]?.timestamp).toBe('legacy-available')
   } finally { wrapper.unmount() }
 })

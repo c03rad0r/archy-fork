@@ -281,6 +281,7 @@ export function useFleetData() {
   const selectedNodeId = ref<string | null>(cached.selectedNodeId ?? null)
   const nodeHistory = ref<NodeHistoryEntry[]>([])
   const nodeHistoryLoading = ref(false)
+  const nodeHistoryMessage = ref('')
   const autoRefresh = ref(true)
   const lastRefreshed = ref(cached.lastRefreshed ?? '')
   const sortBy = ref<SortOption>(cached.sortBy ?? 'status')
@@ -423,15 +424,25 @@ export function useFleetData() {
     const request = ++historyRequest
     nodeHistoryLoading.value = true
     try {
-      const data = await rpcClient.call<{ history?: NodeHistoryEntry[]; entries?: NodeHistoryEntry[] }>({
+      const data = await rpcClient.call<{ history?: NodeHistoryEntry[]; entries?: NodeHistoryEntry[]; history_available?: boolean }>({
         method: 'telemetry.fleet-node-history',
         params: { node_id: nodeId },
       })
       if (request === historyRequest && selectedNodeId.value === nodeId) {
-        nodeHistory.value = normalizeNodeHistoryResponse(data)
+        if (data.history_available === false) {
+          nodeHistory.value = []
+          nodeHistoryMessage.value = 'History is unavailable for this node.'
+        } else {
+          nodeHistory.value = normalizeNodeHistoryResponse(data)
+          nodeHistoryMessage.value = ''
+        }
       }
     } catch {
-      // Non-critical
+      if (request === historyRequest && selectedNodeId.value === nodeId) {
+        nodeHistoryMessage.value = nodeHistory.value.length
+          ? 'History refresh failed. Showing the last received history.'
+          : 'History is unavailable for this node.'
+      }
     } finally {
       if (request === historyRequest) nodeHistoryLoading.value = false
     }
@@ -521,6 +532,7 @@ export function useFleetData() {
     historyRequest++
     nodeHistory.value = []
     nodeHistoryLoading.value = false
+    nodeHistoryMessage.value = ''
     if (newId) {
       fetchNodeHistory(newId)
     } else {
@@ -599,7 +611,7 @@ export function useFleetData() {
 
   return {
     loading, refreshing, errorMessage, nodes, fleetAlerts, alertsLoading, alertsErrorMessage,
-    selectedNodeId, selectedNode, nodeHistory, nodeHistoryLoading,
+    selectedNodeId, selectedNode, nodeHistory, nodeHistoryLoading, nodeHistoryMessage,
     autoRefresh, lastRefreshed, sortBy, chartWidth, now,
     onlineCount, offlineCount, unknownCount, healthyCount, fleetHealthPct,
     avgCpu, avgMem, avgDisk, sortedNodes, allAppIds,
