@@ -11,6 +11,42 @@ Read **Current live checkpoint** first. Older receipts below apply only to their
 
 ### Latest continuation checkpoint (read before older bullets)
 
+- **Newest continuation:** Indee operation `8b53579c…` passed all seven writer
+  drain/exit proofs; backup verification and successful cutover remain in progress.
+  Prior `f39bd824` native recovery finished autonomously after observer timeouts;
+  independent final checks passed. Same VM was safely paused for compilation,
+  then resumed and passed nine readiness probes including the exact died-event
+  query. Only its owned transient unit received best-effort MemoryLow=3GiB;
+  MemoryMin/swap limits and all other services are unchanged. Reset on cleanup.
+- Firewall UI is integrated through `a1bc6426`: full width, standard black entry,
+  right-aligned statuses, unchanged Network background, shared header/BackButton,
+  verified-capability private reads and separate requests across view generations.
+  Current focused coverage is 7 header/firewall, 18 device and 3 background cases;
+  four-width source browser qualification passed. Not deployed. Isolated new VPN
+  backend compilation stopped on an omitted existing JSON fixture before tests;
+  missing inputs are now materialized, but no pass is claimed.
+- Combined dashboard snapshot: `/tmp/archy-integrated-ui-qualified-20261008`,
+  781 tracked inputs. Delta gate verifies all34 changes against the qualified
+  1,459-test Fleet baseline map exactly to reviewed File Browser, connection and
+  firewall slices. Typecheck/build still pending. Runner:
+  `/tmp/archy-integrated-ui-20261008.py`; delta gate:
+  `/tmp/archy-integrated-ui-delta-gate.py`. No build was started during VM work.
+- Existing ngit proposal `8f394251` remains **draft**, updated by normal fast-forward
+  from `e97f958f` to `cf3c38bed009edd729f908b452913a7a1a8e0b67`; advertised tip verified.
+  Its title is now “Post-1.9.0 recovery, private IndeeHub delivery and dashboard
+  follow-ups”, with exact updated cover note verified. No duplicate PR, force push,
+  accepted-main merge, release or catalog activation occurred. `cf3c38be` joins
+  existing proposal ancestry with zero tracked content change. Required mirror
+  check after source publication still fails only local main mismatch; retained
+  log `/tmp/archy-post190-mirror-check-20261008.log`. Do not claim main parity or
+  acceptance from publishing a draft. Proposal:
+  https://gitworkshop.dev/nevent1qqsg7w2z29e3hfedp3ans2vs5j2qhluxxsle0jgdgh0rgh8qh4lzkgspz3mhxue69uhhyetvv9ujumn8d96zuer9wc0r8ny8
+- Private Yaya delivery runbook is now `docs/indeehub-private-delivery-runbook-20261008.md`.
+  Worker-aware offline planner includes all three delivery image pins; draft is
+  explicitly not activation-ready until fresh live bindings and remaining gates.
+  Cloud Libraries backend/UI remain isolated, uncompiled and not enabled.
+
+
 - Latest actual attempt `5bd06edc…` reached target startup but failed; native
   rollback and independent **same-boot** verification passed: all seven restored
   runtimes, exact image/unit pins, writable-layer sentinels, database/volume
