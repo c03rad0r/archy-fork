@@ -135,7 +135,7 @@ class MaintenanceTests(unittest.TestCase):
    if argv[:2]==['podman','events']:return json.dumps({'ID':members()[0]['container_id'],'ContainerExitCode':137}).encode()
    raise AssertionError(argv)
   c.runner=command
-  with self.assertRaisesRegex(RuntimeError,'did not exit cleanly'):c.graceful_stop('indeedhub')
+  with self.assertRaisesRegex(RuntimeError,'not allowed for this writer'):c.graceful_stop('indeedhub')
   self.assertFalse(c.record['stopped']['indeedhub'].get('confirmed',False))
   self.assertTrue((self.root/'update-transactions'/'holds'/'indeedhub').exists())
  def test_failed_stop_can_restore_without_fabricating_completed_drain(self):
@@ -183,6 +183,82 @@ class MaintenanceTests(unittest.TestCase):
   c.fence.parent.mkdir(parents=True);c.fence.write_text(self.operation)
   with self.assertRaisesRegex(RuntimeError,'without journal'):c.release('aborted')
   self.assertTrue(c.fence.exists())
+ def test_queue_requires_complete_nonnegative_integer_observations(self):
+  valid={name:0 for name in module.QUEUE_COUNTS}
+  for counts in ({}, {k:v for k,v in valid.items() if k!='active'},
+                 dict(valid,active=-1),dict(valid,active=True),dict(valid,unknown=0)):
+   with self.subTest(counts=counts):
+    self.controller.runner=lambda argv,timeout,output:json.dumps({'paused':True,'counts':counts}).encode()
+    with self.assertRaisesRegex(RuntimeError,'queue observation'):self.controller.queue('status')
+    self.assertIsNone(self.controller.record)
+  self.controller.runner=lambda argv,timeout,output:json.dumps({'paused':True,'counts':valid}).encode()
+  self.assertEqual(self.controller.queue('status')['counts'],valid)
+ def legacy_forced_fixture(self):
+  c=self.controller;unit=self.root/'worker.container';unit.write_text('[Container]\nImage=original\n')
+  worker=next(m for m in members() if m['name']=='indeedhub-ffmpeg');worker['unit_sha256']=module.sha(unit)
+  counts={name:0 for name in module.QUEUE_COUNTS}
+  c.record={'ingress_closed':True,'queue_pause_confirmed':True,'last_queue_counts':counts,
+   'stopped':{'indeedhub':{'confirmed':True},worker['name']:{'container_id':worker['container_id'],'intent_at':1700000000}}}
+  c.fence.parent.mkdir(parents=True);c.fence.write_text(self.operation)
+  original={'name':worker['name'],'container_id':worker['container_id'],'image':worker['image_id'],'config_sha256':worker['config_sha256'],'body':unit.read_text()}
+  recovery={'source_container_id':worker['container_id'],'operation_id':self.operation,'image':'d'*64}
+  runtime={'id':self.operation,'phase':'Restoring','target_startup_began':False,'members':[{'original':original,'recovery_image':recovery}]}
+  runtimepath=c.data/'update-transactions'/'supervised'/(self.operation+'.json');module.atomic(runtimepath,runtime)
+  image={'Id':'d'*64,'Created':'2023-01-01T00:00:00Z','Config':{'Cmd':['node','dist/ffmpeg-worker/worker.js'],'Entrypoint':['docker-entrypoint.sh']}}
+  observed={'paused':True,'counts':dict(counts)};state={'ps':b''}
+  def runner(argv,timeout,output):
+   if argv[:3]==['podman','image','inspect']:return json.dumps([image]).encode()
+   if argv[:3]==['systemctl','--user','show']:return str(unit).encode()
+   if argv[:2]==['podman','ps']:return state['ps']
+   if argv[:2]==['podman','exec']:return json.dumps(observed).encode()
+   raise AssertionError(argv)
+  c.runner=runner
+  props='ActiveState=failed\nSubState=failed\nExecMainStatus=137\nResult=exit-code\n'
+  return c,worker,props,runtime,runtimepath,image,observed,state,unit
+ def test_legacy_forced_idle_proof_is_explicit_and_does_not_claim_graceful_work(self):
+  c,w,p,*_=self.legacy_forced_fixture();proof=c.legacy_idle_worker_termination(w,p)
+  self.assertEqual(proof['classification'],'legacy-idle-worker-forced-termination')
+  self.assertFalse(proof['graceful']);self.assertFalse(proof['completed_work_claim']);self.assertTrue(proof['process_dead'])
+ def test_legacy_forced_idle_rejects_missing_active_or_queued_work_before_stop(self):
+  c,w,p,*_=self.legacy_forced_fixture();valid=dict(c.record['last_queue_counts'])
+  for field in module.QUEUE_COUNTS:
+   for bad in ({k:v for k,v in valid.items() if k!=field},dict(valid,**{field:1})):
+    c.record['last_queue_counts']=bad
+    with self.assertRaises(RuntimeError):c.legacy_idle_worker_termination(w,p)
+ def test_legacy_forced_idle_rejects_reopened_missing_or_nonempty_after_queue(self):
+  c,w,p,r,rp,i,after,*_=self.legacy_forced_fixture();valid=dict(after['counts'])
+  after['paused']=False
+  with self.assertRaises(RuntimeError):c.legacy_idle_worker_termination(w,p)
+  after['paused']=True
+  for field in module.QUEUE_COUNTS:
+   for bad in ({k:v for k,v in valid.items() if k!=field},dict(valid,**{field:1})):
+    after['counts']=bad
+    with self.assertRaises(RuntimeError):c.legacy_idle_worker_termination(w,p)
+ def test_legacy_forced_idle_rejects_changed_original_recovery_and_operation(self):
+  import copy
+  c,w,p,r,rp,*_=self.legacy_forced_fixture()
+  mutations=[lambda d:d.update(id='foreign'),lambda d:d.update(target_startup_began=True),lambda d:d.update(phase='Committed')]
+  for key in ('container_id','image','config_sha256','body'):
+   mutations.append(lambda d,k=key:d['members'][0]['original'].update({k:'changed'}))
+  for key in ('source_container_id','operation_id'):
+   mutations.append(lambda d,k=key:d['members'][0]['recovery_image'].update({k:'changed'}))
+  for mutate in mutations:
+   damaged=copy.deepcopy(r);mutate(damaged);module.atomic(rp,damaged)
+   with self.assertRaises(RuntimeError):c.legacy_idle_worker_termination(w,p)
+ def test_legacy_forced_idle_rejects_unproven_process_command_unit_and_ingress(self):
+  c,w,p,r,rp,image,after,state,unit=self.legacy_forced_fixture()
+  for field,value in [('Id','e'*64),('Created','2030-01-01T00:00:00Z'),('Config',{'Cmd':['other'],'Entrypoint':['docker-entrypoint.sh']})]:
+   old=image[field];image[field]=value
+   with self.assertRaises(RuntimeError):c.legacy_idle_worker_termination(w,p)
+   image[field]=old
+  state['ps']=(w['container_id']+' running').encode()
+  with self.assertRaises(RuntimeError):c.legacy_idle_worker_termination(w,p)
+  state['ps']=b''
+  with self.assertRaises(RuntimeError):c.legacy_idle_worker_termination(w,p.replace('ExecMainStatus=137','ExecMainStatus=0'))
+  c.record['ingress_closed']=False
+  with self.assertRaises(RuntimeError):c.legacy_idle_worker_termination(w,p)
+  c.record['ingress_closed']=True;unit.write_text('changed')
+  with self.assertRaises(RuntimeError):c.legacy_idle_worker_termination(w,p)
  def test_legacy_worker_sigterm_requires_proven_paused_idle_queue(self):
   c=self.controller;c.record={'operation_id':self.operation,'phase':'Prepared','original_members':module.validate_members(members())};c.save()
   worker=next(m for m in members() if m['name']=='indeedhub-ffmpeg')
@@ -194,12 +270,12 @@ class MaintenanceTests(unittest.TestCase):
    raise AssertionError(argv)
   c.runner=command
   with self.assertRaises(RuntimeError):c.graceful_stop(worker['name'])
-  c.record['queue_pause_confirmed']=True;c.record['last_queue_counts']={'active':1}
+  c.record['queue_pause_confirmed']=True;c.record['last_queue_counts']={name:(1 if name=='active' else 0) for name in module.QUEUE_COUNTS}
   with self.assertRaises(RuntimeError):c.graceful_stop(worker['name'])
   c.record['last_queue_counts']['active']=0;c.graceful_stop(worker['name'])
   self.assertEqual(c.record['stopped'][worker['name']]['classification'],'idle-worker-terminated-after-queue-drain')
  def test_legacy_api_compatibility_requires_fresh_empty_business_state(self):
-  c=self.controller;c.record={'operation_id':self.operation,'phase':'Prepared','stopped':{'indeedhub':{'confirmed':True},'indeedhub-ffmpeg':{'confirmed':True}},'queue_pause_confirmed':True,'last_queue_counts':{'active':0}};c.save()
+  c=self.controller;c.record={'operation_id':self.operation,'phase':'Prepared','stopped':{'indeedhub':{'confirmed':True},'indeedhub-ffmpeg':{'confirmed':True}},'queue_pause_confirmed':True,'last_queue_counts':{name:0 for name in module.QUEUE_COUNTS}};c.save()
   counts={name:0 for name in ('projects','contents','payments','shareholders','subscriptions','library_items','other_active_transactions')}
   c.runner=lambda argv,timeout,output:json.dumps(counts).encode()
   counts['payments']=1

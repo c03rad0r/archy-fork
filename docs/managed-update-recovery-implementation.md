@@ -293,3 +293,35 @@ or widening manager write access. The controller uses that fixed command now;
 25 pure controller tests pass, including refusal before fence creation on dump
 failure. A new helper hash requires a matching backend rebuild. Candidate-helper
 qualification remains separate from actual backend transaction acceptance.
+
+### Legacy worker termination qualification — 2026-10-07
+
+The held disposable-VM operation `4320fe90-8ab5-4496-a4e7-cf11ca0fd376`
+exposed the original worker's Node-as-PID1 SIGTERM behavior. A no-network,
+no-volume probe from its exact recovery image exited 137 without init and 143
+with init. This is not graceful shutdown or proof of completed jobs.
+
+The controller now requires an exact six-field nonnegative integer queue
+observation; absent `active` can no longer imply idle. Its narrowly scoped legacy
+worker path records **forced idle termination**, with `graceful=false` and
+`completed_work_claim=false`, only after paused all-zero observations before and
+after, closed ingress/frontend, exact operation/original/recovery image and known
+command, unchanged saved unit, original stop intent and died event, and proof the
+process is dead. Other writers' 137 exits remain refused. All 31 pure controller
+regressions passed, including missing/nonzero counts, reopened queue, changed
+identity, command, unit and process state. Actual worker-only classification passed
+under the hardened service → user scope with the lifecycle lock held.
+
+The same fixture's API has npm as PID1 and one direct `node dist/main` child.
+After fresh empty-business-state proof and durable stop intent, an exact-command,
+parent-validated SIGTERM to that child stopped the original container; npm emitted
+exit 1. The existing clean-exit gate correctly retained the hold. API termination
+classification is still under review; no generic exit-1 allowance was added.
+Frontend/worker are confirmed stopped; API is stopped but unconfirmed; storage
+members remain running. Backup/fresh-restore, full RPC rollback/success and live
+activation are **not passed**. Installed pinned helper remains unchanged; this is
+private candidate-helper qualification only. Live Yaya remains unchanged.
+
+Future worker image source now includes idempotent SIGTERM/SIGINT shutdown in app
+commit `29627fc` with four passing Jest tests. Its image has not been built; the
+previous frontend/API-only candidate catalog cannot cover that new worker image.
