@@ -416,3 +416,31 @@ have both passed.
 Final isolated backend rerun: **1,719 passed, zero failed, four explicit ignores**.
 This includes the default Routstr zero-allowance stop and saved Auto behavior.
 The deployable backend build is in progress; Framework deployment remains pending.
+
+### Routstr-first Framework deployment — 2026-10-08
+
+The private provider backend built successfully and is active on Framework:
+SHA-256 `6002af4c131545e9c93c21a65e31ef8719e6beb2682d47825d0ac95ee724e12a`.
+Authenticated publishing health passed. Native Bitcoin/LND process IDs and start
+times were identical before and after the management restart. The prior backend
+is retained as `~/external-access-uat/backend-before-provider-setup`.
+
+Live qualification found a browser-history race while replacing the connection
+modal with Receive: closing the first panel consumed a history entry after the
+new panel opened, immediately dismissing it. AI setup now owns one history entry
+across connection, funding and scanning. Other BaseModal/Receive callers retain
+their default history behavior. Ten modal/connection tests and nine receive tests
+pass. The final dashboard production build passed and is deployed; index SHA-256
+`d53ef48ec61f0c947df75ca57af9dd44ccf1c8a6db13ff61931b73e0dd0df1d3`.
+UI backups are `/opt/archipelago/web-ui.before-provider-setup-uat` and
+`/opt/archipelago/web-ui.before-provider-handoff-uat`.
+
+Actual Framework Chromium checks at 390px and 1440px pass: Routstr-first setup,
+Claude/OpenAI inputs, empty password fields, direct ecash receive/Lightning
+address display, repeated top-up opens, close/return and browser Back. No horizontal
+overflow and no provider-setting, allowance or publishing mutations occurred.
+The existing Claude credential is recognized by status; its value was never read.
+No paid inference, new API-key save, or public content publication was performed.
+Real paid-provider responses and physical companion confirmation remain separate
+acceptance items. The earlier routing, Nostr, 2FA-restoration and release gates
+remain open; this is a private Framework UAT update, not a general release.
