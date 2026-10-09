@@ -145,6 +145,28 @@ acceptance; this is a new paid-file incident.
       must complete before closing. Move publishing to its own editor tab, preserve
       computer-upload state and existing pending registration requests.
 
+  Retained operator UAT follow-up (2026-10-09; none of these are closed by an
+  isolated build or a running-container patch):
+
+  - [ ] Keep only the selected native Archipelago signer identity; reject any
+        cached or mismatching IndeeHub identity, and verify Home Serve and
+        Archipelago sign-in with real selected identities after reload.
+  - [ ] Verify computer uploads for every asset field, byte-level progress,
+        project Save/Publish persistence, and reloaded poster/video/trailer URLs.
+        The poster URL currently omits the slash after `/storage` on Yaya.
+  - [ ] Restore the authenticated, mobile-friendly Cloud file modal, with an
+        actual attach action beside computer upload for every required asset
+        field. The current Cloud iframe is not an attachment workflow.
+  - [ ] Verify that any producer can register and publish Cloud video, including
+        exact-project/video/terms signing, resumable registration, and playback.
+  - [ ] Deliver and UAT both metered ecash playback and fixed-period rental,
+        retaining Lightning payment/rental support where promised. A price in
+        sats plus one-time Cashu rental is not metered ecash streaming.
+  - [ ] Deploy pinned, durable IndeeHub frontend/API images and test their
+        recreation without losing native identities, uploaded assets, projects,
+        payments, or publication state. Running-container file patches do not
+        satisfy this gate.
+
 - [x] Yaya App Store component/alias regression (reported 2026-10-02): one
       Cuprate entry (hide Cuprate UI companion), one BTCPay Server in Commerce
       with its icon (merge legacy btcpay pins), one NetBird entry (hide server
