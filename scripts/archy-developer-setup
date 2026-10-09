@@ -1,0 +1,64 @@
+#!/usr/bin/env bash
+# Idempotent Archipelago developer environment bootstrap.
+# Check by default; package installation requires --apply.
+set -euo pipefail
+
+APPLY=0
+CODEX=0
+for arg in "$@"; do
+  case "$arg" in
+    --apply) APPLY=1 ;;
+    --codex) CODEX=1 ;;
+    --help|-h) printf 'Usage: archy-developer-setup [--check] [--apply] [--codex]\n'; exit 0 ;;
+    --check) ;;
+    *) printf 'archy-developer-setup: unknown option: %s\n' "$arg" >&2; exit 2 ;;
+  esac
+done
+
+tools=(git tmux jq fzf rg fd nvim podman mise direnv)
+missing=()
+for tool in "${tools[@]}"; do
+  if command -v "$tool" >/dev/null 2>&1; then
+    printf 'ok\t%s\t%s\n' "$tool" "$(command -v "$tool")"
+  else
+    missing+=("$tool")
+    printf 'missing\t%s\n' "$tool"
+  fi
+done
+
+if command -v codex >/dev/null 2>&1; then
+  printf 'ok\tcodex\t%s\n' "$(command -v codex)"
+elif (( CODEX )); then
+  missing+=(codex)
+  printf 'missing\tcodex\n'
+fi
+
+if (( ! APPLY )); then
+  if [ "${#missing[@]}" -gt 0 ]; then
+    printf '\nMissing: %s\n' "${missing[*]}"
+    printf 'Re-run with --apply to install missing packages, and --codex to install Codex.\n'
+    exit 1
+  fi
+  exit 0
+fi
+
+if ! command -v apt-get >/dev/null 2>&1; then
+  printf 'No apt-get found; install the missing tools using the node distribution package manager.\n' >&2
+  exit 1
+fi
+
+packages=(git tmux jq fzf ripgrep fd-find neovim podman direnv)
+if [ "${#missing[@]}" -gt 0 ]; then
+  sudo -n apt-get update
+  sudo -n apt-get install -y "${packages[@]}"
+fi
+
+if (( CODEX )) && ! command -v codex >/dev/null 2>&1; then
+  command -v npm >/dev/null 2>&1 || { printf 'npm is required for Codex installation.\n' >&2; exit 1; }
+  npm install --global @openai/codex
+fi
+
+if command -v mise >/dev/null 2>&1; then
+  mise trust --yes "$PWD" >/dev/null 2>&1 || true
+fi
+printf 'developer setup complete; authenticate Codex interactively with: codex login\n'
