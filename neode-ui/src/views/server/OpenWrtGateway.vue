@@ -1034,6 +1034,10 @@ onMounted(() => {
 </template>
 
 <style scoped>
+.router-model-card {
+  margin: 24px;
+}
+
 @media (min-width: 1024px) {
   .router-model-card > .grid > .router-marketplace {
     align-self: end;
