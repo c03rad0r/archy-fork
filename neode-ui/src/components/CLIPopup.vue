@@ -1,8 +1,8 @@
 <template>
   <Teleport to="body">
     <Transition name="cli-popup">
-      <div v-if="cliStore.isOpen" class="fixed inset-0 z-[2500] flex items-center justify-end p-4 pointer-events-none">
-        <section ref="panelRef" class="glass-card terminal-panel relative z-10 w-full overflow-hidden pointer-events-auto md:mr-4" :class="{ minimized }" :style="panelStyle" aria-label="Archipelago terminal">
+      <div v-if="cliStore.isOpen" class="fixed inset-0 z-[2500] flex items-center justify-start p-4 pointer-events-none">
+        <section ref="panelRef" class="glass-card terminal-panel relative z-10 w-full overflow-hidden pointer-events-auto md:ml-[300px]" :class="{ minimized }" :style="panelStyle" aria-label="Archipelago terminal">
           <header class="terminal-header sticky top-0 z-10 flex items-center gap-3 border-b border-white/10 px-4 py-3 bg-black/60 backdrop-blur-md md:bg-transparent md:backdrop-blur-none" @mousedown="startDrag">
             <div class="terminal-drag-handle" title="Drag to move">
               <svg class="w-4 h-4 text-white/50" fill="currentColor" viewBox="0 0 24 24"><path d="M8 6h2v2H8V6zm0 5h2v2H8v-2zm0 5h2v2H8v-2zm5-10h2v2h-2V6zm0 5h2v2h-2v-2zm0 5h2v2h-2v-2z" /></svg>
@@ -60,10 +60,18 @@ let fitAddon: FitAddon | null = null
 let resizeObserver: ResizeObserver | null = null
 let socket: WebSocket | null = null
 let renderedSession = ''
+let connectionGeneration = 0
 
 const activeSession = computed(() => sessions.value.find(session => session.id === selectedId.value))
 const panelStyle = computed(() => ({ transform: `translate(${position.value.x}px, ${position.value.y}px)` }))
 const wsUrl = (id: string) => `${location.protocol === 'https:' ? 'wss:' : 'ws:'}//${location.host}/ws/terminal?session=${encodeURIComponent(id)}`
+function compactSnapshot(data: string) {
+  const lines = data.split(/\r?\n/)
+  const visible = (line: string) => line.replace(/\u001b\[[0-9;?]*[ -/]*[@-~]/g, '').trim().length > 0
+  while (lines.length && !visible(lines[0] ?? '')) lines.shift()
+  while (lines.length && !visible(lines[lines.length - 1] ?? '')) lines.pop()
+  return lines.join('\n')
+}
 
 async function loadSessions() {
   error.value = ''
@@ -112,15 +120,22 @@ function connectSelected() {
     terminal?.reset()
     renderedSession = selectedId.value
   }
-  socket = new WebSocket(wsUrl(selectedId.value))
-  socket.onopen = () => { connected.value = true; resizeTerminal() }
-  socket.onclose = () => { connected.value = false }
-  socket.onerror = () => { connected.value = false }
-  socket.onmessage = event => {
+  const generation = ++connectionGeneration
+  const connection = new WebSocket(wsUrl(selectedId.value))
+  socket = connection
+  connection.onopen = () => { if (generation !== connectionGeneration) return; connected.value = true; resizeTerminal() }
+  connection.onclose = () => { if (generation === connectionGeneration) connected.value = false }
+  connection.onerror = () => { if (generation === connectionGeneration) connected.value = false }
+  connection.onmessage = event => {
+    if (generation !== connectionGeneration) return
     try {
       const message = JSON.parse(event.data)
       if (message.type === 'output') {
-        terminal?.write(message.data, () => terminal?.scrollToBottom())
+        // The daemon sends a complete visible-pane snapshot, not a byte
+        // stream. Replace the pane so every prompt does not duplicate the
+        // previous screen into xterm scrollback.
+        terminal?.reset()
+        terminal?.write(compactSnapshot(message.data), () => terminal?.scrollToBottom())
       }
     } catch { /* ignore malformed frames */ }
   }
@@ -188,8 +203,8 @@ onBeforeUnmount(() => {
 .terminal-title { flex: 1; font-weight: 500; } .terminal-host { color: rgba(255,255,255,.45); font-size: 12px; font-weight: 400; }
 .terminal-drag-handle { display: flex; align-items: center; justify-content: center; width: 32px; height: 32px; border-radius: 6px; flex-shrink: 0; }
 .terminal-drag-handle:hover { background: rgba(255,255,255,.1); }
-.terminal-body { flex: 1 1 auto; min-height: 0; height: 0; overflow: hidden; }
-.terminal-output { box-sizing: border-box; height: 100%; max-height: 100%; margin: 0; overflow: hidden; padding: 14px 16px; color: rgba(255,255,255,.9); outline: none; }
+.terminal-body { display: flex; flex: 1 1 0; min-height: 0; max-height: 100%; height: 0; overflow: hidden; }
+.terminal-output { box-sizing: border-box; flex: 1 1 auto; min-height: 0; min-width: 0; height: 100%; max-height: 100%; margin: 0; overflow: hidden; padding: 14px 16px; color: rgba(255,255,255,.9); outline: none; }
 .terminal-output :deep(.xterm) { height: 100%; width: 100%; }
 .terminal-output :deep(.xterm-viewport) { background: transparent !important; }
 .terminal-output:not(:focus-within) :deep(.xterm-cursor) { visibility: hidden !important; }
