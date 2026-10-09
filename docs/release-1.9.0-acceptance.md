@@ -2,16 +2,17 @@
 
 ## Combined Yaya UAT candidate — 9 October 2026
 
-The combined source candidate now integrates the ngit proposals for DATUM
-(`15ff5fb9`), Gashboard (`acd65f3c`) and external access/website publishing
-(`79ca68c1`), plus the Server disk-warning refresh fix. The candidate is based
-on accepted main `aff408cc`; its integration commits retain each proposal head
-as a parent. All three ngit proposals are still open pending publication of this
-combined result. Gitea has no duplicate open PRs. Do not report the proposals as
-merged until the exact resulting main commit and proposal dispositions are
-verified on ngit and mirrored to Gitea.
+The combined source is published on ngit and mirrored byte-for-byte to Gitea at
+main `bb933d409187a8181e284a5a91a81b4e036b3036`, based on accepted main
+`aff408cc`. Its integration commits retain each proposal head as a parent:
+DATUM proposal `15ff5fb9` was applied in merge `ee3380ee`, Gashboard proposal
+`acd65f3c` in merge `45c211f3`, and external-access proposal `79ca68c1` in merge
+`152ac785`. `ngit pr view` reports all three proposals as **applied**; `ngit pr
+list` reports no open/draft proposals. The additional Server disk-warning fix
+is commit `84674ffd`. No duplicate Gitea PRs were open.
 
-Source validation on commit `84674ffd`:
+Source validation on code commit `84674ffd` (followed by the release-ledger
+entry in `bb933d40`):
 
 - Backend production build passed on its identical backend inputs at
   `152ac785`: SHA256
@@ -36,6 +37,13 @@ Source validation on commit `84674ffd`:
   `target_startup_began=false`; no terminal success receipt exists. Thus the
   user's publishing-disabled notice and Cloud Video 503 have not been fixed by
   that update attempt.
+
+The required mirror check passed locally for main and `v1.9.0-alpha`:
+`python3 scripts/check-git-mirrors.py --local --ref refs/heads/main --ref
+refs/tags/v1.9.0-alpha`. It verified three requested refs across local, ngit
+and Gitea; this is not a full historical branch/tag parity audit. The ngit PR
+dispositions above were checked separately because the script does not verify
+proposal metadata.
 
 This is a private UAT source candidate, not deployment acceptance, catalog
 publication, OTA or ISO authorization. Continue only after a safe upgrade path
