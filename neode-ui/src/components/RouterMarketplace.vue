@@ -127,8 +127,9 @@ async function search() {
 function openShop() {
   open.value = true
   query.value = 'openwrt'
+  if (import.meta.env.DEV) listings.value = DEV_LISTINGS
   emit('open')
-  if (!listings.value.length) void search()
+  void search()
 }
 function closeShop() { open.value = false; closeSockets(); emit('close') }
 function formatPrice(item: RouterListing) {
