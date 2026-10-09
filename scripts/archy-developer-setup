@@ -35,9 +35,27 @@ elif (( CODEX )); then
   printf 'missing\tcodex\n'
 fi
 
+user_home=$(getent passwd "$(id -u)" | cut -d: -f6)
+codex_root=${CODEX_HOME:-$user_home/.codex}
+skill_source_dir=${ARCHY_SKILLS_DIR:-$PWD/.agents/skills}
+skills=(archipelago archipelago-app archipelago-design)
+missing_skills=()
+for skill in "${skills[@]}"; do
+  source_skill="$skill_source_dir/$skill/SKILL.md"
+  target_skill="$codex_root/skills/$skill/SKILL.md"
+  if [ -f "$target_skill" ]; then
+    printf 'ok\tskill:%s\t%s\n' "$skill" "$target_skill"
+  elif [ -f "$source_skill" ]; then
+    missing_skills+=("skill:$skill")
+    printf 'missing\tskill:%s\t%s\n' "$skill" "$target_skill"
+  else
+    printf 'missing\tskill:%s\tsource unavailable (%s)\n' "$skill" "$source_skill"
+  fi
+done
+
 if (( ! APPLY )); then
-  if [ "${#missing[@]}" -gt 0 ]; then
-    printf '\nMissing: %s\n' "${missing[*]}"
+  if [ "${#missing[@]}" -gt 0 ] || [ "${#missing_skills[@]}" -gt 0 ]; then
+    printf '\nMissing: %s %s\n' "${missing[*]}" "${missing_skills[*]}"
     printf 'Re-run with --apply to install missing packages, including Codex.\n'
     exit 1
   fi
@@ -60,7 +78,19 @@ if (( CODEX )) && ! command -v codex >/dev/null 2>&1; then
   sudo -n npm install --global @openai/codex
 fi
 
+if [ "${#missing_skills[@]}" -gt 0 ]; then
+  mkdir -p "$codex_root/skills"
+  for skill in "${skills[@]}"; do
+    source_dir="$skill_source_dir/$skill"
+    target_dir="$codex_root/skills/$skill"
+    [ -f "$source_dir/SKILL.md" ] || continue
+    mkdir -p "$target_dir"
+    cp -a "$source_dir/." "$target_dir/"
+    printf 'installed\tskill:%s\t%s\n' "$skill" "$target_dir"
+  done
+fi
+
 if command -v mise >/dev/null 2>&1; then
   mise trust --yes "$PWD" >/dev/null 2>&1 || true
 fi
-printf 'developer setup complete; authenticate Codex interactively with: codex login\n'
+printf 'developer setup complete; Archipelago skills preloaded for Codex; authenticate interactively with: codex login\n'
