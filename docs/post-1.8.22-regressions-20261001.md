@@ -42,6 +42,79 @@ acceptance; this is a new paid-file incident.
 
 ## Current tasks
 
+- 2026-10-09 live repair checkpoint (supersedes the pending deployment notes
+  immediately below): Yaya now runs management backend SHA256
+  `938a90c7d9ecbdb179b1cf2886b5ed03e4d78c0d454f2cec42c0d9de3d447eb9`,
+  built from the registration correction in `424070d2`. Optimized build passed.
+  Management health, unchanged running container IDs, unchanged node identity key
+  and unchanged registration pin/marker checks passed. The old binary is retained
+  under `/var/lib/archipelago/support/indee-registration-424070d2/`.
+  The first context probe during inventory startup still failed; after inventory
+  recovery the authenticated `media.registration.context` probe succeeds and
+  returns all installation bindings. No catalog or app-data mutation was used.
+  The probe initially treated JSON-RPC `error: null` as failure; corrected it and
+  repeated the successful live request. Isolated backend regression compilation
+  remains pending after severe build-host swapping; do not claim its test passed.
+
+  A real native Home Serve login then exposed another defect: `UserDTO` omitted
+  `nostrPubkey`, so the strict frontend profile check correctly refused the
+  otherwise matching signed session. IndeeHub `08586e3` adds this public field;
+  two DTO regressions and backend production build pass. Deployed only the built
+  DTO module with its previous copy saved under the private
+  `indee-profile-08586e3` artifact directory, then restarted only `indeedhub-api`.
+  API health passes. A clean real browser selected native **Home Serve**, approved
+  only its kind-27235 authentication request, and verified that the native choice,
+  session subject and API profile key match. The signer closes normally. No
+  identity was created/replaced and no payment or publication was submitted.
+  Frontend `7b18912` and API DTO remain running-container patches; durable image/
+  managed deployment, complete video upload/publication and cached-account-switch
+  acceptance remain open. Preserve the operator's native identities throughout.
+
+- 2026-10-09 UI checkpoint: IndeeHub commit `40b3798` is served on Yaya
+  (index SHA256 `d921a88448f89674809dbe623ec045849012b1fb0330e3abf1d2d6836e9b3c96`).
+  Publishing now appears only in its own editor tab; Assets remains mounted
+  across tab switches. Copy distinguishes computer upload from Cloud-backed
+  catalog publication; saved-registration recovery is under a details control.
+  Production build and 26 focused frontend tests pass. Browser checks verify
+  native signer availability, no automatic login, removal of local account
+  controls and clearing of legacy app-local accounts. Real selected-identity
+  sign-in and video upload/publication remain unverified. This is a running
+  container frontend patch, not a durable pinned-image/catalog deployment.
+  Backend correction `424070d2` has ngit proposal
+  `9d6de783f5022b3b859e0b1f3e881e389da4482dd5dd15ff29a40b4e25dafcb8`;
+  isolated regression and optimized build are still running, not passed or
+  deployed. Preserve this distinction when resuming the backend work.
+
+- 2026-10-09 follow-up: operator reports missing autosign and the same generic
+  registration error. `40b3798` disabled provider auto-authentication without
+  replacing it with app authentication on native selection; this was a regression.
+  IndeeHub `7b18912` adds a single shared automatic/manual login path driven by
+  the trusted provider's `onIdentitySelected`. It rejects mismatching signer keys
+  and changed selections, checks the backend profile, and never falls back to a
+  cached app identity. Twenty-one focused tests and the production build pass.
+  Yaya serves index SHA256
+  `1c7fee64430b0d993288408dbe493d0f4f55a49fe2422a3507c7204c12343632`;
+  the native provider bytes are unchanged. A disposable served-app browser test
+  verifies selection triggers exactly one kind-27235 signature request without
+  clicking login; it intentionally stops before signing with a stub. This is not
+  real-identity login acceptance. The first browser run raced deployment and
+  failed against the previous build; the post-deployment rerun passes.
+  Authenticated read-only registration RPC still reproduces the generic failure,
+  with server cause `IndeeHub is not installed`; backend build/test remain pending.
+
+- [ ] **2026-10-09 IndeeHub UAT remains failed:** operator still reports wrong
+      Nostr identity, upload failure and confusing always-visible publishing UI.
+      Preserve native identities; remove only app-local generated/imported accounts.
+      Require explicit Archipelago selection and matching API profile. On Yaya,
+      `media.registration.context` logs `IndeeHub is not installed` while all seven
+      containers run. Authenticated state includes only the parent `indeedhub`
+      package; the registration code incorrectly requires a separate
+      `indeedhub-api` package record. Candidate correction retains parent running/
+      installed checks and the existing API installation pin; it checks a legacy
+      API package when present. Source tests/build and live registration acceptance
+      must complete before closing. Move publishing to its own editor tab, preserve
+      computer-upload state and existing pending registration requests.
+
 - [x] Yaya App Store component/alias regression (reported 2026-10-02): one
       Cuprate entry (hide Cuprate UI companion), one BTCPay Server in Commerce
       with its icon (merge legacy btcpay pins), one NetBird entry (hide server

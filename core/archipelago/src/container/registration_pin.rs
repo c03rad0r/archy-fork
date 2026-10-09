@@ -48,6 +48,12 @@ pub(crate) fn installed_context(
     state: &crate::data_model::DataModel,
 ) -> Result<InstalledAppContext> {
     for id in ["indeedhub", "indeedhub-api"] {
+        // Stack components are not separate package records on managed installs.
+        // Keep validating legacy standalone API records when they exist; the
+        // installed parent and its existing API identity pin are mandatory.
+        if id == "indeedhub-api" && !state.package_data.contains_key(id) {
+            continue;
+        }
         let entry = state
             .package_data
             .get(id)
@@ -613,6 +619,12 @@ mod tests {
         assert!(installed_context(root.path(), &identity, &state).is_err());
         let pin = ensure_for_installation(root.path(), "indeedhub-api", &identity).unwrap();
         let first = installed_context(root.path(), &identity, &state).unwrap();
+        let api_entry = state.package_data.remove("indeedhub-api").unwrap();
+        assert_eq!(
+            installed_context(root.path(), &identity, &state).unwrap(),
+            first
+        );
+        state.package_data.insert("indeedhub-api".into(), api_entry);
         assert_eq!(first.app_audience, pin.app_audience);
         assert_eq!(first.app_origins, vec!["https://localhost:7778"]);
         state.package_data.get_mut("indeedhub-api").unwrap().state =
