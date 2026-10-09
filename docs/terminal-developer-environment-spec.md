@@ -1,7 +1,9 @@
 # Archipelago terminal and developer environment plan
 
-Status: planning draft, 2026-10-09. No runtime implementation or installation is
-part of this change. Repository baseline: `2cb1bae5ce244d387679f90951d62fd030ebf228`.
+Status: execution draft, 2026-10-09. The local persistent-session primitive is
+implemented in `scripts/archy-session`; dashboard/WebSocket attachment,
+developer-account provisioning, and Codex installation remain follow-on slices.
+Repository baseline: `2cb1bae5ce244d387679f90951d62fd030ebf228`.
 
 Archipelago should let an owner open a real terminal, resume previous work,
 configure their system, and ask a preinstalled coding agent to build an app that
@@ -162,6 +164,19 @@ modal keyboard handler unchanged. Ctrl+C interrupts the foreground job; Ctrl+D
 has normal shell semantics. Focus can move to toolbar controls and back.
 
 ## Persistent sessions and one-click resume
+
+### Implemented local primitive
+
+`scripts/archy-session` provides the first execution slice for named sessions.
+It stores atomic JSON metadata under the user state directory and uses one
+isolated tmux session per workspace. `list` reconciles metadata with the live
+tmux process, `attach` resumes an existing process without creating a duplicate,
+`rename` preserves the workspace, and `end` is the only operation that stops a
+session. Its lifecycle test is `scripts/tests/archy-session-test.sh`.
+
+This helper is intentionally not the browser security boundary: the future
+session service must enforce owner/node/boot identity, attachment grants, CSRF,
+and revocation before exposing it through the dashboard.
 
 This is a core release criterion, including the first usable terminal milestone.
 
