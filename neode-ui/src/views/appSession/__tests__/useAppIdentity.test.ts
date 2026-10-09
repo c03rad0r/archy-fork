@@ -49,4 +49,21 @@ describe('useAppIdentity explicit identity selection', () => {
     expect(showPicker.value).toBe(false)
     expect(postMessage).toHaveBeenCalledWith({ type: 'archipelago:identity-cancelled' }, '*')
   })
+
+  it('forgets automatic app selection without deleting the node identity', () => {
+    localStorage.setItem('archipelago_app_identity_archipelago-source', JSON.stringify(alice))
+    localStorage.setItem('unrelated-node-identity', 'preserved')
+    const showPicker = ref(true)
+    const identity = useAppIdentity(
+      ref('archipelago-source'),
+      ref(null),
+      showPicker,
+    )
+
+    identity.clearRememberedIdentity()
+
+    expect(identity.getStoredIdentity()).toBeNull()
+    expect(localStorage.getItem('unrelated-node-identity')).toBe('preserved')
+    expect(showPicker.value).toBe(false)
+  })
 })

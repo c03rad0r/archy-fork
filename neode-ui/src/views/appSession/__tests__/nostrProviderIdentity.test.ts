@@ -482,10 +482,15 @@ describe('nostr-provider identity selection', () => {
     vi.stubGlobal('fetch', fetchMock)
     const { frame, signerOrigin, postMessage } = loadProvider(false)
     choose(frame, signerOrigin, key)
+    postMessage.mockClear()
     providerWindow.archipelagoNostr!.clearSession()
     await vi.advanceTimersByTimeAsync(1600)
     expect(fetchMock).not.toHaveBeenCalled()
     expect(providerWindow.archipelagoNostr!.getSelectedIdentity()).toBeNull()
+    expect(postMessage).toHaveBeenCalledWith(
+      { type: 'archipelago:signer-clear-session' },
+      signerOrigin,
+    )
     const selection = providerWindow.archipelagoNostr!.selectIdentity()
     expect(postMessage).toHaveBeenCalledWith(expect.objectContaining({ type: 'archipelago:signer-select-identity', force: true }), signerOrigin)
     choose(frame, signerOrigin, key)

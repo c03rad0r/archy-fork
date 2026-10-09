@@ -194,6 +194,15 @@
     try {
       ['nostr_token', 'nostr_pubkey', 'refresh_token'].forEach(function (key) { sessionStorage.removeItem(key); });
     } catch (_) {}
+    // Signing out is also an explicit request to stop the dashboard from
+    // restoring this app's remembered identity on its next load. The broker
+    // forgets only the app-to-identity selection; node identities and keys are
+    // preserved and remain available for a later explicit sign-in.
+    postToSigner({
+      type: embedded
+        ? 'archipelago:identity:clear'
+        : 'archipelago:signer-clear-session',
+    });
   }
 
   function scheduleIdentityAuth(pubkey) {

@@ -569,6 +569,7 @@ function onMessage(e: MessageEvent) {
   void registrationBridge.handle(e); void rentalBridge.handle(e)
   if (e.data?.type === 'nostr-request') nostrBridge.handleNostrRequest(e)
   if (e.data?.type === 'archipelago:identity:request') identity.handleIdentityRequest(e.data?.force === true)
+  if (e.data?.type === 'archipelago:identity:clear') identity.clearRememberedIdentity()
   if (e.data?.type === 'archipelago:media:playing') screensaverStore.suppress(screensaverReason.value)
   if (e.data?.type === 'archipelago:media:idle') screensaverStore.resume(screensaverReason.value)
 }
