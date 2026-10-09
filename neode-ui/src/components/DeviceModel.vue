@@ -192,6 +192,6 @@ onBeforeUnmount(() => {
 .device-model__caption { position: absolute; inset: auto 0 0; display: flex; justify-content: center; align-items: center; gap: 14px; color: rgba(255,255,255,.4); font-size: 11px; }
 .device-model__caption button { padding: 4px 9px; color: rgba(255,255,255,.65); border: 1px solid rgba(255,255,255,.12); border-radius: 20px; background: transparent; cursor: pointer; }
 .device-model__counter { color: rgba(255,255,255,.3); font-variant-numeric: tabular-nums; }
-.device-model--viewport { height: 330px; }
+.device-model--viewport { height: 290px; }
 @media (min-width: 1024px) { .device-model--viewport { height: var(--device-height); min-height: 260px; } }
 </style>

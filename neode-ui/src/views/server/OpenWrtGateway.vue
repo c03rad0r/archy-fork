@@ -5,7 +5,7 @@ import { rpcClient } from '@/api/rpc-client'
 import { useCachedResource } from '@/composables/useCachedResource'
 import BackButton from '@/components/BackButton.vue'
 import DeviceModel from '@/components/DeviceModel.vue'
-import RouterMarketplace from '@/components/RouterMarketplace.vue'
+import HardwareMarketplace from '@/components/HardwareMarketplace.vue'
 
 const router = useRouter()
 function goBack() {
@@ -549,7 +549,7 @@ onMounted(() => {
     <div ref="routerCard" class="glass-card p-6 mb-6 overflow-hidden router-model-card" :style="routerCardHeight ? { height: routerCardHeight } : undefined">
       <div class="grid grid-cols-1 lg:grid-cols-[minmax(0,1fr)_minmax(280px,360px)] gap-6 items-start">
         <DeviceModel v-if="!routerShopOpen" model="beryl-ax" label="Beryl AX (GL-MT3000) OpenWrt router" fill-viewport :controls="false" />
-        <RouterMarketplace :expanded="routerShopOpen" @open="openRouterShop" @close="closeRouterShop" />
+        <HardwareMarketplace :expanded="routerShopOpen" @open="openRouterShop" @close="closeRouterShop" />
       </div>
     </div>
     <div class="h-16" aria-hidden="true"></div>
@@ -1038,10 +1038,10 @@ onMounted(() => {
 .router-model-card {
   margin: 24px 0 48px;
 }
-.router-model-card > .grid { height: 100%; }
+.router-model-card > .grid { height: 100%; min-height: 0; grid-template-rows: minmax(0, 1fr); }
 
 @media (min-width: 1024px) {
-  .router-model-card > .grid > .router-marketplace {
+  .router-model-card > .grid > :deep(.router-marketplace) {
     align-self: end;
     margin-top: 0;
   }

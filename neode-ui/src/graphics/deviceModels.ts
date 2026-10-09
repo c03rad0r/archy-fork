@@ -4,7 +4,7 @@ import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.j
 // Original, procedural display models. Dimensions/layouts follow the existing
 // device illustrations and manufacturer references listed in device-models.md.
 // These are recognition aids, not mechanical CAD or revision-specific pinouts.
-type Kind = 'board' | 'echo' | 'deck' | 'card' | 'case' | 'router'
+type Kind = 'board' | 'echo' | 'deck' | 'card' | 'case' | 'router' | 'phone'
 interface DeviceSpec {
   kind: Kind; name: string; w: number; h: number; d: number; color: number
   screen?: 'oled' | 'paper'; antenna?: boolean; battery?: boolean; pins?: number
@@ -36,6 +36,7 @@ export const deviceSpecs: Record<string, DeviceSpec> = {
   'rak4631_case': { kind: 'case', name: 'RAK WisBlock', w: 1.4, h: 2.3, d: .55, color: 0xd5dad5, screen: 'oled', antenna: true },
   'unknown-new': { kind: 'case', name: 'LoRa mesh radio', w: 1.8, h: 2.6, d: .5, color: 0x182623, screen: 'oled' },
   'beryl-ax': { kind: 'router', name: 'Beryl AX · GL-MT3000', w: 3, h: .8, d: 2.05, color: 0x171b20 },
+  'pixel-graphene': { kind: 'phone', name: 'Pixel · GrapheneOS', w: 1.82, h: 3.7, d: .26, color: 0x24282c },
 }
 
 export function createDeviceModel(id: string) {
@@ -157,6 +158,41 @@ export function createDeviceModel(id: string) {
     box(.02, .05, .05, -1.51, .14, -.77, dark)
     const underside = label('GL-MT3000  /  BERYL AX', 1.25, .15, 0, -.413, 0)
     underside.rotation.x = Math.PI / 2
+  } else if (spec.kind === 'phone') {
+    // Pixel-inspired handset: metal edge, side keys, rear camera bar and a
+    // conceptual GrapheneOS verified-boot display. This is not device CAD.
+    box(w + .035, h + .035, d + .025, 0, 0, 0, silver, .22)
+    box(w, h, d, 0, 0, 0, body, .21)
+    box(w - .08, h - .09, .025, 0, 0, d / 2 + .018, black, .19)
+    box(w - .15, h - .18, .008, 0, 0, d / 2 + .036, glass, .15)
+    const bootCanvas = document.createElement('canvas')
+    bootCanvas.width = 512; bootCanvas.height = 1024
+    const boot = bootCanvas.getContext('2d')!
+    const glow = boot.createLinearGradient(0, 0, 512, 1024)
+    glow.addColorStop(0, '#080d11'); glow.addColorStop(1, '#121c1d')
+    boot.fillStyle = glow; boot.fillRect(0, 0, 512, 1024)
+    boot.strokeStyle = '#e6c775'; boot.lineWidth = 12
+    boot.beginPath(); boot.moveTo(256, 288); boot.lineTo(326, 314); boot.lineTo(315, 395)
+    boot.quadraticCurveTo(294, 433, 256, 451); boot.quadraticCurveTo(218, 433, 197, 395)
+    boot.lineTo(186, 314); boot.closePath(); boot.stroke()
+    boot.fillStyle = '#e8ede9'; boot.textAlign = 'center'
+    boot.font = '500 57px sans-serif'; boot.fillText('GrapheneOS', 256, 590)
+    boot.fillStyle = '#d4bc78'; boot.font = '30px sans-serif'; boot.fillText('Verified boot', 256, 644)
+    boot.fillStyle = '#859699'; boot.font = '23px sans-serif'; boot.fillText('Bootloader locked', 256, 684)
+    const bootTexture = new THREE.CanvasTexture(bootCanvas); bootTexture.colorSpace = THREE.SRGBColorSpace; textures.push(bootTexture)
+    const bootMaterial = new THREE.MeshBasicMaterial({ map: bootTexture, toneMapped: false }); materials.push(bootMaterial)
+    const bootScreen = new THREE.Mesh(geometry('pixel-boot-screen', () => new THREE.PlaneGeometry(w - .19, h - .23)), bootMaterial)
+    bootScreen.position.z = d / 2 + .043; root.add(bootScreen)
+    disk(.035, 0, h / 2 - .13, d / 2 + .05, dark)
+    box(.045, .31, .07, w / 2 + .019, .57, 0, silver, .018)
+    box(.045, .17, .07, w / 2 + .019, .15, 0, silver, .018)
+    box(w * .82, .42, .07, 0, h * .29, -d / 2 - .04, black, .18)
+    for (const x of [-.43, .03, .47]) {
+      disk(.135, x, h * .29, -d / 2 - .085, silver)
+      disk(.095, x, h * .29, -d / 2 - .098, dark)
+      disk(.04, x, h * .29, -d / 2 - .11, glass)
+    }
+    box(.13, .045, .025, 0, -h / 2 - .014, 0, dark, .014)
   } else if (spec.kind === 'board') {
     box(w, h, d, 0, 0, 0, body, .06)
     // Plated through holes, copper traces, solder joints and populated reverse.

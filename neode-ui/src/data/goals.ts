@@ -68,6 +68,13 @@ export const GOALS: GoalDefinition[] = [
     steps: [{ id: 'external-access', title: 'Configure access', description: 'Choose and verify each connection.', action: 'configure', isAutomatic: false }],
   },
   {
+    id: 'non-surveillance-phone', title: 'Get a non surveillance phone',
+    subtitle: 'Choose an unlockable Pixel and take control with GrapheneOS',
+    icon: 'phone', category: 'identity', requiredApps: [],
+    route: '/dashboard/setup/non-surveillance-phone', estimatedTime: 'Browse phones', difficulty: 'beginner',
+    steps: [{ id: 'choose-private-phone', title: 'Choose a compatible Pixel', description: 'Check that the bootloader can be unlocked, then install GrapheneOS and lock it again for verified boot.', action: 'info', isAutomatic: false }],
+  },
+  {
     id: 'publish-website', title: 'Publish a website',
     subtitle: 'Create a website on your node and choose where to publish it',
     icon: 'website', category: 'community', requiredApps: [],

@@ -256,6 +256,11 @@ const router = createRouter({
           component: () => import('@/views/publishing/PublishingSetup.vue'),
         },
         {
+          path: 'setup/non-surveillance-phone',
+          name: 'non-surveillance-phone',
+          component: () => import('@/views/goals/NonSurveillancePhone.vue'),
+        },
+        {
           path: 'goals/:goalId',
           name: 'goal-detail',
           component: () => import('../views/GoalDetail.vue'),
