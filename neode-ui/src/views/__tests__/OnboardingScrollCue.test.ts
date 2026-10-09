@@ -37,7 +37,10 @@ function setGeometry(
 
 describe('OnboardingSeedGenerate scroll cue (UIFIX-03)', () => {
   beforeEach(() => {
-    vi.stubGlobal('ResizeObserver', vi.fn(() => ({ observe: vi.fn(), disconnect: vi.fn() })))
+    vi.stubGlobal('ResizeObserver', class {
+      observe = vi.fn()
+      disconnect = vi.fn()
+    })
     vi.mocked(rpcClient.call).mockReset()
     Element.prototype.scrollIntoView = vi.fn()
   })
