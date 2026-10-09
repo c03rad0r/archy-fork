@@ -446,21 +446,32 @@ console.log('process identity cases passed');'''
   self.assertEqual(c.record['legacy_api_empty_state'],counts)
  def test_money_free_uat_requires_all_monetary_history_and_capability_absent(self):
   counts=dict.fromkeys(module.UAT_ZERO_COUNTS,0)
-  probe={'main_sha256':module.UAT_API_MAIN_SHA256,'providers_absent':True,'http_connections_absent':True,'registration_disabled':True,'publication_disabled':True}
+  probe={'main_sha256':module.UAT_API_MAIN_SHA256,'providers_absent':True,'http_connections_absent':True,'registration_disabled':True,'publication_disabled':True,'registration_enabled':False,'publication_enabled':False}
   self.assertTrue(module.valid_money_free_uat(counts,probe))
+  enabled=dict(probe,registration_disabled=False,publication_disabled=False,registration_enabled=True,publication_enabled=True)
+  self.assertTrue(module.valid_money_free_uat(counts,enabled))
   for name in counts:
    for value in (1,-1,False,None):
     self.assertFalse(module.valid_money_free_uat(dict(counts,**{name:value}),probe))
    missing=dict(counts);missing.pop(name)
    self.assertFalse(module.valid_money_free_uat(missing,probe))
   for name in probe:
-   changed=dict(probe);changed[name]=False if name!='main_sha256' else '0'*64
+   changed=dict(probe);changed[name]=not probe[name] if name!='main_sha256' else '0'*64
+   self.assertFalse(module.valid_money_free_uat(counts,changed))
+  for changed in (
+      dict(probe,registration_disabled=False),
+      dict(probe,publication_disabled=False),
+      dict(probe,registration_enabled=True),
+      dict(probe,publication_enabled=True),
+      dict(enabled,registration_enabled=False),
+      dict(enabled,publication_enabled=False),
+  ):
    self.assertFalse(module.valid_money_free_uat(counts,changed))
  def test_money_free_stopped_proof_rejects_changed_data_and_operation(self):
   import copy
   c=self.controller;m=next(m for m in members() if m['name']=='indeedhub-api')
   counts=dict.fromkeys(module.UAT_ZERO_COUNTS,0)
-  probe={'main_sha256':module.UAT_API_MAIN_SHA256,'providers_absent':True,'http_connections_absent':True,'registration_disabled':True,'publication_disabled':True}
+  probe={'main_sha256':module.UAT_API_MAIN_SHA256,'providers_absent':True,'http_connections_absent':True,'registration_disabled':True,'publication_disabled':True,'registration_enabled':False,'publication_enabled':False}
   baseline={'operation_id':self.operation,'tables':{'projects':{'rows':1,'rows_sha256':'a'*64}}}
   c.record={'money_free_uat':{'operation_id':self.operation,'container_id':m['container_id'],'image_id':m['image_id'],'counts':counts,'probe':probe,'database_before_signal':baseline}}
   c.holds=lambda:None;c.fence_matches=lambda:None;c.require_api_stopped=lambda _:None

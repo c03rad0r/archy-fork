@@ -28,13 +28,24 @@ console.log(JSON.stringify({main_sha256:crypto.createHash('sha256').update(fs.re
  http_connections_absent:sockets.every(s=>{const c=s.trim().split(/\s+/);return !c[1].endsWith(':'+port)||['0A','06','07'].includes(c[3]);}),
  providers_absent:keys.every(k=>!process.env[k]),
  registration_disabled:process.env.ARCHIPELAGO_REGISTRATION_ENABLED==='false',
- publication_disabled:process.env.ARCHIPELAGO_PUBLICATION_ENABLED==='false'}));'''
+ publication_disabled:process.env.ARCHIPELAGO_PUBLICATION_ENABLED==='false',
+ registration_enabled:process.env.ARCHIPELAGO_REGISTRATION_ENABLED==='true',
+ publication_enabled:process.env.ARCHIPELAGO_PUBLICATION_ENABLED==='true'}));'''
 def valid_money_free_uat(counts, probe):
     return (isinstance(counts,dict) and set(counts)==UAT_ZERO_COUNTS
         and all(type(v) is int and v==0 for v in counts.values())
-        and isinstance(probe,dict) and all(type(probe.get(k)) is bool for k in ('providers_absent','http_connections_absent','registration_disabled','publication_disabled'))
-        and probe=={'main_sha256':UAT_API_MAIN_SHA256,'providers_absent':True,'http_connections_absent':True,
-            'registration_disabled':True,'publication_disabled':True})
+        and isinstance(probe,dict) and set(probe)=={'main_sha256','providers_absent','http_connections_absent',
+            'registration_disabled','publication_disabled','registration_enabled','publication_enabled'}
+        and all(type(probe[k]) is bool for k in set(probe)-{'main_sha256'})
+        and probe['main_sha256']==UAT_API_MAIN_SHA256 and probe['providers_absent'] is True
+        and probe['http_connections_absent'] is True
+        # Each feature must have an exact true/false value, and the pair must
+        # move together. Enabled private-UAT installs are safe only because the
+        # zero-count proof above also covers registration intents, publications,
+        # the publication outbox, entitlements, every payment table and revenue.
+        and probe['registration_disabled'] is not probe['registration_enabled']
+        and probe['publication_disabled'] is not probe['publication_enabled']
+        and probe['registration_enabled'] is probe['publication_enabled'])
 def valid_empty_business(counts):
     return isinstance(counts,dict) and set(counts)==BUSINESS_COUNTS and all(type(v) is int and v==0 for v in counts.values())
 def valid_empty_queue(observed):
