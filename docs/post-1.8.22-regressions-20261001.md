@@ -42,6 +42,34 @@ acceptance; this is a new paid-file incident.
 
 ## Current tasks
 
+- 2026-10-09 live repair checkpoint (supersedes the pending deployment notes
+  immediately below): Yaya now runs management backend SHA256
+  `938a90c7d9ecbdb179b1cf2886b5ed03e4d78c0d454f2cec42c0d9de3d447eb9`,
+  built from the registration correction in `424070d2`. Optimized build passed.
+  Management health, unchanged running container IDs, unchanged node identity key
+  and unchanged registration pin/marker checks passed. The old binary is retained
+  under `/var/lib/archipelago/support/indee-registration-424070d2/`.
+  The first context probe during inventory startup still failed; after inventory
+  recovery the authenticated `media.registration.context` probe succeeds and
+  returns all installation bindings. No catalog or app-data mutation was used.
+  The probe initially treated JSON-RPC `error: null` as failure; corrected it and
+  repeated the successful live request. Isolated backend regression compilation
+  remains pending after severe build-host swapping; do not claim its test passed.
+
+  A real native Home Serve login then exposed another defect: `UserDTO` omitted
+  `nostrPubkey`, so the strict frontend profile check correctly refused the
+  otherwise matching signed session. IndeeHub `08586e3` adds this public field;
+  two DTO regressions and backend production build pass. Deployed only the built
+  DTO module with its previous copy saved under the private
+  `indee-profile-08586e3` artifact directory, then restarted only `indeedhub-api`.
+  API health passes. A clean real browser selected native **Home Serve**, approved
+  only its kind-27235 authentication request, and verified that the native choice,
+  session subject and API profile key match. The signer closes normally. No
+  identity was created/replaced and no payment or publication was submitted.
+  Frontend `7b18912` and API DTO remain running-container patches; durable image/
+  managed deployment, complete video upload/publication and cached-account-switch
+  acceptance remain open. Preserve the operator's native identities throughout.
+
 - 2026-10-09 UI checkpoint: IndeeHub commit `40b3798` is served on Yaya
   (index SHA256 `d921a88448f89674809dbe623ec045849012b1fb0330e3abf1d2d6836e9b3c96`).
   Publishing now appears only in its own editor tab; Assets remains mounted
