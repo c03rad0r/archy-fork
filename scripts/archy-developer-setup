@@ -1,0 +1,96 @@
+#!/usr/bin/env bash
+# Idempotent Archipelago developer environment bootstrap.
+# Check by default; package installation requires --apply.
+set -euo pipefail
+
+APPLY=0
+# Codex is part of the standard developer environment. Keep --codex as a
+# backwards-compatible no-op for existing setup commands.
+CODEX=1
+for arg in "$@"; do
+  case "$arg" in
+    --apply) APPLY=1 ;;
+    --codex) CODEX=1 ;;
+    --help|-h) printf 'Usage: archy-developer-setup [--check] [--apply] [--codex]\n\nCodex is installed by default with --apply; authenticate with: codex login\n'; exit 0 ;;
+    --check) ;;
+    *) printf 'archy-developer-setup: unknown option: %s\n' "$arg" >&2; exit 2 ;;
+  esac
+done
+
+tools=(git tmux jq fzf rg fd nvim podman mise direnv)
+missing=()
+for tool in "${tools[@]}"; do
+  if command -v "$tool" >/dev/null 2>&1; then
+    printf 'ok\t%s\t%s\n' "$tool" "$(command -v "$tool")"
+  else
+    missing+=("$tool")
+    printf 'missing\t%s\n' "$tool"
+  fi
+done
+
+if command -v codex >/dev/null 2>&1; then
+  printf 'ok\tcodex\t%s\n' "$(command -v codex)"
+elif (( CODEX )); then
+  missing+=(codex)
+  printf 'missing\tcodex\n'
+fi
+
+user_home=$(getent passwd "$(id -u)" | cut -d: -f6)
+codex_root=${CODEX_HOME:-$user_home/.codex}
+skill_source_dir=${ARCHY_SKILLS_DIR:-$PWD/.agents/skills}
+skills=(archipelago archipelago-app archipelago-design)
+missing_skills=()
+for skill in "${skills[@]}"; do
+  source_skill="$skill_source_dir/$skill/SKILL.md"
+  target_skill="$codex_root/skills/$skill/SKILL.md"
+  if [ -f "$target_skill" ]; then
+    printf 'ok\tskill:%s\t%s\n' "$skill" "$target_skill"
+  elif [ -f "$source_skill" ]; then
+    missing_skills+=("skill:$skill")
+    printf 'missing\tskill:%s\t%s\n' "$skill" "$target_skill"
+  else
+    printf 'missing\tskill:%s\tsource unavailable (%s)\n' "$skill" "$source_skill"
+  fi
+done
+
+if (( ! APPLY )); then
+  if [ "${#missing[@]}" -gt 0 ] || [ "${#missing_skills[@]}" -gt 0 ]; then
+    printf '\nMissing: %s %s\n' "${missing[*]}" "${missing_skills[*]}"
+    printf 'Re-run with --apply to install missing packages, including Codex.\n'
+    exit 1
+  fi
+  exit 0
+fi
+
+if ! command -v apt-get >/dev/null 2>&1; then
+  printf 'No apt-get found; install the missing tools using the node distribution package manager.\n' >&2
+  exit 1
+fi
+
+packages=(git tmux jq fzf ripgrep fd-find neovim podman direnv nodejs npm)
+if [ "${#missing[@]}" -gt 0 ]; then
+  sudo -n apt-get update
+  sudo -n apt-get install -y "${packages[@]}"
+fi
+
+if (( CODEX )) && ! command -v codex >/dev/null 2>&1; then
+  command -v npm >/dev/null 2>&1 || { printf 'npm is required for Codex installation.\n' >&2; exit 1; }
+  sudo -n npm install --global @openai/codex
+fi
+
+if [ "${#missing_skills[@]}" -gt 0 ]; then
+  mkdir -p "$codex_root/skills"
+  for skill in "${skills[@]}"; do
+    source_dir="$skill_source_dir/$skill"
+    target_dir="$codex_root/skills/$skill"
+    [ -f "$source_dir/SKILL.md" ] || continue
+    mkdir -p "$target_dir"
+    cp -a "$source_dir/." "$target_dir/"
+    printf 'installed\tskill:%s\t%s\n' "$skill" "$target_dir"
+  done
+fi
+
+if command -v mise >/dev/null 2>&1; then
+  mise trust --yes "$PWD" >/dev/null 2>&1 || true
+fi
+printf 'developer setup complete; Archipelago skills preloaded for Codex; authenticate interactively with: codex login\n'

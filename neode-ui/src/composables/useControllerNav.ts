@@ -252,6 +252,7 @@ export function useControllerNav(containerRef?: { value: HTMLElement | null }) {
   // ─── Keyboard Handler ───────────────────────────────────────
 
   function handleKeyDown(e: KeyboardEvent) {
+    if ((e.target as HTMLElement | null)?.closest?.('[data-archipelago-terminal]')) return
     const navKeys = ['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Enter', 'Escape']
     if (!navKeys.includes(e.key)) return
 

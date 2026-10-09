@@ -1,0 +1,118 @@
+#!/usr/bin/env bash
+# Persistent Archipelago developer sessions. Terminal attachments are disposable;
+# the tmux session owns the process and durable JSON owns its discoverable state.
+set -euo pipefail
+
+STATE_DIR="${ARCHY_SESSION_STATE_DIR:-${XDG_STATE_HOME:-$HOME/.local/state}/archipelago/sessions}"
+mkdir -p "$STATE_DIR"
+die() { echo "archy-session: $*" >&2; exit 2; }
+need_tmux() { command -v tmux >/dev/null 2>&1 || die "tmux is required"; }
+need_python() { command -v python3 >/dev/null 2>&1 || die "python3 is required"; }
+valid_id() { [[ "$1" =~ ^[a-zA-Z0-9][a-zA-Z0-9._-]{0,63}$ ]]; }
+session_file() { printf '%s/%s.json' "$STATE_DIR" "$1"; }
+
+write_record() {
+    local id=$1 name=$2 workspace=$3 state=$4 tmux_name=$5
+    need_python
+    python3 - "$STATE_DIR" "$id" "$name" "$workspace" "$state" "$tmux_name" <<'PY'
+import json, os, sys, tempfile, time
+state_dir, ident, name, workspace, state, tmux_name = sys.argv[1:]
+record = {"schema": 1, "id": ident, "name": name, "workspace": workspace,
+          "state": state, "tmux": tmux_name, "updated_at": int(time.time())}
+fd, tmp = tempfile.mkstemp(prefix=f".{ident}.", suffix=".tmp", dir=state_dir)
+try:
+    with os.fdopen(fd, "w", encoding="utf-8") as handle:
+        json.dump(record, handle, sort_keys=True); handle.write("\n"); handle.flush(); os.fsync(handle.fileno())
+    os.replace(tmp, os.path.join(state_dir, ident + ".json"))
+finally:
+    try: os.unlink(tmp)
+    except FileNotFoundError: pass
+PY
+}
+
+new_id() { need_python; python3 - <<'PY'
+import secrets
+print("s-" + secrets.token_hex(8))
+PY
+}
+
+read_json() {
+    python3 - "$1" "$2" <<'PY'
+import json, sys
+print(json.load(open(sys.argv[1], encoding="utf-8"))[sys.argv[2]])
+PY
+}
+
+cmd_list() {
+    need_tmux; need_python
+    python3 - "$STATE_DIR" <<'PY'
+import json, os, subprocess, sys
+state_dir = sys.argv[1]
+for filename in sorted(os.listdir(state_dir)):
+    if not filename.endswith(".json"): continue
+    try: record = json.load(open(os.path.join(state_dir, filename), encoding="utf-8"))
+    except (OSError, ValueError, KeyError): continue
+    live = subprocess.run(["tmux", "has-session", "-t", record["tmux"]], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL).returncode == 0
+    effective = "detached" if live else ("interrupted" if record.get("state") == "running" else record.get("state", "ended"))
+    print(f"{record['id']}\t{record['name']}\t{effective}\t{record['workspace']}")
+PY
+}
+
+cmd_start() {
+    need_tmux
+    local name=${1:-Work} workspace=${2:-$HOME/Work}
+    [[ -d "$workspace" ]] || die "workspace does not exist: $workspace"
+    local id tmux_name; id=$(new_id); tmux_name="archy-$id"
+    tmux new-session -d -s "$tmux_name" -c "$workspace"
+    write_record "$id" "$name" "$workspace" running "$tmux_name"
+    printf '%s\n' "$id"
+}
+
+record_for() {
+    local id=$1 file; valid_id "$id" || die "invalid session id"; file=$(session_file "$id")
+    [[ -f "$file" ]] || die "session not found: $id"; printf '%s\n' "$file"
+}
+
+cmd_attach() {
+    need_tmux; local file=$1 tmux_name; tmux_name=$(read_json "$file" tmux)
+    tmux has-session -t "$tmux_name" 2>/dev/null || die "session is not running; inspect with list"
+    exec tmux attach-session -t "$tmux_name"
+}
+
+cmd_rename() {
+    local id=$1 name=$2 file=$3; local workspace tmux_name state=ended
+    workspace=$(read_json "$file" workspace); tmux_name=$(read_json "$file" tmux); need_tmux
+    tmux has-session -t "$tmux_name" 2>/dev/null && state=detached
+    write_record "$id" "$name" "$workspace" "$state" "$tmux_name"
+}
+
+cmd_end() {
+    local id=$1 file=$2; local tmux_name name workspace
+    tmux_name=$(read_json "$file" tmux); name=$(read_json "$file" name); workspace=$(read_json "$file" workspace); need_tmux
+    tmux kill-session -t "$tmux_name" 2>/dev/null || true
+    write_record "$id" "$name" "$workspace" ended "$tmux_name"
+}
+
+usage() {
+    cat >&2 <<'EOF'
+Usage:
+  archy-session list
+  archy-session start [name] [workspace]
+  archy-session attach <id>
+  archy-session rename <id> <name>
+  archy-session end <id>
+
+Closing an attached terminal detaches it. end is the explicit destructive
+operation and never removes the workspace or its files.
+EOF
+}
+
+command=${1:-}
+case "$command" in
+list) cmd_list ;;
+start) shift; cmd_start "$@" ;;
+attach) shift; [[ $# == 1 ]] || die "attach requires an id"; file=$(record_for "$1"); cmd_attach "$file" ;;
+rename) shift; [[ $# == 2 ]] || die "rename requires an id and name"; file=$(record_for "$1"); cmd_rename "$1" "$2" "$file" ;;
+end) shift; [[ $# == 1 ]] || die "end requires an id"; file=$(record_for "$1"); cmd_end "$1" "$file" ;;
+*) usage; exit 2 ;;
+esac

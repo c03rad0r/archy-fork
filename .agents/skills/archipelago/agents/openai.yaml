@@ -1,0 +1,7 @@
+interface:
+  display_name: "Archipelago system"
+  short_description: "Work safely on Archipelago systems"
+  brand_color: "#F7931A"
+  default_prompt: "Use $archipelago to inspect and safely change this Archipelago node."
+policy:
+  allow_implicit_invocation: true

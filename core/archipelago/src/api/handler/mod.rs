@@ -14,6 +14,7 @@ mod remote_input;
 mod remote_relay;
 mod rental_playback;
 mod routstr_proxy;
+mod terminal;
 mod websocket;
 
 use crate::api::rpc::RpcHandler;
@@ -426,6 +427,16 @@ impl ApiHandler {
             .await;
         }
 
+        // Owner terminal attachment — the browser socket is disposable; the
+        // authenticated tmux session survives reconnects and browser closes.
+        if method == Method::GET && path == "/ws/terminal" {
+            if !self.is_authenticated(req.headers()).await {
+                tracing::warn!("401 WebSocket /ws/terminal — session invalid or missing");
+                return Ok(Self::unauthorized());
+            }
+            return Self::handle_terminal_websocket(req).await;
+        }
+
         // Remote input WebSocket — companion app sends keyboard/mouse events
         if method == Method::GET && path == "/ws/remote-input" {
             if !self.is_authenticated(req.headers()).await {
@@ -542,6 +553,15 @@ impl ApiHandler {
                         serde_json::to_vec(&status).unwrap_or_default(),
                     ))
                     .unwrap())
+            }
+
+            (Method::GET, "/api/terminal/sessions") => {
+                if !self.is_authenticated(&headers).await { return Ok(Self::unauthorized()); }
+                terminal::list_response().await
+            }
+            (Method::POST, "/api/terminal/sessions") => {
+                if !self.is_authenticated(&headers).await { return Ok(Self::unauthorized()); }
+                terminal::create(&body_bytes).await
             }
 
             // Node message — P2P endpoint (authenticated by source validation, not cookie)
