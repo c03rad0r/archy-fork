@@ -42,6 +42,29 @@ acceptance; this is a new paid-file incident.
 
 ## Current tasks
 
+- 2026-10-09 dual-node UAT correction: Archy `main` at `5b0b35401` was already
+  serving identical backend and dashboard artifacts on Yaya and Framework;
+  browser cache hid the new device-model screens. Yaya's terminal failed
+  independently because `/api/terminal/sessions` fell through to HTML. Its
+  HTTP and HTTPS proxy now return backend JSON `401` when unsigned; Framework
+  already did. Source correction ngit proposal `dd22151e` was reviewed and
+  merged as `b50fc5627ca4b108b85c40f72366a07a8cbcd5a9`, then pushed to
+  ngit and Gitea with local main-ref parity passing. Authenticated browser
+  terminal acceptance remains open; the UAT Nginx edit is live on Yaya.
+
+  IndeeHub frontend UAT on both nodes now includes the explicit local `/relay`
+  Archipelago source and publication panel flags after an omitted build setting
+  hid them. This is still a mounted UAT frontend, not a pinned app image. Yaya's
+  local relay has one protocol-qualified offer signed by the unwanted `0494`
+  identity; Framework's has none. Framework still runs its April `1.0.0` API
+  without the Archipelago module or registration pin, while Yaya has an October
+  API with three Archipelago migrations. Ordinary films exist on both nodes but
+  are not automatically signed Archipelago catalog offers. Preserve those films
+  and native identities; do not republish or delete the old signed event without
+  producer authorization. Backend image parity, node-specific pin preparation,
+  actual producer publication, cross-node discovery and paid playback remain
+  separate open acceptance gates.
+
 - 2026-10-09 recurrence: the operator again receives the profile-identity refusal.
   Live reproduction shows the signed session still matches the selected native
   identity, but the API's original DTO is back and omits `nostrPubkey`. Do not
