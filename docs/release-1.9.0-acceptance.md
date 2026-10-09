@@ -1,5 +1,49 @@
 # Archipelago 1.9.0-alpha release acceptance
 
+## Combined Yaya UAT candidate — 9 October 2026
+
+The combined source candidate now integrates the ngit proposals for DATUM
+(`15ff5fb9`), Gashboard (`acd65f3c`) and external access/website publishing
+(`79ca68c1`), plus the Server disk-warning refresh fix. The candidate is based
+on accepted main `aff408cc`; its integration commits retain each proposal head
+as a parent. All three ngit proposals are still open pending publication of this
+combined result. Gitea has no duplicate open PRs. Do not report the proposals as
+merged until the exact resulting main commit and proposal dispositions are
+verified on ngit and mirrored to Gitea.
+
+Source validation on commit `84674ffd`:
+
+- Backend production build passed on its identical backend inputs at
+  `152ac785`: SHA256
+  `cead9fdcd2c6bc6f422bc2a06576124da361d8c4db25cbf39c090630d7b14754`.
+  The backend qualification ran 269 passing test executions (266 unique test
+  names), one ignored; it is not a full-suite claim. The only later source change
+  is the dashboard disk-warning fix.
+- The combined UI suite had 108 passing tests before the disk-warning change;
+  its focused regression file now has 9 passing tests. The final production UI
+  build passed and its archive is recorded in the private qualification receipt
+  at `.release-qualification-20261007/combined-dashboard-delivery-84674ffd/`.
+- The signed private catalog and IndeeHub candidate were previously qualified,
+  but activation of the native IndeeHub update on Yaya was attempted exactly
+  once and restored before target API/database startup. The maintenance gate
+  stopped because the legacy API has existing business data and lacks a proven
+  request-drain acknowledgement. The old service is running again; no retry is
+  authorized by this record. Do not weaken the gate based only on row counts or
+  unchanged database fingerprints.
+- Yaya read-only inspection on 9 October confirmed the existing IndeeHub API,
+  frontend, FFmpeg, Postgres, Redis, MinIO and relay containers are running.
+  The recorded update operation remains `Restored`, with
+  `target_startup_began=false`; no terminal success receipt exists. Thus the
+  user's publishing-disabled notice and Cloud Video 503 have not been fixed by
+  that update attempt.
+
+This is a private UAT source candidate, not deployment acceptance, catalog
+publication, OTA or ISO authorization. Continue only after a safe upgrade path
+for the populated IndeeHub store is qualified, then deploy the exact accepted
+main candidate and complete the operator UAT checklist. Preserve the existing
+IndeeHub data and every wallet/payment record. Do not publish OTA/ISO until UAT
+is accepted and all release gates below are closed.
+
 
 ## Post-1.9.0 source acceptance checkpoint — 8 October 2026
 
