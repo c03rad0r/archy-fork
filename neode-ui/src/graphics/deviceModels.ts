@@ -35,7 +35,7 @@ export const deviceSpecs: Record<string, DeviceSpec> = {
   'heltec-mesh-node-t114-case': { kind: 'case', name: 'HELTEC T114', w: 1.25, h: 2.4, d: .5, color: 0x10a9c4, screen: 'oled', antenna: true },
   'rak4631_case': { kind: 'case', name: 'RAK WisBlock', w: 1.4, h: 2.3, d: .55, color: 0xd5dad5, screen: 'oled', antenna: true },
   'unknown-new': { kind: 'case', name: 'LoRa mesh radio', w: 1.8, h: 2.6, d: .5, color: 0x182623, screen: 'oled' },
-  'beryl-ax': { kind: 'router', name: 'Beryl AX · GL-MT3000', w: 3, h: .8, d: 2.05, color: 0x297b8f },
+  'beryl-ax': { kind: 'router', name: 'Beryl AX · GL-MT3000', w: 3, h: .8, d: 2.05, color: 0x171b20 },
 }
 
 export function createDeviceModel(id: string) {

@@ -532,7 +532,8 @@ onMounted(() => {
       <p v-if="error" class="mt-3 text-xs text-red-400">{{ error }}</p>
     </div>
 
-    <DeviceModel model="beryl-ax" label="Beryl AX (GL-MT3000) OpenWrt router" fill-viewport />
+    <DeviceModel model="beryl-ax" label="Beryl AX (GL-MT3000) OpenWrt router" fill-viewport dev-browse />
+
     </template>
 
     <!-- Loading skeleton -->
@@ -1009,5 +1010,6 @@ onMounted(() => {
       </div>
 
     </template>
+
   </div>
 </template>

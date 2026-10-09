@@ -4470,6 +4470,12 @@ app.post('/rpc/v1', (req, res) => {
 
       // ── OpenWRT / TollGate gateway (demo: a thoroughly-used gateway) ──
       case 'openwrt.get-status': {
+        // Keep the local preview in the unconnected state so the router model
+        // is immediately visible. Set MOCK_OPENWRT_CONNECTED=1 to preview the
+        // connected dashboard instead.
+        if (!process.env.MOCK_OPENWRT_CONNECTED) {
+          return res.json({ error: { code: -32004, message: 'No router configured' } })
+        }
         return res.json({
           result: {
             host: '192.168.8.1',

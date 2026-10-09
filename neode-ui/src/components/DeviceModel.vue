@@ -1,19 +1,25 @@
 <script setup lang="ts">
 import { onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import type { createDeviceScene } from '@/graphics/deviceScene'
+import { deviceSpecs } from '@/graphics/deviceModels'
 
 const props = withDefaults(defineProps<{
   model: string
   label: string
   fallback?: string
   fillViewport?: boolean
-}>(), { fallback: '', fillViewport: false })
+  /** Development-only gallery controls. Never rendered in production builds. */
+  devBrowse?: boolean
+}>(), { fallback: '', fillViewport: false, devBrowse: false })
 const host = ref<HTMLElement>()
 const frame = ref<HTMLElement>()
 const ready = ref(false)
 const failed = ref(false)
 const paused = ref(false)
 const reducedMotion = ref(false)
+const currentModel = ref(props.model)
+const devModelIds = Object.keys(deviceSpecs)
+const devBrowseEnabled = import.meta.env.DEV && props.devBrowse
 const dragging = ref(false)
 const remainingHeight = ref('360px')
 let view: ReturnType<typeof createDeviceScene> | undefined
@@ -29,6 +35,16 @@ let lastDraw = 0
 let pointer: number | undefined
 let lastX = 0
 let lastY = 0
+
+function devModelLabel(id: string) { return deviceSpecs[id]?.name ?? id }
+function browseModel(offset: number) {
+  if (!devBrowseEnabled || !view) return
+  const index = devModelIds.indexOf(currentModel.value)
+  const next = devModelIds[(index + offset + devModelIds.length) % devModelIds.length]!
+  currentModel.value = next
+  view.setModel(next)
+  view.render()
+}
 
 function stop() { cancelAnimationFrame(raf); raf = 0; previous = 0; lastDraw = 0 }
 function canSpin() { return view && visible && !document.hidden && !paused.value && !motion?.matches && !dragging.value }
@@ -99,6 +115,7 @@ function key(event: KeyboardEvent) {
 watch(paused, sync)
 watch(() => props.model, () => {
   generation++; up()
+  currentModel.value = props.model
   if (view) {
     try { view.setModel(props.model) } catch { failed.value = true; disposeScene() }
   } else { failed.value = false; void init() }
@@ -144,7 +161,12 @@ onBeforeUnmount(() => {
       </div>
     </div>
     <figcaption class="device-model__caption">
-      <span>{{ failed ? label : 'Drag to explore' }}</span>
+      <span>{{ failed ? label : (devBrowseEnabled ? devModelLabel(currentModel) : 'Drag to explore') }}</span>
+      <template v-if="devBrowseEnabled">
+        <button type="button" aria-label="Previous 3D model" @click="browseModel(-1)">Back</button>
+        <span class="device-model__counter">{{ devModelIds.indexOf(currentModel) + 1 }} / {{ devModelIds.length }}</span>
+        <button type="button" aria-label="Next 3D model" @click="browseModel(1)">Next</button>
+      </template>
       <button v-if="ready && !reducedMotion" type="button" :aria-label="paused ? 'Resume automatic rotation' : 'Pause automatic rotation'"
         :aria-pressed="paused" @click="paused = !paused">{{ paused ? 'Rotate' : 'Pause' }}</button>
     </figcaption>
@@ -163,6 +185,7 @@ onBeforeUnmount(() => {
 .device-model__placeholder svg { width: min(65%, 280px); fill: rgba(63,126,146,.2); stroke: #619ba9; stroke-width: 2; }
 .device-model__caption { position: absolute; inset: auto 0 0; display: flex; justify-content: center; align-items: center; gap: 14px; color: rgba(255,255,255,.4); font-size: 11px; }
 .device-model__caption button { padding: 4px 9px; color: rgba(255,255,255,.65); border: 1px solid rgba(255,255,255,.12); border-radius: 20px; background: transparent; cursor: pointer; }
+.device-model__counter { color: rgba(255,255,255,.3); font-variant-numeric: tabular-nums; }
 .device-model--viewport { height: 330px; }
 @media (min-width: 1024px) { .device-model--viewport { height: var(--device-height); min-height: 260px; } }
 </style>

@@ -8,7 +8,7 @@ export function createDeviceScene(host: HTMLElement, id: string) {
   renderer.setClearColor(0x000000, 0)
   renderer.outputColorSpace = THREE.SRGBColorSpace
   renderer.toneMapping = THREE.ACESFilmicToneMapping
-  renderer.toneMappingExposure = 1
+  renderer.toneMappingExposure = .94
   renderer.domElement.setAttribute('aria-hidden', 'true')
   const scene = new THREE.Scene()
   const camera = new THREE.PerspectiveCamera(33, 1, .1, 100)
@@ -18,11 +18,11 @@ export function createDeviceScene(host: HTMLElement, id: string) {
   const studio = new RoomEnvironment()
   const pmrem = new THREE.PMREMGenerator(renderer)
   const environment = pmrem.fromScene(studio, .04, .1, 100, { size: 128 })
-  scene.environment = environment.texture; scene.environmentIntensity = .8
+  scene.environment = environment.texture; scene.environmentIntensity = 1.05
   studio.dispose(); pmrem.dispose()
-  scene.add(new THREE.HemisphereLight(0xe4eeff, 0x202b3d, 1.4))
+  scene.add(new THREE.HemisphereLight(0xe4eeff, 0x354052, 2.25))
   for (const [color, intensity, x, y, z] of [
-    [0xffffff, 2.2, 3, 5, 6], [0x91c6e8, 1.8, -4, 1, -3], [0xe8c5ac, 1.4, 4, 0, -4],
+    [0xffffff, 1.15, 3, 5, 6], [0x91c6e8, .85, -4, 1, -3], [0xe8c5ac, .65, 4, 0, -4],
   ]) {
     const light = new THREE.DirectionalLight(color, intensity)
     light.position.set(x!, y!, z!); scene.add(light)

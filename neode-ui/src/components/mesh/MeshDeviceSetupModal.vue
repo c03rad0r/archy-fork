@@ -9,9 +9,9 @@
     <!-- Step 1: detection graphic + what's currently on the radio -->
     <div v-if="step === 1" class="text-center">
       <DeviceModel
-        :model="deviceImage.image.split('/').pop()!.replace('.svg', '')"
+        :model="deviceImage.model"
         :label="deviceImage.label"
-        :fallback="deviceImage.image"
+        dev-browse
       />
       <p class="text-white text-base font-medium">{{ deviceImage.label }}</p>
       <p class="text-white/60 text-xs mt-1">

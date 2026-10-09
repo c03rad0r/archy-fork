@@ -10,8 +10,7 @@ computer illustrations in `archipelago-website-deck`.
 `neode-ui/src/graphics/deviceModels.ts` contains 25 radio illustrations,
 including the generic fallback and three optional enclosure variants, plus
 the Beryl AX (GL-MT3000). All existing `meshDeviceImages.ts` detection results
-resolve to a model by their SVG filename. The existing SVGs and attribution
-remain available as static fallbacks. USB chip identification remains a
+resolve to a procedural model key. USB chip identification remains a
 best-effort visual match; it does not select firmware or claim exact hardware.
 
 The radios include modeled rear faces, enclosure panels or populated boards,
@@ -23,7 +22,6 @@ verified against a rear photograph. The Beryl AX is the example router from
 
 Reference material:
 
-- Existing Meshtastic illustrations in `neode-ui/public/assets/img/mesh-devices/`.
 - Beryl AX official front/rear/side hardware drawing:
   https://static.gl-inet.com/docs/router/en/4/user_guide/gl-mt3000/hardware_info/mt3000_interface.jpg
 - Beryl AX guide:
