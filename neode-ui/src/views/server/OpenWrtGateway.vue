@@ -533,11 +533,11 @@ onMounted(() => {
       <p v-if="error" class="mt-3 text-xs text-red-400">{{ error }}</p>
     </div>
 
-    <div class="grid grid-cols-1 lg:grid-cols-[minmax(0,1fr)_minmax(280px,360px)] gap-6 items-start">
-      <div class="glass-card p-6 mb-6 overflow-hidden router-model-card">
+    <div class="glass-card p-6 mb-6 overflow-hidden router-model-card">
+      <div class="grid grid-cols-1 lg:grid-cols-[minmax(0,1fr)_minmax(280px,360px)] gap-6 items-start">
         <DeviceModel model="beryl-ax" label="Beryl AX (GL-MT3000) OpenWrt router" fill-viewport dev-browse />
+        <RouterMarketplace />
       </div>
-      <RouterMarketplace />
     </div>
 
     </template>
