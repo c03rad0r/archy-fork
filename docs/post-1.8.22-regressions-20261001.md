@@ -42,6 +42,36 @@ acceptance; this is a new paid-file incident.
 
 ## Current tasks
 
+- 2026-10-09 recurrence: the operator again receives the profile-identity refusal.
+  Live reproduction shows the signed session still matches the selected native
+  identity, but the API's original DTO is back and omits `nostrPubkey`. Do not
+  weaken the frontend identity check. The earlier direct `podman restart` was
+  incorrect for this systemd-managed app: the attached service exits, then its
+  `Restart=always` cleanup/recreation returns to the original image. On this
+  repeat, the API disappears briefly and systemd recreates it at 16:30:53 UTC;
+  journal evidence and changed container ID confirm that lifecycle. The brief
+  earlier successful login was therefore insufficient deployment acceptance.
+
+  A per-node UAT correction now uses Quadlet drop-in
+  `~/.config/containers/systemd/indeedhub-api.container.d/90-profile-uat.conf`
+  to mount `/var/lib/archipelago/uat-overrides/indeehub-profile-08586e3/user.dto.js`
+  read-only at `/app/dist/users/dto/response/user.dto.js`. Artifact SHA256:
+  `4450f45def6c68396d9f4fa597a24ca74cec447d1cb3c8772af29e406d929e6d`.
+  The original image, source Quadlet, credentials, databases and identities are
+  unchanged. Restart via `systemctl --user restart indeedhub-api`, never direct
+  Podman. The module checksum survives two managed recreations. Real native
+  login after the first passes. The immediate second-start login obtained no
+  session; after explicitly verifying API health 200, the repeated real native
+  login passes with matching node selection, JWT subject and profile public key.
+  The service remains active/running with zero automatic restarts. This is a persistent **local UAT
+  override**, not a new signed image/catalog. Native upgrades remain held until
+  the reviewed image includes the fix and this exact override is retired; do not
+  bypass external-override/installation ownership checks. Recovery is to move
+  this specific drop-in into the existing private repair backup, daemon-reload
+  and restart the managed API; that restores the old image's known login defect.
+  No node identity or personal media was replaced. The previously pending
+  isolated registration regression has now passed: one test, zero failures.
+
 - 2026-10-09 live repair checkpoint (supersedes the pending deployment notes
   immediately below): Yaya now runs management backend SHA256
   `938a90c7d9ecbdb179b1cf2886b5ed03e4d78c0d454f2cec42c0d9de3d447eb9`,
