@@ -139,10 +139,10 @@ onBeforeUnmount(closeSockets)
       </div>
       <div v-if="loading && !filtered.length" class="text-sm text-white/45 py-5 text-center">Searching NIP-99 relays…</div>
       <div v-else-if="error && !filtered.length" class="text-sm text-white/50 py-5 text-center">{{ error }}</div>
-      <div v-else class="grid grid-cols-1 md:grid-cols-2 gap-4">
+      <div v-else class="router-marketplace__results" tabindex="0" aria-label="Router listings carousel">
         <article v-for="item in filtered" :key="item.id" class="router-marketplace__card">
           <img v-if="item.image" :src="item.image" :alt="item.title" class="router-marketplace__image" loading="lazy" />
-          <div class="router-marketplace__image router-marketplace__image--empty" aria-hidden="true">⌁</div>
+          <div v-else class="router-marketplace__image router-marketplace__image--empty" aria-hidden="true">⌁</div>
           <div class="min-w-0 flex-1">
             <h3 class="text-sm font-medium text-white truncate">{{ item.title }}</h3>
             <p class="text-xs text-white/55 mt-1 line-clamp-2">{{ item.summary }}</p>
@@ -166,7 +166,11 @@ onBeforeUnmount(closeSockets)
 @media (max-width: 1023px) {
   .router-marketplace__cta { width: 100%; justify-content: center; }
 }
-.router-marketplace__card { display: flex; gap: 12px; min-width: 0; padding: 12px; border: 1px solid rgba(255,255,255,.09); border-radius: 11px; background: rgba(255,255,255,.035); }
+.router-marketplace__results { display: flex; gap: 16px; overflow-x: auto; overscroll-behavior-x: contain; scroll-snap-type: x mandatory; scrollbar-width: thin; padding-bottom: 4px; }
+.router-marketplace__card { display: flex; flex: 0 0 100%; scroll-snap-align: start; gap: 12px; min-width: 0; padding: 12px; border: 1px solid rgba(255,255,255,.09); border-radius: 11px; background: rgba(255,255,255,.035); }
+@media (min-width: 768px) {
+  .router-marketplace__card { flex-basis: calc((100% - 16px) / 2); }
+}
 .router-marketplace__image { width: 64px; height: 64px; object-fit: cover; border-radius: 8px; flex-shrink: 0; background: rgba(255,255,255,.05); }
 .router-marketplace__image--empty { display: grid; place-items: center; color: rgba(121,205,215,.6); font-size: 34px; }
 </style>
