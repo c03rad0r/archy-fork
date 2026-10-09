@@ -1023,11 +1023,11 @@ onMounted(() => {
 <style scoped>
 @media (min-width: 1024px) {
   .router-model-card {
-    max-height: calc(100dvh - 168px);
+    max-height: calc(100dvh - 192px);
   }
 
   .router-model-card > .grid {
-    max-height: calc(100dvh - 216px);
+    max-height: calc(100dvh - 240px);
   }
 
   .router-model-card > .grid > .router-marketplace {
