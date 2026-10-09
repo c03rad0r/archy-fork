@@ -30,6 +30,9 @@ service binary before any replacement.
 - Create a named session, type `printf 'uat\n'`, close the terminal, reopen it,
   and resume the same session without a duplicate tmux process.
 - Refresh the browser and reconnect after a temporary network interruption.
+- Verify the terminal panel stays bounded while output grows, keeps an inner
+  scroll position at the newest line, and supports drag, resize, minimize,
+  refresh, and fullscreen controls without blocking dashboard navigation.
 - Open a second owner browser and verify inventory visibility; verify only one
   active attachment sends input at a time before enabling transfer controls.
 - Confirm explicit End stops the tmux process but preserves the workspace.
@@ -38,6 +41,11 @@ service binary before any replacement.
 - Verify the Omarchy-derived agent skill files and app starter are present in
   the candidate source/artifact; do not treat a local npm install failure as a
   successful app build.
+
+The node's reverse proxy must route `/api/terminal/` to the Archipelago daemon
+(`127.0.0.1:5678`) in both HTTP and HTTPS server blocks. `/ws` already carries
+the terminal WebSocket upgrade. Without the REST location, the SPA fallback
+returns `index.html` instead of the authenticated session response.
 
 ## Rollback
 
