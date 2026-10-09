@@ -471,7 +471,7 @@ onMounted(() => {
 </script>
 
 <template>
-  <div class="pb-6">
+  <div class="pb-12">
     <!-- mb-0 overrides the pill's default mb-4, which pushed it above the
          title's centerline in this inline header row. -->
     <div class="flex items-center gap-3 mb-6">
@@ -1035,7 +1035,7 @@ onMounted(() => {
 
 <style scoped>
 .router-model-card {
-  margin: 24px 0;
+  margin: 24px 0 48px;
 }
 
 @media (min-width: 1024px) {
