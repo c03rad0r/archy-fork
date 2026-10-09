@@ -5,6 +5,7 @@ import { rpcClient } from '@/api/rpc-client'
 import { useCachedResource } from '@/composables/useCachedResource'
 import BackButton from '@/components/BackButton.vue'
 import DeviceModel from '@/components/DeviceModel.vue'
+import RouterMarketplace from '@/components/RouterMarketplace.vue'
 
 const router = useRouter()
 function goBack() {
@@ -532,7 +533,12 @@ onMounted(() => {
       <p v-if="error" class="mt-3 text-xs text-red-400">{{ error }}</p>
     </div>
 
-    <DeviceModel model="beryl-ax" label="Beryl AX (GL-MT3000) OpenWrt router" fill-viewport dev-browse />
+    <div class="grid grid-cols-1 lg:grid-cols-[minmax(0,1fr)_minmax(280px,360px)] gap-6 items-start">
+      <div class="glass-card p-6 mb-6 overflow-hidden router-model-card">
+        <DeviceModel model="beryl-ax" label="Beryl AX (GL-MT3000) OpenWrt router" fill-viewport dev-browse />
+      </div>
+      <RouterMarketplace />
+    </div>
 
     </template>
 

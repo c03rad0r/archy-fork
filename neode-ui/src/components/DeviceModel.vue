@@ -8,9 +8,10 @@ const props = withDefaults(defineProps<{
   label: string
   fallback?: string
   fillViewport?: boolean
+  glassContainer?: boolean
   /** Development-only gallery controls. Never rendered in production builds. */
   devBrowse?: boolean
-}>(), { fallback: '', fillViewport: false, devBrowse: false })
+}>(), { fallback: '', fillViewport: false, glassContainer: false, devBrowse: false })
 const host = ref<HTMLElement>()
 const frame = ref<HTMLElement>()
 const ready = ref(false)
@@ -150,7 +151,7 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <figure ref="frame" class="device-model" :class="{ 'device-model--viewport': fillViewport }"
+  <figure ref="frame" class="device-model" :class="{ 'device-model--viewport': fillViewport, 'device-model--glass': glassContainer }"
     :style="{ '--device-height': remainingHeight }" :data-model="model" :data-ready="ready">
     <div ref="host" class="device-model__stage" :class="{ 'is-dragging': dragging }"
       :tabindex="ready ? 0 : -1" role="group" :aria-label="`${label}. Drag or use arrow keys to rotate. Home shows the front; End shows the back.`"
@@ -175,6 +176,8 @@ onBeforeUnmount(() => {
 
 <style scoped>
 .device-model { position: relative; width: 100%; height: 240px; margin: 0; isolation: isolate; }
+.device-model--glass { padding: 16px 18px 12px; border: 1px solid rgba(255,255,255,.13); border-radius: 14px; background: linear-gradient(135deg, rgba(255,255,255,.075), rgba(255,255,255,.025)); box-shadow: inset 0 1px 0 rgba(255,255,255,.045), 0 18px 55px rgba(0,0,0,.14); }
+.device-model--glass::after { content: ''; position: absolute; inset: 0; border-radius: inherit; pointer-events: none; background: linear-gradient(120deg, rgba(255,255,255,.1), transparent 34%, transparent 72%, rgba(255,255,255,.035)); opacity: .45; }
 .device-model::before { content: ''; position: absolute; inset: 14% 9%; background: radial-gradient(ellipse, rgba(110,167,180,.09), transparent 68%); pointer-events: none; z-index: -1; }
 .device-model__stage { position: absolute; inset: 0 0 28px; cursor: grab; touch-action: pan-y; border-radius: 16px; }
 .device-model__stage.is-dragging { cursor: grabbing; }
