@@ -554,6 +554,24 @@ mod lifecycle_regression_tests {
     }
 
     #[test]
+    fn manifest_presentation_reports_the_declared_author() {
+        let mut entry = installing_fixture();
+        entry.manifest.author = Some("Archipelago".to_owned());
+        for (metadata, expected) in [
+            (serde_json::json!({}), "Archipelago"),
+            (serde_json::json!({"author":"  "}), "Archipelago"),
+            (serde_json::json!({"author":3}), "Archipelago"),
+            (serde_json::json!({"author":" ForgeSworn "}), "ForgeSworn"),
+        ] {
+            apply_manifest_value(
+                &serde_json::json!({"app":{"metadata":metadata}}),
+                &mut entry,
+            );
+            assert_eq!(entry.manifest.author.as_deref(), Some(expected));
+        }
+    }
+
+    #[test]
     fn installed_manifest_entry_path_survives_scans_without_changing_runtime_origin() {
         let mut entry = installing_fixture();
         entry.state = PackageState::Stopped;
@@ -881,6 +899,10 @@ fn apply_manifest_value(value: &serde_json::Value, entry: &mut PackageDataEntry)
     if let Some(metadata) = app.get("metadata") {
         if let Some(icon) = text(metadata.get("icon")) {
             entry.static_files.icon = icon;
+        }
+        // The scanner's default author is the node OS; a declared author wins.
+        if let Some(author) = text(metadata.get("author")) {
+            entry.manifest.author = Some(author);
         }
         if let Some(tier) = text(metadata.get("tier")) {
             entry.manifest.tier = Some(tier);
