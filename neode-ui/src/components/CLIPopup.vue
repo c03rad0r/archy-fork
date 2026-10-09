@@ -24,7 +24,7 @@
             <div v-if="error" class="terminal-empty terminal-error"><strong>Terminal unavailable</strong><span>{{ error }}</span><button class="terminal-button" type="button" @click="loadSessions">Retry</button></div>
             <div v-else-if="!sessions.length" class="terminal-empty"><strong>Create your first developer session</strong><span>Sessions stay running when this window closes and can be resumed later.</span><button class="terminal-button terminal-primary" type="button" @click="createSession">Start session</button></div>
             <div v-else-if="!selectedId" class="terminal-empty"><strong>Choose a session</strong><span>Resume an existing workspace or start a new one.</span></div>
-            <div v-else ref="terminalRef" class="terminal-output" tabindex="0" aria-label="Archipelago terminal session" @pointerdown.stop="focusInput" @click.stop="focusInput"></div>
+            <div v-else ref="terminalRef" class="terminal-output" tabindex="0" aria-label="Archipelago terminal session" @pointerdown.stop="focusInput" @click.stop="focusInput" @keydown.stop @keyup.stop @keypress.stop></div>
           </div>
           <footer v-if="selectedId && !minimized" class="terminal-input-bar">
             <span class="terminal-status" :class="{ connected: connected }">{{ connected ? 'Connected' : 'Reconnecting…' }}</span>

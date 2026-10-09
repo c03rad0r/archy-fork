@@ -239,7 +239,11 @@ pub(crate) async fn websocket(req: Request<hyper::Body>) -> Result<Response<hype
             loop {
                 tokio::select! {
                     _ = interval.tick() => {
-                        let output = Command::new("tmux").args(["capture-pane", "-p", "-e", "-t", &record.tmux, "-S", "-250"]).output().await;
+                        // Capture the visible pane only. Asking tmux for a large
+                        // historical range injects hundreds of blank rows into
+                        // xterm on every reconnect, producing a misleading
+                        // giant initial scrollbar. xterm owns live scrollback.
+                        let output = Command::new("tmux").args(["capture-pane", "-p", "-e", "-t", &record.tmux]).output().await;
                         if let Ok(output) = output {
                             let text = String::from_utf8_lossy(&output.stdout).into_owned();
                             if text != last { last = text.clone(); if tx.send(Message::Text(serde_json::json!({"type":"output", "data":text}).to_string())).await.is_err() { break; } }
