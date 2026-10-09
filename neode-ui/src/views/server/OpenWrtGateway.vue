@@ -1035,7 +1035,7 @@ onMounted(() => {
 
 <style scoped>
 .router-model-card {
-  margin: 24px;
+  margin: 24px 0;
 }
 
 @media (min-width: 1024px) {
