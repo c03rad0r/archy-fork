@@ -94,6 +94,7 @@ function goalIcon(icon: string): string {
     lightning: '⚡',
     identity: '🔑',
     backup: '💾',
+    phone: '📱',
   }
   return icons[icon] || '📦'
 }

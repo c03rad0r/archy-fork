@@ -1,9 +1,11 @@
 <script setup lang="ts">
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, nextTick } from 'vue'
 import { useRouter } from 'vue-router'
 import { rpcClient } from '@/api/rpc-client'
 import { useCachedResource } from '@/composables/useCachedResource'
 import BackButton from '@/components/BackButton.vue'
+import DeviceModel from '@/components/DeviceModel.vue'
+import HardwareMarketplace from '@/components/HardwareMarketplace.vue'
 
 const router = useRouter()
 function goBack() {
@@ -113,6 +115,19 @@ const host = ref('')
 const sshUser = ref('root')
 const sshPassword = ref('')
 const showConnectForm = ref(false)
+const routerShopOpen = ref(false)
+const routerCard = ref<HTMLElement>()
+const routerCardHeight = ref<string>()
+function openRouterShop() {
+  const height = routerCard.value?.getBoundingClientRect().height
+  if (height) routerCardHeight.value = `${height}px`
+  routerShopOpen.value = true
+}
+async function closeRouterShop() {
+  routerShopOpen.value = false
+  await nextTick()
+  routerCardHeight.value = undefined
+}
 const connecting = ref(false)
 const connectedParams = ref<Record<string, string> | null>(null)
 
@@ -456,7 +471,7 @@ onMounted(() => {
 </script>
 
 <template>
-  <div class="pb-6">
+  <div class="pb-12">
     <!-- mb-0 overrides the pill's default mb-4, which pushed it above the
          title's centerline in this inline header row. -->
     <div class="flex items-center gap-3 mb-6">
@@ -465,7 +480,8 @@ onMounted(() => {
     </div>
 
     <!-- Connect form -->
-    <div v-if="showConnectForm" class="glass-card p-6 mb-6">
+    <template v-if="showConnectForm">
+    <div class="glass-card p-6 mb-6">
       <h2 class="text-sm font-semibold text-white/80 mb-4">Connect to Router</h2>
       <div class="space-y-3">
         <div>
@@ -529,6 +545,16 @@ onMounted(() => {
       </div>
       <p v-if="error" class="mt-3 text-xs text-red-400">{{ error }}</p>
     </div>
+
+    <div ref="routerCard" class="glass-card p-6 mb-6 overflow-hidden router-model-card" :style="routerCardHeight ? { height: routerCardHeight } : undefined">
+      <div class="grid grid-cols-1 lg:grid-cols-[minmax(0,1fr)_minmax(280px,360px)] gap-6 items-start">
+        <DeviceModel v-if="!routerShopOpen" model="beryl-ax" label="Beryl AX (GL-MT3000) OpenWrt router" fill-viewport :controls="false" />
+        <HardwareMarketplace :expanded="routerShopOpen" @open="openRouterShop" @close="closeRouterShop" />
+      </div>
+    </div>
+    <div class="h-16" aria-hidden="true"></div>
+
+    </template>
 
     <!-- Loading skeleton -->
     <template v-else-if="loading">
@@ -1004,5 +1030,20 @@ onMounted(() => {
       </div>
 
     </template>
+
   </div>
 </template>
+
+<style scoped>
+.router-model-card {
+  margin: 24px 0 48px;
+}
+.router-model-card > .grid { height: 100%; min-height: 0; grid-template-rows: minmax(0, 1fr); }
+
+@media (min-width: 1024px) {
+  .router-model-card > .grid > :deep(.router-marketplace) {
+    align-self: end;
+    margin-top: 0;
+  }
+}
+</style>

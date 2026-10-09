@@ -163,13 +163,22 @@
             </div>
           </template>
         </div>
-        <router-link
-          to="/dashboard/server/firewall-tunnels"
-          class="glass-button mt-4 w-full gap-2 rounded-lg text-sm font-medium"
-        >
-          Firewalls &amp; tunnels
-          <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7" /></svg>
-        </router-link>
+        <div class="grid grid-cols-1 sm:grid-cols-2 gap-3 mt-4">
+          <router-link
+            to="/dashboard/server/firewall-tunnels"
+            class="glass-button w-full gap-2 rounded-lg text-sm font-medium"
+          >
+            Firewalls &amp; tunnels
+            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7" /></svg>
+          </router-link>
+          <router-link
+            to="/dashboard/server/openwrt"
+            class="glass-button w-full gap-2 rounded-lg text-sm font-medium"
+          >
+            OpenWrt Gateway
+            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7" /></svg>
+          </router-link>
+        </div>
       </div>
 
       <FipsNetworkCard />

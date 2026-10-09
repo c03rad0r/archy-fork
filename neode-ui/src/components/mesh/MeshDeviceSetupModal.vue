@@ -8,25 +8,11 @@
   >
     <!-- Step 1: detection graphic + what's currently on the radio -->
     <div v-if="step === 1" class="text-center">
-      <div class="mx-auto my-2 w-40 h-40 relative">
-        <!-- pulsing signal waves behind the board image -->
-        <svg viewBox="0 0 160 160" class="absolute inset-0 w-full h-full" aria-hidden="true">
-          <g class="mesh-detect-waves" stroke="rgba(251,146,60,0.5)" fill="none" stroke-width="2.5" stroke-linecap="round">
-            <path d="M130 44 a30 30 0 0 1 0 28" />
-            <path d="M138 36 a42 42 0 0 1 0 44" />
-            <path d="M146 28 a54 54 0 0 1 0 60" />
-          </g>
-        </svg>
-        <!-- actual board image (vendored from the Meshtastic web flasher) -->
-        <img
-          :src="deviceImage.image"
-          :alt="deviceImage.label"
-          class="relative w-full h-full object-contain drop-shadow-[0_8px_24px_rgba(251,146,60,0.25)]"
-          @error="imageFailed = true"
-          v-if="!imageFailed"
-        />
-        <div v-else class="relative w-full h-full flex items-center justify-center text-5xl">📡</div>
-      </div>
+      <DeviceModel
+        :model="deviceImage.model"
+        :label="deviceImage.label"
+        dev-browse
+      />
       <p class="text-white text-base font-medium">{{ deviceImage.label }}</p>
       <p class="text-white/60 text-xs mt-1">
         {{ deviceImage.exact ? 'Detected' : 'Detected LoRa radio' }} on
@@ -306,6 +292,7 @@ import { useMeshStore, type MeshDeviceProbe, type MeshConfigureParams, type Flas
 import { useAppStore } from '@/stores/app'
 import { LORA_REGIONS, regionByCode, suggestRegionFromLatLon, meshcorePlanFor, RNODE_REGION_PLANS } from '@/utils/loraRegions'
 import { resolveMeshDeviceImage } from '@/utils/meshDeviceImages'
+import DeviceModel from '@/components/DeviceModel.vue'
 
 const mesh = useMeshStore()
 const appStore = useAppStore()
@@ -344,7 +331,6 @@ function stopProbeProgress(done = false) {
 
 const devicePath = computed(() => mesh.flashFlowPath ?? mesh.undismissedDetectedDevices[0] ?? '')
 const show = computed(() => !!devicePath.value)
-const imageFailed = ref(false)
 const deviceImage = computed(() =>
   resolveMeshDeviceImage(
     mesh.status?.detected_device_info?.find(d => d.path === devicePath.value)
@@ -417,7 +403,6 @@ watch([show, devicePath], async ([visible]) => {
     probeError.value = ''
     probing.value = false
     stopProbeProgress()
-    imageFailed.value = false
     openFlashStep()
     const t = (mesh.status?.device_type ?? '').toLowerCase()
     if (t === 'meshcore' || t === 'meshtastic' || t === 'reticulum') {
@@ -427,7 +412,6 @@ watch([show, devicePath], async ([visible]) => {
   }
   step.value = 1
   error.value = ''
-  imageFailed.value = false
   form.value.region = suggestedRegion.value?.code ?? mesh.status?.lora_region ?? ''
   form.value.name = mesh.status?.self_advert_name ?? appStore.serverName ?? ''
   form.value.channel = mesh.status?.channel_name || 'archipelago'
@@ -629,17 +613,3 @@ function closeFlashStep() {
   step.value = 1
 }
 </script>
-
-<style scoped>
-.mesh-detect-waves path {
-  animation: mesh-wave-pulse 2.2s ease-out infinite;
-  opacity: 0;
-}
-.mesh-detect-waves path:nth-child(2) { animation-delay: 0.35s; }
-.mesh-detect-waves path:nth-child(3) { animation-delay: 0.7s; }
-@keyframes mesh-wave-pulse {
-  0% { opacity: 0; }
-  25% { opacity: 1; }
-  100% { opacity: 0; }
-}
-</style>
