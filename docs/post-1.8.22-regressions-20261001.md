@@ -65,6 +65,29 @@ acceptance; this is a new paid-file incident.
   actual producer publication, cross-node discovery and paid playback remain
   separate open acceptance gates.
 
+- 2026-10-09 later dual-node UAT checkpoint: both nodes now run the same
+  source-built IndeeHub API image `f007b818d8ad` from `518de96`, with their
+  own existing native registration bindings and no runtime code mounts. The
+  three missing Framework migrations were applied after a validated database
+  backup; Yaya's database and prior overrides were also backed up, and the
+  overrides retired recoverably. Both nodes run the same rebuilt frontend and
+  asynchronous transcode worker image. Local public catalogs now return Yaya's
+  completed *Web5 Explained* and Framework's completed *Arch x Indie*;
+  Framework's stalled transcode was requeued once and completed. Posters and
+  encrypted HLS manifests return 200 on both nodes; raw source files return
+  403, unauthenticated key requests return 401, and MinIO policy reconciliation
+  succeeds twice on both nodes. Focused API/worker tests and production builds
+  passed, but authenticated purchase/playback and a new post-fix long transcode
+  remain unverified. Framework and Yaya still have separate local project
+  catalogs; neither local publication proves cross-node discovery. The only
+  signed Archipelago offer found was Yaya's earlier event from the unwanted
+  `0494` identity; do not sign or republish it as a different producer without
+  the operator's explicit identity choice. The IndeeHub source branch is not
+  merged upstream because its configured remote is currently inaccessible.
+  The Archy terminal proxy now returns JSON 401 on both nodes instead of HTML
+  for an unauthenticated API request; authenticated browser terminal acceptance
+  is still open. No catalog, OTA or ISO was published.
+
 - 2026-10-09 recurrence: the operator again receives the profile-identity refusal.
   Live reproduction shows the signed session still matches the selected native
   identity, but the API's original DTO is back and omits `nostrPubkey`. Do not
