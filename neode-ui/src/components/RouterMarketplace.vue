@@ -82,6 +82,11 @@ async function search() {
     relayUrls.value = []
   }
   if (!relayUrls.value.length) {
+    if (import.meta.env.DEV) {
+      listings.value = DEV_LISTINGS
+      loading.value = false
+      return
+    }
     loading.value = false
     error.value = 'No Archipelago Nostr relays are configured. Add a relay in Settings → Nostr Relays and try again.'
     return
