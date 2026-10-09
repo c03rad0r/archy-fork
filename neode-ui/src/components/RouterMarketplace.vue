@@ -163,6 +163,9 @@ onBeforeUnmount(closeSockets)
 <style scoped>
 .router-marketplace { margin-top: 16px; }
 .router-marketplace__cta { display: inline-flex; align-items: center; gap: 10px; }
+@media (max-width: 1023px) {
+  .router-marketplace__cta { width: 100%; justify-content: center; }
+}
 .router-marketplace__card { display: flex; gap: 12px; min-width: 0; padding: 12px; border: 1px solid rgba(255,255,255,.09); border-radius: 11px; background: rgba(255,255,255,.035); }
 .router-marketplace__image { width: 64px; height: 64px; object-fit: cover; border-radius: 8px; flex-shrink: 0; background: rgba(255,255,255,.05); }
 .router-marketplace__image--empty { display: grid; place-items: center; color: rgba(121,205,215,.6); font-size: 34px; }
