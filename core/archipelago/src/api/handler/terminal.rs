@@ -10,6 +10,24 @@ use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use tokio::process::Command;
 use tokio_tungstenite::tungstenite::Message;
+
+fn tmux_key_for_input(data: &str) -> Option<&'static str> {
+    match data {
+        "\u{3}" => Some("C-c"),
+        "\u{4}" => Some("C-d"),
+        "\r" | "\n" => Some("Enter"),
+        "\u{7f}" => Some("BSpace"),
+        "\t" => Some("Tab"),
+        "\u{1b}[A" => Some("Up"),
+        "\u{1b}[B" => Some("Down"),
+        "\u{1b}[C" => Some("Right"),
+        "\u{1b}[D" => Some("Left"),
+        "\u{1b}[H" => Some("Home"),
+        "\u{1b}[F" => Some("End"),
+        "\u{1b}[3~" => Some("DC"),
+        _ => None,
+    }
+}
 use uuid::Uuid;
 
 use super::{build_response, ApiHandler};
@@ -231,7 +249,7 @@ pub(crate) async fn websocket(req: Request<hyper::Body>) -> Result<Response<hype
                         Some(Ok(Message::Text(text))) => {
                             let Ok(message) = serde_json::from_str::<ClientMessage>(&text) else { continue };
                             match message.kind.as_str() {
-                                "input" => if let Some(data) = message.data { let mut command = Command::new("tmux"); command.args(["send-keys", "-t", &record.tmux]); if data == "\u{3}" { command.arg("C-c"); } else if data == "\u{4}" { command.arg("C-d"); } else { command.args(["-l", "--", &data]); } let _ = command.output().await; },
+                                "input" => if let Some(data) = message.data { let mut command = Command::new("tmux"); command.args(["send-keys", "-t", &record.tmux]); if let Some(key) = tmux_key_for_input(&data) { command.arg(key); } else { command.args(["-l", "--", &data]); } let _ = command.output().await; },
                                 "resize" => if let (Some(cols), Some(rows)) = (message.cols, message.rows) { let _ = Command::new("tmux").args(["resize-window", "-t", &record.tmux, "-x", &cols.to_string(), "-y", &rows.to_string()]).output().await; },
                                 "ping" => { let _ = tx.send(Message::Text(r#"{"type":"pong"}"#.into())).await; },
                                 _ => {}
