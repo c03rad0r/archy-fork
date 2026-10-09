@@ -9,7 +9,7 @@ computer illustrations in `archipelago-website-deck`.
 
 `neode-ui/src/graphics/deviceModels.ts` contains 25 radio illustrations,
 including the generic fallback and three optional enclosure variants, plus
-the Beryl AX (GL-MT3000). All existing `meshDeviceImages.ts` detection results
+the Beryl AX (GL-MT3000) and a black Pixel 9 Pro. All existing `meshDeviceImages.ts` detection results
 resolve to a procedural model key. USB chip identification remains a
 best-effort visual match; it does not select firmware or claim exact hardware.
 
@@ -33,7 +33,12 @@ Reference material:
   https://wiki.lilygo.cc/products/t-deck-series/t-deck/
 
 Manufacturer photographs are references only; none are copied into the app.
-Geometry, grain, labels and screens are generated locally without CDN assets.
+Geometry, grain and device labels are generated locally without CDN assets.
+The black Pixel 9 Pro illustration uses an unmodified, locally bundled GrapheneOS
+boot logo mask from its framework source. Its rounded outline, glass panels,
+camera island, layered lenses, side buttons and ports are procedural geometry.
+The display shows a static phase of the OS boot animation, distinct from Google's
+bootloader notice. Source and attribution: `neode-ui/src/graphics/assets/ATTRIBUTION.md`.
 
 ## Interaction and lifecycle
 
@@ -50,17 +55,17 @@ materials. Unmount releases the renderer and context. Unsupported browser APIs,
 unavailable WebGL, import failures or lost contexts leave a static fallback.
 
 The router figure uses the remaining viewport height below the connection form
-on desktop (minimum 260px); phones get a fixed 330px illustration. Small desktop
+on desktop (minimum 260px); mobile layouts get a fixed 290px illustration. Small desktop
 windows can scroll normally rather than collapsing the model to zero height.
 
-## Marketplace follow-up
+## Hardware discovery
 
-The user requested a checkpoint after the models to switch to a cheaper model.
-No Buy router button, relay searches, product cards or checkout implementation
-are included in this change. Next: research the current NIP-99 specification,
-add router marketplace discovery and product cards, then connect the purchase
-entry point to Archipelago's existing checkout capabilities. The user explicitly
-excluded building the whole checkout flow at this stage.
+The router gateway and private-phone Setup goal share `HardwareMarketplace.vue`.
+Buy router / Buy phone replaces the model with a horizontal product carousel,
+preserving the outer container's height. Discovery queries enabled relays from
+`nostr.list-relays` for NIP-99 kind-30402 events. Development builds show clearly
+labeled sample listings when no matching live listings are found. Checkout and
+the product View/Buy actions remain unimplemented.
 
 Browser scenarios and reports stay outside this repository, under
 `/home/yaya/.local/share/browser-check/projects/archy-devices/`.

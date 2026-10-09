@@ -12,7 +12,8 @@ export function createDeviceScene(host: HTMLElement, id: string) {
   renderer.domElement.setAttribute('aria-hidden', 'true')
   const scene = new THREE.Scene()
   const camera = new THREE.PerspectiveCamera(33, 1, .1, 100)
-  let model = createDeviceModel(id)
+  let disposed = false
+  let model = createDeviceModel(id, render)
   scene.add(model.pivot)
   model.pivot.rotation.set(id === 'beryl-ax' ? .27 : -.08, -.4, 0)
   const studio = new RoomEnvironment()
@@ -28,7 +29,6 @@ export function createDeviceScene(host: HTMLElement, id: string) {
     light.position.set(x!, y!, z!); scene.add(light)
   }
   host.append(renderer.domElement)
-  let disposed = false
   function render() { if (!disposed) renderer.render(scene, camera) }
   function resize() {
     if (disposed) return
@@ -44,7 +44,7 @@ export function createDeviceScene(host: HTMLElement, id: string) {
   return {
     canvas: renderer.domElement, get rotation() { return model.pivot.rotation }, render, resize,
     setModel(next: string) {
-      const replacement = createDeviceModel(next)
+      const replacement = createDeviceModel(next, render)
       scene.remove(model.pivot); model.dispose(); model = replacement
       model.pivot.rotation.set(next === 'beryl-ax' ? .27 : -.08, -.4, 0)
       scene.add(model.pivot); resize()

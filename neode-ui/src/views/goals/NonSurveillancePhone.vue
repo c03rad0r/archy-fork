@@ -32,7 +32,7 @@ async function closeShop() {
 
     <div ref="showcase" class="glass-card p-6 overflow-hidden phone-showcase" :style="showcaseHeight ? { height: showcaseHeight } : undefined">
       <div class="grid grid-cols-1 lg:grid-cols-[minmax(0,1fr)_minmax(280px,360px)] gap-6 items-start phone-showcase__grid">
-        <DeviceModel v-if="!shopOpen" model="pixel-graphene" label="Pixel phone with GrapheneOS verified boot" fill-viewport :controls="false" />
+        <DeviceModel v-if="!shopOpen" model="pixel-graphene" label="Black Pixel 9 Pro with the GrapheneOS boot screen" fill-viewport :controls="false" />
         <HardwareMarketplace kind="phone" :expanded="shopOpen" @open="openShop" @close="closeShop" />
       </div>
     </div>

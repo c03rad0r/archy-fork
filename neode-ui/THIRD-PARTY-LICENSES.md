@@ -33,6 +33,8 @@ planned (see docs/LICENSE-COMPLIANCE-AUDIT.md).
 
 ## Vendored
 
+- `src/graphics/assets/grapheneos-boot-mask.png` — GrapheneOS boot artwork,
+  Apache-2.0; see the adjacent ATTRIBUTION.md for the pinned source and credits.
 - `public/assets/icon/` — see ATTRIBUTION.md in that directory
   (game-icons.net CC BY 3.0; pixelarticons MIT).
 - `public/assets/img/mesh-devices/` — Meshtastic project artwork, GPL-3.0;

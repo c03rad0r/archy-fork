@@ -1,5 +1,6 @@
 import * as THREE from 'three'
 import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.js'
+import grapheneBootMaskUrl from './assets/grapheneos-boot-mask.png'
 
 // Original, procedural display models. Dimensions/layouts follow the existing
 // device illustrations and manufacturer references listed in device-models.md.
@@ -36,15 +37,16 @@ export const deviceSpecs: Record<string, DeviceSpec> = {
   'rak4631_case': { kind: 'case', name: 'RAK WisBlock', w: 1.4, h: 2.3, d: .55, color: 0xd5dad5, screen: 'oled', antenna: true },
   'unknown-new': { kind: 'case', name: 'LoRa mesh radio', w: 1.8, h: 2.6, d: .5, color: 0x182623, screen: 'oled' },
   'beryl-ax': { kind: 'router', name: 'Beryl AX · GL-MT3000', w: 3, h: .8, d: 2.05, color: 0x171b20 },
-  'pixel-graphene': { kind: 'phone', name: 'Pixel · GrapheneOS', w: 1.82, h: 3.7, d: .26, color: 0x24282c },
+  'pixel-graphene': { kind: 'phone', name: 'Pixel 9 Pro · GrapheneOS', w: 1.8, h: 3.82, d: .213, color: 0x08090b },
 }
 
-export function createDeviceModel(id: string) {
+export function createDeviceModel(id: string, invalidate: () => void = () => {}) {
   const spec = deviceSpecs[id] ?? deviceSpecs['unknown-new']!
   const root = new THREE.Group()
   const geometries = new Map<string, THREE.BufferGeometry>()
   const materials: THREE.Material[] = []
   const textures: THREE.Texture[] = []
+  let disposed = false
   const material = (color: number, roughness = .5, metalness = .1) => {
     const m = new THREE.MeshStandardMaterial({ color, roughness, metalness })
     materials.push(m); return m
@@ -159,40 +161,96 @@ export function createDeviceModel(id: string) {
     const underside = label('GL-MT3000  /  BERYL AX', 1.25, .15, 0, -.413, 0)
     underside.rotation.x = Math.PI / 2
   } else if (spec.kind === 'phone') {
-    // Pixel-inspired handset: metal edge, side keys, rear camera bar and a
-    // conceptual GrapheneOS verified-boot display. This is not device CAD.
-    box(w + .035, h + .035, d + .025, 0, 0, 0, silver, .22)
-    box(w, h, d, 0, 0, 0, body, .21)
-    box(w - .08, h - .09, .025, 0, 0, d / 2 + .018, black, .19)
-    box(w - .15, h - .18, .008, 0, 0, d / 2 + .036, glass, .15)
-    const bootCanvas = document.createElement('canvas')
-    bootCanvas.width = 512; bootCanvas.height = 1024
-    const boot = bootCanvas.getContext('2d')!
-    const glow = boot.createLinearGradient(0, 0, 512, 1024)
-    glow.addColorStop(0, '#080d11'); glow.addColorStop(1, '#121c1d')
-    boot.fillStyle = glow; boot.fillRect(0, 0, 512, 1024)
-    boot.strokeStyle = '#e6c775'; boot.lineWidth = 12
-    boot.beginPath(); boot.moveTo(256, 288); boot.lineTo(326, 314); boot.lineTo(315, 395)
-    boot.quadraticCurveTo(294, 433, 256, 451); boot.quadraticCurveTo(218, 433, 197, 395)
-    boot.lineTo(186, 314); boot.closePath(); boot.stroke()
-    boot.fillStyle = '#e8ede9'; boot.textAlign = 'center'
-    boot.font = '500 57px sans-serif'; boot.fillText('GrapheneOS', 256, 590)
-    boot.fillStyle = '#d4bc78'; boot.font = '30px sans-serif'; boot.fillText('Verified boot', 256, 644)
-    boot.fillStyle = '#859699'; boot.font = '23px sans-serif'; boot.fillText('Bootloader locked', 256, 684)
-    const bootTexture = new THREE.CanvasTexture(bootCanvas); bootTexture.colorSpace = THREE.SRGBColorSpace; textures.push(bootTexture)
-    const bootMaterial = new THREE.MeshBasicMaterial({ map: bootTexture, toneMapped: false }); materials.push(bootMaterial)
-    const bootScreen = new THREE.Mesh(geometry('pixel-boot-screen', () => new THREE.PlaneGeometry(w - .19, h - .23)), bootMaterial)
-    bootScreen.position.z = d / 2 + .043; root.add(bootScreen)
-    disk(.035, 0, h / 2 - .13, d / 2 + .05, dark)
-    box(.045, .31, .07, w / 2 + .019, .57, 0, silver, .018)
-    box(.045, .17, .07, w / 2 + .019, .15, 0, silver, .018)
-    box(w * .82, .42, .07, 0, h * .29, -d / 2 - .04, black, .18)
-    for (const x of [-.43, .03, .47]) {
-      disk(.135, x, h * .29, -d / 2 - .085, silver)
-      disk(.095, x, h * .29, -d / 2 - .098, dark)
-      disk(.04, x, h * .29, -d / 2 - .11, glass)
+    // Rounded outlines are independent of thickness: a thin RoundedBox clamps
+    // the corner radius to its depth and makes a handset look square.
+    function outline(width: number, height: number, radius: number) {
+      const x = -width / 2, y = -height / 2, r = radius
+      const shape = new THREE.Shape()
+      shape.moveTo(x + r, y); shape.lineTo(x + width - r, y)
+      shape.quadraticCurveTo(x + width, y, x + width, y + r)
+      shape.lineTo(x + width, y + height - r)
+      shape.quadraticCurveTo(x + width, y + height, x + width - r, y + height)
+      shape.lineTo(x + r, y + height)
+      shape.quadraticCurveTo(x, y + height, x, y + height - r)
+      shape.lineTo(x, y + r); shape.quadraticCurveTo(x, y, x + r, y)
+      return shape
     }
-    box(.13, .045, .025, 0, -h / 2 - .014, 0, dark, .014)
+    function panel(width: number, height: number, depth: number, radius: number, z: number, m: THREE.Material, x = 0, y = 0) {
+      const bevel = Math.min(.012, depth / 4)
+      const g = geometry(`phone${width},${height},${depth},${radius}`, () => {
+        const shape = outline(width - bevel * 2, height - bevel * 2, radius - bevel)
+        const result = new THREE.ExtrudeGeometry(shape, { depth: depth - bevel * 2, bevelEnabled: true, bevelThickness: bevel, bevelSize: bevel, bevelSegments: 3, steps: 1, curveSegments: 12 })
+        result.translate(0, 0, -depth / 2 + bevel)
+        return result
+      })
+      const mesh = new THREE.Mesh(g, m); mesh.position.set(x, y, z); root.add(mesh); return mesh
+    }
+    const frame = material(0x101113, .32, .72)
+    const edge = material(0x24262a, .27, .8)
+    const rear = material(0x08090b, .32, .12)
+    const lensRing = material(0x303238, .25, .78)
+    const lens = material(0x080d16, .12, .3)
+    const lensCoating = material(0x172a38, .16, .45)
+    const seal = material(0x030405, .85)
+    panel(w, h, d, .265, 0, frame)
+    panel(w - .024, h - .024, .022, .255, -d / 2, edge)
+    panel(w - .048, h - .048, .018, .245, -d / 2 - .013, rear)
+    panel(w - .02, h - .02, .02, .255, d / 2, seal)
+    panel(w - .044, h - .044, .012, .244, d / 2 + .011, material(0x050609, .2, .08))
+    const oled = new THREE.MeshBasicMaterial({ color: 0x000000, toneMapped: false }); materials.push(oled)
+    panel(w - .108, h - .108, .004, .216, d / 2 + .02, oled)
+
+    // Unmodified GrapheneOS boot mask, centered at its native Pixel 9 Pro
+    // screen ratio (448 / 1280). Static white phase of the OS boot animation.
+    const logoW = (w - .108) * 448 / 1280, logoH = logoW * 605 / 448
+    const logoGeometry = geometry('graphene-boot-logo', () => new THREE.PlaneGeometry(logoW, logoH))
+    const bootCanvas = document.createElement('canvas'); bootCanvas.width = 448; bootCanvas.height = 605
+    const boot = bootCanvas.getContext('2d')!
+    boot.fillStyle = '#000'; boot.fillRect(0, 0, 448, 605)
+    const bootTexture = new THREE.CanvasTexture(bootCanvas)
+    bootTexture.colorSpace = THREE.SRGBColorSpace; textures.push(bootTexture)
+    new THREE.ImageLoader().load(grapheneBootMaskUrl, image => {
+      if (disposed) return
+      boot.fillStyle = '#f3f3f3'; boot.fillRect(0, 0, 448, 605)
+      boot.drawImage(image, 0, 0); bootTexture.needsUpdate = true; invalidate()
+    })
+    const logoMaterial = new THREE.MeshBasicMaterial({ map: bootTexture, toneMapped: false }); materials.push(logoMaterial)
+    const logo = new THREE.Mesh(logoGeometry, logoMaterial); logo.position.z = d / 2 + .026; root.add(logo)
+    disk(.031, 0, h / 2 - .145, d / 2 + .028, seal)
+    disk(.017, 0, h / 2 - .145, d / 2 + .039, lens)
+    panel(.32, .014, .006, .007, d / 2 + .02, seal, 0, h / 2 - .044)
+
+    // Pixel 9 Pro's raised camera island, glass pill, three layered optics,
+    // flash and temperature sensor; all face outward on the rear.
+    const cameraY = h / 2 - .68
+    panel(1.57, .59, .105, .285, -d / 2 - .058, frame, 0, cameraY)
+    panel(1.51, .53, .018, .255, -d / 2 - .117, edge, 0, cameraY)
+    panel(1.14, .402, .012, .196, -d / 2 - .13, seal, .125, cameraY)
+    for (const x of [-.245, .125, .49]) {
+      disk(.154, x, cameraY, -d / 2 - .142, lensRing)
+      disk(.13, x, cameraY, -d / 2 - .153, dark)
+      disk(.103, x, cameraY, -d / 2 - .164, lens)
+      disk(.064, x, cameraY, -d / 2 - .175, lensCoating)
+      disk(.039, x, cameraY, -d / 2 - .186, dark)
+      disk(.018, x - .029, cameraY + .038, -d / 2 - .197, material(0x46556c, .18, .3))
+    }
+    disk(.069, -.582, cameraY + .11, -d / 2 - .139, material(0xc8c4ae, .5))
+    disk(.033, -.582, cameraY - .11, -d / 2 - .139, lens)
+    disk(.009, -.45, cameraY - .12, -d / 2 - .14, seal)
+    // Black buttons, antenna seams, bottom USB-C opening and speaker holes.
+    box(.038, .28, .09, w / 2 + .012, .74, 0, frame, .012)
+    box(.038, .45, .09, w / 2 + .012, .19, 0, frame, .012)
+    for (const side of [-1, 1]) for (const y of [-1.35, 1.36]) box(.008, .027, d - .035, side * (w / 2 + .001), y, 0, seal, .002)
+    const port = panel(.245, .071, .009, .032, 0, edge)
+    port.rotation.x = Math.PI / 2; port.position.set(0, -h / 2 - .002, 0)
+    const portHole = panel(.213, .047, .01, .021, 0, seal)
+    portHole.rotation.x = Math.PI / 2; portHole.position.set(0, -h / 2 - .008, 0)
+    box(.145, .008, .012, 0, -h / 2 - .015, 0, frame, .003)
+    for (let i = 0; i < 5; i++) {
+      const hole = disk(.016, 0, 0, 0, seal)
+      hole.rotation.x = 0; hole.position.set(.34 + i * .067, -h / 2 - .003, 0)
+    }
+    const mic = disk(.015, 0, 0, 0, seal); mic.rotation.x = 0; mic.position.set(-.4, -h / 2 - .003, 0)
   } else if (spec.kind === 'board') {
     box(w, h, d, 0, 0, 0, body, .06)
     // Plated through holes, copper traces, solder joints and populated reverse.
@@ -340,6 +398,7 @@ export function createDeviceModel(id: string) {
   return {
     pivot, radius, name: spec.name,
     dispose() {
+      disposed = true
       root.traverse(object => { if (object instanceof THREE.InstancedMesh) object.dispose() })
       geometries.forEach(g => g.dispose()); materials.forEach(m => m.dispose()); textures.forEach(t => t.dispose())
     },
