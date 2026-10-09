@@ -92,7 +92,45 @@ hardening rather than claiming every cache key was erased. The IndeeHub frontend
 commits `0d6434e` and `71cf546a` remain local because that repository has no ngit
 coordinate; do not publish them Gitea-only under the mirror policy.
 
+### IndeeHub selected-identity regression — UAT reopened 9 October 2026
+
+Operator UAT disproved the earlier sign-out acceptance: choosing the homeserver
+identity could continue with a previously active saved account and display a
+different npub. `loginWithExtension` caught selection/provider failures without
+rethrowing, after which the modal read `accountManager.active`; that pointer could
+still name the old account. IndeeHub commits `a4d3946` and `86256ee` now clear the
+active pointer before an explicit native switch, propagate failure, bind the
+authentication call to the exact returned signer account, and retain the
+Archipelago provider hook in the source index. A regression starts with a stale
+saved account and proves a failed selection cannot fall back to it while the
+saved key itself remains preserved.
+
+All 155 frontend tests, type checking and the production build pass. A live Yaya
+frontend-only correction is installed with rollback under the operator's private
+artifact directory. The served index references the provider, provider SHA256 is
+still `ad4c93b3b25545dca1b391c5add75e5bc618c865290805f7ac5d1ad0fd18b469`,
+the service worker was regenerated to invalidate the brief provider-less cache,
+and `/health` passes. Automated Chromium confirms the provider loads and no stale
+active account is restored. Real homeserver selection and displayed-npub matching
+remain pending operator UAT; the current live filesystem correction is not yet a
+new signed catalog/image activation and must not be described as durable managed
+deployment acceptance.
+
 ## Combined Yaya UAT candidate — 9 October 2026
+
+Follow-up operator request: retain all node-native identities; remove IndeeHub's
+Create Account/private-key import and reset only its old browser accounts.
+IndeeHub commit `7fbdc74` removes generation/import handlers and screens, performs
+a one-time removal of `indeedhub-accounts`, `indeedhub-active-account` and app
+session credentials, and corrects the default API base from browser localhost
+to `/api`. The previous live hotfix was built without explicit API settings,
+explaining its network error; its earlier success claims were premature.
+Twenty-one focused authentication/reset tests pass and the production build
+passes with `/api`, `/storage`, `/relay`, mock off and publication enabled.
+This updated static bundle is deployed to Yaya's existing frontend container;
+its index SHA256 is `a14834acab5fc9b42f55a92c540b9b765334ac7d2d2628ddc82bc1c5725d53ad`.
+Node identity storage was not modified. Signed-image recreation and real native
+identity sign-in acceptance remain outstanding.
 
 The combined source is published on ngit and mirrored byte-for-byte to Gitea at
 main `bb933d409187a8181e284a5a91a81b4e036b3036`, based on accepted main

@@ -42,6 +42,19 @@ acceptance; this is a new paid-file incident.
 
 ## Current tasks
 
+- [ ] **2026-10-09 IndeeHub UAT remains failed:** operator still reports wrong
+      Nostr identity, upload failure and confusing always-visible publishing UI.
+      Preserve native identities; remove only app-local generated/imported accounts.
+      Require explicit Archipelago selection and matching API profile. On Yaya,
+      `media.registration.context` logs `IndeeHub is not installed` while all seven
+      containers run. Authenticated state includes only the parent `indeedhub`
+      package; the registration code incorrectly requires a separate
+      `indeedhub-api` package record. Candidate correction retains parent running/
+      installed checks and the existing API installation pin; it checks a legacy
+      API package when present. Source tests/build and live registration acceptance
+      must complete before closing. Move publishing to its own editor tab, preserve
+      computer-upload state and existing pending registration requests.
+
 - [x] Yaya App Store component/alias regression (reported 2026-10-02): one
       Cuprate entry (hide Cuprate UI companion), one BTCPay Server in Commerce
       with its icon (merge legacy btcpay pins), one NetBird entry (hide server

@@ -201,12 +201,12 @@ impl RpcHandler {
         anyhow::ensure!(
             state
                 .package_data
-                .get("indeedhub-api")
+                .get("indeedhub")
                 .is_some_and(|entry| matches!(
                     entry.state,
                     crate::data_model::PackageState::Running
                 )),
-            "The installed IndeeHub API must be running to register its media"
+            "The installed IndeeHub app must be running to register its media"
         );
         let identity =
             crate::identity::NodeIdentity::load_existing(&self.config.data_dir.join("identity"))
