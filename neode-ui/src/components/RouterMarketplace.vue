@@ -167,15 +167,20 @@ onBeforeUnmount(closeSockets)
         <article v-for="item in filtered" :key="item.id" class="router-marketplace__card">
           <img v-if="item.image" :src="item.image" :alt="item.title" class="router-marketplace__image" loading="lazy" />
           <div v-else class="router-marketplace__image router-marketplace__image--empty" aria-hidden="true">⌁</div>
-          <div class="min-w-0 flex-1">
+          <div class="router-marketplace__details">
             <h3 class="text-sm font-medium text-white truncate">{{ item.title }}</h3>
             <p class="text-xs text-white/55 mt-1 line-clamp-2">{{ item.summary }}</p>
             <div class="flex flex-wrap gap-x-3 gap-y-1 mt-3 text-[11px] text-white/40">
-              <span class="text-cyan-200/80">{{ formatPrice(item) }}</span>
               <span v-if="item.location">{{ item.location }}</span>
               <span>seller {{ item.pubkey.slice(0, 8) }}…</span>
             </div>
-            <button type="button" class="mt-3 text-xs text-white/55 border border-white/10 rounded-md px-2.5 py-1.5 cursor-not-allowed" disabled title="Checkout is the next step">Continue in Archipelago</button>
+            <div class="router-marketplace__footer">
+              <strong class="router-marketplace__price">{{ formatPrice(item) }}</strong>
+              <div class="router-marketplace__actions">
+                <button type="button" class="router-marketplace__action" disabled title="Listing details are next">View</button>
+                <button type="button" class="router-marketplace__action router-marketplace__action--buy" disabled title="Checkout is the next step">Buy</button>
+              </div>
+            </div>
           </div>
         </article>
       </div>
@@ -187,15 +192,23 @@ onBeforeUnmount(closeSockets)
 <style scoped>
 .router-marketplace { margin-top: 16px; }
 .router-marketplace--expanded { grid-column: 1 / -1; margin-top: 0; }
+.router-marketplace--expanded > .glass-card { height: 100%; display: flex; flex-direction: column; }
+.router-marketplace--expanded .router-marketplace__results { flex: 1; min-height: 0; }
 .router-marketplace__cta { display: inline-flex; align-items: center; gap: 10px; }
 @media (max-width: 1023px) {
   .router-marketplace__cta { width: 100%; justify-content: center; }
 }
 .router-marketplace__results { display: flex; gap: 16px; overflow-x: auto; overscroll-behavior-x: contain; scroll-snap-type: x mandatory; scrollbar-width: thin; padding-bottom: 4px; }
-.router-marketplace__card { display: flex; flex: 0 0 100%; scroll-snap-align: start; gap: 12px; min-width: 0; padding: 12px; border: 1px solid rgba(255,255,255,.09); border-radius: 11px; background: rgba(255,255,255,.035); }
+.router-marketplace__card { display: flex; flex: 0 0 100%; scroll-snap-align: start; flex-direction: column; gap: 12px; min-width: 0; height: 100%; padding: 12px; border: 1px solid rgba(255,255,255,.09); border-radius: 11px; background: rgba(255,255,255,.035); }
+.router-marketplace__details { display: flex; flex: 1; min-height: 0; flex-direction: column; }
+.router-marketplace__footer { margin-top: auto; padding-top: 18px; }
+.router-marketplace__price { display: block; color: rgba(180,244,235,.9); font-size: 18px; }
+.router-marketplace__actions { display: flex; gap: 8px; margin-top: 12px; }
+.router-marketplace__action { flex: 1; padding: 8px 12px; border: 1px solid rgba(255,255,255,.14); border-radius: 8px; color: rgba(255,255,255,.55); font-size: 12px; }
+.router-marketplace__action--buy { border-color: rgba(118,230,191,.35); color: rgba(180,244,235,.9); }
 @media (min-width: 768px) {
   .router-marketplace__card { flex-basis: calc((100% - 16px) / 2); }
 }
-.router-marketplace__image { width: 64px; height: 64px; object-fit: cover; border-radius: 8px; flex-shrink: 0; background: rgba(255,255,255,.05); }
+.router-marketplace__image { width: 100%; height: clamp(150px, 28vh, 260px); object-fit: cover; border-radius: 8px; flex-shrink: 0; background: linear-gradient(135deg, rgba(112,214,205,.18), rgba(255,255,255,.04)); }
 .router-marketplace__image--empty { display: grid; place-items: center; color: rgba(121,205,215,.6); font-size: 34px; }
 </style>
