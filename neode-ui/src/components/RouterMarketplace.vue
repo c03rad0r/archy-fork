@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
+import { rpcClient } from '@/api/rpc-client'
 
 const props = withDefaults(defineProps<{ expanded?: boolean }>(), { expanded: false })
 const emit = defineEmits<{ open: []; close: [] }>()
@@ -17,11 +18,7 @@ interface RouterListing {
   relay: string
 }
 
-const RELAYS = [
-  'wss://relay.damus.io',
-  'wss://nos.lol',
-  'wss://relay.nostr.band',
-]
+const relayUrls = ref<string[]>([])
 const open = ref(false)
 const query = ref('')
 const listings = ref<RouterListing[]>([])
@@ -71,8 +68,21 @@ function closeSockets() {
 async function search() {
   const run = ++requestId
   closeSockets(); loading.value = true; error.value = ''
+  try {
+    const configured = await rpcClient.call<{ relays?: Array<{ url?: string; enabled?: boolean }> }>({ method: 'nostr.list-relays', params: {} })
+    relayUrls.value = (configured.relays ?? [])
+      .filter(relay => relay.enabled !== false && typeof relay.url === 'string' && /^wss?:\/\//.test(relay.url))
+      .map(relay => relay.url!.replace(/\/$/, ''))
+  } catch {
+    relayUrls.value = []
+  }
+  if (!relayUrls.value.length) {
+    loading.value = false
+    error.value = 'No Archipelago Nostr relays are configured. Add a relay in Settings → Nostr Relays and try again.'
+    return
+  }
   const found = new Map<string, RouterListing>()
-  await Promise.all(RELAYS.map(relay => new Promise<void>(resolve => {
+  await Promise.all(relayUrls.value.map(relay => new Promise<void>(resolve => {
     let settled = false
     const finish = () => { if (!settled) { settled = true; resolve() } }
     let socket: WebSocket
