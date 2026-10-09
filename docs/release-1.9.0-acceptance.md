@@ -1350,3 +1350,23 @@ The frontend/API module changes are running-container UAT patches, not a new
 durable pinned app image. Full upload/publication and cached-identity-switch
 acceptance remain open. No payment, public listing, identity replacement, fleet
 catalog, OTA or ISO publication was performed by this repair.
+
+## ngit UAT contribution disposition — 2026-10-09
+
+The overlapping hardware proposals `a9165a5e`, `5a210008`, `a11eb1da`,
+and `39c7c335` were reviewed as one contribution and merged once at
+`a5637d9350aa05fa52136e736a64a5bccd1539c6`. ngit marked all four
+applied after main publication; no duplicate Gitea merge was created.
+The hardware frontend production build and six focused UI tests passed.
+
+Terminal proposal `c1156d20` merged at `02671438d`; its dashboard-origin
+security correction was separately reviewed as ngit proposal `2e6577db`
+and merged at `bb7961277`. The terminal frontend build, two shell suites,
+and isolated backend `terminal_origin_tests` passed. Declared-author proposal
+`924f78e1` merged at `3667105b2`; its isolated backend regression passed.
+The IndeeHub open-UAT checklist proposal `f9914a73` merged at `4b65879b6`.
+After publishing main at `4b65879b6`, ngit showed no open/draft proposals.
+
+`python3 scripts/check-git-mirrors.py --local` passed for local/ngit/Gitea
+main at `4b65879b6`. This is a main-ref check only, not an `--all` historical
+branch/tag audit, live-node acceptance, or permission to publish OTA/ISO.
