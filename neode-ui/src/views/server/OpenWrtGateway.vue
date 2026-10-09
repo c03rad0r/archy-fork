@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, nextTick } from 'vue'
 import { useRouter } from 'vue-router'
 import { rpcClient } from '@/api/rpc-client'
 import { useCachedResource } from '@/composables/useCachedResource'
@@ -116,6 +116,18 @@ const sshUser = ref('root')
 const sshPassword = ref('')
 const showConnectForm = ref(false)
 const routerShopOpen = ref(false)
+const routerCard = ref<HTMLElement>()
+const routerCardHeight = ref<string>()
+function openRouterShop() {
+  const height = routerCard.value?.getBoundingClientRect().height
+  if (height) routerCardHeight.value = `${height}px`
+  routerShopOpen.value = true
+}
+async function closeRouterShop() {
+  routerShopOpen.value = false
+  await nextTick()
+  routerCardHeight.value = undefined
+}
 const connecting = ref(false)
 const connectedParams = ref<Record<string, string> | null>(null)
 
@@ -534,10 +546,10 @@ onMounted(() => {
       <p v-if="error" class="mt-3 text-xs text-red-400">{{ error }}</p>
     </div>
 
-    <div class="glass-card p-6 mb-6 overflow-hidden router-model-card">
+    <div ref="routerCard" class="glass-card p-6 mb-6 overflow-hidden router-model-card" :style="routerCardHeight ? { height: routerCardHeight } : undefined">
       <div class="grid grid-cols-1 lg:grid-cols-[minmax(0,1fr)_minmax(280px,360px)] gap-6 items-start">
         <DeviceModel v-if="!routerShopOpen" model="beryl-ax" label="Beryl AX (GL-MT3000) OpenWrt router" fill-viewport :controls="false" />
-        <RouterMarketplace :expanded="routerShopOpen" @open="routerShopOpen = true" @close="routerShopOpen = false" />
+        <RouterMarketplace :expanded="routerShopOpen" @open="openRouterShop" @close="closeRouterShop" />
       </div>
     </div>
 

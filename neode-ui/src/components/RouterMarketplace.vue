@@ -82,8 +82,7 @@ async function search() {
     socket.addEventListener('open', () => {
       socket.send(JSON.stringify(['REQ', `archy-router-${run}`, {
         kinds: [30402],
-        '#t': ['router', 'openwrt', 'wifi'],
-        limit: 50,
+        limit: 200,
       }]))
     })
     socket.addEventListener('message', message => {
