@@ -1,6 +1,6 @@
 # Archipelago
 
-> **Alpha testing:** Archipelago is experimental software. Any funds you put on it are at your own risk.
+> **Alpha testing — funds at your own risk.** Archipelago is experimental software and is not production-ready. Any funds you put on it are at your own risk. Substantial security hardening is planned before production readiness; current builds are for testing and feedback.
 
 > Self-sovereign Bitcoin node OS and manifest-driven app platform.
 
@@ -13,14 +13,19 @@ Podman containers managed by the Rust backend.
 [![License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 [![Rust](https://img.shields.io/badge/rust-stable-orange)](https://www.rust-lang.org/)
 [![Vue.js](https://img.shields.io/badge/vue.js-3.5-brightgreen)](https://vuejs.org/)
-[![Version](https://img.shields.io/badge/version-1.8.13--alpha-blue)](https://source.archipelago-foundation.org/lfg2025/archy/releases)
+[![Version](https://img.shields.io/badge/version-1.9.0--alpha-blue)](https://source.archipelago-foundation.org/lfg2025/archy/releases)
 
 ## Current release
 
-The current pre-release is **v1.8.13-alpha**. Release notes and signed OTA
-artifacts are published on [Gitea](https://source.archipelago-foundation.org/lfg2025/archy/releases).
-The same source is mirrored through ngit for Nostr-native cloning and
-contribution:
+The latest published pre-release is **v1.9.0-alpha**. Download the
+[x86_64 server installer ISO](https://source.archipelago-foundation.org/lfg2025/archy/releases/download/v1.9.0-alpha/archipelago-installer-1.9.0-alpha-unbundled-x86_64.iso)
+or read the [release notes and known limitations](https://source.archipelago-foundation.org/lfg2025/archy/releases/tag/v1.9.0-alpha).
+Newer changes on `main` and private UAT deployments are not included in that
+published ISO. Check the [releases page](https://source.archipelago-foundation.org/lfg2025/archy/releases)
+for subsequent published installers and signed OTA artifacts.
+
+**ngit is the canonical source contribution and review platform.** Gitea mirrors
+accepted source and hosts release downloads. For Nostr-native cloning:
 
 ```
 nostr://npub1w3sqdkrhn0gyuvsex32effzgnfpyde6qrrc4u467flg5e9txh4wsfn5vjg/relay.ngit.dev/archy
@@ -28,6 +33,50 @@ nostr://npub1w3sqdkrhn0gyuvsex32effzgnfpyde6qrrc4u467flg5e9txh4wsfn5vjg/relay.ng
 
 Clone with ngit, or use the Gitea mirror when you need a conventional Git
 remote. Contributions should follow [CONTRIBUTING.md](CONTRIBUTING.md).
+
+## Install on a server
+
+Use a dedicated **x86_64 Intel/AMD server, mini PC, or PC**, an SSD, and an
+8 GB or larger USB drive. For Bitcoin and multiple apps, 8 GB or more RAM and
+a generously sized SSD are recommended; an unpruned Bitcoin node needs room
+for the growing blockchain. Connect Ethernet and a monitor/keyboard, or use
+your server's remote console and virtual installation media.
+
+1. **Download the installer and checksum:**
+   - [Archipelago 1.9.0-alpha ISO](https://source.archipelago-foundation.org/lfg2025/archy/releases/download/v1.9.0-alpha/archipelago-installer-1.9.0-alpha-unbundled-x86_64.iso) (approximately 2.7 GB).
+   - [SHA-256 checksum](https://source.archipelago-foundation.org/lfg2025/archy/releases/download/v1.9.0-alpha/archipelago-installer-1.9.0-alpha-unbundled-x86_64.iso.sha256).
+   - [Signed checksum JSON](https://source.archipelago-foundation.org/lfg2025/archy/releases/download/v1.9.0-alpha/archipelago-installer-1.9.0-alpha-unbundled-x86_64.iso.sha256.json).
+2. **Verify the download.** Save the ISO and `.sha256` file together, then on
+   Linux run:
+
+   ```bash
+   sha256sum --check archipelago-installer-1.9.0-alpha-unbundled-x86_64.iso.sha256
+   ```
+
+   The result must be `OK`. This checks file integrity; the signed JSON is
+   provided separately for release-signature verification.
+3. **Write the ISO to USB** using [Balena Etcher](https://etcher.balena.io/) or
+   your preferred image writer. Write the image rather than copying the ISO
+   into the USB filesystem. For a remotely managed server, attach the ISO as
+   virtual installation media instead. This is a raw `.iso`; no decompression
+   is needed.
+4. **Boot the server from that media.** Disable Secure Boot for this installer
+   and follow the console installation prompts. **Installation erases the
+   selected target disk**, so back up its contents and check the disk selection
+   carefully.
+5. **Remove/eject the installation media and boot from the installed disk.**
+   Find the server's address in your router's DHCP client list or local console,
+   then open `http://<server-ip>` from another device on the same network.
+6. **Complete first-run setup:** create your dashboard password and follow the
+   onboarding wizard to choose apps and Bitcoin storage settings. The unbundled
+   ISO downloads app images as needed, so allow internet access for app setup.
+
+For an existing Archipelago server, use the dashboard's **Settings** update
+flow for a published OTA rather than reinstalling. See the
+[user walkthrough](docs/user-walkthrough.md) for onboarding and daily use.
+
+**This remains alpha software: funds are at your own risk, and production
+security hardening is still ahead.**
 
 ## What is here
 
