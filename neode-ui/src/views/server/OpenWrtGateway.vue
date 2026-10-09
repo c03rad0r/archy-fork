@@ -1022,8 +1022,12 @@ onMounted(() => {
 
 <style scoped>
 @media (min-width: 1024px) {
-  .router-model-card .device-model--viewport {
-    min-height: calc(100dvh - 216px);
+  .router-model-card {
+    max-height: calc(100dvh - 168px);
+  }
+
+  .router-model-card > .grid {
+    max-height: calc(100dvh - 216px);
   }
 
   .router-model-card > .grid > .router-marketplace {
