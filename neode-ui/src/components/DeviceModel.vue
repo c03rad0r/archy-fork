@@ -160,8 +160,8 @@ onBeforeUnmount(() => {
       :tabindex="ready ? 0 : -1" role="group" :aria-label="`${label}. Drag or use arrow keys to rotate. Home shows the front; End shows the back.`"
       @pointerdown="down" @pointermove="move" @pointerup="up" @pointercancel="up" @lostpointercapture="up" @keydown="key">
       <img v-if="!ready && fallback" :src="fallback" :alt="label" class="device-model__fallback" />
-      <div v-else-if="!ready" class="device-model__placeholder" role="img" :aria-label="label">
-        <svg viewBox="0 0 200 120" aria-hidden="true"><rect x="31" y="59" width="138" height="46" rx="15"/><path d="M38 65V17Q38 9 45 9T52 17V60M148 60V17Q148 9 155 9T162 17V65M92 87h16"/></svg>
+      <div v-else-if="!ready" class="device-model__placeholder" role="status" aria-label="Loading 3D illustration">
+        <span class="device-model__loader" aria-hidden="true"><i></i><i></i><i></i></span>
       </div>
     </div>
     <figcaption v-if="controls || devBrowseEnabled" class="device-model__caption">
@@ -188,7 +188,12 @@ onBeforeUnmount(() => {
 .device-model__stage :deep(canvas) { display: block; width: 100%; height: 100%; }
 .device-model__fallback { width: 100%; height: 100%; object-fit: contain; padding: 22px; }
 .device-model__placeholder { height: 100%; display: grid; place-items: center; }
-.device-model__placeholder svg { width: min(65%, 280px); fill: rgba(63,126,146,.2); stroke: #619ba9; stroke-width: 2; }
+.device-model__loader { display: flex; align-items: center; gap: 8px; opacity: .7; }
+.device-model__loader i { display: block; width: 7px; height: 7px; border-radius: 999px; background: rgba(140,228,213,.75); animation: device-model-pulse 1.1s ease-in-out infinite; }
+.device-model__loader i:nth-child(2) { animation-delay: .14s; }
+.device-model__loader i:nth-child(3) { animation-delay: .28s; }
+@keyframes device-model-pulse { 0%, 60%, 100% { transform: scale(.65); opacity: .35; } 30% { transform: scale(1); opacity: 1; } }
+@media (prefers-reduced-motion: reduce) { .device-model__loader i { animation: none; opacity: .65; } }
 .device-model__caption { position: absolute; inset: auto 0 0; display: flex; justify-content: center; align-items: center; gap: 14px; color: rgba(255,255,255,.4); font-size: 11px; }
 .device-model__caption button { padding: 4px 9px; color: rgba(255,255,255,.65); border: 1px solid rgba(255,255,255,.12); border-radius: 20px; background: transparent; cursor: pointer; }
 .device-model__counter { color: rgba(255,255,255,.3); font-variant-numeric: tabular-nums; }
