@@ -19,6 +19,8 @@ if [[ ${ARCHY_TEST_ISOLATOR:-systemd} == podman ]]; then
   cargo_home=$(mkdir -p "$cargo_home" && cd "$cargo_home" && pwd)
   artifacts=$(mktemp -d)
   trap 'rm -rf -- "$artifacts"' EXIT
+  install -d "$artifacts/runtime/archipelago" "$artifacts/runtime/containers" \
+    "$artifacts/runtime/tmp"
 
   podman run --rm \
     --cpus="${ARCHY_TEST_CPUS:-4}" --memory="${ARCHY_TEST_MEMORY:-4g}" --pids-limit=2048 \
@@ -54,10 +56,12 @@ PY
 
   podman run --rm \
     --cpus="${ARCHY_TEST_CPUS:-4}" --memory="${ARCHY_TEST_MEMORY:-4g}" --pids-limit=1024 \
-    --cap-drop=all --security-opt=no-new-privileges --read-only \
-    --tmpfs /tmp:rw,size=512m --tmpfs /run:rw,size=64m \
-    --tmpfs /var/lib/archipelago:rw,size=256m --tmpfs /var/lib/containers:rw,size=256m \
-    --tmpfs /root:rw,size=64m --network=none \
+    --cap-drop=all --cap-add=chown --cap-add=fowner --cap-add=setuid --cap-add=setgid \
+    --security-opt=no-new-privileges --read-only \
+    --tmpfs /run:rw,size=64m --tmpfs /root:rw,size=64m --network=none \
+    --volume "$artifacts/runtime/tmp:/tmp:rw,Z" \
+    --volume "$artifacts/runtime/archipelago:/var/lib/archipelago:rw,Z" \
+    --volume "$artifacts/runtime/containers:/var/lib/containers:rw,Z" \
     --volume "$REPO:/workspace:ro,Z" --workdir /workspace/core \
     --env ARCHY_TEST_ISOLATED=1 \
     "$image" "$executable" --test-threads="${ARCHY_TEST_THREADS:-4}" "$@"

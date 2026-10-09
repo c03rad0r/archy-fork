@@ -1979,9 +1979,9 @@ pub(super) fn manifest_apps_dirs() -> Vec<std::path::PathBuf> {
     if let Some(root) = std::env::var_os("ARCHIPELAGO_APPS_DIR") {
         dirs.push(root.into());
     }
-    if let Ok(manifest_dir) = std::env::var("CARGO_MANIFEST_DIR") {
-        dirs.push(Path::new(&manifest_dir).join("../../apps"));
-    }
+    // Cargo exposes this at compile time, not when an already-built isolated
+    // test executable is launched from a different working directory.
+    dirs.push(Path::new(env!("CARGO_MANIFEST_DIR")).join("../../apps"));
     dirs.extend([
         Path::new("apps").to_path_buf(),
         Path::new("/opt/archipelago/apps").to_path_buf(),
