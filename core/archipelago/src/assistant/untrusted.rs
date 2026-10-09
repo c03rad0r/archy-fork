@@ -30,7 +30,7 @@ pub const TOKEN_LEN: usize = 8;
 /// wrapped. Called exactly once per [`UntrustedBlock::new`] /
 /// [`wrap_untrusted`] invocation.
 fn fresh_token() -> String {
-    rand::thread_rng()
+    rand::rngs::OsRng
         .sample_iter(Alphanumeric)
         .take(TOKEN_LEN)
         .map(char::from)
