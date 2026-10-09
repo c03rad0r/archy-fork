@@ -102,7 +102,7 @@ impl MetricsStore {
         // Use saturating semantics to avoid underflow
         let _ = self
             .ws_connections
-            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |v| {
+            .try_update(Ordering::Relaxed, Ordering::Relaxed, |v| {
                 if v > 0 {
                     Some(v - 1)
                 } else {
