@@ -191,7 +191,7 @@ onBeforeUnmount(closeSockets)
 
 <style scoped>
 .router-marketplace { margin-top: 16px; }
-.router-marketplace--expanded { grid-column: 1 / -1; margin-top: 0; }
+.router-marketplace--expanded { grid-column: 1 / -1; height: 100%; margin-top: 0; }
 .router-marketplace--expanded > .glass-card { height: 100%; display: flex; flex-direction: column; }
 .router-marketplace--expanded .router-marketplace__results { flex: 1; min-height: 0; }
 .router-marketplace__cta { display: inline-flex; align-items: center; gap: 10px; }

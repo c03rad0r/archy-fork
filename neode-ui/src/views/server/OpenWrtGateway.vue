@@ -1038,6 +1038,7 @@ onMounted(() => {
 .router-model-card {
   margin: 24px 0 48px;
 }
+.router-model-card > .grid { height: 100%; }
 
 @media (min-width: 1024px) {
   .router-model-card > .grid > .router-marketplace {
