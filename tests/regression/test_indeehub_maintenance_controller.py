@@ -444,6 +444,34 @@ console.log('process identity cases passed');'''
   with self.assertRaisesRegex(RuntimeError,'business work'):c.legacy_api_idle()
   counts['other_active_transactions']=0;c.legacy_api_idle()
   self.assertEqual(c.record['legacy_api_empty_state'],counts)
+ def test_money_free_uat_requires_all_monetary_history_and_capability_absent(self):
+  counts=dict.fromkeys(module.UAT_ZERO_COUNTS,0)
+  probe={'main_sha256':module.UAT_API_MAIN_SHA256,'providers_absent':True,'http_connections_absent':True,'registration_disabled':True,'publication_disabled':True}
+  self.assertTrue(module.valid_money_free_uat(counts,probe))
+  for name in counts:
+   for value in (1,-1,False,None):
+    self.assertFalse(module.valid_money_free_uat(dict(counts,**{name:value}),probe))
+   missing=dict(counts);missing.pop(name)
+   self.assertFalse(module.valid_money_free_uat(missing,probe))
+  for name in probe:
+   changed=dict(probe);changed[name]=False if name!='main_sha256' else '0'*64
+   self.assertFalse(module.valid_money_free_uat(counts,changed))
+ def test_money_free_stopped_proof_rejects_changed_data_and_operation(self):
+  import copy
+  c=self.controller;m=next(m for m in members() if m['name']=='indeedhub-api')
+  counts=dict.fromkeys(module.UAT_ZERO_COUNTS,0)
+  probe={'main_sha256':module.UAT_API_MAIN_SHA256,'providers_absent':True,'http_connections_absent':True,'registration_disabled':True,'publication_disabled':True}
+  baseline={'operation_id':self.operation,'tables':{'projects':{'rows':1,'rows_sha256':'a'*64}}}
+  c.record={'money_free_uat':{'operation_id':self.operation,'container_id':m['container_id'],'image_id':m['image_id'],'counts':counts,'probe':probe,'database_before_signal':baseline}}
+  c.holds=lambda:None;c.fence_matches=lambda:None;c.require_api_stopped=lambda _:None
+  c.money_free_uat_counts=lambda:dict(counts);c.database_commitments=lambda:copy.deepcopy(baseline)
+  c.verify_money_free_uat_stopped(m)
+  self.assertTrue(c.record['money_free_uat']['stopped_data_verified'])
+  c.database_commitments=lambda:{'operation_id':self.operation,'tables':{'projects':{'rows':2,'rows_sha256':'b'*64}}}
+  with self.assertRaisesRegex(RuntimeError,'Committed data changed'):c.verify_money_free_uat_stopped(m)
+  c.database_commitments=lambda:copy.deepcopy(baseline)
+  c.record['money_free_uat']['operation_id']='foreign'
+  with self.assertRaisesRegex(RuntimeError,'proof missing'):c.verify_money_free_uat_stopped(m)
  def test_rollback_compatibility_binds_operation_preserves_rows_and_allows_only_empty_additions(self):
   import copy
   table={'schema':{'columns':['original']},'rows':0,'rows_sha256':'a'*64}

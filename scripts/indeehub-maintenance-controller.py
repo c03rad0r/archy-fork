@@ -12,6 +12,29 @@ QUEUE_COUNTS = frozenset(('active','waiting','paused','delayed','failed','comple
 def valid_queue_counts(counts):
     return isinstance(counts,dict) and set(counts)==QUEUE_COUNTS and all(type(v) is int and v>=0 for v in counts.values())
 BUSINESS_COUNTS = frozenset(('projects','contents','payments','shareholders','subscriptions','library_items','other_active_transactions'))
+# A bounded compatibility path for the already-upgraded API on alpha UAT nodes.
+# This is NOT permission to interrupt a populated payment system. Every monetary
+# history/intent must be absent, revenue zero, and payment providers unconfigured.
+UAT_API_MAIN_SHA256 = '6ff3d4fa5d6a17c530a8e69b2b8b65ec8214c03e71f9a8cf3a27dd53702f1120'
+UAT_EMPTY_TABLES = ('payments','payouts','rents','season_rents','subscriptions',
+    'library_items','zap_stats','archipelago_rental_entitlements',
+    'archipelago_registration_intents','archipelago_publication_outbox','archipelago_publications')
+UAT_ZERO_COUNTS = frozenset(UAT_EMPTY_TABLES) | {'nonzero_revenue','other_active_transactions'}
+UAT_API_PROBE = r'''const fs=require('fs'),crypto=require('crypto');
+const keys=['BTCPAY_API_KEY','BTCPAY_STORE_ID','BTCPAY_URL','BTCPAY_SERVER_URL','STRIKE_API_KEY'];
+const port=Number(process.env.PORT||4000).toString(16).toUpperCase().padStart(4,'0');
+const sockets=['/proc/net/tcp','/proc/net/tcp6'].flatMap(p=>fs.readFileSync(p,'utf8').trim().split('\n').slice(1));
+console.log(JSON.stringify({main_sha256:crypto.createHash('sha256').update(fs.readFileSync('/app/dist/main.js')).digest('hex'),
+ http_connections_absent:sockets.every(s=>{const c=s.trim().split(/\s+/);return !c[1].endsWith(':'+port)||['0A','06','07'].includes(c[3]);}),
+ providers_absent:keys.every(k=>!process.env[k]),
+ registration_disabled:process.env.ARCHIPELAGO_REGISTRATION_ENABLED==='false',
+ publication_disabled:process.env.ARCHIPELAGO_PUBLICATION_ENABLED==='false'}));'''
+def valid_money_free_uat(counts, probe):
+    return (isinstance(counts,dict) and set(counts)==UAT_ZERO_COUNTS
+        and all(type(v) is int and v==0 for v in counts.values())
+        and isinstance(probe,dict) and all(type(probe.get(k)) is bool for k in ('providers_absent','http_connections_absent','registration_disabled','publication_disabled'))
+        and probe=={'main_sha256':UAT_API_MAIN_SHA256,'providers_absent':True,'http_connections_absent':True,
+            'registration_disabled':True,'publication_disabled':True})
 def valid_empty_business(counts):
     return isinstance(counts,dict) and set(counts)==BUSINESS_COUNTS and all(type(v) is int and v==0 for v in counts.values())
 def valid_empty_queue(observed):
@@ -350,8 +373,46 @@ class Controller:
         sql="SELECT json_build_object("+fields+",'other_active_transactions',(SELECT count(*) FROM pg_stat_activity WHERE datname=current_database() AND pid<>pg_backend_pid() AND state<>'idle'))"
         counts=json.loads(self.run(['podman','exec','indeedhub-postgres','psql','-XAt','-U','indeedhub','-d','indeedhub','-c',sql]))
         require(set(counts)==set(tables)|{'other_active_transactions'},'Legacy API business-state observation incomplete')
-        require(all(type(value) is int and value==0 for value in counts.values()),'Legacy API has business work or active transactions; completion cannot be inferred')
+        if not all(type(value) is int and value==0 for value in counts.values()):
+            require(all(type(counts[name]) is int and counts[name]==0 for name in ('payments','subscriptions','library_items','other_active_transactions')),'Legacy API has business work or active transactions; completion cannot be inferred')
+            # Keep the original empty-business rule for unknown/older APIs. The
+            # known shutdown-aware API can retain free draft projects, provided
+            # there is no monetary capability or history and no active writer.
+            self.money_free_uat_idle()
+            return
         self.record['legacy_api_empty_state']=counts;self.save()
+    def money_free_uat_counts(self):
+        fields=','.join("'%s',(SELECT count(*) FROM public.%s)"%(name,name) for name in UAT_EMPTY_TABLES)
+        sql="SELECT json_build_object("+fields+",'nonzero_revenue',(SELECT count(*) FROM public.shareholders WHERE pending_revenue IS NULL OR rent_pending_revenue IS NULL OR pending_revenue<>0 OR rent_pending_revenue<>0),'other_active_transactions',(SELECT count(*) FROM pg_stat_activity WHERE datname=current_database() AND pid<>pg_backend_pid() AND state<>'idle'))"
+        return json.loads(self.run(['podman','exec','indeedhub-postgres','psql','-XAt','-U','indeedhub','-d','indeedhub','-c',sql]))
+    def money_free_uat_idle(self):
+        self.holds();self.fence_matches()
+        require(self.record.get('ingress_closed') is True,'UAT API admission is not closed')
+        for name in ('indeedhub','indeedhub-ffmpeg'):
+            require(self.record.get('stopped',{}).get(name,{}).get('confirmed') is True,'UAT frontend/worker not stopped')
+        member=next(m for m in self.record['original_members'] if m['name']=='indeedhub-api')
+        actual=self.inspect(member['name'])
+        require(actual['Id']==member['container_id'] and actual['Image']==member['image_id'] and actual['State']['Running'],'UAT API identity changed')
+        require(self.record.get('queue_pause_confirmed') is True and valid_queue_counts(self.record.get('last_queue_counts')) and all(v==0 for v in self.record['last_queue_counts'].values()),'UAT queue is not paused and empty')
+        probe=json.loads(self.run(['podman','exec',member['container_id'],'node','-e',UAT_API_PROBE]))
+        counts=self.money_free_uat_counts()
+        require(valid_money_free_uat(counts,probe),'Legacy API has business work or active transactions; no qualified money-free shutdown path')
+        # Capture committed data before signalling, then require exact equality
+        # after shutdown. A changed row refuses forward cutover; native recovery
+        # retains these live rows instead of restoring an older database.
+        before=self.database_commitments()
+        self.record['money_free_uat']={'operation_id':self.operation,'container_id':member['container_id'],
+            'image_id':member['image_id'],'probe':probe,'counts':counts,'database_before_signal':before}
+        self.save()
+    def verify_money_free_uat_stopped(self, member):
+        proof=self.record.get('money_free_uat')
+        require(isinstance(proof,dict) and proof.get('operation_id')==self.operation
+            and proof.get('container_id')==member['container_id'] and proof.get('image_id')==member['image_id']
+            and valid_money_free_uat(proof.get('counts'),proof.get('probe')),'Money-free UAT shutdown proof missing')
+        self.holds();self.fence_matches();self.require_api_stopped(member)
+        require(valid_money_free_uat(self.money_free_uat_counts(),proof['probe']),'Monetary state changed during UAT shutdown')
+        require(self.database_commitments()==proof['database_before_signal'],'Committed data changed during UAT shutdown; retain live data for recovery')
+        proof['stopped_data_verified']=True;self.save()
     def api_recovery_identity(self, member, role="api"):
         self.holds();self.fence_matches()
         require(role in ('api','relay') and member['name']=='indeedhub-'+role,'Legacy signal member required')
@@ -489,7 +550,9 @@ class Controller:
         self.api_recovery_identity(member)
         stopped=self.record['stopped'][member['name']];signal=stopped.get('api_signal',{})
         require(signal.get('operation_id')==self.operation and signal.get('container_id')==member['container_id'] and signal.get('acknowledged') is True and signal.get('intent_at',0)>=stopped['intent_at'],'Legacy API signal proof missing')
-        require(valid_empty_business(self.record.get('legacy_api_empty_state')),'Legacy API empty-business proof missing')
+        money_free=self.record.get('money_free_uat') is not None
+        if money_free:self.verify_money_free_uat_stopped(member)
+        else:require(valid_empty_business(self.record.get('legacy_api_empty_state')),'Legacy API empty-business proof missing')
         require(valid_api_process_proof(signal.get('proof')) and valid_empty_queue(signal.get('before_queue')) and type(signal.get('acknowledged_at')) in (int,float) and signal['acknowledged_at']>=signal['intent_at'],'Legacy API durable signal proof incomplete')
         state=dict(line.split('=',1) for line in properties.splitlines() if '=' in line)
         require(state.get('ActiveState')=='failed' and state.get('SubState')=='failed' and state.get('ExecMainStatus')=='1' and state.get('Result')=='exit-code','Unrecognized API wrapper exit')
@@ -497,7 +560,7 @@ class Controller:
         self.require_api_stopped(member)
         require(isinstance(signal.get('queue_binding'),dict),'API queue binding proof missing')
         after=self.observe_empty_redis_queue(member,signal['prefix'],signal['queue_binding'])
-        return {'classification':'empty-business-legacy-api-child-signal-termination','graceful':False,'completed_work_claim':False,'process_dead':True,'signal':signal,'after_queue':after}
+        return {'classification':('money-free-uat-api-child-signal-termination' if money_free else 'empty-business-legacy-api-child-signal-termination'),'graceful':False,'completed_work_claim':False,'process_dead':True,'signal':signal,'after_queue':after}
     def legacy_idle_worker_termination(self, member, properties):
         # Compatibility only for the observed original Node-as-PID1 worker.
         # A timeout/SIGKILL is never renamed graceful or completed work.
@@ -583,14 +646,17 @@ class Controller:
         code=matching[-1].get('ContainerExitCode',matching[-1].get('containerExitCode'))
         idle_worker = name=='indeedhub-ffmpeg' and self.record.get('queue_pause_confirmed') is True and valid_queue_counts(self.record.get('last_queue_counts')) and self.record['last_queue_counts']['active']==0
         empty_api = name=='indeedhub-api' and self.record.get('legacy_api_empty_state') is not None
+        money_free_api = name=='indeedhub-api' and self.record.get('money_free_uat') is not None
+        if money_free_api:self.verify_money_free_uat_stopped(member)
         forced=self.legacy_idle_worker_termination(member,properties) if str(code)=='137' else None
         if name=='indeedhub-api' and str(code)=='1':forced=self.legacy_api_wrapper_termination(member,properties)
         require(forced is not None or ('ActiveState=inactive' in properties and 'Result=success' in properties),'Service did not stop successfully')
-        require(forced is not None or str(code)=='0' or (str(code)=='143' and (idle_worker or empty_api)),'Original process did not exit cleanly; active work is not claimed completed')
+        require(forced is not None or str(code)=='0' or (str(code)=='143' and (idle_worker or empty_api or money_free_api)),'Original process did not exit cleanly; active work is not claimed completed')
         if name=='indeedhub-relay':
             require(str(code)=='0','Relay native shutdown did not exit cleanly')
             self.require_api_stopped(member)
         classification=forced['classification'] if forced else (('idle-worker-terminated-after-queue-drain' if idle_worker else 'empty-business-store-legacy-api-terminated') if str(code)=='143' else 'clean-process-exit')
+        if money_free_api:classification='money-free-uat-api-terminated-data-preserved'
         if forced:stopped[name]['legacy_idle_termination']=forced
         stopped[name].update(confirmed=True,exit_code=int(code),classification=classification,confirmed_at=time.time());self.save()
     def volume_sources(self):
