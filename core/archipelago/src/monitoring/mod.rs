@@ -40,10 +40,12 @@ pub fn spawn_metrics_collector(
                     store.push(snapshot).await;
                     debug!("Metrics snapshot collected");
 
+                    // Reconcile even when all thresholds have recovered, so
+                    // the previous disk/RAM/CPU warning disappears promptly.
+                    if let Some(ref state_mgr) = state {
+                        notifications::push_alert_notifications(state_mgr, &alerts).await;
+                    }
                     if !alerts.is_empty() {
-                        if let Some(ref state_mgr) = state {
-                            notifications::push_alert_notifications(state_mgr, &alerts).await;
-                        }
                         if let Some(ref dir) = data_dir {
                             notifications::deliver_alert_webhooks(dir, &alerts).await;
                         }
