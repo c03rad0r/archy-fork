@@ -1,8 +1,8 @@
 <template>
   <Teleport to="body">
     <Transition name="cli-popup">
-      <div v-if="cliStore.isOpen" class="fixed inset-0 z-[2500] flex items-center justify-center p-4 pointer-events-none">
-        <section ref="panelRef" class="glass-card terminal-panel relative z-10 w-full overflow-hidden pointer-events-auto" :class="{ minimized }" :style="panelStyle" aria-label="Archipelago terminal">
+      <div v-if="cliStore.isOpen" class="fixed inset-0 z-[2500] flex items-center justify-end p-4 pointer-events-none">
+        <section ref="panelRef" class="glass-card terminal-panel relative z-10 w-full overflow-hidden pointer-events-auto md:mr-4" :class="{ minimized }" :style="panelStyle" aria-label="Archipelago terminal">
           <header class="terminal-header sticky top-0 z-10 flex items-center gap-3 border-b border-white/10 px-4 py-3 bg-black/60 backdrop-blur-md md:bg-transparent md:backdrop-blur-none" @mousedown="startDrag">
             <div class="terminal-drag-handle" title="Drag to move">
               <svg class="w-4 h-4 text-white/50" fill="currentColor" viewBox="0 0 24 24"><path d="M8 6h2v2H8V6zm0 5h2v2H8v-2zm0 5h2v2H8v-2zm5-10h2v2h-2V6zm0 5h2v2h-2v-2zm0 5h2v2h-2v-2z" /></svg>
@@ -20,11 +20,11 @@
               <button class="terminal-icon-button" type="button" aria-label="Close" @click="closeTerminal"><svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" /></svg></button>
             </div>
           </header>
-          <div v-if="!minimized" class="terminal-body">
+          <div v-show="!minimized" class="terminal-body">
             <div v-if="error" class="terminal-empty terminal-error"><strong>Terminal unavailable</strong><span>{{ error }}</span><button class="terminal-button" type="button" @click="loadSessions">Retry</button></div>
             <div v-else-if="!sessions.length" class="terminal-empty"><strong>Create your first developer session</strong><span>Sessions stay running when this window closes and can be resumed later.</span><button class="terminal-button terminal-primary" type="button" @click="createSession">Start session</button></div>
             <div v-else-if="!selectedId" class="terminal-empty"><strong>Choose a session</strong><span>Resume an existing workspace or start a new one.</span></div>
-            <div v-else ref="terminalRef" class="terminal-output" tabindex="0" aria-label="Archipelago terminal session" @click="focusInput"></div>
+            <div v-else ref="terminalRef" class="terminal-output" tabindex="0" aria-label="Archipelago terminal session" @pointerdown.stop="focusInput" @click.stop="focusInput"></div>
           </div>
           <footer v-if="selectedId && !minimized" class="terminal-input-bar">
             <span class="terminal-status" :class="{ connected: connected }">{{ connected ? 'Connected' : 'Reconnecting…' }}</span>
@@ -59,6 +59,7 @@ let terminal: Terminal | null = null
 let fitAddon: FitAddon | null = null
 let resizeObserver: ResizeObserver | null = null
 let socket: WebSocket | null = null
+let renderedSession = ''
 
 const activeSession = computed(() => sessions.value.find(session => session.id === selectedId.value))
 const panelStyle = computed(() => ({ transform: `translate(${position.value.x}px, ${position.value.y}px)` }))
@@ -88,7 +89,7 @@ async function createSession() {
 }
 
 function closeTerminal() { disconnect(); cliStore.close() }
-function refreshTerminal() { if (selectedId.value) connectSelected(); else loadSessions() }
+function refreshTerminal() { if (selectedId.value) { terminal?.reset(); connectSelected() } else loadSessions() }
 function startDrag(event: MouseEvent) {
   if ((event.target as HTMLElement).closest('button, select, input')) return
   dragging.value = { x: event.clientX, y: event.clientY, px: position.value.x, py: position.value.y }
@@ -105,8 +106,12 @@ async function toggleFullscreen() {
 }
 function disconnect() { socket?.close(); socket = null; connected.value = false }
 function connectSelected() {
-  disconnect(); terminal?.reset()
+  disconnect()
   if (!selectedId.value) return
+  if (renderedSession !== selectedId.value) {
+    terminal?.reset()
+    renderedSession = selectedId.value
+  }
   socket = new WebSocket(wsUrl(selectedId.value))
   socket.onopen = () => { connected.value = true; resizeTerminal() }
   socket.onclose = () => { connected.value = false }
@@ -114,7 +119,9 @@ function connectSelected() {
   socket.onmessage = event => {
     try {
       const message = JSON.parse(event.data)
-      if (message.type === 'output') { terminal?.write(message.data); terminal?.scrollToBottom() }
+      if (message.type === 'output') {
+        terminal?.write(message.data, () => terminal?.scrollToBottom())
+      }
     } catch { /* ignore malformed frames */ }
   }
 }
@@ -185,6 +192,8 @@ onBeforeUnmount(() => {
 .terminal-output { box-sizing: border-box; height: 100%; max-height: 100%; margin: 0; overflow: hidden; padding: 14px 16px; color: rgba(255,255,255,.9); outline: none; }
 .terminal-output :deep(.xterm) { height: 100%; width: 100%; }
 .terminal-output :deep(.xterm-viewport) { background: transparent !important; }
+.terminal-output:not(:focus-within) :deep(.xterm-cursor) { visibility: hidden !important; }
+.terminal-output:focus-within :deep(.xterm-cursor) { visibility: visible !important; }
 .terminal-input-bar { border-top: 1px solid rgba(255,255,255,.1); } .terminal-prompt { color: #f7931a; font-size: 20px; } .terminal-input { flex: 1; min-width: 0; border: 0; outline: 0; background: transparent; color: white; font: 13px ui-monospace, monospace; }
 .terminal-status { color: rgba(255,255,255,.5); font-size: 11px; } .terminal-status.connected { color: #92d6a0; }
 .terminal-hint { margin-left: auto; color: rgba(255,255,255,.35); font-size: 11px; }
