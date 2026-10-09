@@ -67,7 +67,9 @@ function layout() {
     let scroll = 0
     for (let el = frame.value.parentElement; el; el = el.parentElement) scroll += el.scrollTop
     const top = frame.value.getBoundingClientRect().top + scroll
-    remainingHeight.value = `${Math.max(260, window.innerHeight - top - 24)}px`
+    // Keep a visible page gutter below the showcase; the frame sits inside a
+    // glass card whose bottom margin must remain visible in the viewport.
+    remainingHeight.value = `${Math.max(260, window.innerHeight - top - 88)}px`
   }
   view?.resize()
 }
