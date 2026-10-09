@@ -18,10 +18,10 @@ mod handshake;
 mod identity;
 mod interfaces;
 mod lightning_purchase;
-mod onchain_purchase;
 pub(crate) mod lnd;
 mod marketplace;
 mod media_registration;
+mod onchain_purchase;
 mod playback;
 mod purchase;
 // pub(crate): 13-10's `assistant::backends::select_backend` reuses
@@ -34,12 +34,12 @@ mod monitoring;
 mod music;
 mod names;
 mod network;
-mod publishing;
 mod node;
 mod nostr;
 mod onboarding_gate;
 mod openwrt;
 mod package;
+mod publishing;
 pub(crate) use package::patch_indeedhub_nostr_provider;
 pub(crate) use package::wyoming_satellite_keeper;
 mod peers;
@@ -112,7 +112,6 @@ fn native_consent_origin_allowed(method: &str, headers: &hyper::HeaderMap, dev_m
             | "media.registration.context"
             | "media.registration.resolve"
             | "content.rental-purchase"
-
             | "content.onchain-cancel"
             | "content.onchain-attempt"
             | "content.onchain-create"

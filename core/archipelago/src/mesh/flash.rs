@@ -113,22 +113,19 @@ const PORT_FREE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10
 /// resource is gone yet).
 async fn wait_for_port_free(path: &str) -> Result<()> {
     let deadline = tokio::time::Instant::now() + PORT_FREE_TIMEOUT;
-    let mut last_err = None;
     loop {
         match serial2_tokio::SerialPort::open(path, 115200) {
             Ok(_) => return Ok(()),
-            Err(e) => last_err = Some(e),
-        }
-        if tokio::time::Instant::now() >= deadline {
-            break;
+            Err(error) if tokio::time::Instant::now() >= deadline => {
+                return Err(anyhow::anyhow!(
+                    "{path} is still held open by something else after {}s (last error: {error}) — refusing to start the flasher against a contended port",
+                    PORT_FREE_TIMEOUT.as_secs(),
+                ));
+            }
+            Err(_) => {}
         }
         tokio::time::sleep(std::time::Duration::from_millis(500)).await;
     }
-    Err(anyhow::anyhow!(
-        "{path} is still held open by something else after {}s (last error: {}) — refusing to start the flasher against a contended port",
-        PORT_FREE_TIMEOUT.as_secs(),
-        last_err.map(|e| e.to_string()).unwrap_or_default()
-    ))
 }
 
 /// Live state for the one flash job that can run at a time. A single global

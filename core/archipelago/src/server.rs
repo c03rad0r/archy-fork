@@ -1194,11 +1194,13 @@ impl Server {
         // Podman needs and can restart-loop apps that publish those ports.
         let relay_task = tokio::spawn(app_port_v6_relay_loop(tx.subscribe()));
         let publishing_task = tokio::spawn(crate::publishing::serving::run(
-            self._config.data_dir.clone(), tx.subscribe(),
+            self._config.data_dir.clone(),
+            tx.subscribe(),
         ));
 
         let publishing_tor_task = tokio::spawn(crate::publishing::tor::run(
-            self._config.data_dir.clone(), tx.subscribe(),
+            self._config.data_dir.clone(),
+            tx.subscribe(),
         ));
 
         // The app gate: authentication in front of every app port, on every

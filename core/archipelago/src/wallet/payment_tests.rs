@@ -2682,7 +2682,7 @@ async fn rental_catalog_term_mismatch_never_plans_or_creates_buyer_intent() {
 #[tokio::test]
 async fn unconfirmed_quote_can_cancel_and_requote_without_exposing_wallet_funds() {
     use crate::content_purchase_caller::{purchase, ReadyPurchase};
-    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::atomic::AtomicBool;
     let mint = Mint::start(0, None).await;
     let buyer = tempfile::tempdir().unwrap();
     let seller = mint.wallet().await;

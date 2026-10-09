@@ -15,7 +15,7 @@ mod frames;
 mod node_cmd;
 mod session;
 
-pub(crate) use session::{probe_device, DeviceProbe};
+pub(crate) use session::probe_device;
 
 use super::types::*;
 use serde::{Deserialize, Serialize};

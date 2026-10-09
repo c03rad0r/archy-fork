@@ -193,16 +193,6 @@ impl ApiHandler {
             let data = self.config.data_dir.clone();
             let id = binding.content_id.clone();
             let retained = source.clone();
-            struct CancelCopy(std::sync::Arc<std::sync::atomic::AtomicBool>);
-            impl Drop for CancelCopy {
-                fn drop(&mut self) {
-                    self.0.store(true, std::sync::atomic::Ordering::SeqCst);
-                }
-            }
-            let cancel_copy = CancelCopy(std::sync::Arc::new(std::sync::atomic::AtomicBool::new(
-                false,
-            )));
-            let cancelled = cancel_copy.0.clone();
             let snapshot = tokio::task::spawn_blocking(move || {
                 crate::content_snapshot::open_matching(&data, &id, &retained.sha256, retained.size)
             })

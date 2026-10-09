@@ -122,7 +122,8 @@ async fn read_disk_usage() -> Result<(u64, u64)> {
     };
     let mut command = tokio::process::Command::new("df");
     command.args(["--block-size=1", "--output=used,size", target]);
-    let output = bounded_output(command, std::time::Duration::from_secs(3)).await
+    let output = bounded_output(command, std::time::Duration::from_secs(3))
+        .await
         .context("Failed to run df")?;
 
     if !output.status.success() {
@@ -222,7 +223,8 @@ async fn bounded_output(
 ) -> Result<std::process::Output> {
     command.kill_on_drop(true);
     tokio::time::timeout(timeout, command.output())
-        .await.context("Metrics subprocess timed out")?
+        .await
+        .context("Metrics subprocess timed out")?
         .context("Metrics subprocess failed")
 }
 
@@ -230,7 +232,8 @@ async fn bounded_output(
 async fn read_container_stats() -> Result<Vec<ContainerMetrics>> {
     let mut command = tokio::process::Command::new("podman");
     command.args(["stats", "--no-stream", "--format", "json"]);
-    let output = bounded_output(command, std::time::Duration::from_secs(8)).await
+    let output = bounded_output(command, std::time::Duration::from_secs(8))
+        .await
         .context("Failed to run podman stats")?;
 
     if !output.status.success() {
@@ -411,14 +414,22 @@ mod subprocess_deadline_tests {
         let dir = tempfile::tempdir().unwrap();
         let pid_file = dir.path().join("pid");
         let mut command = tokio::process::Command::new("sh");
-        command.arg("-c").arg("echo $$ > \"$1\"; exec sleep 30").arg("metrics-test").arg(&pid_file);
+        command
+            .arg("-c")
+            .arg("echo $$ > \"$1\"; exec sleep 30")
+            .arg("metrics-test")
+            .arg(&pid_file);
         let start = std::time::Instant::now();
-        let error = bounded_output(command, std::time::Duration::from_millis(500)).await.unwrap_err();
+        let error = bounded_output(command, std::time::Duration::from_millis(500))
+            .await
+            .unwrap_err();
         assert!(error.to_string().contains("timed out"));
         assert!(start.elapsed() < std::time::Duration::from_secs(3));
         let pid = tokio::fs::read_to_string(pid_file).await.unwrap();
         for _ in 0..40 {
-            if !std::path::Path::new(&format!("/proc/{}", pid.trim())).exists() { return; }
+            if !std::path::Path::new(&format!("/proc/{}", pid.trim())).exists() {
+                return;
+            }
             tokio::time::sleep(std::time::Duration::from_millis(25)).await;
         }
         panic!("Timed-out metrics subprocess was not reaped");
@@ -428,7 +439,9 @@ mod subprocess_deadline_tests {
     async fn successful_metrics_output_is_preserved() {
         let mut command = tokio::process::Command::new("printf");
         command.arg("metrics-ok");
-        let output = bounded_output(command, std::time::Duration::from_secs(1)).await.unwrap();
+        let output = bounded_output(command, std::time::Duration::from_secs(1))
+            .await
+            .unwrap();
         assert!(output.status.success());
         assert_eq!(output.stdout, b"metrics-ok");
     }

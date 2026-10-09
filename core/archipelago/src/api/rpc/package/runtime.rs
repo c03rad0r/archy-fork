@@ -883,7 +883,8 @@ async fn do_orchestrator_package_start(
         if i > 0 {
             tokio::time::sleep(std::time::Duration::from_secs(2)).await;
         }
-        let managed = crate::container::supervised_update::installed_unit(data_dir, name)?.is_some();
+        let managed =
+            crate::container::supervised_update::installed_unit(data_dir, name)?.is_some();
         if !managed {
             repair_before_package_start(name).await;
             wait_before_package_start(name).await;
@@ -1145,7 +1146,8 @@ async fn do_orchestrator_package_stop(
 ) -> Result<()> {
     let mut errors = Vec::new();
     for name in containers {
-        let managed = crate::container::supervised_update::installed_unit(data_dir, name)?.is_some();
+        let managed =
+            crate::container::supervised_update::installed_unit(data_dir, name)?.is_some();
         match orchestrator.stop(name).await {
             Ok(()) => {}
             Err(e) if !managed && is_unknown_app_id_error(&e) => {

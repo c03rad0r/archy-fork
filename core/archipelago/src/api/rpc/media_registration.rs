@@ -61,8 +61,8 @@ fn verified_resolution(input: serde_json::Value, now: u64) -> Result<ResolvePara
     let encoded = serde_json::to_value(event)?;
     anyhow::ensure!(
         encoded["tags"] == serde_json::json!([["d", RESOLUTION_DOMAIN]])
-            && event.created_at.as_u64() >= params.intent.created_at.saturating_sub(30)
-            && event.created_at.as_u64() <= now.saturating_add(30),
+            && event.created_at.as_secs() >= params.intent.created_at.saturating_sub(30)
+            && event.created_at.as_secs() <= now.saturating_add(30),
         "Invalid resolution signature time or scope"
     );
     let content: serde_json::Value = serde_json::from_str(&event.content)?;
@@ -103,7 +103,7 @@ fn verified_producer(params: &Params, now: u64) -> Result<String> {
         producer == params.intent.producer,
         "The signing identity differs from the project producer"
     );
-    let created = event.created_at.as_u64();
+    let created = event.created_at.as_secs();
     anyhow::ensure!(
         created >= params.intent.created_at.saturating_sub(30)
             && created < params.intent.expires_at

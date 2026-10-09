@@ -5,6 +5,7 @@ import PeerFiles from '../PeerFiles.vue'
 import { rpcClient } from '@/api/rpc-client'
 
 vi.mock('vue-router', () => ({
+  RouterLink: { template: '<a><slot /></a>' },
   useRouter: () => ({ push: vi.fn() }),
 }))
 

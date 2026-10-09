@@ -454,6 +454,7 @@ describe('keepAliveLifecycle: 02-11 gap closure — leaked background pollers in
           FleetNodeDetail: true,
           FleetContainerMatrix: true,
           BackButton: true,
+          RouterLink: true,
         },
       },
     })

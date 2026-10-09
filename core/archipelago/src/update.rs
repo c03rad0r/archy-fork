@@ -1496,25 +1496,28 @@ pub(crate) async fn host_sudo(args: &[&str]) -> Result<std::process::ExitStatus>
             .context("isolated test command failed");
     }
 
-    let mut full: Vec<&str> = vec![
-        "systemd-run",
-        "--wait",
-        "--quiet",
-        "--collect",
-        "--pipe",
-        // Shell snippets passed as one argument must reach the child intact.
-        // systemd-run otherwise expands $VAR/${VAR} against the manager's
-        // environment before `sh -lc` can see them (and usually replaces them
-        // with empty strings).
-        "--expand-environment=no",
-        "--",
-    ];
-    full.extend_from_slice(args);
-    tokio::process::Command::new("sudo")
-        .args(&full)
-        .status()
-        .await
-        .context("sudo systemd-run spawn failed")
+    #[cfg(not(test))]
+    {
+        let mut full: Vec<&str> = vec![
+            "systemd-run",
+            "--wait",
+            "--quiet",
+            "--collect",
+            "--pipe",
+            // Shell snippets passed as one argument must reach the child intact.
+            // systemd-run otherwise expands $VAR/${VAR} against the manager's
+            // environment before `sh -lc` can see them (and usually replaces them
+            // with empty strings).
+            "--expand-environment=no",
+            "--",
+        ];
+        full.extend_from_slice(args);
+        tokio::process::Command::new("sudo")
+            .args(&full)
+            .status()
+            .await
+            .context("sudo systemd-run spawn failed")
+    }
 }
 
 /// Same mechanism as `host_sudo` but captures stdout — for read-only probes
@@ -1535,21 +1538,24 @@ pub(crate) async fn host_sudo_output(args: &[&str]) -> Result<std::process::Outp
             .context("isolated test command failed");
     }
 
-    let mut full: Vec<&str> = vec![
-        "systemd-run",
-        "--wait",
-        "--quiet",
-        "--collect",
-        "--pipe",
-        "--expand-environment=no",
-        "--",
-    ];
-    full.extend_from_slice(args);
-    tokio::process::Command::new("sudo")
-        .args(&full)
-        .output()
-        .await
-        .context("sudo systemd-run output spawn failed")
+    #[cfg(not(test))]
+    {
+        let mut full: Vec<&str> = vec![
+            "systemd-run",
+            "--wait",
+            "--quiet",
+            "--collect",
+            "--pipe",
+            "--expand-environment=no",
+            "--",
+        ];
+        full.extend_from_slice(args);
+        tokio::process::Command::new("sudo")
+            .args(&full)
+            .output()
+            .await
+            .context("sudo systemd-run output spawn failed")
+    }
 }
 
 /// Apply a downloaded update. Backs up current binaries, replaces with staged versions.

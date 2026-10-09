@@ -1795,8 +1795,10 @@ app:
             }
         }
         exempt.sort();
-        // Reviewed 2026-09-30: lightning-stack's three retired endpoints
+        // Reviewed 2026-10-09: lightning-stack's three retired endpoints
         // disappeared; Cuprate restricted RPC moved from none to gate-open.
+        // DATUM's Stratum port is a raw public mining protocol; its separate
+        // administration interface remains gated and loopback-bound.
         // Compare exact endpoints, not just a count that can hide substitutions.
         let expected = [
             ("bitcoin-core", 8333),
@@ -1804,6 +1806,7 @@ app:
             ("core-lightning", 9736),
             ("core-lightning", 9835),
             ("cuprate", 18183),
+            ("datum", 23334),
             ("electrumx", 50001),
             ("fedimint", 8173),
             ("fedimint", 8174),
@@ -1870,6 +1873,8 @@ app:
         // Angor's indexer exposes public chain data/transaction broadcast;
         // its optional standalone relay accepts signed public Nostr events.
         // Neither mounts credentials or the node's internal relay database.
+        // Gashboard performs its own NIP-98/access-list authentication on
+        // every data route before issuing or accepting a session.
         assert_eq!(
             open,
             vec![
@@ -1877,6 +1882,7 @@ app:
                 ("angor-relay".to_string(), 8091u16),
                 ("btcpay-server".to_string(), 23000u16),
                 ("cuprate".to_string(), 18090u16),
+                ("gashboard".to_string(), 1337u16),
                 ("gitea".to_string(), 3001u16),
                 ("nginx-proxy-manager".to_string(), 8081u16),
                 ("tailscale".to_string(), 8240u16),

@@ -683,10 +683,7 @@ pub fn resolve(
             Err(error)
                 if error
                     .downcast_ref::<std::io::Error>()
-                    .is_some_and(|e| e.kind() == std::io::ErrorKind::NotFound) =>
-            {
-                ()
-            }
+                    .is_some_and(|e| e.kind() == std::io::ErrorKind::NotFound) => {}
             Err(error) => return Err(error),
         }
     }

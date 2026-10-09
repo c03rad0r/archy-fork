@@ -4,7 +4,10 @@ import Fleet from '../../Fleet.vue'
 import { rpcClient } from '@/api/rpc-client'
 
 vi.mock('@/api/rpc-client', () => ({ rpcClient: { call: vi.fn() } }))
-vi.mock('vue-router', () => ({ useRouter: () => ({ push: vi.fn() }) }))
+vi.mock('vue-router', () => ({
+  RouterLink: { template: '<a><slot /></a>' },
+  useRouter: () => ({ push: vi.fn() }),
+}))
 afterEach(() => { sessionStorage.clear(); vi.clearAllMocks() })
 
 const stubs = {
