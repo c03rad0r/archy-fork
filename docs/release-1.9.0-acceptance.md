@@ -43,7 +43,15 @@ The required mirror check passed locally for main and `v1.9.0-alpha`:
 refs/tags/v1.9.0-alpha`. It verified three requested refs across local, ngit
 and Gitea; this is not a full historical branch/tag parity audit. The ngit PR
 dispositions above were checked separately because the script does not verify
-proposal metadata.
+proposal metadata. A separate `--all` audit is **not** clean; it reports
+pre-existing advertised branch/tag differences, including `a3-10-endpoint-fallback`,
+`chore/aiui-monorepo-migration`, `demo-build`, `rotate-release-root`,
+`ux-at-last`, `v1.7.129-alpha`, and numerous branches missing from one mirror.
+The full captured list is
+`.release-qualification-20261007/mirror-audit-20261009/all.log` (SHA256
+`cd48bc8742413cced933d684259f3e0406bb2e8f51db5e7d5ac4e580b489a74a`). These
+unrelated refs were not rewritten or deleted. Do not describe the historical
+mirrors as fully synchronized.
 
 This is a private UAT source candidate, not deployment acceptance, catalog
 publication, OTA or ISO authorization. Continue only after a safe upgrade path
