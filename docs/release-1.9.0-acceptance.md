@@ -1327,3 +1327,26 @@ Public assets: [1.9.0-alpha release](https://source.archipelago-foundation.org/l
 The separate follow-up branch now passes1,683 backend tests (four existing ignored)
 and all1,222 frontend tests after correcting the storage classifier. These are
 source test results, not inclusion in the published artifacts or live acceptance.
+
+## IndeeHub native login and registration repair — 2026-10-09 follow-up
+
+ngit proposal `9d6de783f5022b3b859e0b1f3e881e389da4482dd5dd15ff29a40b4e25dafcb8`
+was reviewed and merged once as
+`83feb1806336a1204ea0d6232de5220d4f6656ad`. It retains installed/running
+parent, existing node identity/pin, installed origins and legacy API component
+checks while accepting managed stacks without a separate API package record.
+See the latest checkpoint in `post-1.8.22-regressions-20261001.md` for exact
+deployed hashes, preserved-state checks, backups and the failed earlier probes.
+
+Yaya's authenticated registration-context RPC now passes on the optimized
+candidate backend. Real native **Home Serve** authentication passes after
+IndeeHub frontend `7b18912` and API profile correction `08586e3`: chosen node
+key, signed session subject and API profile key match, with native consent and
+normal signer dismissal. Frontend 21 focused tests, API two DTO tests, and both
+production builds pass. The isolated Rust regression build is still running;
+no unit-test pass is inferred from the live check.
+
+The frontend/API module changes are running-container UAT patches, not a new
+durable pinned app image. Full upload/publication and cached-identity-switch
+acceptance remain open. No payment, public listing, identity replacement, fleet
+catalog, OTA or ISO publication was performed by this repair.
