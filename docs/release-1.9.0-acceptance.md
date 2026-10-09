@@ -1,5 +1,97 @@
 # Archipelago 1.9.0-alpha release acceptance
 
+## Yaya alpha UAT continuation — 9 October 2026
+
+Operator renewed deployment authorization for `yaya-server` for combined UAT,
+including IndeeHub, JustWorks and the merged external-access, Gashboard and
+DATUM work. OTA/ISO publication still requires subsequent operator acceptance.
+
+Fresh read-only inspection found the prior operation `36ac4803` Restored with
+cleanup complete, no lifecycle holds, and all 28 current containers running.
+The API is already the shutdown-hook-aware version (main.js SHA256
+`6ff3d4fa5d6a17c530a8e69b2b8b65ec8214c03e71f9a8cf3a27dd53702f1120`).
+Its one project, one content item and one shareholder caused the legacy
+empty-business gate to refuse. All 11 checked payment/rental/publication history
+and intent tables are empty; pending shareholder revenue is zero, and BTCPay/
+Strike credentials and endpoints are absent. These observations do not qualify
+updates of nodes with monetary history or configured payment providers.
+
+Correction `1e11c93e` adds a bounded money-free UAT path: exact known API entry
+point, disabled registration/publication, absent providers and HTTP connections,
+closed ingress, stopped frontend/worker, paused empty queue, zero monetary state,
+and exact database commitments before and after the existing child SIGTERM path.
+Changed data refuses forward cutover and retains live data for native recovery.
+All 63 maintenance-controller tests passed. A matching optimized backend build
+and live deployment/verification remain pending at this checkpoint.
+
+The README server-install instructions and verified published 1.9.0-alpha ISO
+link are commit `31ea755c`, including alpha/funds-at-own-risk and planned
+pre-production hardening wording. Both commits were reviewed and merged through
+ngit proposal `5bd850d3` (status applied), merge `ecc8cc80`. Main and the existing
+`v1.9.0-alpha` tag passed local/ngit/Gitea parity. The ISO asset returned HTTP 200
+and its published SHA-256 is
+`aad5f0350428976969043079a63b0e7a8264dcee2574526bd34719c798c750af`.
+This documentation update does not publish a new installer.
+
+### IndeeHub sign-out UAT deployment — PASS with retained limitation
+
+The dashboard/provider sign-out change was reviewed as ngit proposal
+`8648b7362c3ddb2195a7f5466cab9c8ad224ca289996fec303f4a7f8091e7c42`
+and merged at `2cb1bae5`. A first supervised Yaya attempt
+`74ef081b-0e7a-49c0-8fd8-959ebcf4b2ec` correctly refused before target startup
+because the maintenance controller recognized only coherently disabled
+registration/publication flags, while this money-free UAT installation has both
+flags enabled. Native recovery completed `Restored`, cleanup complete and
+maintenance released; PostgreSQL, Redis, MinIO, relay and API identities were
+preserved, and only the frontend/worker recovery containers were recreated. The
+failed attempt and its private receipts remain retained; it was not retried or
+reused.
+
+The narrow controller correction accepts either coherently enabled or coherently
+disabled UAT flags while continuing to reject missing, ambiguous or mixed flags
+and preserving the exact API binary, zero monetary/business/outbox/entitlement/
+revenue, absent-provider and absent-connection requirements. Sixty-three focused
+controller tests passed. The required isolated backend suite passed 2,066 tests,
+with five explicit opt-in ignores and zero failures. It was reviewed as ngit
+proposal `ecac4574fdefcdb17b913b720d1f7b446db6cd9a6f6063f78a22d6b7af6d320c`,
+merged at `5812f53c`, mirrored exactly to ngit and Gitea, and passed the local
+main-ref parity check.
+
+Yaya now runs optimized backend SHA256
+`6a1389c8945f95183ea918b653f813e3125e4254ec3078e8daa1773d896573df`
+with helper SHA256
+`4e086c7b8ef985944f1a370d932d9107ec87d2164b004f130522d25a81184c23`.
+The signed 69-app combined catalog remains SHA256
+`88888f6a541e2b13b70e2ab57ae6c355420313d61fd47c152b4341b2cda3ab1a`.
+After native recovery, a fresh seven-unit plan was bound to the actual recovered
+frontend/worker recipes; its SHA256 is
+`a6d26db482c86ff8dda6b2c2816473f2cdcbd5def98c9cf640b97e42d53206bd`.
+Offline preparation preserved the exact seven originals without changing any
+runtime. Dashboard index and provider SHA256 values are respectively
+`f3cff3f8a27ae94318c34ef61638e22a73bb06fc076634ebe981309ee3c5008e`
+and `ad4c93b3b25545dca1b391c5add75e5bc618c865290805f7ac5d1ad0fd18b469`.
+
+Exactly one new authenticated `package.update` was submitted. Operation
+`309f3d74-74d4-478a-a02e-cf077bab547d` completed Prepared → Editing → Starting →
+**Committed**, cleanup complete; maintenance is **Released/committed**, and both
+fresh database and four-volume restore proofs pass. Post-commit verification
+passed all seven exact target units/images and healthy new runtimes, exact
+database commitments, all 110 migration rows including the three reviewed
+additions, 21 unchanged unrelated runtimes, 16 unchanged identity/operator
+files, 18 unchanged unrelated units, cleared holds/fence, coherent enabled UAT
+flags, nginx configuration, and matching host/container provider bytes.
+
+A disposable live Chromium test injected valid-looking stale login hints without
+using a real identity. The production API did not grant authentication; the
+primary login credentials and active-account selection cleared, and the app
+remained signed out after both normal and cache-bypassing hard reloads. Three
+secondary API-client hints (`indeehub_api_token`, `indeehub_api_refresh`, and
+`indeehub_api_expires`) remained in that synthetic profile but did not restore
+authentication. Treat complete removal of those non-authorizing hints as retained
+hardening rather than claiming every cache key was erased. The IndeeHub frontend
+commits `0d6434e` and `71cf546a` remain local because that repository has no ngit
+coordinate; do not publish them Gitea-only under the mirror policy.
+
 ## Combined Yaya UAT candidate — 9 October 2026
 
 The combined source is published on ngit and mirrored byte-for-byte to Gitea at
