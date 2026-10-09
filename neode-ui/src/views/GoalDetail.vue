@@ -280,13 +280,16 @@ function stepIconUrl(step: GoalStep): string | undefined {
  * generic services list. `launchAppId` opens via the app launcher (iframe apps
  * overlay on top of the current screen; X-Frame-Options apps open a tab).
  */
-const GOAL_COMPLETION_CTA: Record<string, { label: string; route?: string; launchAppId?: string }> = {
+const GOAL_COMPLETION_CTA: Record<string, { label: string; route?: string | { path: string; query?: Record<string, string> }; launchAppId?: string }> = {
   'instant-business-site': { label: 'Open Just Works', launchAppId: 'justworks' },
   'open-a-shop': { label: 'Go to my shop (BTCPay)', launchAppId: 'btcpay-server' },
   'accept-payments': { label: 'Go to Lightning (LND)', route: '/dashboard/apps/lnd' },
   'run-lightning-node': { label: 'View my channels', route: '/dashboard/apps/lnd/channels' },
   'setup-fedimint': { label: 'Open Fedimint', launchAppId: 'fedimint' },
-  'file-browser': { label: 'Open File Browser', launchAppId: 'filebrowser' },
+  // Keep the completion action inside Archipelago's native Cloud browser. The
+  // old CTA launched the standalone File Browser app, which lost the Cloud
+  // navigation context and bypassed the original in-app file browser view.
+  'file-browser': { label: 'Open my cloud files', route: { path: '/dashboard/cloud', query: { tab: 'mine' } } },
   'store-files': { label: 'Open my cloud (Nextcloud)', launchAppId: 'nextcloud' },
   'create-identity': { label: 'Go to my identity', route: '/dashboard/web5' },
   'back-up-everything': { label: 'Go to backups', route: '/dashboard/settings' },
