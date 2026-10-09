@@ -14,7 +14,11 @@ pub(crate) async fn push_alert_notifications(
     alerts: &[FiredAlert],
 ) {
     let (mut data, _rev) = state_mgr.get_snapshot().await;
+    let previous_count = data.notifications.len();
     prune_stale_alert_notifications(&mut data.notifications, alerts);
+    if alerts.is_empty() && data.notifications.len() == previous_count {
+        return;
+    }
     for alert in alerts {
         let level = match alert.kind {
             AlertRuleKind::DiskUsage | AlertRuleKind::RamUsage => {
@@ -42,7 +46,17 @@ pub(crate) async fn push_alert_notifications(
         data.notifications.remove(0);
     }
     state_mgr.update_data(data).await;
-    info!("Fired {} alert(s)", alerts.len());
+    if !alerts.is_empty() {
+        info!("Fired {} alert(s)", alerts.len());
+    }
+}
+
+fn is_metrics_alert_id(id: &str) -> bool {
+    id.split_once('-').is_some_and(|(kind, timestamp)| {
+        matches!(kind, "disk" | "ram" | "cpu" | "latency")
+            && !timestamp.is_empty()
+            && timestamp.bytes().all(|byte| byte.is_ascii_digit())
+    })
 }
 
 fn prune_stale_alert_notifications(
@@ -53,6 +67,11 @@ fn prune_stale_alert_notifications(
     let active_ids: HashSet<&str> = alerts.iter().map(|alert| alert.id.as_str()).collect();
     notifications.retain(|notification| {
         if active_ids.contains(notification.id.as_str()) {
+            return false;
+        }
+        // A fresh timestamp is not evidence that an earlier threshold is
+        // still exceeded. Remove resolved monitoring alerts immediately.
+        if is_metrics_alert_id(&notification.id) {
             return false;
         }
         if notification.app_id.is_some() || notification.id.starts_with("health-") {
@@ -127,6 +146,8 @@ mod tests {
             notification("alert-active", fresh_timestamp.clone(), None),
             notification("alert-old", old_timestamp, None),
             notification("alert-fresh", fresh_timestamp.clone(), None),
+            notification("disk-123", fresh_timestamp.clone(), None),
+            notification("ram-123", fresh_timestamp.clone(), None),
             notification("health-indeedhub-1", fresh_timestamp, Some("indeedhub")),
         ];
 
@@ -134,5 +155,23 @@ mod tests {
 
         let ids: Vec<&str> = notifications.iter().map(|n| n.id.as_str()).collect();
         assert_eq!(ids, vec!["alert-fresh", "health-indeedhub-1"]);
+    }
+
+    #[test]
+    fn clears_resolved_metrics_alerts_without_touching_other_notifications() {
+        let fresh = Utc::now().to_rfc3339();
+        let mut notifications = vec![
+            notification("disk-123", fresh.clone(), None),
+            notification("latency-456", fresh.clone(), None),
+            notification("disk-not-a-timestamp", fresh.clone(), None),
+            notification("health-indeedhub-1", fresh.clone(), Some("indeedhub")),
+            notification("app-notice", fresh, Some("indeedhub")),
+        ];
+        prune_stale_alert_notifications(&mut notifications, &[]);
+        let ids: Vec<&str> = notifications.iter().map(|n| n.id.as_str()).collect();
+        assert_eq!(
+            ids,
+            vec!["disk-not-a-timestamp", "health-indeedhub-1", "app-notice"]
+        );
     }
 }
