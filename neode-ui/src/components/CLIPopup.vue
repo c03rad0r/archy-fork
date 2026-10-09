@@ -91,7 +91,8 @@ function onKeydown(event: KeyboardEvent) {
   if (event.ctrlKey && event.key.toLowerCase() === 'c') { event.preventDefault(); send('\u0003'); return }
   if (event.ctrlKey && event.key.toLowerCase() === 'd') { event.preventDefault(); send('\u0004'); return }
   const special: Record<string, string> = { Enter: '\n', Backspace: '\u007f', Tab: '\t', ArrowUp: '\u001b[A', ArrowDown: '\u001b[B', ArrowRight: '\u001b[C', ArrowLeft: '\u001b[D' }
-  if (special[event.key]) { event.preventDefault(); send(special[event.key]); return }
+  const specialKey = special[event.key]
+  if (specialKey !== undefined) { event.preventDefault(); send(specialKey); return }
   if (event.key.length === 1 && !event.metaKey && !event.altKey) { event.preventDefault(); send(event.key) }
 }
 function focusInput() { nextTick(() => inputRef.value?.focus()) }
