@@ -19,6 +19,11 @@ interface RouterListing {
 }
 
 const relayUrls = ref<string[]>([])
+const DEV_LISTINGS: RouterListing[] = [
+  { id: 'dev-beryl-ax', pubkey: 'archipelago-demo-seller', title: 'GL.iNet Beryl AX (GL-MT3000)', summary: 'Wi‑Fi 6 travel router with OpenWrt, WireGuard and mesh-ready firmware.', content: '', location: 'London, UK', status: 'active', image: '', price: { amount: '€89', currency: 'EUR' }, relay: 'development mock' },
+  { id: 'dev-flint-2', pubkey: 'openwrt-demo-seller', title: 'GL.iNet Flint 2', summary: 'Dual 2.5G Ethernet OpenWrt router for a home gateway or node controller.', content: '', location: 'Berlin, DE', status: 'active', image: '', price: { amount: '€159', currency: 'EUR' }, relay: 'development mock' },
+  { id: 'dev-nano-pi', pubkey: 'community-demo-seller', title: 'NanoPi R5S OpenWrt gateway', summary: 'Compact RK3568 gateway with three Ethernet ports and community support.', content: '', location: 'Amsterdam, NL', status: 'active', image: '', price: { amount: '€74', currency: 'EUR' }, relay: 'development mock' },
+]
 const open = ref(false)
 const query = ref('')
 const listings = ref<RouterListing[]>([])
@@ -110,6 +115,7 @@ async function search() {
   })))
   if (run !== requestId) return
   listings.value = [...found.values()]
+  if (!listings.value.length && import.meta.env.DEV) listings.value = DEV_LISTINGS
   loading.value = false
   if (!listings.value.length) error.value = 'No active OpenWrt router listings answered from the configured public relays.'
 }
@@ -145,16 +151,11 @@ onBeforeUnmount(closeSockets)
         <div>
           <p class="text-xs uppercase tracking-[.18em] text-white/40">Nostr classifieds</p>
           <h2 id="router-marketplace-title" class="text-base font-semibold text-white mt-1">OpenWrt routers for sale</h2>
-          <p class="text-xs text-white/50 mt-1">Live NIP-99 listings from public relays. Checkout will be added next.</p>
+          <p class="text-xs text-white/50 mt-1">Live NIP-99 listings from Archipelago relays.</p>
         </div>
         <button type="button" class="text-xs text-white/45 hover:text-white" @click="closeShop">Close</button>
       </div>
-      <div class="flex gap-2 mb-5">
-        <input v-model="query" type="search" placeholder="Search routers, brands or locations" aria-label="Search router listings"
-          class="w-full px-3 py-2 rounded-lg bg-white/5 border border-white/10 text-sm text-white placeholder-white/30 focus:outline-none focus:border-white/30" />
-        <button type="button" class="glass-button px-4 text-sm" :disabled="loading" @click="search">{{ loading ? 'Searching…' : 'Search' }}</button>
-      </div>
-      <div v-if="loading && !filtered.length" class="text-sm text-white/45 py-5 text-center">Searching NIP-99 relays…</div>
+      <div v-if="loading && !filtered.length" class="sr-only" aria-live="polite">Loading router listings</div>
       <div v-else-if="error && !filtered.length" class="text-sm text-white/50 py-5 text-center">{{ error }}</div>
       <div v-else class="router-marketplace__results" tabindex="0" aria-label="Router listings carousel">
         <article v-for="item in filtered" :key="item.id" class="router-marketplace__card">
