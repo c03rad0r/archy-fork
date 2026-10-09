@@ -30,7 +30,7 @@ const DEV_PHONE_LISTINGS: HardwareListing[] = [
   { id: 'dev-pixel-10', pubkey: 'phone-demo-seller', title: 'Pixel 10 · GrapheneOS ready', summary: 'A newer Pixel for private, independent mobile computing.', content: '', location: 'Amsterdam, NL', status: 'active', image: '/assets/img/phone-mockups/pixel-10.webp', price: { amount: '699', currency: 'EUR' }, relay: 'development mock' },
 ]
 const devListings = computed(() => props.kind === 'phone' ? DEV_PHONE_LISTINGS : DEV_ROUTER_LISTINGS)
-const topicTags = computed(() => props.kind === 'phone' ? ['pixel', 'grapheneos', 'privacy-phone'] : ['openwrt', 'router', 'gl-inet', 'beryl', 'flint'])
+const topicTags = computed(() => props.kind === 'phone' ? ['pixel'] : ['openwrt', 'router', 'gl-inet', 'beryl', 'flint'])
 const open = ref(false)
 const carousel = ref<HTMLElement>()
 const listings = ref<HardwareListing[]>([])
@@ -49,7 +49,7 @@ function matchesHardware(item: { title: string; summary: string; content: string
   const tags = item.tags?.flat().join(' ') ?? ''
   const text = `${item.title} ${item.summary} ${item.content} ${tags}`
   return props.kind === 'phone'
-    ? /\bpixel\b|grapheneos/i.test(text)
+    ? /\bpixel\b/i.test(text)
     : /openwrt|gl[- .]?inet|beryl|flint|nanopi|gl-mt3000|gl-mt6000/i.test(text)
 }
 function parse(event: {

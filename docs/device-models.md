@@ -63,7 +63,8 @@ windows can scroll normally rather than collapsing the model to zero height.
 The router gateway and private-phone Setup goal share `HardwareMarketplace.vue`.
 Buy router / Buy phone replaces the model with a horizontal product carousel,
 preserving the outer container's height. Discovery queries enabled relays from
-`nostr.list-relays` for NIP-99 kind-30402 events. Development builds show clearly
+`nostr.list-relays` for NIP-99 kind-30402 events. Phone discovery uses the `pixel`
+keyword. Development builds show clearly
 labeled sample listings when no matching live listings are found. Checkout and
 the product View/Buy actions remain unimplemented.
 
