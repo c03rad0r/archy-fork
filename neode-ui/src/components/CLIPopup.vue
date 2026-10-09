@@ -3,7 +3,7 @@
     <Transition name="cli-popup">
       <div v-if="cliStore.isOpen" class="fixed inset-0 z-[2500] flex items-center justify-center p-4 pointer-events-none">
         <section ref="panelRef" class="glass-card terminal-panel relative z-10 w-full overflow-hidden pointer-events-auto" :class="{ minimized }" :style="panelStyle" aria-label="Archipelago terminal">
-          <header class="terminal-header" @mousedown="startDrag">
+          <header class="terminal-header sticky top-0 z-10 flex items-center gap-3 border-b border-white/10 px-4 py-3 bg-black/60 backdrop-blur-md md:bg-transparent md:backdrop-blur-none" @mousedown="startDrag">
             <div class="terminal-drag-handle" title="Drag to move">
               <svg class="w-4 h-4 text-white/50" fill="currentColor" viewBox="0 0 24 24"><path d="M8 6h2v2H8V6zm0 5h2v2H8v-2zm0 5h2v2H8v-2zm5-10h2v2h-2V6zm0 5h2v2h-2v-2zm0 5h2v2h-2v-2z" /></svg>
             </div>
@@ -108,7 +108,7 @@ function connectSelected() {
   disconnect(); terminal?.reset()
   if (!selectedId.value) return
   socket = new WebSocket(wsUrl(selectedId.value))
-  socket.onopen = () => { connected.value = true; resizeTerminal(); focusInput() }
+  socket.onopen = () => { connected.value = true; resizeTerminal() }
   socket.onclose = () => { connected.value = false }
   socket.onerror = () => { connected.value = false }
   socket.onmessage = event => {
@@ -139,6 +139,7 @@ onMounted(() => {
   terminal = new Terminal({
     convertEol: true,
     cursorBlink: true,
+    cursorInactiveStyle: 'none',
     fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace',
     fontSize: 13,
     lineHeight: 1.45,
@@ -155,9 +156,14 @@ onMounted(() => {
   }
   nextTick(resizeTerminal)
 })
+function blurTerminalWhenOutside(event: PointerEvent) {
+  if (panelRef.value && !panelRef.value.contains(event.target as Node)) terminal?.blur()
+}
+onMounted(() => window.addEventListener('pointerdown', blurTerminalWhenOutside, true))
 onBeforeUnmount(() => {
   window.removeEventListener('mousemove', onDrag)
   window.removeEventListener('mouseup', stopDrag)
+  window.removeEventListener('pointerdown', blurTerminalWhenOutside, true)
   resizeObserver?.disconnect()
   terminal?.dispose()
   disconnect()
@@ -165,11 +171,11 @@ onBeforeUnmount(() => {
 </script>
 
 <style scoped>
-.terminal-panel { display: flex; flex-direction: column; width: min(672px, calc(100vw - 2rem)); height: min(640px, calc(100vh - 2rem)); min-width: 320px; min-height: 220px; max-width: calc(100vw - 2rem); max-height: calc(100vh - 2rem); resize: both; }
+.terminal-panel { display: flex; flex-direction: column; width: min(960px, calc(100vw - 2rem)); height: min(680px, calc(100vh - 2rem)); min-width: 420px; min-height: 260px; max-width: calc(100vw - 2rem); max-height: calc(100vh - 2rem); resize: both; }
 .terminal-panel.minimized { width: auto; height: auto; min-width: 320px; resize: none; }
 .terminal-panel:fullscreen { width: 100vw; height: 100vh; max-width: none; max-height: none; border-radius: 0; }
 .terminal-header, .terminal-input-bar { display: flex; align-items: center; gap: 12px; padding: 13px 16px; }
-.terminal-header { border-bottom: 1px solid rgba(255,255,255,.1); cursor: grab; user-select: none; }
+.terminal-header { cursor: grab; user-select: none; }
 .terminal-header:active { cursor: grabbing; }
 .terminal-title, .terminal-actions { display: flex; align-items: center; gap: 10px; min-width: 0; }
 .terminal-title { flex: 1; font-weight: 500; } .terminal-host { color: rgba(255,255,255,.45); font-size: 12px; font-weight: 400; }
