@@ -35,6 +35,7 @@ export function useModalKeyboard(
 
   function handleKeydown(e: KeyboardEvent) {
     if (!isOpen.value) return
+    if ((e.target as HTMLElement | null)?.closest?.('[data-archipelago-terminal]')) return
 
     if (e.key === 'Escape') {
       restoreFocusRef?.value?.focus?.()

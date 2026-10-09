@@ -2,7 +2,7 @@
   <Teleport to="body">
     <Transition name="cli-popup">
       <div v-if="cliStore.isOpen" class="fixed inset-0 z-[2500] flex items-center justify-start p-4 pointer-events-none">
-        <section ref="panelRef" class="glass-card terminal-panel relative z-10 w-full overflow-hidden pointer-events-auto md:ml-[300px]" :class="{ minimized }" :style="panelStyle" aria-label="Archipelago terminal">
+        <section ref="panelRef" data-archipelago-terminal class="glass-card terminal-panel relative z-10 w-full overflow-hidden pointer-events-auto md:ml-[300px]" :class="{ minimized }" :style="panelStyle" aria-label="Archipelago terminal">
           <header class="terminal-header sticky top-0 z-10 flex items-center gap-3 border-b border-white/10 px-4 py-3 bg-black/60 backdrop-blur-md md:bg-transparent md:backdrop-blur-none" @mousedown="startDrag">
             <div class="terminal-drag-handle" title="Drag to move">
               <svg class="w-4 h-4 text-white/50" fill="currentColor" viewBox="0 0 24 24"><path d="M8 6h2v2H8V6zm0 5h2v2H8v-2zm0 5h2v2H8v-2zm5-10h2v2h-2V6zm0 5h2v2h-2v-2zm0 5h2v2h-2v-2z" /></svg>
