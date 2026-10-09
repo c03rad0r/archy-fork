@@ -1,298 +1,118 @@
 <template>
   <Teleport to="body">
     <Transition name="cli-popup">
-      <div
-        v-if="cliStore.isOpen"
-        class="fixed inset-0 z-[2500] flex items-center justify-center p-4"
-        @click.self="cliStore.close()"
-      >
-        <div class="absolute inset-0 bg-black/60 backdrop-blur-sm"></div>
-        <div
-          ref="panelRef"
-          class="glass-card w-full max-w-2xl relative z-10 overflow-hidden flex flex-col"
-          :style="panelStyle"
-          @mousedown="onPanelMouseDown"
-        >
-          <!-- Header: terminal icon + title + app switcher -->
-          <div class="flex items-center gap-3 px-4 py-3 border-b border-white/10">
-            <div
-              ref="dragHandleRef"
-              class="flex items-center justify-center w-8 h-8 rounded cursor-grab hover:bg-white/10 transition-colors shrink-0"
-              :class="{ 'cursor-grabbing': isDragging }"
-              title="Drag to move"
-            >
-              <svg class="w-4 h-4 text-white/50" fill="currentColor" viewBox="0 0 24 24">
-                <path d="M8 6h2v2H8V6zm0 5h2v2H8v-2zm0 5h2v2H8v-2zm5-10h2v2h-2V6zm0 5h2v2h-2v-2zm0 5h2v2h-2v-2z" />
-              </svg>
+      <div v-if="cliStore.isOpen" class="fixed inset-0 z-[2500] flex items-center justify-center p-4" @click.self="cliStore.close()">
+        <div class="absolute inset-0 bg-black/70 backdrop-blur-sm"></div>
+        <section class="terminal-panel relative z-10 w-full max-w-5xl overflow-hidden" aria-label="Archipelago terminal">
+          <header class="terminal-header">
+            <div class="terminal-title"><span class="terminal-dot"></span><span>Archipelago terminal</span><span class="terminal-host">{{ activeSession?.name || 'No session' }}</span></div>
+            <div class="terminal-actions">
+              <select v-model="selectedId" class="terminal-select" aria-label="Terminal session" @change="connectSelected">
+                <option value="">Select session</option>
+                <option v-for="session in sessions" :key="session.id" :value="session.id">{{ session.name }} · {{ session.state }}</option>
+              </select>
+              <button class="terminal-button" type="button" @click="createSession">New</button>
+              <button class="terminal-close" type="button" aria-label="Close terminal" @click="closeTerminal">Close</button>
             </div>
-            <div class="flex items-center gap-3 flex-1 min-w-0">
-              <svg class="w-5 h-5 text-white/60 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 9l3 3-3 3m5 0h3M5 20h14a2 2 0 002-2V6a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
-              </svg>
-              <span class="text-white font-medium">CLI Access</span>
-            </div>
-            <kbd class="hidden sm:inline-flex px-2 py-1 text-xs text-white/50 bg-white/10 rounded">Esc</kbd>
+          </header>
+          <div class="terminal-body">
+            <div v-if="error" class="terminal-empty terminal-error"><strong>Terminal unavailable</strong><span>{{ error }}</span><button class="terminal-button" type="button" @click="loadSessions">Retry</button></div>
+            <div v-else-if="!sessions.length" class="terminal-empty"><strong>Create your first developer session</strong><span>Sessions stay running when this window closes and can be resumed later.</span><button class="terminal-button terminal-primary" type="button" @click="createSession">Start session</button></div>
+            <div v-else-if="!selectedId" class="terminal-empty"><strong>Choose a session</strong><span>Resume an existing workspace or start a new one.</span></div>
+            <pre v-else ref="outputRef" class="terminal-output" tabindex="0" @click="focusInput">{{ output }}</pre>
           </div>
-
-          <!-- Content: mock CLI in dev, SSH instructions in production -->
-          <div class="flex-1 overflow-hidden flex flex-col min-h-0">
-            <!-- Mock CLI interface (dev mode only) -->
-            <div
-              v-if="isDev"
-              class="flex-1 flex flex-col min-h-0 p-4 bg-black/80 rounded-b-lg font-mono text-sm"
-            >
-              <div ref="outputRef" class="flex-1 overflow-y-auto text-green-400/90 whitespace-pre-wrap break-words mb-2 min-h-0">{{ mockOutput }}</div>
-              <div class="flex items-center gap-2 shrink-0">
-                <span class="text-amber-400">archipelago@node</span>
-                <span class="text-white/60">~</span>
-                <span class="text-white/40">$</span>
-                <input
-                  ref="cliInputRef"
-                  v-model="mockCommand"
-                  type="text"
-                  class="flex-1 bg-transparent text-white outline-none border-none"
-                  placeholder=" "
-                  @keydown.enter="runMockCommand"
-                />
-              </div>
-            </div>
-
-            <!-- SSH instructions (production only) -->
-            <div v-else class="flex-1 overflow-y-auto p-4 space-y-4">
-              <p class="text-white/80 text-sm">
-                Connect to this node via SSH to access the command line. Use the same host as this web interface.
-              </p>
-
-              <div class="space-y-3">
-                <div class="p-3 rounded-lg bg-white/5 font-mono text-sm">
-                  <div class="text-white/50 text-xs uppercase tracking-wider mb-2">SSH Command</div>
-                  <div class="flex items-center gap-2 flex-wrap">
-                    <code class="text-green-400 break-all">{{ sshCommand }}</code>
-                    <button
-                      type="button"
-                      class="shrink-0 px-2 py-1 rounded bg-white/10 text-white/80 hover:bg-white/20 hover:text-white text-xs transition-colors"
-                      @click="copyCommand"
-                    >
-                      {{ copied ? 'Copied!' : 'Copy' }}
-                    </button>
-                  </div>
-                </div>
-
-                <div class="p-3 rounded-lg bg-white/5 text-sm space-y-1">
-                  <div class="text-white/50 text-xs uppercase tracking-wider mb-2">Connection Details</div>
-                  <div class="flex flex-col gap-1.5 text-white/80">
-                    <div class="flex justify-between gap-4">
-                      <span class="text-white/50">Host</span>
-                      <span class="font-mono text-green-400">{{ host }}</span>
-                    </div>
-                    <div class="flex justify-between gap-4">
-                      <span class="text-white/50">User</span>
-                      <span class="font-mono">archipelago</span>
-                    </div>
-                    <div class="flex justify-between gap-4">
-                      <span class="text-white/50">Password</span>
-                      <span class="font-mono">archipelago</span>
-                    </div>
-                  </div>
-                </div>
-
-                <p class="text-white/50 text-xs">
-                  From the terminal menu you can install to disk, configure Bitcoin, Lightning, view logs, and more.
-                </p>
-                <p class="text-white/40 text-xs">
-                  Tip: Press <kbd class="px-1.5 py-0.5 rounded bg-white/10 font-mono text-[10px]">F</kbd> to open this anytime.
-                </p>
-              </div>
-            </div>
-          </div>
-        </div>
+          <footer v-if="selectedId" class="terminal-input-bar">
+            <span class="terminal-prompt">›</span><input ref="inputRef" class="terminal-input" aria-label="Terminal input" autocomplete="off" autocapitalize="off" spellcheck="false" @keydown="onKeydown" @blur="keepFocus" />
+            <span class="terminal-status" :class="{ connected: connected }">{{ connected ? 'Connected' : 'Reconnecting…' }}</span>
+          </footer>
+        </section>
       </div>
     </Transition>
   </Teleport>
 </template>
 
 <script setup lang="ts">
-import { ref, computed, watch, nextTick, onMounted, onBeforeUnmount } from 'vue'
+import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
 import { useCLIStore } from '@/stores/cli'
-import { useModalKeyboard } from '@/composables/useModalKeyboard'
+
+type Session = { id: string; name: string; workspace: string; state: string; updated_at: number }
 const cliStore = useCLIStore()
-const panelRef = ref<HTMLElement | null>(null)
-const dragHandleRef = ref<HTMLElement | null>(null)
+const sessions = ref<Session[]>([])
+const selectedId = ref('')
+const output = ref('')
+const error = ref('')
+const connected = ref(false)
 const outputRef = ref<HTMLElement | null>(null)
-const cliInputRef = ref<HTMLInputElement | null>(null)
-const copied = ref(false)
+const inputRef = ref<HTMLInputElement | null>(null)
+let socket: WebSocket | null = null
 
-const mockCommand = ref('')
-const mockOutput = ref(`  ╔═══════════════════════════════════════════════════════════╗
-  ║   🏝️  ARCHIPELAGO BITCOIN NODE OS                         ║
-  ║   Your sovereign Bitcoin infrastructure                   ║
-  ╚═══════════════════════════════════════════════════════════╝
+const activeSession = computed(() => sessions.value.find(session => session.id === selectedId.value))
+const wsUrl = (id: string) => `${location.protocol === 'https:' ? 'wss:' : 'ws:'}//${location.host}/ws/terminal?session=${encodeURIComponent(id)}`
 
-  System Status:
-  ─────────────────────────────────────────────────────────────
-  Mode:        🟢 Installed
-  Podman:      🟢 Installed
-  Bitcoin:     🟢 Running (blocks: syncing)
-  Lightning:   🟡 Stopped
-
-  Main Menu:
-  ─────────────────────────────────────────────────────────────
-  r) Refresh                - Update IP/status
-  w) Open Web UI            - Launch graphical interface
-  1) Install to Disk        - Permanently install Archipelago
-  2) Setup Bitcoin Core     - Configure Bitcoin full node
-  3) Setup Lightning (LND)  - Configure Lightning Network
-  4) Setup BTCPay Server    - Bitcoin payment processor
-  5) View Logs              - Monitor running services
-  6) Network Settings       - Configure networking
-  7) System Info            - View system information
-  q) Quit
-
-`)
-
-const isDragging = ref(false)
-const dragStart = ref<{ x: number; y: number; panelX: number; panelY: number } | null>(null)
-
-const SAVED_POSITION_KEY = 'archipelago-cli-position'
-const savedPosition = ref<{ x: number; y: number } | null>(null)
-
-const isDev = import.meta.env.DEV
-const host = computed(() => window.location.hostname)
-const sshCommand = computed(() => `ssh archipelago@${host.value}`)
-
-const panelStyle = computed(() => {
-  const pos = savedPosition.value
-  if (!pos) return {}
-  return {
-    transform: `translate(${pos.x}px, ${pos.y}px)`,
-    margin: 0,
-  }
-})
-
-function loadSavedPosition() {
+async function loadSessions() {
+  error.value = ''
   try {
-    const raw = localStorage.getItem(SAVED_POSITION_KEY)
-    if (raw) {
-      const parsed = JSON.parse(raw)
-      savedPosition.value = { x: parsed.x ?? 0, y: parsed.y ?? 0 }
-    } else {
-      savedPosition.value = null
-    }
-  } catch (e) {
-    if (import.meta.env.DEV) console.warn('Failed to load saved CLI position', e)
-    savedPosition.value = null
-  }
+    const response = await fetch('/api/terminal/sessions', { credentials: 'include' })
+    if (!response.ok) throw new Error(response.status === 401 ? 'Sign in to use the developer terminal.' : `Session service returned ${response.status}.`)
+    sessions.value = await response.json()
+    if (!selectedId.value && sessions.value[0]) selectedId.value = sessions.value[0].id
+    if (selectedId.value) connectSelected()
+  } catch (cause) { error.value = cause instanceof Error ? cause.message : 'Could not load terminal sessions.' }
 }
 
-function savePosition(x: number, y: number) {
-  savedPosition.value = { x, y }
+async function createSession() {
+  error.value = ''
   try {
-    localStorage.setItem(SAVED_POSITION_KEY, JSON.stringify({ x, y }))
-  } catch (e) {
-    if (import.meta.env.DEV) console.warn('Failed to save CLI position', e)
+    const response = await fetch('/api/terminal/sessions', { method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: 'Archipelago work' }) })
+    if (!response.ok) throw new Error('Could not create a developer session.')
+    const session = await response.json()
+    sessions.value = [session, ...sessions.value]
+    selectedId.value = session.id
+    connectSelected()
+  } catch (cause) { error.value = cause instanceof Error ? cause.message : 'Could not create terminal session.' }
+}
+
+function closeTerminal() { disconnect(); cliStore.close() }
+function disconnect() { socket?.close(); socket = null; connected.value = false }
+function connectSelected() {
+  disconnect(); output.value = ''
+  if (!selectedId.value) return
+  socket = new WebSocket(wsUrl(selectedId.value))
+  socket.onopen = () => { connected.value = true; focusInput() }
+  socket.onclose = () => { connected.value = false }
+  socket.onerror = () => { connected.value = false }
+  socket.onmessage = event => {
+    try { const message = JSON.parse(event.data); if (message.type === 'output') { output.value = message.data; nextTick(() => { if (outputRef.value) outputRef.value.scrollTop = outputRef.value.scrollHeight }) } } catch { /* ignore malformed frames */ }
   }
 }
 
-function runMockCommand() {
-  const cmd = mockCommand.value.trim()
-  if (!cmd) return
-  mockOutput.value += `\n  archipelago@node ~ $ ${cmd}\n`
-  const lower = cmd.toLowerCase()
-  if (lower === 'r' || lower === 'refresh') {
-    mockOutput.value += `  Status refreshed.\n`
-  } else if (lower === 'w' || lower.startsWith('web')) {
-    mockOutput.value += `  Opening Web UI... (press C to return to CLI)\n`
-  } else if (lower === 'q' || lower === 'quit' || lower === 'exit') {
-    mockOutput.value += `  Goodbye! 🏝️\n`
-    cliStore.close()
-  } else if (lower === 'help' || lower === '?') {
-    mockOutput.value += `  Type r, w, 1-7, or q. Press C to switch to Web UI.\n`
-  } else {
-    mockOutput.value += `  Unknown command. Type 'help' or 'r' for menu.\n`
-  }
-  mockCommand.value = ''
-  nextTick(() => {
-    outputRef.value?.scrollTo({ top: outputRef.value.scrollHeight, behavior: 'smooth' })
-  })
+function send(data: string) { if (socket?.readyState === WebSocket.OPEN) socket.send(JSON.stringify({ type: 'input', data })) }
+function onKeydown(event: KeyboardEvent) {
+  if (event.ctrlKey && event.key.toLowerCase() === 'c') { event.preventDefault(); send('\u0003'); return }
+  if (event.ctrlKey && event.key.toLowerCase() === 'd') { event.preventDefault(); send('\u0004'); return }
+  const special: Record<string, string> = { Enter: '\n', Backspace: '\u007f', Tab: '\t', ArrowUp: '\u001b[A', ArrowDown: '\u001b[B', ArrowRight: '\u001b[C', ArrowLeft: '\u001b[D' }
+  if (special[event.key]) { event.preventDefault(); send(special[event.key]); return }
+  if (event.key.length === 1 && !event.metaKey && !event.altKey) { event.preventDefault(); send(event.key) }
 }
-
-async function copyCommand() {
-  try {
-    await navigator.clipboard.writeText(sshCommand.value)
-    copied.value = true
-    setTimeout(() => {
-      copied.value = false
-    }, 2000)
-  } catch {
-    // Fallback for older browsers
-    const textarea = document.createElement('textarea')
-    textarea.value = sshCommand.value
-    document.body.appendChild(textarea)
-    textarea.select()
-    document.execCommand('copy')
-    document.body.removeChild(textarea)
-    copied.value = true
-    setTimeout(() => {
-      copied.value = false
-    }, 2000)
-  }
-}
-
-function onPanelMouseDown(e: MouseEvent) {
-  if (!dragHandleRef.value?.contains(e.target as Node)) return
-  isDragging.value = true
-  const rect = panelRef.value?.getBoundingClientRect()
-  if (!rect) return
-  const currentX = savedPosition.value?.x ?? 0
-  const currentY = savedPosition.value?.y ?? 0
-  dragStart.value = { x: e.clientX, y: e.clientY, panelX: currentX, panelY: currentY }
-}
-
-function onMouseMove(e: MouseEvent) {
-  if (!dragStart.value) return
-  const dx = e.clientX - dragStart.value.x
-  const dy = e.clientY - dragStart.value.y
-  savePosition(dragStart.value.panelX + dx, dragStart.value.panelY + dy)
-}
-
-function onMouseUp() {
-  isDragging.value = false
-  dragStart.value = null
-}
-
-useModalKeyboard(panelRef, computed(() => cliStore.isOpen), () => cliStore.close())
-
-watch(
-  () => cliStore.isOpen,
-  (open) => {
-    if (open) {
-      loadSavedPosition()
-      if (isDev) {
-        nextTick(() => cliInputRef.value?.focus())
-      }
-    }
-  }
-)
-
-onMounted(() => {
-  loadSavedPosition()
-  window.addEventListener('mousemove', onMouseMove)
-  window.addEventListener('mouseup', onMouseUp)
-})
-
-onBeforeUnmount(() => {
-  window.removeEventListener('mousemove', onMouseMove)
-  window.removeEventListener('mouseup', onMouseUp)
-})
+function focusInput() { nextTick(() => inputRef.value?.focus()) }
+function keepFocus() { if (cliStore.isOpen) setTimeout(focusInput, 0) }
+watch(() => cliStore.isOpen, open => { if (open) loadSessions(); else disconnect() })
+onBeforeUnmount(disconnect)
 </script>
 
 <style scoped>
-.cli-popup-enter-active,
-.cli-popup-leave-active {
-  transition: opacity 0.2s ease;
-}
-.cli-popup-enter-from,
-.cli-popup-leave-to {
-  opacity: 0;
-}
+.terminal-panel { display: flex; flex-direction: column; max-height: min(760px, calc(100vh - 2rem)); min-height: min(540px, calc(100vh - 2rem)); border: 1px solid rgba(247,147,26,.28); border-radius: 18px; background: #0b0e12; box-shadow: 0 28px 90px rgba(0,0,0,.65); color: #f6f7f9; }
+.terminal-header, .terminal-input-bar { display: flex; align-items: center; gap: 12px; padding: 13px 16px; background: rgba(255,255,255,.045); }
+.terminal-header { justify-content: space-between; border-bottom: 1px solid rgba(255,255,255,.1); }
+.terminal-title, .terminal-actions { display: flex; align-items: center; gap: 10px; min-width: 0; }
+.terminal-title { font-weight: 650; } .terminal-host { color: rgba(255,255,255,.45); font-size: 12px; font-weight: 400; }
+.terminal-dot { width: 9px; height: 9px; border-radius: 50%; background: #f7931a; box-shadow: 0 0 12px #f7931a; }
+.terminal-body { flex: 1; min-height: 0; overflow: hidden; background: #050608; }
+.terminal-output { height: 100%; margin: 0; overflow: auto; padding: 18px; color: #d7f7d3; font: 13px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace; white-space: pre-wrap; outline: none; }
+.terminal-input-bar { border-top: 1px solid rgba(255,255,255,.1); } .terminal-prompt { color: #f7931a; font-size: 20px; } .terminal-input { flex: 1; min-width: 0; border: 0; outline: 0; background: transparent; color: white; font: 13px ui-monospace, monospace; }
+.terminal-status { color: #e8a7a7; font-size: 11px; } .terminal-status.connected { color: #92d6a0; }
+.terminal-select, .terminal-button, .terminal-close { min-height: 36px; border-radius: 9px; border: 1px solid rgba(255,255,255,.15); background: rgba(255,255,255,.07); color: white; padding: 0 11px; font-size: 12px; }
+.terminal-button:hover, .terminal-select:hover { background: rgba(255,255,255,.13); } .terminal-primary { background: #f7931a; border-color: #f7931a; color: #17100a; font-weight: 700; } .terminal-close { color: rgba(255,255,255,.65); }
+.terminal-empty { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px; height: 100%; min-height: 300px; padding: 32px; text-align: center; color: rgba(255,255,255,.55); } .terminal-empty strong { color: white; font-size: 16px; } .terminal-error strong { color: #ffaaa6; }
+@media (max-width: 640px) { .terminal-panel { min-height: calc(100vh - 1rem); max-height: calc(100vh - 1rem); } .terminal-header { align-items: flex-start; flex-direction: column; } .terminal-actions { width: 100%; } .terminal-select { flex: 1; min-width: 0; } .terminal-status { display: none; } }
 </style>
