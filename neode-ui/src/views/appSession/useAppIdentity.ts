@@ -35,6 +35,13 @@ export function useAppIdentity(
     try { localStorage.setItem(IDENTITY_KEY + appId.value, JSON.stringify(identity)) } catch {}
   }
 
+  /** Forget only this app's automatic identity choice. Saved node identities
+   * and their keys remain intact for a later explicit sign-in. */
+  function clearRememberedIdentity() {
+    try { localStorage.removeItem(IDENTITY_KEY + appId.value) } catch {}
+    showIdentityPicker.value = false
+  }
+
   async function sendIdentity(identity: SelectedIdentity) {
     try {
       const challenge = `archipelago-identity:${Date.now()}`
@@ -86,6 +93,7 @@ export function useAppIdentity(
     onIdentitySelected,
     onIframeLoadIdentity,
     handleIdentityRequest,
+    clearRememberedIdentity,
     cancelIdentitySelection,
   }
 }

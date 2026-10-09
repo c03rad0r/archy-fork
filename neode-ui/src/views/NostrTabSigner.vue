@@ -57,6 +57,11 @@ function storeIdentity(identity: SelectedIdentity) {
   try { localStorage.setItem(`archipelago_app_identity_${appId.value}`, JSON.stringify(identity)) } catch {}
 }
 
+function clearStoredIdentity() {
+  if (!appId.value) return
+  try { localStorage.removeItem(`archipelago_app_identity_${appId.value}`) } catch {}
+}
+
 function parentPost(message: Record<string, unknown>) {
   window.parent.postMessage(message, appOrigin.value || '*')
 }
@@ -201,6 +206,17 @@ function onMessage(event: MessageEvent) {
   if (data.type === 'archipelago:signer-select-identity' && appId.value && event.origin === appOrigin.value) {
     showIdentityPicker.value = true
     showSigner()
+    return
+  }
+
+  if (data.type === 'archipelago:signer-clear-session' && appId.value && event.origin === appOrigin.value) {
+    clearStoredIdentity()
+    queuedRequests.splice(0)
+    showIdentityPicker.value = false
+    bridge.cancelPending()
+    registrationBridge.cancel()
+    rentalBridge.cancel()
+    hideSigner()
     return
   }
 

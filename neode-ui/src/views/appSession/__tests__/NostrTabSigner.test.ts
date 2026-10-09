@@ -66,6 +66,25 @@ describe('NostrTabSigner visibility', () => {
     expect(document.body.classList.contains('nostr-signer-route')).toBe(false)
   })
 
+  it('forgets the remembered app selection when the app signs out', async () => {
+    localStorage.setItem('archipelago_app_identity_indeedhub', JSON.stringify({
+      id: 'identity-a', name: 'Alice', nostr_pubkey: 'a'.repeat(64),
+    }))
+    localStorage.setItem('unrelated-node-identity', 'preserved')
+    const wrapper = shallowMount(NostrTabSigner)
+    try {
+      parentMessage({ type: 'archipelago:signer-init', appId: 'indeedhub', appName: 'IndeeHub' })
+      parentMessage({ type: 'archipelago:signer-clear-session' })
+      await flushPromises()
+
+      expect(localStorage.getItem('archipelago_app_identity_indeedhub')).toBeNull()
+      expect(localStorage.getItem('unrelated-node-identity')).toBe('preserved')
+      expect(wrapper.findComponent(NostrIdentityPicker).props('show')).toBe(false)
+    } finally {
+      wrapper.unmount()
+    }
+  })
+
   it('hands off a reactive picker identity as cloneable public fields and releases the overlay', async () => {
     vi.useFakeTimers()
     const sent: Array<Record<string, unknown>> = []

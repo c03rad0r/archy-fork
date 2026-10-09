@@ -312,6 +312,13 @@ function storeIdentity(appUrl: string, identity: SelectedIdentity) {
   } catch { /* ignore */ }
 }
 
+function clearStoredIdentity(appUrl: string) {
+  try {
+    const key = IDENTITY_STORAGE_KEY + appUrl.replace(/[^a-z0-9]/gi, '_')
+    localStorage.removeItem(key)
+  } catch { /* ignore */ }
+}
+
 /** Handle identity selection from the picker */
 function onIdentitySelected(identity: SelectedIdentity) {
   showIdentityPicker.value = false
@@ -521,6 +528,10 @@ function onMessage(e: MessageEvent) {
   if (e.data?.type === 'archipelago:identity:request' && store.isOpen) {
     if (e.data?.force === true) showIdentityPicker.value = true
     else sendIdentityIfSupported()
+  }
+  if (e.data?.type === 'archipelago:identity:clear' && store.isOpen && e.source === iframeRef.value?.contentWindow) {
+    if (store.url) clearStoredIdentity(store.url)
+    showIdentityPicker.value = false
   }
   // Wallet connect — app requests a payment
   if (e.data?.type === 'archipelago:payment-request' && store.isOpen) {
