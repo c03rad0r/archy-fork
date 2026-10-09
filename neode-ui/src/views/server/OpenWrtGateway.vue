@@ -535,7 +535,7 @@ onMounted(() => {
 
     <div class="glass-card p-6 mb-6 overflow-hidden router-model-card">
       <div class="grid grid-cols-1 lg:grid-cols-[minmax(0,1fr)_minmax(280px,360px)] gap-6 items-start">
-        <DeviceModel model="beryl-ax" label="Beryl AX (GL-MT3000) OpenWrt router" fill-viewport />
+        <DeviceModel model="beryl-ax" label="Beryl AX (GL-MT3000) OpenWrt router" fill-viewport :controls="false" />
         <RouterMarketplace />
       </div>
     </div>
@@ -1022,6 +1022,10 @@ onMounted(() => {
 
 <style scoped>
 @media (min-width: 1024px) {
+  .router-model-card .device-model--viewport {
+    min-height: calc(100dvh - 216px);
+  }
+
   .router-model-card > .grid > .router-marketplace {
     align-self: end;
     margin-top: 0;

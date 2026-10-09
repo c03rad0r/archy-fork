@@ -9,9 +9,10 @@ const props = withDefaults(defineProps<{
   fallback?: string
   fillViewport?: boolean
   glassContainer?: boolean
+  controls?: boolean
   /** Development-only gallery controls. Never rendered in production builds. */
   devBrowse?: boolean
-}>(), { fallback: '', fillViewport: false, glassContainer: false, devBrowse: false })
+}>(), { fallback: '', fillViewport: false, glassContainer: false, controls: true, devBrowse: false })
 const host = ref<HTMLElement>()
 const frame = ref<HTMLElement>()
 const ready = ref(false)
@@ -161,7 +162,7 @@ onBeforeUnmount(() => {
         <svg viewBox="0 0 200 120" aria-hidden="true"><rect x="31" y="59" width="138" height="46" rx="15"/><path d="M38 65V17Q38 9 45 9T52 17V60M148 60V17Q148 9 155 9T162 17V65M92 87h16"/></svg>
       </div>
     </div>
-    <figcaption class="device-model__caption">
+    <figcaption v-if="controls || devBrowseEnabled" class="device-model__caption">
       <span>{{ failed ? label : (devBrowseEnabled ? devModelLabel(currentModel) : 'Drag to explore') }}</span>
       <template v-if="devBrowseEnabled">
         <button type="button" aria-label="Previous 3D model" @click="browseModel(-1)">Back</button>
