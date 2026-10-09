@@ -119,9 +119,9 @@ fn apps_dirs() -> Vec<PathBuf> {
     if let Some(root) = std::env::var_os("ARCHIPELAGO_APPS_DIR") {
         dirs.push(root.into());
     }
-    if let Ok(manifest_dir) = std::env::var("CARGO_MANIFEST_DIR") {
-        dirs.push(PathBuf::from(manifest_dir).join("../../apps"));
-    }
+    // Preserve source discovery after the prebuilt test binary moves into its
+    // networkless execution container.
+    dirs.push(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../apps"));
     dirs.extend([
         PathBuf::from("apps"),
         PathBuf::from("/opt/archipelago/apps"),

@@ -12,6 +12,11 @@ export default defineConfig({
   test: {
     environment: 'jsdom',
     globals: true,
+    // Vitest 5's process-fork pool can time out while starting workers on a
+    // busy two-core development node. Threads retain per-file isolation and
+    // avoid that expensive process startup; CI itself remains containerized.
+    pool: 'threads',
+    maxWorkers: 4,
     // Vitest's 5s default is not a statement about these tests — the whole
     // 1000-test suite runs in ~70s on an idle box. It is a statement about
     // the machine. This one also runs a live node, so a release gate can

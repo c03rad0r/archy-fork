@@ -257,6 +257,12 @@ impl RpcHandler {
             }
         }
 
+        // Unit tests deliberately construct a handler without an orchestrator.
+        // Never let that mock cross into a real Podman command on the host.
+        if cfg!(test) && self.orchestrator.is_none() {
+            return Ok(serde_json::json!([]));
+        }
+
         let output = tokio::process::Command::new("podman")
             .args(["ps", "-a", "--format", "json"])
             .output()

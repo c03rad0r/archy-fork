@@ -24,7 +24,7 @@ pub const FIPS_IFACE: &str = "fips0";
 /// - Link-local (`fe80::/10`) and non-ULA addresses are ignored — we
 ///   only want the mesh-routable ULA that `<npub>.fips` DNS resolves to.
 pub fn fips0_ula() -> Option<Ipv6Addr> {
-    addresses_on(FIPS_IFACE).into_iter().find(|a| is_ula(a))
+    addresses_on(FIPS_IFACE).into_iter().find(is_ula)
 }
 
 /// List every IPv6 address bound to a given interface from

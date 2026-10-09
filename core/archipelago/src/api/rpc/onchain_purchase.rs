@@ -442,7 +442,7 @@ impl RpcHandler {
             if record.quote.is_none() {
                 engine::mark_address_allocation(&journal, true)?;
                 let status = self.request_onchain_allocation(&record, &fips).await?;
-                record = engine::accept_quote(
+                engine::accept_quote(
                     &journal,
                     status.quote()?.context(
                         "Original seller allocation is unresolved; recover this operation",

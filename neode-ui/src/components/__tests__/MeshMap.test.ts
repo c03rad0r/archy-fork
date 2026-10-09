@@ -48,14 +48,14 @@ describe('MeshMap', () => {
       return 7
     })
     const clearWatch = vi.fn()
-    const resizeObserver = vi.fn(() => ({
-      observe: vi.fn(),
-      disconnect: vi.fn(),
-    }))
+    class ResizeObserverMock {
+      observe = vi.fn()
+      disconnect = vi.fn()
+    }
     vi.stubGlobal('navigator', {
       geolocation: { watchPosition, clearWatch },
     })
-    vi.stubGlobal('ResizeObserver', resizeObserver)
+    vi.stubGlobal('ResizeObserver', ResizeObserverMock)
 
     const wrapper = mount(MeshMap)
 

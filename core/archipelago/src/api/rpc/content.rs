@@ -1013,19 +1013,28 @@ impl RpcHandler {
 
         let fips_npub = crate::federation::fips_npub_for_onion(&self.config.data_dir, onion).await;
         let path = format!("/content/{}/onchain-status/{}", content_id, address);
-        let (response, _transport) =
-            match crate::fips::dial::PeerRequest::new(fips_npub.as_deref(), onion, &path)
-                .service(crate::settings::transport::PeerService::PeerFiles)
-                .timeout(std::time::Duration::from_secs(15))
-                .fips_timeout(std::time::Duration::from_secs(6))
-                .send_content_get(&self.config.data_dir)
-                .await
-            {
-                Ok(v) => v,
-                Err(_) => return Ok(serde_json::json!({ "paid": false, "unreachable": true, "status": "unknown", "error": "Payment verification is unavailable. Keep the original address and do not pay again." })),
-            };
+        let (response, _transport) = match crate::fips::dial::PeerRequest::new(
+            fips_npub.as_deref(),
+            onion,
+            &path,
+        )
+        .service(crate::settings::transport::PeerService::PeerFiles)
+        .timeout(std::time::Duration::from_secs(15))
+        .fips_timeout(std::time::Duration::from_secs(6))
+        .send_content_get(&self.config.data_dir)
+        .await
+        {
+            Ok(v) => v,
+            Err(_) => {
+                return Ok(
+                    serde_json::json!({ "paid": false, "unreachable": true, "status": "unknown", "error": "Payment verification is unavailable. Keep the original address and do not pay again." }),
+                )
+            }
+        };
         if !response.status().is_success() {
-            return Ok(serde_json::json!({ "paid": false, "status": "unknown", "error": "The seller could not verify this payment. Keep the original address and do not pay again." }));
+            return Ok(
+                serde_json::json!({ "paid": false, "status": "unknown", "error": "The seller could not verify this payment. Keep the original address and do not pay again." }),
+            );
         }
         let body: serde_json::Value = response
             .json()

@@ -227,7 +227,7 @@ pub async fn publish_presence(
     // NIP-40 expiration: relays that honour it garbage-collect the event if
     // this node stops heartbeating (reinstall, decommission, long outage).
     // `discover` enforces the same window client-side for relays that don't.
-    let expires = Timestamp::from(Timestamp::now().as_u64() + PRESENCE_TTL_SECS);
+    let expires = Timestamp::from(Timestamp::now().as_secs() + PRESENCE_TTL_SECS);
     let builder = EventBuilder::new(Kind::Custom(30078), content)
         .tag(Tag::identifier("archipelago-node"))
         .tag(Tag::expiration(expires));
@@ -268,7 +268,7 @@ pub async fn publish_tombstone(
     }
     // Tombstone also expires: after TTL the relay may drop it entirely,
     // which is the desired end state (nothing left to list).
-    let expires = Timestamp::from(Timestamp::now().as_u64() + PRESENCE_TTL_SECS);
+    let expires = Timestamp::from(Timestamp::now().as_secs() + PRESENCE_TTL_SECS);
     let builder = EventBuilder::new(Kind::Custom(30078), "{}")
         .tag(Tag::identifier("archipelago-node"))
         .tag(Tag::expiration(expires));
@@ -326,7 +326,8 @@ pub async fn discover_nodes(
     client.disconnect().await;
 
     let mut nodes = Vec::new();
-    let stale_cutoff = Timestamp::from(Timestamp::now().as_u64().saturating_sub(PRESENCE_TTL_SECS));
+    let stale_cutoff =
+        Timestamp::from(Timestamp::now().as_secs().saturating_sub(PRESENCE_TTL_SECS));
     for event in events {
         // Client-side staleness enforcement: pre-TTL events (and events from
         // relays that ignore NIP-40) would otherwise list dead installs

@@ -31,7 +31,7 @@ use futures_util::{SinkExt, StreamExt};
 use serde_json::{json, Value};
 use tokio::sync::mpsc;
 use tokio_tungstenite::tungstenite::Message;
-use tracing::{debug, info, warn};
+use tracing::{debug, info};
 
 const CDP_HTTP: &str = "http://127.0.0.1:9222";
 /// Marker whose presence means this node drives a local kiosk display.

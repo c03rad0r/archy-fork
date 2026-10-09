@@ -7,6 +7,8 @@ const STEP_ROUTE_OVERRIDES: Record<string, string> = {
   'create-passphrase': '/dashboard/settings',
   'create-backup': '/dashboard/settings',
   'save-backup': '/dashboard/settings',
+  'external-access': '/dashboard/setup/external-access',
+  'publish-website': '/dashboard/setup/website',
   // Channel steps land directly on the Lightning channels screen (which
   // carries the "open a channel with Zeus" suggestion).
   'open-channel': '/dashboard/apps/lnd/channels',

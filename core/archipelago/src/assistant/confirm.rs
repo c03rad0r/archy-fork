@@ -23,7 +23,6 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Duration;
 
-use rand::RngCore;
 use serde_json::json;
 use sha2::{Digest, Sha256};
 use tokio::sync::oneshot;
@@ -227,7 +226,9 @@ pub fn global() -> Arc<ConfirmGate> {
 /// nonce for the same action never matches today's pending entry).
 pub fn mint_nonce(tool_name: &str, validated_args: &str) -> String {
     let mut salt = [0u8; 16];
-    rand::thread_rng().fill_bytes(&mut salt);
+    crate::entropy::draw_key_bytes(&mut rand::rngs::OsRng, &mut salt).unwrap_or_else(|e| {
+        panic!("refusing to mint a confirmation nonce from degenerate entropy: {e} (KEY-05)")
+    });
     let mut hasher = Sha256::new();
     hasher.update(salt);
     hasher.update(tool_name.as_bytes());

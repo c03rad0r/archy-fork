@@ -79,11 +79,15 @@ describe('Mesh graphics lifecycle (Task 2): Leaflet map (MeshMap.vue)', () => {
     vi.useFakeTimers()
     mapInstances.length = 0
     resizeObserverInstances = []
-    vi.stubGlobal('ResizeObserver', vi.fn(() => {
-      const inst = { observe: vi.fn(), disconnect: vi.fn(), unobserve: vi.fn() }
-      resizeObserverInstances.push(inst)
-      return inst
-    }))
+    vi.stubGlobal('ResizeObserver', class {
+      observe = vi.fn()
+      disconnect = vi.fn()
+      unobserve = vi.fn()
+
+      constructor() {
+        resizeObserverInstances.push(this)
+      }
+    })
     vi.spyOn(Element.prototype, 'getBoundingClientRect').mockReturnValue({
       height: 200, width: 200, top: 0, left: 0, right: 0, bottom: 0, x: 0, y: 0, toJSON: () => undefined,
     } as DOMRect)

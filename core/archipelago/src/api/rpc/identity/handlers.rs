@@ -114,17 +114,34 @@ impl RpcHandler {
 
     /// Explicit owner-key import into a separate native business identity.
     pub(in crate::api::rpc) async fn handle_identity_import_nostr(
-        &self, params: Option<serde_json::Value>,
+        &self,
+        params: Option<serde_json::Value>,
     ) -> Result<serde_json::Value> {
         let params = params.unwrap_or_default();
-        let password = params.get("password").and_then(|v| v.as_str()).unwrap_or("");
+        let password = params
+            .get("password")
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
         if !self.auth_manager.verify_password(password).await? {
             anyhow::bail!("Invalid node password");
         }
-        let name = params.get("name").and_then(|v| v.as_str()).unwrap_or("Just Works");
-        anyhow::ensure!(!name.trim().is_empty() && name.len() <= 100, "Invalid identity name");
-        let nsec = params.get("nsec").and_then(|v| v.as_str()).unwrap_or("").trim();
-        let npub = params.get("expected_npub").and_then(|v| v.as_str()).unwrap_or("");
+        let name = params
+            .get("name")
+            .and_then(|v| v.as_str())
+            .unwrap_or("Just Works");
+        anyhow::ensure!(
+            !name.trim().is_empty() && name.len() <= 100,
+            "Invalid identity name"
+        );
+        let nsec = params
+            .get("nsec")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .trim();
+        let npub = params
+            .get("expected_npub")
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
         let manager = IdentityManager::new(&self.config.data_dir).await?;
         let record = manager.import_nostr(name.to_string(), nsec, npub).await?;
         Ok(serde_json::json!({"id":record.id, "name":record.name,

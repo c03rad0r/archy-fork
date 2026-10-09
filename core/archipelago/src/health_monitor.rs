@@ -946,7 +946,10 @@ pub fn spawn_health_monitor(state: Arc<StateManager>, data_dir: PathBuf) {
                     }
                     if matches!(
                         pkg.state,
-                        PackageState::Starting | PackageState::Stopping | PackageState::Restarting | PackageState::Updating
+                        PackageState::Starting
+                            | PackageState::Stopping
+                            | PackageState::Restarting
+                            | PackageState::Updating
                     ) {
                         debug!(
                             "Skipping container during package lifecycle transition: {} ({:?})",
@@ -1069,7 +1072,8 @@ pub fn spawn_health_monitor(state: Arc<StateManager>, data_dir: PathBuf) {
                             app_id: Some(container.app_id.clone()),
                         });
                         if data.notifications.len() > 20 {
-                            data.notifications = data.notifications.split_off(data.notifications.len() - 20);
+                            data.notifications =
+                                data.notifications.split_off(data.notifications.len() - 20);
                         }
                         state_changed = true;
                     }
@@ -1164,7 +1168,8 @@ pub fn spawn_health_monitor(state: Arc<StateManager>, data_dir: PathBuf) {
                     // the restart resyncs cleanly instead of crash-looping.
                     maybe_recover_corrupt_electrumx(&container.name, attempt).await;
 
-                    let restarted = restart_container(&container.name, &container.state, &data_dir).await;
+                    let restarted =
+                        restart_container(&container.name, &container.state, &data_dir).await;
 
                     if !restarted || attempt >= MAX_RESTART_ATTEMPTS {
                         let notification = Notification {
@@ -1249,10 +1254,15 @@ mod tests {
         let installed = root.path().join("update-transactions/installed-units");
         std::fs::create_dir_all(&installed).unwrap();
         let record = installed.join(format!("{name}.json"));
-        std::fs::write(&record, serde_json::to_vec(&serde_json::json!({
-            "schema": 1, "operation": uuid::Uuid::new_v4().to_string(),
-            "name": name, "body": "[Container]\nImage=original:retained\n", "mode": 0o600
-        })).unwrap()).unwrap();
+        std::fs::write(
+            &record,
+            serde_json::to_vec(&serde_json::json!({
+                "schema": 1, "operation": uuid::Uuid::new_v4().to_string(),
+                "name": name, "body": "[Container]\nImage=original:retained\n", "mode": 0o600
+            }))
+            .unwrap(),
+        )
+        .unwrap();
         assert!(!automatic_recovery_allowed(root.path(), name));
         assert!(!restart_container(name, "running", root.path()).await);
         std::fs::write(&record, b"damaged").unwrap();

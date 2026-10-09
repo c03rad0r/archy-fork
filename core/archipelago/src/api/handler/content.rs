@@ -583,15 +583,17 @@ impl ApiHandler {
                     paid = true;
                 }
                 Ok(false) => {}
-                Err(_) => return Ok(build_response(
-                    StatusCode::OK,
-                    "application/json",
-                    hyper::Body::from(serde_json::to_vec(&serde_json::json!({
-                        "paid": false,
-                        "status": "unknown",
-                        "error": "Exact on-chain outputs could not be verified. Keep the original payment address and do not pay again."
-                    }))?),
-                )),
+                Err(_) => {
+                    return Ok(build_response(
+                        StatusCode::OK,
+                        "application/json",
+                        hyper::Body::from(serde_json::to_vec(&serde_json::json!({
+                            "paid": false,
+                            "status": "unknown",
+                            "error": "Exact on-chain outputs could not be verified. Keep the original payment address and do not pay again."
+                        }))?),
+                    ))
+                }
             }
         }
         let body = serde_json::json!({ "paid": paid });

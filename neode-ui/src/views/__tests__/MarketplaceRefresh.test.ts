@@ -69,7 +69,10 @@ vi.mock('../discover/curatedApps', () => ({
 
 describe('Marketplace tracer tab: background refresh failure (D-07)', () => {
   beforeEach(() => {
-    vi.stubGlobal('ResizeObserver', vi.fn(() => ({ observe: vi.fn(), disconnect: vi.fn() })))
+    vi.stubGlobal('ResizeObserver', class {
+      observe = vi.fn()
+      disconnect = vi.fn()
+    })
     routerPushMock.mockClear()
     toastErrorMock.mockClear()
     toastInfoMock.mockClear()

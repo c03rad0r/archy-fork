@@ -11,8 +11,8 @@ pub mod mint_client;
 pub(crate) mod mutation;
 pub mod nut13;
 pub mod profits;
-mod send_journal;
 mod receive_journal;
+mod send_journal;
 
 pub(crate) mod purchase_fee_plan;
 

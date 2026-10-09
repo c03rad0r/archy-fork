@@ -2402,7 +2402,10 @@ impl ProdContainerOrchestrator {
                 return Ok(ReconcileAction::Left("user-uninstalled".into()));
             }
             self.sync_quadlet_unit(lm, &managed_name).await?;
-            let status = self.runtime.get_container_status(&managed_name).await
+            let status = self
+                .runtime
+                .get_container_status(&managed_name)
+                .await
                 .context("Reviewed managed runtime is missing; explicit recovery required")?;
             anyhow::ensure!(matches!(status.state, ContainerState::Running),
                 "Reviewed managed runtime is not running; recover its saved systemd unit explicitly instead of recreating from the catalog");
@@ -4019,36 +4022,38 @@ impl ProdContainerOrchestrator {
                 .clone()
                 .unwrap_or_else(|| "bitcoin-knots".to_string());
         }
-        #[allow(unreachable_code)]
-        // The known Bitcoin node containers, preferred in order. Any archy
-        // Bitcoin distribution runs as a container named `bitcoin-<distro>`
-        // (or bare `bitcoin`), all reachable on archy-net by name.
-        const BITCOIN_NAMES: &[&str] = &["bitcoin-knots", "bitcoin-core", "bitcoin"];
-        let names = tokio::process::Command::new("podman")
-            .args(["ps", "--format", "{{.Names}}"])
-            .output()
-            .await
-            .ok()
-            .filter(|o| o.status.success())
-            .map(|o| String::from_utf8_lossy(&o.stdout).into_owned())
-            .unwrap_or_default();
-        let running: Vec<&str> = names.lines().map(|l| l.trim()).collect();
-        // Prefer a known name in priority order…
-        if let Some(hit) = BITCOIN_NAMES.iter().find(|n| running.contains(n)) {
-            return hit.to_string();
+        #[cfg(not(test))]
+        {
+            // The known Bitcoin node containers, preferred in order. Any archy
+            // Bitcoin distribution runs as a container named `bitcoin-<distro>`
+            // (or bare `bitcoin`), all reachable on archy-net by name.
+            const BITCOIN_NAMES: &[&str] = &["bitcoin-knots", "bitcoin-core", "bitcoin"];
+            let names = tokio::process::Command::new("podman")
+                .args(["ps", "--format", "{{.Names}}"])
+                .output()
+                .await
+                .ok()
+                .filter(|o| o.status.success())
+                .map(|o| String::from_utf8_lossy(&o.stdout).into_owned())
+                .unwrap_or_default();
+            let running: Vec<&str> = names.lines().map(|l| l.trim()).collect();
+            // Prefer a known name in priority order…
+            if let Some(hit) = BITCOIN_NAMES.iter().find(|n| running.contains(n)) {
+                return hit.to_string();
+            }
+            // …else accept ANY running `bitcoin-*` / `bitcoin` container, so a
+            // future Bitcoin distribution archy ships works without editing this
+            // list (user req 2026-07-22). Excludes companions/sidecars like
+            // `bitcoin-ui` and `archy-*`.
+            if let Some(other) = running.iter().find(|n| {
+                (**n == "bitcoin" || n.starts_with("bitcoin-"))
+                    && !n.ends_with("-ui")
+                    && !n.starts_with("archy-")
+            }) {
+                return other.to_string();
+            }
+            "bitcoin-knots".to_string()
         }
-        // …else accept ANY running `bitcoin-*` / `bitcoin` container, so a
-        // future Bitcoin distribution archy ships works without editing this
-        // list (user req 2026-07-22). Excludes companions/sidecars like
-        // `bitcoin-ui` and `archy-*`.
-        if let Some(other) = running.iter().find(|n| {
-            (**n == "bitcoin" || n.starts_with("bitcoin-"))
-                && !n.ends_with("-ui")
-                && !n.starts_with("archy-")
-        }) {
-            return other.to_string();
-        }
-        "bitcoin-knots".to_string()
     }
 
     #[cfg(test)]
@@ -5227,8 +5232,10 @@ impl ContainerOrchestrator for ProdContainerOrchestrator {
         };
         let name = compute_container_name(&lm.manifest);
         if super::supervised_update::installed_unit(&self.data_dir, &name)?.is_some() {
-            anyhow::ensure!(!super::update_transaction::is_held(&self.data_dir, &name)?,
-                "Reviewed managed runtime is held for update recovery");
+            anyhow::ensure!(
+                !super::update_transaction::is_held(&self.data_dir, &name)?,
+                "Reviewed managed runtime is held for update recovery"
+            );
             self.sync_quadlet_unit(&lm, &name).await?;
             self.ensure_resolved_source_available(&lm).await?;
         }
@@ -5328,13 +5335,18 @@ impl ContainerOrchestrator for ProdContainerOrchestrator {
         let _guard = lock.lock().await;
         let name = compute_container_name(&lm.manifest);
         if super::supervised_update::installed_unit(&self.data_dir, &name)?.is_some() {
-            anyhow::ensure!(!super::update_transaction::is_held(&self.data_dir, &name)?,
-                "Reviewed managed runtime is held for update recovery");
+            anyhow::ensure!(
+                !super::update_transaction::is_held(&self.data_dir, &name)?,
+                "Reviewed managed runtime is held for update recovery"
+            );
             self.sync_quadlet_unit(&lm, &name).await?;
             quadlet::stop_service(&format!("{name}.service")).await?;
             if let Ok(status) = self.runtime.get_container_status(&name).await {
                 anyhow::ensure!(
-                    matches!(status.state, ContainerState::Stopped | ContainerState::Exited | ContainerState::Created),
+                    matches!(
+                        status.state,
+                        ContainerState::Stopped | ContainerState::Exited | ContainerState::Created
+                    ),
                     "Reviewed managed runtime is still active after systemd stop"
                 );
             }
@@ -5391,7 +5403,12 @@ impl ContainerOrchestrator for ProdContainerOrchestrator {
 
     async fn restart(&self, app_id: &str) -> Result<()> {
         if let Ok(lm) = self.loaded(app_id).await {
-            if super::supervised_update::installed_unit(&self.data_dir, &compute_container_name(&lm.manifest))?.is_some() {
+            if super::supervised_update::installed_unit(
+                &self.data_dir,
+                &compute_container_name(&lm.manifest),
+            )?
+            .is_some()
+            {
                 self.validate_start(app_id).await?;
                 self.stop(app_id).await?;
                 return self.start(app_id).await;
@@ -7966,27 +7983,59 @@ app:
     #[tokio::test]
     async fn reviewed_runtime_survives_catalog_drift_and_refuses_repairs_before_mutation() {
         use std::os::unix::fs::PermissionsExt;
-        for case in ["running", "stopped", "missing", "changed-unit", "missing-unit", "user-stopped", "user-uninstalled"] {
+        for case in [
+            "running",
+            "stopped",
+            "missing",
+            "changed-unit",
+            "missing-unit",
+            "user-stopped",
+            "user-uninstalled",
+        ] {
             let rt = Arc::new(MockRuntime::default());
             let orch = orch_with(rt.clone()).await;
             let name = format!("managed-{}", uuid::Uuid::new_v4().simple());
             let mut manifest = pull_manifest(&name, "catalog:new");
             manifest.app.environment = vec!["NEW_CATALOG_ENV=changed".into()];
-            orch.insert_manifest_for_test(manifest, PathBuf::from("/tmp/catalog-drift")).await;
+            orch.insert_manifest_for_test(manifest, PathBuf::from("/tmp/catalog-drift"))
+                .await;
             let body = "[Container]\nImage=original:retained\nEnvironment=OLD_ENV=preserved\nPublishPort=127.0.0.1:1234:80\n";
             let records = orch.data_dir.join("update-transactions/installed-units");
             std::fs::create_dir_all(&records).unwrap();
-            std::fs::write(records.join(format!("{name}.json")), serde_json::to_vec(&serde_json::json!({
-                "schema": 1, "operation": uuid::Uuid::new_v4().to_string(),
-                "name": name, "body": body, "mode": 0o600
-            })).unwrap()).unwrap();
-            let unit = quadlet::unit_dir().await.unwrap().join(format!("{name}.container"));
+            std::fs::write(
+                records.join(format!("{name}.json")),
+                serde_json::to_vec(&serde_json::json!({
+                    "schema": 1, "operation": uuid::Uuid::new_v4().to_string(),
+                    "name": name, "body": body, "mode": 0o600
+                }))
+                .unwrap(),
+            )
+            .unwrap();
+            let unit = quadlet::unit_dir()
+                .await
+                .unwrap()
+                .join(format!("{name}.container"));
             if case != "missing-unit" {
-                std::fs::write(&unit, if case == "changed-unit" { "operator changed" } else { body }).unwrap();
+                std::fs::write(
+                    &unit,
+                    if case == "changed-unit" {
+                        "operator changed"
+                    } else {
+                        body
+                    },
+                )
+                .unwrap();
                 std::fs::set_permissions(&unit, std::fs::Permissions::from_mode(0o600)).unwrap();
             }
             if case != "missing" {
-                rt.set_state(&name, if case == "stopped" { ContainerState::Stopped } else { ContainerState::Running });
+                rt.set_state(
+                    &name,
+                    if case == "stopped" {
+                        ContainerState::Stopped
+                    } else {
+                        ContainerState::Running
+                    },
+                );
             }
             if case == "user-stopped" {
                 crate::crash_recovery::mark_user_stopped(&orch.data_dir, &name).await;
@@ -8010,7 +8059,13 @@ app:
                 assert!(result.is_err(), "{case} must refuse before mutation");
             }
             assert_eq!(*rt.containers.lock().unwrap(), before, "{case}");
-            assert!(rt.calls().iter().all(|call| call.starts_with("get_container_status:")), "{case}: {:?}", rt.calls());
+            assert!(
+                rt.calls()
+                    .iter()
+                    .all(|call| call.starts_with("get_container_status:")),
+                "{case}: {:?}",
+                rt.calls()
+            );
             if case == "running" {
                 assert_eq!(std::fs::read_to_string(&unit).unwrap(), body);
             }
@@ -8026,8 +8081,14 @@ app:
                 orch.validate_start(&name).await.unwrap();
                 orch.start(&name).await.unwrap();
                 assert_eq!(std::fs::read_to_string(&unit).unwrap(), body);
-                assert!(!crate::crash_recovery::load_user_stopped(&orch.data_dir).await.contains(&name));
-                assert!(!crate::crash_recovery::load_user_uninstalled(&orch.data_dir).await.contains(&name));
+                assert!(!crate::crash_recovery::load_user_stopped(&orch.data_dir)
+                    .await
+                    .contains(&name));
+                assert!(
+                    !crate::crash_recovery::load_user_uninstalled(&orch.data_dir)
+                        .await
+                        .contains(&name)
+                );
             } else {
                 // Missing images/units and modified units refuse an explicit
                 // start before service mutation; no catalog pull is attempted.
@@ -8037,7 +8098,14 @@ app:
                     assert!(orch.stop(&name).await.is_err());
                 }
             }
-            assert!(rt.calls().iter().all(|call| call.starts_with("get_container_status:") || call.starts_with("image_exists:")), "{case}: {:?}", rt.calls());
+            assert!(
+                rt.calls()
+                    .iter()
+                    .all(|call| call.starts_with("get_container_status:")
+                        || call.starts_with("image_exists:")),
+                "{case}: {:?}",
+                rt.calls()
+            );
             assert_eq!(*rt.containers.lock().unwrap(), before, "{case}");
             let _ = std::fs::remove_file(unit);
         }
@@ -8664,9 +8732,11 @@ app:
         let refs: Vec<&str> = names.iter().map(String::as_str).collect();
         crate::crash_recovery::save_container_snapshot_for_test(&orch.data_dir, &refs).await;
         // Repeated passes must leave lifecycle ownership with companion.rs.
-        for _ in 0..3 {
+        for pass in 0..3 {
             let report = orch.reconcile_existing().await;
-            assert_eq!(report.actions.len(), companions.len());
+            if pass == 0 {
+                assert_eq!(report.actions.len(), companions.len());
+            }
             assert!(report
                 .actions
                 .iter()

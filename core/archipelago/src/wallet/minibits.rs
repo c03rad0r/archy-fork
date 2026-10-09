@@ -474,7 +474,7 @@ async fn ensure_token(
 
 /// Draw a fresh readable wallet name, Minibits-style: adjective + noun + number.
 fn generate_wallet_id() -> String {
-    let mut rng = rand::thread_rng();
+    let mut rng = rand::rngs::OsRng;
     let adj = ADJECTIVES.choose(&mut rng).copied().unwrap_or("quiet");
     let noun = NOUNS.choose(&mut rng).copied().unwrap_or("harbor");
     let num = rand::Rng::gen_range(&mut rng, 1..=999);

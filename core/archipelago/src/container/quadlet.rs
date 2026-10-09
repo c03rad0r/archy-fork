@@ -742,14 +742,17 @@ pub async fn unit_dir() -> Result<PathBuf> {
             .get_or_init(|| tempfile::tempdir().unwrap().keep())
             .clone());
     }
-    let home = std::env::var_os("HOME")
-        .map(PathBuf::from)
-        .ok_or_else(|| anyhow!("HOME not set; cannot locate quadlet unit dir"))?;
-    let dir = home.join(DEFAULT_REL_UNIT_DIR);
-    fs::create_dir_all(&dir)
-        .await
-        .with_context(|| format!("create_dir_all {}", dir.display()))?;
-    Ok(dir)
+    #[cfg(not(test))]
+    {
+        let home = std::env::var_os("HOME")
+            .map(PathBuf::from)
+            .ok_or_else(|| anyhow!("HOME not set; cannot locate quadlet unit dir"))?;
+        let dir = home.join(DEFAULT_REL_UNIT_DIR);
+        fs::create_dir_all(&dir)
+            .await
+            .with_context(|| format!("create_dir_all {}", dir.display()))?;
+        Ok(dir)
+    }
 }
 
 /// The early same-node Portainer repair used a managed Quadlet drop-in. Once
@@ -944,21 +947,25 @@ async fn systemctl_user_status(
     #[cfg(test)]
     {
         use std::os::unix::process::ExitStatusExt;
+        let _ = (args, timeout);
         return Ok(std::process::ExitStatus::from_raw(0));
     }
-    let mut cmd = Command::new("systemctl");
-    cmd.arg("--user").args(args);
-    cmd.kill_on_drop(true);
-    tokio::time::timeout(timeout, cmd.status())
-        .await
-        .with_context(|| {
-            format!(
-                "systemctl --user {} timed out after {}s",
-                args.join(" "),
-                timeout.as_secs()
-            )
-        })?
-        .with_context(|| format!("spawn systemctl --user {}", args.join(" ")))
+    #[cfg(not(test))]
+    {
+        let mut cmd = Command::new("systemctl");
+        cmd.arg("--user").args(args);
+        cmd.kill_on_drop(true);
+        tokio::time::timeout(timeout, cmd.status())
+            .await
+            .with_context(|| {
+                format!(
+                    "systemctl --user {} timed out after {}s",
+                    args.join(" "),
+                    timeout.as_secs()
+                )
+            })?
+            .with_context(|| format!("spawn systemctl --user {}", args.join(" ")))
+    }
 }
 
 async fn kill_and_reset_service(service: &str) -> Result<()> {
@@ -994,21 +1001,25 @@ async fn wait_not_deactivating(service: &str, timeout: Duration) -> bool {
 async fn systemctl_user_output(args: &[&str], timeout: Duration) -> Result<std::process::Output> {
     #[cfg(test)]
     {
+        let _ = (args, timeout);
         anyhow::bail!("Unit tests have no real user service manager");
     }
-    let mut cmd = Command::new("systemctl");
-    cmd.arg("--user").args(args);
-    cmd.kill_on_drop(true);
-    tokio::time::timeout(timeout, cmd.output())
-        .await
-        .with_context(|| {
-            format!(
-                "systemctl --user {} timed out after {}s",
-                args.join(" "),
-                timeout.as_secs()
-            )
-        })?
-        .with_context(|| format!("spawn systemctl --user {}", args.join(" ")))
+    #[cfg(not(test))]
+    {
+        let mut cmd = Command::new("systemctl");
+        cmd.arg("--user").args(args);
+        cmd.kill_on_drop(true);
+        tokio::time::timeout(timeout, cmd.output())
+            .await
+            .with_context(|| {
+                format!(
+                    "systemctl --user {} timed out after {}s",
+                    args.join(" "),
+                    timeout.as_secs()
+                )
+            })?
+            .with_context(|| format!("spawn systemctl --user {}", args.join(" ")))
+    }
 }
 
 pub fn contains_stale_health_gate(unit_body: &str) -> bool {

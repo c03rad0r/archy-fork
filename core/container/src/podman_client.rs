@@ -1002,7 +1002,10 @@ fn manifest_container_name(manifest: &AppManifest) -> String {
 }
 
 fn manifest_apps_dirs() -> Vec<PathBuf> {
-    let mut dirs = Vec::new();
+    // Keep source-tree discovery independent of the caller's working
+    // directory. Isolated test runners deliberately start in `core/`, while
+    // production uses one of the installed paths below.
+    let mut dirs = vec![Path::new(env!("CARGO_MANIFEST_DIR")).join("../../apps")];
     if let Ok(manifest_dir) = std::env::var("CARGO_MANIFEST_DIR") {
         dirs.push(Path::new(&manifest_dir).join("../../apps"));
     }

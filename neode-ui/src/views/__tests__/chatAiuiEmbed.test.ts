@@ -41,10 +41,10 @@ vi.mock('@/composables/useDemoIntro', () => ({ IS_DEMO: false }))
 // mocked at the module boundary, mirroring MarketplaceRefresh.test.ts's
 // convention for isolating a view from its heavier dependencies.
 vi.mock('@/services/contextBroker', () => ({
-  ContextBroker: vi.fn().mockImplementation(() => ({
-    start: vi.fn(),
-    stop: vi.fn(),
-  })),
+  ContextBroker: class {
+    start = vi.fn()
+    stop = vi.fn()
+  },
 }))
 
 /** Mount Chat.vue behind a real <KeepAlive> so onActivated/onDeactivated fire. */

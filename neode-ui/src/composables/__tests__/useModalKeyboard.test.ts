@@ -32,10 +32,10 @@ function createTestComponent(onCloseFn: () => void) {
 }
 
 describe('useModalKeyboard', () => {
-  let closeFn: ReturnType<typeof vi.fn>
+  let closeFn: ReturnType<typeof vi.fn<() => void>>
 
   beforeEach(() => {
-    closeFn = vi.fn()
+    closeFn = vi.fn<() => void>()
   })
 
   it('calls onClose when Escape is pressed and modal is open', async () => {
