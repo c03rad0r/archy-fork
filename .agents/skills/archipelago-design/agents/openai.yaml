@@ -1,0 +1,7 @@
+interface:
+  display_name: "Archipelago design"
+  short_description: "Keep Archipelago UI consistent"
+  brand_color: "#F7931A"
+  default_prompt: "Use $archipelago-design to implement this UI in Archipelago's design system."
+policy:
+  allow_implicit_invocation: true

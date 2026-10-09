@@ -1,0 +1,48 @@
+app:
+  id: archipelago-app-starter
+  name: Archipelago App Starter
+  version: 0.1.0
+  description: A minimal Archipelago design-system starter with responsive states.
+  container:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      tag: localhost/archipelago-app-starter:0.1.0
+  resources:
+    cpu_limit: 1
+    memory_limit: 128Mi
+    disk_limit: 256Mi
+  security:
+    capabilities: []
+    readonly_root: true
+    no_new_privileges: true
+    network_policy: isolated
+  ports:
+    - host: 8180
+      container: 8080
+      protocol: tcp
+      bind: 127.0.0.1
+      auth: gated
+  volumes:
+    - type: bind
+      source: /var/lib/archipelago/archipelago-app-starter
+      target: /data
+      options: [rw]
+  health_check:
+    type: http
+    endpoint: http://127.0.0.1:8080
+    path: /
+    interval: 30s
+    timeout: 5s
+    retries: 3
+  interfaces:
+    main:
+      name: Archipelago App Starter
+      description: Responsive design-system starter
+      type: ui
+      port: 8180
+      protocol: http
+      path: /
+  metadata:
+    category: development
+    tier: optional

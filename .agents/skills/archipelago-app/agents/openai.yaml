@@ -1,0 +1,7 @@
+interface:
+  display_name: "Archipelago app"
+  short_description: "Build a real Archipelago app"
+  brand_color: "#F7931A"
+  default_prompt: "Use $archipelago-app to build and validate this Archipelago app."
+policy:
+  allow_implicit_invocation: true
