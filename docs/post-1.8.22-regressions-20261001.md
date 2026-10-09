@@ -167,6 +167,31 @@ acceptance; this is a new paid-file incident.
         payments, or publication state. Running-container file patches do not
         satisfy this gate.
 
+  Dual-node UAT checkpoint, 2026-10-09: Yaya and Framework serve the same
+  IndeeHub frontend build through restart-surviving UAT Quadlet overrides;
+  their existing native-provider bytes were preserved. Both app endpoints
+  return HTTP 200 and protected API endpoints reject unauthenticated requests.
+  Narrow API overrides add the profile field required by the strict signer
+  check and correct `/storage/projects/...` poster URLs. Yaya's saved project
+  still has a poster and video key; its poster now returns HTTP 200 while the
+  private video returns HTTP 403 without authorization. A poster-only anonymous
+  `GetObject` rule was added to the public bucket; no private bucket read rule
+  was added. Framework's two missing IndeeHub buckets were created without
+  replacing other storage. Source backend tests/build, frontend build, and 12
+  focused identity/upload tests pass. Real selected-identity sign-in, upload
+  completion and Save/reload on both physical nodes still require operator UAT.
+  The Cloud browser is view-only and is **not** an attachment picker. These
+  overrides are not pinned managed images or release acceptance.
+
+- [ ] **Yaya disk threshold notification recovery:** after safely reclaiming
+      only BuildKit cache, actual data-volume use is 62% (127,440,146,432 of
+      219,181,039,616 bytes on 2026-10-09). The previous 164 GiB / 194 GiB
+      display reflected real usage before cleanup, not merely stale UI.
+      Source monitoring pushes notifications only when current alerts are
+      nonempty, so a previously fired threshold notice may remain after usage
+      recovers. Fix notification clearing and verify live recovery after app
+      removal/cache cleanup without deleting wallets or persistent app data.
+
 - [x] Yaya App Store component/alias regression (reported 2026-10-02): one
       Cuprate entry (hide Cuprate UI companion), one BTCPay Server in Commerce
       with its icon (merge legacy btcpay pins), one NetBird entry (hide server
