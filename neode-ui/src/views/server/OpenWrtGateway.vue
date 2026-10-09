@@ -115,6 +115,7 @@ const host = ref('')
 const sshUser = ref('root')
 const sshPassword = ref('')
 const showConnectForm = ref(false)
+const routerShopOpen = ref(false)
 const connecting = ref(false)
 const connectedParams = ref<Record<string, string> | null>(null)
 
@@ -535,8 +536,8 @@ onMounted(() => {
 
     <div class="glass-card p-6 mb-6 overflow-hidden router-model-card">
       <div class="grid grid-cols-1 lg:grid-cols-[minmax(0,1fr)_minmax(280px,360px)] gap-6 items-start">
-        <DeviceModel model="beryl-ax" label="Beryl AX (GL-MT3000) OpenWrt router" fill-viewport :controls="false" />
-        <RouterMarketplace />
+        <DeviceModel v-if="!routerShopOpen" model="beryl-ax" label="Beryl AX (GL-MT3000) OpenWrt router" fill-viewport :controls="false" />
+        <RouterMarketplace :expanded="routerShopOpen" @open="routerShopOpen = true" @close="routerShopOpen = false" />
       </div>
     </div>
 

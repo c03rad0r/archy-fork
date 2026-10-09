@@ -1,6 +1,9 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
 
+const props = withDefaults(defineProps<{ expanded?: boolean }>(), { expanded: false })
+const emit = defineEmits<{ open: []; close: [] }>()
+
 interface RouterListing {
   id: string
   pubkey: string
@@ -101,8 +104,13 @@ async function search() {
   loading.value = false
   if (!listings.value.length) error.value = 'No active OpenWrt router listings answered from the configured public relays.'
 }
-function openShop() { open.value = true; if (!listings.value.length) void search() }
-function closeShop() { open.value = false; closeSockets() }
+function openShop() {
+  open.value = true
+  query.value = 'openwrt'
+  emit('open')
+  if (!listings.value.length) void search()
+}
+function closeShop() { open.value = false; closeSockets(); emit('close') }
 function formatPrice(item: RouterListing) {
   if (!item.price) return 'Price on request'
   return `${item.price.amount} ${item.price.currency.toUpperCase()}${item.price.frequency ? ` / ${item.price.frequency}` : ''}`
@@ -112,7 +120,7 @@ onBeforeUnmount(closeSockets)
 </script>
 
 <template>
-  <section class="router-marketplace lg:mt-0" aria-labelledby="router-marketplace-title">
+  <section class="router-marketplace lg:mt-0" :class="{ 'router-marketplace--expanded': props.expanded }" aria-labelledby="router-marketplace-title">
     <div class="glass-card p-5 md:p-6">
       <template v-if="!open">
         <p class="text-xs uppercase tracking-[.18em] text-white/40">OpenWrt gateway</p>
@@ -162,6 +170,7 @@ onBeforeUnmount(closeSockets)
 
 <style scoped>
 .router-marketplace { margin-top: 16px; }
+.router-marketplace--expanded { grid-column: 1 / -1; margin-top: 0; }
 .router-marketplace__cta { display: inline-flex; align-items: center; gap: 10px; }
 @media (max-width: 1023px) {
   .router-marketplace__cta { width: 100%; justify-content: center; }
