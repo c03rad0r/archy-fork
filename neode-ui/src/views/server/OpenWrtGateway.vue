@@ -552,6 +552,7 @@ onMounted(() => {
         <RouterMarketplace :expanded="routerShopOpen" @open="openRouterShop" @close="closeRouterShop" />
       </div>
     </div>
+    <div class="h-16" aria-hidden="true"></div>
 
     </template>
 
