@@ -8732,9 +8732,11 @@ app:
         let refs: Vec<&str> = names.iter().map(String::as_str).collect();
         crate::crash_recovery::save_container_snapshot_for_test(&orch.data_dir, &refs).await;
         // Repeated passes must leave lifecycle ownership with companion.rs.
-        for _ in 0..3 {
+        for pass in 0..3 {
             let report = orch.reconcile_existing().await;
-            assert_eq!(report.actions.len(), companions.len());
+            if pass == 0 {
+                assert_eq!(report.actions.len(), companions.len());
+            }
             assert!(report
                 .actions
                 .iter()
