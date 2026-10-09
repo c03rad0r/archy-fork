@@ -318,6 +318,26 @@ impl ApiHandler {
         }
     }
 
+    // A node app on another port shares host-only owner cookies. Never grant
+    // that app access to the owner shell, even though other app APIs accept
+    // same-host cross-port origins. Browser terminal requests must originate
+    // from the exact dashboard authority (Host includes its port).
+    fn has_terminal_origin(headers: &hyper::HeaderMap) -> bool {
+        let Some(origin) = headers
+            .get(hyper::header::ORIGIN)
+            .and_then(|v| v.to_str().ok())
+        else {
+            return false;
+        };
+        let Some(host) = headers
+            .get(hyper::header::HOST)
+            .and_then(|v| v.to_str().ok())
+        else {
+            return false;
+        };
+        origin == format!("http://{host}") || origin == format!("https://{host}")
+    }
+
     /// Permissive origin check for the share-to-mesh iframe intent: any scheme
     /// http(s):// followed by the configured host_ip, optionally `:port`. Apps
     /// proxied under other ports (APP_PORTS) call this from within the same
@@ -433,6 +453,13 @@ impl ApiHandler {
             if !self.is_authenticated(req.headers()).await {
                 tracing::warn!("401 WebSocket /ws/terminal — session invalid or missing");
                 return Ok(Self::unauthorized());
+            }
+            if !Self::has_terminal_origin(req.headers()) {
+                return Ok(build_response(
+                    StatusCode::FORBIDDEN,
+                    "application/json",
+                    hyper::Body::from(r#"{"error":"Terminal origin denied"}"#),
+                ));
             }
             return Self::handle_terminal_websocket(req).await;
         }
@@ -556,11 +583,29 @@ impl ApiHandler {
             }
 
             (Method::GET, "/api/terminal/sessions") => {
-                if !self.is_authenticated(&headers).await { return Ok(Self::unauthorized()); }
+                if !self.is_authenticated(&headers).await {
+                    return Ok(Self::unauthorized());
+                }
+                if !Self::has_terminal_origin(&headers) {
+                    return Ok(build_response(
+                        StatusCode::FORBIDDEN,
+                        "application/json",
+                        hyper::Body::from(r#"{"error":"Terminal origin denied"}"#),
+                    ));
+                }
                 terminal::list_response().await
             }
             (Method::POST, "/api/terminal/sessions") => {
-                if !self.is_authenticated(&headers).await { return Ok(Self::unauthorized()); }
+                if !self.is_authenticated(&headers).await {
+                    return Ok(Self::unauthorized());
+                }
+                if !Self::has_terminal_origin(&headers) {
+                    return Ok(build_response(
+                        StatusCode::FORBIDDEN,
+                        "application/json",
+                        hyper::Body::from(r#"{"error":"Terminal origin denied"}"#),
+                    ));
+                }
                 terminal::create(&body_bytes).await
             }
 
@@ -878,4 +923,30 @@ fn sanitize_html(s: &str) -> String {
         .replace('>', "&gt;")
         .replace('"', "&quot;")
         .replace('\'', "&#x27;")
+}
+
+#[cfg(test)]
+mod terminal_origin_tests {
+    use super::ApiHandler;
+    use hyper::header::{HeaderMap, HeaderValue, HOST, ORIGIN};
+
+    fn allowed(host: &str, origin: Option<&str>) -> bool {
+        let mut headers = HeaderMap::new();
+        headers.insert(HOST, HeaderValue::from_str(host).unwrap());
+        if let Some(origin) = origin {
+            headers.insert(ORIGIN, HeaderValue::from_str(origin).unwrap());
+        }
+        ApiHandler::has_terminal_origin(&headers)
+    }
+
+    #[test]
+    fn terminal_accepts_only_the_exact_dashboard_authority() {
+        assert!(allowed("node.local", Some("https://node.local")));
+        assert!(allowed("192.168.1.2:7778", Some("http://192.168.1.2:7778")));
+        assert!(!allowed("node.local", Some("https://node.local:7778")));
+        assert!(!allowed("node.local:7778", Some("https://node.local")));
+        assert!(!allowed("node.local", Some("https://evil.example")));
+        assert!(!allowed("node.local", Some("null")));
+        assert!(!allowed("node.local", None));
+    }
 }
