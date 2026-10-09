@@ -4,12 +4,14 @@
 set -euo pipefail
 
 APPLY=0
-CODEX=0
+# Codex is part of the standard developer environment. Keep --codex as a
+# backwards-compatible no-op for existing setup commands.
+CODEX=1
 for arg in "$@"; do
   case "$arg" in
     --apply) APPLY=1 ;;
     --codex) CODEX=1 ;;
-    --help|-h) printf 'Usage: archy-developer-setup [--check] [--apply] [--codex]\n'; exit 0 ;;
+    --help|-h) printf 'Usage: archy-developer-setup [--check] [--apply] [--codex]\n\nCodex is installed by default with --apply; authenticate with: codex login\n'; exit 0 ;;
     --check) ;;
     *) printf 'archy-developer-setup: unknown option: %s\n' "$arg" >&2; exit 2 ;;
   esac
@@ -36,7 +38,7 @@ fi
 if (( ! APPLY )); then
   if [ "${#missing[@]}" -gt 0 ]; then
     printf '\nMissing: %s\n' "${missing[*]}"
-    printf 'Re-run with --apply to install missing packages, and --codex to install Codex.\n'
+    printf 'Re-run with --apply to install missing packages, including Codex.\n'
     exit 1
   fi
   exit 0
@@ -47,7 +49,7 @@ if ! command -v apt-get >/dev/null 2>&1; then
   exit 1
 fi
 
-packages=(git tmux jq fzf ripgrep fd-find neovim podman direnv)
+packages=(git tmux jq fzf ripgrep fd-find neovim podman direnv nodejs npm)
 if [ "${#missing[@]}" -gt 0 ]; then
   sudo -n apt-get update
   sudo -n apt-get install -y "${packages[@]}"
@@ -55,7 +57,7 @@ fi
 
 if (( CODEX )) && ! command -v codex >/dev/null 2>&1; then
   command -v npm >/dev/null 2>&1 || { printf 'npm is required for Codex installation.\n' >&2; exit 1; }
-  npm install --global @openai/codex
+  sudo -n npm install --global @openai/codex
 fi
 
 if command -v mise >/dev/null 2>&1; then
