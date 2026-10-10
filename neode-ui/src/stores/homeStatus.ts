@@ -89,7 +89,9 @@ export const useHomeStatusStore = defineStore('homeStatus', () => {
         load_avg_1?: number
         load_avg_5?: number
         load_avg_15?: number
-      }>({ method: 'system.stats', dedup: true })
+      // Disk capacity must be live: persisted/deduplicated snapshots can keep
+      // showing the pre-cleanup volume for minutes after files are removed.
+      }>({ method: 'system.stats', dedup: false })
       stats.cpuPercent = res.cpu_usage_percent
       stats.memUsed = res.mem_used_bytes
       stats.memTotal = res.mem_total_bytes

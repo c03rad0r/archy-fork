@@ -806,10 +806,12 @@ const diskCleaning = ref(false)
 // onActivated (useCachedResource.ts) revalidates it staleness-gated on
 // reactivation, so the explicit every-entry call is no longer needed.
 const diskStatusRes = useCachedResource<{ used_bytes: number; total_bytes: number; free_bytes: number; used_percent: number; level: 'ok' | 'warning' | 'critical'; encrypted?: boolean }>({
-  key: 'server.disk-status',
+  // v2: persisted snapshots kept showing the pre-cleanup volume for minutes
+  // after files were removed; disk capacity must always be live.
+  key: 'server.disk-status-v2',
   immediate: false,
   ttlMs: 10_000,
-  persist: true,
+  persist: false,
   fetcher: () => rpcClient.diskStatus(),
 })
 // Reactivation refreshes the cached resource directly. Derive its display
@@ -833,7 +835,8 @@ async function runDiskCleanup() {
 }
 
 function formatBytes(bytes: number): string {
-  const gb = 1024 * 1024 * 1024; const mb = 1024 * 1024
+  const tb = 1024 * 1024 * 1024 * 1024; const gb = 1024 * 1024 * 1024; const mb = 1024 * 1024
+  if (bytes >= tb) return `${(bytes / tb).toFixed(1)} TB`
   if (bytes >= gb) return `${(bytes / gb).toFixed(1)} GB`
   if (bytes >= mb) return `${(bytes / mb).toFixed(0)} MB`
   return `${(bytes / 1024).toFixed(0)} KB`

@@ -34,7 +34,7 @@
       <div class="monitoring-stat-card">
         <p class="text-xs text-white/50 uppercase tracking-wide">{{ t('monitoring.diskUsage') }}</p>
         <p class="text-2xl font-bold text-white">{{ diskPercent }}%</p>
-        <p class="text-xs text-white/40">{{ formatBytes(liveSystem.disk_used_bytes) }} / {{ formatBytes(liveSystem.disk_total_bytes) }}</p>
+        <p class="text-xs text-white/40">{{ formatBytes(Math.max(0, liveSystem.disk_total_bytes - liveSystem.disk_used_bytes)) }} free / {{ formatBytes(liveSystem.disk_total_bytes) }}</p>
       </div>
       <div class="monitoring-stat-card">
         <p class="text-xs text-white/50 uppercase tracking-wide">{{ t('monitoring.network') }}</p>
@@ -444,6 +444,7 @@ function healthColor(entry: HealthEntry): string {
 }
 
 function formatBytes(bytes: number): string {
+  if (bytes >= 1_099_511_627_776) return `${(bytes / 1_099_511_627_776).toFixed(1)} TB`
   if (bytes >= 1_073_741_824) return `${(bytes / 1_073_741_824).toFixed(1)} GB`
   if (bytes >= 1_048_576) return `${(bytes / 1_048_576).toFixed(1)} MB`
   if (bytes >= 1024) return `${(bytes / 1024).toFixed(0)} KB`

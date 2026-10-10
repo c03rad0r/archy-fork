@@ -254,7 +254,11 @@ describe('Server tab cache (Task 1): seven load groups', () => {
     // installed/service_active/key_present fields were considered.
     expect(readSnapshot('server.fips-summary')).toBeNull()
     expect(readSnapshot('server.interfaces')).not.toBeNull()
-    expect(readSnapshot('server.disk-status')).not.toBeNull()
+    // Disk capacity must stay live: persisted snapshots kept rendering the
+    // pre-cleanup volume for minutes after files were removed (operator
+    // report 2026-10-10). The v2 key is intentionally persist:false;
+    // reactivation refetches instead of restoring a stale snapshot.
+    expect(readSnapshot('server.disk-status-v2')).toBeNull()
 
     wrapper.unmount()
   })
