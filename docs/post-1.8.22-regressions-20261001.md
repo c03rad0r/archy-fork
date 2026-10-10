@@ -42,6 +42,56 @@ acceptance; this is a new paid-file incident.
 
 ## Current tasks
 
+- 2026-10-10 three-node IndeeHub/terminal UAT checkpoint: Yaya, Framework and
+  Shorty serve byte-identical IndeeHub entry pages
+  (`0a2ef3393aacd96d834ad4666d4aa4c64c5fe0cc28f973351cfbc73a78156e7a`),
+  dashboard entry pages
+  (`b41a8d3c87ba923c9a4e5f7d0a61dafac593a3438510482d9e6b85a53bb63c9f`)
+  and management binaries
+  (`daf39c71b7029c0b51f8b74cc146fb3dd9af287744856e0e6a63bb63b40829ab`).
+  All manager health endpoints report `ok` with crash recovery complete.
+  Bitcoin/LND container IDs remained exact across the manager restarts. The
+  canonical runtime Nginx source is identical on all three nodes at
+  `524fd418ce71c6399f2772f7a105a968254e9a6414c96e45376422c414c18658`;
+  this matters because manager bootstrap otherwise restored an older runtime
+  template and removed terminal/playback routes on restart.
+
+  Terminal creation and authenticated listing pass on Yaya and Framework.
+  The live failure was missing `tmux`, after routing and origin failures had
+  separately been corrected. `tmux` is installed on all three UAT nodes and is
+  now required by both ISO installation paths. Shorty's proxy/runtime is
+  installed and Nginx-valid, but authenticated creation was not accepted because
+  its dashboard password differs; keep that as unverified rather than a pass.
+  Test-created Yaya/Framework session records were moved recoverably under the
+  support directory after acceptance and no longer appear in the session list.
+  The UI now includes actual response details for create failures instead of the
+  generic message, and its empty state occupies and centers within the full
+  terminal viewport. That dashboard build is byte-identical on all three nodes.
+
+  Cross-node public film discovery now works through FIPS in both directions:
+  Yaya receives Framework's *Arch x Indie* and Framework receives Yaya's
+  *Web5 Explained*. Framework's explicitly free film returned a JSON stream,
+  HLS manifest, 16-byte AES key and 1,736,192-byte MPEG-TS segment through the
+  Yaya same-origin bridge. A negative test found Yaya's project row said zero
+  while its signed offer required 15 sats; the first bridge build would have
+  treated that mismatch as free. The deployed guard now requires both project
+  data and signed terms to be explicitly zero. Framework receives HTTP 402
+  `rental required` and no stream URL for that title. Never weaken this guard to
+  make a paid playback test pass. Paid Cashu/Lightning rental, metered ecash,
+  entitlement recovery without another payment, and the intended native-identity
+  replacement for the old `0494` offer remain open end-to-end acceptance gates.
+
+  MeshCore V3 parsing now reads the channel after SNR/reserved bytes. The UI
+  recovers already-persisted impossible MeshCore channel IDs into Public while
+  preserving valid channels and other transports. Connected Nodes uses `Map`,
+  with full-width My connections/Find Nodes controls on mobile. Focused frontend
+  tests (8), TypeScript, production build, terminal packaging regression and
+  formatting pass. Three targeted backend regressions pass through the isolated
+  runner: guarded public streaming, MeshCore V3 channel parsing, and the peer
+  content path filter. Source review/commit, ngit proposal disposition, exact
+  main mirroring and a complete mirror audit remain required before OTA/ISO. No
+  OTA or ISO was published by this UAT deployment.
+
 - 2026-10-09 dual-node UAT correction: Archy `main` at `5b0b35401` was already
   serving identical backend and dashboard artifacts on Yaya and Framework;
   browser cache hid the new device-model screens. Yaya's terminal failed
@@ -1794,3 +1844,28 @@ isolated runner. The full isolated suite, production backend build, another
 explicit native update, post-update runtime/data proofs, and paired browser
 acceptance remain pending. No wallet, payment, personal-media or profile changes
 are part of this readiness correction.
+
+## 2026-10-09: two-node IndeeHub UAT — open acceptance items
+
+Yaya and Framework now have matching UAT frontend bundles, but this is **not**
+feature acceptance or release publication. The backstage `indeehub.com/watch/`
+slug control has been removed from the active bundle. The local My List button
+now calls the library API instead of only toggling its icon; signed-in browser
+acceptance is pending. Cross-node saves remain open because the library API is
+local-project-only. Cross-node comments, reactions and zaps remain open: social
+events use node-origin-specific content IDs and each `/relay` requires that
+node's login. Do not treat cross-node public film listing as social federation.
+
+Framework logged `content.playback-prepare: Not a purchase route` after a Cashu
+rental attempt. The buyer sent a rental-control path through a purchase-only
+transport guard. A narrow authenticated rental-control route is implemented;
+the release binary compiled, its route unit test passed through the isolated
+runner, and the identical binary is deployed on both UAT nodes with healthy
+RPC and session services. An existing-purchase retry without another payment
+remains pending. The earlier
+Framework LND startup fix does not close this paid-file recovery incident.
+Lightning purchase/zap still lacks configured BTCPay credentials on both UAT
+nodes; the API now reports service unavailable instead of an opaque Invalid URL,
+but payment is not accepted. Framework's listed film has no verified media
+registration or signed stream offer; listing is not proof of playable media.
+No OTA, ISO or public release follows from these UAT changes.

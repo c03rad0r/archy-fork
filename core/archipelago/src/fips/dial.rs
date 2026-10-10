@@ -35,6 +35,23 @@ use tokio::net::UdpSocket;
 /// path filter can restrict the exposed surface.
 pub const PEER_PORT: u16 = 5679;
 
+fn is_rental_control_route(path: &str) -> bool {
+    let parts: Vec<_> = path.split('/').collect();
+    let valid_id = |value: &str| {
+        !value.is_empty()
+            && value
+                .bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-' || byte == b'_')
+    };
+    parts.len() == 6
+        && parts[0].is_empty()
+        && parts[1] == "content"
+        && valid_id(parts[2])
+        && parts[3] == "rental"
+        && valid_id(parts[4])
+        && matches!(parts[5], "prepare" | "start")
+}
+
 /// Whether a FIPS-side HTTP status should trigger a fall-back to Tor in
 /// `Auto` mode. A `404` over FIPS often means the peer's mesh listener
 /// doesn't expose that path (e.g. a peer on an older build with a stricter
@@ -527,8 +544,27 @@ impl<'a> PeerRequest<'a> {
         request.send_encoded_json(&encoded).await
     }
 
+    /// Rental preparation/start carries an already-settled capability, never a
+    /// payment token. Authenticate the exact control route without relaxing the
+    /// purchase-only guard above or replaying any purchase on a retry.
+    pub(crate) async fn send_rental_control_json<B: serde::Serialize>(
+        self,
+        data_dir: &std::path::Path,
+        expected_seller: &str,
+        body: &B,
+    ) -> Result<(reqwest::Response, crate::transport::TransportKind)> {
+        anyhow::ensure!(
+            is_rental_control_route(self.path),
+            "Not a rental control route"
+        );
+        let (request, encoded) = self
+            .prepare_authenticated_content_json(data_dir, expected_seller, body)
+            .await?;
+        request.send_encoded_json(&encoded).await
+    }
+
     async fn prepare_content_json<B: serde::Serialize>(
-        mut self,
+        self,
         data_dir: &std::path::Path,
         expected_seller: &str,
         body: &B,
@@ -537,6 +573,16 @@ impl<'a> PeerRequest<'a> {
             self.path.starts_with("/content/purchase/"),
             "Not a purchase route"
         );
+        self.prepare_authenticated_content_json(data_dir, expected_seller, body)
+            .await
+    }
+
+    async fn prepare_authenticated_content_json<B: serde::Serialize>(
+        mut self,
+        data_dir: &std::path::Path,
+        expected_seller: &str,
+        body: &B,
+    ) -> Result<(Self, Vec<u8>)> {
         let peer = crate::federation::load_unique_payment_peer(data_dir, self.onion_host).await?;
         anyhow::ensure!(
             peer.did == expected_seller,
@@ -886,6 +932,28 @@ impl<'a> PeerRequest<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn rental_control_routes_are_exact_and_cannot_be_purchase_routes() {
+        assert!(is_rental_control_route(
+            "/content/registered_abc/rental/1234-5678/prepare"
+        ));
+        assert!(is_rental_control_route(
+            "/content/registered_abc/rental/1234-5678/start"
+        ));
+        for path in [
+            "/content/purchase/abc",
+            "/content/registered_abc/rental/1234-5678/settle",
+            "/content/registered_abc/rental/1234-5678/prepare/extra",
+            "/content/../rental/1234-5678/prepare",
+            "/content/registered_abc/rental/1234-5678/prepare?token=x",
+        ] {
+            assert!(
+                !is_rental_control_route(path),
+                "unexpected rental control route: {path}"
+            );
+        }
+    }
 
     #[tokio::test]
     async fn purchase_post_serializes_once_and_binds_the_actual_bytes_to_the_peer() {

@@ -20,6 +20,7 @@ import MediaLightbox from '@/components/cloud/MediaLightbox.vue'
 import type { FileBrowserItem } from '@/api/filebrowser-client'
 import { useCachedResource } from '@/composables/useCachedResource'
 import RefreshIndicator from '@/components/RefreshIndicator.vue'
+import { channelContactId, isChannelMessage, isPublicChannelMessage } from '@/views/mesh/channelMessages'
 import '@/views/mesh/mesh-styles.css'
 
 const mesh = useMeshStore()
@@ -78,18 +79,18 @@ let pollInterval: ReturnType<typeof setInterval> | null = null
 let wsUnsub: (() => void) | null = null
 
 // The Public channel (always available on Meshcore)
-// "Public" maps to meshcore slot 1 — the configured "archipelago" channel
-// in mesh-config.json. Slot 0 is the firmware default Public, which uses
-// the universal meshcore key and only works between devices sharing keys
-// + RF region. Slot 1 is set by archipelago first-boot to a hash derived
-// from the channel_name, so all archipelago nodes are guaranteed on the
-// same channel regardless of region.
+// "Public" is the stock MeshCore/Meshtastic public channel in slot 0.
 const publicChannel = { index: 0, name: 'Public' }
 
-// Channel contact_id convention: matches backend u32::MAX - channel_index
-function channelContactId(channelIndex: number): number {
-  return 4294967295 - channelIndex // u32::MAX - index
-}
+const publicChannelUnread = computed(() => {
+  const contactIds = new Set([
+    channelContactId(publicChannel.index),
+    ...mesh.messages.filter(isPublicChannelMessage).map(message => message.peer_contact_id),
+  ])
+  return Object.entries(mesh.unreadCounts)
+    .filter(([contactId]) => contactIds.has(Number(contactId)))
+    .reduce((total, [, count]) => total + count, 0)
+})
 
 // Archipelago Channel — Tor-based messaging to all federated/peered nodes
 const archChannelActive = ref(false)
@@ -714,8 +715,10 @@ const chatMessages = computed(() => {
   const HIDDEN_TYPES = new Set(['reaction', 'read_receipt', 'edit', 'presence', 'channel_invite', 'contact_card'])
   const hideReactions = (m: MeshMessage) => !m.message_type || !HIDDEN_TYPES.has(m.message_type)
   if (activeChatChannel.value) {
-    const chanId = channelContactId(activeChatChannel.value.index)
-    return mesh.messages.filter(m => m.peer_contact_id === chanId && hideReactions(m))
+    return mesh.messages.filter(m => {
+      const belongsToChannel = isChannelMessage(m, activeChatChannel.value!.index)
+      return belongsToChannel && hideReactions(m)
+    })
   }
   if (activeChatPeer.value) {
     // Pull from every underlying contact_id in the merged group so radio
@@ -1134,7 +1137,10 @@ function openChannelChat(channel: { index: number; name: string }) {
   messageText.value = ''
   activeTab.value = 'chat'
   mobileShowChat.value = true
-  mesh.markChatRead(channelContactId(channel.index))
+  const contactIds = channel.index === publicChannel.index
+    ? mesh.messages.filter(isPublicChannelMessage).map(message => message.peer_contact_id)
+    : [channelContactId(channel.index)]
+  mesh.markChatRead([...new Set([channelContactId(channel.index), ...contactIds])])
   nextTick(() => scrollChatToBottom())
 }
 
@@ -2275,7 +2281,7 @@ async function downloadAttachment(payload: MeshAttachmentPayload) {
                 <div class="mesh-peer-name">Public</div>
                 <div class="mesh-peer-sub">Mesh radio</div>
               </div>
-              <span v-if="mesh.unreadCounts[channelContactId(0)]" class="ml-auto text-[10px] px-1.5 py-0.5 rounded-full bg-orange-500/30 text-orange-300">{{ mesh.unreadCounts[channelContactId(0)] }}</span>
+              <span v-if="publicChannelUnread" class="ml-auto text-[10px] px-1.5 py-0.5 rounded-full bg-orange-500/30 text-orange-300">{{ publicChannelUnread }}</span>
             </div>
             <div v-if="displayedPeers.length === 0 && peerSearch.trim()" class="mesh-empty">
               No contacts match “{{ peerSearch.trim() }}”.

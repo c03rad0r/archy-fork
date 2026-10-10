@@ -73,6 +73,7 @@ stage "git-diff-check"   git diff --check
 stage "mirror-gate-regression" python3 scripts/tests/test_git_mirrors.py
 stage "iso-boot-runner-regression" python3 scripts/tests/test_iso_qemu_runner.py
 stage "iso-qualified-web-ui" python3 tests/regression/iso-qualified-web-ui.py
+stage "terminal-runtime-packaging" python3 tests/regression/terminal-runtime-packaging.py
 stage "first-boot-retry" python3 tests/regression/first-boot-retry.py
 stage "demo-rpc-parity" timeout 120 node neode-ui/scripts/mock-rpc-parity.mjs
 stage "demo-resumable-uploads" timeout 120 node --test neode-ui/scripts/demo-upload-test.mjs

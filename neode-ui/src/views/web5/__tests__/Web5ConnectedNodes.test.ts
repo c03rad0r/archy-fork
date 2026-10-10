@@ -5,8 +5,9 @@ import { rpcClient } from '@/api/rpc-client'
 
 enableAutoUnmount(afterEach)
 
+const pushRoute = vi.hoisted(() => vi.fn())
 vi.mock('vue-router', () => ({
-  useRouter: () => ({ push: vi.fn() }),
+  useRouter: () => ({ push: pushRoute }),
 }))
 
 vi.mock('vue-i18n', () => ({
@@ -45,6 +46,23 @@ describe('Web5ConnectedNodes', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     sessionStorage.clear()
+  })
+
+  it('puts the three federation destinations and icon refresh in the bottom bar', async () => {
+    const wrapper = mount(Web5ConnectedNodes)
+    const nav = wrapper.get('nav[aria-label="Node connections"]')
+    expect(nav.text()).toContain('My connections')
+    expect(nav.text()).toContain('Find Nodes')
+    expect(nav.text()).toContain('Map')
+    expect(nav.text()).not.toContain('Network Map')
+    const mobilePrimaryRow = nav.get('div.grid.grid-cols-2')
+    expect(mobilePrimaryRow.findAll('button')).toHaveLength(2)
+    expect(mobilePrimaryRow.findAll('button').every(button => button.classes().includes('w-full'))).toBe(true)
+    await nav.findAll('button')[0]!.trigger('click')
+    await nav.findAll('button')[1]!.trigger('click')
+    await nav.findAll('button')[2]!.trigger('click')
+    expect(pushRoute.mock.calls.map(([route]) => route.query.view)).toEqual(['connected', 'discover', 'map'])
+    expect(nav.findAll('button')[3]!.attributes('aria-label')).toBe('Refresh connected nodes')
   })
 
   it('shows a loading state for empty trusted nodes while peers are loading', async () => {

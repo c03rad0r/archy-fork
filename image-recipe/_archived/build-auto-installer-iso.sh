@@ -386,6 +386,7 @@ DOCKERFILE_HEAD
     python3 \
     curl \
     git \
+    tmux \
     vim-tiny \
     nano \
     ca-certificates \

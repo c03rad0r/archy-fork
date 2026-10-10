@@ -178,6 +178,7 @@ chroot /mnt/archipelago apt-get install -y \
     curl \
     wget \
     htop \
+    tmux \
     vim-tiny \
     nano \
     ca-certificates \
