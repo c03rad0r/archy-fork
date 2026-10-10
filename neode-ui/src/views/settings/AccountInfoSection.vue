@@ -362,6 +362,27 @@ init()
               </button>
             </div>
             <div class="overflow-y-auto flex-1 min-h-0 space-y-6 pr-1">
+              <!-- v1.9.1-alpha -->
+              <div>
+                <div class="flex items-center gap-2 mb-3">
+                  <span class="text-xs font-mono px-2 py-0.5 rounded bg-orange-500/20 text-orange-300">v1.9.1-alpha</span>
+                  <span class="text-xs text-white/40">October 10, 2026</span>
+                </div>
+                <div class="space-y-3 text-sm text-white/80 pl-3 border-l border-white/10">
+                  <p>Add an owner terminal with xterm rendering, preserved scrollback, focused keyboard handling and Codex skills preinstalled; restrict it to the dashboard origin.</p>
+                  <p>Prevent monitoring alerts from lingering after the condition recovers.</p>
+                  <p>Show free disk capacity ("X free / Y total", TB-aware) from live data on Home, Monitoring and Server instead of a stale cached snapshot.</p>
+                  <p>Allow explicit renewal of expired IndeeHub rentals, and keep the IndeeHub provider injection idempotent when the app already bundles it.</p>
+                  <p>Make IndeeHub native login, registration and media registration reliable on managed stacks; route the IndeeHub catalog and free playback across nodes through FIPS.</p>
+                  <p>Add a private phone setup goal, shared hardware listings, GrapheneOS Pixel artwork and Archipelago router NIP-99 listings.</p>
+                  <p>Open the file-browser goal in the native Cloud view.</p>
+                  <p>Keep isolated backend tests hermetic and add an ARM proposal test lane.</p>
+                  <p>Lightning rental on IndeeHub is not accepted: BTCPay is unconfigured on the IndeeHub API.</p>
+                  <p>Metered ecash playback and the Shorty signed-in operator acceptance are not yet verified.</p>
+                  <p>Remaining items in the post-1.8.22 regression checklist stay open.</p>
+                  <p>Pre-existing historical mirror drift between ngit and Gitea is inventoried, not resolved.</p>
+                </div>
+              </div>
               <!-- v1.9.0-alpha -->
               <div>
                 <div class="flex items-center gap-2 mb-3">
