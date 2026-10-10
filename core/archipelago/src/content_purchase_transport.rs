@@ -39,6 +39,60 @@ impl FipsPurchaseTransport {
         self.retry_preparation = retry;
         self
     }
+
+    /// Ask the authenticated seller for the original rental window without
+    /// starting or extending it. The capability never crosses into the app.
+    pub async fn expired_rental_window(
+        &self,
+        contract: &crate::content_purchase::Contract,
+        capability: &str,
+        viewing_seconds: u64,
+    ) -> Result<(u64, u64)> {
+        let route = format!(
+            "/content/{}/rental/{}/prepare",
+            contract.content_id, contract.id
+        );
+        let body = serde_json::json!({"capability":capability,"ready_id":null,"retry":false});
+        let (mut response, _) =
+            crate::fips::dial::PeerRequest::new(Some(&self.fips_npub), &self.onion, &route)
+                .require_fips()
+                .single_delivery()
+                .timeout(Duration::from_secs(20))
+                .send_rental_control_json(&self.data_dir, &self.seller_did, &body)
+                .await?;
+        anyhow::ensure!(
+            response.status().is_success(),
+            "Original rental status is unavailable"
+        );
+        let mut bytes = Vec::new();
+        while let Some(chunk) = response.chunk().await? {
+            anyhow::ensure!(
+                bytes
+                    .len()
+                    .checked_add(chunk.len())
+                    .is_some_and(|n| n <= 16 * 1024),
+                "Rental status response is too large"
+            );
+            bytes.extend_from_slice(&chunk);
+        }
+        let value: serde_json::Value = serde_json::from_slice(&bytes)?;
+        anyhow::ensure!(
+            value["state"] == "expired",
+            "Original rental viewing period is still available"
+        );
+        let started = value["started_at"]
+            .as_u64()
+            .context("Missing rental start")?;
+        let expires = value["expires_at"]
+            .as_u64()
+            .context("Missing rental expiry")?;
+        anyhow::ensure!(
+            value["viewing_seconds"].as_u64() == Some(viewing_seconds)
+                && started.checked_add(viewing_seconds) == Some(expires),
+            "Seller changed the original rental window"
+        );
+        Ok((started, expires))
+    }
     async fn post<B: Serialize + Sync, R: DeserializeOwned>(
         &self,
         route: &str,

@@ -144,6 +144,8 @@ impl RpcHandler {
 struct RentalParams {
     #[serde(default)]
     retry_preparation: bool,
+    #[serde(default)]
+    renew_expired: bool,
     seller_did: String,
     content_id: String,
     expected_sha256: String,
@@ -209,6 +211,46 @@ impl RpcHandler {
             price_sats: params.expected_price_sats,
             viewing_seconds: params.expected_viewing_seconds,
         };
+        if params.renew_expired {
+            let journal = Journal::open(&self.config.data_dir).await?;
+            let matching = journal
+                .find_buyers(&buyer, transport.seller_did(), &params.content_id)
+                .await?;
+            let settled: Vec<_> = matching
+                .into_iter()
+                .filter(|record| record.phase == crate::content_purchase::BuyerPhase::ReceiptSaved)
+                .collect();
+            anyhow::ensure!(
+                settled.len() <= 1,
+                "Multiple original rentals require recovery"
+            );
+            if let Some(record) = settled.into_iter().next() {
+                let capability = record
+                    .receipt()
+                    .context("Original rental receipt is missing")?
+                    .capability
+                    .clone();
+                let original_duration = journal
+                    .protocol_envelope("buyer", &record.contract.id)
+                    .await?
+                    .context("Original rental terms are missing")?
+                    .offer
+                    .viewing_seconds
+                    .context("Original purchase is not a timed rental")?;
+                let (started, expires) = transport
+                    .expired_rental_window(&record.contract, &capability, original_duration)
+                    .await?;
+                journal
+                    .record_rental_expiry(
+                        &record.contract,
+                        started,
+                        expires,
+                        original_duration,
+                        u64::try_from(chrono::Utc::now().timestamp()).unwrap_or(0),
+                    )
+                    .await?;
+            }
+        }
         match caller::purchase_bound(
             &self.config.data_dir,
             &buyer,

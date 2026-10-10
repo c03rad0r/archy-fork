@@ -48,21 +48,23 @@ describe('Web5ConnectedNodes', () => {
     sessionStorage.clear()
   })
 
-  it('puts the three federation destinations and icon refresh in the bottom bar', async () => {
+  it('uses full-width paired mobile rows and a text refresh control', async () => {
     const wrapper = mount(Web5ConnectedNodes)
     const nav = wrapper.get('nav[aria-label="Node connections"]')
     expect(nav.text()).toContain('My connections')
     expect(nav.text()).toContain('Find Nodes')
     expect(nav.text()).toContain('Map')
     expect(nav.text()).not.toContain('Network Map')
-    const mobilePrimaryRow = nav.get('div.grid.grid-cols-2')
-    expect(mobilePrimaryRow.findAll('button')).toHaveLength(2)
-    expect(mobilePrimaryRow.findAll('button').every(button => button.classes().includes('w-full'))).toBe(true)
+    const mobileRows = nav.findAll('div.grid.grid-cols-2')
+    expect(mobileRows).toHaveLength(2)
+    expect(mobileRows.every(row => row.findAll('button').length === 2)).toBe(true)
+    expect(mobileRows.flatMap(row => row.findAll('button')).every(button => button.classes().includes('w-full'))).toBe(true)
     await nav.findAll('button')[0]!.trigger('click')
     await nav.findAll('button')[1]!.trigger('click')
     await nav.findAll('button')[2]!.trigger('click')
     expect(pushRoute.mock.calls.map(([route]) => route.query.view)).toEqual(['connected', 'discover', 'map'])
     expect(nav.findAll('button')[3]!.attributes('aria-label')).toBe('Refresh connected nodes')
+    expect(nav.findAll('button')[3]!.text()).toBe('Refresh')
   })
 
   it('shows a loading state for empty trusted nodes while peers are loading', async () => {

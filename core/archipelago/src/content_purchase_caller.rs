@@ -206,7 +206,10 @@ pub(crate) async fn purchase_bound(
             .await?;
         let unresolved: Vec<_> = matching
             .into_iter()
-            .filter(|record| record.phase != BuyerPhase::Cancelled)
+            .filter(|record| {
+                record.phase != BuyerPhase::Cancelled
+                    && !(expected.is_some() && record.phase == BuyerPhase::Delivered)
+            })
             .collect();
         anyhow::ensure!(
             unresolved.len() <= 1,
