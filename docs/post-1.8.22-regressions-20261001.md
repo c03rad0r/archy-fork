@@ -88,9 +88,11 @@ acceptance; this is a new paid-file incident.
   tests (8), TypeScript, production build, terminal packaging regression and
   formatting pass. Three targeted backend regressions pass through the isolated
   runner: guarded public streaming, MeshCore V3 channel parsing, and the peer
-  content path filter. Source review/commit, ngit proposal disposition, exact
-  main mirroring and a complete mirror audit remain required before OTA/ISO. No
-  OTA or ISO was published by this UAT deployment.
+  content path filter. The reviewed source was submitted as ngit proposal
+  `e970261bdf1578094cc05180853b850fafdf0950bb3f250d374672144d576bfc`
+  and merged once as `23c88da4c426fa8094e2e7c931586d27d028f4eb`.
+  Exact main mirroring and a complete mirror audit remain required before
+  OTA/ISO. No OTA or ISO was published by this UAT deployment.
 
 - 2026-10-09 dual-node UAT correction: Archy `main` at `5b0b35401` was already
   serving identical backend and dashboard artifacts on Yaya and Framework;
