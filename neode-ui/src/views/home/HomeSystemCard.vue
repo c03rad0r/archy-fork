@@ -51,7 +51,7 @@
             <div class="p-4 bg-white/5 rounded-lg">
               <div class="flex items-center justify-between mb-2">
                 <p class="text-xs text-white/60">{{ t('home.disk') }}</p>
-                <p class="text-sm font-medium" :class="gaugeTextColor(stats.diskPercent)">{{ formatBytes(stats.diskUsed) }} / {{ formatBytes(stats.diskTotal) }}</p>
+                <p class="text-sm font-medium" :class="gaugeTextColor(stats.diskPercent)">{{ formatBytes(Math.max(0, stats.diskTotal - stats.diskUsed)) }} free / {{ formatBytes(stats.diskTotal) }}</p>
               </div>
               <div class="w-full h-2 bg-white/10 rounded-full overflow-hidden">
                 <div class="h-full rounded-full transition-all duration-500" :class="gaugeBarColor(stats.diskPercent)" :style="{ width: stats.diskPercent + '%' }"></div>

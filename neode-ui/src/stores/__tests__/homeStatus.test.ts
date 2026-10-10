@@ -93,3 +93,37 @@ describe('homeStatus — B16 bitcoin sync status retain (no vanish, no stale-as-
     expect(store.bitcoinStale).toBe(true) // labeled "Updating…" since we have no live numbers yet
   })
 })
+
+describe('homeStatus — live disk capacity (dedup disabled for system.stats)', () => {
+  beforeEach(() => {
+    setActivePinia(createPinia())
+    vi.clearAllMocks()
+  })
+
+  it('issues a fresh system.stats request on every refresh instead of a deduplicated snapshot', async () => {
+    const store = useHomeStatusStore()
+    mockedRpc.call.mockResolvedValue({
+      cpu_usage_percent: 5,
+      mem_used_bytes: 1,
+      mem_total_bytes: 2,
+      disk_used_bytes: 1,
+      disk_total_bytes: 2,
+      uptime_secs: 60,
+    })
+
+    await store.refreshSystemStats()
+    await store.refreshSystemStats()
+
+    const statsCalls = mockedRpc.call.mock.calls.filter(
+      ([opts]) => (opts as { method?: string }).method === 'system.stats'
+    )
+    expect(statsCalls).toHaveLength(2)
+    for (const [opts] of statsCalls) {
+      // Persisted/deduplicated snapshots can keep showing the pre-cleanup
+      // volume for minutes after files are removed; capacity must be live.
+      expect((opts as { dedup?: boolean }).dedup).toBe(false)
+    }
+    expect(store.stats.diskUsed).toBe(1)
+    expect(store.stats.diskTotal).toBe(2)
+  })
+})
