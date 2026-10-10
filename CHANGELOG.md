@@ -1,5 +1,23 @@
 # Changelog
 
+## v1.9.1-alpha (2026-10-10)
+
+- Add an owner terminal with xterm rendering, preserved scrollback, focused keyboard handling and Codex skills preinstalled; restrict it to the dashboard origin.
+- Prevent monitoring alerts from lingering after the condition recovers.
+- Show free disk capacity ("X free / Y total", TB-aware) from live data on Home, Monitoring and Server instead of a stale cached snapshot.
+- Allow explicit renewal of expired IndeeHub rentals, and keep the IndeeHub provider injection idempotent when the app already bundles it.
+- Make IndeeHub native login, registration and media registration reliable on managed stacks; route the IndeeHub catalog and free playback across nodes through FIPS.
+- Add a private phone setup goal, shared hardware listings, GrapheneOS Pixel artwork and Archipelago router NIP-99 listings.
+- Open the file-browser goal in the native Cloud view.
+- Keep isolated backend tests hermetic and add an ARM proposal test lane.
+
+Known limitations (open acceptance gates at publication):
+
+- Lightning rental on IndeeHub is not accepted: BTCPay is unconfigured on the IndeeHub API.
+- Metered ecash playback and the Shorty signed-in operator acceptance are not yet verified.
+- Remaining items in the post-1.8.22 regression checklist stay open.
+- Pre-existing historical mirror drift between ngit and Gitea is inventoried, not resolved.
+
 ## v1.9.0-alpha (2026-10-05)
 
 Unpublished release candidate; qualification is still in progress.
