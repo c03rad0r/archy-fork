@@ -1,10 +1,6 @@
 <template>
   <!-- Quick Actions Container -->
   <div class="glass-card p-6 mb-6">
-    <div class="flex flex-wrap gap-3 mb-4" aria-label="Node connections">
-      <RouterLink :to="{ name: 'federation', query: { view: 'discover' } }" class="glass-button px-4 py-2 rounded-lg text-sm text-white">Connect with Nodes</RouterLink>
-      <RouterLink :to="{ name: 'federation', query: { view: 'connected' } }" class="glass-button px-4 py-2 rounded-lg text-sm text-white">Connected Nodes</RouterLink>
-    </div>
     <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-5 gap-4 stagger-grid">
       <!-- Networking Profits -->
       <div data-controller-container tabindex="0" :class="{ 'card-stagger': showStagger }" class="flex flex-col gap-3 p-4 bg-white/5 rounded-lg min-w-0" style="--stagger-index: 0">
@@ -186,7 +182,7 @@
 
 <script setup lang="ts">
 import { ref } from 'vue'
-import { RouterLink, useRouter } from 'vue-router'
+import { useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import type { ProfitsData, NostrRelayStatsData, HwWalletDevice } from './types'
 

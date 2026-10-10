@@ -443,15 +443,23 @@ private fun injectTopInset(view: WebView) {
                 return '';
             }
             function apply() {
+                // IndeeHub's browse hero is an image, not a body background.
+                // Padding the body puts a solid strip above the image; let the
+                // hero start at the display edge while push() keeps its fixed
+                // header below the status icons. Other routes keep the normal
+                // content inset.
+                var imageHero = location.port === '7778' &&
+                    (location.pathname === '/' || location.pathname === '/browse') &&
+                    !!document.querySelector('section img');
                 var bodyBg = document.body
                     ? getComputedStyle(document.body).backgroundColor : '';
                 var eff = effectiveTopBg();
                 // Repaint body only when its declared background is not what
                 // the page actually renders at the top (or paints nothing).
-                var fix = eff && eff !== bodyBg
+                var fix = !imageHero && eff && eff !== bodyBg
                     ? 'background-color:' + eff + ' !important;' : '';
                 styleEl().textContent =
-                    'body{padding-top:' + SAT + 'px !important;' +
+                    'body{padding-top:' + (imageHero ? 0 : SAT) + 'px !important;' +
                     'box-sizing:border-box !important;' + fix + '}';
             }
             function push(el) {

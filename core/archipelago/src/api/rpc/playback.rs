@@ -146,7 +146,11 @@ impl RpcHandler {
                 .require_fips()
                 .single_delivery()
                 .timeout(std::time::Duration::from_secs(20))
-                .send_content_json(&self.config.data_dir, &binding.contract.seller_did, &body)
+                .send_rental_control_json(
+                    &self.config.data_dir,
+                    &binding.contract.seller_did,
+                    &body,
+                )
                 .await?;
         anyhow::ensure!(
             response.status().is_success(),

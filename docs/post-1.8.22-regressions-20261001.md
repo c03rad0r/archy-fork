@@ -1794,3 +1794,28 @@ isolated runner. The full isolated suite, production backend build, another
 explicit native update, post-update runtime/data proofs, and paired browser
 acceptance remain pending. No wallet, payment, personal-media or profile changes
 are part of this readiness correction.
+
+## 2026-10-09: two-node IndeeHub UAT — open acceptance items
+
+Yaya and Framework now have matching UAT frontend bundles, but this is **not**
+feature acceptance or release publication. The backstage `indeehub.com/watch/`
+slug control has been removed from the active bundle. The local My List button
+now calls the library API instead of only toggling its icon; signed-in browser
+acceptance is pending. Cross-node saves remain open because the library API is
+local-project-only. Cross-node comments, reactions and zaps remain open: social
+events use node-origin-specific content IDs and each `/relay` requires that
+node's login. Do not treat cross-node public film listing as social federation.
+
+Framework logged `content.playback-prepare: Not a purchase route` after a Cashu
+rental attempt. The buyer sent a rental-control path through a purchase-only
+transport guard. A narrow authenticated rental-control route is implemented;
+the release binary compiled, its route unit test passed through the isolated
+runner, and the identical binary is deployed on both UAT nodes with healthy
+RPC and session services. An existing-purchase retry without another payment
+remains pending. The earlier
+Framework LND startup fix does not close this paid-file recovery incident.
+Lightning purchase/zap still lacks configured BTCPay credentials on both UAT
+nodes; the API now reports service unavailable instead of an opaque Invalid URL,
+but payment is not accepted. Framework's listed film has no verified media
+registration or signed stream offer; listing is not proof of playable media.
+No OTA, ISO or public release follows from these UAT changes.

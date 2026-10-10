@@ -338,6 +338,20 @@ impl ApiHandler {
         origin == format!("http://{host}") || origin == format!("https://{host}")
     }
 
+    // Browsers do not send Origin on a same-origin GET. Fetch Metadata is a
+    // browser-controlled header and distinguishes the dashboard from an app on
+    // another port, which is only same-site. Mutating requests and WebSockets
+    // still require the exact Origin above.
+    fn has_terminal_read_origin(headers: &hyper::HeaderMap) -> bool {
+        if headers.contains_key(hyper::header::ORIGIN) {
+            return Self::has_terminal_origin(headers);
+        }
+        headers
+            .get("sec-fetch-site")
+            .and_then(|value| value.to_str().ok())
+            == Some("same-origin")
+    }
+
     /// Permissive origin check for the share-to-mesh iframe intent: any scheme
     /// http(s):// followed by the configured host_ip, optionally `:port`. Apps
     /// proxied under other ports (APP_PORTS) call this from within the same
@@ -533,7 +547,25 @@ impl ApiHandler {
 
         match (method, path.as_str()) {
             // RPC — auth is handled inside rpc handler per-method
-            (Method::POST, "/rpc/v1") => self.rpc_handler.clone().handle(req_with_bytes).await,
+            (Method::POST, "/rpc/v1") => {
+                let origin = self.app_cors_origin(&headers);
+                let mut response = self.rpc_handler.clone().handle(req_with_bytes).await?;
+                if !origin.is_empty() {
+                    response.headers_mut().insert(
+                        "access-control-allow-origin",
+                        hyper::header::HeaderValue::from_str(&origin)?,
+                    );
+                    response.headers_mut().insert(
+                        "access-control-allow-credentials",
+                        hyper::header::HeaderValue::from_static("true"),
+                    );
+                    response.headers_mut().insert(
+                        hyper::header::VARY,
+                        hyper::header::HeaderValue::from_static("Origin"),
+                    );
+                }
+                Ok(response)
+            }
 
             // AIUI model proxy — session-gated forwarder to Claude/Ollama,
             // replacing the unauthenticated claude-api-proxy.py sidecar and
@@ -586,7 +618,7 @@ impl ApiHandler {
                 if !self.is_authenticated(&headers).await {
                     return Ok(Self::unauthorized());
                 }
-                if !Self::has_terminal_origin(&headers) {
+                if !Self::has_terminal_read_origin(&headers) {
                     return Ok(build_response(
                         StatusCode::FORBIDDEN,
                         "application/json",
@@ -939,6 +971,18 @@ mod terminal_origin_tests {
         ApiHandler::has_terminal_origin(&headers)
     }
 
+    fn read_allowed(host: &str, origin: Option<&str>, fetch_site: Option<&str>) -> bool {
+        let mut headers = HeaderMap::new();
+        headers.insert(HOST, HeaderValue::from_str(host).unwrap());
+        if let Some(origin) = origin {
+            headers.insert(ORIGIN, HeaderValue::from_str(origin).unwrap());
+        }
+        if let Some(fetch_site) = fetch_site {
+            headers.insert("sec-fetch-site", HeaderValue::from_str(fetch_site).unwrap());
+        }
+        ApiHandler::has_terminal_read_origin(&headers)
+    }
+
     #[test]
     fn terminal_accepts_only_the_exact_dashboard_authority() {
         assert!(allowed("node.local", Some("https://node.local")));
@@ -948,5 +992,23 @@ mod terminal_origin_tests {
         assert!(!allowed("node.local", Some("https://evil.example")));
         assert!(!allowed("node.local", Some("null")));
         assert!(!allowed("node.local", None));
+    }
+
+    #[test]
+    fn terminal_read_accepts_same_origin_fetch_but_not_same_site_apps() {
+        assert!(read_allowed("node.local", None, Some("same-origin")));
+        assert!(!read_allowed("node.local", None, Some("same-site")));
+        assert!(!read_allowed("node.local", None, Some("cross-site")));
+        assert!(!read_allowed("node.local", None, None));
+        assert!(!read_allowed(
+            "node.local",
+            Some("https://evil.example"),
+            Some("same-site")
+        ));
+        assert!(!read_allowed(
+            "node.local",
+            Some("https://evil.example"),
+            Some("same-origin")
+        ));
     }
 }

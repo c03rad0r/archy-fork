@@ -166,24 +166,27 @@
       </div>
     </div>
 
-    <div class="mt-auto shrink-0 pt-4 space-y-3">
-      <!-- Always the bottom 50/50 pair, every screen size — consistent with
-           the other web5 cards' full-width bottom actions. -->
-      <div class="grid grid-cols-2 gap-3">
-        <button
-          @click="router.push('/dashboard/server/federation')"
-          class="mobile-card-action glass-button rounded-lg text-sm font-medium text-white/90 hover:text-white transition-colors"
-        >
-          {{ t('web5.findNodes') }}
+    <div class="mt-auto shrink-0 pt-4 border-t border-white/10">
+      <nav aria-label="Node connections" class="grid grid-cols-[repeat(2,minmax(0,1fr))_2.75rem] sm:grid-cols-[repeat(3,minmax(0,1fr))_2.75rem] gap-2">
+        <button @click="router.push({ name: 'federation', query: { view: 'connected' } })" class="mobile-card-action glass-button rounded-lg px-2 text-xs sm:text-sm font-medium text-white/90 hover:text-white text-center min-h-11">
+          My connections
+        </button>
+        <button @click="router.push({ name: 'federation', query: { view: 'discover' } })" class="mobile-card-action glass-button rounded-lg px-2 text-xs sm:text-sm font-medium text-white/90 hover:text-white text-center min-h-11">
+          Find Nodes
+        </button>
+        <button @click="router.push({ name: 'federation', query: { view: 'map' } })" class="mobile-card-action glass-button rounded-lg px-2 text-xs sm:text-sm font-medium text-white/90 hover:text-white text-center min-h-11 col-span-2 sm:col-span-1">
+          Map
         </button>
         <button
           @click="refreshActiveTab"
           :disabled="loadingPeers || loadingRequests"
-          class="mobile-card-action glass-button rounded-lg text-sm font-medium text-white/90 hover:text-white transition-colors"
+          class="mobile-card-action glass-button rounded-lg min-h-11 w-11 flex items-center justify-center text-white/80 hover:text-white disabled:opacity-50"
+          :aria-label="loadingPeers || loadingRequests ? 'Refreshing connected nodes' : 'Refresh connected nodes'"
+          title="Refresh connected nodes"
         >
-          {{ loadingPeers || loadingRequests ? t('common.loading') : t('common.refresh') }}
+          <svg class="w-4 h-4" :class="{ 'animate-spin': loadingPeers || loadingRequests }" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M20 11a8 8 0 10-2.4 6M20 4v7h-7" /></svg>
         </button>
-      </div>
+      </nav>
     </div>
   </div>
 
