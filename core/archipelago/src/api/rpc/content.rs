@@ -1418,6 +1418,76 @@ impl RpcHandler {
         }))
     }
 
+    /// Browse IndeeHub's public film catalogs through the native peer bridge.
+    /// The bridge selects FIPS first (with the normal safe fallback policy),
+    /// so the browser never needs a peer LAN address or an onion connection.
+    pub(super) async fn handle_content_browse_indeehub_peers(&self) -> Result<serde_json::Value> {
+        let nodes = crate::federation::load_nodes(&self.config.data_dir)
+            .await
+            .unwrap_or_default();
+        let peers: Vec<_> = nodes
+            .into_iter()
+            .filter(|node| is_valid_v3_onion(&node.onion))
+            .collect();
+        let calls = peers.into_iter().map(|node| async move {
+            let onion = node.onion.clone();
+            let request_onion = onion.clone();
+            let fips = node.fips_npub.clone();
+            let result = tokio::time::timeout(std::time::Duration::from_secs(12), async move {
+                let (response, transport) = crate::fips::dial::PeerRequest::new(
+                    fips.as_deref(),
+                    &request_onion,
+                    "/api/public-catalog/indeedhub",
+                )
+                .service(crate::settings::transport::PeerService::PeerFiles)
+                .timeout(std::time::Duration::from_secs(10))
+                .fips_timeout(std::time::Duration::from_secs(6))
+                .send_get()
+                .await?;
+                if !response.status().is_success() {
+                    anyhow::bail!("peer returned {}", response.status());
+                }
+                let listings: serde_json::Value = response
+                    .json()
+                    .await
+                    .context("invalid IndeeHub peer catalog")?;
+                Ok::<_, anyhow::Error>((listings, transport))
+            })
+            .await
+            .ok()
+            .and_then(Result::ok);
+            (onion, result)
+        });
+        let mut items = Vec::new();
+        let mut reached = 0usize;
+        for (onion, result) in futures_util::future::join_all(calls).await {
+            let Some((listings, transport)) = result else {
+                continue;
+            };
+            let Some(listings) = listings.as_array() else {
+                continue;
+            };
+            reached += 1;
+            for listing in listings {
+                let Some(mut listing) = listing.as_object().cloned() else {
+                    continue;
+                };
+                listing.insert("peer".to_string(), serde_json::json!(onion));
+                listing.insert(
+                    "transport".to_string(),
+                    serde_json::json!(transport.to_string()),
+                );
+                items.push(serde_json::Value::Object(listing));
+            }
+        }
+        Ok(serde_json::json!({
+            "items": items,
+            "peers_reached": reached,
+            "peers_total": reached,
+            "partial": false,
+        }))
+    }
+
     /// `content.owned-get` — return a purchased item's bytes (base64) from the
     /// local cache for in-app viewing/saving. No network, no re-payment.
     pub(super) async fn handle_content_owned_get(

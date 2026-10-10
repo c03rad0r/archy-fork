@@ -1468,6 +1468,9 @@ pub fn is_peer_allowed_path(path: &str) -> bool {
             | "/archipelago/mesh-typed"
             | "/dwn"
             | "/transport/inbox"
+            // IndeeHub public metadata is loopback-fetched by the native
+            // handler; the app port itself is never exposed on FIPS.
+            | "/api/public-catalog/indeedhub"
             // Content *catalog* — the peer-browse entry point. This is the
             // exact path `/content` (no trailing slash); the prefix match
             // below only covers `/content/<id>` item fetches, so without

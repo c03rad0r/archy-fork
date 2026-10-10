@@ -24,7 +24,7 @@ use crate::container::{ContainerOrchestrator, DevContainerOrchestrator};
 use crate::monitoring::MetricsStore;
 use crate::session::{self, SessionStore};
 use crate::state::StateManager;
-use anyhow::Result;
+use anyhow::{Context, Result};
 use hyper::{Method, Request, Response, StatusCode};
 use sha2::{Digest, Sha256};
 use std::sync::Arc;
@@ -222,6 +222,50 @@ impl ApiHandler {
             hyper::StatusCode::BAD_GATEWAY,
             "text/plain",
             hyper::Body::from("all upstream catalog URLs failed"),
+        ))
+    }
+
+    /// Serve IndeeHub's sanitized public project catalog on the FIPS peer
+    /// listener. The app container remains on loopback; peers never receive
+    /// its session-gated port directly.
+    async fn handle_indeehub_public_catalog(&self) -> Result<Response<hyper::Body>> {
+        let response = reqwest::Client::builder()
+            .timeout(std::time::Duration::from_secs(10))
+            .build()?
+            .get("http://127.0.0.1:7778/api/projects/public-catalog")
+            .header(reqwest::header::ACCEPT, "application/json")
+            .send()
+            .await;
+        let response = match response {
+            Ok(response) => response,
+            Err(error) => {
+                tracing::warn!(%error, "IndeeHub public catalog loopback fetch failed");
+                return Ok(build_response(
+                    StatusCode::BAD_GATEWAY,
+                    "application/json",
+                    hyper::Body::from(r#"{"error":"IndeeHub catalog unavailable"}"#),
+                ));
+            }
+        };
+        if !response.status().is_success() {
+            return Ok(build_response(
+                StatusCode::BAD_GATEWAY,
+                "application/json",
+                hyper::Body::from(r#"{"error":"IndeeHub catalog unavailable"}"#),
+            ));
+        }
+        let bytes = response.bytes().await?;
+        anyhow::ensure!(
+            bytes.len() <= 8 * 1024 * 1024,
+            "IndeeHub catalog exceeds limit"
+        );
+        let value: serde_json::Value =
+            serde_json::from_slice(&bytes).context("IndeeHub catalog is not valid JSON")?;
+        anyhow::ensure!(value.is_array(), "IndeeHub catalog must be an array");
+        Ok(build_response(
+            StatusCode::OK,
+            "application/json",
+            hyper::Body::from(bytes),
         ))
     }
 
@@ -793,6 +837,12 @@ impl ApiHandler {
                     .header("Content-Type", "application/json")
                     .header("Cache-Control", "private, no-store")
                     .body(hyper::Body::from(body))?)
+            }
+
+            // Public IndeeHub metadata is also exposed on the FIPS peer
+            // listener, whose path filter is the only ingress gate here.
+            (Method::GET, "/api/public-catalog/indeedhub") => {
+                self.handle_indeehub_public_catalog().await
             }
 
             (Method::GET, "/api/app-catalog") => {
