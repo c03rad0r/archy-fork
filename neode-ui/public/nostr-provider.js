@@ -439,7 +439,8 @@
     start: function (handle, readyId) { return rentalRequest('start', { handle: handle, ready_id: readyId }, 35000); },
     request: function (offer, options) {
       if (!options || options.playbackProtocol !== 2) return Promise.reject(new Error('Playback protocol 2 is required before requesting a rental.'));
-      return rentalRequest('request', { offer: offer }, 600000, options.signal);
+      if (options.renewExpired !== undefined && typeof options.renewExpired !== 'boolean') return Promise.reject(new Error('Invalid rental renewal request.'));
+      return rentalRequest('request', { offer: offer, renewExpired: options.renewExpired === true }, 600000, options.signal);
     }
   };
   Object.defineProperty(window.archipelagoRental, 'playbackProtocol', { value: 2, writable: false, configurable: false, enumerable: true });
