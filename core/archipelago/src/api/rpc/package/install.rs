@@ -74,10 +74,15 @@ async fn local_podman_image_exists(image: &str) -> Result<bool> {
     }
 }
 
-fn patched_indeedhub_nginx_config(original: &str) -> String {
+fn patched_indeedhub_nginx_config(original: &str, inject_provider: bool) -> String {
     let mut conf = original
         .lines()
-        .filter(|line| !line.contains("X-Frame-Options"))
+        .filter(|line| {
+            !line.contains("X-Frame-Options")
+                && (inject_provider
+                    || (!line.contains("sub_filter_once")
+                        && !line.contains("sub_filter '</head>'")))
+        })
         .collect::<Vec<_>>()
         .join("\n");
     conf.push('\n');
@@ -91,21 +96,22 @@ fn patched_indeedhub_nginx_config(original: &str) -> String {
                 location = /sw.js {",
         );
     }
-    if conf.contains("try_files") && !conf.contains("sub_filter") {
+    if inject_provider && conf.contains("try_files") && !conf.contains("sub_filter") {
         conf = conf.replacen(
             "try_files $uri $uri/ /index.html;",
             "try_files $uri $uri/ /index.html;\n\
                         sub_filter_once on;\n\
-                        sub_filter '</head>' '<script src=\"/nostr-provider.js?v=tab-signer-v4\"></script></head>';",
+                        sub_filter '</head>' '<script src=\"/nostr-provider.js?v=tab-signer-v5\"></script></head>';",
             1,
         );
     }
     conf = conf.replace(
         "src=\"/nostr-provider.js\"",
-        "src=\"/nostr-provider.js?v=tab-signer-v4\"",
+        "src=\"/nostr-provider.js?v=tab-signer-v5\"",
     );
-    conf = conf.replace("tab-signer-v2", "tab-signer-v4");
-    conf = conf.replace("tab-signer-v3", "tab-signer-v4");
+    conf = conf.replace("tab-signer-v2", "tab-signer-v5");
+    conf = conf.replace("tab-signer-v3", "tab-signer-v5");
+    conf = conf.replace("tab-signer-v4", "tab-signer-v5");
     conf.replace(
         "proxy_set_header X-Forwarded-Prefix /api;",
         "proxy_set_header X-Forwarded-Prefix $http_x_forwarded_prefix/api;",
@@ -165,6 +171,11 @@ pub(crate) async fn patch_indeedhub_nostr_provider() {
 
     let provider_src = "/opt/archipelago/web-ui/nostr-provider.js";
     let provider_dest = format!("{container_root}/usr/share/nginx/html/nostr-provider.js");
+    let provider_is_bundled =
+        tokio::fs::read_to_string(format!("{container_root}/usr/share/nginx/html/index.html"))
+            .await
+            .map(|html| html.contains("src=\"/nostr-provider.js"))
+            .unwrap_or(false);
     let provider_copied = tokio::fs::metadata(provider_src).await.is_ok()
         && tokio::process::Command::new("podman")
             .args([
@@ -189,7 +200,7 @@ pub(crate) async fn patch_indeedhub_nostr_provider() {
     if let Ok(out) = copy_out {
         if out.status.success() {
             if let Ok(original) = tokio::fs::read_to_string(&tmp_path).await {
-                let conf = patched_indeedhub_nginx_config(&original);
+                let conf = patched_indeedhub_nginx_config(&original, !provider_is_bundled);
                 if conf != original && tokio::fs::write(&tmp_path, &conf).await.is_ok() {
                     config_copied = tokio::process::Command::new("podman")
                         .args([
@@ -219,7 +230,8 @@ pub(crate) async fn patch_indeedhub_nostr_provider() {
                     }
                 } else if conf == original
                     && conf.contains("location = /nostr-provider.js {")
-                    && conf.contains("src=\"/nostr-provider.js?v=tab-signer-v4\"")
+                    && (provider_is_bundled
+                        || conf.contains("src=\"/nostr-provider.js?v=tab-signer-v5\""))
                 {
                     config_copied = true;
                 }
@@ -2618,19 +2630,23 @@ mod tests {
     }
 }
 "#;
-        let patched = patched_indeedhub_nginx_config(original);
+        let patched = patched_indeedhub_nginx_config(original, true);
         assert!(!patched.contains("X-Frame-Options"));
         assert!(patched.contains("location = /nostr-provider.js {"));
         assert!(patched.contains("Cache-Control \"no-cache, no-store, must-revalidate\""));
-        assert!(patched.contains("src=\"/nostr-provider.js?v=tab-signer-v4\""));
+        assert!(patched.contains("src=\"/nostr-provider.js?v=tab-signer-v5\""));
         assert!(patched.contains("X-Forwarded-Prefix $http_x_forwarded_prefix/api"));
-        assert_eq!(patched_indeedhub_nginx_config(&patched), patched);
+        assert_eq!(patched_indeedhub_nginx_config(&patched, true), patched);
 
-        let previous_broker = patched.replace("tab-signer-v4", "tab-signer-v3");
-        let migrated = patched_indeedhub_nginx_config(&previous_broker);
-        assert!(migrated.contains("tab-signer-v4"));
+        let previous_broker = patched.replace("tab-signer-v5", "tab-signer-v3");
+        let migrated = patched_indeedhub_nginx_config(&previous_broker, true);
+        assert!(migrated.contains("tab-signer-v5"));
         assert!(!migrated.contains("tab-signer-v3"));
-        assert_eq!(patched_indeedhub_nginx_config(&migrated), migrated);
+        assert_eq!(patched_indeedhub_nginx_config(&migrated, true), migrated);
+
+        let bundled = patched_indeedhub_nginx_config(&patched, false);
+        assert!(!bundled.contains("sub_filter"));
+        assert_eq!(patched_indeedhub_nginx_config(&bundled, false), bundled);
     }
 
     #[test]

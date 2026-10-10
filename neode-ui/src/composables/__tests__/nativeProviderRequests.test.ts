@@ -38,4 +38,27 @@ describe('native provider on ordinary HTTP node origins',()=>{
   await expect(window.archipelagoRental.request({title:'Already closed'},{playbackProtocol:2,signal:stop.signal})).rejects.toThrow('closed')
   expect(parent.postMessage).not.toHaveBeenCalled()
  })
+ it('validates and forwards the explicit rental renewal choice',async()=>{
+  const listeners:((event:unknown)=>void)[]=[]
+  const parent={postMessage:vi.fn()}
+  const window:any={top:{},parent,location:{href:'http://node.local:7778/browse',pathname:'/browse',port:'7778',origin:'http://node.local:7778'},addEventListener:(_name:string,handler:(event:unknown)=>void)=>listeners.push(handler)}
+  const timers=new Set<unknown>();let count=0
+  runInNewContext(source,{window,document:{currentScript:{hasAttribute:()=>true},readyState:'complete'},crypto:{getRandomValues:(bytes:Uint8Array)=>{bytes.fill(++count);return bytes}},Uint8Array,URL,console,
+    setTimeout:(fn:unknown)=>{timers.add(fn);return fn},clearTimeout:(fn:unknown)=>timers.delete(fn)})
+  await expect(window.archipelagoRental.request({title:'Bad'},{playbackProtocol:2,renewExpired:'yes' as unknown as boolean})).rejects.toThrow('Invalid rental renewal request.')
+  expect(parent.postMessage).not.toHaveBeenCalled()
+  const renewal=window.archipelagoRental.request({title:'Expired'},{playbackProtocol:2,renewExpired:true})
+  const fresh=window.archipelagoRental.request({title:'Fresh'},{playbackProtocol:2,renewExpired:false})
+  const omitted=window.archipelagoRental.request({title:'Omitted'},{playbackProtocol:2})
+  const messages=parent.postMessage.mock.calls.map(([message])=>message)
+  expect(messages).toHaveLength(3)
+  expect(messages[0]).toMatchObject({type:'archipelago-rental-request',action:'request',playbackProtocol:2,renewExpired:true})
+  expect(messages[1]).toMatchObject({type:'archipelago-rental-request',action:'request',playbackProtocol:2,renewExpired:false})
+  expect(messages[2]).toMatchObject({type:'archipelago-rental-request',action:'request',playbackProtocol:2,renewExpired:false})
+  for(const message of messages) for(const receive of listeners) receive({source:parent,origin:'http://node.local',data:{type:'archipelago-rental-response',id:message.id,result:{ok:true}}})
+  await expect(renewal).resolves.toEqual({ok:true})
+  await expect(fresh).resolves.toEqual({ok:true})
+  await expect(omitted).resolves.toEqual({ok:true})
+  expect(timers.size).toBe(0)
+ })
 })
