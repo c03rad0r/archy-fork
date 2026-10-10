@@ -1,5 +1,33 @@
 # Archipelago 1.9.0-alpha release acceptance
 
+## Three-node expired-rental renewal UAT — 10 October 2026
+
+- ngit proposal `267f63692f16af34771b7268ffd71502f9a1b087661044730bb891478c82212d`
+  was merged once as `f6e84fdcb46eb2ac998f4ad53cd9c34ccfb03ac4`; the exact `main`
+  commit is on ngit and Gitea and the local/main mirror check passes.
+- Explicit renewal is permitted only after the authenticated seller reports the
+  original immutable timed-rental window as expired. Active and incomplete
+  purchases continue to recover under their existing operation and are not paid
+  again. The isolated backend regression passed 1/1; the dashboard bridge passed
+  29/29 tests; the IndeeHub player passed 10/10 tests. A real expired Framework
+  rental was recovered before this change without another payment and confirmed
+  the missing transition; an actual renewed payment remains operator UAT, not a
+  source-test pass.
+- Optimized backend SHA256 `97f4ffcc6e5f47eaeb88bfcd72d858aa1b15baa2ae775d02718ed7074151f4fd`,
+  dashboard index SHA256 `d6ffe81f2e7449b12ebb3affed63802520a75634d753ed81d77605d17c5e8e7c`,
+  and IndeeHub index SHA256 `ee9192ab758871df04ee519c69a3dcb8693001fcc69c2b547cc7ca94236eba54`
+  are deployed on Yaya, Framework and Shorty with private rollback copies.
+  All three management health probes pass. Bitcoin/LND and IndeeHub database,
+  Redis, MinIO, relay, API and ffmpeg container IDs remained unchanged.
+- Framework's obsolete nginx `sub_filter` was injecting a duplicate native
+  signer provider into the self-contained frontend. It was removed with its
+  previous configuration retained privately; all three nodes now serve the same
+  IndeeHub HTML. The mobile Connected Nodes footer now gives Map and Refresh
+  equal width and uses Refresh text rather than an oversized mobile icon.
+- This is UAT deployment evidence, not OTA/ISO acceptance. Lightning rental,
+  metered ecash, Shorty authenticated operator acceptance, the remaining active
+  regression checklist and full historical mirror parity remain release gates.
+
 ## Yaya alpha UAT continuation — 9 October 2026
 
 Operator renewed deployment authorization for `yaya-server` for combined UAT,
