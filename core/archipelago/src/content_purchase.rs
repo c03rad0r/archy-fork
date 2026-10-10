@@ -1167,6 +1167,40 @@ impl Journal {
         }
         Ok(record)
     }
+
+    /// Retire a settled timed-rental receipt only after the authenticated
+    /// seller has reported its immutable viewing window as expired. This is a
+    /// lifecycle transition, not evidence that a permanent copy was cached:
+    /// it merely permits a later, explicitly approved rental operation for the
+    /// same registered title. Incomplete and still-active purchases must remain
+    /// recoverable under their original UUID.
+    pub async fn record_rental_expiry(
+        &self,
+        contract: &Contract,
+        started_at: u64,
+        expires_at: u64,
+        viewing_seconds: u64,
+        now: u64,
+    ) -> Result<BuyerRecord> {
+        let mut record = self.bound_buyer(contract).await?;
+        anyhow::ensure!(
+            contract.content_id.starts_with("registered_")
+                && record.phase == BuyerPhase::ReceiptSaved
+                && record.receipt.is_some(),
+            "Only a settled timed rental can be retired"
+        );
+        anyhow::ensure!(
+            viewing_seconds > 0
+                && started_at > 0
+                && started_at.checked_add(viewing_seconds) == Some(expires_at)
+                && now >= expires_at,
+            "Original rental viewing period has not ended"
+        );
+        record.phase = BuyerPhase::Delivered;
+        record.validate()?;
+        self.write("buyer", &contract.id, &record).await?;
+        Ok(record)
+    }
 }
 
 #[cfg(test)]
@@ -1363,6 +1397,49 @@ mod tests {
         assert!(journal.prepare_buyer(&expired, 2000).await.is_err());
         assert!(journal.prepare_seller(&expired, 999).await.is_err());
         assert!(journal.buyer(&expired.id).await.unwrap().is_none());
+    }
+    #[tokio::test]
+    async fn only_an_expired_settled_rental_can_be_retired_for_another_period() {
+        let root = tempfile::tempdir().unwrap();
+        let mut rental = contract();
+        rental.content_id = "registered_film-1".into();
+        let journal = Journal::open(root.path()).await.unwrap();
+        journal.prepare_buyer(&rental, 1100).await.unwrap();
+        let seller = journal.prepare_seller(&rental, 1100).await.unwrap();
+        journal
+            .record_acceptance(&rental, &seller.acceptance().unwrap(), &rental.seller_did)
+            .await
+            .unwrap();
+        let encoded = token(&rental, "rental-expiry");
+        journal.record_token(&rental, &encoded).await.unwrap();
+        journal
+            .record_incoming_token(&rental, &encoded)
+            .await
+            .unwrap();
+        journal
+            .record_settlement(&rental, rental.minimum_net_sats)
+            .await
+            .unwrap();
+        let receipt = journal.issue_receipt(&rental).await.unwrap();
+        journal.record_receipt(&rental, &receipt).await.unwrap();
+
+        assert!(journal
+            .record_rental_expiry(&rental, 2000, 5600, 3600, 5599)
+            .await
+            .is_err());
+        assert_eq!(
+            journal.buyer(&rental.id).await.unwrap().unwrap().phase,
+            BuyerPhase::ReceiptSaved
+        );
+        let retired = journal
+            .record_rental_expiry(&rental, 2000, 5600, 3600, 5600)
+            .await
+            .unwrap();
+        assert_eq!(retired.phase, BuyerPhase::Delivered);
+
+        let mut next = rental.clone();
+        next.id = uuid::Uuid::new_v4().to_string();
+        journal.prepare_buyer(&next, 1500).await.unwrap();
     }
     #[tokio::test]
     async fn damaged_records_and_nonregular_targets_are_preserved() {

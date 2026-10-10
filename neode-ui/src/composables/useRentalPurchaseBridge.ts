@@ -5,7 +5,7 @@ import { installedOriginMatches } from './useMediaRegistrationBridge'
 interface FrameContext { appId: () => string; appUrl: () => string; frameWindow: () => Window | null; consentBusy?: () => boolean }
 export interface RentalOffer { title: string; terms: { nodeDid: string; contentId: string; sha256: string; priceSats: number; viewingSeconds: number } }
 interface Quote { network: 'mainnet' | 'testnet'; mint_url: string; state: string; operation_id: string; envelope_sha256: string; wallet_debit_sats: number; gross_token_sats: number; seller_net_sats: number; expires_at: number; seller_onion: string }
-interface Pending { source: Window; origin: string; id: string; offer: RentalOffer; quote?: Quote }
+interface Pending { source: Window; origin: string; id: string; offer: RentalOffer; renewExpired: boolean; quote?: Quote }
 type PlaybackAction = 'status' | 'prepare' | 'start'
 interface PlaybackBinding { duration?: number; startedAt?: number; expiresAt?: number }
 const readyPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/
@@ -99,6 +99,7 @@ export function useRentalPurchaseBridge(context: FrameContext) {
       result = await rpcClient.call<Quote & { completed_bytes?: number; total_bytes?: number }>({ method: 'content.rental-purchase', params: {
         seller_did: terms.nodeDid, content_id: terms.contentId, expected_sha256: terms.sha256,
         expected_price_sats: terms.priceSats, expected_viewing_seconds: terms.viewingSeconds,
+        renew_expired: item.renewExpired,
         ...(!confirm && attempt === 0 ? { retry_preparation: true } : {}),
         max_wallet_debit: confirm ? item.quote!.wallet_debit_sats : Number.MAX_SAFE_INTEGER,
         ...(confirm ? { consent: { operation_id: item.quote!.operation_id,
@@ -192,7 +193,8 @@ export function useRentalPurchaseBridge(context: FrameContext) {
       || !Number.isSafeInteger(terms.viewingSeconds) || terms.viewingSeconds < 1) {
       (event.source as Window).postMessage({ type: 'archipelago-rental-response', id, error: 'Invalid rental terms.' }, event.origin); return
     }
-    const item: Pending = { source: event.source as Window, origin: event.origin, id, offer: structuredClone(offer) }
+    if (event.data.renewExpired !== undefined && typeof event.data.renewExpired !== 'boolean') return
+    const item: Pending = { source: event.source as Window, origin: event.origin, id, offer: structuredClone(offer), renewExpired: event.data.renewExpired === true }
     pending = item
     try { await installed(item); if (current(item)) { request.value = item.offer; phase.value = 'review' } }
     catch (cause) { reply(item, undefined, String(cause)); if (pending === item) pending = null }

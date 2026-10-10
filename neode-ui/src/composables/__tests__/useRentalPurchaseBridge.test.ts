@@ -33,6 +33,15 @@ describe('native rental confirmation', () => {
   expect(calls[1]![0].params.max_wallet_debit).toBe(10); expect(f.bridge.request.value).toBeNull()
   expect(f.child.postMessage.mock.lastCall![0].result).toEqual({playbackProtocol:2,handle:'d'.repeat(64),expires_at:null,operation_id:quote.operation_id}); expect(rpc.call.mock.calls.some(([v])=>v.method==='content.playback-start')).toBe(false)
  })
+ it('forwards an explicit expired-period renewal without changing its reviewed terms', async () => {
+  const f=fixture()
+  await f.bridge.handle({data:{type:'archipelago-rental-request',playbackProtocol:2,id:'cccccccc-cccc-4ccc-8ccc-cccccccccccc',offer,renewExpired:true},origin:'https://node.test:7778',source:f.child} as unknown as MessageEvent)
+  await f.bridge.review()
+  const call=rpc.call.mock.calls.find(([v])=>v.method==='content.rental-purchase')![0]
+  expect(call.params.renew_expired).toBe(true)
+  expect(call.params.consent).toBeUndefined()
+  expect(call.params).toMatchObject({content_id:offer.terms.contentId,expected_price_sats:offer.terms.priceSats,expected_viewing_seconds:offer.terms.viewingSeconds})
+ })
  it('does not dispatch after closing during installation validation', async()=>{
   const f=fixture(); await f.send(); let release!:(value:unknown)=>void
   rpc.call.mockImplementationOnce(()=>new Promise(resolve=>{release=resolve}))
