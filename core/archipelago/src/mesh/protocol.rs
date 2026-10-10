@@ -551,17 +551,19 @@ pub fn parse_contact_msg_v3(data: &[u8]) -> Result<(String, String, i8)> {
 }
 
 /// Parse RESP_CHANNEL_MSG_V3 (0x11) - channel message.
-/// Format: channel_idx(1B) + path_len(1B) + txt_type(1B) + timestamp(4B) + text
+/// Format after the response code has been removed:
+/// SNR(1B) + reserved(2B) + channel_idx(1B) + path_len(1B) +
+/// txt_type(1B) + timestamp(4B) + text.
 /// Returns (channel_idx, text).
 pub fn parse_channel_msg_v3(data: &[u8]) -> Result<(u8, String)> {
-    if data.len() < 7 {
+    if data.len() < 10 {
         anyhow::bail!("Channel message too short: {} bytes", data.len());
     }
-    let channel_idx = data[0];
-    // data[1] = path_len, data[2] = txt_type
-    // data[3..7] = timestamp
-    let text = if data.len() > 7 {
-        String::from_utf8_lossy(&data[7..])
+    let channel_idx = data[3];
+    // data[0] = SNR, data[1..3] = reserved, data[4] = path_len,
+    // data[5] = txt_type, data[6..10] = timestamp.
+    let text = if data.len() > 10 {
+        String::from_utf8_lossy(&data[10..])
             .trim_end_matches('\0')
             .to_string()
     } else {
@@ -649,12 +651,12 @@ pub fn parse_contact_msg_v1_raw(data: &[u8]) -> Result<(String, Vec<u8>)> {
 /// Parse RESP_CHANNEL_MSG_V3 returning raw payload bytes.
 /// Returns (channel_idx, raw_payload_bytes).
 pub fn parse_channel_msg_v3_raw(data: &[u8]) -> Result<(u8, Vec<u8>)> {
-    if data.len() < 7 {
+    if data.len() < 10 {
         anyhow::bail!("Channel message too short: {} bytes", data.len());
     }
-    let channel_idx = data[0];
-    let payload = if data.len() > 7 {
-        let mut p = data[7..].to_vec();
+    let channel_idx = data[3];
+    let payload = if data.len() > 10 {
+        let mut p = data[10..].to_vec();
         // Strip trailing NUL bytes
         while p.last() == Some(&0) {
             p.pop();
@@ -778,6 +780,23 @@ pub fn parse_identity_broadcast(msg: &str) -> Option<(String, String, String)> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn parses_v3_channel_after_snr_and_reserved_prefix() -> Result<()> {
+        // decode_frame removes the 0x11 response code before this parser sees
+        // the payload. A real V3 frame then begins with SNR + two reserved
+        // bytes; treating SNR as the channel index filed public messages under
+        // random channels such as 47 or 208.
+        let data = [
+            0xd0, 0x00, 0x00, // SNR and reserved
+            0x00, 0xff, 0x00, // public channel, path, text type
+            0x78, 0x56, 0x34, 0x12, // timestamp
+            b'h', b'e', b'l', b'l', b'o', 0x00,
+        ];
+        assert_eq!(parse_channel_msg_v3(&data)?, (0, "hello".to_string()));
+        assert_eq!(parse_channel_msg_v3_raw(&data)?, (0, b"hello".to_vec()));
+        Ok(())
+    }
 
     #[test]
     fn test_encode_frame() {

@@ -178,10 +178,21 @@ pub(crate) async fn create(body: &[u8]) -> Result<Response<hyper::Body>> {
     }
     let id = format!("s-{}", Uuid::new_v4().simple());
     let tmux_name = format!("archy-{id}");
-    let output = Command::new("tmux")
+    let output = match Command::new("tmux")
         .args(["new-session", "-d", "-s", &tmux_name, "-c", &workspace])
         .output()
-        .await?;
+        .await
+    {
+        Ok(output) => output,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            return Ok(build_response(
+                StatusCode::SERVICE_UNAVAILABLE,
+                "application/json",
+                hyper::Body::from(r#"{"error":"Terminal runtime is not installed on this node"}"#),
+            ));
+        }
+        Err(error) => return Err(error.into()),
+    };
     if !output.status.success() {
         return Ok(build_response(
             StatusCode::SERVICE_UNAVAILABLE,

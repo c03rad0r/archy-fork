@@ -88,7 +88,10 @@ async function createSession() {
   error.value = ''
   try {
     const response = await fetch('/api/terminal/sessions', { method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: 'Archipelago work' }) })
-    if (!response.ok) throw new Error('Could not create a developer session.')
+    if (!response.ok) {
+      const payload = await response.json().catch(() => null) as { error?: string } | null
+      throw new Error(payload?.error || `Could not create a developer session (${response.status}).`)
+    }
     const session = await response.json()
     sessions.value = [session, ...sessions.value]
     selectedId.value = session.id
@@ -215,6 +218,6 @@ onBeforeUnmount(() => {
 .terminal-select, .terminal-icon-button, .terminal-button { min-height: 36px; border-radius: 9px; border: 1px solid rgba(255,255,255,.12); background: rgba(255,255,255,.06); color: white; padding: 0 9px; font-size: 12px; }
 .terminal-icon-button:hover, .terminal-button:hover, .terminal-select:hover { background: rgba(255,255,255,.13); }
 .terminal-primary { background: #f7931a; border-color: #f7931a; color: #17100a; font-weight: 700; }
-.terminal-empty { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px; height: 100%; min-height: 300px; padding: 32px; text-align: center; color: rgba(255,255,255,.55); } .terminal-empty strong { color: white; font-size: 16px; } .terminal-error strong { color: #ffaaa6; }
+.terminal-empty { display: flex; flex: 1 1 100%; width: 100%; flex-direction: column; align-items: center; justify-content: center; gap: 10px; height: 100%; min-height: 300px; padding: 32px; text-align: center; color: rgba(255,255,255,.55); } .terminal-empty strong { color: white; font-size: 16px; } .terminal-error strong { color: #ffaaa6; }
 @media (max-width: 640px) { .terminal-panel { width: calc(100vw - 1rem); height: calc(100vh - 1rem); max-width: calc(100vw - 1rem); max-height: calc(100vh - 1rem); } .terminal-header { align-items: flex-start; flex-direction: column; } .terminal-actions { width: 100%; flex-wrap: wrap; } .terminal-select { flex: 1; min-width: 0; } .terminal-status { display: none; } }
 </style>

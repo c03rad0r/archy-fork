@@ -46,6 +46,43 @@ pub(super) fn build_response(
         .unwrap_or_else(|_| Response::new(hyper::Body::from("Internal error")))
 }
 
+fn zero_sats(value: Option<&serde_json::Value>) -> bool {
+    match value {
+        Some(serde_json::Value::Number(number)) => number.as_u64() == Some(0),
+        Some(serde_json::Value::String(number)) => number.parse::<u64>() == Ok(0),
+        _ => false,
+    }
+}
+
+/// Public playback must be explicitly free in both the mutable project row and
+/// any signed rental offer. A stale project price must never override signed
+/// paid terms, and malformed offers fail closed.
+fn indeehub_listing_is_publicly_free(listing: &serde_json::Value) -> bool {
+    if !zero_sats(listing.get("rentalPrice")) {
+        return false;
+    }
+    let Some(offer) = listing.get("offerEvent") else {
+        return true;
+    };
+    if offer.is_null() {
+        return true;
+    }
+    let Some(tags) = offer.get("tags").and_then(serde_json::Value::as_array) else {
+        return false;
+    };
+    let Some(terms) = tags.iter().find_map(|tag| {
+        let tag = tag.as_array()?;
+        (tag.first()?.as_str()? == "rental")
+            .then(|| tag.get(1)?.as_str())
+            .flatten()
+    }) else {
+        return false;
+    };
+    serde_json::from_str::<serde_json::Value>(terms)
+        .ok()
+        .is_some_and(|terms| zero_sats(terms.get("priceSats")))
+}
+
 pub struct ApiHandler {
     config: Config,
     rpc_handler: Arc<RpcHandler>,
@@ -280,6 +317,38 @@ impl ApiHandler {
                 StatusCode::BAD_REQUEST,
                 "application/json",
                 hyper::Body::from(r#"{"error":"invalid content id"}"#),
+            ));
+        }
+        let catalog = reqwest::Client::new()
+            .get("http://127.0.0.1:7778/api/projects/public-catalog")
+            .header(reqwest::header::ACCEPT, "application/json")
+            .send()
+            .await?;
+        if !catalog.status().is_success() {
+            return Ok(build_response(
+                StatusCode::BAD_GATEWAY,
+                "application/json",
+                hyper::Body::from(r#"{"error":"IndeeHub catalog unavailable"}"#),
+            ));
+        }
+        let listings: serde_json::Value = catalog.json().await?;
+        let listing = listings.as_array().and_then(|items| {
+            items
+                .iter()
+                .find(|item| item.get("id").and_then(|v| v.as_str()) == Some(id))
+        });
+        let Some(listing) = listing else {
+            return Ok(build_response(
+                StatusCode::NOT_FOUND,
+                "application/json",
+                hyper::Body::from(r#"{"error":"film is not publicly listed"}"#),
+            ));
+        };
+        if !indeehub_listing_is_publicly_free(listing) {
+            return Ok(build_response(
+                StatusCode::PAYMENT_REQUIRED,
+                "application/json",
+                hyper::Body::from(r#"{"error":"rental required"}"#),
             ));
         }
         let upstream = reqwest::Client::new()
@@ -1344,5 +1413,35 @@ mod terminal_origin_tests {
             Some("https://evil.example"),
             Some("same-origin")
         ));
+    }
+}
+
+#[cfg(test)]
+mod indeehub_public_stream_tests {
+    use super::indeehub_listing_is_publicly_free;
+    use serde_json::json;
+
+    #[test]
+    fn public_stream_requires_explicitly_free_project_and_signed_terms() {
+        assert!(indeehub_listing_is_publicly_free(&json!({
+            "rentalPrice": 0,
+            "offerEvent": null
+        })));
+        assert!(indeehub_listing_is_publicly_free(&json!({
+            "rentalPrice": "0",
+            "offerEvent": {"tags": [["rental", "{\"priceSats\":0}"]]}
+        })));
+        assert!(!indeehub_listing_is_publicly_free(&json!({
+            "rentalPrice": 15,
+            "offerEvent": null
+        })));
+        assert!(!indeehub_listing_is_publicly_free(&json!({
+            "rentalPrice": 0,
+            "offerEvent": {"tags": [["rental", "{\"priceSats\":15}"]]}
+        })));
+        assert!(!indeehub_listing_is_publicly_free(&json!({
+            "rentalPrice": 0,
+            "offerEvent": {"tags": [["rental", "invalid"]]}
+        })));
     }
 }

@@ -167,16 +167,19 @@
     </div>
 
     <div class="mt-auto shrink-0 pt-4 border-t border-white/10">
-      <nav aria-label="Node connections" class="grid grid-cols-[repeat(2,minmax(0,1fr))_2.75rem] sm:grid-cols-[repeat(3,minmax(0,1fr))_2.75rem] gap-2">
-        <button @click="router.push({ name: 'federation', query: { view: 'connected' } })" class="mobile-card-action glass-button rounded-lg px-2 text-xs sm:text-sm font-medium text-white/90 hover:text-white text-center min-h-11">
-          My connections
-        </button>
-        <button @click="router.push({ name: 'federation', query: { view: 'discover' } })" class="mobile-card-action glass-button rounded-lg px-2 text-xs sm:text-sm font-medium text-white/90 hover:text-white text-center min-h-11">
-          Find Nodes
-        </button>
-        <button @click="router.push({ name: 'federation', query: { view: 'map' } })" class="mobile-card-action glass-button rounded-lg px-2 text-xs sm:text-sm font-medium text-white/90 hover:text-white text-center min-h-11 col-span-2 sm:col-span-1">
-          Map
-        </button>
+      <nav aria-label="Node connections" class="space-y-2 sm:grid sm:grid-cols-[repeat(3,minmax(0,1fr))_2.75rem] sm:gap-2 sm:space-y-0">
+        <div class="grid grid-cols-2 gap-2 sm:contents">
+          <button @click="router.push({ name: 'federation', query: { view: 'connected' } })" class="mobile-card-action glass-button rounded-lg w-full px-2 text-xs sm:text-sm font-medium text-white/90 hover:text-white text-center min-h-11">
+            My connections
+          </button>
+          <button @click="router.push({ name: 'federation', query: { view: 'discover' } })" class="mobile-card-action glass-button rounded-lg w-full px-2 text-xs sm:text-sm font-medium text-white/90 hover:text-white text-center min-h-11">
+            Find Nodes
+          </button>
+        </div>
+        <div class="flex gap-2 sm:contents">
+          <button @click="router.push({ name: 'federation', query: { view: 'map' } })" class="mobile-card-action glass-button rounded-lg flex-1 w-full px-2 text-xs sm:text-sm font-medium text-white/90 hover:text-white text-center min-h-11">
+            Map
+          </button>
         <button
           @click="refreshActiveTab"
           :disabled="loadingPeers || loadingRequests"
@@ -186,6 +189,7 @@
         >
           <svg class="w-4 h-4" :class="{ 'animate-spin': loadingPeers || loadingRequests }" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M20 11a8 8 0 10-2.4 6M20 4v7h-7" /></svg>
         </button>
+        </div>
       </nav>
     </div>
   </div>
