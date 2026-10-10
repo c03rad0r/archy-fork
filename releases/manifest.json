@@ -1,49 +1,38 @@
 {
   "changelog": [
-    "Keep Cuprate and NetBird supporting components out of app listings and consolidate BTCPay Server under Commerce.",
-    "Default on-chain sends, channel opens and cooperative closes to a dynamic next-block fee target, preserving explicit slower and custom choices.",
-    "Add reviewed fee-bump quotes, explicit budgets and durable operation tracking for supported wallet transactions.",
-    "Preserve Nginx Proxy Manager storage, same-node upstream connectivity, certificates and access controls through managed migrations.",
-    "Restrict public management access while retaining configured public apps and ACME certificate validation.",
-    "Serve the Mempool explorer on the Angor indexer origin alongside its API.",
-    "Include the self-contained LoRa flashing tool and explicit board selection in update and installer payloads.",
-    "Preserve paid-file Lightning entitlements across restarts and recover settled invoices from LND. Retry delivery without paying again and retain purchased files in the owned cache.",
-    "Return explicit payment-status errors with safe retry guidance when verification is unavailable.",
-    "Keep upload progress on its original screen, show completion there or notify on other screens, and cancel active and queued uploads.",
-    "Resume interrupted uploads while the app remains open, preserve the original destination, and verify saved file contents before reporting completion.",
-    "Provision a unique private File Browser login on each node while keeping Cloud sign-in automatic and preserving existing accounts and files.",
-    "Update Nostr dependencies to reject forged relay events and oversized encrypted messages; preserve native signing and encryption compatibility.",
-    "Allow apps to opt in to a validated public-key list of user identities without granting signing access.",
-    "Make transaction filters transparent and horizontally scrollable on mobile.",
-    "Keep Immich internal services out of My Apps, avoid false recovery states for healthy stacks, and allow removal of retired catalog apps.",
-    "Repair the redundant managed Portainer network override that can prevent startup, preserving custom overrides and persistent state.",
-    "Offer Standard, Medium, Fast and custom fees when cooperatively closing Lightning channels.",
-    "Add a clear-search icon to My Apps, Services and the App Store on desktop and mobile.",
-    "Keep Angor Indexer and the optional Angor Relay in the signed app catalog. Full indexing requires a synced, unpruned Bitcoin node and its indexing dependencies.",
-    "Improve the mobile photo/video viewer with persistent action menus, fullscreen controls and companion download support.",
-    "Publish companion 0.5.34/build54 with the existing signing identity and verified phone save/open behavior.",
-    "Known limitation: Angor historical project discovery is incomplete. Funding data for 35 reference projects was verified, but 34 original project announcements remain unavailable from the relays checked; recovery is tracked separately."
+    "Add an owner terminal with xterm rendering, preserved scrollback, focused keyboard handling and Codex skills preinstalled; restrict it to the dashboard origin.",
+    "Prevent monitoring alerts from lingering after the condition recovers.",
+    "Show free disk capacity (\"X free / Y total\", TB-aware) from live data on Home, Monitoring and Server instead of a stale cached snapshot.",
+    "Allow explicit renewal of expired IndeeHub rentals, and keep the IndeeHub provider injection idempotent when the app already bundles it.",
+    "Make IndeeHub native login, registration and media registration reliable on managed stacks; route the IndeeHub catalog and free playback across nodes through FIPS.",
+    "Add a private phone setup goal, shared hardware listings, GrapheneOS Pixel artwork and Archipelago router NIP-99 listings.",
+    "Open the file-browser goal in the native Cloud view.",
+    "Keep isolated backend tests hermetic and add an ARM proposal test lane.",
+    "Lightning rental on IndeeHub is not accepted: BTCPay is unconfigured on the IndeeHub API.",
+    "Metered ecash playback and the Shorty signed-in operator acceptance are not yet verified.",
+    "Remaining items in the post-1.8.22 regression checklist stay open.",
+    "Pre-existing historical mirror drift between ngit and Gitea is inventoried, not resolved."
   ],
   "components": [
     {
-      "current_version": "1.9.0-alpha",
-      "download_url": "https://source.archipelago-foundation.org/lfg2025/archy/releases/download/v1.9.0-alpha/archipelago",
+      "current_version": "1.9.1-alpha",
+      "download_url": "https://source.archipelago-foundation.org/lfg2025/archy/releases/download/v1.9.1-alpha/archipelago",
       "name": "archipelago",
-      "new_version": "1.9.0-alpha",
-      "sha256": "560aa6006cd9ef8be95b1f7831cf3b53854e911622b50022bb4402ce0f8b010a",
-      "size_bytes": 66475120
+      "new_version": "1.9.1-alpha",
+      "sha256": "35f2ef259089bac2c8a9b9769ed228eacdcb7d95587ad9474596ec7ca7d0e235",
+      "size_bytes": 77367896
     },
     {
-      "current_version": "1.9.0-alpha",
-      "download_url": "https://source.archipelago-foundation.org/lfg2025/archy/releases/download/v1.9.0-alpha/archipelago-frontend-1.9.0-alpha.tar.gz",
-      "name": "archipelago-frontend-1.9.0-alpha.tar.gz",
-      "new_version": "1.9.0-alpha",
-      "sha256": "6d5135fa8e79b1bc84c8ed972770ebf99fe6611d819e5c1453f38f1593c26e66",
-      "size_bytes": 106942370
+      "current_version": "1.9.1-alpha",
+      "download_url": "https://source.archipelago-foundation.org/lfg2025/archy/releases/download/v1.9.1-alpha/archipelago-frontend-1.9.1-alpha.tar.gz",
+      "name": "archipelago-frontend-1.9.1-alpha.tar.gz",
+      "new_version": "1.9.1-alpha",
+      "sha256": "d7c7de43245a4a7721f141516bf422fb6c741077d5f134304947d327a7b9f3a4",
+      "size_bytes": 107992893
     }
   ],
-  "release_date": "2026-10-05",
-  "signature": "695fe223a525bec266ec20da497883c80cad05a2779003618229cd97cec4477c9054d564ad4aef938d0c7872b42ae112d8b04406413bced43dd007eaf865e707",
+  "release_date": "2026-10-10",
+  "signature": "073cad00a5a87201f868f3015c1c6e74c6b35f0172418e458248de9fe95efcbc06664c9707b77b30e1213a2628dcedc5a53f1fb23a1fcb59ed05ae03b05da501",
   "signed_by": "did:key:z6Mkfu5LT8d4DjETtrkATvHh9Dvcbnr7zBCUwfau8Sw7DLWT",
-  "version": "1.9.0-alpha"
+  "version": "1.9.1-alpha"
 }
