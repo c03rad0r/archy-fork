@@ -1487,6 +1487,11 @@ pub fn is_peer_allowed_path(path: &str) -> bool {
         || path.starts_with("/blob/")
         // DWN sync — /dwn/health is step 1 of every sync; same story.
         || path.starts_with("/dwn/")
+        // Free IndeeHub playback. Stream and key authorization is delegated
+        // to IndeeHub; encrypted public segments are safe to proxy verbatim.
+        || path.starts_with("/api/public-indeehub-stream/")
+        || path.starts_with("/api/public-indeehub-media/")
+        || path.starts_with("/api/public-indeehub-key/")
 }
 
 /// The ordinary API listener is a management surface even when contacted
@@ -2422,12 +2427,20 @@ mod merge_tests {
         // 100% Tor by construction.
         assert!(is_peer_allowed_path("/blob/abc123"), "blob fetch by CID");
         assert!(is_peer_allowed_path("/dwn/health"), "DWN sync step 1");
+        assert!(is_peer_allowed_path("/api/public-indeehub-stream/1234",));
+        assert!(is_peer_allowed_path(
+            "/api/public-indeehub-media/1234/projects/film/transcoded/seg_000.ts",
+        ));
+        assert!(is_peer_allowed_path("/api/public-indeehub-key/1234"));
         // Not on the allow-list → rejected (no broad surface over the mesh).
         assert!(!is_peer_allowed_path("/contention"), "must not prefix-leak");
         assert!(!is_peer_allowed_path("/"));
         assert!(!is_peer_allowed_path("/rpc/v2"));
         assert!(!is_peer_allowed_path("/blobber"), "must not prefix-leak");
         assert!(!is_peer_allowed_path("/dwnx"), "must not prefix-leak");
+        assert!(!is_peer_allowed_path("/api/public-indeehub-stream"));
+        assert!(!is_peer_allowed_path("/api/public-indeehub-media"));
+        assert!(!is_peer_allowed_path("/api/public-indeehub-key"));
     }
 
     #[test]

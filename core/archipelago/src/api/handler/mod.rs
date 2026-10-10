@@ -269,6 +269,263 @@ impl ApiHandler {
         ))
     }
 
+    /// Resolve a free IndeeHub title to its local HLS manifest. IndeeHub's
+    /// optional-auth guard remains the authority: paid content returns 403.
+    async fn handle_indeehub_public_stream(&self, path: &str) -> Result<Response<hyper::Body>> {
+        let id = path
+            .strip_prefix("/api/public-indeehub-stream/")
+            .unwrap_or("");
+        if id.is_empty() || !id.chars().all(|c| c.is_ascii_hexdigit() || c == '-') {
+            return Ok(build_response(
+                StatusCode::BAD_REQUEST,
+                "application/json",
+                hyper::Body::from(r#"{"error":"invalid content id"}"#),
+            ));
+        }
+        let upstream = reqwest::Client::new()
+            .get(format!("http://127.0.0.1:7778/api/contents/{id}/stream"))
+            .header(reqwest::header::ACCEPT, "application/json")
+            .send()
+            .await?;
+        let status = upstream.status();
+        let mut value: serde_json::Value = upstream
+            .json()
+            .await
+            .unwrap_or_else(|_| serde_json::json!({"error":"stream unavailable"}));
+        if status.is_success() {
+            let content_id = value.get("id").and_then(|v| v.as_str()).unwrap_or(id);
+            if let Some(file) = value.get("file").and_then(|v| v.as_str()) {
+                if let Some(storage_path) = file.strip_prefix("/storage/") {
+                    value["file"] = serde_json::json!(format!(
+                        "/api/public-indeehub-media/{content_id}/{storage_path}"
+                    ));
+                }
+            }
+        }
+        Ok(Response::builder()
+            .status(status)
+            .header("Content-Type", "application/json")
+            .header("Cache-Control", "no-store")
+            .header("Access-Control-Allow-Origin", "*")
+            .body(hyper::Body::from(serde_json::to_vec(&value)?))?)
+    }
+
+    /// Proxy encrypted HLS manifests and segments from IndeeHub's public
+    /// bucket. The manifest key URI is rebound to the guarded free-key route.
+    async fn handle_indeehub_public_media(&self, path: &str) -> Result<Response<hyper::Body>> {
+        let tail = path
+            .strip_prefix("/api/public-indeehub-media/")
+            .unwrap_or("");
+        let Some((content_id, object)) = tail.split_once('/') else {
+            return Ok(build_response(
+                StatusCode::BAD_REQUEST,
+                "text/plain",
+                hyper::Body::from("invalid media path"),
+            ));
+        };
+        let safe_id = !content_id.is_empty()
+            && content_id
+                .chars()
+                .all(|c| c.is_ascii_hexdigit() || c == '-');
+        let safe_object = !object.is_empty()
+            && !object.split('/').any(|part| part == "..")
+            && object
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || matches!(c, '/' | '-' | '_' | '.'));
+        if !safe_id || !safe_object {
+            return Ok(build_response(
+                StatusCode::BAD_REQUEST,
+                "text/plain",
+                hyper::Body::from("invalid media path"),
+            ));
+        }
+        let upstream = reqwest::Client::new()
+            .get(format!("http://127.0.0.1:7778/storage/{object}"))
+            .send()
+            .await?;
+        let status = upstream.status();
+        let content_type = upstream
+            .headers()
+            .get(reqwest::header::CONTENT_TYPE)
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or("application/octet-stream")
+            .to_owned();
+        let mut bytes = upstream.bytes().await?.to_vec();
+        if object.ends_with(".m3u8") && status.is_success() {
+            let manifest = String::from_utf8(bytes)?;
+            bytes = manifest
+                .replace(
+                    &format!("/api/contents/{content_id}/key"),
+                    &format!("/api/public-indeehub-key/{content_id}"),
+                )
+                .into_bytes();
+        }
+        Ok(Response::builder()
+            .status(status)
+            .header("Content-Type", content_type)
+            .header(
+                "Cache-Control",
+                if object.ends_with(".m3u8") {
+                    "no-store"
+                } else {
+                    "public, max-age=86400"
+                },
+            )
+            .header("Access-Control-Allow-Origin", "*")
+            .body(hyper::Body::from(bytes))?)
+    }
+
+    /// Fetch the HLS key through IndeeHub's access check. With no forwarded
+    /// user credentials, only genuinely free content can succeed here.
+    async fn handle_indeehub_public_key(&self, path: &str) -> Result<Response<hyper::Body>> {
+        let id = path.strip_prefix("/api/public-indeehub-key/").unwrap_or("");
+        if id.is_empty() || !id.chars().all(|c| c.is_ascii_hexdigit() || c == '-') {
+            return Ok(build_response(
+                StatusCode::BAD_REQUEST,
+                "text/plain",
+                hyper::Body::from("invalid content id"),
+            ));
+        }
+        let upstream = reqwest::Client::new()
+            .get(format!("http://127.0.0.1:7778/api/contents/{id}/key"))
+            .send()
+            .await?;
+        let status = upstream.status();
+        let bytes = upstream.bytes().await?;
+        Ok(Response::builder()
+            .status(status)
+            .header("Content-Type", "application/octet-stream")
+            .header("Cache-Control", "no-store")
+            .header("Access-Control-Allow-Origin", "*")
+            .body(hyper::Body::from(bytes))?)
+    }
+
+    async fn request_indeehub_peer(&self, onion: &str, path: &str) -> Result<reqwest::Response> {
+        let nodes = crate::federation::load_nodes(&self.config.data_dir)
+            .await
+            .unwrap_or_default();
+        let node = nodes
+            .iter()
+            .find(|node| node.onion == onion)
+            .context("IndeeHub peer is not connected")?;
+        let (response, _transport) =
+            crate::fips::dial::PeerRequest::new(node.fips_npub.as_deref(), &node.onion, path)
+                .service(crate::settings::transport::PeerService::PeerFiles)
+                .timeout(std::time::Duration::from_secs(30))
+                .fips_timeout(std::time::Duration::from_secs(15))
+                .send_get()
+                .await?;
+        Ok(response)
+    }
+
+    /// Same-origin browser bridge for a connected peer's free stream. The
+    /// remote node still performs IndeeHub's free/paid authorization check.
+    async fn handle_indeehub_peer_stream(&self, path: &str) -> Result<Response<hyper::Body>> {
+        let tail = path
+            .strip_prefix("/api/peer-indeehub-stream/")
+            .unwrap_or("");
+        let Some((onion, id)) = tail.split_once('/') else {
+            return Ok(build_response(
+                StatusCode::BAD_REQUEST,
+                "application/json",
+                hyper::Body::from(r#"{"error":"invalid peer stream"}"#),
+            ));
+        };
+        if id.is_empty() || !id.chars().all(|c| c.is_ascii_hexdigit() || c == '-') {
+            return Ok(build_response(
+                StatusCode::BAD_REQUEST,
+                "application/json",
+                hyper::Body::from(r#"{"error":"invalid content id"}"#),
+            ));
+        }
+        let upstream = self
+            .request_indeehub_peer(onion, &format!("/api/public-indeehub-stream/{id}"))
+            .await?;
+        let status = upstream.status();
+        let mut value: serde_json::Value = upstream
+            .json()
+            .await
+            .unwrap_or_else(|_| serde_json::json!({"error":"stream unavailable"}));
+        if status.is_success() {
+            if let Some(file) = value.get("file").and_then(|v| v.as_str()) {
+                if let Some(remote_path) = file.strip_prefix("/api/public-indeehub-media/") {
+                    value["file"] = serde_json::json!(format!(
+                        "/api/peer-indeehub-media/{onion}/{remote_path}"
+                    ));
+                }
+            }
+        }
+        Ok(Response::builder()
+            .status(status)
+            .header("Content-Type", "application/json")
+            .header("Cache-Control", "no-store")
+            .body(hyper::Body::from(serde_json::to_vec(&value)?))?)
+    }
+
+    async fn handle_indeehub_peer_media(&self, path: &str) -> Result<Response<hyper::Body>> {
+        let tail = path.strip_prefix("/api/peer-indeehub-media/").unwrap_or("");
+        let Some((onion, remote_path)) = tail.split_once('/') else {
+            return Ok(build_response(
+                StatusCode::BAD_REQUEST,
+                "text/plain",
+                hyper::Body::from("invalid peer media"),
+            ));
+        };
+        let upstream = self
+            .request_indeehub_peer(onion, &format!("/api/public-indeehub-media/{remote_path}"))
+            .await?;
+        let status = upstream.status();
+        let content_type = upstream
+            .headers()
+            .get(reqwest::header::CONTENT_TYPE)
+            .and_then(|value| value.to_str().ok())
+            .unwrap_or("application/octet-stream")
+            .to_owned();
+        let mut bytes = upstream.bytes().await?.to_vec();
+        if remote_path.ends_with(".m3u8") && status.is_success() {
+            let manifest = String::from_utf8(bytes)?;
+            bytes = manifest
+                .replace(
+                    "/api/public-indeehub-key/",
+                    &format!("/api/peer-indeehub-key/{onion}/"),
+                )
+                .into_bytes();
+        }
+        Ok(Response::builder()
+            .status(status)
+            .header("Content-Type", content_type)
+            .header(
+                "Cache-Control",
+                if remote_path.ends_with(".m3u8") {
+                    "no-store"
+                } else {
+                    "public, max-age=86400"
+                },
+            )
+            .body(hyper::Body::from(bytes))?)
+    }
+
+    async fn handle_indeehub_peer_key(&self, path: &str) -> Result<Response<hyper::Body>> {
+        let tail = path.strip_prefix("/api/peer-indeehub-key/").unwrap_or("");
+        let Some((onion, id)) = tail.split_once('/') else {
+            return Ok(build_response(
+                StatusCode::BAD_REQUEST,
+                "text/plain",
+                hyper::Body::from("invalid peer key"),
+            ));
+        };
+        let upstream = self
+            .request_indeehub_peer(onion, &format!("/api/public-indeehub-key/{id}"))
+            .await?;
+        let status = upstream.status();
+        let bytes = upstream.bytes().await?;
+        Ok(Response::builder()
+            .status(status)
+            .header("Content-Type", "application/octet-stream")
+            .header("Cache-Control", "no-store")
+            .body(hyper::Body::from(bytes))?)
+    }
+
     /// Serve an encrypted backup archive (`<data_dir>/backups/<id>.bak`) as a
     /// browser download. The archive is passphrase-encrypted at rest; the
     /// session gate at the route controls who can fetch it.
@@ -843,6 +1100,33 @@ impl ApiHandler {
             // listener, whose path filter is the only ingress gate here.
             (Method::GET, "/api/public-catalog/indeedhub") => {
                 self.handle_indeehub_public_catalog().await
+            }
+            (Method::GET, p) if p.starts_with("/api/public-indeehub-stream/") => {
+                self.handle_indeehub_public_stream(p).await
+            }
+            (Method::GET, p) if p.starts_with("/api/public-indeehub-media/") => {
+                self.handle_indeehub_public_media(p).await
+            }
+            (Method::GET, p) if p.starts_with("/api/public-indeehub-key/") => {
+                self.handle_indeehub_public_key(p).await
+            }
+            (Method::GET, p) if p.starts_with("/api/peer-indeehub-stream/") => {
+                if !self.is_authenticated(&headers).await {
+                    return Ok(Self::unauthorized());
+                }
+                self.handle_indeehub_peer_stream(p).await
+            }
+            (Method::GET, p) if p.starts_with("/api/peer-indeehub-media/") => {
+                if !self.is_authenticated(&headers).await {
+                    return Ok(Self::unauthorized());
+                }
+                self.handle_indeehub_peer_media(p).await
+            }
+            (Method::GET, p) if p.starts_with("/api/peer-indeehub-key/") => {
+                if !self.is_authenticated(&headers).await {
+                    return Ok(Self::unauthorized());
+                }
+                self.handle_indeehub_peer_key(p).await
             }
 
             (Method::GET, "/api/app-catalog") => {
