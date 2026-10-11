@@ -362,6 +362,17 @@ init()
               </button>
             </div>
             <div class="overflow-y-auto flex-1 min-h-0 space-y-6 pr-1">
+              <!-- v1.9.2-alpha -->
+              <div>
+                <div class="flex items-center gap-2 mb-3">
+                  <span class="text-xs font-mono px-2 py-0.5 rounded bg-orange-500/20 text-orange-300">v1.9.2-alpha</span>
+                  <span class="text-xs text-white/40">October 10, 2026</span>
+                </div>
+                <div class="space-y-3 text-sm text-white/80 pl-3 border-l border-white/10">
+                  <p>Ship the Archipelago companion 0.5.37 (build 57) APK so the downloadable app matches the Android source version and its local playback diagnostics.</p>
+                  <p>Carries all v1.9.1-alpha changes and known limitations unchanged.</p>
+                </div>
+              </div>
               <!-- v1.9.1-alpha -->
               <div>
                 <div class="flex items-center gap-2 mb-3">
