@@ -1,5 +1,10 @@
 # Changelog
 
+## v1.9.2-alpha (2026-10-10)
+
+- Ship the Archipelago companion 0.5.37 (build 57) APK so the downloadable app matches the Android source version and its local playback diagnostics.
+- Carries all v1.9.1-alpha changes and known limitations unchanged; v1.9.1-alpha shipped the 0.5.36 companion APK and has no installer ISO.
+
 ## v1.9.1-alpha (2026-10-10)
 
 - Add an owner terminal with xterm rendering, preserved scrollback, focused keyboard handling and Codex skills preinstalled; restrict it to the dashboard origin.
