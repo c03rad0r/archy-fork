@@ -370,7 +370,7 @@ init()
                 </div>
                 <div class="space-y-3 text-sm text-white/80 pl-3 border-l border-white/10">
                   <p>Ship the Archipelago companion 0.5.37 (build 57) APK so the downloadable app matches the Android source version and its local playback diagnostics.</p>
-                  <p>Carries all v1.9.1-alpha changes and known limitations unchanged.</p>
+                  <p>Carries all v1.9.1-alpha changes and known limitations unchanged; v1.9.1-alpha shipped the 0.5.36 companion APK and has no installer ISO.</p>
                 </div>
               </div>
               <!-- v1.9.1-alpha -->
