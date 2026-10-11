@@ -3,6 +3,7 @@
 ## v1.9.2-alpha (2026-10-10)
 
 - Ship the Archipelago companion 0.5.37 (build 57) APK so the downloadable app matches the Android source version and its local playback diagnostics.
+- Build the installer ISO with a release gate that checks the bundled companion APK version against the Android source version.
 - Carries all v1.9.1-alpha changes and known limitations unchanged; v1.9.1-alpha shipped the 0.5.36 companion APK and has no installer ISO.
 
 ## v1.9.1-alpha (2026-10-10)
