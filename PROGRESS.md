@@ -46,14 +46,41 @@ higher. The binary build is therefore part of the proof, not optional.
 
 | # | Milestone | Status | Files touched |
 |---|---|---|---|
-| 1 | Worktree created on `origin/main` (fcc18b3) | done | — |
-| 2 | Baseline recorded (smoke 44 PASS / media 1 FAIL) | done | — |
-| 3 | RED: failing test written for the media exemption | in progress | `core/archipelago/src/server.rs` (test module appended) |
-| 4 | GREEN: implement `is_media_stream_path` + wire the watchdog | pending | `core/archipelago/src/server.rs` |
-| 5 | Build binary → `localnode` venue becomes available | pending | — |
-| 6 | READ-BACK on the media path (the mandatory criterion) | pending | — |
-| 7 | fmt + clippy ratchet + isolated runner | pending | — |
-| 8 | Commit + push to fork, verify with `ls-remote` | pending | — |
+| 1 | Worktree created on `origin/main` (fcc18b3) | **done** | — |
+| 2 | Baseline recorded (smoke 44 PASS / media 1 FAIL) | **done** | — |
+| 3 | RED: failing test written for the media exemption | **done** | `server.rs` (test module appended) |
+| 4 | RED-NEGATIVE-CONTROL: naive stub (`/content/` only) observed failing | **done** | `server.rs` |
+| 5 | GREEN: real `is_media_stream_path` + flag wiring + watchdog exemption | **done** | `server.rs` |
+| 6 | Sanctioned suite green (2078 passed, 0 failed, exit 0) | **done** | — |
+| 7 | fmt clean; commit + push to fork verified by `ls-remote` | **done** | commit `d046d02` |
+| 8 | Build binary → `localnode` venue available | in progress | — |
+| 9 | READ-BACK on the media path (the mandatory criterion) | pending | — |
+| 10 | clippy ratchet (after vs baseline 124/123) | pending | — |
+
+## Results so far
+
+**RED observed, twice, and the second one is the important one.**
+
+1. Test written first → `error[E0425]: cannot find function is_media_stream_path` (14 errors).
+   That only proves the function was missing, not that the assertions are meaningful.
+2. So a deliberately NAIVE implementation was inserted — matching only `/content/`, which is
+   the exact trap the prompt warns about — and the suite was run. Result:
+   `2077 passed; 1 failed` at precisely
+   `buyer playback proxy must be exempt; exempting only /content/ leaves the viewer route dead at 900 s`.
+   **The test catches the half-fix.** Without this step the test would have passed for a
+   reason unrelated to the bug.
+3. Real predicate landed → `test result: ok. 2078 passed; 0 failed; 5 ignored`, exit 0.
+
+**Resource incidents (both real, both recovered — the handover warned about the disk one):**
+
+- OOM: `rustc` killed at anon-rss 3.9 GB on the first `cargo test`; swap was already 3.6/7.8 GB.
+- Disk: fell 9.4G → 2.4G free (99%) during a debug build.
+- Fix: use the SANCTIONED runner (`scripts/test-backend-isolated.sh`), which applies
+  `profile.test.package.archipelago.opt-level=0` and `debug=0` — less disk and less memory
+  than plain `cargo test`, and it is the mandated acceptance path anyway. It also runs the
+  suite inside `systemd-run --private-network`, which is a stronger check than a bare run.
+- Prerequisites for the systemd backend were all present: `systemd-run`, `unshare`,
+  `setpriv`, and working `sudo -n`.
 
 ## The change (design, decided before coding)
 
