@@ -1494,6 +1494,30 @@ pub fn is_peer_allowed_path(path: &str) -> bool {
         || path.starts_with("/api/public-indeehub-key/")
 }
 
+/// True when a request path serves a media STREAM — a body that legitimately
+/// runs longer than the non-upgraded connection deadline.
+///
+/// P3 regression context: `NON_UPGRADED_DEADLINE` (900 s) drops any
+/// non-websocket-upgraded connection, so without this exemption a film longer
+/// than 15 minutes is truncated mid-body. Both prefixes are required:
+///
+/// - `/content/` — the seller-side serve of a purchased object
+///   (`cloud_purchase.rs` wraps the stream; `registered_media.rs` serves
+///   64 KiB chunks with per-chunk authorization).
+/// - `/api/rental-playback/` — the buyer-side proxy that a viewer actually
+///   hits (`api/rpc/playback.rs:222` builds the playback URL). Exempting only
+///   `/content/` fixes the seller and leaves the viewer route dead at 900 s.
+///
+/// The bare `/content` (no trailing slash) is the peer catalog — a JSON
+/// exchange, not a stream — and is deliberately NOT exempt.
+///
+/// Safety: `http1_keep_alive(false)` means one exchange per connection, so a
+/// media flag set by the request cannot exempt a later, different request on
+/// the same connection.
+pub fn is_media_stream_path(path: &str) -> bool {
+    path.starts_with("/content/") || path.starts_with("/api/rental-playback/")
+}
+
 /// The ordinary API listener is a management surface even when contacted
 /// directly, without host nginx. Peer traffic has its own path-restricted
 /// listener and retains its existing cryptographic authentication.
@@ -1603,10 +1627,19 @@ async fn accept_loop(
                     // exempt from the non-upgraded connection deadline below.
                     let upgraded = Arc::new(std::sync::atomic::AtomicBool::new(false));
                     let upgraded_flag = upgraded.clone();
+                    // Set when a request serves a media stream: a film body
+                    // legitimately runs past NON_UPGRADED_DEADLINE (900 s), so
+                    // media paths are exempt too. Without this, playback is
+                    // truncated at 15 minutes mid-body.
+                    let media = Arc::new(std::sync::atomic::AtomicBool::new(false));
+                    let media_flag = media.clone();
                     let service = service_fn(move |mut req: hyper::Request<hyper::Body>| {
                         let handler = handler.clone();
                         if req.headers().contains_key(hyper::header::UPGRADE) {
                             upgraded_flag.store(true, std::sync::atomic::Ordering::Relaxed);
+                        }
+                        if is_media_stream_path(req.uri().path()) {
+                            media_flag.store(true, std::sync::atomic::Ordering::Relaxed);
                         }
                         async move {
                             // Record the TCP peer so rate limiting only trusts
@@ -1649,6 +1682,7 @@ async fn accept_loop(
                         loop {
                             tokio::time::sleep(std::time::Duration::from_secs(30)).await;
                             if !upgraded.load(std::sync::atomic::Ordering::Relaxed)
+                                && !media.load(std::sync::atomic::Ordering::Relaxed)
                                 && started.elapsed() >= NON_UPGRADED_DEADLINE
                             {
                                 return;
@@ -2681,5 +2715,87 @@ mod management_surface_tests {
             "198.18.0.2".parse().unwrap(),
             &request
         ));
+    }
+}
+
+#[cfg(test)]
+mod media_deadline_tests {
+    use super::*;
+
+    /// P3 regression guard: media routes are exempt from the 900 s
+    /// non-upgraded connection deadline.
+    ///
+    /// Without this exemption a film longer than 15 minutes is truncated
+    /// mid-body: `NON_UPGRADED_DEADLINE` (900 s) drops any connection that is
+    /// not websocket-upgraded, and media is served as a plain HTTP body
+    /// (`cloud_purchase.rs` wraps a stream, `registered_media.rs` and
+    /// `rental_playback.rs` serve 64 KiB chunks).
+    ///
+    /// BOTH prefixes are required. `/content/` is the seller-side serve;
+    /// `/api/rental-playback/` is the buyer-side proxy that a viewer actually
+    /// hits. Exempting only `/content/` fixes the seller and leaves the buyer
+    /// dead at 15 minutes.
+    #[test]
+    fn media_paths_are_exempt_from_the_non_upgraded_deadline() {
+        // Seller-side serve of a purchased object.
+        assert!(
+            is_media_stream_path("/content/abc123"),
+            "seller-side object serve must be exempt"
+        );
+        // Peer content fetch goes through the same handler shape.
+        assert!(
+            is_media_stream_path("/content/registered_xyz/rental/0-"),
+            "registered-media rental serve must be exempt"
+        );
+        // Buyer-side proxy — the route a viewer actually hits.
+        assert!(
+            is_media_stream_path("/api/rental-playback/handle-xyz"),
+            "buyer playback proxy must be exempt; exempting only /content/ leaves the \
+             viewer route dead at 900 s"
+        );
+    }
+
+    /// The exemption must not become a blanket bypass of the deadline.
+    #[test]
+    fn non_media_paths_still_take_the_non_upgraded_deadline() {
+        assert!(!is_media_stream_path("/rpc/v1"));
+        assert!(!is_media_stream_path("/health"));
+        assert!(!is_media_stream_path("/"));
+        assert!(!is_media_stream_path("/archipelago/node-message"));
+    }
+
+    /// Prefix matching must be exact-segment, not substring: a path that merely
+    /// CONTAINS a media prefix, or extends it without a separator, is not media.
+    #[test]
+    fn media_exemption_does_not_prefix_leak() {
+        assert!(
+            !is_media_stream_path("/content"),
+            "catalog is JSON, not a stream"
+        );
+        assert!(!is_media_stream_path("/contentx"), "must not prefix-leak");
+        assert!(
+            !is_media_stream_path("/x/content/abc"),
+            "must not match mid-path"
+        );
+        assert!(
+            !is_media_stream_path("/api/rental-playback"),
+            "the bare route without a handle is not a stream"
+        );
+        assert!(
+            !is_media_stream_path("/api/rental-playbackx/handle"),
+            "must not prefix-leak"
+        );
+    }
+
+    /// A downgraded (non-media) connection must still be bounded: the flag
+    /// tracks the FIRST request on the connection, and keep-alive is off, so
+    /// there is no upgrade-then-stream downgrade path to worry about. This
+    /// asserts the decision function is pure and order-independent.
+    #[test]
+    fn media_decision_is_pure() {
+        for _ in 0..3 {
+            assert!(is_media_stream_path("/content/a"));
+            assert!(!is_media_stream_path("/health"));
+        }
     }
 }
