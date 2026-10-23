@@ -2,58 +2,88 @@ use anyhow::{Context, Result};
 use tracing::info;
 
 use crate::opkg::PkgManager;
+use crate::tollgate::assets::{asset_url, AssetShape, PackageTarget, FEED_REPO};
 use crate::tollgate::version::{
     decide_install, package_version_from_pin, parse_installed, Installed, TOLLGATE_PACKAGE,
     TOLLGATE_SERVICE_BIN,
 };
 use crate::Router;
 
-/// Pinned upstream release. Was stuck on v0.2.0 (Oct 2025) until 2026-09-05 —
-/// nine releases behind. v0.5.0's changelog covers exactly the failure modes
-/// hit live against archy-x250-pa3: a mint with an empty/broken keyset used
-/// to crash-loop the daemon forever ("graceful degradation when Cashu mints
-/// fail" in v0.5.0), and the bundled captive-portal build had no CBOR support
-/// at all, so it could only decode legacy `cashuA` tokens — rejecting the
-/// `cashuB` (NUT-00 V4) tokens modern wallets like Minibits generate by
-/// default ("portal improvements" in v0.5.0 include a JS bundle update that
-/// should carry a current cashu-ts with V4 support). Bump this string to move
-/// both this crate's URLs and the version baked into the source comments.
-const TOLLGATE_VERSION: &str = "v0.5.0";
+/// Pinned TollGate release.
+///
+/// **This is the feed release tag, not a tag on the reference-implementation
+/// repository.** Up to and including v0.5.0 the packages were attached to a
+/// release on `OpenTollGate/tollgate-module-basic-go`. From v0.6.0 they are
+/// built and signed by the OpenWrt packages feed, and the same tag on the old
+/// repository carries **zero assets** — so a bump that keeps the old
+/// repository 404s on every architecture while pointing at a release tag that
+/// genuinely exists. See [`crate::tollgate::assets`] for the full account.
+///
+/// Bump history:
+/// * v0.2.0 (Oct 2025) → v0.5.0, 2026-09-05 — nine releases behind; v0.5.0
+///   carried the Cashu-mint crash-loop fix and the CBOR-capable portal build
+///   that could decode `cashuB` (NUT-00 V4) tokens.
+/// * v0.5.0 → v0.6.0 — packages moved to the feed; asset names became
+///   target-qualified and the filename version dropped its leading `v`.
+///
+/// Rolling this constant back to `"v0.5.0"` restores the previous download
+/// path, provided the URL is built with [`AssetShape::LegacyArchOnly`] against
+/// [`LEGACY_REPO`] — which is why the shape is chosen from the same place the
+/// version is, rather than hardcoded at each call site.
+pub const TOLLGATE_VERSION: &str = "v0.6.0";
 
-/// Direct-download fallback URLs by opkg architecture string, for the
-/// `.ipk` (ar-archive) package format.
-/// Used when the package is not in any configured feed.
-/// Source: https://github.com/OpenTollGate/tollgate-module-basic-go/releases/tag/v0.5.0
-fn ipk_url(arch: &str) -> Option<String> {
-    let name = match arch {
-        "mips_24kc" => "mips_24kc",
-        "mipsel_24kc" => "mipsel_24kc",
-        "aarch64_cortex-a53" => "aarch64_cortex-a53",
-        "aarch64_cortex-a72" => "aarch64_cortex-a72",
-        "arm_cortex-a7" => "arm_cortex-a7",
-        "x86_64" => "x86_64",
-        _ => return None,
-    };
-    Some(format!(
-        "https://github.com/OpenTollGate/tollgate-module-basic-go/releases/download/{TOLLGATE_VERSION}/tollgate-wrt_{TOLLGATE_VERSION}_{name}.ipk"
+/// The asset-name scheme that matches [`TOLLGATE_VERSION`].
+///
+/// Kept adjacent to the version on purpose: the two changed together, and
+/// separating them is how a bump produces a URL that is well-formed and wrong.
+const TOLLGATE_SHAPE: AssetShape = AssetShape::FeedTargetQualified;
+
+/// The repository that publishes the assets matching [`TOLLGATE_VERSION`].
+const TOLLGATE_REPO: &str = FEED_REPO;
+
+/// Direct-download URL for the `.ipk` (ar-archive) format.
+///
+/// Used when the package is not in any configured feed. Requires the router's
+/// OpenWrt target as well as its architecture — see
+/// [`PackageTarget`](crate::tollgate::assets::PackageTarget).
+fn ipk_url(target: &PackageTarget) -> Option<String> {
+    if !target.is_complete() {
+        return None;
+    }
+    Some(asset_url(
+        TOLLGATE_REPO,
+        TOLLGATE_VERSION,
+        TOLLGATE_SHAPE,
+        &target.arch,
+        &target.target,
+        "ipk",
     ))
 }
 
-/// Direct-download URLs for the native Alpine-style `.apk` package format —
-/// only published for a subset of architectures as of v0.5.0. Where
-/// available this is strictly better than [`ipk_url`] on an apk-native
+/// Direct-download URL for the native Alpine-style `.apk` format.
+///
+/// Where available this is strictly better than [`ipk_url`] on an apk-native
 /// (OpenWrt 25.x+) router: `apk add` installs it directly (dependency
 /// resolution, postinst, uci-defaults all handled by apk itself), instead of
-/// the manual `ar`/`tar` extraction dance `install_ipk` has to do to unpack
+/// the manual `ar`/`tar` extraction dance [`install_ipk`] has to do to unpack
 /// an `.ipk` on a router with no `opkg`.
-fn apk_url(arch: &str) -> Option<String> {
-    let name = match arch {
-        "aarch64_cortex-a53" => "aarch64_cortex-a53",
-        "x86_64" => "x86_64",
-        _ => return None,
-    };
-    Some(format!(
-        "https://github.com/OpenTollGate/tollgate-module-basic-go/releases/download/{TOLLGATE_VERSION}/tollgate-wrt_{TOLLGATE_VERSION}_{name}.apk"
+///
+/// The v0.5.0-era code published `.apk` for only two architectures, which made
+/// every other apk-native router fall through to the manual path. From v0.6.0
+/// both formats are published for all eight `(arch, target)` pairs, so the
+/// allow-list is gone — an unsupported pair now fails on the fetch rather than
+/// being silently excluded.
+fn apk_url(target: &PackageTarget) -> Option<String> {
+    if !target.is_complete() {
+        return None;
+    }
+    Some(asset_url(
+        TOLLGATE_REPO,
+        TOLLGATE_VERSION,
+        TOLLGATE_SHAPE,
+        &target.arch,
+        &target.target,
+        "apk",
     ))
 }
 
@@ -71,28 +101,60 @@ pub fn install_tollgate(router: &Router) -> Result<()> {
     }
 
     // Package not in any feed — download the .ipk directly.
-    let arch = router.run_ok(
-        "opkg print-architecture | grep -v all | grep -v noarch | tail -1 | awk '{print $2}'",
-    )?;
-    let arch = arch.trim();
+    //
+    // The architecture alone is no longer sufficient: from v0.6.0 the asset
+    // name is target-qualified, because one CPU arch legitimately serves
+    // several OpenWrt targets (`mips_24kc` is both `ath79-generic` and
+    // `ath79-nand`). Read both halves.
+    let target = read_package_target(router)?;
 
-    let url = ipk_url(arch).ok_or_else(|| {
+    let url = ipk_url(&target).ok_or_else(|| {
         anyhow::anyhow!(
-            "No pre-built TollGate package for architecture '{}'. \
+            "Could not build a TollGate package URL for arch '{}' target '{}'. \
+             Both values are required — an arch-only asset name no longer exists. \
              Add a custom opkg feed or build from source.",
-            arch
+            target.arch,
+            target.target
         )
     })?;
 
     info!(
-        "[{}] Downloading TollGate for {} from GitHub releases",
-        router.host, arch
+        "[{}] Downloading TollGate for {} / {} from the package feed",
+        router.host, target.arch, target.target
     );
     router.run_ok(&format!(
         "wget --no-check-certificate -O /tmp/tollgate.ipk '{}' 2>&1",
         url
     ))?;
     install_ipk(router, "/tmp/tollgate.ipk")
+}
+
+/// Read `DISTRIB_ARCH` and `DISTRIB_TARGET` from the router.
+///
+/// Falls back to the package manager's own architecture report and then
+/// `uname -m` for the architecture, because `DISTRIB_ARCH` is absent on some
+/// builds. There is deliberately **no fallback for the target**: a guessed
+/// target builds a well-formed URL for the wrong package, which is worse than
+/// a loud failure.
+pub fn read_package_target(router: &Router) -> Result<PackageTarget> {
+    let (out, _) = router.run(PackageTarget::READ_CMD)?;
+    let mut target = PackageTarget::parse(&out);
+
+    if target.arch.is_empty() {
+        let (fallback, _) = router.run(
+            "apk --print-arch 2>/dev/null || opkg print-architecture 2>/dev/null \
+             | grep -v all | grep -v noarch | tail -1 | awk '{print $2}' || uname -m",
+        )?;
+        // `uname -m` returns bare "mipsel"/"mips"; map to the 24kc variant,
+        // which is the standard for home-router MIPS builds.
+        target.arch = match fallback.trim() {
+            "mipsel" => "mipsel_24kc".to_string(),
+            "mips" => "mips_24kc".to_string(),
+            other => other.to_string(),
+        };
+    }
+
+    Ok(target)
 }
 
 /// Install tollgate-module-basic-go on OpenWrt 25.x where opkg is not available.
@@ -133,35 +195,30 @@ pub fn install_tollgate_apk_native(router: &Router) -> Result<()> {
     }
     info!("[{}] {}", router.host, decision.reason());
 
-    // Get architecture from /etc/openwrt_release.
-    // The variable is DISTRIB_ARCH on most builds; OPENWRT_ARCH on some.
-    // Fall back to apk --print-arch, then uname -m.
-    let arch_raw = router.run_ok(
-        ". /etc/openwrt_release 2>/dev/null \
-         && a=\"${DISTRIB_ARCH:-${OPENWRT_ARCH:-}}\" \
-         && [ -n \"$a\" ] && echo \"$a\" \
-         || apk --print-arch 2>/dev/null \
-         || uname -m",
-    )?;
-    // Normalise: uname -m returns bare "mipsel"/"mips"; map to 24kc variant
-    // which is the standard for home-router MIPS builds.
-    let arch = match arch_raw.trim() {
-        "mipsel" => "mipsel_24kc",
-        "mips" => "mips_24kc",
-        other => other,
-    };
-    info!("[{}] detected arch: {:?}", router.host, arch);
-    if arch.is_empty() {
-        anyhow::bail!("Could not determine router architecture");
+    // Both halves of the package identity, read from the router.
+    let target = read_package_target(router)?;
+    if !target.is_complete() {
+        anyhow::bail!(
+            "Could not determine this router's OpenWrt target (arch '{}', target '{}'). \
+             From v0.6.0 the TollGate package name is target-qualified, so the architecture \
+             alone is not enough to build a download URL. Check that /etc/openwrt_release \
+             defines DISTRIB_TARGET.",
+            target.arch,
+            target.target
+        );
     }
+    info!(
+        "[{}] detected arch: {:?} target: {:?}",
+        router.host, target.arch, target.target
+    );
 
-    // Prefer a native .apk when the release publishes one for this arch —
-    // `apk add` handles the install itself (deps, postinst, uci-defaults),
-    // skipping the manual ar/tar extraction the .ipk fallback below needs.
-    if let Some(url) = apk_url(arch) {
+    // Prefer a native .apk — `apk add` handles the install itself (deps,
+    // postinst, uci-defaults), skipping the manual ar/tar extraction the .ipk
+    // fallback below needs.
+    if let Some(url) = apk_url(&target) {
         info!(
-            "[{}] Downloading native TollGate .apk for {} from GitHub releases",
-            router.host, arch
+            "[{}] Downloading native TollGate .apk for {} / {} from the package feed",
+            router.host, target.arch, target.target
         );
         let (dl_out, dl_code) = router.run(&format!(
             "wget --no-check-certificate -O /tmp/tollgate.apk '{}' 2>&1",
@@ -187,17 +244,18 @@ pub fn install_tollgate_apk_native(router: &Router) -> Result<()> {
         return Ok(());
     }
 
-    let url = ipk_url(arch).ok_or_else(|| {
+    let url = ipk_url(&target).ok_or_else(|| {
         anyhow::anyhow!(
-            "No pre-built TollGate package for architecture '{}'. \
+            "Could not build a TollGate package URL for arch '{}' target '{}'. \
              Add a custom feed or build from source.",
-            arch
+            target.arch,
+            target.target
         )
     })?;
 
     info!(
-        "[{}] Downloading TollGate for {} from GitHub releases",
-        router.host, arch
+        "[{}] Downloading TollGate for {} / {} from the package feed",
+        router.host, target.arch, target.target
     );
     // --no-check-certificate: fresh OpenWrt 25.x images ship without a CA bundle;
     // GitHub serves releases over HTTPS so wget would otherwise reject the cert.
