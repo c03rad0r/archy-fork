@@ -244,6 +244,21 @@ pub struct Counted<S> {
     /// `None` for callers with no billable peer (local UI, unauthenticated reads) — those
     /// still count globally, they just have nobody to charge.
     usage: Option<(String, String)>,
+    /// D3 refusal: when set, each poll checks what this peer has already had against the
+    /// remaining allowance, and ENDS THE STREAM when it is exceeded. `None` = no cap (the
+    /// pre-D3 behaviour, kept for callers with no entitlement to enforce).
+    cap: Option<CapState>,
+}
+
+/// The remaining allowance a stream is checked against, refreshed as it changes.
+///
+/// `remaining` is an `Arc<AtomicU64>` rather than a copied `u64` because the allowance
+/// shrinks as bytes are served and as the durable session is charged by the flush task. A
+/// copy taken at construction would let a viewer keep streaming against a stale allowance.
+pub struct CapState {
+    pub remaining: std::sync::Arc<AtomicU64>,
+    /// Set once the cap is breached, so the reason is logged once and not per chunk.
+    pub breached: std::sync::Arc<std::sync::atomic::AtomicBool>,
 }
 
 impl<S, E, B> Stream for Counted<S>
@@ -255,6 +270,28 @@ where
 
     fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         let this = self.get_mut();
+        // D3 refusal: if this peer has already had more than its allowance, end the stream
+        // CLEANLY. `Poll::Ready(None)` is end-of-body, which a player treats as a completed
+        // transfer; returning an error here would surface as a network failure to the
+        // viewer, which the plan explicitly forbids ("end the body with Ok(None), not an
+        // error"). Checked before polling so no byte past the allowance is ever handed out.
+        if let (Some((peer, service)), Some(cap)) = (&this.usage, &this.cap) {
+            let remaining = cap.remaining.load(Ordering::Relaxed);
+            if media_usage()
+                .check_within_allowance(peer, service, remaining)
+                .is_err()
+            {
+                if !cap.breached.swap(true, Ordering::Relaxed) {
+                    tracing::info!(
+                        peer = %peer,
+                        service = %service,
+                        remaining,
+                        "media byte cap reached; ending the stream cleanly"
+                    );
+                }
+                return Poll::Ready(None);
+            }
+        }
         match this.inner.as_mut().poll_next(cx) {
             Poll::Ready(Some(Ok(chunk))) => {
                 let n = chunk.as_ref().len() as u64;
@@ -303,6 +340,7 @@ where
         inner: Box::pin(stream),
         _guard: ActiveGuard::new(),
         usage: None,
+        cap: None,
     }
 }
 
@@ -324,6 +362,37 @@ where
         inner: Box::pin(stream),
         _guard: ActiveGuard::new(),
         usage: Some((peer_id.to_string(), service_id.to_string())),
+        cap: None,
+    }
+}
+
+/// As `counted_for`, but ALSO ends the stream when the peer's allowance is spent.
+///
+/// This is D3's refusal half. `remaining` is an `Arc<AtomicU64>` so the allowance is re-read
+/// on every poll: the durable session shrinks as the flush task charges it, and a copy
+/// captured at construction would let a viewer keep streaming against a stale allowance.
+///
+/// The number comes from the caller (which knows the session) rather than being read here,
+/// because reading it means a store hit on the request path — and the plan is explicit that
+/// this must not become per-chunk metering.
+pub fn counted_within_allowance<S, E, B>(
+    stream: S,
+    peer_id: &str,
+    service_id: &str,
+    remaining: std::sync::Arc<AtomicU64>,
+) -> Counted<S>
+where
+    S: Stream<Item = Result<B, E>>,
+    B: AsRef<[u8]>,
+{
+    Counted {
+        inner: Box::pin(stream),
+        _guard: ActiveGuard::new(),
+        usage: Some((peer_id.to_string(), service_id.to_string())),
+        cap: Some(CapState {
+            remaining,
+            breached: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
+        }),
     }
 }
 
@@ -354,6 +423,72 @@ mod tests {
         let owned: Vec<Result<Vec<u8>, std::io::Error>> =
             sizes.iter().map(|n| Ok(vec![0xAB; *n])).collect();
         stream::iter(owned)
+    }
+
+    /// D3's refusal half, and the observation that makes it real: a stream whose allowance
+    /// runs out must END — not error, not hang, not keep serving. Before this existed, the
+    /// counter moved and nothing ever stopped.
+    #[tokio::test]
+    async fn stream_ends_cleanly_when_the_allowance_is_spent() {
+        use futures_util::stream;
+        use futures_util::StreamExt;
+
+        // 10 chunks of 100 bytes = 1000 bytes available; allow only 250.
+        let chunks: Vec<Result<Vec<u8>, std::io::Error>> =
+            (0..10).map(|_| Ok(vec![0u8; 100])).collect();
+        let remaining = std::sync::Arc::new(std::sync::atomic::AtomicU64::new(250));
+        let mut body = counted_within_allowance(
+            stream::iter(chunks),
+            "cap-peer",
+            "content-download",
+            remaining.clone(),
+        );
+
+        let mut served = 0usize;
+        let mut items = 0usize;
+        while let Some(item) = body.next().await {
+            match item {
+                Ok(chunk) => served += chunk.len(),
+                Err(_) => panic!("the cap must end the body, never error it"),
+            }
+            items += 1;
+        }
+
+        // The loop above only exits when `next()` returns None — i.e. the body ENDED. That
+        // is the whole point: not an error, not a hang, a normal end of stream.
+        assert!(
+            served < 1000,
+            "the stream must have been cut short, served={served} of 1000"
+        );
+        assert!(
+            served <= 250 + 100,
+            "at most one chunk past the allowance may be handed out, served={served}"
+        );
+        assert!(
+            items <= 4,
+            "the body must stop promptly, not run to the end: {items} items"
+        );
+
+        // CONTROL: with a generous allowance the whole body is delivered.
+        let chunks2: Vec<Result<Vec<u8>, std::io::Error>> =
+            (0..10).map(|_| Ok(vec![0u8; 100])).collect();
+        let mut control = counted_within_allowance(
+            stream::iter(chunks2),
+            "cap-peer-control",
+            "content-download",
+            std::sync::Arc::new(std::sync::atomic::AtomicU64::new(1_000_000)),
+        );
+        let mut control_served = 0usize;
+        while let Some(Ok(chunk)) = control.next().await {
+            control_served += chunk.len();
+        }
+        assert_eq!(
+            control_served, 1000,
+            "a generous allowance must deliver the whole body"
+        );
+
+        media_usage().take("cap-peer", "content-download");
+        media_usage().take("cap-peer-control", "content-download");
     }
 
     /// D3: the accumulator must be driven by the BODY, not by a caller who remembers to add.

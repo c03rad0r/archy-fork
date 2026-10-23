@@ -117,6 +117,33 @@ impl MediaUsageAccumulator {
             .unwrap_or(0)
     }
 
+    /// D3 refusal check: may this peer still be served, given what it owes but has not yet
+    /// been charged?
+    ///
+    /// `remaining` is the durable session's remaining allowance. Unflushed bytes count
+    /// against it, because otherwise a viewer could stream an unbounded amount inside one
+    /// flush window — up to the window size, repeatedly — while the durable store still
+    /// showed plenty of credit. Charging late is fine; *admitting* late is not.
+    ///
+    /// Returns `Ok(())` when the peer may continue, or a reason string when it may not.
+    /// Deliberately does not itself end the stream: the caller decides how to close, because
+    /// the plan requires the body to end with `Ok(None)` — a clean end of stream, not an
+    /// error a player reports as a network failure.
+    pub fn check_within_allowance(
+        &self,
+        peer_id: &str,
+        service_id: &str,
+        remaining: u64,
+    ) -> Result<(), String> {
+        let owed = self.pending(peer_id, service_id);
+        if owed > remaining {
+            return Err(format!(
+                "byte cap reached: {owed} bytes served this window against {remaining} remaining"
+            ));
+        }
+        Ok(())
+    }
+
     /// Remove and return the unflushed total for a pair.
     ///
     /// Called after a successful flush. Taking before charging and restoring on failure
@@ -190,6 +217,60 @@ pub async fn flush_usage(data_dir: &std::path::Path, acc: &MediaUsageAccumulator
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// D3 refusal: unflushed bytes must count against the remaining allowance. Without this
+    /// a viewer streams an unbounded amount inside one flush window while the durable store
+    /// still shows credit — charging late is fine, admitting late is not.
+    #[test]
+    fn unflushed_bytes_count_against_the_allowance() {
+        let acc = MediaUsageAccumulator::new();
+        acc.add("p", "s", 900);
+        assert!(acc.check_within_allowance("p", "s", 1000).is_ok());
+
+        // Exactly at the allowance: allowed. The cap is "free AFTER X", so X itself is fine.
+        acc.add("p", "s", 100);
+        assert!(
+            acc.check_within_allowance("p", "s", 1000).is_ok(),
+            "owed == remaining is the boundary and must be admitted"
+        );
+
+        // One byte past: refused, and the reason names the numbers.
+        acc.add("p", "s", 1);
+        let err = acc
+            .check_within_allowance("p", "s", 1000)
+            .expect_err("owed > remaining must be refused");
+        assert!(
+            err.contains("1001"),
+            "reason must state what was owed: {err}"
+        );
+        assert!(err.contains("1000"), "reason must state remaining: {err}");
+
+        // A different peer is unaffected — accounting is per pair.
+        assert!(acc.check_within_allowance("other", "s", 0).is_ok());
+    }
+
+    /// An exhausted durable session (remaining 0) must refuse as soon as ANY byte is owed.
+    #[test]
+    fn exhausted_session_refuses_any_unflushed_byte() {
+        let acc = MediaUsageAccumulator::new();
+        assert!(
+            acc.check_within_allowance("p", "s", 0).is_ok(),
+            "nothing owed against nothing remaining is not yet a breach"
+        );
+        acc.add("p", "s", 1);
+        assert!(
+            acc.check_within_allowance("p", "s", 0).is_err(),
+            "one unflushed byte against a spent session must refuse"
+        );
+    }
+
+    /// The service id must match what check_gate's callers already use, or media bytes
+    /// charge a parallel bucket that never exhausts — the cap would look wired and do
+    /// nothing measurable.
+    #[test]
+    fn service_id_matches_the_gate_callers() {
+        assert_eq!(SERVICE_MEDIA_STREAM, "content-download");
+    }
 
     /// D3 regression guard named by the acceptance criteria. A resumed transfer must not
     /// reset the cap: the accumulator is per (peer, service) for the life of the process,

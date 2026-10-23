@@ -403,18 +403,48 @@ impl ApiHandler {
         if let Some((start, end)) = bounds {
             result = result.header("Content-Range", format!("bytes {start}-{end}/{total}"));
         }
-        // D3: accumulate these bytes against the BUYER, so the byte cap has something to
-        // charge. The buyer is the rental contract's holder, not a mesh peer — this is the
-        // buyer proxy, so the viewer is identified by the entitlement they presented.
-        // `counted` (no peer) is kept for the local/unauthenticated sites, which have
-        // nobody to bill.
-        Ok(
-            result.body(Body::wrap_stream(crate::media_metrics::counted_for(
-                chunks,
-                &binding.contract.id,
-                crate::media_meter::SERVICE_MEDIA_STREAM,
-            )))?,
+        // D3 refusal: read the buyer's remaining allowance ONCE here, then let the body
+        // re-check it per chunk against the `Arc<AtomicU64>`. Reading it per chunk would be
+        // a store hit on the media path — exactly the per-chunk metering the plan forbids.
+        //
+        // `NoSession`/`NotMetered` mean there is nothing to cap against, so the stream is
+        // served exactly as before: D3 must not start refusing sessions that were never
+        // metered. That is the conservative direction — a cap that invents refusals breaks
+        // paying viewers, which is worse than under-charging.
+        let allowance = crate::streaming::meter::check_access(
+            &self.config.data_dir,
+            &binding.contract.id,
+            crate::media_meter::SERVICE_MEDIA_STREAM,
+            0,
         )
+        .await;
+        let remaining = match allowance {
+            Ok(crate::streaming::meter::MeterDecision::Allow { remaining, .. }) => Some(
+                std::sync::Arc::new(std::sync::atomic::AtomicU64::new(remaining)),
+            ),
+            // Already spent before the first byte: end immediately, cleanly.
+            Ok(crate::streaming::meter::MeterDecision::Exhausted { .. }) => {
+                Some(std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0)))
+            }
+            // No session / not metered: no cap. See the note above.
+            _ => None,
+        };
+
+        let contract_id = binding.contract.id.clone();
+        let body = match remaining {
+            Some(remaining) => Body::wrap_stream(crate::media_metrics::counted_within_allowance(
+                chunks,
+                &contract_id,
+                crate::media_meter::SERVICE_MEDIA_STREAM,
+                remaining,
+            )),
+            None => Body::wrap_stream(crate::media_metrics::counted_for(
+                chunks,
+                &contract_id,
+                crate::media_meter::SERVICE_MEDIA_STREAM,
+            )),
+        };
+        Ok(result.body(body)?)
     }
 }
 
