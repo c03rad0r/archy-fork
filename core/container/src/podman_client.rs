@@ -1142,10 +1142,9 @@ pub fn disk_limit_storage_opt(
         DiskLimitSupport::Enforceable { .. } => match parse_memory_limit(raw) {
             // Reuse the size parser: both accept the same Ki/Mi/Gi/Ti and k/m/g/t
             // suffixes, and duplicating it would let the two drift.
-            Some(bytes) if bytes > 0 => (
-                Some(serde_json::json!({ "size": bytes.to_string() })),
-                None,
-            ),
+            Some(bytes) if bytes > 0 => {
+                (Some(serde_json::json!({ "size": bytes.to_string() })), None)
+            }
             _ => (
                 None,
                 Some(format!(
@@ -1216,7 +1215,10 @@ mod tests {
     fn disk_limit_is_refused_with_a_reason_on_non_xfs_and_wired_on_xfs() {
         // ext4 (this host, and stock Debian 13): must NOT emit storage_opt, must explain.
         let (opt, note) = disk_limit_storage_opt(Some("2Gi"), "ext4");
-        assert!(opt.is_none(), "must not send a storage_opt podman will reject");
+        assert!(
+            opt.is_none(),
+            "must not send a storage_opt podman will reject"
+        );
         let note = note.expect("a skipped limit MUST carry a reason");
         assert!(
             note.contains("ext4"),
@@ -1242,7 +1244,10 @@ mod tests {
 
         // No disk_limit at all: nothing to do, and nothing to warn about.
         let (opt, note) = disk_limit_storage_opt(None, "ext4");
-        assert!(opt.is_none() && note.is_none(), "absent limit is not a warning");
+        assert!(
+            opt.is_none() && note.is_none(),
+            "absent limit is not a warning"
+        );
     }
 
     /// An unparseable limit must not become `size: 0` — podman rejects 0 at start time,
@@ -1266,7 +1271,10 @@ mod tests {
     fn unknown_backing_filesystem_fails_safe() {
         for fs in ["", "unknown", "extfs"] {
             let (opt, note) = disk_limit_storage_opt(Some("1Gi"), fs);
-            assert!(opt.is_none(), "empty/unknown backing must not claim enforceability");
+            assert!(
+                opt.is_none(),
+                "empty/unknown backing must not claim enforceability"
+            );
             assert!(note.is_some(), "and must say so");
         }
     }

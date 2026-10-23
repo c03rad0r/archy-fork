@@ -400,9 +400,42 @@ confident wrong diagnosis: cookie `csrf` vs `csrf_token`; fixture dir `content-o
 (the 206 row had been printing `Content-Range=None` since P1). A lookup that fails silently
 is indistinguishable from absence. Probes must fail loudly.
 
+## D4a IMPLEMENTED (2026-10-23) — enforced on XFS, REPORTED on ext4
+
+`disk_limit` was declared and read nowhere; now wired, but **not** as a copy of the memory
+path, because per-container size limits need overlay-on-XFS with project quotas and this
+platform is ext4 (see the recon section below for the measured error).
+
+- `disk_limit_support(backing_fs)` — `Enforceable` on xfs, `NotEnforceable` elsewhere with a
+  reason naming the real filesystem and the fix.
+- `disk_limit_storage_opt(limit, backing_fs)` — the storage_opt when honourable, a reason
+  when not. Reuses `parse_memory_limit` rather than a second parser that could drift.
+- `storage_backing_fs()` — statfs on the container storage root; detection failure returns
+  empty, which **fails safe** to NotEnforceable. Claiming enforceability we cannot back up is
+  the silent failure; an extra warning costs nothing.
+- `create_container` passes `storage_opt` when possible and `tracing::warn!`s when not — so a
+  limit the host cannot enforce is **visible** instead of silent.
+
+Tests (3 new): refused-with-reason on non-XFS and wired on XFS; unparseable warns rather than
+sending `size: 0` (which podman rejects at start); unknown backing FS fails safe.
+
+Observed: **86 passed / 0 failed** in `archipelago-container`, doctests 0 failed. Note the
+field lives in the **`archipelago-container`** crate, not `archipelago` — filtering on the
+wrong crate reports "0 tests" and looks like a pass.
+
+Also fixed a doctest I broke: the `$ podman run` example was indented 4 spaces, so rustdoc
+compiled it as Rust and failed with `expected item, found $`. Marked ```text```.
+
+Gates: fmt clean · clippy 124 == 124 · runner **2087 passed / 1 failed** (environmental
+quadlet, identical on pristine).
+
+**Not claimed:** disk_limit is *effective* only on XFS hosts. On ext4 — including this one —
+it is now *reported*, not enforced. Whether the field should instead be expressed through the
+working node-level media budget (`snapshot_budget.rs`) is an operator product decision.
+
 ## D4a RECON — `disk_limit` is declared but unread, AND the obvious wiring does not work
 
-**Status: recon complete, NOT implemented. The prompt's premise needs correcting.**
+**Status: recon complete; implementation now landed — see the section above.**
 
 ### Correction 1: the line number was stale, the field is real
 
