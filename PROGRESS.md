@@ -438,13 +438,25 @@ exist on it (drive with `StreamExt::next`); `stream::iter` needs an explicit err
 (E0282).
 
 **NOT done, stated plainly — the remaining D3 work:**
-1. `flush_usage` is **not yet called** from the stream-end path, so accumulated bytes are
-   never persisted.
-2. The cap is **not yet enforced** against a live session — nothing is cut off yet.
-3. Consequences: the wire read-back (`serve over /content/..., show the counter delta`) is
-   **NOT_VERIFIED**, and `check_gate`'s three callers remain off the video path.
+1. `flush_usage` **is now called** (60 s sweep in `main.rs`) — accumulated bytes are persisted.
+2. The buyer proxy now charges **real per-viewer bytes** (`counted_for` with the rental
+   contract id), so the cap has a subject.
+3. **Still missing: nothing REFUSES a stream on exhaustion.** `check_gate` is not consulted
+   on the media path, so bytes are charged and flushed but the cap does not yet stop anyone.
+4. Therefore the wire read-back (`serve over /content/..., show the counter delta`) is
+   **NOT_VERIFIED** — it needs the localnode venue. `check_gate`'s three callers remain off
+   the video path.
 
-So: the counter moves in-process and is negative-control-proven, but D3 is **not done**.
+So: bytes are accounted, attributed to a real buyer, and flushed durably — but D3 is **not
+done** until exhaustion refuses a stream.
+
+### The gate check that lied (keep this)
+
+`cargo clippy ... | grep -c '^warning:'` returned **0** twice while the crate **did not
+compile**. A failed build emits no `warning:` lines, so "0 warnings" read as a perfect pass
+against a 124 baseline. The check now greps `^error` and `Finished` FIRST, then counts.
+Same silent-failure class as the header-case bug: a lookup that fails indistinguishably from
+success.
 
 ## D4a IMPLEMENTED (2026-10-23) — enforced on XFS, REPORTED on ext4
 
