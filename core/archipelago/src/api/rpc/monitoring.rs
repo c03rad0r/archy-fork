@@ -219,11 +219,33 @@ impl RpcHandler {
     /// observation is not possible from outside the process.
     pub(super) async fn handle_monitoring_media(&self) -> Result<serde_json::Value> {
         let media = crate::media_metrics::snapshot();
+        let (objects, peers, cache_hits, cache_misses) = crate::media_metrics::detail::snapshot();
         Ok(serde_json::json!({
+            // Totals
             "bytes_served": media.bytes_served,
             "chunks_served": media.chunks_served,
             "streams_active": media.streams_active,
             "streams_total": media.streams_total,
+            // Per-object, keyed by (content_sha256, content_size) — never content_id
+            "objects": objects
+                .into_iter()
+                .map(|(k, v)| (k, serde_json::json!({
+                    "bytes_served": v.bytes_served,
+                    "requests": v.requests,
+                })))
+                .collect::<serde_json::Map<_, _>>(),
+            // Per-peer
+            "peers": peers
+                .into_iter()
+                .map(|(k, v)| (k, serde_json::json!({
+                    "bytes_served": v.bytes_served,
+                    "requests": v.requests,
+                    "active_streams": v.active_streams,
+                })))
+                .collect::<serde_json::Map<_, _>>(),
+            // Cache outcomes, separately observable
+            "cache_hits": cache_hits,
+            "cache_misses": cache_misses,
         }))
     }
 }
