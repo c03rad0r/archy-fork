@@ -2,12 +2,14 @@ pub mod assets;
 pub mod config;
 pub mod install;
 pub mod nodogsplash;
+pub mod verify;
 pub mod version;
 pub mod wifi;
 
 pub use assets::{AssetShape, PackageTarget, FEED_REPO, LEGACY_REPO};
 pub use config::TollGateConfig;
 pub use install::{install_tollgate, read_package_target, TOLLGATE_VERSION};
+pub use verify::{manifest_url, verify_download, VerifyOutcome};
 pub use version::{TOLLGATE_PACKAGE, TOLLGATE_SERVICE_BIN};
 pub use wifi::provision_ssid;
 
@@ -39,6 +41,12 @@ pub async fn provision(router: &Router, config: &TollGateConfig) -> Result<()> {
             install::install_tollgate_apk_native(router)?;
         }
     }
+
+    // Runtime dependencies the package declares but that no install path here
+    // resolves: jq decides which UI answers the entry ports, and ca-bundle is
+    // what lets the gateway verify a mint over TLS. Installed after the
+    // package so a failure names the dependency rather than the package.
+    install::install_runtime_deps(router, pkg_mgr)?;
 
     // NoDogSplash is a hard runtime dependency of tollgate-wrt (upstream's
     // package declares `+nodogsplash`), but neither install path above pulls
