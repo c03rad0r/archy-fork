@@ -23,7 +23,7 @@ use std::sync::Arc;
 use std::time::Duration;
 use tokio::signal;
 use tokio::sync::Notify;
-use tracing::info;
+use tracing::{debug, info};
 
 mod api;
 mod app_ops;
@@ -277,6 +277,38 @@ async fn main() -> Result<()> {
             let _ = sd_notify::notify(false, &[sd_notify::NotifyState::Watchdog]);
         }
     });
+
+    // D3: flush accumulated media bytes into the durable meter.
+    //
+    // This is the ONLY path that makes streamed bytes billable, and it is deliberately a
+    // coarse sweep rather than per-chunk: `meter::record_and_check` rewrites the whole
+    // session store on every call, so metering a 5 Mbps stream per chunk would mean ~16,000
+    // store writes per GB per viewer. 60 s is well under the 8 MiB flush window's natural
+    // cadence at any sane bitrate, so in practice this fires on idle rather than on a full
+    // window — and it is what bounds loss on an unclean shutdown.
+    //
+    // Without this, `media_usage()` accumulates and nothing ever charges: the counter moves
+    // and the cap never bites. That was the gap D3 shipped with.
+    {
+        let flush_dir = config.data_dir.clone();
+        tokio::spawn(async move {
+            let mut interval = tokio::time::interval(std::time::Duration::from_secs(60));
+            loop {
+                interval.tick().await;
+                let charged = crate::media_meter::flush_usage(
+                    &flush_dir,
+                    crate::media_metrics::media_usage(),
+                )
+                .await;
+                if charged > 0 {
+                    debug!(
+                        "D3: flushed media usage for {} peer/service pair(s)",
+                        charged
+                    );
+                }
+            }
+        });
+    }
 
     // Run crash recovery before starting the manifest reconciler. Both paths
     // mutate Podman; running them concurrently can corrupt transient runtime

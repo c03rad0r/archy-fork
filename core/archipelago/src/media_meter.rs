@@ -57,6 +57,14 @@ pub const DEFAULT_FLUSH_BYTES: u64 = 8 * 1024 * 1024;
 
 type Key = (String, String);
 
+/// The service id D3 charges media bytes against.
+///
+/// A named constant, not a literal at the call site: the existing `check_gate` callers use
+/// `SERVICE_ID` constants (`swarm/paid.rs`, `swarm/paid_alpn.rs`) and the session store keys
+/// on this string. A typo would silently create a *second* session bucket that never
+/// exhausts — the cap would look wired and do nothing.
+pub const SERVICE_MEDIA_STREAM: &str = "content-download";
+
 /// In-memory byte accumulator, keyed by (peer_id, service_id).
 #[derive(Debug, Default)]
 pub struct MediaUsageAccumulator {

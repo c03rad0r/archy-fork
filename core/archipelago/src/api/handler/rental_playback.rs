@@ -403,7 +403,18 @@ impl ApiHandler {
         if let Some((start, end)) = bounds {
             result = result.header("Content-Range", format!("bytes {start}-{end}/{total}"));
         }
-        Ok(result.body(Body::wrap_stream(crate::media_metrics::counted(chunks)))?)
+        // D3: accumulate these bytes against the BUYER, so the byte cap has something to
+        // charge. The buyer is the rental contract's holder, not a mesh peer — this is the
+        // buyer proxy, so the viewer is identified by the entitlement they presented.
+        // `counted` (no peer) is kept for the local/unauthenticated sites, which have
+        // nobody to bill.
+        Ok(
+            result.body(Body::wrap_stream(crate::media_metrics::counted_for(
+                chunks,
+                &binding.contract.id,
+                crate::media_meter::SERVICE_MEDIA_STREAM,
+            )))?,
+        )
     }
 }
 
