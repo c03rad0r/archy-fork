@@ -118,3 +118,78 @@ that never becomes media still takes the full 900 s bound, and the 30 s
 - Do NOT run unrestricted `cargo test` on a node with installed apps. (This box is not an
   archy node, so `cargo test` is used here for the RED/GREEN loop; the **sanctioned
   acceptance run** is `scripts/test-backend-isolated.sh`.)
+
+---
+
+# P1 HAND-OFF — media-path observability (recon complete, NOT started)
+
+**Status: recon done, no code written.** Recorded here so the next worker skips the
+discovery I already paid for. Do not re-derive it.
+
+## What P1 must add
+
+Per-object bytes served · active-viewer count · per-peer accounting · cache hit/miss.
+Today `MetricSnapshot` (`monitoring/types.rs:14-35`) is host + container only.
+
+## The counter idiom ALREADY EXISTS — copy it, do not invent one
+
+    core/archipelago/src/update.rs:15
+    pub static DOWNLOAD_BYTES: AtomicU64 = AtomicU64::new(0);
+    pub static DOWNLOAD_TOTAL: AtomicU64 = AtomicU64::new(0);
+
+That is the established pattern in this codebase for exactly this problem (progress
+counting for a byte stream). Also present: `OnceLock<Mutex<..>>` in
+`api/handler/routstr_proxy.rs:88` and `api/rpc/lnd/macaroons.rs:169`.
+
+## The 5 sites where media bytes actually flow (verified, file:line)
+
+| Site | Stream built at | `wrap_stream` at | Notes |
+|---|---|---|---|
+| `api/handler/registered_media.rs` | `:281` (`rental_response`) | `:337` | seller-side registered rental |
+| `api/handler/rental_playback.rs` | `:320` | `:406` | **buyer proxy — the route a viewer hits** |
+| `api/handler/cloud_purchase.rs` | `:109` | `:140` | purchase-gated serve |
+| `prepared_media.rs` | `:133` | `:165` | prepared/transcoded media |
+| `media_stream.rs` | `:61` | `:91` | shared `file_response`; **only** called by `api/handler/proxy.rs:244` |
+
+**`media_stream.rs` is NOT the single choke point** — it is used only by `proxy.rs`. The
+other four build their own `try_unfold` streams. So P1 needs the counter at 5 sites, or a
+shared wrapper introduced at those 5 sites. Do not assume one insertion point; I checked.
+
+## Design that fits the existing shape
+
+1. New counters as `pub static ... AtomicU64` (per the `update.rs` idiom), in a new
+   `media_metrics.rs` or under `monitoring/`.
+2. Wrap each of the 5 chunk streams so every emitted chunk adds `read` to a byte counter —
+   keep the per-chunk work to a single relaxed atomic add. **Never** do a JSON write or a
+   lock per chunk; the D3 section of the prompt already warns that
+   `meter::record_and_check` per chunk is ~16,000 JSON rewrites per GB per viewer.
+3. Add fields to `MetricSnapshot` and fill them in `monitoring/collector.rs:37`
+   (`collect_snapshot`), which is where `rpc_latency_ms`/`ws_connections` are already
+   "filled in by MetricsStore::push" — follow that comment's precedent.
+4. Active viewers / cache hit-miss need a decision: a gauge (inc on stream start, dec on
+   `Drop`) is the honest shape. Copy the `Reservation`+`Drop` idiom noted in the handover
+   for D4b rather than inventing a second lifetime mechanism.
+
+## The read-back P1 must satisfy (from the coverage contract)
+
+Serve one object over `/content/...`, read the counter back, **show the delta**. A counter
+that only increments in a unit test proves nothing.
+
+**This is blocked on the same thing P3's wire proof is: B3.** The binary hardcodes
+`/var/lib/archipelago` and dies with `Failed to write PID marker / Permission denied`, so
+no node can be started to serve the object. **B3 gates the wire-level proof of P1, P2, P3,
+P4, D3 and D5.** It is the highest-value unblock on the board, and it is a one-line
+question for the operator: is a writable data dir acceptable, or should the binary take a
+config/env override?
+
+## Suggested test names (from the prompt's list, D1/D3 overlap)
+
+- P1's own: a counter delta observed over the media path.
+- The prompt names `per_subscriber_rental_window_is_still_enforced_mid_stream` for D1 and
+  `range_requests_cannot_reset_the_cap` for D3 — both touch the same code, so land P1
+  first and reuse its seam.
+
+## Estimated effort
+
+The prompt says 1-2 d. My recon agrees: 5 insertion sites, one new module, one snapshot
+field group. The real cost is B3, not the counter.
