@@ -161,7 +161,10 @@ mod tests {
         let after = snapshot();
 
         assert_eq!(collected.len(), 3, "every chunk must be passed through");
-        assert!(collected.iter().all(|r| r.is_ok()), "errors must not be invented");
+        assert!(
+            collected.iter().all(|r| r.is_ok()),
+            "errors must not be invented"
+        );
         assert_eq!(
             collected[2].as_ref().expect("chunk").len(),
             1,
@@ -210,11 +213,17 @@ mod tests {
         {
             let failing = stream::iter(vec![
                 Ok(vec![1u8; 8]),
-                Err(std::io::Error::new(std::io::ErrorKind::UnexpectedEof, "boom")),
+                Err(std::io::Error::new(
+                    std::io::ErrorKind::UnexpectedEof,
+                    "boom",
+                )),
             ]);
             let mut c = counted(failing);
             assert!(c.next().await.expect("first").is_ok());
-            assert!(c.next().await.expect("second").is_err(), "error must propagate");
+            assert!(
+                c.next().await.expect("second").is_err(),
+                "error must propagate"
+            );
         }
         assert_eq!(
             snapshot().streams_active,
