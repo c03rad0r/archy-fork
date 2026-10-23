@@ -322,6 +322,39 @@ writing a second one — the auth and fixture setup cost real time to get right,
 gotchas are documented in its comments (cookie is `csrf_token`, not `csrf`; fixture dir is
 `purchased-content`, not `content-owned`).
 
+## P2 IMPLEMENTED + VERIFIED (2026-10-23)
+
+`server.rs`: `UI_CONNECTION_BUDGET` / `PEER_CONNECTION_BUDGET` as named constants; the peer
+listener gets its own semaphore; the drain references the UI budget by name. NOT a smaller
+peer budget — shrinking it would swap a UI-starvation bug for a peer-starvation bug.
+
+The trap avoided: wrapping a media body to hold a permit for its lifetime is WORSE than the
+bug — graceful shutdown waits for permits to return (`:1232`), so a 2-hour film makes a
+restart wait 2 hours.
+
+Evidence — live read-back (`scripts/p2-admission-readback.py`), real binary:
+
+    [PASS] BASELINE UI answers, no media load — /health 200, /rpc/v1 200
+    [PASS] 48 media streams established — 48/48 HTTP 200 held open
+    [PASS] UI STILL ANSWERS under concurrent media load — /health 200, /rpc/v1 200
+    [PASS] CONTROL: media still served (UI budget did not starve it)
+    [NOT_VERIFIED] scale caveat — 48 streams, not 1024
+    counts: PASS=6, NOT_VERIFIED=1, exit 0
+
+Source-level guard, negative-control proven: re-merging the budgets fails it at
+`peer_late_bind_loop must receive peer_connections`.
+
+Two of my own defects: the guard first failed against ITSELF (`include_str!` includes the
+test module, so the needle appeared in the assertion searching for it — needle now built at
+runtime); and the drain used a bare `1024`, now the named constant.
+
+Gates: check 0 · fmt clean · clippy 124 == 124 · runner 2085 passed / 1 failed (the
+environmental quadlet test, identical on pristine fcc18b3).
+
+STILL NOT DONE for P2: the **per-peer rate cap** (the plan's second half), and
+`spawn_blocking(open_matching)` remains unbounded (`cloud_purchase.rs:97`). The guard is
+source-level, not behavioural — a unit test cannot observe two semaphores.
+
 ## Environment notes that will save time
 
 - Release build: **`CARGO_BUILD_JOBS=1`**. `jobs=2` OOM-killed rustc twice at ~2.2-3.9 GB.
@@ -333,3 +366,59 @@ gotchas are documented in its comments (cookie is `csrf_token`, not `csrf`; fixt
   session secret there.
 - `/api/peer-content/` is session-gated **on purpose** — do not exempt media paths from auth
   to make a test pass; that hands purchased bytes to unauthenticated callers.
+
+---
+
+# P2 IMPLEMENTED + VERIFIED (2026-10-23)
+
+## What landed
+
+`server.rs`: `UI_CONNECTION_BUDGET` and `PEER_CONNECTION_BUDGET` as named constants; the peer
+listener receives its own `peer_connections` semaphore; the drain condition references the UI
+budget **by name** (a bare `1024` there could drift).
+
+Deliberately NOT a smaller peer budget — shrinking it would convert a UI-starvation bug into a
+peer-starvation bug. The fix is separation, not a smaller number.
+
+## The trap this design avoids
+
+The obvious implementation — wrap each media body so it holds a permit for its lifetime —
+is **worse than the bug**. Graceful shutdown waits for permits to return (`server.rs:1232`),
+so a permit held for a 2-hour film makes a clean restart wait 2 hours. Keeping peer permits
+out of the drain path is what makes that deadlock unreachable. The file also records at
+`:1594-1600` that a blocking acquire in the accept path was removed after it froze `accept()`
+entirely (the `.228` CLOSE-WAIT signature); this change does not reintroduce it.
+
+## Evidence
+
+Live read-back on the real release binary (`scripts/p2-admission-readback.py`):
+
+    [PASS] BASELINE: UI answers with no media load — /health 200, /rpc/v1 200
+    [PASS] 48 media streams established — 48/48 HTTP 200 while held open
+    [PASS] UI STILL ANSWERS under concurrent media load — /health 200, /rpc/v1 200
+    [PASS] CONTROL: media is still served (UI budget did not starve it)
+    [NOT_VERIFIED] scale caveat — 48 streams, not 1024
+    counts: PASS=6, NOT_VERIFIED=1, exit 0
+
+Source-level guard in `server.rs`, **negative-control proven**: re-merging the budgets on
+purpose — restoring the original bug — fails it at exactly
+`peer_late_bind_loop must receive peer_connections`.
+
+Two of my own defects found getting here:
+  * The guard first failed against **itself**: `include_str!("server.rs")` includes the test
+    module, so the literal needle appeared in the assertion searching for it. Needle is now
+    assembled at runtime.
+  * The drain used a bare `1024`; now the named constant, with an assertion it does not return.
+
+Gates: check 0 · fmt clean · clippy **124 == 124** · mandated runner **2085 passed / 1 failed**
+(the environmental quadlet test, identical on pristine `fcc18b3`).
+
+## Still NOT done for P2
+
+- **Per-peer rate cap** — the plan's second half of P2. Not implemented. The budget
+  separation fixes the headline UI-starvation failure; a per-peer cap is a separate concern
+  (one peer consuming all peer permits).
+- **`spawn_blocking(open_matching)` remains unbounded** (`cloud_purchase.rs:97`).
+- **The guard is source-level, not behavioural**: a unit test cannot observe two semaphores.
+  The live read-back covers the observable claim; the guard covers the structural one. Neither
+  alone is sufficient.
