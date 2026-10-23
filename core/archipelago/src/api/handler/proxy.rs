@@ -241,11 +241,18 @@ impl ApiHandler {
         // Ownership is checked before opening a bounded file stream. Corrupt
         // records or missing purchased bytes never trigger another purchase.
         match crate::content_owned::open_owned(&self.config.data_dir, onion, content_id).await {
-            Ok(Some((mime, file))) => return crate::media_stream::file_response(file, &mime, headers).await,
+            Ok(Some((mime, file))) => {
+                // The bytes are local: this is a genuine cache HIT, not a proxy fetch.
+                crate::media_metrics::detail::record_cache_hit();
+                return crate::media_stream::file_response(file, &mime, headers).await;
+            }
             Ok(None) => {},
             Err(_) => return Ok(build_response(StatusCode::CONFLICT, "application/json",
                 hyper::Body::from(serde_json::json!({"error": "Purchased file unavailable locally. Recover the existing purchase without paying again."}).to_string()))),
         }
+
+        // Not in the local store: this request has to go to the peer, i.e. a cache MISS.
+        crate::media_metrics::detail::record_cache_miss();
 
         let fips_npub = crate::federation::fips_npub_for_onion(&self.config.data_dir, onion).await;
         let peer_path = format!("/content/{}", content_id);

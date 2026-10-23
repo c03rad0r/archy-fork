@@ -72,6 +72,7 @@ pub fn snapshot() -> MediaMetrics {
 /// Bounded on purpose. An unbounded map keyed by attacker-influenced input is a memory
 /// exhaustion vector, so both maps are capped and evict oldest-first when full. A counter
 /// that can be made to OOM the node is worse than no counter.
+#[allow(dead_code)] // per-object/per-peer producers pending a sha256 source; see ObjectCounters
 pub mod detail {
     use std::collections::BTreeMap;
     use std::sync::atomic::{AtomicU64, Ordering};
@@ -86,6 +87,15 @@ pub mod detail {
     /// Counters for one object. Keyed by `(content_sha256, content_size)` per the plan's
     /// cache-key decision — never by `content_id`, which is a seller-local opaque string
     /// and would fragment the same bytes across sellers.
+    ///
+    /// NO PRODUCER YET, and this is a real gap rather than an oversight: the seller's
+    /// `OwnedItem` index (`content_owned.rs:48-61`) carries onion, content_id, filename,
+    /// mime, size, paid_sats, backend, timestamp and download_complete — but NO sha256.
+    /// So at the serve site there is nothing to build a `(sha256, size)` key from. The
+    /// alternative would be keying on `content_id`, which the plan explicitly forbids
+    /// because it fragments identical bytes across sellers. The API is therefore present
+    /// and tested, awaiting a hash source; `allow(dead_code)` records that rather than
+    /// letting the lint silently delete a documented interface.
     #[derive(Debug, Clone, Copy, Default, serde::Serialize, serde::Deserialize)]
     pub struct ObjectCounters {
         pub bytes_served: u64,
@@ -155,7 +165,12 @@ pub mod detail {
     }
 
     /// Snapshot of the detail maps, for the RPC.
-    pub fn snapshot() -> (Vec<(String, ObjectCounters)>, Vec<(String, PeerCounters)>, u64, u64) {
+    pub fn snapshot() -> (
+        Vec<(String, ObjectCounters)>,
+        Vec<(String, PeerCounters)>,
+        u64,
+        u64,
+    ) {
         let objects = OBJECTS
             .lock()
             .map(|m| m.iter().map(|(k, v)| (k.clone(), *v)).collect())
@@ -282,12 +297,10 @@ pub fn counter_test_lock() -> std::sync::MutexGuard<'static, ()> {
     LOCK.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
 }
 
-
-
 #[cfg(test)]
 mod tests {
-    use super::*;
     use super::detail;
+    use super::*;
     use futures_util::stream;
     use futures_util::StreamExt;
 
@@ -398,7 +411,10 @@ mod tests {
         detail::record_object(&k, 500);
         let (objects, _, _, _) = detail::snapshot();
         let entry = objects.iter().find(|(name, _)| name == &k).expect("entry");
-        assert_eq!(entry.1.bytes_served, 1500, "bytes must accumulate per object");
+        assert_eq!(
+            entry.1.bytes_served, 1500,
+            "bytes must accumulate per object"
+        );
         assert_eq!(entry.1.requests, 2, "requests must count per object");
 
         // The same hash at a different size is a DIFFERENT object.
