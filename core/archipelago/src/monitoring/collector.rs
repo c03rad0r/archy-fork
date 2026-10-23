@@ -40,6 +40,7 @@ pub async fn collect_snapshot() -> Result<MetricSnapshot> {
         containers,
         rpc_latency_ms: 0.0, // filled in by MetricsStore::push
         ws_connections: 0,   // filled in by MetricsStore::push
+        media: crate::media_metrics::snapshot(),
     })
 }
 

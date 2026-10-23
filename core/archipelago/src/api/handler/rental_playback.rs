@@ -403,7 +403,7 @@ impl ApiHandler {
         if let Some((start, end)) = bounds {
             result = result.header("Content-Range", format!("bytes {start}-{end}/{total}"));
         }
-        Ok(result.body(Body::wrap_stream(chunks))?)
+        Ok(result.body(Body::wrap_stream(crate::media_metrics::counted(chunks)))?)
     }
 }
 

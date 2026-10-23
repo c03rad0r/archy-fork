@@ -178,6 +178,7 @@ mod tests {
             containers: vec![],
             rpc_latency_ms: 0.0,
             ws_connections: 0,
+            media: Default::default(),
         };
 
         store.push(snapshot).await;
@@ -210,6 +211,7 @@ mod tests {
             containers: vec![],
             rpc_latency_ms: 0.0,
             ws_connections: 0,
+            media: Default::default(),
         };
 
         store.push(snapshot).await;
@@ -239,6 +241,7 @@ mod tests {
                 containers: vec![],
                 rpc_latency_ms: 0.0,
                 ws_connections: 0,
+                media: Default::default(),
             };
             store.push(snapshot).await;
         }
@@ -272,6 +275,7 @@ mod tests {
                 containers: vec![],
                 rpc_latency_ms: 0.0,
                 ws_connections: 0,
+                media: Default::default(),
             };
             store.push(snapshot).await;
         }
@@ -305,6 +309,7 @@ mod tests {
                 containers: vec![],
                 rpc_latency_ms: 0.0,
                 ws_connections: 0,
+                media: Default::default(),
             };
             store.push(snapshot).await;
         }

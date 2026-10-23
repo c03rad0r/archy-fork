@@ -17,6 +17,10 @@ pub struct MetricSnapshot {
     pub containers: Vec<ContainerMetrics>,
     pub rpc_latency_ms: f64,
     pub ws_connections: u32,
+    /// Media-path counters (P1). Without these, D1/D3/D5 have nothing to read back.
+    /// `#[serde(default)]` so snapshots persisted before this field existed still parse.
+    #[serde(default)]
+    pub media: crate::media_metrics::MediaMetrics,
 }
 
 /// System-wide resource metrics.

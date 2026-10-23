@@ -137,6 +137,6 @@ impl ApiHandler {
         if partial {
             response = response.header("content-range", format!("bytes {start}-{end}/{total}"));
         }
-        Ok(response.body(Body::wrap_stream(chunks))?)
+        Ok(response.body(Body::wrap_stream(crate::media_metrics::counted(chunks)))?)
     }
 }

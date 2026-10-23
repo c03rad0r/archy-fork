@@ -88,7 +88,7 @@ pub async fn file_response(
     if let Some((start, end)) = selected {
         response = response.header("Content-Range", format!("bytes {start}-{end}/{total}"));
     }
-    Ok(response.body(Body::wrap_stream(chunks))?)
+    Ok(response.body(Body::wrap_stream(crate::media_metrics::counted(chunks)))?)
 }
 
 #[cfg(test)]

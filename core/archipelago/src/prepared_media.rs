@@ -162,7 +162,7 @@ impl PreparedMedia {
         if let Some((start, end, total)) = range {
             response = response.header("Content-Range", format!("bytes {start}-{end}/{total}"));
         }
-        Ok(response.body(Body::wrap_stream(chunks))?)
+        Ok(response.body(Body::wrap_stream(crate::media_metrics::counted(chunks)))?)
     }
 }
 
