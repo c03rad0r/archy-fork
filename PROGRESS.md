@@ -400,6 +400,74 @@ confident wrong diagnosis: cookie `csrf` vs `csrf_token`; fixture dir `content-o
 (the 206 row had been printing `Content-Range=None` since P1). A lookup that fails silently
 is indistinguishable from absence. Probes must fail loudly.
 
+## D4a RECON — `disk_limit` is declared but unread, AND the obvious wiring does not work
+
+**Status: recon complete, NOT implemented. The prompt's premise needs correcting.**
+
+### Correction 1: the line number was stale, the field is real
+
+The prompt cites `manifest.rs:481-488`. The field is actually at
+**`container/src/manifest.rs:488`** inside `ResourceLimits`:
+
+    pub struct ResourceLimits {
+        pub cpu_limit: Option<u32>,       // :484 — wired
+        pub memory_limit: Option<String>, // :486 — wired
+        pub disk_limit: Option<String>,   // :488 — DECLARED BUT READ NOWHERE
+    }
+
+Verified by grepping the whole tree outside `target/`: `disk_limit` appears on **exactly one
+line** — its own declaration. So D4a's target is real and my initial "it does not exist"
+was my own error (I grepped from the wrong directory first; the wrong diagnosis, not a
+missing field).
+
+### Correction 2: the wiring the prompt implies CANNOT WORK on this platform
+
+The natural implementation is `--storage-opt size=<bytes>`, the way `memory_limit` maps to
+`memory.limit`. Measured, not assumed:
+
+    $ podman run --rm --storage-opt size=100M docker.io/library/alpine:latest true
+    Error: storage option overlay.size and overlay.inodes only supported for backingFS XFS.
+    Found extfs
+
+    $ df -T ~/.local/share/containers/storage
+    /dev/mapper/ubuntu--vg-ubuntu--lv ext4
+
+The overlay driver supports per-container size limits **only on XFS with project quotas**.
+This host is ext4 — and so is a stock **Debian 13** install, which is the platform the
+project targets. So a naive `--storage-opt size=` wiring would either error at container
+start or be silently ignored, depending on the call path. Writing it and reporting "D4a
+done" would be the exact silent-failure class this job exists to remove.
+
+`storage_opt` also appears **nowhere** in `container/src/` today, so there is no existing
+plumbing to copy.
+
+### What D4a can honestly be
+
+Three options, in order of how much they actually enforce:
+
+1. **Reject-or-warn at manifest validation** — if `disk_limit` is set and the storage
+   backing filesystem cannot enforce it, say so loudly (at deploy time, not at container
+   start). This turns a silently-ignored limit into a visible one. Small, honest, and the
+   only option that is correct on every filesystem.
+2. **Wire it where it CAN be enforced** — pass `--storage-opt size=` only when the backing
+   FS is XFS with prjquota, detected at runtime, and report the skip otherwise. Enforces
+   where possible without lying where it is not.
+3. **Enforce at the node level instead** — the media budget in `snapshot_budget.rs:15-16`
+   (64 GiB / 512 MiB floor, hard-fail `:153-159`) is the project's existing disk-governance
+   mechanism, and it *does* work. A per-app limit that cannot be enforced may be better
+   expressed there than as a manifest field that does nothing.
+
+**Recommendation: (1) + (2) together** — validate loudly, enforce where the filesystem
+allows. Option (3) is a product decision (does the manifest field mean anything if it can
+only be honoured on XFS?) and belongs to the operator, not to this loop.
+
+### Why I stopped here rather than picking one
+
+The plan lists D4a as "1-2 d, imitate `parse_memory_limit`". The imitation is 20 lines; the
+*decision* is which of the three above is the intended semantics, and that changes what
+"done" means. That is a DECIDE-vs-ESCALATE item with a product answer, so it is surfaced
+rather than guessed — and the recon is banked so the answer costs one message, not a day.
+
 ## Environment notes that will save time
 
 - Release build: **`CARGO_BUILD_JOBS=1`**. `jobs=2` OOM-killed rustc twice at ~2.2-3.9 GB.
