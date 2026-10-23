@@ -88,6 +88,12 @@ def main() -> int:
     env = dict(os.environ)
     env["PATH"] = f"{Path.home() / '.cargo' / 'bin'}:{env.get('PATH', '')}"
     env["ARCHY_TEST_ISOLATED"] = "1"
+    # ARCHIPELAGO_DATA_DIR is HONOURED (config.rs:125). The first version of this script did
+    # not set it and then reported the resulting "Failed to write PID marker / Permission
+    # denied" as an environment blocker. That was wrong: the blocker was this script. Set it.
+    env["ARCHIPELAGO_DATA_DIR"] = str(tmp)
+    env["ARCHIPELAGO_BIND"] = f"127.0.0.1:{port}"
+    env["ARCHIPELAGO_DEV_MODE"] = "1"
 
     print(f"binary : {BIN}  ({BIN.stat().st_size / 1e6:.1f} MB)")
     print(f"data   : {tmp}")
@@ -110,6 +116,37 @@ def main() -> int:
     time.sleep(3.0)
     if proc.poll() is not None:
         tail = "\n".join(log.read_text(errors="replace").splitlines()[-12:])
+        if "Neither Podman nor Docker" in tail:
+            record(
+                "binary can complete startup with a private data dir",
+                "BLOCKED",
+                "ARCHIPELAGO_DATA_DIR works (the PID marker is written to it), but startup "
+                "then requires a container runtime: 'Error: Failed to create auto runtime / "
+                "Caused by: Neither Podman nor Docker is available'. The listener comes up "
+                "only after that. Install podman (apt candidate available) to unblock.",
+            )
+            record(
+                "media exemption observable on the wire",
+                "NOT_VERIFIED",
+                "no container runtime, so the node does not finish booting and nothing can "
+                "be observed on its wire.",
+            )
+            counts = {}
+            for _, status, _ in results:
+                counts[status] = counts.get(status, 0) + 1
+            import json as _json
+            (tmp / "readback.json").write_text(_json.dumps(
+                {"check": "P3 media deadline exemption", "binary": str(BIN),
+                 "results": [{"name": n, "status": st, "detail": d} for n, st, d in results],
+                 "counts": counts}, indent=2))
+            print()
+            print("counts:", ", ".join(f"{k}={v}" for k, v in sorted(counts.items())))
+            print()
+            print("node log tail:")
+            for line in tail.splitlines():
+                print("   ", line)
+            return 0 if "FAIL" not in counts else 1
+
         if "PID marker" in tail or "Permission denied" in tail:
             record(
                 "binary can run under a private data directory",
