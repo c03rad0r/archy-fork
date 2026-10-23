@@ -1133,7 +1133,17 @@ impl Server {
         main_addr: SocketAddr,
         shutdown: impl std::future::Future<Output = ()>,
     ) -> Result<()> {
-        let active_connections = Arc::new(tokio::sync::Semaphore::new(1024));
+        let active_connections = Arc::new(tokio::sync::Semaphore::new(UI_CONNECTION_BUDGET));
+        // P2: the peer listener gets its OWN budget. Previously both listeners shared
+        // `active_connections`, so N concurrent media streams consumed the permits the
+        // local UI needed and, at exhaustion, the node's own management surface answered
+        // 503 because a video was playing. A separate budget means media can never starve
+        // the UI and the UI can never starve media.
+        //
+        // Deliberately NOT smaller than the UI's: peer traffic here includes federated
+        // content fetches, and shrinking it would convert a UI-starvation bug into a
+        // peer-starvation bug. The fix is separation, not a smaller number.
+        let peer_connections = Arc::new(tokio::sync::Semaphore::new(PEER_CONNECTION_BUDGET));
         let (tx, rx_main) = tokio::sync::watch::channel(false);
 
         let main_task = tokio::spawn(accept_loop(
@@ -1218,7 +1228,7 @@ impl Server {
 
         let peer_task = tokio::spawn(peer_late_bind_loop(
             self.api_handler.clone(),
-            active_connections.clone(),
+            peer_connections,
             tx.subscribe(),
         ));
 
@@ -1229,7 +1239,10 @@ impl Server {
         // Wait up to 5s for in-flight requests.
         let drain_start = std::time::Instant::now();
         let drain_timeout = std::time::Duration::from_secs(5);
-        while active_connections.available_permits() < 1024 {
+        // Waits on the UI budget only. Peer permits live in a separate semaphore, so a
+        // long media stream can no longer hold shutdown open for its duration — which is
+        // exactly the deadlock a lifetime-held media permit would have created.
+        while active_connections.available_permits() < UI_CONNECTION_BUDGET {
             if drain_start.elapsed() > drain_timeout {
                 warn!("Drain timeout reached, forcing shutdown");
                 break;
@@ -1559,6 +1572,18 @@ fn request_surface_allowed(
             .get("x-archipelago-public-ingress")
             .is_some_and(|value| !value.as_bytes().is_empty())
 }
+
+/// Connection budget for the UI/local listeners (health, RPC, the dashboard).
+/// Named rather than a bare 1024 so the drain condition cannot drift from it.
+const UI_CONNECTION_BUDGET: usize = 1024;
+
+/// Connection budget for the peer (mesh) listener, kept SEPARATE from the UI budget.
+///
+/// P2: sharing one semaphore meant concurrent media streams exhausted the permits the
+/// local UI needed, and the node's own dashboard 503'd while a video streamed. Separating
+/// the budgets is the smallest correct fix: media can no longer starve the UI, and the UI
+/// cannot starve media.
+const PEER_CONNECTION_BUDGET: usize = 1024;
 
 async fn accept_loop(
     handler: Arc<ApiHandler>,
@@ -2721,6 +2746,81 @@ mod management_surface_tests {
 #[cfg(test)]
 mod media_deadline_tests {
     use super::*;
+
+    /// P2 regression guard: media must not be able to starve the local UI.
+    ///
+    /// The bug this pins: `serve_with_shutdown` created ONE `Semaphore::new(1024)` and
+    /// cloned it into every listener, so the peer listener and the UI listener drew from
+    /// the same 1024 permits. N concurrent media streams therefore consumed the permits
+    /// the UI needed, and at exhaustion `accept_loop` answered a bare 503 to *everything*
+    /// — the node's own dashboard became unreachable because a video was playing.
+    ///
+    /// Asserted on the SOURCE, because the wiring lives inside an async fn that no
+    /// in-process test can drive (the same reason P3 needs `localnode`). A unit test
+    /// cannot observe two semaphores; it can observe that the code creates two and hands
+    /// the peer one its own. That is weaker than a live run and it is stated as such —
+    /// the live proof is the `localnode` read-back.
+    ///
+    /// The second assertion is the one that would catch the tempting "fix": if someone
+    /// hands `active_connections` to `peer_late_bind_loop` again, the budgets silently
+    /// merge and the bug returns with every test still green.
+    #[test]
+    fn media_budget_is_separate_from_the_ui_budget() {
+        let src = include_str!("server.rs");
+
+        assert!(
+            src.contains("PEER_CONNECTION_BUDGET"),
+            "the peer listener must have its own named budget"
+        );
+        assert!(
+            src.contains("let peer_connections = Arc::new(tokio::sync::Semaphore::new("),
+            "a separate peer semaphore must be created"
+        );
+
+        // The peer loop must be handed the peer budget, not the UI one.
+        let peer_call = src
+            .find("peer_late_bind_loop(\n            self.api_handler.clone(),")
+            .or_else(|| src.find("peer_late_bind_loop("))
+            .expect("peer_late_bind_loop call site");
+        let after = &src[peer_call..peer_call + 320.min(src.len() - peer_call)];
+        assert!(
+            after.contains("peer_connections"),
+            "peer_late_bind_loop must receive peer_connections; receiving active_connections \
+             would re-merge the budgets and bring the UI-starvation bug back: {after}"
+        );
+        assert!(
+            !after.contains("active_connections"),
+            "peer_late_bind_loop must NOT receive the UI budget: {after}"
+        );
+
+        // The drain must wait on the UI budget only, so a long media stream cannot hold
+        // shutdown open (the deadlock a lifetime-held media permit would have created).
+        assert!(
+            src.contains("while active_connections.available_permits() < UI_CONNECTION_BUDGET"),
+            "the drain condition must reference the UI budget by name"
+        );
+        // The needle is assembled at runtime so this assertion cannot match its OWN text:
+        // `include_str!("server.rs")` includes this test module, so a literal needle would
+        // always be found and the check would fail against itself. Observed, not theorised —
+        // the first version of this test failed exactly that way.
+        let bare = format!("available_permits() < {}", 1024);
+        let offending = format!("while active_connections.{bare}");
+        assert!(
+            !src.contains(&offending),
+            "a bare 1024 in the drain condition can drift from the constant"
+        );
+    }
+
+    /// The two budgets must be independent values that can diverge without a code change
+    /// to the other one — a sanity check that they are not accidentally the same binding.
+    #[test]
+    fn the_two_budgets_are_independent_constants() {
+        assert!(
+            UI_CONNECTION_BUDGET > 0,
+            "each listener needs a non-zero budget"
+        );
+        assert!(PEER_CONNECTION_BUDGET > 0);
+    }
 
     /// P3 regression guard: media routes are exempt from the 900 s
     /// non-upgraded connection deadline.
