@@ -17,8 +17,8 @@ not flash or install OpenWrt; you bring a router that already runs it.
   (turns it into a wireless bridge/repeater) with DHCP + NAT configured for
   you.
 - **TollGate provisioning** (optional): installs the
-  [TollGate](https://tollgate.me) captive-portal package
-  (`tollgate-module-basic-go`) and stands up an `archipelago` SSID that
+  [TollGate](https://tollgate.me) captive-portal package (`tollgate-wrt`)
+  and stands up an `archipelago` SSID that
   sells timed internet access for sats, settled against this node's local
   Cashu mint.
 
@@ -151,7 +151,7 @@ internet to download the package.
 
 1. Click **Install TollGate**. The button relabels to *"Installing… this
    may take a few minutes"* while it works.
-2. Under the hood this installs `tollgate-module-basic-go` on the router
+2. Under the hood this installs `tollgate-wrt` on the router
    (via `opkg` on OpenWrt ≤24.x, or a manual `.ipk` extract on 25.x images
    where `opkg` isn't available), writes `/etc/tollgate/config.json`, and
    creates the `archipelago` SSID — all with default pricing (10 sats per
@@ -177,6 +177,41 @@ installed:
 
 Anyone who joins the `archipelago` SSID sees TollGate's captive portal and
 pays sats (via the configured Cashu mint) for timed access.
+
+### ⚠️ Known limitation: the paid bridge may not be the enforced bridge
+
+**As of the v0.6.0 pin, a router can install, run, accept payments, and still
+not gate the `archipelago` SSID.** Verify enforcement explicitly rather than
+trusting the success message.
+
+Archipelago puts the paid SSID on its own bridge, `br-tollgate`
+(192.168.99.1/24), deliberately — see `wifi.rs`. But the TollGate package's
+own first-boot scripts are written for the upstream `br-lan` topology:
+
+- `99-tollgate-setup` sets `nodogsplash.@nodogsplash[0].gatewayinterface='br-lan'`;
+- `20-nds-enforce.nft` matches `iifname "br-lan"` for every rule;
+- there are **zero** references to `br-tollgate` anywhere in the shipped
+  package tree.
+
+Archipelago deletes the anonymous nodogsplash section and pins
+`gatewayinterface` to `br-tollgate` itself, but the package's postinst runs on
+every install/upgrade and re-creates the `br-lan` section. Which instance ends
+up owning the captive redirect is therefore a race, not a guarantee.
+
+**How to check** (on the router, after provisioning):
+
+```sh
+ndsctl status | grep -i gatewayinterface
+fw4 -t 2>/dev/null | grep -c 'iifname "br-lan"'   # count the br-lan rules
+ip -4 addr show br-tollgate | grep inet           # the paid bridge exists
+```
+
+If the gateway interface reads `br-lan`, **payments open the gate on the
+router's management LAN rather than on the paid SSID** — that is the failure
+mode this note exists to stop shipping silently.
+
+Tracked separately from the version bump: fixing it changes enforcement
+behaviour on a live payment path and needs hardware verification.
 
 ## Verifying a successful install
 
@@ -245,14 +280,33 @@ new host/credentials; the newly connected router becomes the persisted one.
   saved router can't stall other RPCs — but the dashboard will show a
   connection error until you reconnect with the router's current address.
 - **TollGate provision fails with "No pre-built TollGate package for
-  architecture..."**: your router's SoC isn't one of the prebuilt
-  `.ipk` targets (`mips_24kc`, `mipsel_24kc`, `aarch64_cortex-a53`,
-  `aarch64_cortex-a72`, `arm_cortex-a7`). You'll need a custom opkg feed or
-  to build `tollgate-module-basic-go` from source for your architecture.
+  architecture..."**: from v0.6.0 the package asset names are **target**
+  qualified, not architecture-only, so a failure here usually means the
+  router's OpenWrt *target* could not be read rather than that its CPU is
+  unsupported. Check both values:
+
+  ```sh
+  . /etc/openwrt_release
+  echo "arch=${DISTRIB_ARCH} target=$(echo "$DISTRIB_TARGET" | tr / -)"
+  ```
+
+  The supported pairs are published by the
+  [packages feed](https://github.com/FreedomTechFeed/packages/releases) —
+  `tollgate-wrt_<version>_<arch>-<target>.{apk,ipk}`. Both formats are
+  published for every pair, so an `.apk`-native router (25.x) no longer needs
+  the manual `.ipk` path. Note that `arm_cortex-a7` in older notes is spelled
+  `arm_cortex-a7_neon-vfpv4` for the Raspberry Pi 2 target.
 - **TollGate download looks like it succeeded but provisioning still
-  fails**: the node sanity-checks the downloaded `.ipk` is at least 50 KB —
-  a smaller file usually means `wget` captured an HTML error page instead
-  (no internet access from the router, or a bad release URL).
+  fails**: the node verifies the download against the release's signed
+  `SHA256SUMS` manifest. A failure names either a digest mismatch (the file is
+  not what the release published) or a missing manifest entry (the release did
+  not publish that asset) — the second is a provenance problem, not a corrupt
+  transfer, and rebuilding the URL is the fix, not retrying.
+- **`jq` and `ca-bundle` are installed alongside TollGate.** They are declared
+  dependencies of the package, and nothing else pulls them in. `jq` is
+  load-bearing: the package's first-boot script uses it to read which UI owns
+  the router's entry ports, and silently falls back to the board mapping when
+  it is missing.
 - **Install fails right after a reboot or a fresh WAN setup** with `apk
   update failed ... router may have no internet access` even though WAN
   looks configured: this is usually just timing, not a real problem — the
@@ -280,7 +334,7 @@ RPC methods (`core/archipelago/src/api/rpc/openwrt.rs`, dispatched in
 | Method | Purpose |
 |---|---|
 | `openwrt.scan` | Probe a subnet for OpenWrt routers (`subnet`, `prefix`, `ssh_user`, `ssh_password`) |
-| `openwrt.get-status` | Full status: release, WiFi interfaces, WAN, TollGate state. No params → uses saved `router_config.json`; params with `host` also persist the connection |
+| `openwrt.get-status` | Full status: release, WiFi interfaces, WAN, TollGate state. The `tollgate` object carries `installed`, `version`, `version_known`, `pinned_version` and `up_to_date` — read `version`/`up_to_date` to confirm a version bump actually took effect, since a router can report `installed: true` while still running an old build. No params → uses saved `router_config.json`; params with `host` also persist the connection |
 | `openwrt.configure-wan` | Write WISP/WAN config (`ssid`, `password`, `encryption`, `dhcp_start`, `dhcp_limit`, `masq`) |
 | `openwrt.scan-wifi` | Radio scan for visible upstream networks |
 | `openwrt.provision-tollgate` | Install/reconfigure TollGate (`price_sats`, `step_size_ms`, `min_steps`, `mint_url`, `enabled`) |
