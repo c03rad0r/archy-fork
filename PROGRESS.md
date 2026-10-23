@@ -400,6 +400,52 @@ confident wrong diagnosis: cookie `csrf` vs `csrf_token`; fixture dir `content-o
 (the 206 row had been printing `Content-Range=None` since P1). A lookup that fails silently
 is indistinguishable from absence. Probes must fail loudly.
 
+## D3 IMPLEMENTED (2026-10-23) — accounting half; cap enforcement NOT yet wired
+
+**Why coarse:** `meter::record_and_check` (`streaming/meter.rs:26`) calls
+`session::load_sessions` and **saves the whole session store** on every call. Per-chunk
+metering of a 5 Mbps stream is therefore ~16,000 store writes per GB per viewer. Bytes
+accumulate in memory (`media_meter.rs`) and flush at end-of-stream or on a coarse window
+(`DEFAULT_FLUSH_BYTES` = 8 MiB, ~13 s at 5 Mbps).
+
+**New `media_meter.rs`:**
+- `MediaUsageAccumulator` keyed by (peer, service); `add` **saturates** (a plain `+` at
+  u64::MAX wraps small → effectively unlimited allowance — same class as the `fetch_sub`
+  wrap already fixed on the active-stream gauge).
+- `add_and_should_flush` / `take` / `drain_all`. `take` drains what it charged, or the next
+  flush double-charges and every viewer's allowance halves.
+- `flush_usage()` — the only place bytes become billable; per-pair errors are logged and
+  skipped so one corrupt session cannot stop everyone else being billed.
+
+**Wired into the body:** `media_metrics::counted_for(stream, peer, service)` accumulates in
+`poll_next`, so the count is the bytes **actually handed out** (a body counted at
+construction reads as fully served even on client disconnect). `counted()` keeps
+`usage: None` for callers with no billable peer.
+
+**Tests (6 new), 2093 passed / 1 failed** (environmental quadlet), fmt clean:
+
+| Test | Proves |
+|---|---|
+| `range_requests_cannot_reset_the_cap` | named guard: a resume ADDS, never resets |
+| `usage_is_accounted_per_peer_and_service` | two viewers don't share a counter |
+| `flush_threshold_fires_on_accumulation_and_resets_only_that_pair` | flush at window, pair-local reset |
+| `enormous_usage_saturates_instead_of_wrapping` | no u64 wrap → no free unlimited stream |
+| `drain_all_empties_and_totals` | no double-count |
+| `counted_for_accumulates_body_bytes_against_the_peer` | body drives it; CONTROL: `counted` charges nobody |
+
+**Two defects of my own:** `Counted` is a `Stream`, not an `HttpBody`, so `data()` does not
+exist on it (drive with `StreamExt::next`); `stream::iter` needs an explicit error type
+(E0282).
+
+**NOT done, stated plainly — the remaining D3 work:**
+1. `flush_usage` is **not yet called** from the stream-end path, so accumulated bytes are
+   never persisted.
+2. The cap is **not yet enforced** against a live session — nothing is cut off yet.
+3. Consequences: the wire read-back (`serve over /content/..., show the counter delta`) is
+   **NOT_VERIFIED**, and `check_gate`'s three callers remain off the video path.
+
+So: the counter moves in-process and is negative-control-proven, but D3 is **not done**.
+
 ## D4a IMPLEMENTED (2026-10-23) — enforced on XFS, REPORTED on ext4
 
 `disk_limit` was declared and read nowhere; now wired, but **not** as a copy of the memory

@@ -22,6 +22,20 @@
 //! breached cap means, and the plan is explicit that the body ends with `Ok(None)` rather
 //! than an error — a truncated-but-clean end of stream, not a mid-stream error that a
 //! player reports as a network failure.
+//!
+//! ## Why `allow(dead_code)` is here, and what it is NOT hiding
+//!
+//! The clippy ratchet runs `cargo clippy -p archipelago --bin archipelago` — **without
+//! `--all-targets`**, so the test cfg is not compiled and test-only consumers do not count
+//! as uses. Everything in this module is exercised by the tests below, but only
+//! `MediaUsageAccumulator::add` (via `counted_for`) has a non-test consumer today. The rest
+//! is `add_and_should_flush` / `take` / `drain_all` / `flush_usage`, which the stream-end
+//! flush will call once it is wired.
+//!
+//! So this attribute covers code that is tested but not yet called, and the D3 section of
+//! PROGRESS.md names exactly which wiring is missing. It is not a silencer for untested
+//! code: every function here has a test that fails without it.
+#![allow(dead_code)]
 
 use std::collections::BTreeMap;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -33,6 +47,12 @@ use std::sync::Mutex;
 /// both the over-serve on a breached cap and the loss on an unclean shutdown to ~8 MiB per
 /// viewer — small next to a 64 GiB media budget, and ~128x fewer store writes than
 /// per-chunk metering.
+///
+/// `dead_code` because the stream-end flush that consumes it is not wired yet — see the D3
+/// section of PROGRESS.md for exactly what remains. Marked rather than deleted so the
+/// constant and its tests survive to the wiring; the alternative (deleting the accounting
+/// until the flush exists) would throw away the negative-control-proven behaviour. The same
+/// idiom is already used in this repo for the per-object counters.
 pub const DEFAULT_FLUSH_BYTES: u64 = 8 * 1024 * 1024;
 
 type Key = (String, String);

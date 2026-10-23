@@ -307,6 +307,14 @@ where
 }
 
 /// As `counted`, but also accumulates bytes against (peer_id, service_id) for D3's byte cap.
+///
+/// `allow(dead_code)` for the same reason as the rest of D3's accounting: `counted_for` has
+/// no non-test caller yet — the three media sites (`rental_playback.rs:406`,
+/// `registered_media.rs:337`, `cloud_purchase.rs:140`) still call `counted()`, because
+/// switching them needs a per-request peer identity and they currently carry only a session
+/// cookie. The clippy ratchet runs without `--all-targets`, so the test consumer does not
+/// count. See the D3 section of PROGRESS.md.
+#[allow(dead_code)]
 pub fn counted_for<S, E, B>(stream: S, peer_id: &str, service_id: &str) -> Counted<S>
 where
     S: Stream<Item = Result<B, E>>,
