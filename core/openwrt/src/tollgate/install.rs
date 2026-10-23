@@ -3,6 +3,7 @@ use tracing::info;
 
 use crate::opkg::PkgManager;
 use crate::tollgate::assets::{asset_url, AssetShape, PackageTarget, FEED_REPO};
+use crate::tollgate::verify::{manifest_url, verify_download, MIN_PACKAGE_BYTES, SHA256SUMS_NAME};
 use crate::tollgate::version::{
     decide_install, package_version_from_pin, parse_installed, Installed, TOLLGATE_PACKAGE,
     TOLLGATE_SERVICE_BIN,
@@ -126,7 +127,101 @@ pub fn install_tollgate(router: &Router) -> Result<()> {
         "wget --no-check-certificate -O /tmp/tollgate.ipk '{}' 2>&1",
         url
     ))?;
+    verify_downloaded_package(router, "/tmp/tollgate.ipk", &filename_from_url(&url))?;
     install_ipk(router, "/tmp/tollgate.ipk")
+}
+
+/// Install the runtime dependencies the TollGate package declares.
+///
+/// The feed recipe declares `DEPENDS:=+nodogsplash +jq +ca-bundle`. None of
+/// them arrive on their own here, because every install path in this module
+/// deliberately skips dependency resolution:
+///
+/// * the `opkg` fast path only resolves deps against a real feed, and there is
+///   usually no TollGate feed configured;
+/// * the raw `.ipk` path extracts with `ar`/`tar` and runs the scriptlets
+///   directly — no solver at all;
+/// * the `.apk` path uses `--allow-untrusted` on a local file.
+///
+/// `nodogsplash` is installed separately (it is also stopped and reconfigured,
+/// see `nodogsplash.rs`), so only the other two are handled here:
+///
+/// * **`jq`** — load-bearing. `99-tollgate-setup` reads `entry_ui` out of
+///   `config.json` with it, and falls back to the `board` mapping when jq is
+///   absent. A missing jq therefore silently changes which UI answers the
+///   router's entry ports.
+/// * **`ca-bundle`** — TLS trust. The gateway verifies Cashu mints and
+///   Lightning over TLS using the system root pool only, so without it a
+///   router cannot verify a payment.
+///
+/// Both are Architecture: all and present in both the 24.10 opkg and 25.12 apk
+/// indexes, so a plain install resolves either way.
+pub fn install_runtime_deps(router: &Router, pkg_mgr: PkgManager) -> Result<()> {
+    for dep in ["jq", "ca-bundle"] {
+        router
+            .install_package(pkg_mgr, dep)
+            .with_context(|| format!("install TollGate runtime dependency {dep}"))?;
+    }
+    Ok(())
+}
+
+/// The basename of a URL's last path segment.
+///
+/// Used to name the file in the manifest lookup, so the digest is checked
+/// against the name the release actually published.
+fn filename_from_url(url: &str) -> String {
+    url.rsplit('/').next().unwrap_or(url).to_string()
+}
+
+/// Fetch a release's `SHA256SUMS` and verify a downloaded file against it.
+///
+/// Runs on the ROUTER, not here: the file being checked lives there, and
+/// hashing it locally would mean trusting a second transfer.
+///
+/// Fails closed. An unreachable manifest, an absent entry, or a digest
+/// mismatch all abort the install — this is a money path, and a package whose
+/// integrity cannot be checked is not installable.
+pub fn verify_downloaded_package(router: &Router, path: &str, filename: &str) -> Result<()> {
+    let (size_out, _) = router.run(&format!("wc -c < {path} 2>/dev/null"))?;
+    let bytes: u64 = size_out.trim().parse().unwrap_or(0);
+
+    // Cheap pre-check first: a tiny file is an error page, and saying so is
+    // more useful than a digest mismatch on HTML.
+    if bytes < MIN_PACKAGE_BYTES {
+        anyhow::bail!("{}", verify_download(filename, bytes, "", "").message());
+    }
+
+    // The release manifest. `--no-check-certificate` for the same reason the
+    // package download uses it: fresh OpenWrt images ship without a CA bundle,
+    // which is one of the reasons we install ca-bundle below.
+    let manifest_url = manifest_url(TOLLGATE_REPO, TOLLGATE_VERSION);
+    let (_, dl_code) = router.run(&format!(
+        "wget --no-check-certificate -q -O /tmp/tollgate-SHA256SUMS '{manifest_url}' 2>&1"
+    ))?;
+    if dl_code != 0 {
+        anyhow::bail!(
+            "could not fetch {SHA256SUMS_NAME} from {manifest_url} — refusing to install a \
+             package whose integrity cannot be verified against the release manifest"
+        );
+    }
+    let (manifest_text, _) = router.run("cat /tmp/tollgate-SHA256SUMS 2>/dev/null")?;
+
+    let (digest_out, digest_code) = router.run(&format!(
+        "sha256sum {path} 2>/dev/null | awk '{{print $1}}'"
+    ))?;
+    if digest_code != 0 {
+        anyhow::bail!("sha256sum is not available on this router — cannot verify the download");
+    }
+    let actual = digest_out.trim();
+
+    let outcome = verify_download(filename, bytes, actual, &manifest_text);
+    router.run_ok("rm -f /tmp/tollgate-SHA256SUMS")?;
+
+    if !outcome.may_install() {
+        anyhow::bail!("{}", outcome.message());
+    }
+    info!("[{}] {}", router.host, outcome.message());
+    Ok(())
 }
 
 /// Read `DISTRIB_ARCH` and `DISTRIB_TARGET` from the router.
@@ -227,15 +322,7 @@ pub fn install_tollgate_apk_native(router: &Router) -> Result<()> {
         if dl_code != 0 {
             anyhow::bail!("TollGate .apk download failed: {}", dl_out.trim());
         }
-        let (size_out, _) = router.run("wc -c < /tmp/tollgate.apk 2>/dev/null")?;
-        let size: u64 = size_out.trim().parse().unwrap_or(0);
-        if size < 50_000 {
-            anyhow::bail!(
-                "Downloaded TollGate .apk is only {}B — wget likely captured an error page. \
-                 Check router internet access and that the release URL is reachable.",
-                size
-            );
-        }
+        verify_downloaded_package(router, "/tmp/tollgate.apk", &filename_from_url(&url))?;
         let (add_out, add_code) = router.run("apk add --allow-untrusted /tmp/tollgate.apk 2>&1")?;
         router.run_ok("rm -f /tmp/tollgate.apk")?;
         if add_code != 0 {
