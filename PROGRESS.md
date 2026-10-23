@@ -193,3 +193,63 @@ config/env override?
 
 The prompt says 1-2 d. My recon agrees: 5 insertion sites, one new module, one snapshot
 field group. The real cost is B3, not the counter.
+
+---
+
+# P1 IMPLEMENTED — and one environmental consequence I caused
+
+## P1 status: code complete, counters wired at all 5 sites, pushed (`f7a397a`)
+
+`core/archipelago/src/media_metrics.rs` (new) + wiring at
+`registered_media.rs:337`, `rental_playback.rs:406`, `cloud_purchase.rs:140`,
+`prepared_media.rs:165`, `media_stream.rs:91`. `MetricSnapshot.media` added with
+`#[serde(default)]`; `collector.rs` fills it.
+
+**RED observed by negative control**, not by a compile error: counting was disabled on
+purpose and the test failed at exactly the right assertion —
+`bytes_served must equal the sum of chunk lengths actually yielded`, left 0 vs right
+131073. A test that only proves a function was missing proves nothing about its assertions.
+
+## THE MANDATED RUNNER NOW HAS 1 FAILURE ON THIS HOST — and it is not this change
+
+| SUT | passed | failed |
+|---|---|---|
+| pristine `fcc18b3` | 2073 | **1** |
+| branch `f7a397a` | 2079 | **1** |
+
+Same single failure on both: `container::quadlet::tests::actual_quadlet_generator_stops_before_forced_removal`.
+
+**Root cause, and it is a consequence of my own podman install.** That test opens with a
+self-skip guard:
+
+    let generator = Path::new("/usr/lib/systemd/system-generators/podman-system-generator");
+    if !generator.exists() { eprintln!("… run this regression on the Linux release host"); return; }
+
+On a host without podman it **silently passes**. Installing podman (which I did to unblock
+the `localnode`/`hardware` venues) put that path on disk, so the test stopped skipping and
+started asserting against the real generator — and podman **4.9.3** emits different text
+than the test expects:
+
+    observed (4.9.3):  ExecStop=/usr/bin/podman rm -v -f -i --cidfile=%t/%N.cid
+                       TimeoutStopSec=615
+                       (no "podman stop --ignore --time=600", no "--stop-timeout 600")
+    expected by test:  ExecStop=/usr/bin/podman stop --ignore --time=600
+                       before ExecStop=/usr/bin/podman rm …
+                       --stop-timeout 600, TimeoutStopSec=615
+
+The test is version-sensitive and was written against a newer podman — presumably the one
+on the project's actual release host. Ubuntu 24.04 ships 4.9.3.
+
+**What I did NOT do:** I did not edit the test, delete it, or weaken its assertions. The
+prompt forbids refactoring unrelated source, the test may well be correct for the podman
+the project targets, and "make the suite green by editing the failing test" is exactly the
+move the prompt exists to prevent. It is reported instead.
+
+**Trade-off, stated plainly:** podman is required for the `localnode` and `hardware`
+venues (and therefore for every wire-level read-back in this job). Installing it activated
+a dormant, version-sensitive test. Both facts are true; neither cancels the other.
+
+## Delta, honestly
+
++6 tests on this branch versus pristine (4 from P3 + 2 from P1), **all passing**. The
+single failure is identical on both trees and is environmental, not behavioural.
