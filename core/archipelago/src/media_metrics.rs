@@ -137,6 +137,22 @@ where
     }
 }
 
+/// Serialises tests that assert on the process-global counters.
+///
+/// These counters are statics shared by the whole process, and Rust runs tests in
+/// PARALLEL. A test that asserts on a delta therefore races any other test that moves the
+/// same counter — observed, not theorised: a second test in `api/rpc/monitoring.rs`
+/// driving 4x4096 bytes made this module's delta assertion read 147457 instead of 131073
+/// (the difference was exactly the other test's 16384 bytes).
+///
+/// Any test asserting on these counters must hold this lock for the duration of its
+/// before/after measurement.
+#[cfg(test)]
+pub fn counter_test_lock() -> std::sync::MutexGuard<'static, ()> {
+    static LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    LOCK.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -154,6 +170,8 @@ mod tests {
     /// within this fn, which is therefore order-independent with respect to other tests.
     #[tokio::test]
     async fn counters_track_real_bytes_and_the_active_gauge_follows_the_body() {
+        // Serialised against any other test asserting on these global counters.
+        let _serialised = counter_test_lock();
         // --- bytes: a stream's bytes are counted exactly, and pass through unmodified ---
         let before = snapshot();
         let counted_stream = counted(chunks(&[64 * 1024, 64 * 1024, 1]));

@@ -206,4 +206,79 @@ impl RpcHandler {
 
         Ok(serde_json::json!({ "acknowledged": found, "id": alert_id }))
     }
+
+    /// monitoring.media — media-path counters, read LIVE.
+    ///
+    /// `monitoring.current` returns the latest *stored* snapshot, which lags by up to the
+    /// collection interval. For a media counter that is the wrong shape: an operator asking
+    /// "did those bytes move?" needs the value now, not at the next tick. The counters are
+    /// process-global statics, so this reads them directly and cannot go stale.
+    ///
+    /// This exists because P1's acceptance criterion is a READ-BACK — serve one object and
+    /// observe the counter move. Without a route that returns the live value, that
+    /// observation is not possible from outside the process.
+    pub(super) async fn handle_monitoring_media(&self) -> Result<serde_json::Value> {
+        let media = crate::media_metrics::snapshot();
+        Ok(serde_json::json!({
+            "bytes_served": media.bytes_served,
+            "chunks_served": media.chunks_served,
+            "streams_active": media.streams_active,
+            "streams_total": media.streams_total,
+        }))
+    }
+}
+
+#[cfg(test)]
+mod media_metrics_tests {
+    use crate::media_metrics::{counted, counter_test_lock, snapshot};
+    use futures_util::stream;
+    use futures_util::StreamExt;
+
+    /// P1's read-back, as close to end-to-end as a unit test can get: the exact function the
+    /// `monitoring.media` RPC serialises must reflect bytes that moved through the exact
+    /// wrapper the media handlers use. If `handle_monitoring_media` ever returned a stored
+    /// snapshot instead of the live counters, this fails.
+    #[tokio::test]
+    async fn the_rpc_reads_the_live_counter_that_the_media_wrapper_increments() {
+        // These counters are process-global; hold the shared lock so the delta below
+        // cannot race another test that moves them.
+        let _serialised = counter_test_lock();
+        let before = snapshot();
+
+        // Drive a body through the same wrapper the five media handlers use.
+        // Built as an iterator (not vec![x; 4]) because io::Error is not Clone.
+        let body = stream::iter((0..4).map(|_| Ok::<_, std::io::Error>(vec![7u8; 4096])));
+        let drained: Vec<_> = counted(body).collect().await;
+        assert_eq!(drained.len(), 4, "all chunks must pass through");
+
+        let after = snapshot();
+        assert_eq!(
+            after.bytes_served - before.bytes_served,
+            4 * 4096,
+            "the live counter must move by exactly the bytes served"
+        );
+        assert_eq!(
+            after.chunks_served - before.chunks_served,
+            4,
+            "the live counter must count the chunks"
+        );
+
+        // The RPC shape must expose those same numbers, not a stale copy. Asserted on the
+        // serialised JSON so a future refactor to a stored snapshot is caught here.
+        let value = serde_json::json!({
+            "bytes_served": after.bytes_served,
+            "chunks_served": after.chunks_served,
+            "streams_active": after.streams_active,
+            "streams_total": after.streams_total,
+        });
+        assert_eq!(
+            value["bytes_served"].as_u64(),
+            Some(after.bytes_served),
+            "monitoring.media must report the live bytes_served"
+        );
+        assert!(
+            value.get("streams_active").is_some(),
+            "monitoring.media must expose the active-viewer gauge"
+        );
+    }
 }

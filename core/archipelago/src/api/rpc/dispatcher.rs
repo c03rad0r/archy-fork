@@ -597,6 +597,7 @@ impl RpcHandler {
 
             // Real-time metrics monitoring
             "monitoring.current" => self.handle_monitoring_current().await,
+            "monitoring.media" => self.handle_monitoring_media().await,
             "monitoring.history" => self.handle_monitoring_history(params).await,
             "monitoring.containers" => self.handle_monitoring_containers().await,
             "monitoring.alerts" => self.handle_monitoring_alerts(params).await,
