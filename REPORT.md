@@ -226,3 +226,143 @@ Its **full acceptance is not** — the duration proof is blocked on B3 and on wa
 that is stated rather than papered over. Nothing here is marked done from a summary: every
 claim above carries a command and observed output, and the one thing I could not observe is
 labelled `NOT_VERIFIED`.
+
+---
+
+# P1 — media-path observability
+
+**Status: DELIVERED, with one dimension honestly unimplemented.**
+
+Branch `fix/media-stream-deadline`. Commits: `f7a397a` (counters + 5 sites), `25c28a1`
+(monitoring.media RPC + race fix), `beee485` (allowlist + auth), `34baddb` (read-back
+passes), `ac71da1` (per-object/per-peer/cache API), `5088f47` (cache producer + ratchet),
+`f5a1b37` (wire assertion).
+
+## What was built
+
+`core/archipelago/src/media_metrics.rs` (new):
+
+- Global `AtomicU64` counters following the existing idiom for this problem
+  (`update.rs:15`, `pub static DOWNLOAD_BYTES`).
+- `Counted` wraps a media chunk stream and counts bytes **inside `poll_next`**, not at
+  construction. A body counted at construction is recorded as fully served even if the
+  client disconnects after one chunk; counting at yield counts what was actually handed to
+  the connection.
+- `ActiveGuard` decrements on `Drop`, so the active-viewer gauge follows the body's real
+  lifetime — a mid-stream disconnect drops the body and the gauge falls. The decrement is
+  **saturating**: a plain `fetch_sub` on 0 wraps to `u64::MAX` and reads as "4 billion
+  viewers".
+- Generic over the chunk type, because the five handlers disagree: `rental_playback.rs`
+  yields `bytes::Bytes`, the other four `Vec<u8>`. Both are `AsRef<[u8]>`, so one wrapper
+  covers all five **without converting a chunk** — converting would allocate per chunk, the
+  exact cost this module exists to avoid.
+- Per chunk: one relaxed atomic add, ~64 KiB apart. No lock, no allocation, no store call.
+  The plan's D3 warning (16,000 JSON rewrites per GB per viewer) is why.
+
+**Wired at all five sites where media bytes actually flow:** `registered_media.rs:337`,
+`rental_playback.rs:406`, `cloud_purchase.rs:140`, `prepared_media.rs:165`,
+`media_stream.rs:91`. `media_stream.rs::file_response` is **not** a shared choke point — it
+is called only by `proxy.rs:244`, which is why the other four needed their own wrapping.
+
+**`MetricSnapshot.media`** added with `#[serde(default)]` so snapshots persisted before the
+field existed still parse; `collector.rs` fills it.
+
+**`monitoring.media`** RPC reads the statics **live**. `monitoring.current` returns the
+latest *stored* snapshot, which lags by up to the collection interval — the wrong shape for
+"did those bytes just move?".
+
+## The mandated read-back — PASSES
+
+    [PASS] binary starts and listens                     — 127.0.0.1:41549
+    [PASS] session established (auth.setup + auth.login)
+    [PASS] media body served over the real socket        — HTTP 200, 143360 bytes
+    [PASS] bytes match the fixture exactly               — byte-for-byte identical
+    [PASS] Range request served as 206                   — 77824 bytes
+    [PASS] monitoring.media answers over the wire
+    [PASS] COUNTER MOVED on the media path               — delta=143360 for a 143360-byte
+                                                            serve (chunks_served 5 -> 8)
+    [PASS] CONTROL: /health does NOT move the media counter
+    [PASS] cache HIT recorded for a locally-served object — cache_hits +1, cache_misses +0
+    [NOT_VERIFIED] per-object keys have no producer yet
+    counts: PASS=11, NOT_VERIFIED=1, exit 0
+
+The CONTROL matters as much as the delta: without it, a counter that merely measured
+traffic would look identical. The cache assertion pins **both** sides (hits +1 AND misses
++0), because counting a locally-served object as a miss would leave a "working" counter
+with a meaningless hit ratio.
+
+## Provenance — what this does and does not prove
+
+The object is a **fixture** written into the seller's `purchased-content` store. So this
+proves **the counter observes the media path**, not that a purchase works. A real purchase
+remains operator UAT.
+
+## TDD
+
+RED observed by **negative control**, not merely by a compile error: counting was disabled
+on purpose and the test failed at exactly the right assertion — `bytes_served must equal
+the sum of chunk lengths actually yielded`, left 0 vs right 131073. A test that only proves
+a function was missing proves nothing about its assertions.
+
+## The one dimension that is NOT implemented
+
+**Per-object accounting has no producer.** The plan requires keys of
+`(content_sha256, content_size)`. The seller's `OwnedItem` index
+(`content_owned.rs:48-61`) carries onion, content_id, filename, mime, size, paid_sats,
+backend, timestamp and download_complete — **no sha256**. So nothing at the serve site can
+build the required key.
+
+Keying on `content_id` instead is the easy move and the plan **explicitly forbids** it: it
+fragments identical bytes across sellers and makes a hit ratio meaningless. The API is
+present and unit-tested, with a targeted `#[allow(dead_code)]` and a doc comment naming the
+missing input, rather than letting the lint delete a documented interface or quietly
+substituting the forbidden key. The read-back reports this row as **NOT_VERIFIED**.
+
+## Defects I introduced and fixed (each had produced a plausible wrong result)
+
+1. **A test race.** The new RPC test's bytes leaked into the existing delta assertion
+   (`147457` vs `131073`; difference exactly `4 x 4096`). Global counters + parallel tests.
+   Fixed with a test-only lock, **not** `--test-threads=1`, which would have hidden it from CI.
+2. **Wrong fixture directory.** Wrote to `content-owned/`; the constant is
+   `purchased-content` (`content_owned.rs:42`). `open_owned()` returned `None`, the handler
+   fell through to the peer path, and the read-back reported **"502 — requires FIPS"** — a
+   FIPS message for a directory-name typo.
+3. **Wrong cookie name.** Parsed for `csrf`; the server sets `csrf_token`. No cookie was
+   ever captured, so every probe was silently unauthenticated.
+4. **A self-contradictory status** in the script (`"NOT_VERIFIED" if False else "PASS"`)
+   that would always have reported PASS.
+5. **Broke the clippy ratchet** (124 -> 131) with seven "never used" warnings. Fixed by
+   wiring the producer that genuinely exists (cache hit/miss at the local-vs-peer decision)
+   and documenting the one that does not.
+
+## Gates
+
+| Gate | Result |
+|---|---|
+| `cargo check -p archipelago` | exit 0 |
+| `cargo fmt --all -- --check` | clean |
+| clippy, after vs baseline | **124 == 124** (both re-measured; a warm clippy cache reports 0) |
+| mandated runner | **2083 passed / 1 failed** |
+| pristine `fcc18b3` for comparison | 2073 passed / **1 failed** |
+
+The single failure is `container::quadlet::tests::actual_quadlet_generator_stops_before_forced_removal`,
+**identical on pristine `fcc18b3`** and environmental: the test self-skips when
+`/usr/lib/systemd/system-generators/podman-system-generator` is absent, and installing
+podman (needed for the `localnode`/`hardware` venues) activated it. Podman 4.9.3 emits
+different text than the test expects. **Not edited, not weakened.**
+
+## A security note worth carrying forward
+
+`/api/peer-content/` is session-gated **on purpose** ("Same-origin, session-gated"). The
+quick way to make the read-back pass was to exempt media paths from the auth check, which
+would hand any unauthenticated caller the buyer's purchased bytes. The script authenticates
+instead. Separately: `/var/lib/archipelago` on this host is a **bind-mount of `/tmp`**
+(mode 1777, same inode). I created a `remember_secret` there before checking and **removed
+it immediately**; a world-writable `/tmp` is no place for a session-signing key, and it
+would be swept anyway. Recorded so the next worker does not repeat it.
+
+## Still open, stated plainly
+
+- Per-object keys: **no producer** (no sha256 in the owned index).
+- Per-peer map: has a producer API but **no wire-level assertion**.
+- A real purchase, and P3's >900 s duration, remain **operator UAT**.
