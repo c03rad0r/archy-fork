@@ -87,14 +87,25 @@ def rpc(port: int, method: str, params: dict | None = None):
         for name, value in resp.getheaders():
             if name.lower() == "set-cookie":
                 pair = value.split(";", 1)[0]
-                key = pair.split("=", 1)[0].strip()
-                if key in ("session", "csrf"):
-                    SESSION[key] = pair.split("=", 1)[1]
-                    SESSION["cookie"] = "; ".join(
-                        f"{k}={v}" for k, v in SESSION.items() if k in ("session", "csrf")
-                    )
-                    if key == "csrf":
-                        SESSION["csrf"] = SESSION["csrf"]
+                if "=" not in pair:
+                    continue
+                key, _, val = pair.partition("=")
+                key = key.strip()
+                # The server sets "session" and "csrf_token" (not "csrf"). Getting this
+                # name wrong means no cookie is ever captured and the whole read-back
+                # silently probes unauthenticated — which is exactly what happened first.
+                if key in ("session", "csrf_token"):
+                    if key == "session":
+                        SESSION["session"] = val
+                    else:
+                        SESSION["csrf"] = val
+                        SESSION["csrf_header"] = val
+        if SESSION.get("session"):
+            SESSION["cookie"] = "; ".join(
+                f"{k}={v}" for k, v in
+                (("session", SESSION.get("session")), ("csrf_token", SESSION.get("csrf")))
+                if v
+            )
         if resp.status != 200:
             return None
         parsed = json.loads(raw)
@@ -120,7 +131,11 @@ def establish_session(port: int) -> None:
 
 def seed_owned(data_dir: Path) -> None:
     """Write a fixture into the content_owned store: index + bytes."""
-    owned_root = data_dir / "content-owned"
+    # OWNED_DIR is "purchased-content" (content_owned.rs:42) — NOT "content-owned".
+    # Getting this wrong made open_owned() return None, the handler fall through to the
+    # FIPS path, and the read-back report a 502 "requires FIPS" that had nothing to do
+    # with FIPS. Read the constant, do not guess the directory name.
+    owned_root = data_dir / "purchased-content"
     (owned_root / ONION).mkdir(parents=True, exist_ok=True)
     (owned_root / ONION / CONTENT_ID).write_bytes(PAYLOAD)
     index = {
@@ -160,7 +175,7 @@ def main() -> int:
     print(f"binary : {BIN}  ({BIN.stat().st_size / 1e6:.1f} MB)")
     print(f"data   : {tmp}")
     print(f"port   : {port}")
-    print(f"fixture: {len(PAYLOAD)} bytes at content-owned/{ONION[:8]}…/{CONTENT_ID}")
+    print(f"fixture: {len(PAYLOAD)} bytes at purchased-content/{ONION[:8]}…/{CONTENT_ID}")
     print()
 
     proc = subprocess.Popen(
