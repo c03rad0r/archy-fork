@@ -298,6 +298,33 @@ def main() -> int:
                 "is measuring traffic, not the media path",
             )
 
+        # ---- cache hit/miss: a locally-served object must register as a HIT -----------
+        c_pre_cache = rpc(port, "monitoring.media") or {}
+        hits_before = c_pre_cache.get("cache_hits", 0)
+        misses_before = c_pre_cache.get("cache_misses", 0)
+        # This object IS in the local store, so serving it is a cache hit, not a proxy fetch.
+        st5, body5, _ = probe(port, path)
+        c_post_cache = rpc(port, "monitoring.media") or {}
+        hit_delta = c_post_cache.get("cache_hits", 0) - hits_before
+        miss_delta = c_post_cache.get("cache_misses", 0) - misses_before
+        record(
+            "cache HIT recorded for a locally-served object",
+            "PASS" if hit_delta >= 1 and miss_delta == 0 else "FAIL",
+            f"cache_hits +{hit_delta}, cache_misses +{miss_delta} for HTTP {st5} "
+            f"served from the local store — a locally-served object must not be counted "
+            f"as a miss, or the hit ratio is meaningless",
+        )
+
+        # ---- per-peer map is exposed (producer is per-request, not per-object) --------
+        record(
+            "per-object keys have no producer yet",
+            "NOT_VERIFIED",
+            "the seller's OwnedItem index carries no sha256 (content_owned.rs:48-61), so "
+            "nothing at the serve site can build the plan's required (sha256, size) key. "
+            "Keying on content_id instead is forbidden by the plan. The API is present and "
+            "unit-tested; this row stays NOT_VERIFIED until a hash source exists.",
+        )
+
         record(
             "counter arithmetic (inline test, negative-control backed)",
             "PASS",
