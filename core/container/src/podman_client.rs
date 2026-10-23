@@ -398,6 +398,30 @@ impl PodmanClient {
             );
         }
 
+        // D4a: `disk_limit` was declared in ResourceLimits and read NOWHERE. Wiring it is
+        // not a straight copy of the memory path, because per-container size limits are
+        // only enforceable on overlay-on-XFS with project quotas — on ext4 podman fails
+        // with "storage option overlay.size and overlay.inodes only supported for
+        // backingFS XFS". So: pass it when the host can honour it, and log loudly when it
+        // cannot, rather than emitting a flag that errors at start or is silently dropped.
+        let (storage_opt, disk_note) = disk_limit_storage_opt(
+            manifest.app.resources.disk_limit.as_deref(),
+            &storage_backing_fs(),
+        );
+        if let Some(opt) = storage_opt {
+            resource_limits.insert("storage_opt".to_string(), opt);
+        }
+        if let Some(note) = disk_note {
+            // A limit the host cannot enforce must be VISIBLE. Silence here is the failure
+            // mode this deliverable exists to remove: the manifest says "disk_limit: 2Gi"
+            // and nothing anywhere says it is being ignored.
+            tracing::warn!(
+                app = %manifest.app.id,
+                "disk_limit declared but NOT enforced: {}",
+                note
+            );
+        }
+
         let (net_mode, custom_network) = podman_network_settings(
             manifest.app.container.network.as_deref(),
             manifest.app.security.network_policy.as_str(),
@@ -1017,6 +1041,122 @@ fn manifest_apps_dirs() -> Vec<PathBuf> {
     dirs
 }
 
+/// Detect the backing filesystem of the container storage root, which is what decides
+/// whether a per-container `size=` can be enforced.
+///
+/// Best-effort by design: if detection fails we return an empty string, which
+/// `disk_limit_support` treats as NotEnforceable. That is the safe direction — claiming a
+/// limit is enforceable when it is not is the silent failure; claiming it is not
+/// enforceable when it actually is merely costs a warning.
+pub fn storage_backing_fs() -> String {
+    // The overlay driver's backing filesystem is what podman checks, and it is not always
+    // the mount's filesystem — so prefer a direct statfs on the storage root, falling back
+    // to the driver name.
+    let roots = [
+        std::env::var("HOME")
+            .map(|h| std::path::PathBuf::from(h).join(".local/share/containers/storage"))
+            .unwrap_or_else(|_| std::path::PathBuf::from("/root/.local/share/containers/storage")),
+        std::path::PathBuf::from("/var/lib/containers/storage"),
+    ];
+    for candidate in roots {
+        if let Ok(out) = std::process::Command::new("stat")
+            .args(["-f", "-c", "%T"])
+            .arg(&candidate)
+            .output()
+        {
+            if out.status.success() {
+                let fs = String::from_utf8_lossy(&out.stdout).trim().to_string();
+                if !fs.is_empty() {
+                    return fs;
+                }
+            }
+        }
+    }
+    String::new()
+}
+
+/// Where a container's writable layer lives, and whether it can enforce a size limit.
+///
+/// Podman's overlay driver supports per-container `size=` only on **XFS with project
+/// quotas**. On ext4 (this host, and stock Debian 13) it fails outright:
+///
+/// ```text
+/// $ podman run --rm --storage-opt size=100M alpine true
+/// Error: storage option overlay.size and overlay.inodes only supported for
+/// backingFS XFS. Found extfs
+/// ```
+///
+/// Marked `text` on purpose: an unmarked indented block is compiled by rustdoc as Rust, and
+/// the `$` prompt made the doctest fail with "expected item, found `$`". Observed, not
+/// theorised.
+///
+/// So a manifest `disk_limit` can only be honoured on some hosts. Rather than wire a flag
+/// that errors at container start (or is silently ignored), D4a reports which case applies
+/// and the caller decides. The point is that a limit which cannot be enforced must be
+/// VISIBLE, not silent.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum DiskLimitSupport {
+    /// The backing filesystem can enforce per-container size limits.
+    Enforceable { backing: String },
+    /// It cannot, with the reason and what would make it possible.
+    NotEnforceable { backing: String, reason: String },
+}
+
+/// Determine whether per-container disk limits can be enforced on this host.
+///
+/// Detection is by backing filesystem name, which is what podman itself checks. `xfs` is
+/// the only supported case; note that XFS *without* project quotas is also unsupported at
+/// runtime, which this cannot distinguish cheaply — so the caller treats `Enforceable` as
+/// "attempt it" rather than "guaranteed", and the container-start error remains the final
+/// authority.
+pub fn disk_limit_support(backing_fs: &str) -> DiskLimitSupport {
+    let fs = backing_fs.trim().to_ascii_lowercase();
+    if fs == "xfs" {
+        DiskLimitSupport::Enforceable { backing: fs }
+    } else {
+        DiskLimitSupport::NotEnforceable {
+            backing: fs.clone(),
+            reason: format!(
+                "per-container size limits need overlay-on-XFS with project quotas; \
+                 this host's backing filesystem is '{fs}'. Enforcing would require an XFS \
+                 storage root, or expressing the limit through the node-level media budget \
+                 instead."
+            ),
+        }
+    }
+}
+
+/// Build the `storage_opt` map for a manifest's `disk_limit`, or explain why it is skipped.
+///
+/// Returns `Ok(None)` when there is no `disk_limit` (nothing to do) and when the host
+/// cannot enforce one (the caller should surface the reason rather than pretend).
+pub fn disk_limit_storage_opt(
+    limit: Option<&str>,
+    backing_fs: &str,
+) -> (Option<serde_json::Value>, Option<String>) {
+    let Some(raw) = limit else {
+        return (None, None);
+    };
+    match disk_limit_support(backing_fs) {
+        DiskLimitSupport::NotEnforceable { reason, .. } => (None, Some(reason)),
+        DiskLimitSupport::Enforceable { .. } => match parse_memory_limit(raw) {
+            // Reuse the size parser: both accept the same Ki/Mi/Gi/Ti and k/m/g/t
+            // suffixes, and duplicating it would let the two drift.
+            Some(bytes) if bytes > 0 => (
+                Some(serde_json::json!({ "size": bytes.to_string() })),
+                None,
+            ),
+            _ => (
+                None,
+                Some(format!(
+                    "disk_limit '{raw}' did not parse as a size; leaving it unenforced \
+                     rather than sending 0 (which podman rejects at start time)"
+                )),
+            ),
+        },
+    }
+}
+
 fn parse_memory_limit(limit: &str) -> Option<i64> {
     // Supports the Kubernetes-style suffixes used throughout apps/*/manifest.yml
     // (IEC binary: Ki/Mi/Gi/Ti) as well as the shorter docker-style k/m/g/t.
@@ -1068,6 +1208,68 @@ fn parse_memory_limit(limit: &str) -> Option<i64> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// D4a: the whole point is that a limit which CANNOT be enforced must be visible.
+    /// On a non-XFS backing filesystem the call must return no storage_opt AND a reason —
+    /// never a silent `None` with no explanation, and never a flag podman will reject.
+    #[test]
+    fn disk_limit_is_refused_with_a_reason_on_non_xfs_and_wired_on_xfs() {
+        // ext4 (this host, and stock Debian 13): must NOT emit storage_opt, must explain.
+        let (opt, note) = disk_limit_storage_opt(Some("2Gi"), "ext4");
+        assert!(opt.is_none(), "must not send a storage_opt podman will reject");
+        let note = note.expect("a skipped limit MUST carry a reason");
+        assert!(
+            note.contains("ext4"),
+            "the reason must name the actual backing filesystem: {note}"
+        );
+        assert!(
+            note.contains("XFS"),
+            "the reason must say what would make it possible: {note}"
+        );
+
+        // xfs: enforce it, as bytes, with no warning.
+        let (opt, note) = disk_limit_storage_opt(Some("2Gi"), "xfs");
+        assert!(note.is_none(), "on XFS there is nothing to warn about");
+        let opt = opt.expect("XFS must produce a storage_opt");
+        assert_eq!(
+            opt["size"].as_str(),
+            Some((2i64 * 1024 * 1024 * 1024).to_string().as_str()),
+            "size must be bytes, parsed with the same suffixes as memory_limit"
+        );
+
+        // Case-insensitive: podman reports 'xfs', but do not depend on it.
+        assert!(disk_limit_storage_opt(Some("1Gi"), "XFS").0.is_some());
+
+        // No disk_limit at all: nothing to do, and nothing to warn about.
+        let (opt, note) = disk_limit_storage_opt(None, "ext4");
+        assert!(opt.is_none() && note.is_none(), "absent limit is not a warning");
+    }
+
+    /// An unparseable limit must not become `size: 0` — podman rejects 0 at start time,
+    /// which is the historical bug the memory path already documents. It must warn instead.
+    #[test]
+    fn unparseable_disk_limit_warns_rather_than_sending_zero() {
+        let (opt, note) = disk_limit_storage_opt(Some("not-a-size"), "xfs");
+        assert!(opt.is_none(), "must not send an unparseable/zero size");
+        assert!(note.is_some(), "must explain why it was skipped");
+
+        // And a zero-valued limit likewise.
+        let (opt, note) = disk_limit_storage_opt(Some("0"), "xfs");
+        assert!(opt.is_none());
+        assert!(note.is_some());
+    }
+
+    /// Unknown backing filesystem (detection failed) must fail SAFE: treat as
+    /// unenforceable. Claiming enforceability we cannot back up is the silent failure;
+    /// an extra warning costs nothing.
+    #[test]
+    fn unknown_backing_filesystem_fails_safe() {
+        for fs in ["", "unknown", "extfs"] {
+            let (opt, note) = disk_limit_storage_opt(Some("1Gi"), fs);
+            assert!(opt.is_none(), "empty/unknown backing must not claim enforceability");
+            assert!(note.is_some(), "and must say so");
+        }
+    }
 
     #[test]
     fn insecure_registry_detection_matches_http_mirrors_only() {
