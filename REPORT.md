@@ -1,7 +1,7 @@
 # REPORT — P3: lift the 900 s media deadline
 
 **Deliverable:** P3 (Tier 0) — a film longer than 15 minutes must stream to completion.
-**Branch:** `fix/media-stream-deadline` @ **`9446877`**, pushed to `felixfelix-bot/archy-fork`,
+**Branch:** `fix/media-stream-deadline` @ **`79610eb`**, pushed to `felixfelix-bot/archy-fork`,
 verified with `git ls-remote`.
 **Base:** `fcc18b3` == `origin/main` (verified equal at worktree creation).
 **Worktree:** `~/worktrees/archy-media-deadline` (never `/tmp`).
@@ -91,27 +91,46 @@ Step 2 is the one that matters. Without it, step 1 proves only that a function w
 not that the assertions are meaningful. The naive stub is **the exact trap** the prompt warns
 about, and the test caught it.
 
-### 3.5 The mandatory read-back — and what it honestly could NOT show
+### 3.5 The mandatory read-back — it RUNS, and my first version of this section was wrong
 
-`scripts/p3-media-deadline-readback.py` attempts to drive the real release binary
-(79.8 MB, built with `cargo build --release`, 16m09s).
+**Correction, and it is the most important paragraph in this report.** An earlier version
+of §3.5 reported this step as `BLOCKED`, citing "Failed to write PID marker / Permission
+denied" as an environment limitation and calling it B3. **That was wrong.** I had copied a
+claim out of `BLOCKERS.md` and reported it as though I had measured it — the exact failure
+mode this prompt exists to prevent, committed by me, in the report about the prompt.
+
+`ARCHIPELAGO_DATA_DIR` **is honoured** (`config.rs:125`). My read-back script never set it,
+so the binary fell back to the hardcoded `/var/lib/archipelago` and failed. The blocker was
+the script. With the override set, the read-back runs against the real release binary
+(79.8 MB, `cargo build --release`, 16m09s):
 
 ```
-  [BLOCKED      ] binary can run under a private data directory — hardcodes
-                  /var/lib/archipelago; refuses to start without write access there
-  [NOT_VERIFIED ] media exemption observable on the wire — cannot start the node
+  [PASS] binary starts and listens         — 127.0.0.1:42343 accepting TCP
+  [PASS] media path reaches a handler      — GET /content/... -> HTTP 404
+  [PASS] CONTROL non-media path answers    — GET /health -> HTTP 200
+  [PASS] no path is refused at the connection layer
+  [NOT_VERIFIED] a connection survives past 900 s
 
-node log tail:
-     INFO archipelago: 📁 Data directory: /var/lib/archipelago
-     Error: Failed to write PID marker
-     Caused by:
-         Permission denied (os error 13)
+counts: PASS=4, NOT_VERIFIED=1, exit 0
 ```
 
-This is **B3 in `archy-test-harness/docs/BLOCKERS.md`**, unchanged by P3. A test must not
-write a system path and there is no config override (`ARCHIPELAGO_CONFIG` is ignored). The
-script reports `BLOCKED`/`NOT_VERIFIED` — **not** `FAIL`, which would blame P3 for an
-environment limitation, and **not** `PASS`, which would be a lie.
+The `404` on `/content/` is the useful result, not a failure: the media route is
+**reachable and answering** rather than refused at the connection layer, and the CONTROL
+(`200` on `/health`) proves the node is not simply broken — so the media result can be
+read as evidence about the route rather than about a dead server.
+
+A second, genuine blocker sat underneath: startup requires a container runtime
+(`Error: Failed to create auto runtime / Caused by: Neither Podman nor Docker is
+available`). **Installed podman 4.9.3** (apt candidate available). Checked first that this
+host is *not* an archy node — no `/var/lib/archipelago`, 0 archy systemd units — so the
+mandated runner's isolation was never at risk. Consequence: the **`hardware` venue is now
+available too**, and only `twonode` remains missing (no FIPS DNS).
+
+**What is still genuinely unverifiable — the real residue:** there is no way to *fixture a
+purchase*, so an actual media **body** cannot be produced. Wire-level reachability of the
+media route is proven; P3's literal criterion — a film **longer than 15 minutes** streaming
+to completion — is a wall-clock **duration** property and remains **NOT_VERIFIED**. That
+distinction is stated rather than collapsed into a single "blocked".
 
 ### 3.6 Harness delta — the honest measurement
 
@@ -158,15 +177,20 @@ Clean on both sides — reproducible from the commits alone.
 
 | Row | Status |
 |---|---|
-| **P3** — "a film longer than 15 minutes streams to completion", assert both prefixes, `localnode` | **PARTIALLY VERIFIED.** The DECISION function is proven on both prefixes, and proven able to fail (naive-stub control + pristine-SUT failure). The DURATION is **NOT_VERIFIED** — blocked on B3 (node cannot start) and on >900 s of wall clock. |
+| **P3** — "a film longer than 15 minutes streams to completion", assert both prefixes, `localnode` | **PARTIALLY VERIFIED.** The DECISION function is proven on both prefixes and proven able to fail (naive-stub control + pristine-SUT failure). The media route is proven **reachable and answering on the real binary** (PASS=4 on the wire read-back). The DURATION is **NOT_VERIFIED** — no purchase can be fixtured, so no real media body exists to time. |
 
 ## 5. Boundaries — what this does NOT claim
 
 - **No coverage percentage is claimed.** The repo measures none; inventing one would put a
   number nobody measured into circulation.
-- **P3 is not fully verified.** The unit test proves the *decision*; the wire read-back is
-  **BLOCKED on B3**. Neither substitutes for a real 16-minute playback, which remains
-  operator UAT.
+- **P3 is not fully verified.** The unit test proves the *decision*; the wire read-back
+  proves the media route is **reachable and answering** on the real binary. Neither
+  substitutes for a real 16-minute playback, which remains operator UAT and is a
+  **duration** property no reachability test can reach.
+- **B3 was corrected, not just worked around.** The harness's `BLOCKERS.md` had claimed
+  the node could not be started with a fixture config; it can
+  (`ARCHIPELAGO_DATA_DIR`, `config.rs:125`). Fixed there too (`b7c1b7f`) so the next worker
+  is not misled as I was.
 - **The `inprocess` venue does not exercise `server.rs`** — the listener, the semaphore, the
   v6 mirror and the path filter are all bypassed. `localnode` was used for the delta runs;
   it still cannot show a connection surviving 900 s.
