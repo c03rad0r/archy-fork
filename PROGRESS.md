@@ -458,6 +458,38 @@ against a 124 baseline. The check now greps `^error` and `Finished` FIRST, then 
 Same silent-failure class as the header-case bug: a lookup that fails indistinguishably from
 success.
 
+## D3 COMPLETE (in-process) — accounting + attribution + flush + REFUSAL
+
+Branch tip `036d28a`. All four halves now exist:
+
+| Half | Where | Evidence |
+|---|---|---|
+| accounting | `media_meter::MediaUsageAccumulator` | 6 tests |
+| attribution | `counted_for` charges the rental contract id | body-level test + CONTROL |
+| flush | 60 s sweep in `main.rs` | `flush_usage` wired |
+| **refusal** | `counted_within_allowance` ends the body at `Ok(None)` | `stream_ends_cleanly_when_the_allowance_is_spent` |
+
+Refusal specifics: `check_within_allowance` counts **unflushed** bytes against the durable
+remaining (charging late is fine, *admitting* late is not); `remaining` is an
+`Arc<AtomicU64>` so the allowance is re-read per poll rather than frozen at construction;
+the check runs BEFORE polling so no byte past the allowance escapes; breach returns
+`Poll::Ready(None)` — a clean end of body, never an error, per the plan.
+
+Safety branch: `NoSession`/`NotMetered` ⇒ **no cap**. D3 must not refuse sessions that were
+never metered — inventing refusals truncates paying viewers, worse than under-charging.
+
+**Still NOT_VERIFIED:** the wire read-back over `/content/...` needs the localnode venue.
+Proven at the body level, not on the wire.
+
+## D4a DECISION — (a) Report it [operator, 2026-10-23]
+
+Operator chose **(a) Report it**: D4a warns loudly when a declared `disk_limit` cannot be
+enforced, and enforces where the filesystem allows. Already built; no code change.
+
+Superseded options, for the record: (b) refuse at deploy, (c) move enforcement to the
+node-level media budget (`snapshot_budget.rs`). (c) remains a live option if per-app disk
+governance is ever wanted on ext4 — it works on every filesystem, unlike `--storage-opt`.
+
 ## D4a IMPLEMENTED (2026-10-23) — enforced on XFS, REPORTED on ext4
 
 `disk_limit` was declared and read nowhere; now wired, but **not** as a copy of the memory
