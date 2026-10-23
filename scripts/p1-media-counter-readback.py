@@ -64,7 +64,11 @@ def probe(port: int, path: str, headers: dict | None = None, timeout: float = 10
         conn.request("GET", path, headers=hdrs)
         resp = conn.getresponse()
         body = resp.read()
-        return resp.status, body, dict(resp.getheaders())
+        # Case-INSENSITIVE: hyper emits lowercase header names, so a plain dict made
+        # "Content-Range" and "ETag" lookups silently return None. Observed — the 206
+        # printed Content-Range=None even though file_response always sets it.
+        hdrs = {k.lower(): v for k, v in resp.getheaders()}
+        return resp.status, body, hdrs
     finally:
         conn.close()
 
@@ -220,7 +224,7 @@ def main() -> int:
                 "media body served over the real socket",
                 "PASS",
                 f"GET {path[:44]}… -> HTTP 200, {len(body)} bytes "
-                f"(Content-Length={hdrs.get('Content-Length')})",
+                f"(Content-Length={hdrs.get('content-length')})",
             )
             record(
                 "bytes match the fixture exactly",
@@ -243,7 +247,7 @@ def main() -> int:
         record(
             "Range request served as 206",
             "PASS" if ok_range else "FAIL",
-            f"HTTP {st2}, {len(body2)} bytes, Content-Range={hdrs2.get('Content-Range')}",
+            f"HTTP {st2}, {len(body2)} bytes, Content-Range={hdrs2.get('content-range')}",
         )
 
         # ---- CONTROL: a non-media path must not be counted --------------------------
@@ -332,6 +336,53 @@ def main() -> int:
             "able to fail: with counting disabled it failed at 'bytes_served must equal "
             "the sum of chunk lengths actually yielded' (0 vs 131073).",
         )
+
+        # ---- P4: ETag + If-Range on the wire ------------------------------------------
+        # The route served here goes through media_stream.rs, which is where P4 landed.
+        st_e, _, h_e = probe(port, path)
+        etag = h_e.get("etag")
+        record(
+            "first response carries an ETag",
+            "PASS" if etag else "FAIL",
+            f"ETag={etag!r} on HTTP {st_e}",
+        )
+
+        if etag:
+            # Matching If-Range must keep the range: this is the resume path.
+            st_r, body_r, h_r = probe(
+                port, path, {"Range": f"bytes={start}-", "If-Range": etag}
+            )
+            ok_resume = st_r == 206 and body_r == PAYLOAD[start:]
+            record(
+                "matching If-Range resumes with 206 and the right offset",
+                "PASS" if ok_resume else "FAIL",
+                f"HTTP {st_r}, {len(body_r)} bytes, "
+                f"Content-Range={h_r.get('content-range')} (expected start={start})",
+            )
+
+            # Stale If-Range must DISABLE the range and send the whole body.
+            st_s, body_s, h_s = probe(
+                port, path, {"Range": f"bytes={start}-", "If-Range": '"stale-validator"'}
+            )
+            ok_stale = st_s == 200 and len(body_s) == len(PAYLOAD)
+            record(
+                "STALE If-Range returns the whole body, not a partial mix",
+                "PASS" if ok_stale else "FAIL",
+                f"HTTP {st_s}, {len(body_s)} bytes (expected 200/{len(PAYLOAD)}). "
+                f"Honouring the range here would splice new bytes onto an old prefix and "
+                f"hand back a corrupt file that looks like a successful resume.",
+            )
+
+            # If-None-Match on a current client -> 304.
+            st_n, body_n, _ = probe(port, path, {"If-None-Match": etag})
+            record(
+                "If-None-Match returns 304 for an already-current client",
+                "PASS" if st_n == 304 else "FAIL",
+                f"HTTP {st_n}, {len(body_n)} bytes",
+            )
+        else:
+            record("If-Range behaviour", "FAIL", "no ETag to resume against")
+
 
     finally:
         if proc.poll() is None:
