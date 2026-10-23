@@ -1,10 +1,12 @@
-use anyhow::Result;
+use anyhow::{Context, Result};
 use tracing::info;
 
+use crate::opkg::PkgManager;
+use crate::tollgate::version::{
+    decide_install, package_version_from_pin, parse_installed, Installed, TOLLGATE_PACKAGE,
+    TOLLGATE_SERVICE_BIN,
+};
 use crate::Router;
-
-/// The OpenWrt package name for the TollGate reference implementation.
-const TOLLGATE_PACKAGE: &str = "tollgate-module-basic-go";
 
 /// Pinned upstream release. Was stuck on v0.2.0 (Oct 2025) until 2026-09-05 —
 /// nine releases behind. v0.5.0's changelog covers exactly the failure modes
@@ -103,19 +105,33 @@ pub fn install_tollgate_apk_native(router: &Router) -> Result<()> {
         router.host, TOLLGATE_PACKAGE
     );
 
-    // Already installed? The service binary is /usr/bin/tollgate-wrt (per its
-    // init.d script) — TOLLGATE_PACKAGE is only the opkg/apk package name,
-    // never an on-disk filename, so it can't be used for the file-existence
-    // fallback below.
-    let (_, code) = router.run(&format!(
-        "apk list --installed 2>/dev/null | grep -q '^{}' || \
-         test -f /usr/bin/tollgate-wrt 2>/dev/null",
-        TOLLGATE_PACKAGE
-    ))?;
-    if code == 0 {
-        info!("[{}] {} already installed", router.host, TOLLGATE_PACKAGE);
+    // Already installed AT THE RIGHT VERSION?
+    //
+    // This guard used to be:
+    //     apk list --installed | grep -q '^tollgate-module-basic-go' \
+    //       || test -f /usr/bin/tollgate-wrt
+    //
+    // Both halves were wrong and the failure was silent:
+    //   * the package is named `tollgate-wrt` (PKG_NAME), never
+    //     `tollgate-module-basic-go` (that is the repository name), so the grep
+    //     could never match;
+    //   * the file-existence fallback then succeeded on any router that had
+    //     ever been provisioned, so the function returned Ok(()) without
+    //     installing.
+    // Net effect: bumping the pinned version changed nothing on an
+    // already-provisioned router, while the UI reported success.
+    //
+    // The replacement compares VERSIONS. A router on 0.5.0 with a 0.6.0 pin
+    // must install; only a genuine version match skips.
+    let installed = installed_tollgate_version(router, PkgManager::ApkNative);
+    let desired = package_version_from_pin(TOLLGATE_VERSION)
+        .context("derive the package version from the pinned release tag")?;
+    let decision = decide_install(&installed, &desired, false, None);
+    if !decision.should_install() {
+        info!("[{}] {}", router.host, decision.reason());
         return Ok(());
     }
+    info!("[{}] {}", router.host, decision.reason());
 
     // Get architecture from /etc/openwrt_release.
     // The variable is DISTRIB_ARCH on most builds; OPENWRT_ARCH on some.
@@ -204,6 +220,76 @@ pub fn install_tollgate_apk_native(router: &Router) -> Result<()> {
         );
     }
     install_ipk(router, "/tmp/tollgate.ipk")
+}
+
+/// Read the currently-installed TollGate version from a router.
+///
+/// Two independent sources, because neither is sufficient alone:
+///
+/// * the package manager's installed list — authoritative, but absent when the
+///   package was unpacked manually (`install_ipk`'s `ar`/`tar` path leaves no
+///   record, which is the normal case on an apk-native router);
+/// * the service binary's own `tollgate version` output — present after a
+///   manual extraction, but it reports the *module build*, which is not the
+///   same string as the feed's package version.
+///
+/// Returning `Installed::UnknownVersion` rather than guessing is deliberate:
+/// an unreadable version must provoke an install attempt. Assuming it matches
+/// is the defect that made a version bump a silent no-op.
+pub fn installed_tollgate_version(router: &Router, pkg_mgr: PkgManager) -> Installed {
+    let listing_cmd = match pkg_mgr {
+        PkgManager::Opkg => "opkg list-installed 2>/dev/null",
+        PkgManager::ApkNative => "apk list --installed 2>/dev/null",
+    };
+    let listing = router.run_ok(listing_cmd).unwrap_or_default();
+    let from_listing = parse_installed(&listing, TOLLGATE_PACKAGE);
+    if matches!(from_listing, Installed::Version(_)) {
+        return from_listing;
+    }
+
+    // No usable package record — fall back to the binary's self-report.
+    let (_, bin_present) = router
+        .run(&format!("test -f {TOLLGATE_SERVICE_BIN} 2>/dev/null"))
+        .unwrap_or((String::new(), 1));
+    if bin_present != 0 {
+        return Installed::Absent;
+    }
+
+    let (version_out, version_code) = router
+        .run(&format!("{TOLLGATE_SERVICE_BIN} version 2>/dev/null"))
+        .unwrap_or((String::new(), 1));
+    if version_code == 0 {
+        // `tollgate version` prints lines like `version: 0.5.0-gabc1234`.
+        if let Some(v) = extract_version_line(&version_out) {
+            return Installed::Version(v);
+        }
+    }
+
+    Installed::UnknownVersion
+}
+
+/// Pull the version out of `tollgate version` output.
+///
+/// Kept separate and pure so it is unit-tested: the binary reports the
+/// *module* build (`0.5.0-gabc1234`), not the feed's package version, so the
+/// parsing has to tolerate a git-suffix and a `version:` label.
+pub fn extract_version_line(output: &str) -> Option<String> {
+    for line in output.lines() {
+        let line = line.trim();
+        let value = match line.split_once(':') {
+            Some((label, rest)) if label.trim().eq_ignore_ascii_case("version") => rest.trim(),
+            _ => continue,
+        };
+        // `0.5.0-gabc1234` -> `0.5.0`
+        let without_git = value
+            .split_once("-g")
+            .map(|(head, _)| head)
+            .unwrap_or(value);
+        if !without_git.is_empty() {
+            return Some(without_git.to_string());
+        }
+    }
+    None
 }
 
 /// Extract and install an .ipk file without opkg.
@@ -338,4 +424,35 @@ fn install_ipk(router: &Router, ipk_path: &str) -> Result<()> {
 
     router.run_ok(&format!("rm -rf /tmp/_tg_install {}", ipk_path))?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::extract_version_line;
+
+    #[test]
+    fn extracts_the_version_from_the_binarys_self_report() {
+        let out = "TollGate Gateway\nversion: 0.5.0-gabc1234\ncommit: abc1234\n";
+        assert_eq!(extract_version_line(out).as_deref(), Some("0.5.0"));
+    }
+
+    #[test]
+    fn tolerates_a_plain_version_line() {
+        let out = "version: 0.6.0\n";
+        assert_eq!(extract_version_line(out).as_deref(), Some("0.6.0"));
+    }
+
+    #[test]
+    fn is_not_fooled_by_a_commit_line_that_contains_the_word_version() {
+        // Only a `version:` label counts; `commit:` must not be picked up.
+        let out = "commit: deadbeef\nversion: 0.6.0-rc6-g1234abc\n";
+        assert_eq!(extract_version_line(out).as_deref(), Some("0.6.0-rc6"));
+    }
+
+    #[test]
+    fn returns_none_when_there_is_no_version_line() {
+        // The caller turns this into UnknownVersion, which forces an install —
+        // it must not be silently treated as a match.
+        assert_eq!(extract_version_line("something else entirely\n"), None);
+    }
 }
