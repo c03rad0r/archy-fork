@@ -355,6 +355,51 @@ STILL NOT DONE for P2: the **per-peer rate cap** (the plan's second half), and
 `spawn_blocking(open_matching)` remains unbounded (`cloud_purchase.rs:97`). The guard is
 source-level, not behavioural — a unit test cannot observe two semaphores.
 
+## P4 IMPLEMENTED + VERIFIED (2026-10-23)
+
+`media_stream.rs` — the shared local-cache serve (reached via `/api/peer-content/` →
+`proxy.rs:244`). Before this there was **no ETag anywhere in the tree**.
+
+- `etag_for(metadata)` — STRONG validator (no `W/`), from size + mtime.
+- `range_is_honoured(headers, etag)` — RFC 7233 §3.2: a mismatched `If-Range` makes the
+  server IGNORE `Range` and send the whole body (200).
+- `If-None-Match` → 304; `ETag` on the 200/206/304 paths.
+
+The property that matters: a **stale `If-Range` must disable the range**, or new bytes get
+spliced onto an old prefix and the client receives a corrupt file that looks like a
+successful resume.
+
+Two deliberate design points, documented in the code:
+1. **Not a content hash.** The plan's `(content_sha256, content_size)` is a CACHE KEY for
+   D1/D5. An HTTP validator answers a different question; size+mtime is the standard answer
+   (nginx, Apache). Content-deriving it means hashing every byte before the first chunk — the
+   cost resume exists to avoid. Known limit stated: identical size AND mtime would pass.
+2. **Strong, not weak** — RFC 7232 §2.3.2 forbids a weak validator with `If-Range`.
+
+Evidence — wire read-back on the real binary:
+
+    [PASS] first response carries an ETag    — ETag='"143360-1792736964166697662"'
+    [PASS] matching If-Range resumes 206     — Content-Range=bytes 65536-143359/143360
+    [PASS] STALE If-Range returns whole body — HTTP 200, 143360 bytes
+    [PASS] If-None-Match returns 304         — HTTP 304
+    counts: PASS=15, NOT_VERIFIED=1, exit 0
+
+Negative control: making `range_is_honoured` ignore `If-Range` (the pre-P4 behaviour) fails
+the test at the stale-validator assertion.
+
+Gates: check 0 · fmt clean · clippy 124 == 124 · runner 2087 passed / 1 failed (the
+environmental quadlet test).
+
+**NOT covered:** the peer/seller handlers build their own responses and still emit no ETag,
+so resume works on the local-cache route but **not yet** on `registered_media.rs`,
+`rental_playback.rs`, `cloud_purchase.rs` or `prepared_media.rs`.
+
+**A recurring failure mode worth naming** — three times now a slug/case mismatch produced a
+confident wrong diagnosis: cookie `csrf` vs `csrf_token`; fixture dir `content-owned` vs
+`purchased-content`; and now case-sensitive header lookups against hyper's lowercase names
+(the 206 row had been printing `Content-Range=None` since P1). A lookup that fails silently
+is indistinguishable from absence. Probes must fail loudly.
+
 ## Environment notes that will save time
 
 - Release build: **`CARGO_BUILD_JOBS=1`**. `jobs=2` OOM-killed rustc twice at ~2.2-3.9 GB.
