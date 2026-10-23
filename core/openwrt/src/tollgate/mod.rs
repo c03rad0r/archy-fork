@@ -1,10 +1,12 @@
 pub mod config;
 pub mod install;
 pub mod nodogsplash;
+pub mod version;
 pub mod wifi;
 
 pub use config::TollGateConfig;
 pub use install::install_tollgate;
+pub use version::{TOLLGATE_PACKAGE, TOLLGATE_SERVICE_BIN};
 pub use wifi::provision_ssid;
 
 use anyhow::{Context, Result};
