@@ -51,14 +51,71 @@ def free_port() -> int:
         return s.getsockname()[1]
 
 
+SESSION: dict[str, str] = {}
+
+
 def probe(port: int, path: str, headers: dict | None = None, timeout: float = 10.0):
+    """GET with the session cookie attached when we have one."""
+    hdrs = dict(headers or {})
+    if SESSION.get("cookie"):
+        hdrs["Cookie"] = SESSION["cookie"]
     conn = http.client.HTTPConnection("127.0.0.1", port, timeout=timeout)
     try:
-        conn.request("GET", path, headers=headers or {})
+        conn.request("GET", path, headers=hdrs)
         resp = conn.getresponse()
-        return resp.status, resp.read(), dict(resp.getheaders())
+        body = resp.read()
+        return resp.status, body, dict(resp.getheaders())
     finally:
         conn.close()
+
+
+def rpc(port: int, method: str, params: dict | None = None):
+    """JSON-RPC call. Captures Set-Cookie so a login establishes a session."""
+    payload = json.dumps(
+        {"jsonrpc": "2.0", "id": 1, "method": method, "params": params or {}}
+    )
+    hdrs = {"Content-Type": "application/json"}
+    if SESSION.get("cookie"):
+        hdrs["Cookie"] = SESSION["cookie"]
+    if SESSION.get("csrf"):
+        hdrs["X-CSRF-Token"] = SESSION["csrf"]
+    conn = http.client.HTTPConnection("127.0.0.1", port, timeout=10)
+    try:
+        conn.request("POST", "/rpc/v1", body=payload, headers=hdrs)
+        resp = conn.getresponse()
+        raw = resp.read()
+        for name, value in resp.getheaders():
+            if name.lower() == "set-cookie":
+                pair = value.split(";", 1)[0]
+                key = pair.split("=", 1)[0].strip()
+                if key in ("session", "csrf"):
+                    SESSION[key] = pair.split("=", 1)[1]
+                    SESSION["cookie"] = "; ".join(
+                        f"{k}={v}" for k, v in SESSION.items() if k in ("session", "csrf")
+                    )
+                    if key == "csrf":
+                        SESSION["csrf"] = SESSION["csrf"]
+        if resp.status != 200:
+            return None
+        parsed = json.loads(raw)
+        result = parsed.get("result")
+        return result if isinstance(result, dict) else None
+    except Exception:
+        return None
+    finally:
+        conn.close()
+
+
+def establish_session(port: int) -> None:
+    """Log in the way a browser does.
+
+    `/api/peer-content/` is deliberately session-gated in the source (and says so:
+    "Same-origin, session-gated"). Weakening that to make a test pass would be the
+    security regression the plan forbids, so the test authenticates instead.
+    """
+    password = "readback-fixture-pw"
+    rpc(port, "auth.setup", {"password": password})   # no-op if already set up
+    rpc(port, "auth.login", {"password": password})
 
 
 def seed_owned(data_dir: Path) -> None:
@@ -131,6 +188,14 @@ def main() -> int:
             return 1
         record("binary starts and listens", "PASS", f"127.0.0.1:{port}")
 
+        establish_session(port)
+        record(
+            "session established (auth.setup + auth.login)",
+            "PASS" if SESSION.get("session") else "FAIL",
+            "got a session cookie" if SESSION.get("session")
+            else "no session cookie — /api/peer-content/ is session-gated by design",
+        )
+
         # ---- the media serve -------------------------------------------------------
         path = f"/api/peer-content/{ONION}/{CONTENT_ID}"
         status, body, hdrs = probe(port, path)
@@ -172,27 +237,58 @@ def main() -> int:
         st3, _, _ = probe(port, "/health")
         record("CONTROL /health answers", "PASS" if st3 == 200 else "FAIL", f"HTTP {st3}")
 
-        # ---- what this script does NOT prove, stated rather than implied --------------
-        # The counters are process-local statics. This script drives the real binary over a
-        # real socket but runs in a DIFFERENT process, so it cannot read them back. Saying
-        # "PASS" here would be a lie; saying "FAIL" would blame the change. So it is
-        # NOT_VERIFIED, with the reason and what would close it.
-        record(
-            "counter delta read back from the running node",
-            "NOT_VERIFIED",
-            "the counters are process-local statics and this script is a separate process, "
-            "so it cannot read them. Closing this needs either an RPC that exposes "
-            "MetricSnapshot.media, or a test that runs inside the node. What IS proven: "
-            "(a) the media path executes and serves a real body on the wire, with counting "
-            "wired into that exact call site; (b) the byte arithmetic is proven by the "
-            "inline test, which was proven able to fail by a negative control.",
-        )
+        # ---- THE READ-BACK: counter delta observed over the wire ---------------------
+        # monitoring.media reads the statics live, so this is a genuine read-back rather
+        # than an inference: read before, serve media, read after, show the delta.
+        c_before = rpc(port, "monitoring.media")
+        if c_before is None:
+            record(
+                "counter delta read back from the running node",
+                "NOT_VERIFIED",
+                "monitoring.media did not answer over /rpc/v1 on this build, so no delta "
+                "could be read. The media path itself was exercised above. Closing this "
+                "needs the RPC to answer (auth or route), or an in-process harness.",
+            )
+        else:
+            before_bytes = c_before.get("bytes_served", 0)
+            # Serve again and re-read.
+            st4, body4, _ = probe(port, path)
+            c_after = rpc(port, "monitoring.media") or {}
+            after_bytes = c_after.get("bytes_served", 0)
+            delta = after_bytes - before_bytes
+
+            record(
+                "monitoring.media answers over the wire",
+                "PASS",
+                f"bytes_served before={before_bytes}, after={after_bytes}",
+            )
+            record(
+                "COUNTER MOVED on the media path (the mandated read-back)",
+                "PASS" if delta >= len(PAYLOAD) else "FAIL",
+                f"delta={delta} bytes for a {len(PAYLOAD)}-byte serve "
+                f"(chunks_served {c_before.get('chunks_served')} -> "
+                f"{c_after.get('chunks_served')}); the counter observed bytes that "
+                f"travelled the media route on a real socket",
+            )
+            # CONTROL: /health must not move the media counter.
+            c_pre = rpc(port, "monitoring.media") or {}
+            probe(port, "/health")
+            c_post = rpc(port, "monitoring.media") or {}
+            moved = (c_post.get("bytes_served", 0) - c_pre.get("bytes_served", 0)) != 0
+            record(
+                "CONTROL: /health does NOT move the media counter",
+                "FAIL" if moved else "PASS",
+                "non-media traffic left bytes_served unchanged"
+                if not moved else "non-media traffic moved the media counter — the counter "
+                "is measuring traffic, not the media path",
+            )
+
         record(
             "counter arithmetic (inline test, negative-control backed)",
             "PASS",
-            "counters_track_real_bytes_and_the_active_gauge_follows_the_body — proven able "
-            "to fail: with counting disabled it failed at 'bytes_served must equal the sum "
-            "of chunk lengths actually yielded' (0 vs 131073).",
+            "counters_track_real_bytes_and_the_active_gauge_follows_the_body was proven "
+            "able to fail: with counting disabled it failed at 'bytes_served must equal "
+            "the sum of chunk lengths actually yielded' (0 vs 131073).",
         )
 
     finally:

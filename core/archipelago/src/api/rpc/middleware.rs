@@ -41,6 +41,12 @@ pub(crate) const UNAUTHENTICATED_METHODS: &[&str] = &[
     "federation.get-state",
     // Fleet telemetry ingest: called by remote nodes posting reports
     "telemetry.ingest",
+    // Media-path counters (P1). Read-only, non-sensitive aggregate byte/stream counts —
+    // the same class as "health". It is deliberately NOT "monitoring.current" (which
+    // exposes host + container detail and stays authenticated): this route returns four
+    // monotonically-increasing integers and nothing that identifies a peer, an object or a
+    // user. Adding it is what makes P1's mandated read-back possible without a session.
+    "monitoring.media",
 ];
 
 /// Methods whose responses can be cached for a few seconds.
