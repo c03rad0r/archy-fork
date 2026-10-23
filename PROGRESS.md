@@ -253,3 +253,83 @@ a dormant, version-sensitive test. Both facts are true; neither cancels the othe
 
 +6 tests on this branch versus pristine (4 from P3 + 2 from P1), **all passing**. The
 single failure is identical on both trees and is environmental, not behavioural.
+
+---
+
+# P2 HAND-OFF — admission control (recon + design, NOT implemented)
+
+**Status: recon done, no code written.** Banked so the next worker skips the discovery.
+
+## The problem, verified against the tree
+
+`server.rs:1136` creates **ONE** `Semaphore::new(1024)` in `serve_with_shutdown` and clones it
+into every listener (`:1142`, `:1168`, `:1221`). So the main UI listener and the peer
+listener **share one budget**. `accept_loop` (`:1563`) takes a permit per connection with
+`try_acquire_owned()` (`:1601`) and, on exhaustion, writes a bare 503 and closes
+(`:1602-1619`).
+
+Consequence: N concurrent media streams consume the same 1024 permits the local UI needs.
+At exhaustion **the UI 503s too** — the node's own management surface becomes unreachable
+because a video is streaming. That is the failure P2 exists to remove.
+
+`spawn_blocking(open_matching)` is unbounded (`cloud_purchase.rs:97`).
+
+## Why a naive wrapper would be a REGRESSION (read this before coding)
+
+The tempting implementation is to wrap each media body so it holds a permit for its
+lifetime. **Do not do that.** `DRAIN_TIMEOUT`/graceful shutdown waits for permits to return
+(`:1232` `while active_connections.available_permits() < 1024`). A permit held for the whole
+duration of a 2-hour film would make shutdown wait 2 hours, turning a clean restart into a
+hang. That is worse than the bug.
+
+Also note the existing comment at `:1594-1600`: `acquire_owned().await` in the accept loop
+was **deliberately removed** because it froze `accept()` entirely when permits drained
+(the `.228` session-flapping / CLOSE-WAIT signature). Any P2 design must not reintroduce a
+blocking acquire in the accept path.
+
+## The design that fits
+
+1. **Separate the budgets.** Media must not be able to starve the UI, and the UI must not be
+   able to starve media. Give the peer/media listener its **own** semaphore rather than
+   sharing the UI's. This alone fixes the headline failure and is the smallest correct change.
+2. **Bound the unbounded.** Cap concurrent media serves with a dedicated, smaller semaphore
+   (the plan's "admission control"), and cap `spawn_blocking(open_matching)` fan-out. On
+   exhaustion, media admission must **fail cleanly** (a bounded, honest error) rather than
+   evicting or blocking.
+3. **Do NOT hold a connection permit for a stream's lifetime.** If a long-lived media permit
+   is needed at all, it must be released at `DRAIN_TIMEOUT`, not at stream end — otherwise
+   graceful shutdown hangs. Prefer bounding *concurrent media serves* via a separate counter
+   that shutdown does not wait on.
+4. **Per-peer rate cap** on the media path: keyed per peer, bounded map (copy the bounded-map
+   idiom from `media_metrics::detail`, `MAX_PEERS`), and it must not be bypassable by
+   opening more connections.
+
+## Regression guard the plan names
+
+`quota_is_enforced_and_admission_fails_cleanly_rather_than_evicting_a_settled_purchase`
+— i.e. when admission is full, the answer is a clean bounded failure, **never** eviction of a
+settled purchase (`content_purchase.rs:133-135`, `content_snapshot.rs:261` are the liability
+this protects).
+
+## The read-back P2 must satisfy
+
+N concurrent media streams, then **the node's own UI still answers**. Before P2 the shared
+semaphore 503s everything including the UI. Venue: `localnode` (available — podman installed).
+The read-back harness pattern already exists: `scripts/p1-media-counter-readback.py` drives
+the real release binary with `ARCHIPELAGO_DATA_DIR`, a fixture in `purchased-content/`, and an
+authenticated session (`auth.setup` + `auth.login`). **Reuse that script's shape** rather than
+writing a second one — the auth and fixture setup cost real time to get right, and the two
+gotchas are documented in its comments (cookie is `csrf_token`, not `csrf`; fixture dir is
+`purchased-content`, not `content-owned`).
+
+## Environment notes that will save time
+
+- Release build: **`CARGO_BUILD_JOBS=1`**. `jobs=2` OOM-killed rustc twice at ~2.2-3.9 GB.
+  ~12-13 min per release build.
+- Test builds: `RUSTFLAGS="-C debuginfo=0" CARGO_PROFILE_TEST_DEBUG=0
+  CARGO_PROFILE_TEST_OPT_LEVEL=0 CARGO_BUILD_JOBS=1 CARGO_INCREMENTAL=0` — plain
+  `cargo test` OOMs.
+- `/var/lib/archipelago` on this host is a **bind-mount of `/tmp`** (mode 1777). Never put a
+  session secret there.
+- `/api/peer-content/` is session-gated **on purpose** — do not exempt media paths from auth
+  to make a test pass; that hands purchased bytes to unauthenticated callers.
