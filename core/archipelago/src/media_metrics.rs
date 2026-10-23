@@ -240,6 +240,10 @@ impl Drop for ActiveGuard {
 pub struct Counted<S> {
     inner: Pin<Box<S>>,
     _guard: ActiveGuard,
+    /// D3: when set, bytes are also accumulated per (peer, service) for the byte cap.
+    /// `None` for callers with no billable peer (local UI, unauthenticated reads) — those
+    /// still count globally, they just have nobody to charge.
+    usage: Option<(String, String)>,
 }
 
 impl<S, E, B> Stream for Counted<S>
@@ -253,8 +257,16 @@ where
         let this = self.get_mut();
         match this.inner.as_mut().poll_next(cx) {
             Poll::Ready(Some(Ok(chunk))) => {
-                MEDIA_BYTES_SERVED.fetch_add(chunk.as_ref().len() as u64, Ordering::Relaxed);
+                let n = chunk.as_ref().len() as u64;
+                MEDIA_BYTES_SERVED.fetch_add(n, Ordering::Relaxed);
                 MEDIA_CHUNKS_SERVED.fetch_add(1, Ordering::Relaxed);
+                // D3: accumulate for the byte cap. Deliberately NOT a durable write here —
+                // `meter::record_and_check` rewrites the whole session store, so calling it
+                // per chunk would mean ~16,000 store writes per GB per viewer. The flush
+                // happens at end-of-stream or on a coarse window.
+                if let Some((peer, service)) = &this.usage {
+                    media_usage().add(peer, service, n);
+                }
                 Poll::Ready(Some(Ok(chunk)))
             }
             // Errors and end-of-stream are passed through untouched: this wrapper must not
@@ -262,6 +274,18 @@ where
             other => other,
         }
     }
+}
+
+/// The process-wide media usage accumulator (D3).
+///
+/// A global rather than a field threaded through every handler: the five media sites are
+/// reached from different modules with different state, and the accumulator is keyed by
+/// (peer, service) anyway — so one instance is both simpler and more correct than five that
+/// could drift.
+pub fn media_usage() -> &'static crate::media_meter::MediaUsageAccumulator {
+    static ACC: std::sync::OnceLock<crate::media_meter::MediaUsageAccumulator> =
+        std::sync::OnceLock::new();
+    ACC.get_or_init(crate::media_meter::MediaUsageAccumulator::new)
 }
 
 /// Count the bytes of `stream` as they are handed out. See module docs.
@@ -278,6 +302,20 @@ where
     Counted {
         inner: Box::pin(stream),
         _guard: ActiveGuard::new(),
+        usage: None,
+    }
+}
+
+/// As `counted`, but also accumulates bytes against (peer_id, service_id) for D3's byte cap.
+pub fn counted_for<S, E, B>(stream: S, peer_id: &str, service_id: &str) -> Counted<S>
+where
+    S: Stream<Item = Result<B, E>>,
+    B: AsRef<[u8]>,
+{
+    Counted {
+        inner: Box::pin(stream),
+        _guard: ActiveGuard::new(),
+        usage: Some((peer_id.to_string(), service_id.to_string())),
     }
 }
 
@@ -310,9 +348,53 @@ mod tests {
         stream::iter(owned)
     }
 
-    /// One test fn: the counters are process-global statics and Rust runs tests in
-    /// parallel, so a second test touching them could interleave. Assertions use deltas
-    /// within this fn, which is therefore order-independent with respect to other tests.
+    /// D3: the accumulator must be driven by the BODY, not by a caller who remembers to add.
+    /// A body that yields 3 chunks must leave exactly those bytes pending against the right
+    /// (peer, service) pair — this is what makes the cap enforceable on the media path
+    /// rather than only in a unit test.
+    #[tokio::test]
+    async fn counted_for_accumulates_body_bytes_against_the_peer() {
+        use futures_util::stream;
+        use futures_util::StreamExt;
+
+        let chunks: Vec<Result<Vec<u8>, std::io::Error>> =
+            vec![Ok(vec![0u8; 100]), Ok(vec![0u8; 250]), Ok(vec![0u8; 7])];
+        let before = media_usage().pending("d3-peer", "content-download");
+        // `Counted` is a Stream, not an HttpBody — drive it with StreamExt::next, not
+        // HttpBody::data. (`counted` yields the chunk type unchanged, so on the real media
+        // paths this same stream is what `Body::wrap_stream` consumes.)
+        let mut body = counted_for(stream::iter(chunks), "d3-peer", "content-download");
+
+        let mut total = 0usize;
+        while let Some(chunk) = body.next().await {
+            total += chunk.unwrap().len();
+        }
+        assert_eq!(total, 357);
+
+        let after = media_usage().pending("d3-peer", "content-download");
+        assert_eq!(
+            after - before,
+            357,
+            "the body must have accumulated exactly the bytes it yielded"
+        );
+
+        // CONTROL: a plain `counted` body (no billable peer) must NOT move the accumulator.
+        let control_before = media_usage().pending("nobody", "content-download");
+        let control_chunks: Vec<Result<Vec<u8>, std::io::Error>> = vec![Ok(vec![0u8; 999])];
+        let mut control = counted(stream::iter(control_chunks));
+        while let Some(chunk) = control.next().await {
+            chunk.unwrap();
+        }
+        assert_eq!(
+            media_usage().pending("nobody", "content-download"),
+            control_before,
+            "counted() has no billable peer and must not charge anyone"
+        );
+
+        // Clean up so this test cannot race others asserting on the same global.
+        media_usage().take("d3-peer", "content-download");
+    }
+
     #[tokio::test]
     async fn counters_track_real_bytes_and_the_active_gauge_follows_the_body() {
         // Serialised against any other test asserting on these global counters.

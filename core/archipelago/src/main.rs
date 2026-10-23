@@ -69,6 +69,7 @@ mod host_ip;
 mod identity;
 mod identity_manager;
 mod marketplace;
+mod media_meter;
 mod media_metrics;
 mod media_registration;
 mod media_stream;
