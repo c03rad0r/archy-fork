@@ -98,6 +98,7 @@ mod server;
 mod session;
 mod settings;
 mod snapshot_budget;
+mod snapshot_index;
 mod state;
 mod storage_crypto;
 mod streaming;

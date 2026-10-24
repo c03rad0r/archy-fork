@@ -43,8 +43,15 @@ fn read_manifest(version: &File) -> Result<Option<Record>> {
     Ok(Some(saved.record))
 }
 
+/// A snapshot handle. `key` is the snapshot directory name.
+///
+/// `key` is read by tests and by the index (which records where a snapshot was found), but
+/// not on the serving path — `open_verified` returns it for callers that need to address the
+/// directory. Marked rather than removed: it is part of the type's contract and the
+/// alternative is re-deriving the directory name from the file descriptor.
 pub(crate) struct Snapshot {
     pub file: File,
+    #[allow(dead_code)]
     pub key: String,
     pub sha256: String,
     pub size: u64,
@@ -232,6 +239,24 @@ pub(crate) fn open_matching(
         libc::O_RDONLY | libc::O_DIRECTORY,
         0,
     )?;
+
+    // D1: try the resident index first. This is the whole win — previously EVERY request
+    // walked up to 10,000 directory entries and parsed a manifest per entry until a match.
+    //
+    // A hit does NOT skip verification: it only supplies the directory name, and the
+    // manifest/stamp/mode checks below still run through the same confined-descriptor path.
+    // So the index can never make an unverified file readable — a wrong or stale entry
+    // yields a miss (or a failed verify that falls through to the scan), never authority.
+    let index_key = crate::snapshot_index::SnapshotKey::new(content_id, sha256, size);
+    if let Some(cached) = crate::snapshot_index::index().lookup(&index_key) {
+        if let Some(snapshot) = open_verified(&root, &cached, content_id, sha256, size)? {
+            return Ok(snapshot);
+        }
+        // Stale: the directory is gone or no longer matches. Drop it and fall through to the
+        // scan, which is exactly the old behaviour.
+        crate::snapshot_index::index().invalidate(&index_key);
+    }
+
     let mut count = 0usize;
     for entry in std::fs::read_dir(format!("/proc/self/fd/{}", root.as_raw_fd()))? {
         let entry = entry?;
@@ -246,28 +271,52 @@ pub(crate) fn open_matching(
             key.len() == 64 && key.bytes().all(|v| v.is_ascii_hexdigit()),
             "Unexpected snapshot version"
         );
-        let version = io::open_at(&root, &key, libc::O_RDONLY | libc::O_DIRECTORY, 0)?;
-        let Some(record) = read_manifest(&version)? else {
-            continue;
-        };
-        if record.content_id != content_id || record.sha256 != sha256 || record.size != size {
-            continue;
+        if let Some(snapshot) = open_verified(&root, &key, content_id, sha256, size)? {
+            // Remember where it was, so the next request for this object skips the scan.
+            crate::snapshot_index::index().insert(index_key, key);
+            return Ok(snapshot);
         }
-        let file = io::open_at(&version, "media", libc::O_RDONLY | libc::O_NONBLOCK, 0)?;
-        anyhow::ensure!(
-            record.version == 1
-                && SourceStamp::read(&file)? == record.snapshot
-                && file.metadata()?.mode() & 0o7777 == 0o400,
-            "Accepted snapshot changed; retain purchase for recovery"
-        );
-        return Ok(Snapshot {
-            file,
-            key,
-            sha256: record.sha256,
-            size: record.size,
-        });
     }
     anyhow::bail!("Accepted content snapshot is unavailable; retain purchase for recovery")
+}
+
+/// Open a specific snapshot directory and verify it matches. `None` = not this one.
+///
+/// Split out of `open_matching` so the indexed path and the scanning path run the SAME
+/// verification. Duplicating the checks for the cached path is how a cache silently becomes
+/// an authorization bypass.
+fn open_verified(
+    root: &File,
+    key: &str,
+    content_id: &str,
+    sha256: &str,
+    size: u64,
+) -> Result<Option<Snapshot>> {
+    let version = match io::open_at(root, key, libc::O_RDONLY | libc::O_DIRECTORY, 0) {
+        Ok(v) => v,
+        // A cached directory that has since been removed is a miss, not an error: the
+        // caller falls back to the scan.
+        Err(_) => return Ok(None),
+    };
+    let Some(record) = read_manifest(&version)? else {
+        return Ok(None);
+    };
+    if record.content_id != content_id || record.sha256 != sha256 || record.size != size {
+        return Ok(None);
+    }
+    let file = io::open_at(&version, "media", libc::O_RDONLY | libc::O_NONBLOCK, 0)?;
+    anyhow::ensure!(
+        record.version == 1
+            && SourceStamp::read(&file)? == record.snapshot
+            && file.metadata()?.mode() & 0o7777 == 0o400,
+        "Accepted snapshot changed; retain purchase for recovery"
+    );
+    Ok(Some(Snapshot {
+        file,
+        key: key.to_string(),
+        sha256: record.sha256,
+        size: record.size,
+    }))
 }
 
 struct Temporary<'a> {
@@ -347,6 +396,64 @@ mod tests {
         retained.file.read_to_end(&mut bytes).unwrap();
         assert_eq!(bytes, b"old film");
         assert!(open_matching(data.path(), "other", &first.sha256, first.size).is_err());
+    }
+
+    /// D1's judged property, at the level `open_matching` actually runs: after the first
+    /// successful lookup of an object, subsequent lookups of the SAME object must be served
+    /// from the resident index instead of rescanning `content-snapshots/`.
+    ///
+    /// Counters are read as deltas because the index is process-global and other tests in
+    /// this binary legitimately insert into it.
+    #[test]
+    fn repeated_lookups_of_one_object_hit_the_index_instead_of_rescanning() {
+        let data = tempfile::tempdir().unwrap();
+        let cloud = tempfile::tempdir().unwrap();
+        let cancelled = std::sync::atomic::AtomicBool::new(false);
+        let limits = Limits {
+            max_bytes: 1024 * 1024,
+            cancelled: &cancelled,
+        };
+        std::fs::write(cloud.path().join("film.mp4"), b"old film").unwrap();
+        let prepared = prepare(
+            data.path(),
+            cloud.path(),
+            "d1-film",
+            Path::new("film.mp4"),
+            &limits,
+            1024 * 1024,
+            0,
+            |_| Ok(()),
+        )
+        .unwrap();
+
+        // First lookup of this object: whatever the index already held, this key is new, so
+        // this call must scan and then populate.
+        let before_hits = crate::snapshot_index::index().hits();
+        let before_misses = crate::snapshot_index::index().misses();
+        let first = open_matching(data.path(), "d1-film", &prepared.sha256, prepared.size).unwrap();
+        assert_eq!(
+            crate::snapshot_index::index().misses(),
+            before_misses + 1,
+            "the first lookup must be a miss (it has to find the snapshot somehow)"
+        );
+        let hits_after_first = crate::snapshot_index::index().hits();
+
+        // Second and third lookups: must hit, and must NOT add misses.
+        for _ in 0..2 {
+            let again =
+                open_matching(data.path(), "d1-film", &prepared.sha256, prepared.size).unwrap();
+            assert_eq!(again.key, first.key, "same object, same snapshot directory");
+        }
+        assert_eq!(
+            crate::snapshot_index::index().hits(),
+            hits_after_first + 2,
+            "both repeat lookups must be served from the index, not by rescanning"
+        );
+        assert_eq!(
+            crate::snapshot_index::index().misses(),
+            before_misses + 1,
+            "repeat lookups must not fall back to the scan"
+        );
     }
     #[test]
     fn quotas_cancellation_and_source_mutation_never_issue_a_snapshot() {

@@ -246,6 +246,13 @@ impl RpcHandler {
             // Cache outcomes, separately observable
             "cache_hits": cache_hits,
             "cache_misses": cache_misses,
+            // D1: the snapshot index. `index_hits` growing while `index_misses` stays flat is
+            // what "open_matching ran once for N subscribers" looks like on the wire — the
+            // observation the D1 acceptance row asks for. `index_entries` bounds the map so a
+            // seller-supplied key cannot grow it unnoticed.
+            "index_entries": crate::snapshot_index::index().len(),
+            "index_hits": crate::snapshot_index::index().hits(),
+            "index_misses": crate::snapshot_index::index().misses(),
         }))
     }
 }
