@@ -152,12 +152,19 @@ internet to download the package.
 1. Click **Install TollGate**. The button relabels to *"Installing… this
    may take a few minutes"* while it works.
 2. Under the hood this installs `tollgate-wrt` on the router
-   (via `opkg` on OpenWrt ≤24.x, or a manual `.ipk` extract on 25.x images
-   where `opkg` isn't available), writes `/etc/tollgate/config.json`, and
+   (via `opkg install` of the pinned `.ipk` on OpenWrt ≤24.x, or `apk add` of
+   the pinned `.apk` on 25.x images — in both cases the exact release asset,
+   downloaded and checked against the release `SHA256SUMS` first), then reads
+   the installed version back and fails the install if it is not the pinned
+   version. It also writes `/etc/tollgate/config.json` and
    creates the `archipelago` SSID — all with default pricing (10 sats per
    1-minute step, minimum 1 step, `mint_url` auto-filled to
    `http://<node-ip>:3338`, enabled).
-3. On success you'll see *"TollGate provisioned successfully"* and the
+3. The install fails loudly rather than reporting success if the version on
+   the router is not the pinned one — on a router that still carries an older
+   build, check that the release carries an asset for this arch/target pair
+   instead of assuming the feed updated.
+4. On success you'll see *"TollGate provisioned successfully"* and the
    panel switches to the installed view (Enabled/Disabled badge, current
    price/step/mint).
 
@@ -194,22 +201,50 @@ uci get nodogsplash.@nodogsplash[0].gatewayinterface
 # -> br-lan
 ```
 
-That is the whole of the finding, and it is measured rather than inferred. An
-earlier revision of this note attributed it to two package files
-(`99-tollgate-setup`, `20-nds-enforce.nft`) and to four `iifname "br-lan"`
-rules. **Those citations do not hold up**: the package the v0.6.0 pin actually
-ships stages its first-boot scripts as `91-tollgate-admin-ui-mode` and
-`92-tollgate-admin-setup`, `git grep gatewayinterface` across the feed repo
-returns no hits, and the same repo carries module #566 plus
-`test-pkg-tarball-parity.sh` Gate I specifically so the admin board is *not*
-reachable from a `br-lan` guest. The conclusion survived; the evidence did not,
-and an unverified security claim is worse than none. Re-derive the mechanism
-against a named commit before restating it.
+The mechanism is in the package the pin actually serves. Extract the released
+`.ipk` — the one whose SHA-256 matches the release `SHA256SUMS` — and read it,
+rather than searching the feed repository, whose tree lists only the feed-side
+overlay:
+
+```sh
+curl -LO https://github.com/FreedomTechFeed/packages/releases/download/v0.6.0/tollgate-wrt_0.6.0_x86_64-x86-64.ipk
+sha256sum tollgate-wrt_0.6.0_x86_64-x86-64.ipk   # must match SHA256SUMS
+tar -xzf tollgate-wrt_0.6.0_x86_64-x86-64.ipk    # the v0.6.0 ipk is a gzip tar
+tar -xzf data.tar.gz
+grep -n gatewayinterface etc/uci-defaults/99-tollgate-setup
+grep -c 'iifname "br-lan"' etc/nftables.d/20-nds-enforce.nft
+```
+
+Both files are shipped (the feed stages the module's whole `packaging/files`
+tree), and both hardcode the management bridge:
+
+* `etc/uci-defaults/99-tollgate-setup:1827` —
+  `uci set nodogsplash.@nodogsplash[0].gatewayinterface='br-lan'`
+* `etc/nftables.d/20-nds-enforce.nft` — four `iifname "br-lan"` matches
+* zero references to `br-tollgate` anywhere in the extracted tree
+
+So the `br-lan` value is not a race and not an inference: it is what the
+package's own first-boot script writes, and it is re-applied by `postinst` on
+every install and upgrade.
+
+> A previous revision of this note retracted these citations on the grounds that
+> the package ships `91-tollgate-admin-ui-mode` and `92-tollgate-admin-setup`
+> instead. That was wrong, and it was checked against the feed *repository*
+> rather than the released artefact: the shipped `etc/uci-defaults/` is
+> `90-tollgate-captive-portal-symlink`, `91-tollgate-admin-ui-mode`,
+> `99-tollgate-setup`, `999-tollgate-admin-setup` — `99-tollgate-setup` is
+> present, and `92-tollgate-admin-setup` is a feed-side filename that installs as
+> `999`. Check the tarball, not the repo tree.
 
 Archipelago deletes the anonymous nodogsplash section and pins
-`gatewayinterface` to `br-tollgate` itself, but the package's postinst runs on
-every install/upgrade and re-creates the `br-lan` section. Which instance ends
-up owning the captive redirect is therefore a race, not a guarantee.
+`gatewayinterface` to `br-tollgate` itself. The ordering matters and is worth
+stating precisely: `postinst` runs `99-tollgate-setup` during the install, and
+Archipelago's `nodogsplash::configure` runs after that, so on a successful
+provision Archipelago's value wins. What is *not* guaranteed is that it stays
+won — any later package install or upgrade re-runs `postinst` and writes
+`br-lan` again, with nothing re-asserting `br-tollgate` until the next
+provision. Treat the value as perishable and re-check it after any upgrade,
+rather than as a one-time invariant.
 
 **How to check** (on the router, after provisioning):
 
