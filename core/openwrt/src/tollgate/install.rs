@@ -169,10 +169,25 @@ pub fn install_tollgate(router: &Router) -> Result<()> {
 
 /// The opkg install form used to install a verified local asset.
 ///
-/// `--force-downgrade` so that rolling the pin back to an older release is an
-/// install rather than an opkg refusal; the file has already been verified
-/// against the release manifest, so "older" is a deliberate choice, not drift.
-const OPKG_INSTALL_LOCAL: &str = "opkg install --force-downgrade";
+/// Every force flag is load-bearing for a *re-provision*, which is the common
+/// case: the router already has some build and we want this exact file on it.
+///
+/// * `--force-downgrade` — rolling the pin back to an older release is an
+///   install, not an opkg refusal. The file is already verified against the
+///   release manifest, so "older" is deliberate, not drift.
+/// * `--force-reinstall` — opkg reports "already installed" and does nothing
+///   when it believes the target version is present, including the same
+///   upstream version with a different `PKG_RELEASE` (`0.6.0-r1` present,
+///   `0.6.0-r2` requested). Without this the files never land and the read-back
+///   below fails a legitimate re-provision.
+/// * `--force-overwrite` — reinstalling over an existing copy collides on
+///   files opkg did not record as owned (a previous manual extraction, or a
+///   config it now ships).
+/// * `--force-depends` — the package's `DEPENDS` are installed separately by
+///   `install_runtime_deps`, so opkg's own dependency check has nothing to
+///   resolve against a local file and would otherwise refuse the install.
+const OPKG_INSTALL_LOCAL: &str =
+    "opkg install --force-downgrade --force-reinstall --force-overwrite --force-depends";
 
 /// Download `url` to `dest` on the router and verify it against the release
 /// `SHA256SUMS` before anything installs it.
@@ -654,10 +669,11 @@ mod tests {
             if cmd.starts_with("wget ") || cmd.starts_with("rm -f ") {
                 return Ok((String::new(), 0));
             }
-            if cmd.starts_with("opkg install ")
-                || cmd.starts_with("opkg --force-downgrade install ")
-                || cmd.starts_with("apk add ")
-            {
+            // Match the exact install command, so dropping a force flag fails
+            // the fixture instead of slipping through a prefix match.
+            let is_install = cmd == format!("{OPKG_INSTALL_LOCAL} /tmp/tollgate.ipk 2>&1")
+                || cmd == "apk add --allow-untrusted /tmp/tollgate.apk 2>&1";
+            if is_install {
                 installed.store(true, std::sync::atomic::Ordering::SeqCst);
                 return Ok((String::new(), 0));
             }
@@ -682,10 +698,17 @@ mod tests {
             .iter()
             .position(|c| c.starts_with("command -v sha256sum"))
             .expect("must verify asset");
+        let expected = format!("{OPKG_INSTALL_LOCAL} /tmp/tollgate.ipk 2>&1");
         let install = commands
             .iter()
-            .position(|c| c.starts_with("opkg install") && c.contains("/tmp/tollgate.ipk"))
-            .expect("must install the verified local asset, never an unpinned feed package");
+            .position(|c| *c == expected)
+            .unwrap_or_else(|| {
+                panic!(
+                    "must install the verified local asset with the full force set \
+                     (--force-reinstall is what makes a same-version re-provision \
+                     actually write files); saw: {commands:#?}"
+                )
+            });
         assert!(verify < install);
         assert!(
             !commands
@@ -781,9 +804,7 @@ mod tests {
                 .lock()
                 .unwrap()
                 .iter()
-                .any(|c| c.starts_with("opkg install")
-                    || c.starts_with("opkg --force-downgrade")
-                    || c.starts_with("apk add")));
+                .any(|c| c.starts_with("opkg install") || c.starts_with("apk add")));
         }
     }
 
