@@ -201,6 +201,18 @@ uci get nodogsplash.@nodogsplash[0].gatewayinterface
 # -> br-lan
 ```
 
+> **This is order-dependent, and a re-provision can mask it.** Measured again on
+> a fresh OpenWrt 25.12.5 x86/64 guest: on the **first** provision the package's
+> `postinst` runs `99-tollgate-setup`, which writes `br-lan`; Archipelago's
+> `nodogsplash::configure` then runs and overwrites it, so the value reads
+> `br-tollgate` afterwards. On the **second** provision it read `br-lan` again.
+> So `br-tollgate` after a provision is not evidence that enforcement is
+> correct — check it for the state you actually care about, and re-check after
+> any package install or upgrade. `br-tollgate` itself may not exist at all on a
+> package-only guest (measured: zero `ip -4 addr show br-tollgate`), because
+> that bridge is created by Archipelago's own `provision_ssid` and needs a
+> wireless radio the VM does not have.
+
 The mechanism is in the package the pin actually serves. Extract the released
 `.ipk` — the one whose SHA-256 matches the release `SHA256SUMS` — and read it,
 rather than searching the feed repository, whose tree lists only the feed-side
