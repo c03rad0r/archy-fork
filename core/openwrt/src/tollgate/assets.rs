@@ -65,9 +65,6 @@ impl AssetShape {
     }
 }
 
-/// The package name inside the released package metadata.
-pub const TOLLGATE_PACKAGE_NAME: &str = "tollgate-wrt";
-
 /// Build the download URL for one asset.
 ///
 /// `release_tag` is the GitHub release tag (`v0.6.0`); whether the filename
