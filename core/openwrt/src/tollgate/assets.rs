@@ -150,9 +150,26 @@ impl PackageTarget {
     /// `DISTRIB_TARGET` is normalised here rather than in Rust so the value on
     /// the wire is already the asset-name spelling, matching the feed's own
     /// documented read-back.
-    pub const READ_CMD: &'static str = ". /etc/openwrt_release 2>/dev/null; \
+    ///
+    /// Three separate traps are handled here, each of which was a real failure:
+    ///
+    /// 1. **A failed `.` aborts the whole script** under `dash`/`ash`. Writing
+    ///    `. /etc/openwrt_release 2>/dev/null; echo ...` looks safe but the
+    ///    redirection does not turn the failure into a warning: the shell exits
+    ///    with status 2 and prints NOTHING. So the source is guarded with `if`
+    ///    rather than silenced with `2>/dev/null`.
+    /// 2. **Escaping must be exactly one level deep.** An earlier revision had
+    ///    one too many, so the command emitted `target="x86-64"` — the quote
+    ///    characters were part of the VALUE — and the asset name became
+    ///    `tollgate-wrt_0.6.0_x86_64-"x86-64".apk`. Because `parse` only trims
+    ///    whitespace, that 404ed on real hardware while every unit test passed:
+    ///    they asserted on the string, never on its output.
+    /// 3. **A missing file must still produce both keys**, empty rather than
+    ///    absent, so the caller sees an incomplete target and refuses to build a
+    ///    URL instead of silently building one from a blank half.
+    pub const READ_CMD: &'static str = "[ -r /etc/openwrt_release ] && . /etc/openwrt_release; \
          echo \"arch=${DISTRIB_ARCH:-${OPENWRT_ARCH:-}}\"; \
-         echo \"target=$(echo \\\"$DISTRIB_TARGET\\\" | tr / -)\"";
+         echo \"target=$(echo $DISTRIB_TARGET | tr / -)\"";
 }
 
 #[cfg(test)]
@@ -319,5 +336,97 @@ v0.5.0/tollgate-wrt_v0.5.0_aarch64_cortex-a53.apk"
         assert!(PackageTarget::READ_CMD.contains("DISTRIB_ARCH"));
         assert!(PackageTarget::READ_CMD.contains("DISTRIB_TARGET"));
         assert!(PackageTarget::READ_CMD.contains("tr / -"));
+    }
+
+    /// The read command must emit values with NO shell quoting left on them.
+    ///
+    /// A regression test for a defect that survived a full live E2E: the command
+    /// was written with one level of escaping too many, so on a router it emitted
+    /// `target="x86-64"` — quotes included — while `parse` only trims whitespace.
+    /// The parsed target kept the quotes, the asset URL became
+    /// `tollgate-wrt_0.6.0_x86_64-"x86-64".apk`, and every download 404ed.
+    ///
+    /// It survived the E2E because the harness replayed the sequence with its
+    /// OWN shell snippet rather than this constant. A replay that uses a
+    /// different command than the code under test proves nothing about it, so the
+    /// assertion here is on the EXECUTED output, not on the string.
+    ///
+    /// The values are supplied through the environment so the test does not
+    /// depend on `/etc/openwrt_release` existing on the build host: when that
+    /// file is unreadable the guard at the front of [`PackageTarget::READ_CMD`]
+    /// skips the source and the environment values pass through unchanged, which
+    /// is the same code path the echoes take.
+    #[test]
+    fn the_read_command_emits_unquoted_values_when_executed() {
+        let out = std::process::Command::new("sh")
+            .arg("-c")
+            .arg(PackageTarget::READ_CMD)
+            .env("DISTRIB_ARCH", "x86_64")
+            .env("DISTRIB_TARGET", "x86/64")
+            .env_remove("OPENWRT_ARCH")
+            .output()
+            .expect("run read command");
+
+        assert!(
+            out.status.success(),
+            "read command must exit 0 even when /etc/openwrt_release is absent; got {:?}",
+            out.status
+        );
+
+        let stdout = String::from_utf8_lossy(&out.stdout).into_owned();
+        // Both keys must always be emitted, even with nothing to source: an
+        // absent key reads as "no value" and silently becomes a blank URL half.
+        assert!(
+            stdout.contains("arch="),
+            "command emitted no arch line: {stdout:?}"
+        );
+        assert!(
+            stdout.contains("target="),
+            "command emitted no target line: {stdout:?}"
+        );
+
+        let parsed = PackageTarget::parse(&stdout);
+        assert_eq!(
+            parsed.arch, "x86_64",
+            "arch must be bare; got {:?} from output {:?}",
+            parsed.arch, stdout
+        );
+        assert_eq!(
+            parsed.target, "x86-64",
+            "target must have no quotes and no slash; got {:?} from output {:?}",
+            parsed.target, stdout
+        );
+        assert!(
+            !stdout.contains('"') && !stdout.contains('\''),
+            "shell quoting leaked into the value: {stdout:?}"
+        );
+    }
+
+    /// A router whose release file cannot be read must still parse to an
+    /// INCOMPLETE target, so the caller refuses to build a URL.
+    ///
+    /// This is the fail-closed half of the same contract: `is_complete()` gates
+    /// every URL builder, and an empty half must trip it rather than producing a
+    /// well-formed URL for a package that does not exist.
+    #[test]
+    fn an_unreadable_release_file_yields_an_incomplete_target() {
+        let out = std::process::Command::new("sh")
+            .arg("-c")
+            .arg(PackageTarget::READ_CMD)
+            .env_remove("DISTRIB_ARCH")
+            .env_remove("OPENWRT_ARCH")
+            .env_remove("DISTRIB_TARGET")
+            .output()
+            .expect("run read command");
+
+        assert!(
+            out.status.success(),
+            "must not fail when the file is absent"
+        );
+        let parsed = PackageTarget::parse(&String::from_utf8_lossy(&out.stdout));
+        assert!(
+            !parsed.is_complete(),
+            "an unreadable release file must NOT look like a usable target; got {parsed:?}"
+        );
     }
 }
