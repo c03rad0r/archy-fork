@@ -152,13 +152,14 @@ impl RpcHandler {
                     // binary would install. Reported as its own field rather
                     // than folded into `installed`, so "wrong version" is
                     // visible instead of looking like success.
-                    let desired = tollgate::TOLLGATE_VERSION.trim_start_matches('v');
+                    let desired = tollgate::package_version_from_pin(tollgate::TOLLGATE_VERSION)
+                        .unwrap_or_else(|_| tollgate::TOLLGATE_VERSION.trim_start_matches('v').to_string());
                     let version_str = match &installed_version {
                         Installed::Version(v) => v.clone(),
                         Installed::UnknownVersion => String::new(),
                         Installed::Absent => String::new(),
                     };
-                    let up_to_date = installed_version.satisfies(desired);
+                    let up_to_date = installed_version.satisfies(&desired);
 
                     serde_json::json!({
                         "installed": true,
