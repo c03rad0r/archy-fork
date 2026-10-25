@@ -185,13 +185,26 @@ not gate the `archipelago` SSID.** Verify enforcement explicitly rather than
 trusting the success message.
 
 Archipelago puts the paid SSID on its own bridge, `br-tollgate`
-(192.168.99.1/24), deliberately — see `wifi.rs`. But the TollGate package's
-own first-boot scripts are written for the upstream `br-lan` topology:
+(192.168.99.1/24), deliberately — see `wifi.rs`. **Measured on a live router
+after a clean v0.6.0 install, the nodogsplash gateway interface is `br-lan`,
+not `br-tollgate`:**
 
-- `99-tollgate-setup` sets `nodogsplash.@nodogsplash[0].gatewayinterface='br-lan'`;
-- `20-nds-enforce.nft` matches `iifname "br-lan"` for every rule;
-- there are **zero** references to `br-tollgate` anywhere in the shipped
-  package tree.
+```sh
+uci get nodogsplash.@nodogsplash[0].gatewayinterface
+# -> br-lan
+```
+
+That is the whole of the finding, and it is measured rather than inferred. An
+earlier revision of this note attributed it to two package files
+(`99-tollgate-setup`, `20-nds-enforce.nft`) and to four `iifname "br-lan"`
+rules. **Those citations do not hold up**: the package the v0.6.0 pin actually
+ships stages its first-boot scripts as `91-tollgate-admin-ui-mode` and
+`92-tollgate-admin-setup`, `git grep gatewayinterface` across the feed repo
+returns no hits, and the same repo carries module #566 plus
+`test-pkg-tarball-parity.sh` Gate I specifically so the admin board is *not*
+reachable from a `br-lan` guest. The conclusion survived; the evidence did not,
+and an unverified security claim is worse than none. Re-derive the mechanism
+against a named commit before restating it.
 
 Archipelago deletes the anonymous nodogsplash section and pins
 `gatewayinterface` to `br-tollgate` itself, but the package's postinst runs on
@@ -201,9 +214,9 @@ up owning the captive redirect is therefore a race, not a guarantee.
 **How to check** (on the router, after provisioning):
 
 ```sh
+uci get nodogsplash.@nodogsplash[0].gatewayinterface   # must read br-tollgate
 ndsctl status | grep -i gatewayinterface
-fw4 -t 2>/dev/null | grep -c 'iifname "br-lan"'   # count the br-lan rules
-ip -4 addr show br-tollgate | grep inet           # the paid bridge exists
+ip -4 addr show br-tollgate | grep inet                # the paid bridge exists
 ```
 
 If the gateway interface reads `br-lan`, **payments open the gate on the
