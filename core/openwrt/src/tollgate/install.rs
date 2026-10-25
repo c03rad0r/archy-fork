@@ -173,7 +173,7 @@ pub fn install_tollgate(router: &Router) -> Result<()> {
 /// `nodogsplash` is installed separately (it is also stopped and reconfigured,
 /// see `nodogsplash.rs`), so only the other two are handled here:
 ///
-/// * **`jq`** — load-bearing. `99-tollgate-setup` reads `entry_ui` out of
+/// * **`jq`** — load-bearing. The package's first-boot scripts read `entry_ui` out of
 ///   `config.json` with it, and falls back to the `board` mapping when jq is
 ///   absent. A missing jq therefore silently changes which UI answers the
 ///   router's entry ports.
@@ -389,7 +389,7 @@ pub fn install_tollgate_apk_native(router: &Router) -> Result<()> {
     // If wget captured an HTML error page it will be tiny.
     let (size_out, _) = router.run("wc -c < /tmp/tollgate.ipk 2>/dev/null")?;
     let size: u64 = size_out.trim().parse().unwrap_or(0);
-    if size < 50_000 {
+    if size < MIN_PACKAGE_BYTES {
         anyhow::bail!(
             "Downloaded TollGate package is only {}B — wget likely captured an error page. \
              Check router internet access and that the release URL is reachable.",

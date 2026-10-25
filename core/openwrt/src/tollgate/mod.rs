@@ -13,7 +13,7 @@ pub use install::{
     TOLLGATE_VERSION,
 };
 pub use verify::{manifest_url, verify_download, VerifyOutcome};
-pub use version::{TOLLGATE_PACKAGE, TOLLGATE_SERVICE_BIN};
+pub use version::{package_version_from_pin, TOLLGATE_PACKAGE, TOLLGATE_SERVICE_BIN};
 pub use wifi::provision_ssid;
 
 use anyhow::{Context, Result};
