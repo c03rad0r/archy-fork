@@ -143,8 +143,13 @@ impl RpcHandler {
                 // dashboard reported "installed" identically for 0.5.0 and
                 // 0.6.0, so the one question this release has to answer —
                 // "did the pin actually take effect?" — could not be asked.
-                let pkg_mgr = router.pkg_manager().unwrap_or(PkgManager::Opkg);
-                let installed_version = tollgate::installed_tollgate_version(&router, pkg_mgr);
+                // Detect the manager for the *reported* value only. The version
+                // read must not depend on that detection succeeding: guessing a
+                // manager here would run its listing on a router that may not
+                // have it, which fails, parses as `Absent`, and reports a
+                // healthy router as "not installed". Ask both listings instead.
+                let pkg_mgr = router.pkg_manager().ok();
+                let installed_version = tollgate::installed_tollgate_version_any(&router);
                 let tollgate_installed = !matches!(installed_version, Installed::Absent);
 
                 let tollgate = if tollgate_installed {
@@ -167,6 +172,10 @@ impl RpcHandler {
                         "version_known": matches!(installed_version, Installed::Version(_)),
                         "pinned_version": desired,
                         "up_to_date": up_to_date,
+                        "pkg_manager": pkg_mgr.map(|m| match m {
+                            PkgManager::Opkg => "opkg",
+                            PkgManager::ApkNative => "apk",
+                        }),
                         "enabled":       router.uci_get("tollgate.main.enabled").map(|v| v == "1").unwrap_or(false),
                         "metric":        router.uci_get("tollgate.main.metric").unwrap_or_default(),
                         "step_size_ms":  router.uci_get("tollgate.main.step_size").ok().and_then(|v| v.parse::<u64>().ok()).unwrap_or(0),

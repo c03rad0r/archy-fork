@@ -9,8 +9,8 @@ pub mod wifi;
 pub use assets::{AssetShape, PackageTarget, FEED_REPO, LEGACY_REPO};
 pub use config::TollGateConfig;
 pub use install::{
-    install_runtime_deps, install_tollgate, installed_tollgate_version, read_package_target,
-    TOLLGATE_VERSION,
+    install_runtime_deps, install_tollgate, installed_tollgate_version,
+    installed_tollgate_version_any, read_package_target, TOLLGATE_VERSION,
 };
 pub use verify::{manifest_url, verify_download, VerifyOutcome};
 pub use version::{package_version_from_pin, TOLLGATE_PACKAGE, TOLLGATE_SERVICE_BIN};
@@ -22,7 +22,7 @@ use tracing::info;
 use crate::{opkg::PkgManager, Router};
 
 /// Full TollGate provisioning sequence:
-/// 1. Install tollgate-module-basic-go
+/// 1. Install `tollgate-wrt` at the pinned release
 /// 2. Install NoDogSplash and immediately stop it (its postinst auto-starts
 ///    it against `br-lan` by default — see `nodogsplash::install_and_stop`)
 /// 3. Write TollGate config: UCI (status/detection only) + the JSON file the
@@ -53,9 +53,9 @@ pub async fn provision(router: &Router, config: &TollGateConfig) -> Result<()> {
 
     // NoDogSplash is a hard runtime dependency of tollgate-wrt (upstream's
     // package declares `+nodogsplash`), but neither install path above pulls
-    // it in: the opkg fast path only resolves deps against a real feed, and
-    // the raw .ipk-extraction fallback (used whenever the package isn't in a
-    // feed, and always on ApkNative) skips dependency resolution entirely.
+    // it in: both install paths install a single verified local asset with no
+    // feed solver behind it (opkg/apk resolve deps only for packages they
+    // fetch themselves), so nothing pulls the declared DEPENDS in.
     // Without it, tollgate-wrt runs and accepts payments but never actually
     // blocks unpaid clients. Install + stop happens before anything else so
     // its auto-started default config (gating br-lan) is live for as little
