@@ -234,7 +234,12 @@ pub fn verify_downloaded_package(router: &Router, path: &str, filename: &str) ->
     let (manifest_text, _) = router.run("cat /tmp/tollgate-SHA256SUMS 2>/dev/null")?;
 
     let (digest_out, digest_code) = router.run(&format!(
-        "sha256sum {path} 2>/dev/null | awk '{{print $1}}'"
+        // The exit status of a pipeline is its LAST command's, so this used to
+        // end in `| awk` and `digest_code` was always 0 — the "sha256sum is not
+        // available" branch below was dead, and a router without it produced a
+        // confusing MISMATCH with an empty actual digest instead. `test -x` first
+        // makes the guard mean what it says.
+        "command -v sha256sum >/dev/null 2>&1 || exit 3; sha256sum {path} 2>/dev/null | awk '{{print $1}}'"
     ))?;
     if digest_code != 0 {
         anyhow::bail!("sha256sum is not available on this router — cannot verify the download");

@@ -6,9 +6,19 @@
 //! stays (it is cheap and it produces a clearer message than a hash mismatch
 //! for the common case), but it is no longer the only check.
 //!
-//! The release publishes a signed `SHA256SUMS` manifest alongside the
+//! The release publishes a `SHA256SUMS` manifest alongside the
 //! packages, so the expected digest is available from a source independent of
 //! the file being checked.
+//!
+//! **What this does and does not prove.** It detects corruption and truncation:
+//! a file that was mangled in transit or replaced by an error page cannot match
+//! a digest the release published. It does NOT establish authenticity against an
+//! active on-path attacker, because both the package and the manifest are
+//! fetched with certificate verification disabled (fresh OpenWrt images ship
+//! without a CA bundle) and the manifest's own `SHA256SUMS.sig` is not fetched or
+//! verified. Such an attacker can serve a payload *and* a matching manifest.
+//! Claiming otherwise in a doc comment about a money path would be worse than
+//! having no check at all, because a reader cannot tell the two apart.
 
 /// The manifest filename, as published by the feed's release job.
 pub const SHA256SUMS_NAME: &str = "SHA256SUMS";

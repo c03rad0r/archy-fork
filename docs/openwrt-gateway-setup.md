@@ -310,11 +310,16 @@ new host/credentials; the newly connected router becomes the persisted one.
   the manual `.ipk` path. Note that `arm_cortex-a7` in older notes is spelled
   `arm_cortex-a7_neon-vfpv4` for the Raspberry Pi 2 target.
 - **TollGate download looks like it succeeded but provisioning still
-  fails**: the node verifies the download against the release's signed
+  fails**: the node verifies the download against the release's
   `SHA256SUMS` manifest. A failure names either a digest mismatch (the file is
   not what the release published) or a missing manifest entry (the release did
   not publish that asset) — the second is a provenance problem, not a corrupt
   transfer, and rebuilding the URL is the fix, not retrying.
+  **This proves the file is intact, not who published it.** Both the package
+  and the manifest are fetched over TLS with certificate verification disabled
+  (fresh images lack a CA bundle), and the release's `SHA256SUMS.sig` is not
+  verified. It catches corruption and truncation; it does not withstand an
+  active on-path attacker, who can serve a payload and a matching manifest.
 - **`jq` and `ca-bundle` are installed alongside TollGate.** They are declared
   dependencies of the package, and nothing else pulls them in. `jq` is
   load-bearing: the package's first-boot script uses it to read which UI owns
