@@ -632,4 +632,69 @@ mod tests {
         // it must not be silently treated as a match.
         assert_eq!(extract_version_line("something else entirely\n"), None);
     }
+
+    // ---- both install paths must consult the version decision -------------
+    //
+    // This is the gap that let a blocking defect through a green suite. All the
+    // `decide_install` tests exercise it in isolation; none asserted it was
+    // CALLED by both install paths. So when the opkg path kept its presence-only
+    // guard, every test still passed and the bump remained a silent no-op on
+    // OpenWrt <=24.x — the exact failure the change claims to remove.
+    //
+    // A source-level assertion is the honest tool here: the router is an SSH
+    // session, so "was the decision consulted before installing" is a question
+    // about the code path, not about a return value.
+
+    fn function_body(name: &str) -> String {
+        let src = include_str!("install.rs");
+        let start = src
+            .find(&format!("pub fn {name}("))
+            .unwrap_or_else(|| panic!("{name} not found"));
+        let rest = &src[start..];
+        // Body ends at the next top-level `pub fn` or the doc comment above it.
+        let end = rest[1..]
+            .find("\npub fn ")
+            .map(|i| i + 1)
+            .unwrap_or(rest.len());
+        rest[..end].to_string()
+    }
+
+    #[test]
+    fn the_opkg_path_consults_the_version_decision_before_installing() {
+        let body = function_body("install_tollgate");
+        assert!(
+            body.contains("decide_install"),
+            "install_tollgate must consult decide_install; without it a router \
+             carrying an old version is reported as installed"
+        );
+        let decide_at = body.find("decide_install").expect("checked above");
+        let install_at = body
+            .find("opkg_install_forced")
+            .expect("install_tollgate must install via opkg_install_forced");
+        assert!(
+            decide_at < install_at,
+            "the version decision must come BEFORE the install call, or it is \
+             discarded by opkg's name-only short-circuit"
+        );
+        assert!(
+            !body.contains("opkg_install(TOLLGATE_PACKAGE)"),
+            "the presence-only opkg_install must not be used once a version \
+             decision exists: it returns Ok(()) on any version"
+        );
+    }
+
+    #[test]
+    fn the_apk_path_consults_the_version_decision_before_installing() {
+        let body = function_body("install_tollgate_apk_native");
+        let decide_at = body
+            .find("decide_install")
+            .expect("install_tollgate_apk_native must consult decide_install");
+        let install_at = body
+            .find("apk add --allow-untrusted")
+            .expect("the apk path must install");
+        assert!(
+            decide_at < install_at,
+            "the version decision must come before the apk install"
+        );
+    }
 }
