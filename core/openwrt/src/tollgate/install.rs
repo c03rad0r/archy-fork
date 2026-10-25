@@ -96,8 +96,35 @@ fn apk_url(target: &PackageTarget) -> Option<String> {
 pub fn install_tollgate(router: &Router) -> Result<()> {
     info!("[{}] Installing {}", router.host, TOLLGATE_PACKAGE);
 
-    // Fast path: standard opkg install (or already installed).
-    if router.opkg_install(TOLLGATE_PACKAGE).is_ok() {
+    // The version decision comes FIRST, and it is the same decision the apk path
+    // makes. It did not use to be here at all, and the omission was invisible in
+    // a specific and dangerous way.
+    //
+    // `router.opkg_install()` is not version-aware: it greps
+    // `opkg list-installed` for the package name and returns Ok(()) if it is
+    // present, at ANY version. While the constant was the repository name
+    // (`tollgate-module-basic-go`) that grep could never match, so control fell
+    // through to a real install and the missing version check did not matter.
+    // Renaming the constant to the real package name — required for the apk
+    // guard — made the grep match again, which turned this path into the very
+    // silent no-op this change exists to remove, on OpenWrt ≤24.x.
+    //
+    // So the guard is explicit here, not delegated to opkg_install.
+    let installed = installed_tollgate_version(router, PkgManager::Opkg);
+    let desired = package_version_from_pin(TOLLGATE_VERSION)
+        .context("derive the package version from the pinned release tag")?;
+    let decision = decide_install(&installed, &desired, false, None);
+    if !decision.should_install() {
+        info!("[{}] {}", router.host, decision.reason());
+        return Ok(());
+    }
+    info!("[{}] {}", router.host, decision.reason());
+
+    // Fast path: the package is in a configured feed. `opkg install` on an
+    // ALREADY-INSTALLED package does not upgrade it, so the version decision
+    // above had to run first — asking opkg to install only after we know the
+    // installed version is wrong.
+    if let Ok(()) = router.opkg_install_forced(TOLLGATE_PACKAGE) {
         return Ok(());
     }
 

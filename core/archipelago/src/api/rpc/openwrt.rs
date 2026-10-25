@@ -143,7 +143,7 @@ impl RpcHandler {
                 // dashboard reported "installed" identically for 0.5.0 and
                 // 0.6.0, so the one question this release has to answer —
                 // "did the pin actually take effect?" — could not be asked.
-                let pkg_mgr = router.opkg_check().unwrap_or(PkgManager::Opkg);
+                let pkg_mgr = router.pkg_manager().unwrap_or(PkgManager::Opkg);
                 let installed_version = tollgate::installed_tollgate_version(&router, pkg_mgr);
                 let tollgate_installed = !matches!(installed_version, Installed::Absent);
 
