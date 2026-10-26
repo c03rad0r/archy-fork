@@ -142,7 +142,7 @@ fn restart_services(router: &Router, enabled: bool) -> Result<()> {
 
     if !wireless_present {
         info!(
-            "[{}] no wifi command on this device — skipping wireless reload (br-tollgate stays unclaimed)",
+            "[{}] no radio on this device — skipping wireless reload (br-tollgate stays unclaimed)",
             router.host
         );
         return Ok(());
