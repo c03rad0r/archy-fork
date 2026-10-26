@@ -125,8 +125,18 @@ fn restart_services(router: &Router, enabled: bool) -> Result<()> {
     // `wifi down` with `run`, logs a non-zero status, and falls through to a
     // `network restart`. Follow that: a wifi reload that cannot happen is
     // logged, not propagated.
+    //
+    // Ask the KERNEL for a radio, not the filesystem for a script. A `wifi`
+    // script is not a radio: the x86 image accepts `wifi-scripts` with no phy
+    // behind it, and a board with its radios disabled has the script too.
+    // Measured: with `wifi-scripts` installed on a radio-less guest this probe
+    // returned true, the reload failed harmlessly, and the br-tollgate check
+    // below then aborted provisioning after 5 cycles — the same
+    // success-reported-as-failure this block exists to remove, moved one step
+    // later. `/sys/class/ieee80211/` has one entry per real phy and is empty
+    // when there is nothing to drive.
     let wireless_present = router
-        .run("test -x /sbin/wifi -o -x /usr/sbin/wifi 2>&1")
+        .run("ls /sys/class/ieee80211/ 2>/dev/null | grep -q .")
         .map(|(_, code)| code == 0)
         .unwrap_or(false);
 
@@ -191,18 +201,25 @@ mod tests {
     use super::*;
     use std::sync::{Arc, Mutex};
 
-    /// A router with no radio: `/sbin/wifi` is absent, so the wifi reload and
-    /// the br-tollgate address check must both be skipped rather than failing
-    /// the whole provision. Regression guard for the `ash: wifi: not found`
-    /// (exit 127) abort that reported failure on a successful install.
+    /// A router with no radio: the wifi reload and the br-tollgate address
+    /// check must both be skipped rather than failing the whole provision.
+    ///
+    /// Two measured forms of "no radio", both regression-guarded here:
+    ///   1. no `wifi` command at all (`ash: wifi: not found`, exit 127);
+    ///   2. a `wifi` command present with no phy behind it — installing
+    ///      `wifi-scripts` on the x86 lab guest produced exactly this, and a
+    ///      probe for the script returned true, so the br-tollgate check ran and
+    ///      aborted provisioning after 5 cycles. The probe must ask
+    ///      `/sys/class/ieee80211/` (one entry per real phy), not the filesystem
+    ///      for a script.
     #[test]
-    fn restart_services_tolerates_a_device_with_no_wifi() {
+    fn restart_services_tolerates_a_device_with_no_radio() {
         let seen: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
         let log = seen.clone();
         let router = Router::scripted(move |cmd| {
             log.lock().unwrap().push(cmd.to_string());
-            if cmd.contains("test -x /sbin/wifi") {
-                return Ok((String::new(), 1)); // no wifi command on this device
+            if cmd.contains("/sys/class/ieee80211/") {
+                return Ok((String::new(), 1)); // no radio on this device
             }
             if cmd.contains("ifdown tollgate") {
                 panic!("must not touch br-tollgate when there is no radio: {cmd}");
@@ -214,7 +231,7 @@ mod tests {
 
         let commands = seen.lock().unwrap().clone();
         assert!(
-            commands.iter().any(|c| c.contains("test -x /sbin/wifi")),
+            commands.iter().any(|c| c.contains("/sys/class/ieee80211/")),
             "must probe for the wifi command before using it; saw {commands:#?}"
         );
         assert!(
@@ -229,8 +246,8 @@ mod tests {
     #[test]
     fn restart_services_still_fails_when_a_radio_exists_but_br_tollgate_never_comes_up() {
         let router = Router::scripted(|cmd| {
-            if cmd.contains("test -x /sbin/wifi") {
-                return Ok((String::new(), 0)); // wifi present
+            if cmd.contains("/sys/class/ieee80211/") {
+                return Ok(("phy0\n".to_string(), 0)); // a real radio is present
             }
             if cmd.contains("ifdown tollgate") {
                 return Ok(("br-tollgate has no kernel-level IPv4 address".into(), 1));
