@@ -658,3 +658,50 @@ Gates: check 0 · fmt clean · clippy **124 == 124** · mandated runner **2085 p
 - **The guard is source-level, not behavioural**: a unit test cannot observe two semaphores.
   The live read-back covers the observable claim; the guard covers the structural one. Neither
   alone is sufficient.
+
+
+# VERIFICATION AT HEAD `9d50f739` (2026-10-26) — fresh build, all three read-backs re-run
+
+Prior read-back numbers were produced against separate builds, and the only release binary left
+on this host (`~/worktrees/archy-media-deadline/core/target/release/archipelago`, mtime
+2026-10-23 08:28) predates `036d28ac` (D3 enforcement, Oct 23 16:34) and `9d50f739` (D1, Oct 24
+04:23). So the numbers below were produced from a **fresh build of this head**, and the scripts'
+`ARCHY_SUT` was pinned to `/home/c08r4d0r/repos/archy` rather than their default worktree.
+
+Binary: `core/target/release/archipelago`, 80,504,928 B,
+`sha256 70b9f8fa608a39bd72b3d1b3541ef027e6509329c6216a0f9a9430954f1afacd`.
+Build: `CARGO_BUILD_JOBS=1 cargo build --release` → `Finished \`release\` profile` in **28m 02s**,
+`CARGO_RC=0`. (A first attempt was run with its output piped through `tail`, so the observed
+`rc=0` was `tail`'s and the run ended with no binary at all — the pipe hid the real status.
+`PIPESTATUS` / a log file, never `| tail`.)
+
+| Read-back | Result | Exit |
+|---|---|---|
+| `p1-media-counter-readback.py` | **PASS=15, NOT_VERIFIED=1, FAIL=0** | 0 |
+| `p2-admission-readback.py` | **PASS=6, NOT_VERIFIED=1, FAIL=0** | 0 |
+| `p3-media-deadline-readback.py` | **PASS=4, NOT_VERIFIED=1, FAIL=0** | 0 |
+
+The three NOT_VERIFIED rows are the known fixture limits, unchanged and not upgraded:
+
+- **P1 per-object keys** — the seller's `OwnedItem` index carries no sha256, so nothing at the
+  serve site can build the plan's `(sha256, size)` key. API present, unit-tested, no producer.
+- **P2 scale caveat** — 48 streams, not 1024. Representative in kind (shared-budget bug), not a
+  load test.
+- **P3 >900 s duration** — requires >900 s of wall clock per case and a real purchased stream
+  (needs the `twonode` venue; FIPS DNS `5354` is not answering on this host).
+
+Other gates at this head:
+
+- `cargo fmt --all -- --check` → **rc 0**
+- `cargo check -p archipelago` → **rc 0** (49 warnings, all pre-existing dead-code)
+- `cargo clippy --all-targets --all-features` → **rc 0, 0 errors, 122 warnings** for the bin —
+  below the 124 baseline, so the ratchet holds
+- mandated runner `scripts/test-backend-isolated.sh` → **2102 passed, 1 failed, 5 ignored**.
+  The single failure is
+  `container::quadlet::tests::actual_quadlet_generator_stops_before_forced_removal` — podman's
+  `quadlet-generator` rejects `StopTimeout` in group `Container` on this host; the same test
+  fails identically on pristine `fcc18b3`, so it is environmental, not introduced here.
+
+Nothing in this section changes the "STILL NOT DONE" list that precedes it: the per-peer rate
+cap is not implemented, `spawn_blocking(open_matching)` is still unbounded, and a real purchase
+remains operator UAT.
