@@ -112,9 +112,44 @@ fn restart_services(router: &Router, enabled: bool) -> Result<()> {
         router.run_ok("/etc/init.d/tollgate-wrt disable || true")?;
     }
     router.run_ok("/etc/init.d/network restart")?;
+
+    // Everything below is wifi-dependent, and its absence is a fact about the
+    // device, not a provisioning failure. A router with no radio — an x86 VM,
+    // a wifi-less CPE, or a board whose radio is disabled — has no `wifi`
+    // command at all (`ash: wifi: not found`, exit 127). Treating that as
+    // fatal aborts AFTER the package is already installed and verified, so
+    // `provision-tollgate` reports failure for a provision that succeeded and
+    // callers retry or alarm on a working router.
+    //
+    // The repo already handles this correctly one module over — `wan.rs` runs
+    // `wifi down` with `run`, logs a non-zero status, and falls through to a
+    // `network restart`. Follow that: a wifi reload that cannot happen is
+    // logged, not propagated.
+    let wireless_present = router
+        .run("test -x /sbin/wifi -o -x /usr/sbin/wifi 2>&1")
+        .map(|(_, code)| code == 0)
+        .unwrap_or(false);
+
+    if !wireless_present {
+        info!(
+            "[{}] no wifi command on this device — skipping wireless reload (br-tollgate stays unclaimed)",
+            router.host
+        );
+        return Ok(());
+    }
+
     // Reload wireless so wireless.tollgate.disabled takes effect on the radio —
     // `network restart` alone doesn't reliably reconfigure wifi interfaces.
-    router.run_ok("wifi down 2>&1; wifi up 2>&1")?;
+    let (wifi_out, wifi_code) = router.run("wifi down 2>&1; wifi up 2>&1")?;
+    if wifi_code != 0 {
+        info!(
+            "[{}] wifi reload failed ({}): {} — continuing, the package is already installed",
+            router.host,
+            wifi_code,
+            wifi_out.trim()
+        );
+    }
+
     // Observed live, twice, in two different ways: netifd can lose the race
     // to claim br-tollgate as the wifi vif attaches to it during the restart
     // above. The first time it showed up as netifd reporting
@@ -127,7 +162,12 @@ fn restart_services(router: &Router, enabled: bool) -> Result<()> {
     // level (not just what netifd claims) and retry the cycle if not, since
     // NoDogSplash refuses to start against an interface that isn't really up
     // and dnsmasq will silently refuse to answer DHCP without erroring loudly.
-    router.run_ok(
+    //
+    // Still fatal when there IS a radio: reaching here with `wireless_present`
+    // true means the device can host a paid SSID, so an unclaimed br-tollgate
+    // is a genuine fault that would leave every client pointed at a dead
+    // gateway.
+    let (cycle_out, cycle_code) = router.run(
         "sleep 2; \
          for i in 1 2 3 4 5; do \
              ifdown tollgate 2>&1; sleep 1; ifup tollgate 2>&1; sleep 2; \
@@ -137,5 +177,71 @@ fn restart_services(router: &Router, enabled: bool) -> Result<()> {
          ip -4 addr show br-tollgate 2>/dev/null | grep -q 'inet ' || \
              { echo 'br-tollgate never got a kernel-level IPv4 address after 5 cycles'; exit 1; }",
     )?;
+    if cycle_code != 0 {
+        anyhow::bail!(
+            "br-tollgate has no kernel-level IPv4 address after 5 ifdown/ifup cycles: {}",
+            cycle_out.trim()
+        );
+    }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::{Arc, Mutex};
+
+    /// A router with no radio: `/sbin/wifi` is absent, so the wifi reload and
+    /// the br-tollgate address check must both be skipped rather than failing
+    /// the whole provision. Regression guard for the `ash: wifi: not found`
+    /// (exit 127) abort that reported failure on a successful install.
+    #[test]
+    fn restart_services_tolerates_a_device_with_no_wifi() {
+        let seen: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
+        let log = seen.clone();
+        let router = Router::scripted(move |cmd| {
+            log.lock().unwrap().push(cmd.to_string());
+            if cmd.contains("test -x /sbin/wifi") {
+                return Ok((String::new(), 1)); // no wifi command on this device
+            }
+            if cmd.contains("ifdown tollgate") {
+                panic!("must not touch br-tollgate when there is no radio: {cmd}");
+            }
+            Ok((String::new(), 0))
+        });
+
+        restart_services(&router, true).expect("a radio-less device is not a failure");
+
+        let commands = seen.lock().unwrap().clone();
+        assert!(
+            commands.iter().any(|c| c.contains("test -x /sbin/wifi")),
+            "must probe for the wifi command before using it; saw {commands:#?}"
+        );
+        assert!(
+            !commands.iter().any(|c| c.contains("wifi down")),
+            "must not run wifi down when the command does not exist; saw {commands:#?}"
+        );
+    }
+
+    /// The same call on a device that DOES have a radio must still fail when
+    /// br-tollgate never gets a kernel-level address — that leaves every
+    /// client pointed at a dead gateway.
+    #[test]
+    fn restart_services_still_fails_when_a_radio_exists_but_br_tollgate_never_comes_up() {
+        let router = Router::scripted(|cmd| {
+            if cmd.contains("test -x /sbin/wifi") {
+                return Ok((String::new(), 0)); // wifi present
+            }
+            if cmd.contains("ifdown tollgate") {
+                return Ok(("br-tollgate has no kernel-level IPv4 address".into(), 1));
+            }
+            Ok((String::new(), 0))
+        });
+
+        let err = restart_services(&router, true).expect_err("unclaimed br-tollgate must fail");
+        assert!(
+            err.to_string().contains("br-tollgate"),
+            "error should name the interface, got: {err}"
+        );
+    }
 }
