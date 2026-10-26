@@ -688,6 +688,43 @@ needs `localnode`/`twonode`, which this host does not have (no `fips0`, FIPS DNS
 The limiter is proven behaviourally and the wiring is proven on the source; the third leg, an
 actual 65th connection from one peer being refused in front of a real listener, is not done.
 
+### WIRE VERIFICATION — done (2026-10-26), superseding the paragraph above
+
+**The paragraph above was wrong about the venue.** `getent hosts fips0` returned nothing and I
+read that as "no fips0", but the interface exists (`fips0`, ULA
+`fd36:3c0f:d6f:8029:ea50:958b:672e:bb0`, read from `/proc/net/if_inet6`). It only means the
+name does not resolve. The peer listener therefore IS wire-testable on this host, and a DNS
+lookup is not a venue probe — read `/proc/net/if_inet6` or `ip -6 addr`, the way the binary
+itself does.
+
+`scripts/p2b-per-peer-cap-readback.py` drives the real release binary's peer listener on
+`[ULA]:5679` and counts what the kernel hands back:
+
+    [PASS] cap is readable from source                 — PEER_PER_PEER_CONNECTION_CAP=64
+    [PASS] fips0 carries a ULA                         — fd36:3c0f:…:bb0
+    [PASS] binary starts and serves both listeners     — UI healthy, peer accepting
+    [PASS] peer admits 64 concurrent connections       — 64/64 held open
+    [PASS] the connection past the cap is refused      — connection 65 → HTTP 429
+    [PASS] refusal is 429, not the 503 for budget exhaustion
+    [PASS] UI listener still answers while the peer cap is saturated — /health → 200 at 64
+    [PASS] closing a peer connection returns its slot  — next connection → 200
+    [PASS] below the cap the next connection is admitted — with 3 held, #4 → 200
+    [NOT_VERIFIED] two DIFFERENT peers are isolated    — all connections share one source key
+    counts: PASS=9, NOT_VERIFIED=1, exit 0
+
+Binary under test: `4e2f961ac3954966dc0243c02ea276e1b46b17c03b9983c73d10f392d7841466`
+(80,067,328 B, built from `ab2c4402`, `Finished release` in 15m 32s, `CARGO_RC=0`).
+
+The last two rows are what make this a control rather than a coincidence: the shallow probe
+proves the refusal is **count-keyed** (a latch or machine-level limit would also refuse at
+depth 3), and the release probe proves the slot is **returned** rather than leaked.
+
+**Still not claimed:** isolation between two DIFFERENT peers. Every connection originates from
+this host, so they share one peer key; that half rests on the address-keyed accounting proven by
+`one_peer_cannot_take_every_slot`, not on this wire run. A second machine on the mesh is the only
+way to close it.
+
+
 
 
 # VERIFICATION AT HEAD `9d50f739` (2026-10-26) — fresh build, all three read-backs re-run
