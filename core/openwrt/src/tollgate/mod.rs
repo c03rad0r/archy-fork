@@ -1,5 +1,6 @@
 pub mod assets;
 pub mod config;
+pub mod firewall;
 pub mod install;
 pub mod nodogsplash;
 pub mod verify;
@@ -89,6 +90,12 @@ pub async fn provision(router: &Router, config: &TollGateConfig) -> Result<()> {
     // br-tollgate, which provision_ssid is what creates.
     nodogsplash::configure(router, config)
         .context("configure nodogsplash — tollgate-wrt cannot gate clients without it")?;
+
+    // The packaged nft fragments assume the captive bridge is called
+    // br-lan; this deployment calls it br-tollgate, so the backend API
+    // (the portal's own data source) was dropped from the paid network.
+    firewall::ensure_paid_bridge_can_reach_api(router)
+        .context("allow the TollGate API from the paid bridge")?;
 
     restart_services(router, config.enabled)?;
     nodogsplash::restart(router)?;
