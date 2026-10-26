@@ -114,18 +114,6 @@ impl Router {
         Ok(())
     }
 
-    /// Install a package WITHOUT the already-installed short-circuit.
-    ///
-    /// [`opkg_install`](Self::opkg_install) returns `Ok(())` as soon as the
-    /// package NAME is listed, at any version, so it can never perform an
-    /// upgrade. Callers that have already decided a different version is wanted
-    /// must use this instead, or the decision is silently discarded.
-    pub fn opkg_install_forced(&self, package: &str) -> Result<()> {
-        info!("[{}] opkg install {}", self.host, package);
-        self.run_ok(&format!("opkg install {}", package))?;
-        Ok(())
-    }
-
     /// Install a package, skipping if already installed.
     pub fn opkg_install(&self, package: &str) -> Result<()> {
         // Check if already installed to avoid unnecessary network traffic.
