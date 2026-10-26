@@ -97,7 +97,7 @@ pub fn configure(router: &Router, cfg: &TollGateConfig) -> Result<()> {
 
     router.uci_set("nodogsplash.main", "nodogsplash")?;
     router.uci_set("nodogsplash.main.enabled", "1")?;
-    router.uci_set("nodogsplash.main.gatewayinterface", "br-tollgate")?;
+    router.uci_set("nodogsplash.main.gatewayinterface", PAID_BRIDGE)?;
     router.uci_set(
         "nodogsplash.main.gatewayname",
         &format!("{} Portal", cfg.ssid),
@@ -246,8 +246,12 @@ pub enum GatewayInterfaceCheck {
 /// future `tollgate-wrt` fixes `setup_nodogsplash` upstream (or renames the
 /// script), the assumption behind this project's repair becomes false and the
 /// comment explaining it becomes a lie — the exact failure this card was filed
-/// against, where prose outlived the mechanism. This probe makes that
-/// checkable from a test instead of from memory.
+/// against, where prose outlived the mechanism.
+///
+/// Callers: `examples/live_driver.rs` runs this on a real router before trusting
+/// the guard's rationale. It is deliberately not asserted in a unit test — a
+/// unit test cannot see the package's filesystem, so a test over this string
+/// would check our own formatting rather than the package.
 pub fn upstream_gateway_write_probe() -> String {
     format!(
         "grep -n \"gatewayinterface='{UPSTREAM_GATEWAY_VALUE}'\" {UPSTREAM_SETUP_SCRIPT} 2>/dev/null"
@@ -259,33 +263,32 @@ mod tests {
     use super::*;
     use std::sync::{Arc, Mutex};
 
-    fn function_body(name: &str) -> String {
-        let src = include_str!("nodogsplash.rs");
-        let start = src
-            .find(&format!("pub fn {name}("))
-            .unwrap_or_else(|| panic!("{name} not found"));
-        let rest = &src[start..];
-        let end = rest[1..]
-            .find("\npub fn ")
-            .map(|i| i + 1)
-            .unwrap_or(rest.len());
-        rest[..end].to_string()
-    }
-
     /// The repair exists because the package writes `br-lan` at the SAME
     /// positional selector `configure` uses for `main`. If someone changes the
     /// guard to a key that is not the one the package writes, the guard can
-    /// pass while the daemon still gates the wrong bridge — so assert the key.
+    /// pass while the daemon still gates the wrong bridge — so assert the key
+    /// the guard actually *reads*, on the wire.
     #[test]
-    fn the_guard_verifies_the_key_the_package_actually_writes() {
-        let body = function_body("assert_gateway_interface_is_paid_bridge");
+    fn the_guard_reads_the_key_the_package_actually_writes() {
+        let seen: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
+        let log = seen.clone();
+        let router = Router::scripted(move |cmd| {
+            log.lock().unwrap().push(cmd.to_string());
+            if cmd.contains("uci -q get") {
+                return Ok((format!("{PAID_BRIDGE}\n"), 0));
+            }
+            Ok((String::new(), 0))
+        });
+
+        assert_gateway_interface_is_paid_bridge(&router).unwrap();
+
+        let commands = seen.lock().unwrap().clone();
         assert!(
-            body.contains("nodogsplash.@nodogsplash[0].gatewayinterface"),
-            "guard must use the positional key the package writes, got:\n{body}"
-        );
-        assert!(
-            body.contains("PAID_BRIDGE"),
-            "guard must compare against the paid bridge constant"
+            commands
+                .iter()
+                .any(|c| c.contains("uci -q get nodogsplash.@nodogsplash[0].gatewayinterface")),
+            "guard must read the positional key the package writes \
+             (nodogsplash.@nodogsplash[0].gatewayinterface), saw {commands:#?}"
         );
     }
 
@@ -376,8 +379,14 @@ mod tests {
     /// script, so a guard that only fixed UCI would be overwritten again on the
     /// next provisioning pass. Pin the relationship that makes the ordering
     /// safe: the repair is called after every package install in `provision`.
+    ///
+    /// This one is a STRUCTURAL check, not a behavioural one — it compares
+    /// positions in the source of `provision`, because driving a full provision
+    /// here would mean downloading and sha256-verifying a real release asset.
+    /// It catches the regression that matters (guard moved above the install)
+    /// and nothing more; do not read it as evidence the guard fires at runtime.
     #[test]
-    fn provision_re_asserts_the_gateway_after_the_package_install() {
+    fn provision_calls_the_guard_after_the_package_install_in_source_order() {
         let src = include_str!("mod.rs");
         let install = src
             .find("install_tollgate(router)?")

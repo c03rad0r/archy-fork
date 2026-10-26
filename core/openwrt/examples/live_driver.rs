@@ -16,7 +16,14 @@ use archipelago_openwrt::tollgate::{self, TollGateConfig};
 use archipelago_openwrt::Router;
 
 fn connect(host: &str) -> anyhow::Result<Router> {
-    let pw = std::env::var("ARCHY_LAB_ROOT_PASSWORD").unwrap_or_else(|_| "archy-lab".into());
+    // No default: a shipped example must not carry a working credential for a
+    // lab router. Fail with an instruction instead of guessing.
+    let pw = std::env::var("ARCHY_LAB_ROOT_PASSWORD").map_err(|_| {
+        anyhow::anyhow!(
+            "set ARCHY_LAB_ROOT_PASSWORD to the router's root password \
+             (never commit it or pass it on a command line others can read)"
+        )
+    })?;
     Router::connect_password(host, 22, "root", &pw)
 }
 
@@ -27,7 +34,8 @@ fn probe(router: &Router, label: &str) -> anyhow::Result<()> {
     let (literal, lrc) = router.run("ndsctl status 2>&1 | grep -i gatewayinterface")?;
     let (bridge, _) = router.run("ip -4 addr show br-tollgate 2>&1 | grep inet")?;
     let (listen, _) = router.run("ndsctl status 2>&1 | grep -i 'Server listening'")?;
-    let (rendered, _) = router.run("grep -i '^GatewayInterface' /tmp/etc/nodogsplash_main.conf 2>&1")?;
+    let (rendered, _) =
+        router.run("grep -i '^GatewayInterface' /tmp/etc/nodogsplash_main.conf 2>&1")?;
     let (sections, _) = router.run("uci show nodogsplash 2>&1 | grep -c nodogsplash")?;
     let (running, _) = router.run("pgrep -f nodogsplash >/dev/null && echo yes || echo no")?;
 
@@ -37,7 +45,14 @@ fn probe(router: &Router, label: &str) -> anyhow::Result<()> {
     println!("$ ndsctl status | grep -i 'Managed interface'");
     println!("{}", nds.trim());
     println!("$ ndsctl status | grep -i gatewayinterface   (card's literal form; rc={lrc})");
-    println!("{}", if literal.trim().is_empty() { "(no output)" } else { literal.trim() });
+    println!(
+        "{}",
+        if literal.trim().is_empty() {
+            "(no output)"
+        } else {
+            literal.trim()
+        }
+    );
     println!("$ grep -i '^GatewayInterface' /tmp/etc/nodogsplash_main.conf");
     println!("{}", rendered.trim());
     println!("$ ndsctl status | grep -i 'Server listening'");
@@ -46,6 +61,24 @@ fn probe(router: &Router, label: &str) -> anyhow::Result<()> {
     println!("{}", bridge.trim());
     println!("daemon running: {}", running.trim());
     println!("nodogsplash uci lines: {}", sections.trim());
+
+    // The guard exists because of one specific line in a file the package owns.
+    // Print whether that line is still there, so a reader of this output can
+    // tell a working guard from one defending against a bug that was fixed
+    // upstream — the failure mode where the comment outlives the mechanism.
+    println!(
+        "$ {}",
+        tollgate::nodogsplash::upstream_gateway_write_probe()
+    );
+    let (upstream, urc) = router.run(&tollgate::nodogsplash::upstream_gateway_write_probe())?;
+    if urc != 0 || upstream.trim().is_empty() {
+        println!(
+            "(no matching write found, rc={urc}) — the package may have fixed \
+             setup_nodogsplash; re-check whether this guard is still needed"
+        );
+    } else {
+        println!("{}", upstream.trim());
+    }
     println!();
     Ok(())
 }
@@ -71,8 +104,8 @@ fn main() -> anyhow::Result<()> {
         }
         "provision" => {
             let ssid = std::env::var("ARCHY_SSID").unwrap_or_else(|_| "archipelago".into());
-            let mint = std::env::var("ARCHY_MINT_URL")
-                .unwrap_or_else(|_| "http://10.99.99.2:3338".into());
+            let mint =
+                std::env::var("ARCHY_MINT_URL").unwrap_or_else(|_| "http://10.99.99.2:3338".into());
             let cfg = TollGateConfig {
                 ssid,
                 mint_url: mint,
@@ -99,7 +132,9 @@ fn main() -> anyhow::Result<()> {
             }
             probe(&router, "AFTER reinstall (no provision)")
         }
-        other => anyhow::bail!("unknown command {other:?}; try probe|assert-guard|provision|reinstall-package"),
+        other => anyhow::bail!(
+            "unknown command {other:?}; try probe|assert-guard|provision|reinstall-package"
+        ),
     }
 }
 
