@@ -25,6 +25,10 @@ docker/*
 !core/
 !scripts/
 !image-recipe/
+# runtime.rs include_str!s apps/nginx-proxy-manager/manifest.yml, so the
+# backend source build needs apps/ in the context. Omitted at first, which
+# made `COPY apps ./apps` match nothing under this deny-by-default list.
+!apps/
 image-recipe/build/
 image-recipe/results/
 image-recipe/output/
