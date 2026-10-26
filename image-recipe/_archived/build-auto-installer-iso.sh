@@ -1359,9 +1359,13 @@ if [ "$BACKEND_CAPTURED" = "0" ]; then
     fi
     BACKEND_DOCKERFILE="$WORK_DIR/Dockerfile.backend"
     cat > "$BACKEND_DOCKERFILE" <<'BACKENDFILE'
-FROM rust:1.93-trixie as builder
+FROM rust:1.99-trixie as builder
 WORKDIR /build
 COPY core ./core
+# runtime.rs include_str!s ../../../../../../apps/nginx-proxy-manager/manifest.yml,
+# i.e. six levels up out of core/, so apps/ must be in the build context or the
+# compile dies with "couldn't read .../manifest.yml".
+COPY apps ./apps
 COPY scripts ./scripts
 COPY image-recipe/configs ./image-recipe/configs
 RUN cd core && cargo build --release --bin archipelago
