@@ -212,10 +212,15 @@ impl ApiHandler {
             let data = self.config.data_dir.clone();
             let id = binding.content_id.clone();
             let retained = source.clone();
-            let snapshot = tokio::task::spawn_blocking(move || {
-                crate::content_snapshot::open_matching(&data, &id, &retained.sha256, retained.size)
-            })
-            .await??;
+            // Bounded (P2): unbounded spawn_blocking let a media burst starve the shared
+            // blocking pool.
+            let snapshot = crate::content_snapshot::open_matching_bounded(
+                data,
+                id,
+                retained.sha256.clone(),
+                retained.size,
+            )
+            .await?;
             let stream = futures_util::stream::try_unfold(
                 (tokio::fs::File::from_std(snapshot.file), source.size),
                 |(mut file, left)| async move {

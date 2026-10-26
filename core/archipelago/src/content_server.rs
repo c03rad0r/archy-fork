@@ -2014,15 +2014,14 @@ pub(crate) async fn allocate_onchain_offer<W: crate::content_onchain_seller::Wal
     let source_data = data_dir.to_path_buf();
     let source_id = binding.content_id.clone();
     let source = saved.source.clone();
-    tokio::task::spawn_blocking(move || {
-        crate::content_snapshot::open_matching(
-            &source_data,
-            &source_id,
-            &source.sha256,
-            source.size,
-        )
-    })
-    .await??;
+    // Bounded (P2): unbounded spawn_blocking let a media burst starve the shared blocking pool.
+    crate::content_snapshot::open_matching_bounded(
+        source_data,
+        source_id,
+        source.sha256.clone(),
+        source.size,
+    )
+    .await?;
     let _held = CATALOG_WRITES.lock().await;
     let catalog = load_catalog(data_dir).await?;
     let item = catalog

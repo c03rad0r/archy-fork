@@ -224,6 +224,81 @@ pub(crate) fn prepare(
     })
 }
 
+/// How many snapshot opens may run in the blocking pool at once.
+///
+/// Deliberately small: each open may `read_dir` up to 10,000 directories on the miss path, and
+/// the pool is shared with every other blocking call in the node. 16 keeps a purchase burst
+/// from monopolising it while still allowing real concurrency on a many-core node.
+pub(crate) const SNAPSHOT_OPEN_CONCURRENCY: usize = 16;
+
+static OPEN_GATE: std::sync::OnceLock<OpenGate> = std::sync::OnceLock::new();
+
+/// The process-wide gate guarding `spawn_blocking(open_matching)`.
+pub(crate) fn open_gate() -> &'static OpenGate {
+    OPEN_GATE.get_or_init(|| OpenGate::new(SNAPSHOT_OPEN_CONCURRENCY))
+}
+
+/// A sized gate around the blocking snapshot opens.
+///
+/// Backpressure, not rejection: a waiter blocks until a slot frees. Refusing here would fail a
+/// delivery the buyer has already paid for, which is a worse outcome than waiting a few
+/// milliseconds for a directory scan.
+#[derive(Clone)]
+pub(crate) struct OpenGate {
+    sem: std::sync::Arc<tokio::sync::Semaphore>,
+}
+
+/// One held slot; released on drop, including on unwind.
+pub(crate) struct OpenSlot {
+    _permit: tokio::sync::OwnedSemaphorePermit,
+}
+
+impl OpenGate {
+    pub(crate) fn new(permits: usize) -> Self {
+        Self {
+            sem: std::sync::Arc::new(tokio::sync::Semaphore::new(permits)),
+        }
+    }
+
+    /// Wait for a slot. `Err` only if the gate is closed, which nothing in this process does.
+    pub(crate) async fn acquire(&self) -> Result<OpenSlot> {
+        Ok(OpenSlot {
+            _permit: self
+                .sem
+                .clone()
+                .acquire_owned()
+                .await
+                .context("Snapshot open gate closed")?,
+        })
+    }
+
+    #[cfg(test)]
+    pub(crate) fn available(&self) -> usize {
+        self.sem.available_permits()
+    }
+}
+
+/// Run `open_matching` on the blocking pool, bounded by [`open_gate`].
+///
+/// This is the ONLY sanctioned way to reach `open_matching` from async code: calling
+/// `spawn_blocking(open_matching)` directly is unbounded and lets a media burst starve every
+/// other blocking user of the node.
+pub(crate) async fn open_matching_bounded(
+    data_dir: std::path::PathBuf,
+    content_id: String,
+    sha256: String,
+    size: u64,
+) -> Result<Snapshot> {
+    let slot = open_gate().acquire().await?;
+    tokio::task::spawn_blocking(move || {
+        // Held across the blocking call — this is what bounds the pool.
+        let _slot = slot;
+        open_matching(&data_dir, &content_id, &sha256, size)
+    })
+    .await
+    .context("Snapshot open task failed")?
+}
+
 /// Open retained accepted bytes even after the original Cloud source vanishes.
 /// Caller supplies the durable contract's identity/hash/size, not a browser path.
 pub(crate) fn open_matching(
@@ -332,6 +407,128 @@ impl Drop for Temporary<'_> {
                 }
             }
         }
+    }
+}
+
+/// Bounded entry points for snapshot opens — the last half of P2.
+///
+/// FINDING THAT MOTIVATED THIS: every media delivery called
+/// `tokio::task::spawn_blocking(open_matching)` directly, with no bound. Tokio's blocking
+/// pool is capped (512 threads by default) but a burst of purchases pins those threads in
+/// `read_dir` over up to 10,000 snapshot directories each. The pool is shared with every
+/// other blocking call in the node — including the ones the UI needs — so an unbounded
+/// media burst can starve unrelated blocking work while the async runtime looks healthy.
+/// `PEER_CONNECTION_BUDGET` and the per-peer cap bound *connections*; neither bounds the
+/// blocking work one connection can start.
+#[cfg(test)]
+mod open_bounds_tests {
+    use super::*;
+
+    /// Backpressure semantics, not rejection: N opens run, the N+1th WAITS for a slot
+    /// instead of failing. A busy node should slow a delivery, not refuse a purchase the
+    /// buyer already paid for.
+    #[tokio::test]
+    async fn opens_are_bounded_and_wait_rather_than_fail() {
+        let gate = OpenGate::new(2);
+        let a = gate.acquire().await.expect("first slot");
+        let b = gate.acquire().await.expect("second slot");
+
+        // Third must not complete while both slots are held.
+        let third = tokio::spawn({
+            let gate = gate.clone();
+            async move { gate.acquire().await.map(|_g| ()) }
+        });
+        tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+        assert!(
+            !third.is_finished(),
+            "a third open must wait for a slot; completing here means the bound is not enforced"
+        );
+
+        drop(a);
+        let third = tokio::time::timeout(std::time::Duration::from_secs(5), third)
+            .await
+            .expect("released slot must wake the waiter")
+            .expect("task joins");
+        assert!(
+            third.is_ok(),
+            "the waiter must be granted a slot, not an error"
+        );
+        drop(b);
+    }
+
+    /// A permit must be returned when the work finishes OR unwinds, and the in-flight
+    /// counter must return to zero — otherwise a burst permanently shrinks capacity.
+    #[tokio::test]
+    async fn slots_are_returned_and_do_not_drift() {
+        let gate = OpenGate::new(4);
+        for _ in 0..50 {
+            let g = gate.acquire().await.expect("cap is 4, sequential use");
+            drop(g);
+        }
+        assert_eq!(
+            gate.available(),
+            4,
+            "sequential use must not consume capacity"
+        );
+
+        // A panicking task must not leak its slot either: `Drop` runs on unwind.
+        let gate2 = gate.clone();
+        let _ = tokio::spawn(async move {
+            let _g = gate2.acquire().await.expect("slot");
+            panic!("deliberate: does the permit survive an unwind?");
+        })
+        .await;
+        assert_eq!(
+            gate.available(),
+            4,
+            "a panic inside the guarded section must not leak a permit"
+        );
+    }
+
+    /// Wiring guard: no delivery path may reach `open_matching` through a bare
+    /// `spawn_blocking`. A new handler that copies the old pattern would silently reintroduce
+    /// the unbounded behaviour with every unit test still green, so this reads the OTHER
+    /// modules' sources and fails on a direct call.
+    #[test]
+    fn no_call_site_bypasses_the_bounded_path() {
+        // `include_str!` per file: the offender is in another module, so the needle cannot
+        // match this file's own text.
+        let sites = [
+            (
+                "cloud_purchase",
+                include_str!("api/handler/cloud_purchase.rs"),
+            ),
+            (
+                "onchain_purchase",
+                include_str!("api/handler/onchain_purchase.rs"),
+            ),
+            (
+                "lightning_purchase",
+                include_str!("api/handler/lightning_purchase.rs"),
+            ),
+            ("content_server", include_str!("content_server.rs")),
+        ];
+        for (module, src) in sites {
+            assert!(
+                !src.contains("crate::content_snapshot::open_matching("),
+                "{module} calls open_matching directly; it must use open_matching_bounded so                  the blocking pool stays bounded"
+            );
+            assert!(
+                src.contains("open_matching_bounded"),
+                "{module} should go through open_matching_bounded"
+            );
+        }
+    }
+
+    /// The bound must be a real, named, finite value and small enough to matter: a bound at
+    /// or above Tokio's blocking-pool size would never constrain anything.
+    #[test]
+    fn the_bound_is_meaningful() {
+        assert!(SNAPSHOT_OPEN_CONCURRENCY > 0);
+        assert!(
+            SNAPSHOT_OPEN_CONCURRENCY < 512,
+            "a bound at or above Tokio's default blocking-pool size cannot bound the pool"
+        );
     }
 }
 

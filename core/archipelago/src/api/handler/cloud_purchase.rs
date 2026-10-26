@@ -94,15 +94,15 @@ impl ApiHandler {
             return Ok(response);
         }
         let data = self.config.data_dir.clone();
-        let file = tokio::task::spawn_blocking(move || {
-            crate::content_snapshot::open_matching(
-                &data,
-                &contract.content_id,
-                &contract.content_sha256,
-                contract.content_size,
-            )
-        })
-        .await??;
+        // Bounded (P2): an unbounded spawn_blocking per delivery let a purchase burst
+        // monopolise the shared blocking pool with directory scans.
+        let file = crate::content_snapshot::open_matching_bounded(
+            data,
+            contract.content_id.clone(),
+            contract.content_sha256.clone(),
+            contract.content_size,
+        )
+        .await?;
         let mut file = tokio::fs::File::from_std(file.file);
         file.seek(std::io::SeekFrom::Start(start)).await?;
         let length = end - start + 1;

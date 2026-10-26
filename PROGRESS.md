@@ -724,6 +724,42 @@ this host, so they share one peer key; that half rests on the address-keyed acco
 `one_peer_cannot_take_every_slot`, not on this wire run. A second machine on the mesh is the only
 way to close it.
 
+### BOUNDED SNAPSHOT OPENS — the last P2 gap closed (2026-10-26)
+
+Every delivery path called `tokio::task::spawn_blocking(open_matching)` **unbounded**. Tokio's
+blocking pool is capped (512 threads by default) and shared with every other blocking call in
+the node, including the ones the UI needs; on a miss, `open_matching` may `read_dir` over up to
+10,000 snapshot directories. So a purchase burst could pin the pool and starve unrelated blocking
+work while the async runtime still looked healthy. Connection budgets — including the new
+per-peer cap — bound *connections*, never the blocking work one connection can start.
+
+`content_snapshot::open_matching_bounded` + `OpenGate` (`SNAPSHOT_OPEN_CONCURRENCY = 16`):
+
+- **Backpressure, not rejection**: a waiter blocks until a slot frees. Refusing a delivery the
+  buyer already paid for is worse than waiting milliseconds for a scan.
+- The permit is held **across** the blocking call and released on `Drop`, including on unwind.
+- All four call sites route through it: `api/handler/cloud_purchase.rs`,
+  `api/handler/onchain_purchase.rs`, `api/handler/lightning_purchase.rs`, `content_server.rs`.
+
+Tests (`content_snapshot::open_bounds_tests`, all passing): the bound waits rather than fails;
+50 sequential acquisitions leave capacity intact and a panicking task does not leak a permit;
+a source-level guard fails if any of the four modules calls `open_matching` directly again; the
+bound is non-zero and below Tokio's default pool size.
+
+Negative control observed: swapping `acquire_owned().await` for `try_acquire_owned()` fails
+`opens_are_bounded_and_wait_rather_than_fail` (`3 passed; 1 failed`), because the third acquire
+then returns immediately instead of waiting. Reverted.
+
+Gates at this commit: fmt rc 0 · clippy rc 0, **0 errors, 122 warnings** (124 ratchet) ·
+mandated runner **2110 passed / 1 failed / 5 ignored** (the same environmental quadlet test).
+
+**Not claimed:** that a saturated open gate is observable on the wire as latency rather than
+errors. That needs many simultaneous purchases against real snapshot directories, i.e. a real
+purchase — operator UAT, same blocker as P3's duration.
+
+Full findings, incl. the traps and the corrected assumptions, are consolidated in
+`docs/CDN-VERIFICATION-FINDINGS.md`.
+
 
 
 
