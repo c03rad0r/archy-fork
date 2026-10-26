@@ -75,6 +75,31 @@ pub async fn provision(router: &Router, config: &TollGateConfig) -> Result<()> {
     nodogsplash::configure(router, config)
         .context("configure nodogsplash — tollgate-wrt cannot gate clients without it")?;
 
+    // The package's postinst has just run its own uci-defaults, and on a
+    // version-changing install those rewrite `gatewayinterface` to `br-lan` on
+    // the very section `configure` above just built (see
+    // `nodogsplash::assert_gateway_interface_is_paid_bridge`). Verified against
+    // the shipped v0.6.0 script. Re-assert it, and say so when it had actually
+    // drifted — a silent normalisation would hide a package behaviour change.
+    match nodogsplash::assert_gateway_interface_is_paid_bridge(router)? {
+        nodogsplash::GatewayInterfaceCheck::Correct => {
+            info!(
+                "[{}] nodogsplash gatewayinterface already {}",
+                router.host,
+                nodogsplash::PAID_BRIDGE
+            );
+        }
+        nodogsplash::GatewayInterfaceCheck::Repaired(previous) => {
+            info!(
+                "[{}] nodogsplash gatewayinterface had drifted to '{}' (package postinst); \
+                 re-pinned to {} and restarted the daemon",
+                router.host,
+                previous,
+                nodogsplash::PAID_BRIDGE
+            );
+        }
+    }
+
     restart_services(router, config.enabled)?;
     nodogsplash::restart(router)?;
 
