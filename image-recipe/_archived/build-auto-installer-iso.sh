@@ -296,8 +296,15 @@ if [ ! -f "$ROOTFS_TAR" ] || [ "${1:-}" == "--rebuild" ] || [ "$(cat "$ROOTFS_ST
 # protocol archipelago uses as its preferred non-Tor transport.
 # Pinned so the shipped version is knowable: an unpinned --depth 1 clone of
 # main made every ISO carry whatever upstream happened to be that day.
-# v0.4.1 is the version fips/config.rs renders its typed config against and
+# v0.5.3 is the version fips/config.rs renders its typed config against and
 # the one validated in the field. Bump the two together.
+#
+# Bumping this ARG alone is NOT sufficient — three things move with it:
+#   1. core/archipelago/src/fips/config.rs (typed schema + snapshot test)
+#   2. tests/fixtures/fips/fips-<tag>.yaml (verbatim upstream example)
+#   3. the runtime updater's version ceiling, if the bump is pinned
+# Run `scripts/verify-fips-fixtures.sh` after editing; it re-downloads the
+# upstream example at this tag and fails on drift.
 # The .deb is rebuilt every ISO build; Docker layer caching keeps the
 # incremental cost low. Failure here fails the ISO build on purpose:
 # we don't want to ship an ISO that silently skips FIPS.
@@ -315,7 +322,7 @@ RUN apt-get -o Acquire::ForceIPv4=true update && apt-get -o Acquire::ForceIPv4=t
     clang libclang-dev libnftnl-dev libmnl-dev \
     && rm -rf /var/lib/apt/lists/*
 RUN cargo install --locked cargo-deb
-ARG FIPS_VERSION=v0.4.1
+ARG FIPS_VERSION=v0.5.3
 RUN git clone --depth 1 --branch "$FIPS_VERSION" \
     https://github.com/jmcorgan/fips.git /src/fips
 WORKDIR /src/fips
@@ -641,6 +648,37 @@ RUN systemctl enable archipelago-fips.service || true
 # already in place — explicit rm + /dev/null symlink is what sticks.
 RUN rm -f /etc/systemd/system/nostr-vpn.service && \
     ln -sf /dev/null /etc/systemd/system/nostr-vpn.service
+
+# ─── Mask the packaged FIPS unit: archipelago owns the daemon lifecycle ────
+#
+# The FIPS .deb installed above ships AND enables /usr/lib/systemd/system/fips.service,
+# and its postinst runs `systemctl enable`. Both it and
+# archipelago-fips.service are WantedBy=multi-user.target and bind the same
+# fips0 TUN, UDP 8668 and TCP 8443.
+#
+# archipelago-fips.service declares `Conflicts=fips.service`, but that is
+# SYMMETRIC: measured 2026-10-25 with two throwaway units, whichever unit starts
+# SECOND survives. fips.service hangs off multi-user.target with no ordering
+# constraint against ours, so at boot systemd starts it and that start stops
+# archipelago-fips.service. Conflicts= therefore prevents SIMULTANEOUS execution
+# but does not protect the supervisor we intend to keep. Evidence and options:
+# docs/findings-fips-unit-conflicts.md.
+#
+# Masking makes the packaged unit unstartable, so the invariant stops depending
+# on boot ordering. Same rm + /dev/null technique as nostr-vpn above, for the
+# same reason: a bare `systemctl mask` in a container build touches the build
+# container's runtime state, which does not survive into the image, and does not
+# remove the real unit file dpkg extracted.
+#
+# Ordering matters: this MUST come after the `.deb` install, otherwise dpkg's
+# postinst re-creates the unit and silently undoes the mask. Asserted by
+# tests/regression/fips-service-masked.py, which fails if the two are reversed.
+#
+# Nodes that are NOT ISO-built (upstream-package-only installs) never receive
+# this mask, so `fips::service::activation_unit()` still falls back to
+# fips.service there — that fallback is for exactly those nodes and stays valid.
+RUN rm -f /etc/systemd/system/fips.service && \
+    ln -sf /dev/null /etc/systemd/system/fips.service
 
 # Remove policy-rc.d so services can start on first boot
 RUN rm -f /usr/sbin/policy-rc.d
