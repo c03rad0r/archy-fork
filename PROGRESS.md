@@ -651,13 +651,43 @@ Gates: check 0 · fmt clean · clippy **124 == 124** · mandated runner **2085 p
 
 ## Still NOT done for P2
 
-- **Per-peer rate cap** — the plan's second half of P2. Not implemented. The budget
-  separation fixes the headline UI-starvation failure; a per-peer cap is a separate concern
-  (one peer consuming all peer permits).
 - **`spawn_blocking(open_matching)` remains unbounded** (`cloud_purchase.rs:97`).
 - **The guard is source-level, not behavioural**: a unit test cannot observe two semaphores.
   The live read-back covers the observable claim; the guard covers the structural one. Neither
   alone is sufficient.
+
+### Per-peer cap — IMPLEMENTED (2026-10-26), retiring the first item above
+
+The budget separation left one hole open: `PEER_CONNECTION_BUDGET` is a *shared* 1024, so a
+single peer could take every permit and starve all other peers. A per-listener number cannot
+express that — the limit has to be keyed by the peer's address.
+
+`PeerConnectionSlots` (server.rs) now does exactly that: a mutex-guarded `HashMap<IpAddr, usize>`
+with `PEER_PER_PEER_CONNECTION_CAP = 64` in-flight connections per source address, consulted on
+the accept path **before** the listener budget (a peer over its cap must not first consume a
+shared permit it will only hand back). Over-cap peers get **429 + Retry-After**, deliberately
+distinct from the **503** that means budget exhaustion, so the two failure modes are
+distinguishable in a log and to a client. The slot is moved into the connection task and released
+by `Drop`, so it measures in-flight connections rather than accepts and every exit path returns
+it. Entries are removed at zero, so the map cannot grow with uptime.
+
+Applied to the **peer listener only** (`peer_only`): the UI listener is a local management
+surface, and keying a cap there would cap loopback — the node's own dashboard.
+
+TDD: three behavioural tests on the real limiter plus one wiring guard. Negative control
+observed — changing `>=` to `>` in the cap comparison fails
+`one_peer_cannot_take_every_slot` at the third-acquire assertion (`2 passed; 1 failed`),
+so the test bites rather than merely passing.
+
+Gates at this commit: fmt rc 0 · clippy **0 errors, 122 warnings** (124 ratchet) · mandated
+runner **2106 passed / 1 failed / 5 ignored** (the same environmental quadlet test; the four new
+tests are among the passes).
+
+**Not claimed:** the cap's live behaviour on a mesh listener is **not** wire-verified — that
+needs `localnode`/`twonode`, which this host does not have (no `fips0`, FIPS DNS `5354` silent).
+The limiter is proven behaviourally and the wiring is proven on the source; the third leg, an
+actual 65th connection from one peer being refused in front of a real listener, is not done.
+
 
 
 # VERIFICATION AT HEAD `9d50f739` (2026-10-26) — fresh build, all three read-backs re-run

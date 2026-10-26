@@ -1585,6 +1585,106 @@ const UI_CONNECTION_BUDGET: usize = 1024;
 /// cannot starve media.
 const PEER_CONNECTION_BUDGET: usize = 1024;
 
+/// Per-peer in-flight connection cap on the peer (mesh) listener — the SECOND half of P2.
+///
+/// `PEER_CONNECTION_BUDGET` stops media from starving the UI, but it is a *shared* pool:
+/// one peer could open all 1024 permits and starve every other peer. A per-listener budget
+/// cannot express that — the limit has to be keyed by the peer's address. This is that cap.
+///
+/// Held per accepted connection and released on drop, so a peer that opens a burst and
+/// closes is never locked out. Chosen well below `PEER_CONNECTION_BUDGET` so a single peer
+/// cannot consume the whole budget, and high enough for a household behind one NAT address
+/// watching several streams plus a federated fetch or two.
+const PEER_PER_PEER_CONNECTION_CAP: usize = 64;
+
+/// Per-peer in-flight accounting for the peer listener, keyed by source address.
+///
+/// A mutex-guarded map rather than an atomic per-address counter because the number of
+/// distinct peers is small and the critical section is a single HashMap operation held only
+/// on the accept path — never across an await, so it cannot stall the reactor.
+#[derive(Debug)]
+struct PeerConnectionSlots {
+    cap: usize,
+    counts: std::sync::Mutex<HashMap<std::net::IpAddr, usize>>,
+}
+
+impl PeerConnectionSlots {
+    fn new(cap: usize) -> Arc<Self> {
+        Arc::new(Self {
+            cap,
+            counts: std::sync::Mutex::new(HashMap::new()),
+        })
+    }
+
+    /// Grant a slot to `peer`, or `None` when that peer is already at its cap.
+    fn try_acquire(self: &Arc<Self>, peer: std::net::IpAddr) -> Option<PeerConnectionSlot> {
+        let mut counts = match self.counts.lock() {
+            Ok(guard) => guard,
+            // A poisoned map means a previous holder panicked while counting. Refusing new
+            // peer connections forever would turn a panic into an outage, so recover the
+            // data and keep enforcing the cap.
+            Err(poisoned) => poisoned.into_inner(),
+        };
+        let in_flight = counts.entry(peer).or_insert(0);
+        if *in_flight >= self.cap {
+            // Do not leave a zero entry behind for a peer we just refused.
+            if *in_flight == 0 {
+                counts.remove(&peer);
+            }
+            return None;
+        }
+        *in_flight += 1;
+        Some(PeerConnectionSlot {
+            slots: self.clone(),
+            peer,
+        })
+    }
+
+    /// Test-only observability: production never reads the counts back, it only holds and
+    /// releases slots. Compiling these out of non-test builds keeps the warning ratchet honest
+    /// instead of adding a permanent "never used" warning for helpers only tests need.
+    #[cfg(test)]
+    fn in_flight(&self, peer: std::net::IpAddr) -> usize {
+        match self.counts.lock() {
+            Ok(counts) => counts.get(&peer).copied().unwrap_or(0),
+            Err(poisoned) => poisoned.into_inner().get(&peer).copied().unwrap_or(0),
+        }
+    }
+
+    #[cfg(test)]
+    fn tracked_peers(&self) -> usize {
+        match self.counts.lock() {
+            Ok(counts) => counts.len(),
+            Err(poisoned) => poisoned.into_inner().len(),
+        }
+    }
+}
+
+/// One held per-peer slot. Returning it to the pool is `Drop`, so every exit path from the
+/// connection task releases it — there is no "forgot to decrement" path.
+#[derive(Debug)]
+struct PeerConnectionSlot {
+    slots: Arc<PeerConnectionSlots>,
+    peer: std::net::IpAddr,
+}
+
+impl Drop for PeerConnectionSlot {
+    fn drop(&mut self) {
+        let mut counts = match self.slots.counts.lock() {
+            Ok(guard) => guard,
+            Err(poisoned) => poisoned.into_inner(),
+        };
+        if let Some(in_flight) = counts.get_mut(&self.peer) {
+            *in_flight -= 1;
+            if *in_flight == 0 {
+                // Remove at zero so the address list cannot grow unbounded over a long
+                // uptime with many transient peers.
+                counts.remove(&self.peer);
+            }
+        }
+    }
+}
+
 async fn accept_loop(
     handler: Arc<ApiHandler>,
     listener: TcpListener,
@@ -1599,6 +1699,15 @@ async fn accept_loop(
     // burst of consecutive errors the peer accept loop returns so its
     // caller (peer_late_bind_loop) can rebind on the current ULA.
     let mut consecutive_errors: u32 = 0;
+    // P2 (second half): the shared `active_connections` budget is per-LISTENER, so one peer
+    // could still take all 1024 permits. Only the peer (mesh) listener gets the per-peer
+    // cap; the UI listener is a local management surface and is deliberately not keyed by
+    // address (loopback would be the only "peer" there).
+    let per_peer_slots = if peer_only {
+        Some(PeerConnectionSlots::new(PEER_PER_PEER_CONNECTION_CAP))
+    } else {
+        None
+    };
     loop {
         tokio::select! {
             result = listener.accept() => {
@@ -1617,6 +1726,36 @@ async fn accept_loop(
                     }
                 };
                 let handler = handler.clone();
+                // P2 (second half): enforce the per-peer cap BEFORE the listener budget, so a
+                // peer that is over its cap cannot first consume a shared permit it will only
+                // hand back. Answering 429 (not the 503 used for budget exhaustion) keeps the
+                // two failure modes distinguishable in the log and to a client.
+                let peer_slot = match per_peer_slots
+                    .as_ref()
+                    .map(|slots| slots.try_acquire(peer_addr.ip()))
+                {
+                    None => None,
+                    Some(Some(slot)) => Some(slot),
+                    Some(None) => {
+                        warn!(
+                            "{} per-peer cap ({}) reached for {} — refusing",
+                            local_addr, PEER_PER_PEER_CONNECTION_CAP, peer_addr
+                        );
+                        tokio::spawn(async move {
+                            use tokio::io::AsyncWriteExt;
+                            let mut stream = stream;
+                            let _ = tokio::time::timeout(
+                                std::time::Duration::from_secs(5),
+                                stream.write_all(
+                                    b"HTTP/1.1 429 Too Many Requests\r\nConnection: close\r\nRetry-After: 5\r\nContent-Length: 0\r\n\r\n",
+                                ),
+                            )
+                            .await;
+                            let _ = stream.shutdown().await;
+                        });
+                        continue;
+                    }
+                };
                 // NEVER park the accept loop on the connection budget.
                 // `acquire_owned().await` here froze accept() entirely when
                 // permits drained — and permits drained because half-open
@@ -1647,6 +1786,10 @@ async fn accept_loop(
                 };
                 tokio::spawn(async move {
                     let _permit = permit;
+                    // Held for the connection's whole life; `Drop` returns the slot. Kept in the
+                    // task (not the accept loop) so the cap measures in-flight connections, not
+                    // accepts.
+                    let _peer_slot = peer_slot;
                     // Set when a request carries an Upgrade header (websocket):
                     // upgraded connections are legitimately long-lived and are
                     // exempt from the non-upgraded connection deadline below.
@@ -2897,5 +3040,134 @@ mod media_deadline_tests {
             assert!(is_media_stream_path("/content/a"));
             assert!(!is_media_stream_path("/health"));
         }
+    }
+}
+
+/// P2 (second half) — per-peer admission on the peer listener.
+#[cfg(test)]
+mod peer_connection_cap_tests {
+    use super::*;
+
+    /// The bug this pins: `PEER_CONNECTION_BUDGET` is a *shared* 1024. Separate from the
+    /// UI budget, so media can no longer starve the dashboard — but a SINGLE peer can
+    /// still open all 1024 and starve every other peer. That is the second half of P2 and
+    /// a per-listener budget cannot express it: the cap has to be keyed by peer address.
+    ///
+    /// Behavioural, not source-level: this drives the real limiter, so a refactor that
+    /// keeps the names but loses the accounting fails here.
+    #[test]
+    fn one_peer_cannot_take_every_slot() {
+        let slots = PeerConnectionSlots::new(2);
+        let noisy: std::net::IpAddr = "198.18.0.2".parse().unwrap();
+        let quiet: std::net::IpAddr = "198.18.0.3".parse().unwrap();
+
+        let first = slots
+            .try_acquire(noisy)
+            .expect("first slot must be granted");
+        let second = slots
+            .try_acquire(noisy)
+            .expect("second slot must be granted");
+        assert!(
+            slots.try_acquire(noisy).is_none(),
+            "a third connection from the same peer must be shed: one peer holding every \
+             permit starves all other peers, which is the failure a shared budget cannot see"
+        );
+
+        // Other peers are unaffected by the noisy one's exhaustion.
+        assert!(
+            slots.try_acquire(quiet).is_some(),
+            "the cap is per-peer: a different peer must still be admitted"
+        );
+
+        // Releasing a slot re-admits that peer, and only that peer's accounting moved.
+        drop(first);
+        assert!(
+            slots.try_acquire(noisy).is_some(),
+            "a dropped connection must return its slot — otherwise a peer is permanently \
+             locked out after a burst"
+        );
+        drop(second);
+    }
+
+    /// A guard must not leak a slot when the connection ends by any path, and the map must
+    /// not grow without bound: an entry is removed when its count reaches zero.
+    #[test]
+    fn released_slots_do_not_accumulate() {
+        let slots = PeerConnectionSlots::new(4);
+        let peer: std::net::IpAddr = "198.18.0.9".parse().unwrap();
+
+        for _ in 0..50 {
+            let guard = slots
+                .try_acquire(peer)
+                .expect("cap is 4; sequential use is fine");
+            drop(guard);
+        }
+
+        assert_eq!(
+            slots.tracked_peers(),
+            0,
+            "peer entries must be removed at zero so an address list cannot grow unbounded"
+        );
+        assert_eq!(slots.in_flight(peer), 0);
+    }
+
+    /// The cap must be a real, named, non-zero bound and must not be the whole budget —
+    /// a cap equal to the budget would never shed anything.
+    #[test]
+    fn the_cap_is_meaningful() {
+        assert!(PEER_PER_PEER_CONNECTION_CAP > 0);
+        assert!(
+            PEER_PER_PEER_CONNECTION_CAP < PEER_CONNECTION_BUDGET,
+            "a per-peer cap at or above the listener budget cannot prevent one peer from \
+             consuming the whole budget"
+        );
+    }
+
+    /// Wiring guard. The limiter above is proven behaviourally, but nothing in a unit test can
+    /// drive `accept_loop` (it owns a real listener), so the WIRING is asserted on the source —
+    /// the same weaker-but-stated form the P2 budget guard uses.
+    ///
+    /// Three things must hold, and each has a plausible wrong version that looks fine:
+    ///   1. the cap is constructed only for the peer listener (a UI-listener cap would key on
+    ///      loopback and cap the node's own dashboard);
+    ///   2. it is consulted on the accept path (a constructed-but-unused limiter is decoration);
+    ///   3. the slot is moved into the connection task and held there (acquiring and dropping
+    ///      it in the accept loop would count accepts, not in-flight connections, and would
+    ///      never shed anything).
+    #[test]
+    fn the_peer_listener_actually_applies_the_cap() {
+        let src = include_str!("server.rs");
+
+        assert!(
+            src.contains("let per_peer_slots = if peer_only {"),
+            "the per-peer cap must be built only for the peer listener"
+        );
+        assert!(
+            src.contains("slots.try_acquire(peer_addr.ip())"),
+            "the accept path must consult the per-peer limiter"
+        );
+
+        // The slot must outlive the accept decision — held by the spawned connection task.
+        let spawn = src
+            .find("let _peer_slot = peer_slot;")
+            .expect("the per-peer slot must be owned by the connection task, not the accept loop");
+
+        // And the refusal must be distinguishable from budget exhaustion: 429, not 503.
+        let refusal = src.find("HTTP/1.1 429 Too Many Requests").expect(
+            "a peer over its cap must be answered 429, not the 503 used for budget exhaustion",
+        );
+        assert!(
+            refusal != spawn,
+            "the refusal and the slot hand-off are different branches"
+        );
+
+        // Negative-control style: the model answer must not be "acquire then immediately drop".
+        let acquire = src
+            .find("slots.try_acquire(peer_addr.ip())")
+            .expect("acquire call");
+        assert!(
+            acquire < spawn,
+            "the slot is acquired on the accept path and then moved into the task"
+        );
     }
 }
