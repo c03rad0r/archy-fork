@@ -46,15 +46,26 @@ Both sha256 values match the release `SHA256SUMS` **and** the independent
 
 ### Still open after this run
 
-1. `wifi down 2>&1; wifi up 2>&1` exits 127 (`ash: wifi: not found`) on a
-   radio-less guest and aborts provisioning **after** the install succeeded.
-   Pre-existing on `fork/main` (`core/openwrt/src/tollgate/mod.rs:117`), not
-   introduced by this PR — but it means every re-provision of a radio-less or
-   wifi-disabled router fails at the last step. Needs its own card.
-2. The 0.5.0 -> 0.6.0 upgrade and a rollback are still unproven.
-3. `--force-depends` vs `install_runtime_deps` is argued, not measured.
-4. `opkg_install_forced` in `opkg.rs` is now unreferenced.
-5. No physical router has run any of this.
+1. ~~`wifi down 2>&1; wifi up 2>&1` exits 127 and aborts provisioning after the
+   install succeeded.~~ **Fixed in this branch.** `restart_services` now probes
+   for the `wifi` command and treats its absence as a device fact rather than a
+   provisioning failure, which is what turned the two clean `{"ok":true}`
+   responses above from `error` objects on the preceding commit. The
+   br-tollgate address check is gated on radio presence too. Raw before/after
+   transcripts: `docs/tollgate-v060-rpc-transcripts.md`.
+2. A `0.5.0 -> 0.6.0` upgrade and a rollback are still unproven. The
+   `rc6 -> 0.6.0` direction **is** measured (see below), but it is not the same
+   thing: rc6 is a pre-release of the same version, and `v0.5.0` exists only on
+   the Nostr release channel, resolved by PRTA's `scripts/release-matrix.py`,
+   which needs MT3000 credentials.
+3. `--force-depends` is still argued rather than measured end-to-end; the
+   ordering it compensates for (deps installed after the package) is confirmed
+   in `tollgate::provision`.
+4. ~~`opkg_install_forced` in `opkg.rs` is now unreferenced.~~ **Removed.** It
+   shipped a public by-name install helper with no call sites, in the PR that
+   removes by-name installs.
+5. No physical router has run any of this. Everything here is QEMU x86/64.
+   The MT3000 is aarch64 and is a different artifact entirely.
 
 ## Upgrade path — measured
 
@@ -67,12 +78,44 @@ package verified against SHA256SUMS (sha256:8789811201a96296ee0be5132a07400eeed8
 tollgate-wrt 0.6.0-r1 is installed and matches the 0.6.0 pin
 ```
 
-The binary was genuinely replaced: rc6's `/usr/bin/tollgate-wrt` was 9,487,478
-bytes as packaged, the post-upgrade file is 13,508,600 bytes, and
-`opkg list-installed` reports `0.6.0-r1`.
+The binary was genuinely replaced, and the evidence is the **content**, not the
+size: rc6's `/usr/bin/tollgate-wrt` is `e42ad747f12c76fdb…` and the post-upgrade
+file is `690d9feeeff685f1e…`, while `opkg list-installed` reports `0.6.0-r1`.
 
-Note the upgrade did **not** need the `--force-*` flags — a different upstream
-version installs normally. That matters for what follows.
+Both binaries are **13,508,600 bytes**. (An earlier version of this document
+claimed the file grew from 9,487,478 to 13,508,600 bytes. That was wrong —
+9,487,478 is the size of the rc6 `.ipk` *archive*, not of the binary inside it,
+so the two numbers were not comparable. Same size, different content.)
+
+Note the upgrade **did** need the `--force-*` flags, and it needs them for a
+reason that is easy to get backwards. opkg compares versions with `verrevcmp`,
+which sorts an rc build **above** the final release it precedes
+(`0.6.0_rc6` > `0.6.0`). So rc6 → final is a *downgrade* as far as opkg is
+concerned. Measured on the 24.10.8 guest with the pin's package already
+installed at rc6 and no flags:
+
+```
+Not downgrading package tollgate-wrt on root from 0.6.0_rc6-r1 to 0.6.0-r1.
+```
+
+`opkg list-installed` still reported `0.6.0_rc6-r1` afterwards — nothing was
+written. The provisioning run only succeeded because `OPKG_INSTALL_LOCAL`
+always passes the force set.
+
+Which flag carries it, measured by passing them one at a time — with
+`--force-reinstall` alone:
+
+```
+Installing tollgate-wrt (0.6.0-r1) to root...
+Configuring tollgate-wrt.
+```
+
+and the binary then hashes to `690d9fee…`. That is `--force-reinstall`'s
+remove-then-install effect doing the work: the old package is removed before the
+new one is unpacked, which sidesteps the downgrade refusal entirely.
+`--force-downgrade` is not what rescues this particular direction, though it
+remains correct for an actual pin rollback.
+
 
 ### The force flags act on a stale package database, not on a republished counter
 

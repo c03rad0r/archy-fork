@@ -172,27 +172,32 @@ pub fn install_tollgate(router: &Router) -> Result<()> {
 /// Every force flag is load-bearing for a *re-provision*, which is the common
 /// case: the router already has some build and we want this exact file on it.
 ///
-/// * `--force-downgrade` — rolling the pin back to an older release is an
-///   install, not an opkg refusal. The file is already verified against the
-///   release manifest, so "older" is deliberate, not drift.
-/// * `--force-reinstall` — opkg trusts its own package database. When that
-///   database already names *some* version, an install over it is refused even
-///   though the files on disk are missing, stale or were written by an earlier
-///   manual extraction. This is the state the old extraction path produced, and
-///   it is what the `UnknownVersion` arm exists to detect.
+/// * `--force-downgrade` — opkg compares versions with `verrevcmp`. An rc
+///   build sorts *above* its final release (`0.6.0_rc6` > `0.6.0`), so moving
+///   from an rc to the release it precedes is a **downgrade** as far as opkg is
+///   concerned and is refused with "Not downgrading" without this. Rolling the
+///   pin back to an older release is the same case. The file is already
+///   verified against the release manifest, so "older" is deliberate, not drift.
+/// * `--force-reinstall` — opkg refuses an install whose version it believes is
+///   already present, and the effect that matters here is **remove-then-
+///   install**: the old files are removed before the new ones are unpacked.
+///   That is what makes a re-provision over an earlier build actually rewrite
+///   `/usr/bin/tollgate-wrt` instead of leaving stale content in place.
 ///
 ///   Note this does **not** cover a republished `PKG_RELEASE` (`0.6.0-r1`
 ///   present, `0.6.0-r2` wanted): [`normalise_version`] strips the trailing
 ///   `-r<digits>` counter, so that pair compares equal, `decide_install`
-///   returns `Skip`, and no install command runs at all. Changing a packaging
-///   counter is not a content change worth reinstalling for — a genuinely new
-///   build has a new upstream version.
+///   returns `Skip`, and no install command runs at all — the flag never gets
+///   the chance to act. Changing a packaging counter is not a content change
+///   worth reinstalling for; a genuinely new build has a new upstream version.
 /// * `--force-overwrite` — reinstalling over an existing copy collides on
 ///   files opkg did not record as owned (a previous manual extraction, or a
 ///   config it now ships).
-/// * `--force-depends` — the package's `DEPENDS` are installed separately by
-///   `install_runtime_deps`, so opkg's own dependency check has nothing to
-///   resolve against a local file and would otherwise refuse the install.
+/// * `--force-depends` — the package's `DEPENDS` are installed by
+///   `install_runtime_deps` *after* this install completes (see the ordering in
+///   `tollgate::provision`), so at this point none of them are present and
+///   opkg's dependency check would refuse the local file. The dependency graph
+///   is resolved later by design, so the check has to be waived here.
 const OPKG_INSTALL_LOCAL: &str =
     "opkg install --force-downgrade --force-reinstall --force-overwrite --force-depends";
 
