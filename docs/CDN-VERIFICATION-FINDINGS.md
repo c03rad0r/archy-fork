@@ -97,6 +97,38 @@ originates from this host, so they share one peer key. That half rests on the ad
 accounting proven by `one_peer_cannot_take_every_slot`. Closing it needs a second machine on the
 mesh.
 
+### The probe had a hole, and it produced a false regression
+
+Re-running this read-back *after* the fork's `main` was rebased onto PR #4 reported
+**connection 65 → HTTP 200**, i.e. "the cap does not work". That was wrong, and the cause was in
+the probe:
+
+- another agent's binary (`/tmp/archy-node`) already held `[fd36:…:bb0]:5679`;
+- our child logged `FIPS peer listener bind … Address already in use` and never bound;
+- the script still saw *something* accepting on 5679, marked "peer accepting=True", and went on
+  to measure **the other process** — a binary without the cap.
+
+**An availability probe is not an identity probe.** A port that answers proves nothing about
+which binary answers. The script now resolves the listener's owning PID (`ss -ltnp`) and FAILS
+outright unless the owner is the child it just started:
+
+    [PASS] the peer listener on the wire is OUR binary — port 5679 owned by our pid 3338372
+
+`PEER_PORT` is a hardcoded `5679` with no env override, so when the host port is occupied the
+honest way to get a clean measurement is isolation, not a different port:
+
+```bash
+sudo -n unshare -n bash -c '
+  ip link set lo up
+  ip link add fips0 type dummy && ip link set fips0 up
+  ip -6 addr add fd00::1/128 dev fips0
+  cd ~/repos/archy && python3 scripts/p2b-per-peer-cap-readback.py
+'
+```
+
+Result at the rebased head `a0b8b201`, binary `3fbc1e3d…`: **PASS=10, NOT_VERIFIED=1, exit 0**.
+The extra PASS compared to the earlier run is the identity check itself.
+
 ---
 
 ## 3. Bounded snapshot opens (P2, final gap)

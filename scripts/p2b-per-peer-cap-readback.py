@@ -127,6 +127,30 @@ def probe(port: int, path: str, timeout: float = 10.0) -> tuple[int, bytes]:
         conn.close()
 
 
+def peer_port_owner(port: int) -> int | None:
+    """PID owning a LISTEN socket on `port`, via `ss -ltnp`.
+
+    WHY THIS EXISTS: this read-back originally reported "peer accepting=True" and then measured
+    whatever answered on 5679. A FOREIGN process already held the port, our own child logged
+    `bind ... Address already in use` and never bound, and the probe happily reported the other
+    process's behaviour (200 instead of 429) as if it were ours. An availability probe is not an
+    identity probe: a port that answers proves nothing about WHICH binary answers.
+    """
+    try:
+        out = subprocess.run(
+            ["ss", "-ltnp"], capture_output=True, text=True, timeout=10
+        ).stdout
+    except (OSError, subprocess.SubprocessError):
+        return None
+    for line in out.splitlines():
+        if f"]:{port} " not in line and f"]:{port}\t" not in line:
+            continue
+        m = re.search(r"pid=(\d+)", line)
+        if m:
+            return int(m.group(1))
+    return None
+
+
 def status_of_refusal(sock: socket.socket, timeout: float = 5.0) -> int:
     """Return the HTTP status this accepted socket carries.
 
@@ -232,6 +256,24 @@ def main() -> int:
         if not (ui_ok and peer_ok):
             print("\ncounts: " + ", ".join(f"{k}={v}" for k, v in _counts().items()))
             return 1
+
+        # ---- 1b. IDENTITY: is the listener on the peer port OURS? ----------------------
+        # A port that answers is not proof that our binary answers. Measured failure: another
+        # `archy-node` held 5679, our child logged "Address already in use", and the probe went
+        # on to measure the OTHER process — reporting its 200 (no cap) as if it were a
+        # regression. Refuse to measure a listener we do not own.
+        owner = peer_port_owner(PEER_PORT)
+        ours = owner == proc.pid
+        if not ours:
+            log_tail = "\n".join(log.read_text(errors="replace").splitlines()[-8:])
+            record("the peer listener on the wire is OUR binary", "FAIL",
+                   f"port {PEER_PORT} is held by pid {owner}, our child is pid {proc.pid}. "
+                   f"Whatever answers there is a different build, so nothing measured below "
+                   f"would be attributable to this binary. Node log tail:\n{log_tail}")
+            print("\ncounts: " + ", ".join(f"{k}={v}" for k, v in _counts().items()))
+            return 1
+        record("the peer listener on the wire is OUR binary", "PASS",
+               f"port {PEER_PORT} owned by our pid {proc.pid}")
 
         # ---- 2. fill the peer to exactly its cap ---------------------------------------
         # These are held open WITHOUT sending a request: the slot is taken at accept(), which

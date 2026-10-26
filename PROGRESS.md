@@ -760,6 +760,29 @@ purchase — operator UAT, same blocker as P3's duration.
 Full findings, incl. the traps and the corrected assumptions, are consolidated in
 `docs/CDN-VERIFICATION-FINDINGS.md`.
 
+### POST-REBASE RE-VERIFICATION at `a0b8b201` (2026-10-26)
+
+The fork's `main` moved to `68c2c9b9` (PR #4, FIPS bump) while this work was in flight, so the
+one CDN commit was rebased onto it as `a0b8b201` and **everything was re-measured** rather than
+carried over — a rebase changes the base, and a number measured against a different base is not
+evidence for this one.
+
+- `cargo fmt --check` rc 0 · `cargo check` rc 0 · clippy rc 0, 0 errors, **122 warnings** (124 ratchet)
+- mandated runner: **2126 passed / 1 failed / 5 ignored** — the same environmental quadlet
+  `StopTimeout` test; the four `open_bounds_tests` are among the passes
+- release binary rebuilt from this head: `3fbc1e3da44ebabc4c02db0d8f4caae1b3b41387a8c861ca371783dfd70980c3`,
+  `Finished release` in 33m 49s
+- P1 **PASS=15 NOT_VERIFIED=1 FAIL=0** · P2 **PASS=6 NOT_VERIFIED=1 FAIL=0** ·
+  P3 **PASS=4 NOT_VERIFIED=1 FAIL=0** — all exit 0
+- P2b per-peer cap: **PASS=10, NOT_VERIFIED=1**, exit 0
+
+**The first P2b run at this head reported FAIL=2 (connection 65 → 200) and that was a false
+regression — the defect was in the probe, not the code.** Another agent's `/tmp/archy-node` held
+port 5679; our child logged `bind … Address already in use` and never bound; the script measured
+the *other* process and reported its uncapped behaviour as ours. Fixed: the script now resolves
+the listener's owning PID with `ss -ltnp` and fails unless it is the child it started. An
+availability probe is not an identity probe. See `docs/CDN-VERIFICATION-FINDINGS.md` §2.
+
 
 
 
