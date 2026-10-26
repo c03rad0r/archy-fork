@@ -275,6 +275,23 @@ mod tests {
     }
 
     #[test]
+    fn a_republished_packaging_counter_does_not_trigger_a_reinstall() {
+        // Boundary of the force-flag comment in install.rs: because the counter
+        // is stripped, a present 0.6.0-r1 SATISFIES a wanted 0.6.0. The
+        // consequence is that decide_install returns Skip and no install
+        // command runs — --force-reinstall never gets a chance to act. State it
+        // as a test so nobody "fixes" the flags expecting them to cover it.
+        assert!(Installed::Version("0.6.0-r1".into()).satisfies("0.6.0"));
+        assert!(Installed::Version("0.6.0-r2".into()).satisfies("0.6.0"));
+        assert_eq!(
+            decide_install(&Installed::Version("0.6.0-r1".into()), "0.6.0", true, None),
+            InstallDecision::Skip {
+                reason: "tollgate-wrt 0.6.0 already installed".into()
+            }
+        );
+    }
+
+    #[test]
     fn does_not_strip_a_release_suffix_that_is_not_a_counter() {
         // Only `-r<digits>` is a PKG_RELEASE. `-rc6` must survive, or an rc
         // would compare equal to the final release and the upgrade would be
