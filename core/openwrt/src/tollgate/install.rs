@@ -175,11 +175,18 @@ pub fn install_tollgate(router: &Router) -> Result<()> {
 /// * `--force-downgrade` — rolling the pin back to an older release is an
 ///   install, not an opkg refusal. The file is already verified against the
 ///   release manifest, so "older" is deliberate, not drift.
-/// * `--force-reinstall` — opkg reports "already installed" and does nothing
-///   when it believes the target version is present, including the same
-///   upstream version with a different `PKG_RELEASE` (`0.6.0-r1` present,
-///   `0.6.0-r2` requested). Without this the files never land and the read-back
-///   below fails a legitimate re-provision.
+/// * `--force-reinstall` — opkg trusts its own package database. When that
+///   database already names *some* version, an install over it is refused even
+///   though the files on disk are missing, stale or were written by an earlier
+///   manual extraction. This is the state the old extraction path produced, and
+///   it is what the `UnknownVersion` arm exists to detect.
+///
+///   Note this does **not** cover a republished `PKG_RELEASE` (`0.6.0-r1`
+///   present, `0.6.0-r2` wanted): [`normalise_version`] strips the trailing
+///   `-r<digits>` counter, so that pair compares equal, `decide_install`
+///   returns `Skip`, and no install command runs at all. Changing a packaging
+///   counter is not a content change worth reinstalling for — a genuinely new
+///   build has a new upstream version.
 /// * `--force-overwrite` — reinstalling over an existing copy collides on
 ///   files opkg did not record as owned (a previous manual extraction, or a
 ///   config it now ships).
@@ -705,8 +712,8 @@ mod tests {
             .unwrap_or_else(|| {
                 panic!(
                     "must install the verified local asset with the full force set \
-                     (--force-reinstall is what makes a same-version re-provision \
-                     actually write files); saw: {commands:#?}"
+                     (--force-reinstall is what makes an install over a stale package \
+                     database actually write files); saw: {commands:#?}"
                 )
             });
         assert!(verify < install);

@@ -55,3 +55,43 @@ Both sha256 values match the release `SHA256SUMS` **and** the independent
 3. `--force-depends` vs `install_runtime_deps` is argued, not measured.
 4. `opkg_install_forced` in `opkg.rs` is now unreferenced.
 5. No physical router has run any of this.
+
+## Upgrade path — measured
+
+Same lab, opkg lane. Installed `0.6.0_rc6-r1` from the rc6 release asset, then
+provisioned through the same RPC:
+
+```
+tollgate-wrt 0.6.0_rc6-r1 is installed, wanted 0.6.0 — upgrading
+package verified against SHA256SUMS (sha256:8789811201a96296ee0be5132a07400eeed84ce64a6115b06ced3f8650bccf6a)
+tollgate-wrt 0.6.0-r1 is installed and matches the 0.6.0 pin
+```
+
+The binary was genuinely replaced: rc6's `/usr/bin/tollgate-wrt` was 9,487,478
+bytes as packaged, the post-upgrade file is 13,508,600 bytes, and
+`opkg list-installed` reports `0.6.0-r1`.
+
+Note the upgrade did **not** need the `--force-*` flags — a different upstream
+version installs normally. That matters for what follows.
+
+### The force flags act on a stale package database, not on a republished counter
+
+The `--force-reinstall` doc comment used to claim it covered "`0.6.0-r1`
+present, `0.6.0-r2` requested". That case never reaches the installer:
+`normalise_version` strips the trailing `-r<digits>` counter, so the pair
+compares equal, `decide_install` returns `Skip`, and no install command runs at
+all. `version.rs` already asserted this (`drops_the_openwrt_packaging_release_counter`);
+a new test, `a_republished_packaging_counter_does_not_trigger_a_reinstall`,
+pins the consequence so the flags cannot be "fixed" to cover it.
+
+What the flag *does* do, measured directly: with the package database claiming
+`0.6.0-r2` and `/usr/bin/tollgate-wrt` deleted by hand, a plain reinstall is
+refused, while
+
+```
+opkg install --force-reinstall --force-overwrite --force-depends /tmp/rc6.ipk
+```
+
+reports `Installing tollgate-wrt (0.6.0_rc6-r1) to root... / Configuring
+tollgate-wrt.` and restores the 13,508,600-byte binary. That is exactly the
+damaged state the removed extraction path used to leave behind.
