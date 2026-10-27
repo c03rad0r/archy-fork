@@ -166,35 +166,59 @@ const UPSTREAM_GATEWAY_VALUE: &str = "br-lan";
 /// Re-assert that NoDogSplash gates the paid bridge, and report whether it had
 /// drifted.
 ///
-/// Why this exists rather than trusting `configure` to have been enough:
-/// `configure` runs once, during provisioning, and writes
-/// `nodogsplash.main.gatewayinterface = br-tollgate`. But the package's own
-/// first-boot script re-runs on EVERY install and upgrade that takes the
-/// script's FULL-setup branch (first install, or a marker recording an older
-/// release), and it writes `br-lan` *positionally at `@nodogsplash[0]`*.
-/// Because `configure` deleted the stock anonymous section, `main` IS
-/// `@nodogsplash[0]` — so that write lands on our section. Measured on a live
-/// 25.12.5 guest with the shipped v0.6.0 script, starting from a correctly
-/// provisioned router:
+/// What this can and cannot do, stated precisely, because the first version of
+/// this comment overclaimed it:
 ///
-/// ```text
-/// $ uci get nodogsplash.@nodogsplash[0].gatewayinterface
-/// br-tollgate
-/// $ setup_nodogsplash          # the package's own function, verbatim
-/// $ uci get nodogsplash.@nodogsplash[0].gatewayinterface
-/// br-lan
-/// ```
+/// `provision` installs the package (whose postinst runs `99-tollgate-setup`)
+/// **before** it calls `nodogsplash::configure`. `configure` then deletes the
+/// stock anonymous section, creates `main` (so `main` IS `@nodogsplash[0]`) and
+/// writes `br-tollgate` to it. This function is called after that, so on the
+/// normal path it reads back the value `configure` itself just wrote and finds
+/// it correct — it does not, and cannot, observe the postinst's `br-lan`,
+/// because the postinst ran two steps earlier. A guard placed where it would
+/// have been needed is therefore not needed at all; this is a POST-CONDITION
+/// on `configure`, not a repair of the install.
 ///
-/// and the daemon then rendered `GatewayInterface br-lan`, reported
-/// `Managed interface: br-lan` from `ndsctl`, and listened on the management
-/// address `10.99.99.1:2050` instead of the paid `192.168.99.1:2050`. So the
-/// customer pays on a portal that is not gating their bridge, and unpaid
-/// clients on the management LAN get captured by it.
+/// The package's write still matters, and is still why `PAID_BRIDGE` is pinned
+/// in two places:
 ///
-/// This is a VERIFY-AND-REPAIR, not a rewrite: when the value is already
-/// correct it issues no `uci set`, so it cannot paper over a different bug by
-/// silently normalising state. It returns which value it found so the caller can
-/// log a repair as the event it is.
+/// * On a **version-changing install or upgrade outside Archipelago** (a bare
+///   `apk add`, a package-manager upgrade on a router nobody re-provisions),
+///   `postinst` runs the FULL branch of `99-tollgate-setup` and writes
+///   `br-lan`. Nothing re-asserts `br-tollgate` until the next provision, so
+///   the value is perishable across upgrades. Measured on a live 25.12.5 guest
+///   with the shipped v0.6.0 script, starting from a correctly provisioned
+///   router:
+///
+///   ```text
+///   $ uci get nodogsplash.@nodogsplash[0].gatewayinterface
+///   br-tollgate
+///   $ setup_nodogsplash          # the package's own function, verbatim
+///   $ uci get nodogsplash.@nodogsplash[0].gatewayinterface
+///   br-lan
+///   ```
+///
+/// * It is branch-gated on `/etc/tollgate-setup-done`: a same-version reinstall
+///   takes the VERIFY branch and leaves the value alone, which is why the
+///   symptom looked intermittent rather than constant.
+///
+/// When it does drift the daemon renders `GatewayInterface br-lan`, reports
+/// `Managed interface: br-lan`, and listens on the management address
+/// `10.99.99.1:2050` instead of the paid `192.168.99.1:2050`. So a drifted
+/// router gates its own management LAN — the operator's laptop is treated as an
+/// unpaid customer. Measured: the lab guest refused SSH to the host until
+/// nodogsplash was stopped.
+///
+/// Why keep it at all: `configure` could fail to persist (uncommitted config,
+/// a competing writer, a future reorder of `provision`), and a provision that
+/// returns Ok while the gateway is on the wrong bridge is exactly the silent
+/// failure this card was filed against. This turns that into a boot-time error
+/// or a logged repair.
+///
+/// It is a VERIFY-AND-REPAIR, not a rewrite: when the value is already correct
+/// it issues no `uci set`, so it cannot paper over a different bug by silently
+/// normalising state. It returns which value it found so the caller can log a
+/// repair as the event it is.
 pub fn assert_gateway_interface_is_paid_bridge(router: &Router) -> Result<GatewayInterfaceCheck> {
     let key = "nodogsplash.@nodogsplash[0].gatewayinterface";
 
@@ -261,6 +285,7 @@ pub fn upstream_gateway_write_probe() -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::tollgate::TollGateConfig;
     use std::sync::{Arc, Mutex};
 
     /// The repair exists because the package writes `br-lan` at the SAME
@@ -375,29 +400,107 @@ mod tests {
         );
     }
 
-    /// The package's `postinst` restarts nodogsplash AFTER running the setup
-    /// script, so a guard that only fixed UCI would be overwritten again on the
-    /// next provisioning pass. Pin the relationship that makes the ordering
-    /// safe: the repair is called after every package install in `provision`.
+    /// The guard is a POST-CONDITION on `configure`, and that is only true
+    /// because `configure` runs after the install. Pin the pairing that makes
+    /// it true, behaviourally: replay `configure` against a router whose
+    /// postinst has already written `br-lan`, and assert the value the guard
+    /// then reads is `br-tollgate` — i.e. `configure`, not the guard, is what
+    /// repairs the install.
     ///
-    /// This one is a STRUCTURAL check, not a behavioural one — it compares
-    /// positions in the source of `provision`, because driving a full provision
-    /// here would mean downloading and sha256-verifying a real release asset.
-    /// It catches the regression that matters (guard moved above the install)
-    /// and nothing more; do not read it as evidence the guard fires at runtime.
+    /// If someone reorders `provision` so the install lands after `configure`,
+    /// this pairing breaks and the guard becomes load-bearing again — which is
+    /// fine, but the prose must change with it. Asserting the current shape
+    /// keeps the two from drifting apart silently.
     #[test]
-    fn provision_calls_the_guard_after_the_package_install_in_source_order() {
-        let src = include_str!("mod.rs");
-        let install = src
-            .find("install_tollgate(router)?")
-            .expect("provision must install the package");
-        let guard = src
-            .find("assert_gateway_interface_is_paid_bridge")
-            .expect("provision must call the gateway-interface guard");
-        assert!(
-            guard > install,
-            "the guard must run after the package install, or the postinst's \
-             br-lan write survives"
+    fn configure_is_what_repairs_the_postinst_write_not_the_guard() {
+        // Stateful fake: models the one section and its gatewayinterface.
+        let value: Arc<Mutex<Option<String>>> = Arc::new(Mutex::new(Some("br-lan".into())));
+        let v = value.clone();
+        let router = Router::scripted(move |cmd| {
+            let mut slot = v.lock().unwrap();
+            if cmd.contains("uci -q get nodogsplash.@nodogsplash[0].gatewayinterface") {
+                return match slot.as_ref() {
+                    Some(s) => Ok((format!("{s}\n"), 0)),
+                    None => Ok((String::new(), 1)),
+                };
+            }
+            if cmd.contains("uci delete nodogsplash.@nodogsplash[0]") {
+                *slot = None;
+                return Ok((String::new(), 0));
+            }
+            if cmd.contains("uci set nodogsplash.main=nodogsplash") {
+                *slot = Some(String::new());
+                return Ok((String::new(), 0));
+            }
+            if let Some(rest) = cmd
+                .strip_prefix("uci set nodogsplash.main.gatewayinterface=")
+                .or_else(|| {
+                    cmd.strip_prefix("uci set nodogsplash.@nodogsplash[0].gatewayinterface=")
+                })
+            {
+                *slot = Some(rest.trim_matches('\'').to_string());
+                return Ok((String::new(), 0));
+            }
+            if cmd.contains("uci set nodogsplash.main.") && slot.is_none() {
+                *slot = Some(String::new());
+            }
+            Ok((String::new(), 0))
+        });
+
+        // The postinst has already run: @[0] reads br-lan (set above).
+        // configure() is what provision calls after the install.
+        configure(
+            &router,
+            &TollGateConfig {
+                mint_url: "http://127.0.0.1:3338".into(),
+                ..Default::default()
+            },
+        )
+        .expect("configure");
+
+        // ...and by the time the guard runs, the install's write is already gone.
+        let outcome = assert_gateway_interface_is_paid_bridge(&router).expect("guard");
+        assert_eq!(
+            outcome,
+            GatewayInterfaceCheck::Correct,
+            "configure must have already repaired the postinst's br-lan write; \
+             if this is Repaired, provision's ordering changed and the guard's \
+             doc comment is now wrong"
         );
+        assert_eq!(
+            value.lock().unwrap().as_deref(),
+            Some(PAID_BRIDGE),
+            "the enforced bridge must be the paid bridge after configure"
+        );
+    }
+
+    /// The other half of the same claim: when the value IS wrong by the time
+    /// the guard runs, the guard fixes it. This is the case a bare `apk add`
+    /// after provisioning leaves behind, and what `live_driver assert-guard`
+    /// exercises on a real router.
+    #[test]
+    fn the_guard_repairs_a_value_that_is_wrong_when_it_runs() {
+        let value: Arc<Mutex<Option<String>>> = Arc::new(Mutex::new(Some("br-lan".into())));
+        let v = value.clone();
+        let router = Router::scripted(move |cmd| {
+            let mut slot = v.lock().unwrap();
+            if cmd.contains("uci -q get nodogsplash.@nodogsplash[0].gatewayinterface") {
+                return match slot.as_ref() {
+                    Some(s) => Ok((format!("{s}\n"), 0)),
+                    None => Ok((String::new(), 1)),
+                };
+            }
+            if let Some(rest) = cmd
+                .strip_prefix("uci set nodogsplash.@nodogsplash[0].gatewayinterface=")
+                .or_else(|| cmd.strip_prefix("uci set nodogsplash.main.gatewayinterface="))
+            {
+                *slot = Some(rest.trim_matches('\'').to_string());
+            }
+            Ok((String::new(), 0))
+        });
+
+        let outcome = assert_gateway_interface_is_paid_bridge(&router).expect("guard");
+        assert_eq!(outcome, GatewayInterfaceCheck::Repaired("br-lan".into()));
+        assert_eq!(value.lock().unwrap().as_deref(), Some(PAID_BRIDGE));
     }
 }

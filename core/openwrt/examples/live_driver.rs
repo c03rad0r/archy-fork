@@ -10,7 +10,6 @@
 //!   driver probe
 //!   driver assert-guard
 //!   driver reinstall-package          (re-runs the install step only)
-use std::path::PathBuf;
 
 use archipelago_openwrt::tollgate::{self, TollGateConfig};
 use archipelago_openwrt::Router;
@@ -118,8 +117,19 @@ fn main() -> anyhow::Result<()> {
         }
         "reinstall-package" => {
             // Re-run ONLY the package install, which is the step whose postinst
-            // runs 99-tollgate-setup. This is the "later install/upgrade"
-            // evidence item: after it, item 1 must still read br-tollgate.
+            // runs 99-tollgate-setup. This is evidence item 4: what the install
+            // does to the gateway interface when nothing re-asserts it.
+            //
+            // Expected, measured on a live 25.12.5 guest with the shipped
+            // v0.6.0 package:
+            //   * same version  -> apk treats it as installed, runs no postinst,
+            //                      the value is unchanged.
+            //   * version change -> FULL branch runs and the value goes back to
+            //                      br-lan. Archipelago's `provision` is what
+            //                      re-pins it, so a bare install followed by no
+            //                      provision leaves a drifted router.
+            // Run `assert-guard` afterwards to watch the repair, or `provision`
+            // to watch the whole sequence converge.
             let pkg_mgr = router.opkg_check()?;
             probe(&router, "BEFORE reinstall")?;
             match pkg_mgr {
@@ -136,9 +146,4 @@ fn main() -> anyhow::Result<()> {
             "unknown command {other:?}; try probe|assert-guard|provision|reinstall-package"
         ),
     }
-}
-
-#[allow(dead_code)]
-fn _assert_paths() {
-    let _ = PathBuf::new();
 }

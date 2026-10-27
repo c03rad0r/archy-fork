@@ -254,11 +254,18 @@ Archipelago deletes the anonymous nodogsplash section and pins
 `gatewayinterface` to `br-tollgate` itself. The ordering matters and is worth
 stating precisely: `postinst` runs `99-tollgate-setup` during the install, and
 Archipelago's `nodogsplash::configure` runs after that, so on a successful
-provision Archipelago's value wins. What is *not* guaranteed is that it stays
-won — any later package install or upgrade re-runs `postinst` and writes
-`br-lan` again, with nothing re-asserting `br-tollgate` until the next
+provision Archipelago's value wins — and it is `configure`, not the post-check
+that follows it, that does the winning. `provision` then reads the value back
+and fails if it is not `br-tollgate`, so a provision can no longer report
+success while the gateway is pinned to the wrong bridge.
+
+What is *not* guaranteed is that it stays won. Any **version-changing** package
+install or upgrade re-runs `postinst`, which takes the script's FULL branch and
+writes `br-lan` again, with nothing re-asserting `br-tollgate` until the next
 provision. Treat the value as perishable and re-check it after any upgrade,
-rather than as a one-time invariant.
+rather than as a one-time invariant. (A same-version reinstall takes the
+VERIFY branch and leaves the value alone, which is why the symptom can look
+intermittent.)
 
 **How to check** (on the router, after provisioning):
 
