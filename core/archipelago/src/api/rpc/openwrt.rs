@@ -12,6 +12,48 @@ use archipelago_openwrt::{
 /// Default port for the local Cashu mint (nutshell / cashu-mint app).
 const LOCAL_MINT_PORT: u16 = 3338;
 
+/// Run one full provision pass over a fresh SSH session.
+///
+/// Kept as a free function so the retry below can run the same pass twice
+/// without cloning the handler or moving the credential plumbing into a
+/// closure.
+async fn provision_tollgate_once(
+    host: String,
+    ssh_user: String,
+    ssh_password: String,
+    config: TollGateConfig,
+) -> Result<()> {
+    tokio::task::spawn_blocking(move || -> Result<()> {
+        let router = Router::connect_password(&host, 22, &ssh_user, &ssh_password)?;
+        router.verify_openwrt()?;
+        tokio::runtime::Handle::current().block_on(tollgate::provision(&router, &config))
+    })
+    .await
+    .context("openwrt provision task")?
+}
+
+/// Whether the router reports the pinned TollGate package installed.
+///
+/// Used only after a provision failed: the package's post-install script
+/// restarts the network, which kills the SSH session that was running `apk
+/// add`. The package is already on disk when that happens, so "the session
+/// died" is not evidence that the install failed.
+async fn tollgate_is_at_pin(
+    host: String,
+    ssh_user: String,
+    ssh_password: String,
+    desired: String,
+) -> bool {
+    tokio::task::spawn_blocking(move || -> Result<bool> {
+        let router = Router::connect_password(&host, 22, &ssh_user, &ssh_password)?;
+        Ok(tollgate::installed_tollgate_version_any(&router).satisfies(&desired))
+    })
+    .await
+    .ok()
+    .and_then(Result::ok)
+    .unwrap_or(false)
+}
+
 impl RpcHandler {
     /// Scan the local subnet for OpenWrt routers.
     ///
@@ -327,20 +369,52 @@ impl RpcHandler {
             payout_address,
         };
 
-        // Blocking SSH session, and provision runs `opkg install` over it —
-        // minutes of held worker if the router stalls mid-exchange.
-        {
-            let host = host.clone();
-            let ssh_user = ssh_user.clone();
-            let ssh_password = ssh_password.clone();
-            let config = config.clone();
-            tokio::task::spawn_blocking(move || -> Result<()> {
-                let router = Router::connect_password(&host, 22, &ssh_user, &ssh_password)?;
-                router.verify_openwrt()?;
-                tokio::runtime::Handle::current().block_on(tollgate::provision(&router, &config))
-            })
-            .await
-            .context("openwrt provision task")??;
+        let first = provision_tollgate_once(
+            host.clone(),
+            ssh_user.clone(),
+            ssh_password.clone(),
+            config.clone(),
+        )
+        .await;
+
+        if let Err(err) = first {
+            // The package's post-install restarts the network on a
+            // radio-equipped router, which kills the SSH session running
+            // `apk add` / `opkg install`. The package is already on disk when
+            // that happens, so the dropped session is not evidence that the
+            // install failed. Reconnect, wait for the router to come back, and
+            // only then decide. Retrying the whole pass is safe: the install
+            // decision skips an already-correct version, and the config/SSID
+            // steps are exactly what the dropped session never reached.
+            let desired = tollgate::package_version_from_pin(tollgate::TOLLGATE_VERSION)
+                .context("derive the pinned TollGate version")?;
+            let mut at_pin = false;
+            for attempt in 0..6 {
+                if attempt > 0 {
+                    tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+                }
+                if tollgate_is_at_pin(
+                    host.clone(),
+                    ssh_user.clone(),
+                    ssh_password.clone(),
+                    desired.clone(),
+                )
+                .await
+                {
+                    at_pin = true;
+                    break;
+                }
+            }
+            if !at_pin {
+                return Err(err);
+            }
+            provision_tollgate_once(
+                host.clone(),
+                ssh_user.clone(),
+                ssh_password.clone(),
+                config.clone(),
+            )
+            .await?;
         }
 
         Ok(serde_json::json!({
