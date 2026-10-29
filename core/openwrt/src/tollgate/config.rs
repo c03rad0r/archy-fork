@@ -3,12 +3,45 @@ use serde::{Deserialize, Serialize};
 
 use crate::Router;
 
+/// One accepted Cashu mint, mirroring the TollGate schema's
+/// `accepted_mints[]` object. Missing fields take the same defaults as the
+/// package (so a partial row from the UI is valid), and `price_unit` is
+/// normalised to the schema's `sat` spelling.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct MintConfig {
+    pub url: String,
+    pub min_balance: u64,
+    pub balance_tolerance_percent: u64,
+    pub payout_interval_seconds: u64,
+    pub min_payout_amount: u64,
+    pub price_per_step: u64,
+    pub price_unit: String,
+    pub purchase_min_steps: u64,
+}
+
+impl Default for MintConfig {
+    fn default() -> Self {
+        Self {
+            url: String::new(),
+            min_balance: 64,
+            balance_tolerance_percent: 10,
+            payout_interval_seconds: 60,
+            min_payout_amount: 128,
+            price_per_step: 1,
+            price_unit: "sat".to_string(),
+            purchase_min_steps: 1,
+        }
+    }
+}
+
 /// TollGate provisioning parameters.
 ///
 /// `mint_url` must be the externally-reachable URL of the Archy Cashu mint —
 /// TollGate customers connect from outside the Archy node's loopback, so
 /// localhost URLs will not work. Resolve this from the running mint app before
-/// calling `provision`.
+/// calling `provision`. `accepted_mints`, when present, supersedes the
+/// single-mint fields and is written as the complete list (add/remove).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TollGateConfig {
     /// SSID name for the pay-as-you-go network.
@@ -37,6 +70,9 @@ pub struct TollGateConfig {
     /// Passphrase for the private management SSID. `None` keeps the existing
     /// key. The schema bounds it to 8–63 characters; the daemon validates it.
     pub private_key: Option<String>,
+    /// Complete accepted-mint list. `None` keeps the single-mint merge path
+    /// for older callers; `Some` replaces the list (add/remove in the UI).
+    pub accepted_mints: Option<Vec<MintConfig>>,
 }
 
 impl Default for TollGateConfig {
@@ -51,6 +87,7 @@ impl Default for TollGateConfig {
             payout_address: None,
             private_ssid: "noderunner-private".to_string(),
             private_key: None,
+            accepted_mints: None,
         }
     }
 }
@@ -64,8 +101,18 @@ impl Default for TollGateConfig {
 /// effect on what the daemon advertises or accepts.
 pub fn apply(router: &Router, cfg: &TollGateConfig) -> Result<()> {
     let step_size = cfg.step_size_ms.to_string();
-    let min_steps = cfg.min_steps.to_string();
-    let price_sats = cfg.price_sats.to_string();
+    let first_mint = cfg.accepted_mints.as_ref().and_then(|m| m.first());
+    let mint_url = first_mint
+        .map(|m| m.url.clone())
+        .unwrap_or_else(|| cfg.mint_url.clone());
+    let min_steps = first_mint
+        .map(|m| m.purchase_min_steps)
+        .unwrap_or(cfg.min_steps as u64)
+        .to_string();
+    let price_sats = first_mint
+        .map(|m| m.price_per_step)
+        .unwrap_or(cfg.price_sats)
+        .to_string();
 
     let mut pairs = vec![
         ("tollgate.main", "tollgate"),
@@ -75,7 +122,7 @@ pub fn apply(router: &Router, cfg: &TollGateConfig) -> Result<()> {
         ("tollgate.main.min_steps", min_steps.as_str()),
         ("tollgate.main.price_per_step", price_sats.as_str()),
         ("tollgate.main.currency", "sat"),
-        ("tollgate.main.mint_url", &cfg.mint_url),
+        ("tollgate.main.mint_url", mint_url.as_str()),
     ];
     // Status-display only (see doc comment above) — only written when the
     // caller actually supplied one, so a reconfigure that doesn't touch
@@ -132,49 +179,94 @@ pub fn apply_daemon_config(router: &Router, cfg: &TollGateConfig) -> Result<()> 
         }
     }
 
-    // Update the configured mint in place. Replacing the whole array used to
-    // drop every other accepted mint and every per-mint setting the operator
-    // had configured; the portal advertises the daemon's accepted set, so that
-    // was a money-path data loss, not just a display bug.
-    let mut mints = doc
-        .get("accepted_mints")
-        .and_then(|v| v.as_array())
-        .cloned()
-        .unwrap_or_default();
-    let wanted_url = cfg.mint_url.trim_end_matches('/');
-    let mut updated = false;
-    for mint in mints.iter_mut() {
-        let mint_url = mint
-            .get("url")
-            .and_then(|v| v.as_str())
-            .unwrap_or("")
-            .trim_end_matches('/');
-        if mint_url == wanted_url {
-            mint["price_per_step"] = serde_json::json!(cfg.price_sats);
-            mint["price_unit"] = serde_json::json!("sats");
-            mint["purchase_min_steps"] = serde_json::json!(cfg.min_steps);
-            updated = true;
-            break;
+    if let Some(list) = &cfg.accepted_mints {
+        // The UI sends the complete list (add/remove). Normalise the legacy
+        // `sats` spelling the same way the daemon's migration does.
+        let mut mints = list.clone();
+        for mint in &mut mints {
+            if mint.price_unit.trim().is_empty() || mint.price_unit.eq_ignore_ascii_case("sats") {
+                mint.price_unit = "sat".to_string();
+            }
         }
+        doc["accepted_mints"] = serde_json::json!(mints);
+    } else {
+        // Update the configured mint in place. Replacing the whole array used
+        // to drop every other accepted mint and every per-mint setting the
+        // operator had configured; the portal advertises the daemon's accepted
+        // set, so that was a money-path data loss, not just a display bug.
+        let mut mints = doc
+            .get("accepted_mints")
+            .and_then(|v| v.as_array())
+            .cloned()
+            .unwrap_or_default();
+        let wanted_url = cfg.mint_url.trim_end_matches('/');
+        let mut updated = false;
+        for mint in mints.iter_mut() {
+            let mint_url = mint
+                .get("url")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .trim_end_matches('/');
+            if mint_url == wanted_url {
+                mint["price_per_step"] = serde_json::json!(cfg.price_sats);
+                mint["price_unit"] = serde_json::json!("sats");
+                mint["purchase_min_steps"] = serde_json::json!(cfg.min_steps);
+                updated = true;
+                break;
+            }
+        }
+        if !updated {
+            mints.push(serde_json::json!({
+                "url": cfg.mint_url,
+                "min_balance": 64,
+                "balance_tolerance_percent": 10,
+                "payout_interval_seconds": 60,
+                "min_payout_amount": 128,
+                "price_per_step": cfg.price_sats,
+                "price_unit": "sats",
+                "purchase_min_steps": cfg.min_steps,
+            }));
+        }
+        doc["accepted_mints"] = serde_json::json!(mints);
     }
-    if !updated {
-        mints.push(serde_json::json!({
-            "url": cfg.mint_url,
-            "min_balance": 64,
-            "balance_tolerance_percent": 10,
-            "payout_interval_seconds": 60,
-            "min_payout_amount": 128,
-            "price_per_step": cfg.price_sats,
-            "price_unit": "sats",
-            "purchase_min_steps": cfg.min_steps,
-        }));
-    }
-    doc["accepted_mints"] = serde_json::json!(mints);
 
     let json_str = serde_json::to_string_pretty(&doc).context("serialize config.json")?;
+
+    // Prefer the package's own writer when the schema CLI is present: it
+    // validates the document and applies operator settings in one place.
+    // Fall back to the file upload for older packages or a stale socket.
+    let tmp = "/tmp/tollgate-config.json";
+    router
+        .upload_file(tmp, json_str.as_bytes())
+        .context("upload temporary config.json")?;
+    let schema_ok = router
+        .run("tollgate --json config schema 2>/dev/null")
+        .map(|(_, code)| code == 0)
+        .unwrap_or(false);
+    if schema_ok {
+        match router.run("tollgate --json config save < /tmp/tollgate-config.json 2>&1") {
+            Ok((_, 0)) => {
+                let _ = router.run_ok("rm -f /tmp/tollgate-config.json");
+                return Ok(());
+            }
+            Ok((out, code)) => tracing::warn!(
+                "[{}] tollgate config save failed ({}): {} — falling back to file upload",
+                router.host,
+                code,
+                out.trim()
+            ),
+            Err(err) => tracing::warn!(
+                "[{}] tollgate config save could not run: {} — falling back to file upload",
+                router.host,
+                err
+            ),
+        }
+    }
+
     router
         .upload_file("/etc/tollgate/config.json", json_str.as_bytes())
         .context("upload /etc/tollgate/config.json")?;
+    let _ = router.run_ok("rm -f /tmp/tollgate-config.json");
     Ok(())
 }
 

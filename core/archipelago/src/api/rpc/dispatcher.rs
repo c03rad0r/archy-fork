@@ -279,6 +279,7 @@ impl RpcHandler {
             "openwrt.scan" => self.handle_openwrt_scan(params).await,
             "openwrt.get-status" => self.handle_openwrt_get_status(params).await,
             "openwrt.provision-tollgate" => self.handle_openwrt_provision_tollgate(params).await,
+            "openwrt.test-mint" => self.handle_openwrt_test_mint(params).await,
             "openwrt.scan-wifi" => self.handle_openwrt_scan_wifi(params).await,
             "openwrt.configure-wan" => self.handle_openwrt_configure_wan(params).await,
 

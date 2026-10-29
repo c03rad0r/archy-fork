@@ -8,7 +8,7 @@ pub mod version;
 pub mod wifi;
 
 pub use assets::{AssetShape, PackageTarget, FEED_REPO, LEGACY_REPO};
-pub use config::TollGateConfig;
+pub use config::{MintConfig, TollGateConfig};
 pub use install::{
     install_runtime_deps, install_tollgate, installed_tollgate_version,
     installed_tollgate_version_any, read_package_target, TOLLGATE_VERSION,

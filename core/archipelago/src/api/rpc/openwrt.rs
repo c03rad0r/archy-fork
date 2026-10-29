@@ -160,6 +160,23 @@ fn daemon_version_matches(daemon: &str, desired: &str) -> bool {
     tollgate::version::normalise_version(core) == tollgate::version::normalise_version(desired)
 }
 
+/// Reject a mint URL before it reaches a shell command. The router-side probe
+/// interpolates the URL into `curl`, so quotes/whitespace/backslashes are
+/// refused rather than escaped.
+fn validate_mint_url(url: &str) -> Result<()> {
+    let url = url.trim();
+    if !(url.starts_with("http://") || url.starts_with("https://")) {
+        anyhow::bail!("mint URL must start with http:// or https://: {url}");
+    }
+    if url
+        .chars()
+        .any(|c| c.is_whitespace() || matches!(c, '\'' | '"' | '\\'))
+    {
+        anyhow::bail!("mint URL contains an unsafe character: {url}");
+    }
+    Ok(())
+}
+
 impl RpcHandler {
     /// Scan the local subnet for OpenWrt routers.
     ///
@@ -346,16 +363,14 @@ impl RpcHandler {
                         .ok()
                         .map(|out| parse_advertisement(&out))
                         .unwrap_or_default();
-                    let configured_mints = router
+                    let configured_mints: Vec<tollgate::MintConfig> = router
                         .run_ok("cat /etc/tollgate/config.json 2>/dev/null")
                         .ok()
                         .and_then(|out| serde_json::from_str::<serde_json::Value>(&out).ok())
-                        .and_then(|doc| {
-                            doc.get("accepted_mints")
-                                .and_then(|v| v.as_array())
-                                .map(|a| a.len())
-                        })
-                        .unwrap_or(0);
+                        .and_then(|doc| doc.get("accepted_mints").cloned())
+                        .and_then(|v| serde_json::from_value(v).ok())
+                        .unwrap_or_default();
+                    let configured_mint_count = configured_mints.len();
 
                     serde_json::json!({
                         "installed": true,
@@ -369,7 +384,8 @@ impl RpcHandler {
                         "daemon_error": daemon_error,
                         "daemon_version_matches": daemon_matches,
                         "advertised_mints": advertised_mints,
-                        "configured_mints": configured_mints,
+                        "configured_mints": configured_mint_count,
+                        "accepted_mints": configured_mints,
                         "pkg_manager": pkg_mgr.map(|m| match m {
                             PkgManager::Opkg => "opkg",
                             PkgManager::ApkNative => "apk",
@@ -432,6 +448,93 @@ impl RpcHandler {
         }
 
         Ok(status)
+    }
+
+    /// Probe a Cashu mint from the router.
+    ///
+    /// Params: host/credentials + `{ "url": "https://..." }`.
+    /// The probe is deliberately router-side: a mint reachable from the node
+    /// but not from the router is unusable for the captive portal.
+    pub(super) async fn handle_openwrt_test_mint(
+        &self,
+        params: Option<serde_json::Value>,
+    ) -> Result<serde_json::Value> {
+        let saved = net_router::load_router_config(&self.config.data_dir).await?;
+        let p = params.unwrap_or_default();
+
+        let host = p
+            .get("host")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string())
+            .or_else(|| {
+                if saved.configured {
+                    Some(saved.address.clone())
+                } else {
+                    None
+                }
+            })
+            .ok_or_else(|| {
+                anyhow::anyhow!("No router configured — provide host or configure the router first")
+            })?;
+        let ssh_user = p
+            .get("ssh_user")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string())
+            .or_else(|| saved.username.clone())
+            .unwrap_or_else(|| "root".to_string());
+        let ssh_password = p
+            .get("ssh_password")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string())
+            .or_else(|| saved.password.clone())
+            .unwrap_or_default();
+        let url = p
+            .get("url")
+            .and_then(|v| v.as_str())
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .ok_or_else(|| anyhow::anyhow!("url is required"))?
+            .to_string();
+        validate_mint_url(&url)?;
+
+        let result = tokio::task::spawn_blocking(move || -> Result<serde_json::Value> {
+            let router = Router::connect_password(&host, 22, &ssh_user, &ssh_password)?;
+            router.verify_openwrt()?;
+            let base = url.trim_end_matches('/');
+            let info_out =
+                router.run_ok(&format!("curl -sS -m 10 '{base}/v1/info' 2>/dev/null"))?;
+            let info: serde_json::Value =
+                serde_json::from_str(&info_out).unwrap_or_else(|_| serde_json::json!({}));
+            let keys_out =
+                router.run_ok(&format!("curl -sS -m 10 '{base}/v1/keysets' 2>/dev/null"))?;
+            let keys: serde_json::Value =
+                serde_json::from_str(&keys_out).unwrap_or_else(|_| serde_json::json!({}));
+            let active = keys
+                .get("keysets")
+                .and_then(|v| v.as_array())
+                .and_then(|a| {
+                    a.iter().find(|k| {
+                        k.get("unit").and_then(|v| v.as_str()) == Some("sat")
+                            && k.get("active").and_then(|v| v.as_bool()).unwrap_or(false)
+                    })
+                });
+            let active_sat = active.is_some();
+            let fee = active
+                .and_then(|k| k.get("input_fee_ppk"))
+                .and_then(|v| v.as_u64());
+            Ok(serde_json::json!({
+                "url": url,
+                "ok": active_sat,
+                "name": info.get("name").cloned().unwrap_or_default(),
+                "version": info.get("version").cloned().unwrap_or_default(),
+                "active_sat_keyset": active_sat,
+                "input_fee_ppk": fee,
+            }))
+        })
+        .await
+        .context("openwrt mint test task")??;
+
+        Ok(result)
     }
 
     /// Provision TollGate on an OpenWrt router and create the "archipelago" SSID.
@@ -549,6 +652,34 @@ impl RpcHandler {
             .filter(|s| !s.is_empty())
             .map(str::to_string);
 
+        let accepted_mints: Option<Vec<tollgate::MintConfig>> = p
+            .get("accepted_mints")
+            .and_then(|v| v.as_array())
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|v| serde_json::from_value(v.clone()).ok())
+                    .collect::<Vec<_>>()
+            });
+        if let Some(mints) = &accepted_mints {
+            if mints.is_empty() {
+                anyhow::bail!("accepted_mints must contain at least one mint");
+            }
+            for mint in mints {
+                validate_mint_url(&mint.url)?;
+                if mint.price_per_step == 0 {
+                    anyhow::bail!("each mint's price_per_step must be at least 1 sat");
+                }
+                if mint.purchase_min_steps == 0 {
+                    anyhow::bail!("each mint's purchase_min_steps must be at least 1");
+                }
+            }
+        }
+        let mint_url = accepted_mints
+            .as_ref()
+            .and_then(|mints| mints.first())
+            .map(|mint| mint.url.clone())
+            .unwrap_or(mint_url);
+
         let config = TollGateConfig {
             ssid: "archipelago".to_string(),
             mint_url,
@@ -559,6 +690,7 @@ impl RpcHandler {
             payout_address,
             private_ssid,
             private_key,
+            accepted_mints,
         };
 
         let first = provision_tollgate_once(
