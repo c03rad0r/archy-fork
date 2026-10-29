@@ -29,6 +29,17 @@ interface WifiInterface {
   disabled: boolean
 }
 
+interface MintConfig {
+  url: string
+  price_per_step: number
+  purchase_min_steps: number
+  price_unit?: string
+  min_balance?: number
+  balance_tolerance_percent?: number
+  payout_interval_seconds?: number
+  min_payout_amount?: number
+}
+
 interface TollGateStatus {
   installed: boolean
   enabled?: boolean
@@ -52,6 +63,7 @@ interface TollGateStatus {
   daemon_version_matches?: boolean
   advertised_mints?: { url: string; price: number; unit: string; min_steps: number }[]
   configured_mints?: number
+  accepted_mints?: MintConfig[]
 }
 
 interface WanStatus {
@@ -184,7 +196,9 @@ const updateTollgateError = ref('')
 const editPriceSats = ref(10)
 const editStepSizeMin = ref(1)
 const editMinSteps = ref(1)
-const editMintUrl = ref('')
+const editMints = ref<MintConfig[]>([])
+type MintTestState = { status: 'idle' | 'testing' | 'ok' | 'fail'; detail: string }
+const mintTest = ref<Record<number, MintTestState>>({})
 const editPayoutAddress = ref('')
 const editPrivateSsid = ref('noderunner-private')
 const editPrivateKey = ref('')
@@ -373,7 +387,16 @@ function startEditTollgate() {
   editPriceSats.value = tg?.price_per_step ?? 10
   editStepSizeMin.value = Math.max(1, Math.round((tg?.step_size_ms ?? 60000) / 60000))
   editMinSteps.value = tg?.min_steps ?? 1
-  editMintUrl.value = tg?.mint_url ?? ''
+  const listed: MintConfig[] = tg?.accepted_mints?.length
+    ? tg.accepted_mints
+    : [{
+        url: tg?.mint_url ?? '',
+        price_per_step: tg?.price_per_step ?? 10,
+        purchase_min_steps: tg?.min_steps ?? 1,
+        price_unit: 'sat',
+      }]
+  editMints.value = listed.map(m => ({ ...m }))
+  mintTest.value = {}
   editPayoutAddress.value = tg?.payout_address ?? ''
   editPrivateSsid.value = tg?.private_ssid || 'noderunner-private'
   editPrivateKey.value = ''
@@ -383,6 +406,10 @@ function startEditTollgate() {
 }
 
 async function saveTollgateConfig() {
+  if (editMints.value.length === 0 || editMints.value.some(m => !m.url.trim())) {
+    updateTollgateError.value = 'At least one mint with a URL is required'
+    return
+  }
   updatingTollgate.value = true
   updateTollgateError.value = ''
   try {
@@ -391,7 +418,17 @@ async function saveTollgateConfig() {
       price_sats: editPriceSats.value,
       step_size_ms: editStepSizeMin.value * 60_000,
       min_steps: editMinSteps.value,
-      mint_url: editMintUrl.value,
+      mint_url: editMints.value[0]?.url.trim() ?? '',
+      accepted_mints: editMints.value.map(m => ({
+        url: m.url.trim(),
+        price_per_step: m.price_per_step,
+        price_unit: m.price_unit || 'sat',
+        purchase_min_steps: m.purchase_min_steps,
+        ...(m.min_balance !== undefined ? { min_balance: m.min_balance } : {}),
+        ...(m.balance_tolerance_percent !== undefined ? { balance_tolerance_percent: m.balance_tolerance_percent } : {}),
+        ...(m.payout_interval_seconds !== undefined ? { payout_interval_seconds: m.payout_interval_seconds } : {}),
+        ...(m.min_payout_amount !== undefined ? { min_payout_amount: m.min_payout_amount } : {}),
+      })),
       payout_address: editPayoutAddress.value,
       private_ssid: editPrivateSsid.value,
       ...(editPrivateKey.value ? { private_key: editPrivateKey.value } : {}),
@@ -404,6 +441,54 @@ async function saveTollgateConfig() {
     updateTollgateError.value = e instanceof Error ? e.message : String(e)
   } finally {
     updatingTollgate.value = false
+  }
+}
+
+function addMint() {
+  editMints.value.push({
+    url: '',
+    price_per_step: editPriceSats.value,
+    purchase_min_steps: editMinSteps.value,
+    price_unit: 'sat',
+  })
+}
+
+function removeMint(index: number) {
+  if (editMints.value.length <= 1) return
+  editMints.value.splice(index, 1)
+  delete mintTest.value[index]
+}
+
+async function testMint(index: number) {
+  const mint = editMints.value[index]
+  if (!mint?.url.trim()) {
+    mintTest.value[index] = { status: 'fail', detail: 'URL is empty' }
+    return
+  }
+  mintTest.value[index] = { status: 'testing', detail: 'Probing from the router…' }
+  try {
+    const res = await rpcClient.call<{
+      ok: boolean
+      name?: string
+      version?: string
+      active_sat_keyset?: boolean
+      input_fee_ppk?: number
+    }>({
+      method: 'openwrt.test-mint',
+      params: { ...authParams(), url: mint.url.trim() },
+      timeout: 30000,
+    })
+    mintTest.value[index] = res.ok
+      ? {
+          status: 'ok',
+          detail: `${res.name || 'mint'}${res.version ? ` ${res.version}` : ''} · sat keyset · fee ${res.input_fee_ppk ?? 0} ppk`,
+        }
+      : { status: 'fail', detail: 'No active sat keyset' }
+  } catch (e) {
+    mintTest.value[index] = {
+      status: 'fail',
+      detail: e instanceof Error ? e.message : String(e),
+    }
   }
 }
 
@@ -1096,13 +1181,61 @@ onMounted(() => {
             />
           </div>
           <div class="mb-4">
-            <label class="block text-xs text-white/40 mb-2">Mint URL</label>
-            <input
-              v-model="editMintUrl"
-              type="text"
-              placeholder="http://..."
-              class="w-full px-4 py-3 bg-transparent border border-white/20 rounded-lg text-white placeholder-white/30 focus:outline-none focus:border-white/40 transition-colors font-mono text-xs"
-            />
+            <div class="flex items-center justify-between mb-2">
+              <label class="block text-xs text-white/40">Accepted mints</label>
+              <button class="text-xs text-white/40 hover:text-white" @click="addMint">+ Add mint</button>
+            </div>
+            <div
+              v-for="(mint, index) in editMints"
+              :key="index"
+              class="mb-3 p-3 border border-white/10 rounded-lg"
+            >
+              <div class="flex items-center gap-2 mb-2">
+                <input
+                  v-model="mint.url"
+                  type="text"
+                  placeholder="https://mint.example"
+                  class="flex-1 px-3 py-2 bg-transparent border border-white/20 rounded-lg text-white placeholder-white/30 focus:outline-none focus:border-white/40 transition-colors font-mono text-xs"
+                />
+                <button
+                  class="text-xs text-red-300/80 hover:text-red-200"
+                  :disabled="editMints.length <= 1"
+                  @click="removeMint(index)"
+                >
+                  Remove
+                </button>
+              </div>
+              <div class="grid grid-cols-2 gap-2 mb-2">
+                <label class="block">
+                  <span class="block text-xs text-white/40 mb-1">Price per step (sats)</span>
+                  <input
+                    v-model.number="mint.price_per_step"
+                    type="number"
+                    min="1"
+                    class="w-full px-3 py-2 bg-transparent border border-white/20 rounded-lg text-white focus:outline-none focus:border-white/40"
+                  />
+                </label>
+                <label class="block">
+                  <span class="block text-xs text-white/40 mb-1">Min steps</span>
+                  <input
+                    v-model.number="mint.purchase_min_steps"
+                    type="number"
+                    min="1"
+                    class="w-full px-3 py-2 bg-transparent border border-white/20 rounded-lg text-white focus:outline-none focus:border-white/40"
+                  />
+                </label>
+              </div>
+              <div class="flex items-center gap-2">
+                <button class="text-xs text-white/40 hover:text-white" @click="testMint(index)">Test</button>
+                <span
+                  v-if="mintTest[index]"
+                  class="text-xs"
+                  :class="mintTest[index]?.status === 'ok' ? 'text-green-300' : mintTest[index]?.status === 'fail' ? 'text-red-300' : 'text-white/40'"
+                >
+                  {{ mintTest[index]?.detail }}
+                </span>
+              </div>
+            </div>
           </div>
           <div class="mb-4">
             <label class="block text-xs text-white/40 mb-2">Payout Lightning address</label>
