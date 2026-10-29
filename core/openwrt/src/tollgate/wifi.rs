@@ -174,6 +174,82 @@ fn should_regate_upstream_ap(network: &str, ssid: &str) -> bool {
     network.trim() == "lan" && ssid.trim().starts_with("TollGate-")
 }
 
+/// Stop broadcasting the upstream installer's rebranded factory APs.
+///
+/// `regate_upstream_default_aps` moves them onto the paid bridge, but they are
+/// still a second open SSID next to `archipelago`. The product owns exactly two
+/// names — the public `archipelago` and the private `noderunner-private` — so
+/// disable the upstream `TollGate-<serial>` sections instead of leaving a
+/// duplicate portal broadcast. Only sections whose SSID carries the upstream
+/// prefix are touched; a genuine operator AP is left alone.
+pub fn disable_upstream_default_aps(router: &Router) -> Result<()> {
+    let sections = router.run_ok(
+        "uci show wireless 2>/dev/null | grep -o '^wireless\\.default_radio[0-9]*' | sort -u",
+    )?;
+    let mut changed = false;
+    for section in sections.lines().map(str::trim).filter(|s| !s.is_empty()) {
+        let ssid = router
+            .uci_get(&format!("{section}.ssid"))
+            .unwrap_or_default();
+        if ssid.trim().starts_with("TollGate-") {
+            info!(
+                "[{}] Disabling upstream default AP {} ({}) — only the Archy SSIDs should broadcast",
+                router.host, section, ssid
+            );
+            router.uci_set(&format!("{section}.disabled"), "1")?;
+            changed = true;
+        }
+    }
+    if changed {
+        router.uci_commit(Some("wireless"))?;
+    }
+    Ok(())
+}
+
+/// Rename the private management radios and, when supplied, set their key.
+///
+/// The TollGate package creates `wireless.private_radio0/1` with a
+/// `<user>-<serial>` SSID and the default passphrase `TollGate`. The schema has
+/// first-class `private_ssid`/`private_key`/`private_encryption` fields; the
+/// daemon applies them from `config.json` on startup, but writing the UCI here
+/// makes the rename deterministic even when the daemon's operator-settings pass
+/// is skipped (stale socket, no radio, older package). Empty values are not an
+/// instruction: they leave the router's current value alone.
+pub fn set_private_network(router: &Router, cfg: &TollGateConfig) -> Result<()> {
+    let ssid = cfg.private_ssid.trim();
+    let key = cfg
+        .private_key
+        .as_deref()
+        .map(str::trim)
+        .filter(|k| !k.is_empty());
+
+    if ssid.is_empty() && key.is_none() {
+        return Ok(());
+    }
+
+    let mut changed = false;
+    for section in ["wireless.private_radio0", "wireless.private_radio1"] {
+        // Only touch radios the package actually created. A package-only
+        // install on a radio-less guest has neither section.
+        if router.uci_get(section).is_err() {
+            continue;
+        }
+        if !ssid.is_empty() {
+            router.uci_set(&format!("{section}.ssid"), ssid)?;
+            changed = true;
+        }
+        if let Some(key) = key {
+            router.uci_set(&format!("{section}.key"), key)?;
+            router.uci_set(&format!("{section}.encryption"), "psk2+ccmp")?;
+            changed = true;
+        }
+    }
+    if changed {
+        router.uci_commit(Some("wireless"))?;
+    }
+    Ok(())
+}
+
 /// Return the first available wireless radio device name (e.g. "radio0").
 fn detect_radio(router: &Router) -> Result<String> {
     let out =

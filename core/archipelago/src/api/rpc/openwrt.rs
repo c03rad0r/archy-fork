@@ -8,6 +8,7 @@ use archipelago_openwrt::{
     tollgate::{self, version::Installed, TollGateConfig},
     wan, wifi_scan,
 };
+use serde::Deserialize;
 
 /// Default port for the local Cashu mint (nutshell / cashu-mint app).
 const LOCAL_MINT_PORT: u16 = 3338;
@@ -52,6 +53,111 @@ async fn tollgate_is_at_pin(
     .ok()
     .and_then(Result::ok)
     .unwrap_or(false)
+}
+
+#[derive(Debug, Clone, Default)]
+struct DaemonStatus {
+    running: bool,
+    version: String,
+    uptime: String,
+    error: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct CliStatusEnvelope {
+    success: bool,
+    #[serde(default)]
+    data: Option<CliStatusData>,
+    #[serde(default)]
+    error: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct CliStatusData {
+    #[serde(default)]
+    running: bool,
+    #[serde(default)]
+    version: String,
+    #[serde(default)]
+    uptime: String,
+}
+
+/// Parse `tollgate --json status`. The daemon reports its own version (e.g.
+/// `TollGate v0.6.0-g9364f2e`), which is not the same string as the installed
+/// package (`0.6.0-r1`); the caller normalises both.
+fn parse_daemon_status(out: &str) -> Option<DaemonStatus> {
+    let envelope: CliStatusEnvelope = serde_json::from_str(out).ok()?;
+    if envelope.success {
+        let data = envelope.data?;
+        Some(DaemonStatus {
+            running: data.running,
+            version: data.version,
+            uptime: data.uptime,
+            error: None,
+        })
+    } else {
+        Some(DaemonStatus {
+            running: false,
+            version: String::new(),
+            uptime: String::new(),
+            error: envelope.error,
+        })
+    }
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+struct AdvertisedMint {
+    url: String,
+    price: u64,
+    unit: String,
+    min_steps: u64,
+}
+
+/// Parse the `price_per_step` tags out of the daemon's kind-10021
+/// advertisement. This is the list the captive portal renders, so it is the
+/// only honest way to answer "what is the router actually selling?".
+fn parse_advertisement(out: &str) -> Vec<AdvertisedMint> {
+    let Ok(event) = serde_json::from_str::<serde_json::Value>(out) else {
+        return Vec::new();
+    };
+    let Some(tags) = event.get("tags").and_then(|v| v.as_array()) else {
+        return Vec::new();
+    };
+    tags.iter()
+        .filter_map(|tag| {
+            let tag = tag.as_array()?;
+            if tag.first()?.as_str()? != "price_per_step" {
+                return None;
+            }
+            Some(AdvertisedMint {
+                url: tag.get(4)?.as_str()?.to_string(),
+                price: tag.get(2)?.as_str()?.parse().ok()?,
+                unit: tag
+                    .get(3)
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("sat")
+                    .to_string(),
+                min_steps: tag
+                    .get(5)
+                    .and_then(|v| v.as_str())
+                    .and_then(|s| s.parse().ok())
+                    .unwrap_or(0),
+            })
+        })
+        .collect()
+}
+
+/// Compare the daemon's self-reported version with the pinned/package version.
+///
+/// The daemon prints `TollGate v0.6.0-g9364f2e`; the package reports
+/// `0.6.0-r1`. Strip the product name, the leading `v`, and any `-g<sha>`
+/// suffix before comparing.
+fn daemon_version_matches(daemon: &str, desired: &str) -> bool {
+    let daemon = daemon.trim();
+    let daemon = daemon.strip_prefix("TollGate").unwrap_or(daemon).trim();
+    let daemon = daemon.strip_prefix('v').unwrap_or(daemon);
+    let core = daemon.split(['-', '+']).next().unwrap_or(daemon);
+    tollgate::version::normalise_version(core) == tollgate::version::normalise_version(desired)
 }
 
 impl RpcHandler {
@@ -208,12 +314,62 @@ impl RpcHandler {
                     };
                     let up_to_date = installed_version.satisfies(&desired);
 
+                    // The package version says what is on disk. It does not
+                    // say what is running: a v0.6.0 upgrade can leave the old
+                    // daemon holding :2121, still advertising its factory
+                    // mint list while the new config sits unread on disk.
+                    let daemon = router
+                        .run_ok("tollgate --json status 2>/dev/null")
+                        .ok()
+                        .and_then(|out| parse_daemon_status(&out));
+                    let (daemon_running, daemon_version, daemon_uptime, daemon_error) = match &daemon
+                    {
+                        Some(d) => (
+                            d.running,
+                            d.version.clone(),
+                            d.uptime.clone(),
+                            d.error.clone(),
+                        ),
+                        None => (
+                            false,
+                            String::new(),
+                            String::new(),
+                            Some(
+                                "tollgate --json status did not return a usable response".to_string(),
+                            ),
+                        ),
+                    };
+                    let daemon_matches =
+                        daemon_running && daemon_version_matches(&daemon_version, &desired);
+                    let advertised_mints = router
+                        .run_ok("curl -sS -m 5 http://127.0.0.1:2121/ 2>/dev/null")
+                        .ok()
+                        .map(|out| parse_advertisement(&out))
+                        .unwrap_or_default();
+                    let configured_mints = router
+                        .run_ok("cat /etc/tollgate/config.json 2>/dev/null")
+                        .ok()
+                        .and_then(|out| serde_json::from_str::<serde_json::Value>(&out).ok())
+                        .and_then(|doc| {
+                            doc.get("accepted_mints")
+                                .and_then(|v| v.as_array())
+                                .map(|a| a.len())
+                        })
+                        .unwrap_or(0);
+
                     serde_json::json!({
                         "installed": true,
                         "version": version_str,
                         "version_known": matches!(installed_version, Installed::Version(_)),
                         "pinned_version": desired,
                         "up_to_date": up_to_date,
+                        "daemon_running": daemon_running,
+                        "daemon_version": daemon_version,
+                        "daemon_uptime": daemon_uptime,
+                        "daemon_error": daemon_error,
+                        "daemon_version_matches": daemon_matches,
+                        "advertised_mints": advertised_mints,
+                        "configured_mints": configured_mints,
                         "pkg_manager": pkg_mgr.map(|m| match m {
                             PkgManager::Opkg => "opkg",
                             PkgManager::ApkNative => "apk",
@@ -356,17 +512,52 @@ impl RpcHandler {
                 .context("invalid TollGate payout address")?;
         }
 
+        // Keep the operator's price sane before touching the router. `0` is
+        // not a free tier here: the daemon divides by the per-step price and
+        // refuses to advertise a mint whose price is zero.
+        let price_sats = p.get("price_sats").and_then(|v| v.as_u64()).unwrap_or(10);
+        let step_size_ms = p
+            .get("step_size_ms")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(60_000);
+        let min_steps = p.get("min_steps").and_then(|v| v.as_u64()).unwrap_or(1);
+        if price_sats == 0 {
+            anyhow::bail!("price_sats must be at least 1 sat");
+        }
+        if step_size_ms < 60_000 {
+            anyhow::bail!("step_size_ms must be at least 60000 (one minute)");
+        }
+        if min_steps == 0 {
+            anyhow::bail!("min_steps must be at least 1");
+        }
+        if min_steps > u32::MAX as u64 {
+            anyhow::bail!("min_steps is too large");
+        }
+
+        let private_ssid = p
+            .get("private_ssid")
+            .and_then(|v| v.as_str())
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .unwrap_or("noderunner-private")
+            .to_string();
+        let private_key = p
+            .get("private_key")
+            .and_then(|v| v.as_str())
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(str::to_string);
+
         let config = TollGateConfig {
             ssid: "archipelago".to_string(),
             mint_url,
-            price_sats: p.get("price_sats").and_then(|v| v.as_u64()).unwrap_or(10),
-            step_size_ms: p
-                .get("step_size_ms")
-                .and_then(|v| v.as_u64())
-                .unwrap_or(60_000),
-            min_steps: p.get("min_steps").and_then(|v| v.as_u64()).unwrap_or(1) as u32,
+            price_sats,
+            step_size_ms,
+            min_steps: min_steps as u32,
             enabled: p.get("enabled").and_then(|v| v.as_bool()).unwrap_or(true),
             payout_address,
+            private_ssid,
+            private_key,
         };
 
         let first = provision_tollgate_once(
@@ -640,4 +831,70 @@ fn parse_ipv4(s: &str) -> Result<[u8; 4]> {
         parts[2].parse()?,
         parts[3].parse()?,
     ])
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parses_the_live_kind_10021_advertisement() {
+        let event = r#"{
+            "kind": 10021,
+            "tags": [
+                ["metric", "milliseconds"],
+                ["step_size", "60000"],
+                ["price_per_step", "cashu", "10", "sat", "http://192.168.50.199:3338", "1"],
+                ["price_per_step", "cashu", "21", "sat", "https://mint.example/Bitcoin", "2"]
+            ]
+        }"#;
+        let mints = parse_advertisement(event);
+        assert_eq!(mints.len(), 2);
+        assert_eq!(mints[0].url, "http://192.168.50.199:3338");
+        assert_eq!(mints[0].price, 10);
+        assert_eq!(mints[1].price, 21);
+        assert_eq!(mints[1].min_steps, 2);
+    }
+
+    #[test]
+    fn ignores_malformed_price_tags_instead_of_panicking() {
+        let event = r#"{"kind":10021,"tags":[
+            ["price_per_step"],
+            ["price_per_step","cashu","not-a-number","sat","https://x","1"],
+            ["price_per_step","cashu","1","sat",""],
+            ["price_per_step","cashu","1","sat","https://ok","1"]
+        ]}"#;
+        let mints = parse_advertisement(event);
+        assert_eq!(mints.len(), 1);
+        assert_eq!(mints[0].url, "https://ok");
+    }
+
+    #[test]
+    fn parses_a_healthy_daemon_status() {
+        let out = r#"{"success":true,"data":{"running":true,
+            "version":"TollGate v0.6.0-g9364f2e","uptime":"9.8s",
+            "config_ok":true,"wallet_ok":true,"network_ok":true}}"#;
+        let status = parse_daemon_status(out).expect("status");
+        assert!(status.running);
+        assert_eq!(status.version, "TollGate v0.6.0-g9364f2e");
+        assert_eq!(status.uptime, "9.8s");
+        assert!(status.error.is_none());
+    }
+
+    #[test]
+    fn parses_a_stale_daemon_status_as_an_error_not_a_crash() {
+        let out = r#"{"success":false,"error":"dial unix /var/run/tollgate.sock: connect: connection refused"}"#;
+        let status = parse_daemon_status(out).expect("status");
+        assert!(!status.running);
+        assert!(status.error.unwrap().contains("connection refused"));
+    }
+
+    #[test]
+    fn daemon_version_matches_the_package_after_normalisation() {
+        assert!(daemon_version_matches("TollGate v0.6.0-g9364f2e", "0.6.0"));
+        assert!(daemon_version_matches("v0.6.0", "0.6.0"));
+        assert!(daemon_version_matches("TollGate v0.6.0", "0.6.0-r1"));
+        assert!(!daemon_version_matches("TollGate v0.5.0-gabc", "0.6.0"));
+        assert!(!daemon_version_matches("", "0.6.0"));
+    }
 }

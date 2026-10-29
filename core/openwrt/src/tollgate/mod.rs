@@ -80,6 +80,15 @@ pub async fn provision(router: &Router, config: &TollGateConfig) -> Result<()> {
     // regate_upstream_default_aps for why this is needed at all.
     wifi::regate_upstream_default_aps(router)
         .context("re-gate upstream tollgate-module-basic-go default AP(s)")?;
+    // The upstream installer's rebranded factory AP is still a second open
+    // SSID next to ours. Disable it; the product owns `archipelago` (public)
+    // and `noderunner-private` (management) only.
+    wifi::disable_upstream_default_aps(router)
+        .context("disable upstream TollGate-<serial> default AP(s)")?;
+    // Rename the package's private management SSID and, when supplied, set
+    // its passphrase. The daemon also applies config.json's private_ssid on
+    // startup; doing the UCI write here makes it deterministic.
+    wifi::set_private_network(router, config).context("rename the private management SSID")?;
     // Must come after provision_ssid (which creates br-tollgate) and before
     // the daemon restart below — config.json is only read at startup.
     config::apply_daemon_config(router, config)
@@ -104,6 +113,55 @@ pub async fn provision(router: &Router, config: &TollGateConfig) -> Result<()> {
     Ok(())
 }
 
+/// Is the running daemon reachable through its own control socket or API?
+///
+/// The socket is the stronger signal (it is what `tollgate --json status` and
+/// the CLI use); the HTTP advertisement is the fallback for an old package
+/// whose socket is gone but whose `:2121` listener still answers.
+fn daemon_reachable(router: &Router) -> bool {
+    let cli = router
+        .run("tollgate --json status 2>/dev/null")
+        .map(|(_, code)| code == 0)
+        .unwrap_or(false);
+    if cli {
+        return true;
+    }
+    router
+        .run(
+            "curl -sS -m 2 -o /dev/null http://127.0.0.1:2121/ 2>/dev/null || \
+             uclient-fetch -q -O /dev/null -T 2 http://127.0.0.1:2121/ 2>/dev/null",
+        )
+        .map(|(_, code)| code == 0)
+        .unwrap_or(false)
+}
+
+/// Stop the real process, then start the new binary and prove it bound.
+///
+/// The v0.6.0 `tollgate-wrt` init script overrides `stop()` with a function
+/// that only writes a log line. With `USE_PROCD=1` that replaces procd's real
+/// stop, so `/etc/init.d/tollgate-wrt restart` is effectively a no-op stop plus
+/// a start. The old daemon keeps `:2121`, the new one dies with
+/// `bind: address already in use`, and the old in-memory config (including the
+/// factory mint list) keeps being advertised. A `killall` between stop and
+/// start is the workaround until the package fixes its init script.
+fn restart_tollgate_daemon(router: &Router) -> Result<()> {
+    router.run_ok("/etc/init.d/tollgate-wrt stop || true")?;
+    router.run_ok("sh -c 'killall tollgate-wrt 2>/dev/null || true'")?;
+    // Let the kernel release :2121 and /var/run/tollgate.sock.
+    router.run_ok("sleep 2")?;
+    router.run_ok("/etc/init.d/tollgate-wrt start")?;
+
+    for _ in 0..8 {
+        if daemon_reachable(router) {
+            return Ok(());
+        }
+        router.run_ok("sleep 2")?;
+    }
+    anyhow::bail!(
+        "tollgate-wrt did not become reachable after stop/start — a stale process may still hold :2121"
+    )
+}
+
 /// Applies `enabled` to the actual running service, not just the UCI value —
 /// the tollgate-wrt init script doesn't consult `tollgate.main.enabled`
 /// itself, so toggling it requires an explicit enable/start or disable/stop.
@@ -113,9 +171,10 @@ pub async fn provision(router: &Router, config: &TollGateConfig) -> Result<()> {
 fn restart_services(router: &Router, enabled: bool) -> Result<()> {
     if enabled {
         router.run_ok("/etc/init.d/tollgate-wrt enable")?;
-        router.run_ok("/etc/init.d/tollgate-wrt restart || /etc/init.d/tollgate-wrt start")?;
+        restart_tollgate_daemon(router)?;
     } else {
         router.run_ok("/etc/init.d/tollgate-wrt stop || true")?;
+        router.run_ok("sh -c 'killall tollgate-wrt 2>/dev/null || true'")?;
         router.run_ok("/etc/init.d/tollgate-wrt disable || true")?;
     }
     router.run_ok("/etc/init.d/network restart")?;

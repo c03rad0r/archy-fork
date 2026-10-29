@@ -31,6 +31,12 @@ pub struct TollGateConfig {
     /// placeholder nobody actually controls (confirmed live against
     /// archy-x250-pa3 2026-09-07: shipped as `tollgate@minibits.cash`).
     pub payout_address: Option<String>,
+    /// Name of the private management SSID. Empty keeps whatever the router
+    /// already broadcasts (the TollGate package's `<user>-<serial>` default).
+    pub private_ssid: String,
+    /// Passphrase for the private management SSID. `None` keeps the existing
+    /// key. The schema bounds it to 8–63 characters; the daemon validates it.
+    pub private_key: Option<String>,
 }
 
 impl Default for TollGateConfig {
@@ -43,6 +49,8 @@ impl Default for TollGateConfig {
             min_steps: 1,
             enabled: true,
             payout_address: None,
+            private_ssid: "noderunner-private".to_string(),
+            private_key: None,
         }
     }
 }
@@ -75,6 +83,9 @@ pub fn apply(router: &Router, cfg: &TollGateConfig) -> Result<()> {
     if let Some(addr) = &cfg.payout_address {
         pairs.push(("tollgate.main.payout_address", addr));
     }
+    if !cfg.private_ssid.trim().is_empty() {
+        pairs.push(("tollgate.main.private_ssid", cfg.private_ssid.trim()));
+    }
     router.uci_apply("tollgate", &pairs)?;
     Ok(())
 }
@@ -97,16 +108,68 @@ pub fn apply_daemon_config(router: &Router, cfg: &TollGateConfig) -> Result<()> 
 
     doc["metric"] = serde_json::json!("milliseconds");
     doc["step_size"] = serde_json::json!(cfg.step_size_ms);
-    doc["accepted_mints"] = serde_json::json!([{
-        "url": cfg.mint_url,
-        "min_balance": 64,
-        "balance_tolerance_percent": 10,
-        "payout_interval_seconds": 60,
-        "min_payout_amount": 128,
-        "price_per_step": cfg.price_sats,
-        "price_unit": "sats",
-        "purchase_min_steps": cfg.min_steps,
-    }]);
+
+    // The private management SSID/key are first-class schema fields. Empty
+    // means "keep the router's existing value", which is what the daemon's
+    // own migration uses.
+    if !cfg.private_ssid.trim().is_empty() {
+        doc["private_ssid"] = serde_json::json!(cfg.private_ssid.trim());
+    }
+    if let Some(key) = cfg
+        .private_key
+        .as_deref()
+        .map(str::trim)
+        .filter(|k| !k.is_empty())
+    {
+        doc["private_key"] = serde_json::json!(key);
+        if doc
+            .get("private_encryption")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .is_empty()
+        {
+            doc["private_encryption"] = serde_json::json!("psk2+ccmp");
+        }
+    }
+
+    // Update the configured mint in place. Replacing the whole array used to
+    // drop every other accepted mint and every per-mint setting the operator
+    // had configured; the portal advertises the daemon's accepted set, so that
+    // was a money-path data loss, not just a display bug.
+    let mut mints = doc
+        .get("accepted_mints")
+        .and_then(|v| v.as_array())
+        .cloned()
+        .unwrap_or_default();
+    let wanted_url = cfg.mint_url.trim_end_matches('/');
+    let mut updated = false;
+    for mint in mints.iter_mut() {
+        let mint_url = mint
+            .get("url")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .trim_end_matches('/');
+        if mint_url == wanted_url {
+            mint["price_per_step"] = serde_json::json!(cfg.price_sats);
+            mint["price_unit"] = serde_json::json!("sats");
+            mint["purchase_min_steps"] = serde_json::json!(cfg.min_steps);
+            updated = true;
+            break;
+        }
+    }
+    if !updated {
+        mints.push(serde_json::json!({
+            "url": cfg.mint_url,
+            "min_balance": 64,
+            "balance_tolerance_percent": 10,
+            "payout_interval_seconds": 60,
+            "min_payout_amount": 128,
+            "price_per_step": cfg.price_sats,
+            "price_unit": "sats",
+            "purchase_min_steps": cfg.min_steps,
+        }));
+    }
+    doc["accepted_mints"] = serde_json::json!(mints);
 
     let json_str = serde_json::to_string_pretty(&doc).context("serialize config.json")?;
     router
