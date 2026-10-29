@@ -244,7 +244,7 @@ pub fn apply_daemon_config(router: &Router, cfg: &TollGateConfig) -> Result<()> 
         .map(|(_, code)| code == 0)
         .unwrap_or(false);
     if schema_ok {
-        match router.run("tollgate --json config save < /tmp/tollgate-config.json 2>&1") {
+        match router.run("tollgate --json config save \"$(cat /tmp/tollgate-config.json)\" 2>&1") {
             Ok((_, 0)) => {
                 let _ = router.run_ok("rm -f /tmp/tollgate-config.json");
                 return Ok(());
