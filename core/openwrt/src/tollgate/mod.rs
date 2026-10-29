@@ -135,7 +135,7 @@ fn daemon_reachable(router: &Router) -> bool {
         .unwrap_or(false)
 }
 
-/// Stop the real process, then start the new binary and prove it bound.
+/// Stop the real process.
 ///
 /// The v0.6.0 `tollgate-wrt` init script overrides `stop()` with a function
 /// that only writes a log line. With `USE_PROCD=1` that replaces procd's real
@@ -144,11 +144,17 @@ fn daemon_reachable(router: &Router) -> bool {
 /// `bind: address already in use`, and the old in-memory config (including the
 /// factory mint list) keeps being advertised. A `killall` between stop and
 /// start is the workaround until the package fixes its init script.
-fn restart_tollgate_daemon(router: &Router) -> Result<()> {
+fn stop_tollgate_daemon(router: &Router) -> Result<()> {
     router.run_ok("/etc/init.d/tollgate-wrt stop || true")?;
     router.run_ok("sh -c 'killall tollgate-wrt 2>/dev/null || true'")?;
     // Let the kernel release :2121 and /var/run/tollgate.sock.
     router.run_ok("sleep 2")?;
+    Ok(())
+}
+
+/// Start the new binary after the network is up and prove it bound.
+fn restart_tollgate_daemon(router: &Router) -> Result<()> {
+    stop_tollgate_daemon(router)?;
     router.run_ok("/etc/init.d/tollgate-wrt start")?;
 
     for _ in 0..8 {
@@ -171,10 +177,9 @@ fn restart_tollgate_daemon(router: &Router) -> Result<()> {
 fn restart_services(router: &Router, enabled: bool) -> Result<()> {
     if enabled {
         router.run_ok("/etc/init.d/tollgate-wrt enable")?;
-        restart_tollgate_daemon(router)?;
+        stop_tollgate_daemon(router)?;
     } else {
-        router.run_ok("/etc/init.d/tollgate-wrt stop || true")?;
-        router.run_ok("sh -c 'killall tollgate-wrt 2>/dev/null || true'")?;
+        stop_tollgate_daemon(router)?;
         router.run_ok("/etc/init.d/tollgate-wrt disable || true")?;
     }
     router.run_ok("/etc/init.d/network restart")?;
@@ -211,6 +216,11 @@ fn restart_services(router: &Router, enabled: bool) -> Result<()> {
             "[{}] no radio on this device — skipping wireless reload (br-tollgate stays unclaimed)",
             router.host
         );
+        if enabled {
+            // Start after the network restart so DNS/resolv.conf are ready
+            // when the daemon probes its mints.
+            restart_tollgate_daemon(router)?;
+        }
         return Ok(());
     }
 
@@ -258,6 +268,12 @@ fn restart_services(router: &Router, enabled: bool) -> Result<()> {
             "br-tollgate has no kernel-level IPv4 address after 5 ifdown/ifup cycles: {}",
             cycle_out.trim()
         );
+    }
+    if enabled {
+        // Start only after the network/wifi convergence: the daemon probes
+        // its mints at startup, and starting before `network restart` leaves
+        // it on a stale resolver (it then advertises only the first mint).
+        restart_tollgate_daemon(router)?;
     }
     Ok(())
 }
