@@ -39,6 +39,19 @@ interface TollGateStatus {
   currency?: string
   mint_url?: string
   payout_address?: string
+  private_ssid?: string
+  version?: string
+  version_known?: boolean
+  pinned_version?: string
+  up_to_date?: boolean
+  pkg_manager?: string
+  daemon_running?: boolean
+  daemon_version?: string
+  daemon_uptime?: string
+  daemon_error?: string
+  daemon_version_matches?: boolean
+  advertised_mints?: { url: string; price: number; unit: string; min_steps: number }[]
+  configured_mints?: number
 }
 
 interface WanStatus {
@@ -157,6 +170,13 @@ const provisioning = ref(false)
 const provisionError = ref('')
 const provisionSuccess = ref(false)
 
+// First-install pricing. The Edit form already exposes these after install;
+// sending them here too means the operator does not have to install at the
+// defaults and immediately edit.
+const installPriceSats = ref(10)
+const installStepSizeMin = ref(1)
+const installMinSteps = ref(1)
+
 // TollGate reconfigure form (shown once installed)
 const editingTollgate = ref(false)
 const updatingTollgate = ref(false)
@@ -166,7 +186,32 @@ const editStepSizeMin = ref(1)
 const editMinSteps = ref(1)
 const editMintUrl = ref('')
 const editPayoutAddress = ref('')
+const editPrivateSsid = ref('noderunner-private')
+const editPrivateKey = ref('')
 const editEnabled = ref(true)
+
+const daemonLabel = computed(() => {
+  const t = status.value?.tollgate
+  if (!t) return 'unknown'
+  if (t.daemon_running) {
+    const up = t.daemon_uptime ? ` (up ${t.daemon_uptime})` : ''
+    return `${t.daemon_version || 'unknown'}${up}`
+  }
+  return t.daemon_error || 'unreachable — restart required'
+})
+
+const mintMismatch = computed(() => {
+  const t = status.value?.tollgate
+  if (!t) return false
+  const advertised = t.advertised_mints?.length ?? 0
+  const configured = t.configured_mints ?? 0
+  return configured > 0 && advertised !== configured
+})
+
+const restartRequired = computed(() => {
+  const t = status.value?.tollgate
+  return !!t && t.installed && (!t.daemon_running || t.daemon_version_matches === false)
+})
 
 // WAN setup flow
 type WanStep = 'idle' | 'scan' | 'scanning' | 'list' | 'password' | 'dhcp' | 'connecting' | 'done'
@@ -306,7 +351,13 @@ async function provisionTollgate() {
   provisionError.value = ''
   provisionSuccess.value = false
   try {
-    const params: Record<string, unknown> = { ...authParams() }
+    const params: Record<string, unknown> = {
+      ...authParams(),
+      price_sats: installPriceSats.value,
+      step_size_ms: installStepSizeMin.value * 60_000,
+      min_steps: installMinSteps.value,
+      private_ssid: editPrivateSsid.value || 'noderunner-private',
+    }
     await rpcClient.call({ method: 'openwrt.provision-tollgate', params, timeout: 300000 })
     provisionSuccess.value = true
     await load(connectedParams.value ?? undefined)
@@ -324,6 +375,8 @@ function startEditTollgate() {
   editMinSteps.value = tg?.min_steps ?? 1
   editMintUrl.value = tg?.mint_url ?? ''
   editPayoutAddress.value = tg?.payout_address ?? ''
+  editPrivateSsid.value = tg?.private_ssid || 'noderunner-private'
+  editPrivateKey.value = ''
   editEnabled.value = tg?.enabled ?? true
   updateTollgateError.value = ''
   editingTollgate.value = true
@@ -340,10 +393,42 @@ async function saveTollgateConfig() {
       min_steps: editMinSteps.value,
       mint_url: editMintUrl.value,
       payout_address: editPayoutAddress.value,
+      private_ssid: editPrivateSsid.value,
+      ...(editPrivateKey.value ? { private_key: editPrivateKey.value } : {}),
       enabled: editEnabled.value,
     }
     await rpcClient.call({ method: 'openwrt.provision-tollgate', params, timeout: 300000 })
     editingTollgate.value = false
+    await load(connectedParams.value ?? undefined)
+  } catch (e) {
+    updateTollgateError.value = e instanceof Error ? e.message : String(e)
+  } finally {
+    updatingTollgate.value = false
+  }
+}
+
+/// Re-apply the current values, which also runs the stop/kill/start lifecycle
+/// on the backend. Used when the running daemon is stale (unreachable or a
+/// different version from the installed package).
+async function restartTollgate() {
+  updatingTollgate.value = true
+  updateTollgateError.value = ''
+  try {
+    const tg = status.value?.tollgate
+    await rpcClient.call({
+      method: 'openwrt.provision-tollgate',
+      params: {
+        ...authParams(),
+        price_sats: tg?.price_per_step ?? 10,
+        step_size_ms: tg?.step_size_ms ?? 60_000,
+        min_steps: tg?.min_steps ?? 1,
+        mint_url: tg?.mint_url ?? '',
+        payout_address: tg?.payout_address ?? '',
+        private_ssid: tg?.private_ssid || 'noderunner-private',
+        enabled: tg?.enabled ?? true,
+      },
+      timeout: 300000,
+    })
     await load(connectedParams.value ?? undefined)
   } catch (e) {
     updateTollgateError.value = e instanceof Error ? e.message : String(e)
@@ -869,6 +954,23 @@ onMounted(() => {
           <div v-if="!status.wan?.internet" class="mb-3 text-xs text-yellow-400/80 bg-yellow-400/10 rounded-lg px-3 py-2">
             Router needs internet access to install TollGate. Configure WAN above first.
           </div>
+          <div class="grid grid-cols-3 gap-3 mb-3">
+            <label class="block">
+              <span class="block text-xs text-white/40 mb-1">Price (sats / min)</span>
+              <input v-model.number="installPriceSats" type="number" min="1"
+                class="w-full px-3 py-2 bg-transparent border border-white/20 rounded-lg text-white focus:outline-none focus:border-white/40" />
+            </label>
+            <label class="block">
+              <span class="block text-xs text-white/40 mb-1">Step (minutes)</span>
+              <input v-model.number="installStepSizeMin" type="number" min="1"
+                class="w-full px-3 py-2 bg-transparent border border-white/20 rounded-lg text-white focus:outline-none focus:border-white/40" />
+            </label>
+            <label class="block">
+              <span class="block text-xs text-white/40 mb-1">Min steps</span>
+              <input v-model.number="installMinSteps" type="number" min="1"
+                class="w-full px-3 py-2 bg-transparent border border-white/20 rounded-lg text-white focus:outline-none focus:border-white/40" />
+            </label>
+          </div>
           <button
             :disabled="provisioning"
             class="glass-button glass-button-success w-full text-sm font-medium"
@@ -890,7 +992,17 @@ onMounted(() => {
                 {{ status.tollgate.enabled ? 'Enabled' : 'Disabled' }}
               </span>
             </div>
-            <button class="text-xs text-white/40 hover:text-white" @click="startEditTollgate">Edit</button>
+            <div class="flex items-center gap-3">
+              <button
+                v-if="restartRequired"
+                class="text-xs text-yellow-300 hover:text-yellow-200"
+                :disabled="updatingTollgate"
+                @click="restartTollgate"
+              >
+                Restart TollGate
+              </button>
+              <button class="text-xs text-white/40 hover:text-white" @click="startEditTollgate">Edit</button>
+            </div>
           </div>
           <dl class="grid grid-cols-2 gap-x-6 gap-y-3 text-sm">
             <div>
@@ -907,6 +1019,33 @@ onMounted(() => {
             <div class="col-span-2">
               <dt class="text-xs text-white/40 mb-0.5">Mint URL</dt>
               <dd class="text-white/70 font-mono text-xs break-all">{{ status.tollgate.mint_url }}</dd>
+            </div>
+            <div class="col-span-2 border-t border-white/10 pt-3 mt-1">
+              <dt class="text-xs text-white/40 mb-1">Version</dt>
+              <dd class="text-white/70 text-xs space-y-1">
+                <div>
+                  Package:
+                  <span class="font-mono">{{ status.tollgate.version || 'unknown' }}</span>
+                  <span v-if="status.tollgate.pkg_manager">({{ status.tollgate.pkg_manager }})</span>
+                </div>
+                <div>
+                  Running daemon:
+                  <span class="font-mono" :class="status.tollgate.daemon_running ? 'text-green-300' : 'text-yellow-300'">
+                    {{ daemonLabel }}
+                  </span>
+                </div>
+                <div>
+                  Pinned:
+                  <span class="font-mono">{{ status.tollgate.pinned_version || 'unknown' }}</span>
+                  <span v-if="status.tollgate.up_to_date" class="text-green-300">up to date</span>
+                </div>
+                <div>
+                  Advertised mints: {{ status.tollgate.advertised_mints?.length ?? 0 }}
+                  <span v-if="mintMismatch" class="text-yellow-300">
+                    (config says {{ status.tollgate.configured_mints }})
+                  </span>
+                </div>
+              </dd>
             </div>
           </dl>
         </template>
@@ -978,6 +1117,29 @@ onMounted(() => {
               crosses its threshold. Leave blank to keep whatever's already set on the router —
               on a router not originally provisioned here, that may be an upstream default you
               don't control.
+            </p>
+          </div>
+          <div class="mb-4">
+            <label class="block text-xs text-white/40 mb-2">Private management SSID</label>
+            <input
+              v-model="editPrivateSsid"
+              type="text"
+              placeholder="noderunner-private"
+              class="w-full px-4 py-3 bg-transparent border border-white/20 rounded-lg text-white placeholder-white/30 focus:outline-none focus:border-white/40 transition-colors"
+            />
+          </div>
+          <div class="mb-4">
+            <label class="block text-xs text-white/40 mb-2">Private Wi-Fi password</label>
+            <input
+              v-model="editPrivateKey"
+              type="password"
+              autocomplete="new-password"
+              placeholder="leave blank to keep the current passphrase"
+              class="w-full px-4 py-3 bg-transparent border border-white/20 rounded-lg text-white placeholder-white/30 focus:outline-none focus:border-white/40 transition-colors"
+            />
+            <p class="mt-2 text-xs text-white/40">
+              8–63 characters. The package default is <span class="font-mono">TollGate</span>;
+              set a real passphrase here.
             </p>
           </div>
           <div class="flex items-center gap-2">

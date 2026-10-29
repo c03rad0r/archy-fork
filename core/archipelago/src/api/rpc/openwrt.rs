@@ -382,6 +382,7 @@ impl RpcHandler {
                         "currency":      router.uci_get("tollgate.main.currency").unwrap_or_default(),
                         "mint_url":      router.uci_get("tollgate.main.mint_url").unwrap_or_default(),
                         "payout_address":router.uci_get("tollgate.main.payout_address").unwrap_or_default(),
+                        "private_ssid":  router.uci_get("tollgate.main.private_ssid").unwrap_or_default(),
                     })
                 } else {
                     serde_json::json!({
