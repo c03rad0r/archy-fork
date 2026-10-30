@@ -11,6 +11,17 @@ impl RpcHandler {
         Ok(serde_json::json!({ "interfaces": interfaces }))
     }
 
+    /// network.upstream-wifi — describe the node's own Wi-Fi uplink so the
+    /// router WAN step can offer to reuse it.
+    ///
+    /// Deliberately returns `has_password`, never the PSK: the browser must
+    /// not receive a network secret it does not need. The backend resolves the
+    /// secret server-side only when the operator opts in.
+    pub(super) async fn handle_network_upstream_wifi(&self) -> Result<serde_json::Value> {
+        debug!("Describing the node's upstream Wi-Fi");
+        upstream_wifi_info().await
+    }
+
     /// network.scan-wifi — scan for available WiFi networks.
     pub(super) async fn handle_network_scan_wifi(&self) -> Result<serde_json::Value> {
         debug!("Scanning WiFi networks");
@@ -274,6 +285,142 @@ async fn list_interfaces() -> Result<Vec<serde_json::Value>> {
 }
 
 /// Scan WiFi networks using `nmcli -t -f SSID,SIGNAL,SECURITY device wifi list`.
+/// The node's active Wi-Fi uplink, or a `configured: false` result when the
+/// node is wired (or has no active Wi-Fi profile).
+async fn upstream_wifi_info() -> Result<serde_json::Value> {
+    let Some((profile, device)) = active_wifi_profile().await else {
+        return Ok(serde_json::json!({
+            "configured": false,
+            "reason": "no active Wi-Fi uplink",
+        }));
+    };
+    let ssid = nmcli_get(&profile, "802-11-wireless.ssid")
+        .await
+        .unwrap_or_default();
+    let security = nmcli_get(&profile, "802-11-wireless-security.key-mgmt")
+        .await
+        .unwrap_or_default();
+    let has_password = nmcli_get_secret(&profile, "802-11-wireless-security.psk")
+        .await
+        .map(|psk| !psk.is_empty())
+        .unwrap_or(false);
+
+    Ok(serde_json::json!({
+        "configured": true,
+        "source": "active",
+        "profile": profile,
+        "device": device,
+        "ssid": ssid,
+        "band": wifi_band(&device).await.unwrap_or_default(),
+        "security": security,
+        "has_password": has_password,
+    }))
+}
+
+/// Resolve the active Wi-Fi profile's SSID and PSK, server-side. Used only by
+/// the router WAN setup when the operator chooses "use this node's
+/// credentials"; the PSK never leaves the backend.
+pub(super) async fn upstream_wifi_psk() -> Result<Option<(String, String)>> {
+    let Some((profile, _device)) = active_wifi_profile().await else {
+        return Ok(None);
+    };
+    let ssid = nmcli_get(&profile, "802-11-wireless.ssid")
+        .await
+        .unwrap_or_default();
+    let psk = nmcli_get_secret(&profile, "802-11-wireless-security.psk")
+        .await
+        .unwrap_or_default();
+    if ssid.is_empty() || psk.is_empty() {
+        return Ok(None);
+    }
+    Ok(Some((ssid, psk)))
+}
+
+/// Find the active 802-11-wireless NetworkManager profile: `(profile, device)`.
+async fn active_wifi_profile() -> Option<(String, String)> {
+    let out = tokio::process::Command::new("nmcli")
+        .args([
+            "-t",
+            "-f",
+            "NAME,TYPE,DEVICE,ACTIVE",
+            "connection",
+            "show",
+        ])
+        .output()
+        .await
+        .ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    let text = String::from_utf8_lossy(&out.stdout);
+    for line in text.lines() {
+        let fields = split_nmcli_escaped(line, 4);
+        if fields.len() < 4 {
+            continue;
+        }
+        if fields[1] == "802-11-wireless" && fields[3].eq_ignore_ascii_case("yes") {
+            return Some((fields[0].clone(), fields[2].clone()));
+        }
+    }
+    None
+}
+
+/// One non-secret NM property. Absent/unreadable values are `None`, never a
+/// hard failure: a node without NetworkManager must still render the manual
+/// WAN form.
+async fn nmcli_get(profile: &str, key: &str) -> Option<String> {
+    let out = tokio::process::Command::new("nmcli")
+        .args(["-g", key, "connection", "show", profile])
+        .output()
+        .await
+        .ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    let value = String::from_utf8_lossy(&out.stdout).trim().to_string();
+    (!value.is_empty()).then_some(value)
+}
+
+/// A secret NM property (`--show-secrets`). Requires the same NetworkManager
+/// polkit grant the node already uses for Wi-Fi setup; a refusal is `None`,
+/// and the caller falls back to manual entry rather than failing the RPC.
+async fn nmcli_get_secret(profile: &str, key: &str) -> Option<String> {
+    let out = tokio::process::Command::new("nmcli")
+        .args(["-s", "-g", key, "connection", "show", profile])
+        .output()
+        .await
+        .ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    Some(String::from_utf8_lossy(&out.stdout).trim().to_string())
+}
+
+/// The band of the AP the device is associated with, from `iw link`. Empty
+/// when unknown; the caller treats that as "let the router's scan decide".
+async fn wifi_band(device: &str) -> Option<String> {
+    let out = tokio::process::Command::new("iw")
+        .args(["dev", device, "link"])
+        .output()
+        .await
+        .ok()?;
+    let text = String::from_utf8_lossy(&out.stdout);
+    let freq = text.lines().find_map(|line| {
+        line.trim()
+            .strip_prefix("freq:")
+            .and_then(|v| v.trim().parse::<u32>().ok())
+    })?;
+    Some(
+        match freq {
+            2400..=2500 => "2.4",
+            5000..=5900 => "5",
+            5925..=7125 => "6",
+            _ => return None,
+        }
+        .to_string(),
+    )
+}
+
 async fn scan_wifi() -> Result<Vec<serde_json::Value>> {
     // Trigger a rescan first
     let _ = tokio::process::Command::new("nmcli")

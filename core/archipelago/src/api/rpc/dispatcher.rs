@@ -265,6 +265,7 @@ impl RpcHandler {
             "router.remove-forward" => self.handle_router_remove_forward(params).await,
             "network.diagnostics" => self.handle_network_diagnostics().await,
             "network.list-interfaces" => self.handle_network_list_interfaces().await,
+            "network.upstream-wifi" => self.handle_network_upstream_wifi().await,
             "network.scan-wifi" => self.handle_network_scan_wifi().await,
             "network.configure-wifi" => self.handle_network_configure_wifi(params).await,
             "network.set-wifi-radio" => self.handle_network_set_wifi_radio(params).await,

@@ -227,12 +227,49 @@ const restartRequired = computed(() => {
   return !!t && t.installed && (!t.daemon_running || t.daemon_version_matches === false)
 })
 
+const isDataMetering = computed(
+  () => (status.value?.tollgate?.metric ?? '').toLowerCase() === 'bytes',
+)
+
+const stepSizeLabel = computed(() => {
+  const t = status.value?.tollgate
+  const value = t?.step_size_ms ?? 60_000
+  return isDataMetering.value ? formatBytes(value) : formatDurationWords(value)
+})
+
+const meteringLabel = computed(() => (isDataMetering.value ? 'Data' : 'Time'))
+
+const mintRows = computed<MintConfig[]>(() => {
+  const t = status.value?.tollgate
+  if (t?.accepted_mints?.length) return t.accepted_mints
+  return t?.mint_url
+    ? [{ url: t.mint_url, price_per_step: t.price_per_step ?? 0, purchase_min_steps: t.min_steps ?? 1 }]
+    : []
+})
+
+const advertisedMintCount = computed(() => status.value?.tollgate?.advertised_mints?.length ?? 0)
+
 // WAN setup flow
 type WanStep = 'idle' | 'scan' | 'scanning' | 'list' | 'password' | 'dhcp' | 'connecting' | 'done'
 const wanStep = ref<WanStep>('idle')
 const scannedNetworks = ref<ScannedNetwork[]>([])
 const selectedNetwork = ref<ScannedNetwork | null>(null)
 const wanPassword = ref('')
+
+// The node's own Wi-Fi uplink, offered as a prefilled WAN source. The
+// backend returns only `has_password`; the PSK is resolved server-side when
+// the operator chooses this option.
+interface UpstreamWifi {
+  configured: boolean
+  ssid?: string
+  band?: string
+  security?: string
+  has_password?: boolean
+  profile?: string
+  device?: string
+  reason?: string
+}
+const nodeUpstream = ref<UpstreamWifi | null>(null)
 const wanError = ref('')
 
 // DHCP/masq settings (step 3 of wizard)
@@ -528,9 +565,61 @@ function startWanSetup() {
   scannedNetworks.value = []
   selectedNetwork.value = null
   wanPassword.value = ''
+  nodeUpstream.value = null
   dhcpStart.value = Number(status.value?.wan?.dhcp_start) || 100
   dhcpLimit.value = Number(status.value?.wan?.dhcp_limit) || 150
   masqEnabled.value = true
+  void loadNodeUpstream()
+}
+
+async function loadNodeUpstream() {
+  try {
+    const result = await rpcClient.call<UpstreamWifi>({
+      method: 'network.upstream-wifi',
+      timeout: 10000,
+    })
+    nodeUpstream.value =
+      result?.configured && result.ssid && result.has_password ? result : null
+  } catch {
+    // A wired node, an enterprise uplink or an unreadable secret all land
+    // here on purpose: the manual scan/password path is still available.
+    nodeUpstream.value = null
+  }
+}
+
+function dismissNodeUpstream() {
+  nodeUpstream.value = null
+}
+
+async function connectUsingNodeCredentials() {
+  const up = nodeUpstream.value
+  if (!up?.ssid) return
+  wanStep.value = 'connecting'
+  wanError.value = ''
+  try {
+    await rpcClient.call({
+      method: 'openwrt.configure-wan',
+      params: {
+        ...authParams(),
+        ssid: up.ssid,
+        password: '',
+        use_node_credentials: true,
+        encryption: up.security || 'psk2',
+        dhcp_start: dhcpStart.value,
+        dhcp_limit: dhcpLimit.value,
+        masq: masqEnabled.value,
+      },
+      timeout: 30000,
+    })
+    wanStep.value = 'done'
+    setTimeout(() => {
+      wanStep.value = 'idle'
+      load(connectedParams.value ?? undefined)
+    }, 8000)
+  } catch (e) {
+    wanError.value = e instanceof Error ? e.message : String(e)
+    wanStep.value = 'scan'
+  }
 }
 
 async function scanWifi() {
@@ -608,6 +697,32 @@ function formatStepSize(ms: number): string {
   if (ms >= 60_000)    return `${ms / 60_000}m`
   if (ms >= 1_000)     return `${ms / 1_000}s`
   return `${ms}ms`
+}
+
+// Human spellings for the summary. "m" alone is ambiguous (minute vs
+// millisecond), which is exactly how "1 sat / 1m" next to "Metric:
+// milliseconds" was read two ways.
+function formatDurationWords(ms: number): string {
+  if (ms >= 3_600_000 && ms % 3_600_000 === 0) {
+    const hours = ms / 3_600_000
+    return `${hours} hour${hours === 1 ? '' : 's'}`
+  }
+  if (ms >= 60_000 && ms % 60_000 === 0) {
+    const minutes = ms / 60_000
+    return `${minutes} minute${minutes === 1 ? '' : 's'}`
+  }
+  if (ms >= 1_000 && ms % 1_000 === 0) {
+    const seconds = ms / 1_000
+    return `${seconds} second${seconds === 1 ? '' : 's'}`
+  }
+  return `${ms} milliseconds`
+}
+
+function formatBytes(bytes: number): string {
+  if (bytes >= 1_000_000_000 && bytes % 1_000_000_000 === 0) return `${bytes / 1_000_000_000} GB`
+  if (bytes >= 1_000_000 && bytes % 1_000_000 === 0) return `${bytes / 1_000_000} MB`
+  if (bytes >= 1_000 && bytes % 1_000 === 0) return `${bytes / 1_000} KB`
+  return `${bytes} bytes`
 }
 
 const openwrtVersion = computed(() => {
@@ -878,6 +993,28 @@ onMounted(() => {
 
         <!-- Step: scan prompt -->
         <template v-else-if="wanStep === 'scan'">
+          <div
+            v-if="nodeUpstream"
+            class="mb-3 p-3 rounded-lg border border-white/10 bg-white/5"
+          >
+            <div class="text-xs text-white/40 mb-1">This node's Wi-Fi uplink</div>
+            <div class="text-sm text-white font-medium">{{ nodeUpstream.ssid }}</div>
+            <div class="text-xs text-white/40 mt-0.5">
+              Saved password on this node
+              <span v-if="nodeUpstream.band">· {{ nodeUpstream.band }} GHz</span>
+            </div>
+            <div class="flex items-center gap-3 mt-2">
+              <button
+                class="glass-button glass-button-warning text-xs px-3 py-1.5"
+                @click="connectUsingNodeCredentials"
+              >
+                Use these credentials
+              </button>
+              <button class="text-xs text-white/40 hover:text-white" @click="dismissNodeUpstream">
+                Change
+              </button>
+            </div>
+          </div>
           <button
             class="glass-button glass-button-warning w-full text-sm font-medium"
             @click="scanWifi"
@@ -1093,17 +1230,28 @@ onMounted(() => {
             <div>
               <dt class="text-xs text-white/40 mb-0.5">Price</dt>
               <dd class="text-white font-medium">
-                {{ status.tollgate.price_per_step }} {{ status.tollgate.currency }}
-                / {{ formatStepSize(status.tollgate.step_size_ms ?? 60000) }}
+                {{ status.tollgate.price_per_step }} {{ status.tollgate.currency || 'sat' }} per {{ stepSizeLabel }}
               </dd>
             </div>
             <div>
-              <dt class="text-xs text-white/40 mb-0.5">Metric</dt>
-              <dd class="text-white/70 capitalize">{{ status.tollgate.metric }}</dd>
+              <dt class="text-xs text-white/40 mb-0.5">Metering</dt>
+              <dd class="text-white/70">
+                {{ meteringLabel }} · step {{ stepSizeLabel }}
+                <span v-if="!isDataMetering">({{ status.tollgate.step_size_ms ?? 60000 }} ms)</span>
+              </dd>
             </div>
             <div class="col-span-2">
-              <dt class="text-xs text-white/40 mb-0.5">Mint URL</dt>
-              <dd class="text-white/70 font-mono text-xs break-all">{{ status.tollgate.mint_url }}</dd>
+              <dt class="text-xs text-white/40 mb-0.5">Mints</dt>
+              <dd class="text-white/70 text-xs">
+                <div>{{ mintRows.length }} configured · {{ advertisedMintCount }} advertised</div>
+                <ul class="font-mono break-all mt-1 space-y-0.5">
+                  <li v-for="mint in mintRows.slice(0, 3)" :key="mint.url">{{ mint.url }}</li>
+                </ul>
+                <div v-if="mintRows.length > 3">… +{{ mintRows.length - 3 }} more</div>
+                <div v-if="mintMismatch" class="text-yellow-300 mt-1">
+                  Configured and advertised counts differ — the daemon may need a restart.
+                </div>
+              </dd>
             </div>
             <div class="col-span-2 border-t border-white/10 pt-3 mt-1">
               <dt class="text-xs text-white/40 mb-1">Version</dt>
@@ -1154,7 +1302,7 @@ onMounted(() => {
             </button>
           </div>
           <div class="mb-4">
-            <label class="block text-xs text-white/40 mb-2">Price per step (sats)</label>
+            <label class="block text-xs text-white/40 mb-2">Price per minute (sats)</label>
             <input
               v-model.number="editPriceSats"
               type="number"
@@ -1163,7 +1311,7 @@ onMounted(() => {
             />
           </div>
           <div class="mb-4">
-            <label class="block text-xs text-white/40 mb-2">Step size (minutes)</label>
+            <label class="block text-xs text-white/40 mb-2">Step (minutes)</label>
             <input
               v-model.number="editStepSizeMin"
               type="number"

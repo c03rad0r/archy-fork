@@ -857,16 +857,34 @@ impl RpcHandler {
             .or_else(|| saved.password.clone())
             .unwrap_or_default();
 
-        let ssid = p
+        let mut ssid = p
             .get("ssid")
             .and_then(|v| v.as_str())
-            .ok_or_else(|| anyhow::anyhow!("Missing required field: ssid"))?
+            .unwrap_or("")
             .to_string();
-        let password = p
+        let mut password = p
             .get("password")
             .and_then(|v| v.as_str())
             .unwrap_or("")
             .to_string();
+        // "Use this node's Wi-Fi credentials": resolve the PSK here, in the
+        // backend. The browser only ever sees the SSID and `has_password`.
+        if p.get("use_node_credentials")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false)
+        {
+            if let Ok(Some((node_ssid, node_psk))) = super::interfaces::upstream_wifi_psk().await {
+                if ssid.trim().is_empty() {
+                    ssid = node_ssid.clone();
+                }
+                if password.is_empty() && ssid == node_ssid {
+                    password = node_psk;
+                }
+            }
+        }
+        if ssid.trim().is_empty() {
+            anyhow::bail!("Missing required field: ssid");
+        }
         let encryption = p
             .get("encryption")
             .and_then(|v| v.as_str())
