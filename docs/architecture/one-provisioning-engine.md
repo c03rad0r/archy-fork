@@ -70,7 +70,7 @@ deprecated native fallback and status compatibility.
 4. Archy calls `openwrt.installer.trust`, then retries the deploy with
    `trust_fingerprint`.
 5. The trust store lives in the installer’s state directory
-   (`/var/lib/archy/tollgate-installer`), not in the browser.
+   (`/var/lib/archipelago/tollgate-installer`), not in the browser.
 
 ## Network assumptions
 

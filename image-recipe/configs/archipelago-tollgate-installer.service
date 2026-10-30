@@ -9,8 +9,8 @@ Type=simple
 User=archipelago
 Group=archipelago
 # The installer keeps SSH known-hosts and the generated root credential here.
-Environment=HOME=/var/lib/archy/tollgate-installer
-Environment=TOLLGATE_CREDENTIAL_FILE=/var/lib/archy/tollgate-installer/root-credentials
+Environment=HOME=/var/lib/archipelago/tollgate-installer
+Environment=TOLLGATE_CREDENTIAL_FILE=/var/lib/archipelago/tollgate-installer/root-credentials
 # File/env-driven Archy profile; ignored by installers that do not know them.
 Environment=TOLLGATE_BRAND=archipelago
 Environment=TOLLGATE_PRIVATE_NYM=noderunner-private
@@ -21,8 +21,8 @@ RestartSec=2
 NoNewPrivileges=yes
 PrivateTmp=yes
 ProtectSystem=strict
-ReadWritePaths=/var/lib/archy/tollgate-installer
-StateDirectory=archy/tollgate-installer
+ReadWritePaths=/var/lib/archipelago/tollgate-installer
+StateDirectory=archipelago/tollgate-installer
 
 [Install]
 WantedBy=multi-user.target
