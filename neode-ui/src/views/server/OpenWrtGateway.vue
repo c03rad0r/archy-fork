@@ -1694,7 +1694,12 @@ onMounted(() => {
         </div>
       </div>
       <p v-if="discoveryError" class="text-xs text-red-400">{{ discoveryError }}</p>
-      <div v-if="discovering" class="text-sm text-white/50">Scanning the node's LAN interfaces…</div>
+      <div
+        v-if="discovering && visibleDiscovered.length === 0"
+        class="text-sm text-white/50"
+      >
+        Scanning the node's LAN interfaces…
+      </div>
       <div
         v-else-if="visibleDiscovered.length === 0 && !discoveryError"
         class="text-sm text-white/50"
