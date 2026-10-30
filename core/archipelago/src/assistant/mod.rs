@@ -159,6 +159,7 @@ impl AssistantCounters {
     }
 
     /// Every notice raised so far, oldest first.
+    #[cfg(test)]
     pub fn notices(&self) -> Vec<OwnerNotice> {
         self.inner
             .lock()

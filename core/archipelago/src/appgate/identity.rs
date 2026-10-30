@@ -103,6 +103,7 @@ impl PortMap {
         self.local.contains(&port)
     }
 
+    #[cfg(test)]
     pub fn is_empty(&self) -> bool {
         self.gated.is_empty() && self.exempt.is_empty() && self.local.is_empty()
     }

@@ -300,10 +300,6 @@ fn missing_install_deps(package_id: &str, deps: &RunningDeps) -> Vec<MissingDep>
         label: "Bitcoin",
         containers: BITCOIN_NAMES,
     };
-    const ELECTRUM: MissingDep = MissingDep {
-        label: "ElectrumX",
-        containers: ELECTRUM_NAMES,
-    };
     let mut missing = Vec::new();
     match package_id {
         "electrumx" | "mempool-electrs" | "electrs" | "lnd" | "btcpay-server" | "btcpayserver" => {

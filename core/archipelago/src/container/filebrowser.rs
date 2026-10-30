@@ -208,6 +208,7 @@ fn shell_quote(s: &str) -> String {
 
 /// Save a complete purchase without overwriting any existing directory entry.
 /// Both host and rootless-namespace paths publish with a no-clobber hard link.
+#[cfg(test)]
 pub async fn save_new_file(dir: &Path, name: &str, bytes: &[u8]) -> Result<PathBuf> {
     save_new_file_with(dir, name, bytes, write_via_userns).await
 }
@@ -245,6 +246,7 @@ fn validate_filename(name: &str) -> Result<()> {
     Ok(())
 }
 
+#[cfg(test)]
 async fn save_new_file_with<F, Fut>(
     dir: &Path,
     name: &str,
@@ -272,6 +274,7 @@ where
     .await
 }
 
+#[cfg(test)]
 async fn save_after_direct_result<F, Fut>(
     result: std::io::Result<PathBuf>,
     dir: &Path,
@@ -311,6 +314,7 @@ impl Drop for PendingFile {
     }
 }
 
+#[cfg(test)]
 async fn write_direct(dir: &Path, name: &str, bytes: &[u8]) -> std::io::Result<PathBuf> {
     write_direct_stream(dir, name, &mut &bytes[..]).await
 }
@@ -387,6 +391,7 @@ done
 exit 1
 "#;
 
+#[cfg(test)]
 async fn write_via_userns(dir: PathBuf, name: String, bytes: Vec<u8>) -> Result<PathBuf> {
     use tokio::io::AsyncWriteExt;
     let mut child = tokio::process::Command::new("podman")
