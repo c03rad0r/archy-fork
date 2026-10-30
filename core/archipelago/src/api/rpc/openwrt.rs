@@ -46,6 +46,20 @@ async fn provision_after_install_once(
     tokio::task::spawn_blocking(move || -> Result<()> {
         let router = Router::connect_password(&host, 22, &ssh_user, &ssh_password)?;
         router.verify_openwrt()?;
+        // The installer owns the device code. Derive the product names from
+        // it so a re-deploy keeps the same `!Archipelago-XXXX` and
+        // `noderunner-private-XXXX`, regardless of which SSID the released
+        // installer wrote first.
+        let mut config = config;
+        if let Ok(code) = router.uci_get("tollgate.device.code") {
+            let code = code.trim().to_ascii_uppercase();
+            if !code.is_empty() {
+                config.ssid = format!("!Archipelago-{code}");
+                if config.private_ssid == "noderunner-private" {
+                    config.private_ssid = format!("noderunner-private-{code}");
+                }
+            }
+        }
         tokio::runtime::Handle::current()
             .block_on(tollgate::provision_after_install(&router, &config))
     })
