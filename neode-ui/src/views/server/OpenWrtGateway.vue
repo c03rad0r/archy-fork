@@ -443,6 +443,9 @@ const missingMintRows = computed(() =>
 )
 
 const mintHealthRows = computed(() => mintHealth.value?.mints ?? [])
+const unreachableMints = computed(() =>
+  mintHealthRows.value.filter(m => !m.ok),
+)
 
 const walletDegraded = computed(() => {
   if (walletInfo.value?.degraded) return true
@@ -1120,12 +1123,17 @@ async function checkMints() {
   }
 }
 
-async function pruneMissingMints() {
-  const urls = missingMintRows.value.map(m => m.url)
+async function pruneUnreachableMints() {
+  const urls = unreachableMints.value.map(m => m.url)
   if (urls.length === 0) return
+  if (urls.length >= mintRows.value.length) {
+    mintHealthError.value =
+      'Refusing to remove every mint; keep at least one working mint.'
+    return
+  }
   if (
     !window.confirm(
-      `Remove ${urls.length} mint${urls.length === 1 ? '' : 's'} the daemon is not advertising?\n\n${urls.join(
+      `Remove ${urls.length} unreachable mint${urls.length === 1 ? '' : 's'}?\n\n${urls.join(
         '\n',
       )}\n\nThis does not delete wallet.db or any existing ecash.`,
     )
@@ -2375,11 +2383,11 @@ onMounted(() => {
                       {{ mintHealthLoading ? 'Checking…' : 'Check mint health' }}
                     </button>
                     <button
-                      v-if="missingMintRows.length && missingMintRows.length < mintRows.length"
+                      v-if="unreachableMints.length > 0 && unreachableMints.length < mintRows.length"
                       class="text-xs text-red-300/80 hover:text-red-200"
                       :disabled="mintHealthLoading"
                       data-testid="prune-mints"
-                      @click="pruneMissingMints"
+                      @click="pruneUnreachableMints"
                     >
                       Remove unreachable
                     </button>
