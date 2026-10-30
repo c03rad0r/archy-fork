@@ -100,6 +100,7 @@ mod state;
 mod storage_crypto;
 mod streaming;
 mod swarm;
+mod tollgate_installer;
 mod tollgate_sweep;
 mod totp;
 mod transport;

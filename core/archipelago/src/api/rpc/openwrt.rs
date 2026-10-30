@@ -1,5 +1,6 @@
 use super::RpcHandler;
 use crate::network::router as net_router;
+use crate::tollgate_installer::InstallerClient;
 use anyhow::{Context, Result};
 use archipelago_openwrt::{
     detect,
@@ -9,6 +10,7 @@ use archipelago_openwrt::{
     wan, wifi_scan,
 };
 use serde::Deserialize;
+use std::time::Duration;
 
 /// Default port for the local Cashu mint (nutshell / cashu-mint app).
 const LOCAL_MINT_PORT: u16 = 3338;
@@ -27,10 +29,28 @@ async fn provision_tollgate_once(
     tokio::task::spawn_blocking(move || -> Result<()> {
         let router = Router::connect_password(&host, 22, &ssh_user, &ssh_password)?;
         router.verify_openwrt()?;
-        tokio::runtime::Handle::current().block_on(tollgate::provision(&router, &config))
+        tokio::runtime::Handle::current().block_on(tollgate::provision_native(&router, &config))
     })
     .await
     .context("openwrt provision task")?
+}
+
+/// Run only the Archy-owned post-install phase over SSH. Used after the
+/// official installer has flashed/installed the package and verified it.
+async fn provision_after_install_once(
+    host: String,
+    ssh_user: String,
+    ssh_password: String,
+    config: TollGateConfig,
+) -> Result<()> {
+    tokio::task::spawn_blocking(move || -> Result<()> {
+        let router = Router::connect_password(&host, 22, &ssh_user, &ssh_password)?;
+        router.verify_openwrt()?;
+        tokio::runtime::Handle::current()
+            .block_on(tollgate::provision_after_install(&router, &config))
+    })
+    .await
+    .context("openwrt post-install task")?
 }
 
 /// Whether the router reports the pinned TollGate package installed.
@@ -276,6 +296,23 @@ impl RpcHandler {
             let host = host.clone();
             let ssh_user = ssh_user.clone();
             let ssh_password = ssh_password.clone();
+            // The official installer owns the release tag. Read it without
+            // starting the service (a status poll must not spawn processes),
+            // with a short timeout so an absent installer cannot stall the
+            // dashboard.
+            let installer_release = match tokio::time::timeout(
+                Duration::from_secs(1),
+                InstallerClient::new(&self.config.data_dir).config(),
+            )
+            .await
+            {
+                Ok(Ok(cfg)) => cfg
+                    .get("feed_release_tag")
+                    .and_then(|v| v.as_str())
+                    .map(str::to_string),
+                _ => None,
+            };
+
             tokio::task::spawn_blocking(move || -> Result<serde_json::Value> {
                 let router = Router::connect_password(&host, 22, &ssh_user, &ssh_password)?;
                 router.verify_openwrt()?;
@@ -322,8 +359,12 @@ impl RpcHandler {
                     // binary would install. Reported as its own field rather
                     // than folded into `installed`, so "wrong version" is
                     // visible instead of looking like success.
-                    let desired = tollgate::package_version_from_pin(tollgate::TOLLGATE_VERSION)
-                        .unwrap_or_else(|_| tollgate::TOLLGATE_VERSION.trim_start_matches('v').to_string());
+                    let desired = installer_release
+                        .as_deref()
+                        .and_then(|tag| tollgate::package_version_from_pin(tag).ok())
+                        .unwrap_or_else(|| {
+                            tollgate::TOLLGATE_VERSION.trim_start_matches('v').to_string()
+                        });
                     let version_str = match &installed_version {
                         Installed::Version(v) => v.clone(),
                         Installed::UnknownVersion => String::new(),
@@ -377,6 +418,7 @@ impl RpcHandler {
                         "version": version_str,
                         "version_known": matches!(installed_version, Installed::Version(_)),
                         "pinned_version": desired,
+                        "installer_feed_tag": installer_release.clone(),
                         "up_to_date": up_to_date,
                         "daemon_running": daemon_running,
                         "daemon_version": daemon_version,
@@ -537,6 +579,82 @@ impl RpcHandler {
         Ok(result)
     }
 
+    /// Status/version of the local tollgate-installer service.
+    pub(super) async fn handle_openwrt_installer_status(&self) -> Result<serde_json::Value> {
+        let client = InstallerClient::new(&self.config.data_dir);
+        match client.ensure_running().await {
+            Ok(cfg) => Ok(serde_json::json!({
+                "available": true,
+                "installer_version": cfg.get("installer_version"),
+                "installer_commit": cfg.get("installer_commit"),
+                "feed_release_tag": cfg.get("feed_release_tag"),
+                "feed_pkg_version": cfg.get("feed_pkg_version"),
+                "feed_module_pin": cfg.get("feed_module_pin"),
+            })),
+            Err(err) => Ok(serde_json::json!({
+                "available": false,
+                "error": err.to_string(),
+            })),
+        }
+    }
+
+    /// Identify a router through the installer; returns `ssh_fingerprint` when
+    /// the host key still needs an explicit trust decision.
+    pub(super) async fn handle_openwrt_installer_identify(
+        &self,
+        params: Option<serde_json::Value>,
+    ) -> Result<serde_json::Value> {
+        let p = params.unwrap_or_default();
+        let ip = p
+            .get("ip")
+            .or_else(|| p.get("host"))
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| anyhow::anyhow!("ip is required"))?;
+        let password = p
+            .get("password")
+            .or_else(|| p.get("ssh_password"))
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
+        let client = InstallerClient::new(&self.config.data_dir);
+        client.ensure_running().await?;
+        client.identify(ip, password).await
+    }
+
+    /// Trust the router's SSH host key after the operator verified the
+    /// fingerprint out of band.
+    pub(super) async fn handle_openwrt_installer_trust(
+        &self,
+        params: Option<serde_json::Value>,
+    ) -> Result<serde_json::Value> {
+        let p = params.unwrap_or_default();
+        let ip = p
+            .get("ip")
+            .or_else(|| p.get("host"))
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| anyhow::anyhow!("ip is required"))?;
+        let fingerprint = p
+            .get("fingerprint")
+            .and_then(|v| v.as_str())
+            .filter(|s| !s.trim().is_empty())
+            .ok_or_else(|| anyhow::anyhow!("fingerprint is required"))?;
+        let client = InstallerClient::new(&self.config.data_dir);
+        client.ensure_running().await?;
+        client.trust(ip, fingerprint).await
+    }
+
+    /// LAN discovery through the installer.
+    pub(super) async fn handle_openwrt_installer_scan(&self) -> Result<serde_json::Value> {
+        let client = InstallerClient::new(&self.config.data_dir);
+        client.ensure_running().await?;
+        client.scan().await
+    }
+
+    /// Installer build/feed identity without starting it.
+    pub(super) async fn handle_openwrt_installer_config(&self) -> Result<serde_json::Value> {
+        let client = InstallerClient::new(&self.config.data_dir);
+        client.config().await
+    }
+
     /// Provision TollGate on an OpenWrt router and create the "archipelago" SSID.
     ///
     /// Params: `{ "host": "192.168.1.1", "ssh_user": "root", "ssh_password": "",
@@ -693,59 +811,214 @@ impl RpcHandler {
             accepted_mints,
         };
 
-        let first = provision_tollgate_once(
-            host.clone(),
-            ssh_user.clone(),
-            ssh_password.clone(),
-            config.clone(),
-        )
-        .await;
+        let engine = p
+            .get("engine")
+            .and_then(|v| v.as_str())
+            .map(str::to_string)
+            .or_else(|| std::env::var("ARCHY_TOLLGATE_ENGINE").ok())
+            .unwrap_or_else(|| "official".to_string());
 
-        if let Err(err) = first {
-            // The package's post-install restarts the network on a
-            // radio-equipped router, which kills the SSH session running
-            // `apk add` / `opkg install`. The package is already on disk when
-            // that happens, so the dropped session is not evidence that the
-            // install failed. Reconnect, wait for the router to come back, and
-            // only then decide. Retrying the whole pass is safe: the install
-            // decision skips an already-correct version, and the config/SSID
-            // steps are exactly what the dropped session never reached.
-            let desired = tollgate::package_version_from_pin(tollgate::TOLLGATE_VERSION)
-                .context("derive the pinned TollGate version")?;
-            let mut at_pin = false;
-            for attempt in 0..6 {
-                if attempt > 0 {
-                    tokio::time::sleep(std::time::Duration::from_secs(5)).await;
-                }
-                if tollgate_is_at_pin(
-                    host.clone(),
-                    ssh_user.clone(),
-                    ssh_password.clone(),
-                    desired.clone(),
-                )
-                .await
-                {
-                    at_pin = true;
-                    break;
-                }
-            }
-            if !at_pin {
-                return Err(err);
-            }
-            provision_tollgate_once(
+        if engine == "native" {
+            // Deprecated fallback retained for one release. The official
+            // installer is the default; see
+            // docs/architecture/one-provisioning-engine.md.
+            let first = provision_tollgate_once(
                 host.clone(),
                 ssh_user.clone(),
                 ssh_password.clone(),
                 config.clone(),
             )
-            .await?;
+            .await;
+
+            if let Err(err) = first {
+                // The package's post-install restarts the network on a
+                // radio-equipped router, which kills the SSH session running
+                // `apk add` / `opkg install`. The package is already on disk when
+                // that happens, so the dropped session is not evidence that the
+                // install failed. Reconnect, wait for the router to come back, and
+                // only then decide. Retrying the whole pass is safe: the install
+                // decision skips an already-correct version, and the config/SSID
+                // steps are exactly what the dropped session never reached.
+                let desired = tollgate::package_version_from_pin(tollgate::TOLLGATE_VERSION)
+                    .context("derive the pinned TollGate version")?;
+                let mut at_pin = false;
+                for attempt in 0..6 {
+                    if attempt > 0 {
+                        tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+                    }
+                    if tollgate_is_at_pin(
+                        host.clone(),
+                        ssh_user.clone(),
+                        ssh_password.clone(),
+                        desired.clone(),
+                    )
+                    .await
+                    {
+                        at_pin = true;
+                        break;
+                    }
+                }
+                if !at_pin {
+                    return Err(err);
+                }
+                provision_tollgate_once(
+                    host.clone(),
+                    ssh_user.clone(),
+                    ssh_password.clone(),
+                    config.clone(),
+                )
+                .await?;
+            }
+
+            return Ok(serde_json::json!({
+                "ok": true,
+                "engine": "native",
+                "host": host,
+                "ssid": config.ssid,
+                "mint_url": config.mint_url,
+            }));
         }
+
+        // Official installer: discovery/trust/flash/install/verify is its job.
+        // Archy applies its own config/SSID/topology afterwards.
+        let lnurl = config.payout_address.clone().ok_or_else(|| {
+            anyhow::anyhow!(
+                "The official tollgate-installer requires a Lightning payout address \
+                 (payout_address) — provide one in the install form"
+            )
+        })?;
+        let installer = InstallerClient::new(&self.config.data_dir);
+        let installer_cfg = installer
+            .ensure_running()
+            .await
+            .context("start the local tollgate-installer")?;
+
+        let identify = installer
+            .identify(&host, &ssh_password)
+            .await
+            .context("identify the router through tollgate-installer")?;
+        let presented = identify
+            .get("ssh_fingerprint")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .trim()
+            .to_string();
+        let trust_fp = p
+            .get("trust_fingerprint")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .trim()
+            .to_string();
+        if !presented.is_empty() && trust_fp != presented {
+            return Ok(serde_json::json!({
+                "ok": false,
+                "engine": "official",
+                "host": host,
+                "host_key_untrusted": true,
+                "ssh_fingerprint": presented,
+                "message": "Verify this fingerprint on the router's console, then retry with trust_fingerprint set to it.",
+            }));
+        }
+        if !trust_fp.is_empty() {
+            installer
+                .trust(&host, &trust_fp)
+                .await
+                .context("trust the router's SSH host key")?;
+        }
+
+        let mut deploy = serde_json::json!({
+            "ip": host,
+            "password": ssh_password,
+            "lnurl": lnurl,
+            "mode": p.get("mode").and_then(|v| v.as_str()).unwrap_or("wan"),
+            "mint": config.mint_url.clone(),
+            "test_mints": config
+                .accepted_mints
+                .as_ref()
+                .map(|mints| mints.iter().any(|m| m.url.contains("testnut")))
+                .unwrap_or(false),
+            "forceFlash": p.get("force_flash").and_then(|v| v.as_bool()).unwrap_or(false),
+        });
+        for (src, dst) in [
+            ("upstream_ssid", "ssid"),
+            ("upstream_password", "wifiPass"),
+            ("band", "band"),
+            ("admin_password", "adminPassword"),
+        ] {
+            if let Some(v) = p
+                .get(src)
+                .and_then(|v| v.as_str())
+                .filter(|s| !s.is_empty())
+            {
+                deploy[dst] = serde_json::json!(v);
+            }
+        }
+        if let Some(key) = config.private_key.as_deref() {
+            deploy["privateWifiPassword"] = serde_json::json!(key);
+        }
+        if let Some(v) = p
+            .get("devSplit")
+            .or_else(|| p.get("dev_split"))
+            .and_then(|v| v.as_i64())
+        {
+            deploy["devSplit"] = serde_json::json!(v);
+        }
+        if let Some(v) = p.get("margin").and_then(|v| v.as_i64()) {
+            deploy["margin"] = serde_json::json!(v);
+        }
+
+        let job = installer
+            .deploy(deploy)
+            .await
+            .context("start the tollgate-installer deploy")?;
+        let snapshot = installer
+            .wait(&job, Duration::from_secs(900))
+            .await
+            .with_context(|| format!("tollgate-installer job {job}"))?;
+
+        // The package's post-install restart can move the wired management
+        // address onto br-private. The installer records the address it ended
+        // on in the job snapshot.
+        let final_host = snapshot
+            .get("ip")
+            .and_then(|v| v.as_str())
+            .filter(|s| !s.is_empty())
+            .unwrap_or(&host)
+            .to_string();
+        // The installer may have generated a root credential; it is served
+        // once on the terminal status read. Use it for the post-config SSH.
+        let post_password = snapshot
+            .get("generated_password")
+            .and_then(|v| v.as_str())
+            .filter(|s| !s.is_empty())
+            .map(str::to_string)
+            .or_else(|| {
+                p.get("admin_password")
+                    .and_then(|v| v.as_str())
+                    .filter(|s| !s.is_empty())
+                    .map(str::to_string)
+            })
+            .unwrap_or_else(|| ssh_password.clone());
+
+        provision_after_install_once(
+            final_host.clone(),
+            ssh_user.clone(),
+            post_password,
+            config.clone(),
+        )
+        .await
+        .context("apply the Archy TollGate configuration after the installer")?;
 
         Ok(serde_json::json!({
             "ok": true,
-            "host": host,
+            "engine": "official",
+            "host": final_host,
             "ssid": config.ssid,
             "mint_url": config.mint_url,
+            "job_id": job,
+            "installer_version": installer_cfg.get("installer_version"),
+            "feed_release_tag": installer_cfg.get("feed_release_tag"),
+            "feed_pkg_version": installer_cfg.get("feed_pkg_version"),
         }))
     }
 

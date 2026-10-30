@@ -60,6 +60,9 @@ pub enum ApiReachability {
     /// The fragment assumed `br-lan`; the paid bridge was added and the
     /// firewall reloaded.
     Patched,
+    /// The new package ships `tollgate-nft-interfaces-render`; the guards were
+    /// regenerated from `nodogsplash.gatewayinterface` instead of being patched.
+    Rendered,
     /// The fragment is absent, so the package no longer ships what this shim
     /// defends against — re-check whether the defect still exists.
     FragmentAbsent,
@@ -70,6 +73,23 @@ pub enum ApiReachability {
 ///
 /// Idempotent: a second call on a patched router issues no write and no reload.
 pub fn ensure_paid_bridge_can_reach_api(router: &Router) -> Result<ApiReachability> {
+    // #784 (merged upstream, not yet in the released 0.6.0 package) replaces
+    // the hardcoded set with defines rendered from the router's own config.
+    // Prefer the renderer when it exists; it follows
+    // nodogsplash.gatewayinterface, which `nodogsplash::configure` has just
+    // set to br-tollgate. A router still on the old package falls through to
+    // the literal-set shim below.
+    let (_, renderer) = router.run("test -x /usr/local/bin/tollgate-nft-interfaces-render")?;
+    if renderer == 0 {
+        router.run_ok("/usr/local/bin/tollgate-nft-interfaces-render --reload")?;
+        info!(
+            "[{}] regenerated the nft guard interfaces from nodogsplash.gatewayinterface \
+             (tollgate-nft-interfaces-render)",
+            router.host
+        );
+        return Ok(ApiReachability::Rendered);
+    }
+
     let (exists, code) = router.run(&format!("test -f {BACKEND_FIREWALL_NFT}"))?;
     let _ = exists;
     if code != 0 {
@@ -124,6 +144,10 @@ mod tests {
         let log = seen.clone();
         let router = Router::scripted(move |cmd| {
             log.lock().unwrap().push(cmd.to_string());
+            // Old package: no renderer, so the literal-set shim runs.
+            if cmd.contains("test -x") {
+                return Ok((String::new(), 1));
+            }
             if cmd.contains("test -f") {
                 return Ok((String::new(), 0));
             }
@@ -158,6 +182,9 @@ mod tests {
         let log = seen.clone();
         let router = Router::scripted(move |cmd| {
             log.lock().unwrap().push(cmd.to_string());
+            if cmd.contains("test -x") {
+                return Ok((String::new(), 1));
+            }
             if cmd.contains("test -f") {
                 return Ok((String::new(), 0));
             }
@@ -185,6 +212,9 @@ mod tests {
     #[test]
     fn a_changed_fragment_fails_instead_of_guessing() {
         let router = Router::scripted(|cmd| {
+            if cmd.contains("test -x") {
+                return Ok((String::new(), 1));
+            }
             if cmd.contains("test -f") {
                 return Ok((String::new(), 0));
             }
@@ -209,6 +239,9 @@ mod tests {
     #[test]
     fn an_absent_fragment_is_reported_not_treated_as_success() {
         let router = Router::scripted(|cmd| {
+            if cmd.contains("test -x") {
+                return Ok((String::new(), 1));
+            }
             if cmd.contains("test -f") {
                 return Ok((String::new(), 1)); // gone
             }
@@ -217,6 +250,34 @@ mod tests {
         assert_eq!(
             ensure_paid_bridge_can_reach_api(&router).unwrap(),
             ApiReachability::FragmentAbsent
+        );
+    }
+
+    #[test]
+    fn prefers_the_upstream_renderer_when_present() {
+        let seen: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
+        let log = seen.clone();
+        let router = Router::scripted(move |cmd| {
+            log.lock().unwrap().push(cmd.to_string());
+            if cmd.contains("test -x") {
+                return Ok((String::new(), 0));
+            }
+            Ok((String::new(), 0))
+        });
+
+        assert_eq!(
+            ensure_paid_bridge_can_reach_api(&router).unwrap(),
+            ApiReachability::Rendered
+        );
+        let cmds = seen.lock().unwrap().clone();
+        assert!(
+            cmds.iter()
+                .any(|c| c.contains("tollgate-nft-interfaces-render --reload")),
+            "must run the upstream renderer: {cmds:#?}"
+        );
+        assert!(
+            !cmds.iter().any(|c| c.contains("sed -i")),
+            "must not patch a fragment when the renderer is available: {cmds:#?}"
         );
     }
 }

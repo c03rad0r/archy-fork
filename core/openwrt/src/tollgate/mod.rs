@@ -32,8 +32,8 @@ use crate::{opkg::PkgManager, Router};
 /// 5. Configure NoDogSplash to gate that bridge (now that it exists) —
 ///    client gating; tollgate-wrt has no enforcement code of its own
 /// 6. Restart affected services
-pub async fn provision(router: &Router, config: &TollGateConfig) -> Result<()> {
-    info!("[{}] Starting TollGate provisioning", router.host);
+pub async fn provision_native(router: &Router, config: &TollGateConfig) -> Result<()> {
+    info!("[{}] Starting native TollGate provisioning", router.host);
 
     let pkg_mgr = router.opkg_check()?;
     match pkg_mgr {
@@ -73,6 +73,16 @@ pub async fn provision(router: &Router, config: &TollGateConfig) -> Result<()> {
          generic splash page, which authorizes clients on click with no payment",
     )?;
 
+    provision_after_install(router, config).await
+}
+
+/// Configure a router whose package install (and NoDogSplash install) is
+/// already done — the official `tollgate-installer` owns that phase now.
+///
+/// This is the Archy-owned half: product SSID/bridge, private management
+/// network, daemon config, payout identity, NoDogSplash, firewall, restart.
+/// Idempotent, so it is also what the native path calls after its install.
+pub async fn provision_after_install(router: &Router, config: &TollGateConfig) -> Result<()> {
     config::apply(router, config)?;
     wifi::provision_ssid(router, config)?;
     // Must come after provision_ssid (creates the `tollgate` network this
