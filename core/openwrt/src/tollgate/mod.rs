@@ -118,6 +118,7 @@ pub async fn provision_after_install(router: &Router, config: &TollGateConfig) -
 
     restart_services(router, config.enabled)?;
     nodogsplash::restart(router)?;
+    nodogsplash::verify(router)?;
 
     info!("[{}] TollGate provisioning complete", router.host);
     Ok(())
@@ -148,8 +149,15 @@ pub fn rename_network(
     wifi::set_private_network(router, &cfg)?;
     config::set_private_ssid(router, private_ssid)?;
     config::sync_uci_from_daemon(router, enabled)?;
+    // Renaming the product SSIDs must also repair the portal: the package’s
+    // stock anonymous section points at br-lan, and the rename path used to
+    // leave it there. configure() deletes that section and creates main on
+    // br-tollgate.
+    nodogsplash::configure(router, &cfg)?;
+    firewall::ensure_paid_bridge_can_reach_api(router)?;
     restart_services(router, enabled)?;
     nodogsplash::restart(router)?;
+    nodogsplash::verify(router)?;
     info!(
         "[{}] renamed product SSIDs to {public_ssid} / {private_ssid}",
         router.host

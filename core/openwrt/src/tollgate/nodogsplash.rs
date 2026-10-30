@@ -134,6 +134,86 @@ pub fn configure(router: &Router, cfg: &TollGateConfig) -> Result<()> {
     Ok(())
 }
 
+/// Enabled NoDogSplash gateway interfaces, in UCI section order.
+fn enabled_gateways(router: &Router) -> Vec<String> {
+    use std::collections::BTreeMap;
+    let (out, _) = router
+        .run("uci show nodogsplash 2>/dev/null")
+        .unwrap_or_default();
+    let mut sections: BTreeMap<String, (Option<String>, bool)> = BTreeMap::new();
+    for line in out.lines() {
+        let Some((lhs, rhs)) = line.trim().split_once('=') else {
+            continue;
+        };
+        let parts: Vec<&str> = lhs.splitn(3, '.').collect();
+        if parts.len() != 3 || parts[0] != "nodogsplash" {
+            continue;
+        }
+        let section = parts[1]
+            .trim_start_matches("@nodogsplash[")
+            .trim_end_matches(']')
+            .to_string();
+        let value = rhs.trim().trim_matches('\'');
+        let entry = sections.entry(section).or_insert((None, false));
+        match parts[2] {
+            "gatewayinterface" => entry.0 = Some(value.to_string()),
+            "enabled" => entry.1 = value == "1",
+            _ => {}
+        }
+    }
+    sections
+        .values()
+        .filter(|(_, enabled)| *enabled)
+        .filter_map(|(iface, _)| iface.clone())
+        .collect()
+}
+
+/// The active gateway interface and whether it is the paid bridge.
+pub fn summary(router: &Router) -> (String, bool) {
+    let gateways = enabled_gateways(router);
+    let gateway = gateways
+        .iter()
+        .find(|g| g.as_str() == "br-tollgate")
+        .cloned()
+        .or_else(|| gateways.first().cloned())
+        .unwrap_or_default();
+    let bridge_ok = router
+        .run("ip link show br-tollgate 2>/dev/null")
+        .map(|(_, code)| code == 0)
+        .unwrap_or(false);
+    (
+        gateway,
+        gateways.iter().any(|g| g == "br-tollgate") && bridge_ok,
+    )
+}
+
+/// Refuse a provisioned router whose NoDogSplash is not gating the paid
+/// bridge. This catches both the package's stock `br-lan` default and a
+/// second anonymous instance left behind by an old install.
+pub fn verify(router: &Router) -> Result<()> {
+    let gateways = enabled_gateways(router);
+    if gateways.is_empty() {
+        anyhow::bail!("NoDogSplash has no enabled gateway section");
+    }
+    if gateways.iter().any(|g| g == "br-lan") {
+        anyhow::bail!(
+            "NoDogSplash is still gating br-lan (enabled interfaces: {:?})",
+            gateways
+        );
+    }
+    if !gateways.iter().any(|g| g == "br-tollgate") {
+        anyhow::bail!(
+            "NoDogSplash is not gating br-tollgate (enabled interfaces: {:?})",
+            gateways
+        );
+    }
+    let (_, code) = router.run("ip link show br-tollgate 2>/dev/null")?;
+    if code != 0 {
+        anyhow::bail!("br-tollgate does not exist");
+    }
+    Ok(())
+}
+
 /// (Re)start the nodogsplash service so config changes and gate state take effect.
 pub fn restart(router: &Router) -> Result<()> {
     router.run_ok("/etc/init.d/nodogsplash enable")?;

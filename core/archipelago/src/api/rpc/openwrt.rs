@@ -1,6 +1,7 @@
 use super::RpcHandler;
 use crate::network::router as net_router;
 use crate::tollgate_installer::InstallerClient;
+use crate::wallet::ecash;
 use anyhow::{Context, Result};
 use archipelago_openwrt::{
     detect,
@@ -42,8 +43,8 @@ async fn provision_after_install_once(
     ssh_user: String,
     ssh_password: String,
     config: TollGateConfig,
-) -> Result<()> {
-    tokio::task::spawn_blocking(move || -> Result<()> {
+) -> Result<Vec<String>> {
+    tokio::task::spawn_blocking(move || -> Result<Vec<String>> {
         let router = Router::connect_password(&host, 22, &ssh_user, &ssh_password)?;
         router.verify_openwrt()?;
         // The installer owns the device code. Derive the product names from
@@ -63,8 +64,48 @@ async fn provision_after_install_once(
                 }
             }
         }
+        // Any mint can be down, not just Minibits. Probe every proposed mint
+        // before it reaches the daemon config so a dead mint cannot strand
+        // the whole merchant in `no-reachable-mints`. Keep the original list
+        // if none are reachable: that is a network outage, not data loss.
+        let mut skipped = Vec::new();
+        if let Some(mints) = config.accepted_mints.clone() {
+            let mut reachable = Vec::new();
+            for mint in &mints {
+                match probe_mint_with_router(&router, &mint.url) {
+                    Ok(probe) if probe.get("ok").and_then(|v| v.as_bool()).unwrap_or(false) => {
+                        reachable.push(mint.clone());
+                    }
+                    Ok(_) => {
+                        tracing::warn!(
+                            "[{}] skipping unreachable mint at install: {}",
+                            router.host,
+                            mint.url
+                        );
+                        skipped.push(mint.url.clone());
+                    }
+                    Err(err) => {
+                        tracing::warn!(
+                            "[{}] skipping unprobeable mint at install: {} ({err:#})",
+                            router.host,
+                            mint.url
+                        );
+                        skipped.push(mint.url.clone());
+                    }
+                }
+            }
+            if reachable.is_empty() {
+                tracing::warn!(
+                    "[{}] every proposed mint is unreachable; keeping the configured list",
+                    router.host
+                );
+            } else {
+                config.accepted_mints = Some(reachable);
+            }
+        }
         tokio::runtime::Handle::current()
-            .block_on(tollgate::provision_after_install(&router, &config))
+            .block_on(tollgate::provision_after_install(&router, &config))?;
+        Ok(skipped)
     })
     .await
     .context("openwrt post-install task")?
@@ -179,6 +220,10 @@ fn router_http_get(router: &Router, url: &str, timeout_secs: u32) -> Result<Stri
 /// the mint identity, and neither is the host's case.
 fn mint_url_key(url: &str) -> String {
     url.trim().trim_end_matches('/').to_ascii_lowercase()
+}
+
+fn is_test_mint(url: &str) -> bool {
+    mint_url_key(url).contains("testnut")
 }
 
 #[derive(Debug, Clone, Default)]
@@ -765,6 +810,8 @@ impl RpcHandler {
                                 .filter(|s| !s.is_empty())
                         })
                         .unwrap_or_default();
+                    let (nodogsplash_gateway, nodogsplash_ok) =
+                        tollgate::nodogsplash::summary(&router);
                     let payout_address = router
                         .run_ok("cat /etc/tollgate/identities.json 2>/dev/null")
                         .ok()
@@ -813,6 +860,8 @@ impl RpcHandler {
                         "mint_url": mint_url,
                         "payout_address": payout_address,
                         "private_ssid": private_ssid,
+                        "nodogsplash_gateway": nodogsplash_gateway,
+                        "nodogsplash_ok": nodogsplash_ok,
                     })
                 } else {
                     serde_json::json!({
@@ -1248,6 +1297,287 @@ impl RpcHandler {
         .context("openwrt apply network names task")??;
 
         Ok(result)
+    }
+
+    /// Repair the paid-network portal gating without renaming anything.
+    ///
+    /// The package's stock anonymous NoDogSplash section points at `br-lan`;
+    /// old installs and the rename path used to leave it there. This deletes
+    /// it, creates `nodogsplash.main` on `br-tollgate`, re-applies the firewall
+    /// allowance, restarts and verifies.
+    pub(super) async fn handle_openwrt_repair_portal(
+        &self,
+        params: Option<serde_json::Value>,
+    ) -> Result<serde_json::Value> {
+        let saved = net_router::load_router_config(&self.config.data_dir).await?;
+        let p = params.unwrap_or_default();
+        let host = p
+            .get("host")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string())
+            .or_else(|| saved.configured.then(|| saved.address.clone()))
+            .ok_or_else(|| anyhow::anyhow!("No router configured"))?;
+        let ssh_user = p
+            .get("ssh_user")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string())
+            .or_else(|| saved.username.clone())
+            .unwrap_or_else(|| "root".to_string());
+        let ssh_password = p
+            .get("ssh_password")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string())
+            .or_else(|| saved.password.clone())
+            .unwrap_or_default();
+
+        let result = tokio::task::spawn_blocking(move || -> Result<serde_json::Value> {
+            let router = Router::connect_password(&host, 22, &ssh_user, &ssh_password)?;
+            router.verify_openwrt()?;
+            let ssid = router
+                .uci_get("wireless.tollgate.ssid")
+                .or_else(|_| router.uci_get("tollgate.main.ssid"))
+                .unwrap_or_else(|_| "archipelago".to_string());
+            let cfg = TollGateConfig {
+                ssid: ssid.clone(),
+                enabled: true,
+                ..TollGateConfig::default()
+            };
+            tollgate::nodogsplash::configure(&router, &cfg)?;
+            tollgate::firewall::ensure_paid_bridge_can_reach_api(&router)?;
+            tollgate::nodogsplash::restart(&router)?;
+            tollgate::nodogsplash::verify(&router)?;
+            let (gateway, ok) = tollgate::nodogsplash::summary(&router);
+            Ok(serde_json::json!({
+                "ok": true,
+                "gateway": gateway,
+                "gateway_ok": ok,
+                "ssid": cfg.ssid,
+            }))
+        })
+        .await
+        .context("openwrt repair portal task")??;
+
+        Ok(result)
+    }
+
+    /// Snapshot of the Archy node's Cashu wallet, used as the drain target.
+    async fn node_wallet_snapshot(&self) -> Result<serde_json::Value> {
+        let network = ecash::load_network(&self.config.data_dir).await?;
+        let wallet = ecash::load_wallet(&self.config.data_dir).await?;
+        let accepted = ecash::load_accepted_mints(&self.config.data_dir).await?;
+        Ok(serde_json::json!({
+            "network": if network.is_test() { "testnet" } else { "mainnet" },
+            "is_test": network.is_test(),
+            "balance_sats": wallet.balance(),
+            "mint_url": wallet.mint_url,
+            "accepted_mints": accepted.mints,
+        }))
+    }
+
+    /// Preview draining the active router wallet to the node's Cashu wallet.
+    pub(super) async fn handle_openwrt_wallet_drain_preview(&self) -> Result<serde_json::Value> {
+        let node = self.node_wallet_snapshot().await?;
+        let router_wallet = match self.tollgate_json("wallet info").await {
+            Ok(wallet) => wallet,
+            Err(err) => {
+                return Ok(serde_json::json!({
+                    "ok": false,
+                    "error": err.to_string(),
+                    "node": node,
+                }));
+            }
+        };
+        let router_status = self.tollgate_json("status").await.ok();
+        let total = router_wallet
+            .get("total_balance")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(0);
+        let balances = router_wallet
+            .get("mint_balances")
+            .and_then(|v| v.as_object())
+            .cloned()
+            .unwrap_or_default();
+        let node_is_test = node
+            .get("is_test")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
+        let accepted: Vec<String> = node
+            .get("accepted_mints")
+            .and_then(|v| v.as_array())
+            .map(|a| {
+                a.iter()
+                    .filter_map(|v| v.as_str().map(str::to_string))
+                    .collect()
+            })
+            .unwrap_or_default();
+
+        let mut receivable = Vec::new();
+        let mut not_accepted = Vec::new();
+        let mut wrong_network = Vec::new();
+        for (url, amount) in balances {
+            let amount = amount.as_u64().unwrap_or(0);
+            if is_test_mint(&url) != node_is_test {
+                wrong_network.push(serde_json::json!({ "url": url, "amount": amount }));
+            } else if accepted
+                .iter()
+                .any(|m| mint_url_key(m) == mint_url_key(&url))
+            {
+                receivable.push(serde_json::json!({ "url": url, "amount": amount }));
+            } else {
+                not_accepted.push(serde_json::json!({ "url": url, "amount": amount }));
+            }
+        }
+
+        Ok(serde_json::json!({
+            "ok": true,
+            "router": {
+                "total_balance": total,
+                "wallet_ok": router_status
+                    .as_ref()
+                    .and_then(|s| s.get("wallet_ok"))
+                    .and_then(|v| v.as_bool()),
+                "running": router_status
+                    .as_ref()
+                    .and_then(|s| s.get("running"))
+                    .and_then(|v| v.as_bool()),
+            },
+            "node": node,
+            "receivable": receivable,
+            "not_accepted": not_accepted,
+            "wrong_network": wrong_network,
+        }))
+    }
+
+    /// Drain the active router wallet to the Archy node's Cashu wallet.
+    ///
+    /// The router's `wallet drain cashu` is irreversible and can partially
+    /// succeed. Every produced token is imported; tokens the node cannot
+    /// accept are returned to the authenticated caller and remain in the
+    /// router's drain journal — they are never silently dropped.
+    pub(super) async fn handle_openwrt_wallet_drain_to_node(
+        &self,
+        params: Option<serde_json::Value>,
+    ) -> Result<serde_json::Value> {
+        let p = params.unwrap_or_default();
+        if p.get("confirm").and_then(|v| v.as_bool()) != Some(true) {
+            anyhow::bail!("confirm=true is required to drain the router wallet");
+        }
+        let node = self.node_wallet_snapshot().await?;
+        let node_is_test = node
+            .get("is_test")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
+        let accepted: Vec<String> = node
+            .get("accepted_mints")
+            .and_then(|v| v.as_array())
+            .map(|a| {
+                a.iter()
+                    .filter_map(|v| v.as_str().map(str::to_string))
+                    .collect()
+            })
+            .unwrap_or_default();
+
+        let saved = net_router::load_router_config(&self.config.data_dir).await?;
+        if !saved.configured {
+            anyhow::bail!("No active router is selected");
+        }
+        let host = saved.address;
+        let user = saved.username.unwrap_or_else(|| "root".to_string());
+        let pass = saved.password.unwrap_or_default();
+        let raw = tokio::task::spawn_blocking(move || -> Result<String> {
+            let router = Router::connect_password(&host, 22, &user, &pass)?;
+            router.verify_openwrt()?;
+            router.run_ok("tollgate --json wallet drain cashu 2>/dev/null")
+        })
+        .await
+        .context("tollgate wallet drain task")??;
+        let response: serde_json::Value =
+            serde_json::from_str(&raw).context("parse tollgate drain JSON")?;
+        let data = response
+            .get("data")
+            .cloned()
+            .unwrap_or_else(|| serde_json::json!({}));
+        let tokens = data
+            .get("tokens")
+            .and_then(|v| v.as_array())
+            .cloned()
+            .unwrap_or_default();
+        let router_errors = data
+            .get("errors")
+            .cloned()
+            .unwrap_or_else(|| serde_json::json!([]));
+        if tokens.is_empty() && response.get("success").and_then(|v| v.as_bool()) != Some(true) {
+            return Ok(serde_json::json!({
+                "ok": false,
+                "error": response.get("error").and_then(|v| v.as_str()).unwrap_or("wallet drain failed"),
+                "node": node,
+                "router_errors": router_errors,
+            }));
+        }
+
+        let mut received = Vec::new();
+        let mut failed = Vec::new();
+        let mut total_received = 0u64;
+        for token in tokens {
+            let mint = token
+                .get("mint_url")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
+            let amount = token
+                .get("balance_sats")
+                .and_then(|v| v.as_u64())
+                .unwrap_or(0);
+            let token_str = token
+                .get("token")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
+            let network_ok = is_test_mint(&mint) == node_is_test;
+            let accepted_mint = accepted
+                .iter()
+                .any(|m| mint_url_key(m) == mint_url_key(&mint));
+            if !network_ok || !accepted_mint || token_str.is_empty() {
+                let reason = if !network_ok {
+                    "mint is on the other Archy ecash network"
+                } else if !accepted_mint {
+                    "mint is not in the Archy wallet accepted-mints list"
+                } else {
+                    "router returned an empty token"
+                };
+                failed.push(serde_json::json!({
+                    "mint": mint,
+                    "amount": amount,
+                    "error": reason,
+                    "token": token_str,
+                }));
+                continue;
+            }
+            match ecash::receive_token(&self.config.data_dir, &token_str).await {
+                Ok(amount_received) => {
+                    total_received += amount_received;
+                    received.push(serde_json::json!({
+                        "mint": mint,
+                        "amount": amount_received,
+                    }));
+                }
+                Err(err) => failed.push(serde_json::json!({
+                    "mint": mint,
+                    "amount": amount,
+                    "error": format!("{err:#}"),
+                    "token": token_str,
+                })),
+            }
+        }
+
+        Ok(serde_json::json!({
+            "ok": true,
+            "node": node,
+            "total_received": total_received,
+            "received": received,
+            "failed": failed,
+            "router_errors": router_errors,
+        }))
     }
 
     pub(super) async fn handle_openwrt_discover(&self) -> Result<serde_json::Value> {
@@ -1981,7 +2311,7 @@ impl RpcHandler {
             })
             .unwrap_or_else(|| ssh_password.clone());
 
-        provision_after_install_once(
+        let skipped_mints = provision_after_install_once(
             final_host.clone(),
             ssh_user.clone(),
             post_password,
@@ -1996,6 +2326,7 @@ impl RpcHandler {
             "host": final_host,
             "ssid": config.ssid,
             "mint_url": config.mint_url,
+            "skipped_mints": skipped_mints,
             "job_id": job,
             "installer_version": installer_cfg.get("installer_version"),
             "feed_release_tag": installer_cfg.get("feed_release_tag"),

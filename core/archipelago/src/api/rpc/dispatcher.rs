@@ -281,6 +281,10 @@ impl RpcHandler {
             "openwrt.discover" => self.handle_openwrt_discover().await,
             "openwrt.select-router" => self.handle_openwrt_select_router(params).await,
             "openwrt.wallet-info" => self.handle_openwrt_wallet_info().await,
+            "openwrt.wallet-drain-preview" => self.handle_openwrt_wallet_drain_preview().await,
+            "openwrt.wallet-drain-to-node" => {
+                self.handle_openwrt_wallet_drain_to_node(params).await
+            }
             "openwrt.upstream-list" => self.handle_openwrt_upstream_list().await,
             "openwrt.upstream-known" => self.handle_openwrt_upstream_known().await,
             "openwrt.upstream-scan" => self.handle_openwrt_upstream_scan().await,
@@ -297,6 +301,7 @@ impl RpcHandler {
             "openwrt.mint-health" => self.handle_openwrt_mint_health(params).await,
             "openwrt.prune-mints" => self.handle_openwrt_prune_mints(params).await,
             "openwrt.apply-network-names" => self.handle_openwrt_apply_network_names(params).await,
+            "openwrt.repair-portal" => self.handle_openwrt_repair_portal(params).await,
             "openwrt.scan-wifi" => self.handle_openwrt_scan_wifi(params).await,
             "openwrt.configure-wan" => self.handle_openwrt_configure_wan(params).await,
 

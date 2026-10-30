@@ -78,6 +78,8 @@ interface TollGateStatus {
   configured_mints?: number
   accepted_mints?: MintConfig[]
   installer_feed_tag?: string
+  nodogsplash_gateway?: string
+  nodogsplash_ok?: boolean
 }
 
 interface InstallerStatus {
@@ -132,6 +134,48 @@ interface WalletInfo {
     mint_count: number
     mint_balances: Record<string, number>
   }
+}
+
+interface DrainMint {
+  url: string
+  amount: number
+}
+
+interface DrainPreview {
+  ok: boolean
+  error?: string
+  router?: {
+    total_balance: number
+    wallet_ok?: boolean
+    running?: boolean
+  }
+  node?: {
+    network: string
+    is_test: boolean
+    balance_sats: number
+    mint_url: string
+    accepted_mints: string[]
+  }
+  receivable?: DrainMint[]
+  not_accepted?: DrainMint[]
+  wrong_network?: DrainMint[]
+}
+
+interface DrainFailed {
+  mint: string
+  amount: number
+  error: string
+  token?: string
+}
+
+interface DrainResult {
+  ok: boolean
+  error?: string
+  node?: DrainPreview['node']
+  total_received?: number
+  received?: { mint: string; amount: number }[]
+  failed?: DrainFailed[]
+  router_errors?: unknown[]
 }
 
 interface UpstreamSTA {
@@ -308,6 +352,30 @@ const detectedCandidates = ref<string[]>([])
 const provisioning = ref(false)
 const provisionError = ref('')
 const provisionSuccess = ref(false)
+const provisionSkippedMints = ref<string[]>([])
+const repairingPortal = ref(false)
+const portalError = ref('')
+
+const PRODUCTION_MINT_URLS = [
+  'https://mint.coinos.io',
+  'https://mint.macadamia.cash',
+  'https://mint.westernbtc.com',
+  'https://kashu.me',
+  'https://mint.cubabitcoin.org',
+]
+const TEST_MINT_URLS = [
+  'https://testnut.cashu.space',
+  'https://testnut.cashu.exchange',
+]
+
+function defaultInstallMints(): MintConfig[] {
+  return PRODUCTION_MINT_URLS.map(url => ({
+    url,
+    price_per_step: 10,
+    purchase_min_steps: 1,
+    price_unit: 'sat',
+  }))
+}
 
 // First-install pricing. The Edit form already exposes these after install;
 // sending them here too means the operator does not have to install at the
@@ -317,6 +385,9 @@ const installStepSizeMin = ref(1)
 const installStepSizeMb = ref(21)
 const installMetric = ref<'milliseconds' | 'bytes'>('milliseconds')
 const installMinSteps = ref(1)
+const installMints = ref<MintConfig[]>(defaultInstallMints())
+const installNewMint = ref('')
+const installShowTestMints = ref(false)
 const installPayoutAddress = ref('')
 
 const installerStatus = ref<InstallerStatus | null>(null)
@@ -342,6 +413,15 @@ const trustRouterDone = ref(false)
 const walletInfo = ref<WalletInfo | null>(null)
 const walletLoading = ref(false)
 const walletError = ref('')
+const drainPreview = ref<DrainPreview | null>(null)
+const drainPreviewLoading = ref(false)
+const drainPreviewError = ref('')
+const drainModal = ref(false)
+const drainExecuting = ref(false)
+const drainMintAdding = ref(false)
+const drainMintError = ref('')
+const drainResult = ref<DrainResult | null>(null)
+const drainResultModal = ref(false)
 const upstreamList = ref<UpstreamSTA[]>([])
 const upstreamKnown = ref<KnownTollGate[]>([])
 const upstreamNetworks = ref<UpstreamNetwork[]>([])
@@ -719,8 +799,54 @@ function syncInstallDefaults(s: RouterStatus) {
     )
   }
   installMinSteps.value = s.tollgate.min_steps ?? 1
+  if (s.tollgate.accepted_mints?.length) {
+    installMints.value = s.tollgate.accepted_mints.map(mint => ({ ...mint }))
+    installShowTestMints.value = installMints.value.some(mint =>
+      TEST_MINT_URLS.includes(mint.url),
+    )
+  }
   installPayoutAddress.value = s.tollgate.payout_address ?? ''
   editPrivateSsid.value = s.tollgate.private_ssid || 'noderunner'
+}
+
+function addInstallMint() {
+  const url = installNewMint.value.trim()
+  if (!url) return
+  if (installMints.value.some(mint => mint.url === url)) {
+    installNewMint.value = ''
+    return
+  }
+  installMints.value.push({
+    url,
+    price_per_step: installPriceSats.value,
+    purchase_min_steps: installMinSteps.value,
+    price_unit: 'sat',
+  })
+  installNewMint.value = ''
+}
+
+function removeInstallMint(index: number) {
+  if (installMints.value.length <= 1) return
+  installMints.value.splice(index, 1)
+}
+
+function syncInstallTestMints() {
+  if (installShowTestMints.value) {
+    for (const url of TEST_MINT_URLS) {
+      if (!installMints.value.some(mint => mint.url === url)) {
+        installMints.value.push({
+          url,
+          price_per_step: installPriceSats.value,
+          purchase_min_steps: installMinSteps.value,
+          price_unit: 'sat',
+        })
+      }
+    }
+  } else {
+    installMints.value = installMints.value.filter(
+      mint => !TEST_MINT_URLS.includes(mint.url),
+    )
+  }
 }
 
 async function connect() {
@@ -958,6 +1084,91 @@ async function loadWallet() {
   }
 }
 
+async function previewDrain() {
+  drainPreviewLoading.value = true
+  drainPreviewError.value = ''
+  try {
+    drainPreview.value = await rpcClient.call<DrainPreview>({
+      method: 'openwrt.wallet-drain-preview',
+      timeout: 60000,
+    })
+    drainModal.value = true
+  } catch (e) {
+    drainPreviewError.value = e instanceof Error ? e.message : String(e)
+  } finally {
+    drainPreviewLoading.value = false
+  }
+}
+
+async function addMissingMints() {
+  const preview = drainPreview.value
+  if (!preview?.node) return
+  const missing = (preview.not_accepted ?? []).map(mint => mint.url)
+  if (missing.length === 0) return
+  if (
+    !window.confirm(
+      `Add ${missing.length} mint${missing.length === 1 ? '' : 's'} to the Archy wallet's accepted list?\n\n${missing.join(
+        '\n',
+      )}\n\nThis changes which Cashu tokens the node will accept.`,
+    )
+  ) {
+    return
+  }
+  drainMintAdding.value = true
+  drainMintError.value = ''
+  try {
+    const union = Array.from(
+      new Set([...(preview.node.accepted_mints ?? []), ...missing]),
+    )
+    await rpcClient.call({
+      method: 'streaming.configure-mints',
+      params: { mints: union },
+      timeout: 30000,
+    })
+    await previewDrain()
+  } catch (e) {
+    drainMintError.value = e instanceof Error ? e.message : String(e)
+  } finally {
+    drainMintAdding.value = false
+  }
+}
+
+async function confirmDrain() {
+  if (
+    !window.confirm(
+      'Drain ALL router wallet funds to this Archy wallet?\n\nThis removes the funds from the router and is irreversible. Tokens the node cannot accept remain in the router drain journal.',
+    )
+  ) {
+    return
+  }
+  drainExecuting.value = true
+  drainPreviewError.value = ''
+  try {
+    const result = await rpcClient.call<DrainResult>({
+      method: 'openwrt.wallet-drain-to-node',
+      params: { confirm: true },
+      timeout: 300000,
+    })
+    drainResult.value = result
+    drainModal.value = false
+    drainResultModal.value = true
+    await loadWallet()
+    await load()
+  } catch (e) {
+    drainPreviewError.value = e instanceof Error ? e.message : String(e)
+  } finally {
+    drainExecuting.value = false
+  }
+}
+
+async function copyText(value: string) {
+  try {
+    await navigator.clipboard.writeText(value)
+  } catch {
+    // Clipboard permissions are optional; the text is still selectable.
+  }
+}
+
 async function loadUpstreams() {
   upstreamLoading.value = true
   upstreamError.value = ''
@@ -1161,6 +1372,23 @@ async function pruneUnreachableMints() {
   }
 }
 
+async function repairPortal() {
+  repairingPortal.value = true
+  portalError.value = ''
+  try {
+    await rpcClient.call({
+      method: 'openwrt.repair-portal',
+      params: authParams(),
+      timeout: 120000,
+    })
+    await load()
+  } catch (e) {
+    portalError.value = e instanceof Error ? e.message : String(e)
+  } finally {
+    repairingPortal.value = false
+  }
+}
+
 async function applyNetworkNames() {
   if (
     !window.confirm(
@@ -1215,9 +1443,14 @@ async function connectKnownGroup(group: KnownTollGateGroup) {
 async function provisionTollgate() {
   provisionError.value = ''
   provisionSuccess.value = false
+  provisionSkippedMints.value = []
   if (!installPayoutAddress.value.trim()) {
     provisionError.value =
       'A Lightning payout address is required by the official installer (where TollGate sends your share).'
+    return
+  }
+  if (installMints.value.length === 0) {
+    provisionError.value = 'At least one accepted mint is required.'
     return
   }
   const stepSize =
@@ -1230,6 +1463,12 @@ async function provisionTollgate() {
     step_size_ms: stepSize,
     metric: installMetric.value,
     min_steps: installMinSteps.value,
+    accepted_mints: installMints.value.map(mint => ({
+      url: mint.url.trim(),
+      price_per_step: Math.max(1, installPriceSats.value),
+      price_unit: 'sat',
+      purchase_min_steps: Math.max(1, installMinSteps.value),
+    })),
     payout_address: installPayoutAddress.value.trim(),
     private_ssid: editPrivateSsid.value || 'noderunner',
   }
@@ -1269,6 +1508,7 @@ async function doProvision(params: Record<string, unknown>) {
     ok?: boolean
     host_key_untrusted?: boolean
     ssh_fingerprint?: string
+    skipped_mints?: string[]
   }>({
     method: 'openwrt.provision-tollgate',
     params,
@@ -1280,6 +1520,7 @@ async function doProvision(params: Record<string, unknown>) {
     trustRequired.value = true
     return
   }
+  provisionSkippedMints.value = result?.skipped_mints ?? []
   provisionSuccess.value = true
   await load(connectedParams.value ?? undefined)
   await loadInstallerStatus()
@@ -2286,6 +2527,46 @@ onMounted(() => {
                 class="w-full px-3 py-2 bg-transparent border border-white/20 rounded-lg text-white focus:outline-none focus:border-white/40" />
             </label>
           </div>
+          <div class="mb-3 rounded-lg border border-white/10 bg-white/[0.02] p-3">
+            <div class="flex items-center justify-between mb-2">
+              <span class="block text-xs text-white/40">Accepted mints</span>
+              <label class="flex items-center gap-1 text-[11px] text-white/40">
+                <input
+                  v-model="installShowTestMints"
+                  type="checkbox"
+                  @change="syncInstallTestMints"
+                />
+                Include test mints
+              </label>
+            </div>
+            <div
+              v-for="(mint, index) in installMints"
+              :key="mint.url"
+              class="flex items-center justify-between gap-2 py-0.5 text-xs"
+            >
+              <span class="font-mono break-all text-white/70">{{ mint.url }}</span>
+              <button
+                class="text-red-300/80 hover:text-red-200 whitespace-nowrap"
+                :disabled="installMints.length <= 1"
+                @click="removeInstallMint(index)"
+              >
+                Remove
+              </button>
+            </div>
+            <div class="flex gap-2 mt-2">
+              <input
+                v-model="installNewMint"
+                type="text"
+                placeholder="https://mint.example"
+                class="flex-1 px-3 py-2 bg-transparent border border-white/20 rounded-lg text-white placeholder-white/30 text-xs focus:outline-none focus:border-white/40"
+                @keydown.enter.prevent="addInstallMint"
+              />
+              <button class="glass-button px-3 py-2 text-xs" @click="addInstallMint">Add</button>
+            </div>
+            <p class="mt-1 text-[11px] text-white/30">
+              Unreachable mints are skipped before the daemon starts; the five defaults are the production set.
+            </p>
+          </div>
           <label class="block mb-3">
             <span class="block text-xs text-white/40 mb-1">Payout Lightning address (required)</span>
             <input v-model="installPayoutAddress" type="text" placeholder="you@wallet.example"
@@ -2310,6 +2591,10 @@ onMounted(() => {
           </button>
           <p v-if="provisionError" class="mt-3 text-xs text-red-400">{{ provisionError }}</p>
           <p v-if="provisionSuccess && !provisioning" class="mt-3 text-xs text-green-400">TollGate provisioned successfully.</p>
+          <p v-if="provisionSkippedMints.length" class="mt-2 text-xs text-yellow-300">
+            Skipped unreachable mints:
+            <span class="font-mono">{{ provisionSkippedMints.join(', ') }}</span>
+          </p>
         </div>
 
         <template v-else-if="!editingTollgate">
@@ -2342,6 +2627,22 @@ onMounted(() => {
             </div>
           </div>
           <p v-if="networkNamesError" class="mb-3 text-xs text-red-400">{{ networkNamesError }}</p>
+          <div
+            v-if="status.tollgate.nodogsplash_ok === false"
+            class="mb-3 rounded-lg border border-red-400/20 bg-red-400/5 p-3 text-xs text-red-300"
+          >
+            The paid-network portal is not gating <span class="font-mono">br-tollgate</span>
+            (current: <span class="font-mono">{{ status.tollgate.nodogsplash_gateway || 'none' }}</span>).
+            <button
+              class="ml-2 text-white/60 hover:text-white underline"
+              :disabled="repairingPortal"
+              data-testid="repair-portal"
+              @click="repairPortal"
+            >
+              {{ repairingPortal ? 'Repairing…' : 'Repair paid-network gating' }}
+            </button>
+            <p v-if="portalError" class="mt-1 text-red-300">{{ portalError }}</p>
+          </div>
 
           <div class="text-sm text-white/70" data-testid="mint-summary">
             Advertising {{ advertisedMintCount }} of {{ mintRows.length }} mints
@@ -2467,6 +2768,9 @@ onMounted(() => {
               <div v-if="walletDegraded" class="text-xs text-yellow-300 mb-2">
                 Wallet degraded: {{ walletDegradedReason }}
               </div>
+              <div v-else-if="walletInfo?.ok" class="text-xs text-green-300 mb-1">
+                Wallet ready
+              </div>
               <div class="text-sm text-white/70">
                 {{ walletTotal }} sats · {{ walletMintCount }} mint{{ walletMintCount === 1 ? '' : 's' }}
               </div>
@@ -2478,6 +2782,25 @@ onMounted(() => {
               <div v-if="walletMints.length === 0" class="text-xs text-white/40 mt-1">
                 No payments received yet.
               </div>
+              <div v-if="missingMintRows.length" class="text-xs text-yellow-300/80 mt-1">
+                Some configured mints are not advertised. Their proofs are preserved; check
+                mint health above.
+              </div>
+              <div class="mt-3 flex flex-wrap items-center gap-3">
+                <button
+                  class="glass-button glass-button-warning text-xs px-3 py-1.5"
+                  :disabled="drainPreviewLoading || !walletInfo?.ok || walletTotal === 0"
+                  :class="drainPreviewLoading || !walletInfo?.ok || walletTotal === 0 ? 'opacity-40 cursor-not-allowed' : ''"
+                  data-testid="wallet-drain"
+                  @click="previewDrain"
+                >
+                  {{ drainPreviewLoading ? 'Loading preview…' : 'Drain to Archy wallet' }}
+                </button>
+                <span class="text-[11px] text-white/30">
+                  Moves router Cashu balances into this node's wallet.
+                </span>
+              </div>
+              <p v-if="drainPreviewError" class="mt-2 text-xs text-red-400">{{ drainPreviewError }}</p>
             </div>
 
             <!-- Upstream gateways -->
@@ -2839,6 +3162,143 @@ onMounted(() => {
       </div>
 
     </template>
+
+    <!-- Router wallet drain preview -->
+    <div
+      v-if="drainModal && drainPreview"
+      class="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4"
+    >
+      <div
+        class="glass-card max-w-lg w-full p-6 max-h-[90vh] overflow-y-auto"
+        data-testid="drain-preview"
+      >
+        <h3 class="text-sm font-semibold text-white/90 mb-2">Drain router wallet</h3>
+        <div v-if="drainPreview.error" class="text-xs text-red-400 mb-2">
+          {{ drainPreview.error }}
+        </div>
+        <p class="text-xs text-white/60">
+          Router balance:
+          <span class="font-mono">{{ drainPreview.router?.total_balance ?? 0 }} sats</span>
+        </p>
+        <p class="text-xs text-white/60 mt-1">
+          Archy wallet:
+          <span class="font-mono">{{ drainPreview.node?.network }}</span>,
+          <span class="font-mono">{{ drainPreview.node?.balance_sats ?? 0 }} sats</span>,
+          accepts {{ drainPreview.node?.accepted_mints?.length ?? 0 }} mint(s).
+        </p>
+
+        <div v-if="(drainPreview.not_accepted?.length ?? 0) > 0" class="mt-3">
+          <div class="text-xs text-yellow-300">Not accepted by the Archy wallet:</div>
+          <ul class="mt-1 text-[11px] font-mono text-white/50 break-all space-y-0.5">
+            <li v-for="mint in drainPreview.not_accepted" :key="mint.url">
+              {{ mint.url }} · {{ mint.amount }} sats
+            </li>
+          </ul>
+          <button
+            class="glass-button glass-button-warning text-xs px-3 py-1.5 mt-2"
+            :disabled="drainMintAdding"
+            data-testid="drain-add-mints"
+            @click="addMissingMints"
+          >
+            {{ drainMintAdding ? 'Adding…' : 'Add missing mints to Archy wallet' }}
+          </button>
+          <p v-if="drainMintError" class="mt-1 text-xs text-red-400">{{ drainMintError }}</p>
+        </div>
+
+        <div v-if="(drainPreview.wrong_network?.length ?? 0) > 0" class="mt-3 text-xs text-yellow-300">
+          These mints are on the other ecash network and will be skipped:
+          <span class="font-mono">
+            {{ drainPreview.wrong_network?.map(mint => mint.url).join(', ') }}
+          </span>
+        </div>
+
+        <div v-if="(drainPreview.receivable?.length ?? 0) > 0" class="mt-3">
+          <div class="text-xs text-green-300">Receivable now:</div>
+          <ul class="mt-1 text-[11px] font-mono text-white/50 break-all space-y-0.5">
+            <li v-for="mint in drainPreview.receivable" :key="mint.url">
+              {{ mint.url }} · {{ mint.amount }} sats
+            </li>
+          </ul>
+        </div>
+
+        <p class="mt-3 text-[11px] text-yellow-300/80">
+          Draining removes the funds from the router and is irreversible. Any token the node
+          cannot accept is still shown here and remains in the router drain journal.
+        </p>
+        <div class="mt-4 flex items-center gap-3">
+          <button
+            class="glass-button glass-button-warning text-sm font-medium"
+            :disabled="drainExecuting || (drainPreview.receivable?.length ?? 0) === 0"
+            :class="drainExecuting || (drainPreview.receivable?.length ?? 0) === 0 ? 'opacity-40 cursor-not-allowed' : ''"
+            data-testid="drain-confirm"
+            @click="confirmDrain"
+          >
+            {{ drainExecuting ? 'Draining…' : `Drain ${drainPreview.router?.total_balance ?? 0} sats` }}
+          </button>
+          <button class="text-xs text-white/40 hover:text-white" @click="drainModal = false">
+            Cancel
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Router wallet drain result -->
+    <div
+      v-if="drainResultModal && drainResult"
+      class="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4"
+    >
+      <div
+        class="glass-card max-w-lg w-full p-6 max-h-[90vh] overflow-y-auto"
+        data-testid="drain-result"
+      >
+        <h3 class="text-sm font-semibold text-white/90 mb-2">Drain result</h3>
+        <p v-if="drainResult.error" class="text-xs text-red-400">{{ drainResult.error }}</p>
+        <p class="text-sm text-white/70">
+          Received
+          <span class="font-mono text-green-300">{{ drainResult.total_received ?? 0 }} sats</span>
+          into the Archy wallet.
+        </p>
+        <ul class="mt-2 text-xs font-mono text-white/50 break-all space-y-0.5">
+          <li v-for="mint in drainResult.received" :key="mint.mint">
+            {{ mint.mint }} · {{ mint.amount }} sats
+          </li>
+        </ul>
+        <div v-if="(drainResult.failed?.length ?? 0) > 0" class="mt-3">
+          <div class="text-xs text-red-300">Not imported:</div>
+          <div
+            v-for="failed in drainResult.failed"
+            :key="failed.mint"
+            class="mt-2 text-xs text-red-300"
+          >
+            <div>{{ failed.mint }} · {{ failed.amount }} sats — {{ failed.error }}</div>
+            <textarea
+              v-if="failed.token"
+              readonly
+              :value="failed.token"
+              rows="3"
+              class="mt-1 w-full px-2 py-1 bg-black/30 border border-white/10 rounded text-[10px] font-mono text-white/50"
+              data-testid="drain-failed-token"
+            ></textarea>
+            <button
+              v-if="failed.token"
+              class="mt-1 text-[11px] text-white/50 hover:text-white underline"
+              @click="copyText(failed.token || '')"
+            >
+              Copy token
+            </button>
+          </div>
+          <p class="mt-2 text-[11px] text-yellow-300/80">
+            These tokens are bearer funds. They remain in the router drain journal; save the
+            token before closing.
+          </p>
+        </div>
+        <div class="mt-4 flex items-center gap-3">
+          <button class="glass-button text-sm font-medium" @click="drainResultModal = false">
+            Close
+          </button>
+        </div>
+      </div>
+    </div>
 
     <!-- Host-key trust (the official installer refuses an unknown key). -->
     <div v-if="trustRequired" class="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4">
