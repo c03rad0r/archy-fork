@@ -418,6 +418,17 @@ const walletDegraded = computed(() => {
   return (t.configured_mints ?? 0) > 0 && (t.advertised_mints?.length ?? 0) === 0
 })
 
+const walletDegradedReason = computed(() => {
+  if (walletInfo.value?.degraded) {
+    return walletInfo.value.error || 'the wallet did not return a usable balance'
+  }
+  const t = status.value?.tollgate
+  if (t && (t.configured_mints ?? 0) > 0 && (t.advertised_mints?.length ?? 0) === 0) {
+    return 'the daemon is not advertising any configured mint'
+  }
+  return 'unknown'
+})
+
 const walletMints = computed(() =>
   Object.entries(walletInfo.value?.wallet?.mint_balances ?? {}),
 )
@@ -2201,7 +2212,7 @@ onMounted(() => {
                     {{ mintHealthLoading ? 'Checking…' : 'Check mint health' }}
                   </button>
                   <button
-                    v-if="missingMintRows.length"
+                    v-if="missingMintRows.length && missingMintRows.length < mintRows.length"
                     class="text-xs text-red-300/80 hover:text-red-200"
                     :disabled="mintHealthLoading"
                     @click="pruneMissingMints"
@@ -2260,7 +2271,7 @@ onMounted(() => {
               </div>
               <div v-if="walletError" class="text-xs text-red-400">{{ walletError }}</div>
               <div v-if="walletDegraded" class="text-xs text-yellow-300 mb-2">
-                Wallet degraded: {{ walletInfo?.error || 'configured mints are not being advertised' }}
+                Wallet degraded: {{ walletDegradedReason }}
               </div>
               <div class="text-sm text-white/70">
                 {{ walletTotal }} sats · {{ walletMintCount }} mint{{ walletMintCount === 1 ? '' : 's' }}
