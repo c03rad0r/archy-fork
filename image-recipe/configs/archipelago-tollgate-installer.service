@@ -1,0 +1,28 @@
+[Unit]
+Description=Archy TollGate installer (headless API, loopback only)
+Documentation=https://github.com/OpenTollGate/tollgate-installer
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=archipelago
+Group=archipelago
+# The installer keeps SSH known-hosts and the generated root credential here.
+Environment=HOME=/var/lib/archy/tollgate-installer
+Environment=TOLLGATE_CREDENTIAL_FILE=/var/lib/archy/tollgate-installer/root-credentials
+# File/env-driven Archy profile; ignored by installers that do not know them.
+Environment=TOLLGATE_BRAND=archipelago
+Environment=TOLLGATE_PRIVATE_NYM=noderunner-private
+Environment=TOLLGATE_SSID_PREFIXES_FILE=/etc/tollgate/ssid-prefixes
+ExecStart=/usr/local/bin/tollgate-installer --bind 127.0.0.1 --port 8099
+Restart=on-failure
+RestartSec=2
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ReadWritePaths=/var/lib/archy/tollgate-installer
+StateDirectory=archy/tollgate-installer
+
+[Install]
+WantedBy=multi-user.target

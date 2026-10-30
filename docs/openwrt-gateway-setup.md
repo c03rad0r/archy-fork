@@ -50,6 +50,8 @@ Archy delegates install/flash/trust/rollback to the official
   Archy starts it on first use if it is not already running.
 - The default binary path is `/usr/local/bin/tollgate-installer`; override it
   with `ARCHY_TOLLGATE_INSTALLER_BIN`.
+- The image recipe ships `archipelago-tollgate-installer.service`. If the
+  service is not running, Archy starts the binary on first use.
 - The first deploy shows the router’s SSH host-key fingerprint. Verify it on
   the router’s own console, then approve; the installer refuses to send the
   root password to an unverified key.
