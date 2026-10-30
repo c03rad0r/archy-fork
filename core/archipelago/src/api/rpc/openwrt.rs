@@ -861,7 +861,7 @@ impl RpcHandler {
                             };
                             (ok, error)
                         }
-                        Err(err) => (false, err.to_string()),
+                        Err(err) => (false, format!("{err:#}")),
                     }
                 };
                 mints.push(serde_json::json!({
