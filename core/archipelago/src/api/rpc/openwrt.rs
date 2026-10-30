@@ -618,20 +618,25 @@ impl RpcHandler {
         &self,
         params: Option<serde_json::Value>,
     ) -> Result<serde_json::Value> {
+        let saved = net_router::load_router_config(&self.config.data_dir).await?;
         let p = params.unwrap_or_default();
         let ip = p
             .get("ip")
             .or_else(|| p.get("host"))
             .and_then(|v| v.as_str())
+            .map(str::to_string)
+            .or_else(|| saved.configured.then(|| saved.address.clone()))
             .ok_or_else(|| anyhow::anyhow!("ip is required"))?;
         let password = p
             .get("password")
             .or_else(|| p.get("ssh_password"))
             .and_then(|v| v.as_str())
-            .unwrap_or("");
+            .map(str::to_string)
+            .or_else(|| saved.password.clone())
+            .unwrap_or_default();
         let client = InstallerClient::new(&self.config.data_dir);
         client.ensure_running().await?;
-        client.identify(ip, password).await
+        client.identify(&ip, &password).await
     }
 
     /// Trust the router's SSH host key after the operator verified the
@@ -640,11 +645,14 @@ impl RpcHandler {
         &self,
         params: Option<serde_json::Value>,
     ) -> Result<serde_json::Value> {
+        let saved = net_router::load_router_config(&self.config.data_dir).await?;
         let p = params.unwrap_or_default();
         let ip = p
             .get("ip")
             .or_else(|| p.get("host"))
             .and_then(|v| v.as_str())
+            .map(str::to_string)
+            .or_else(|| saved.configured.then(|| saved.address.clone()))
             .ok_or_else(|| anyhow::anyhow!("ip is required"))?;
         let fingerprint = p
             .get("fingerprint")
@@ -653,7 +661,7 @@ impl RpcHandler {
             .ok_or_else(|| anyhow::anyhow!("fingerprint is required"))?;
         let client = InstallerClient::new(&self.config.data_dir);
         client.ensure_running().await?;
-        client.trust(ip, fingerprint).await
+        client.trust(&ip, fingerprint).await
     }
 
     /// LAN discovery through the installer.
