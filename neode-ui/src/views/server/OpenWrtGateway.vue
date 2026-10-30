@@ -794,13 +794,6 @@ function formatUptime(secs: number): string {
   return parts.join(' ')
 }
 
-function formatStepSize(ms: number): string {
-  if (ms >= 3_600_000) return `${ms / 3_600_000}h`
-  if (ms >= 60_000)    return `${ms / 60_000}m`
-  if (ms >= 1_000)     return `${ms / 1_000}s`
-  return `${ms}ms`
-}
-
 // Human spellings for the summary. "m" alone is ambiguous (minute vs
 // millisecond), which is exactly how "1 sat / 1m" next to "Metric:
 // milliseconds" was read two ways.
