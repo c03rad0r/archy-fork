@@ -172,7 +172,11 @@ impl InstallerClient {
                 .and_then(|v| v.as_str())
                 .unwrap_or("running");
             match status {
-                "done" => return Ok(snapshot),
+                // `pending` is the installer's non-fatal terminal state: the
+                // package/portal installed, but the merchant wallet is still
+                // loading. Archy's post-config/restart follows, so treat it as
+                // success rather than timing out.
+                "done" | "pending" => return Ok(snapshot),
                 "failed" => {
                     let err = snapshot
                         .get("error")
