@@ -41,6 +41,28 @@ not flash or install OpenWrt; you bring a router that already runs it.
    `http://<node-ip>:3338` and TollGate customers must be able to reach that
    URL from outside the node's loopback.
 
+### Provisioning engine
+
+Archy delegates install/flash/trust/rollback to the official
+[`tollgate-installer`](https://github.com/OpenTollGate/tollgate-installer):
+
+- It runs as a **node service** on `127.0.0.1:8099` with host networking.
+  Archy starts it on first use if it is not already running.
+- The default binary path is `/usr/local/bin/tollgate-installer`; override it
+  with `ARCHY_TOLLGATE_INSTALLER_BIN`.
+- The first deploy shows the router’s SSH host-key fingerprint. Verify it on
+  the router’s own console, then approve; the installer refuses to send the
+  root password to an unverified key.
+- Discovery works because the node is on the router’s LAN. If the router is on
+  another subnet, type its IP in the Connect form instead.
+- **No container is required.** A container is optional packaging only; it
+  must use host networking and a state volume to be equivalent.
+
+Archy still owns the product configuration afterwards: the `archipelago` SSID,
+the private management network, mints/price, payout identity, NoDogSplash, and
+the `br-tollgate` firewall reachability. See
+[`architecture/one-provisioning-engine.md`](architecture/one-provisioning-engine.md).
+
 ## Worked example: flashing a GL.iNet AX3000 to stock OpenWrt
 
 GL.iNet's "AX3000" travel router is the **Beryl AX (GL-MT3000)** —
@@ -143,30 +165,22 @@ IP, and whether the router currently has internet reachability.
 ## Step 4: (Optional) Install TollGate
 
 Once connected (and with a local Cashu mint app running), the dashboard
-shows a **TollGate: not installed** panel with a single **Install TollGate**
-button — there's no config form at this stage, it installs with defaults.
-The panel itself warns: *"Router needs internet access to install TollGate
-— configure WAN above first"* (Step 3), since the router has to reach the
-internet to download the package.
+shows a **TollGate: not installed** panel with the install form (price, step,
+minimum steps, and the payout Lightning address). The panel warns:
+*"Router needs internet access to install TollGate — configure WAN above
+first"* (Step 3), since the router has to reach the internet.
 
 1. Click **Install TollGate**. The button relabels to *"Installing… this
-   may take a few minutes"* while it works.
-2. Under the hood this installs `tollgate-wrt` on the router
-   (via `opkg install` of the pinned `.ipk` on OpenWrt ≤24.x, or `apk add` of
-   the pinned `.apk` on 25.x images — in both cases the exact release asset,
-   downloaded and checked against the release `SHA256SUMS` first), then reads
-   the installed version back and fails the install if it is not the pinned
-   version. It also writes `/etc/tollgate/config.json` and
-   creates the `archipelago` SSID — all with default pricing (10 sats per
-   1-minute step, minimum 1 step, `mint_url` auto-filled to
-   `http://<node-ip>:3338`, enabled).
-3. The install fails loudly rather than reporting success if the version on
-   the router is not the pinned one — on a router that still carries an older
-   build, check that the release carries an asset for this arch/target pair
-   instead of assuming the feed updated.
+   may take a few minutes"* while the official `tollgate-installer` runs.
+2. If the router’s SSH host key is not yet trusted, a fingerprint prompt
+   appears. Verify it on the router’s own console, then approve.
+3. The installer discovers/flashes/installs and verifies the package at the
+   release it selected. Archy then applies the product configuration:
+   `archipelago` SSID, private management network, mints/price, payout
+   identity, NoDogSplash, and the `br-tollgate` firewall reachability.
 4. On success you'll see *"TollGate provisioned successfully"* and the
    panel switches to the installed view (Enabled/Disabled badge, current
-   price/step/mint).
+   version/daemon health, price/step/mints).
 
 ### Configuring price, step size, or mint (after install)
 
