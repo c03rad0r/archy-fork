@@ -94,6 +94,62 @@ fn shell_quote(s: &str) -> String {
     format!("'{}'", s.replace('\'', "'\\''"))
 }
 
+/// How the node reaches a candidate: `(interface, "wifi"|"ethernet", subnet)`.
+/// Best-effort; unknown values are empty strings.
+async fn link_context(ip: &str) -> (String, String, String) {
+    let route = tokio::process::Command::new("ip")
+        .args(["route", "get", ip])
+        .output()
+        .await;
+    let Ok(route) = route else {
+        return (String::new(), String::new(), String::new());
+    };
+    if !route.status.success() {
+        return (String::new(), String::new(), String::new());
+    }
+    let route_text = String::from_utf8_lossy(&route.stdout);
+    let iface = route_text
+        .split_whitespace()
+        .skip_while(|word| *word != "dev")
+        .nth(1)
+        .unwrap_or("")
+        .to_string();
+    if iface.is_empty() {
+        return (String::new(), String::new(), String::new());
+    }
+    let link = if std::path::Path::new(&format!("/sys/class/net/{iface}/wireless")).exists() {
+        "wifi"
+    } else {
+        "ethernet"
+    };
+    let addr = tokio::process::Command::new("ip")
+        .args(["-4", "-o", "addr", "show", "dev", &iface])
+        .output()
+        .await;
+    let subnet = addr
+        .ok()
+        .filter(|out| out.status.success())
+        .and_then(|out| {
+            let text = String::from_utf8_lossy(&out.stdout).to_string();
+            let cidr = text
+                .split_whitespace()
+                .skip_while(|word| *word != "inet")
+                .nth(1)?
+                .to_string();
+            let (ip, prefix) = cidr.split_once('/')?;
+            let octets: Vec<&str> = ip.split('.').collect();
+            if octets.len() != 4 {
+                return None;
+            }
+            Some(format!(
+                "{}.{}.{}.0/{}",
+                octets[0], octets[1], octets[2], prefix
+            ))
+        })
+        .unwrap_or_default();
+    (iface, link.to_string(), subnet)
+}
+
 #[derive(Debug, Clone, Default)]
 struct DaemonStatus {
     running: bool,
@@ -655,8 +711,11 @@ impl RpcHandler {
     }
 
     pub(super) async fn handle_openwrt_upstream_list(&self) -> Result<serde_json::Value> {
+        // The user-facing CLI subcommand is `list`; its server-side action is
+        // `list-upstream`. Calling the server action through the CLI is a
+        // usage error, so use the command the router actually exposes.
         Ok(serde_json::json!({
-            "upstreams": self.tollgate_json("upstream list-upstream").await?,
+            "upstreams": self.tollgate_json("upstream list").await?,
         }))
     }
 
@@ -725,9 +784,16 @@ impl RpcHandler {
             .cloned()
             .unwrap_or_default();
         for router in &mut routers {
-            let ip = router.get("ip").and_then(|v| v.as_str()).unwrap_or("");
-            let mac = router.get("mac").and_then(|v| v.as_str());
-            let remembered = net_router::find_known_router(&known, ip, mac);
+            let ip = router
+                .get("ip")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
+            let mac = router
+                .get("mac")
+                .and_then(|v| v.as_str())
+                .map(str::to_string);
+            let remembered = net_router::find_known_router(&known, &ip, mac.as_deref());
             let active_has_password = saved.configured
                 && ip == saved.address
                 && saved
@@ -738,6 +804,10 @@ impl RpcHandler {
             router["active"] = serde_json::json!(saved.configured && ip == saved.address);
             router["has_saved_credentials"] =
                 serde_json::json!(remembered.is_some() || active_has_password);
+            let (interface, link_type, subnet) = link_context(&ip).await;
+            router["interface"] = serde_json::json!(interface);
+            router["link_type"] = serde_json::json!(link_type);
+            router["subnet"] = serde_json::json!(subnet);
             if let Some(remembered) = remembered {
                 if !remembered.hostname.is_empty() {
                     router["saved_hostname"] = serde_json::json!(remembered.hostname);

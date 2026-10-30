@@ -716,7 +716,14 @@ async function loadUpstreams() {
       }),
     ])
     upstreamList.value = list.upstreams ?? []
-    upstreamKnown.value = known.known?.known_tollgates ?? []
+    const allKnown = known.known?.known_tollgates ?? []
+    // The discovery registry carries regular APs too; only show names that
+    // look like TollGates or carry a price hint.
+    upstreamKnown.value = allKnown.filter(
+      k =>
+        (k.price_per_step ?? 0) > 0 ||
+        /^!?(TollGate|Archipelago|Net4sats)-/i.test(k.ssid || ''),
+    )
   } catch (e) {
     upstreamError.value = e instanceof Error ? e.message : String(e)
   } finally {
