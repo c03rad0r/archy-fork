@@ -64,6 +64,14 @@ interface TollGateStatus {
   advertised_mints?: { url: string; price: number; unit: string; min_steps: number }[]
   configured_mints?: number
   accepted_mints?: MintConfig[]
+  installer_feed_tag?: string
+}
+
+interface InstallerStatus {
+  available: boolean
+  installer_version?: string
+  feed_release_tag?: string
+  error?: string
 }
 
 interface WanStatus {
@@ -188,6 +196,13 @@ const provisionSuccess = ref(false)
 const installPriceSats = ref(10)
 const installStepSizeMin = ref(1)
 const installMinSteps = ref(1)
+const installPayoutAddress = ref('')
+
+const installerStatus = ref<InstallerStatus | null>(null)
+const trustRequired = ref(false)
+const trustPending = ref(false)
+const trustFingerprint = ref('')
+const pendingProvision = ref<Record<string, unknown> | null>(null)
 
 // TollGate reconfigure form (shown once installed)
 const editingTollgate = ref(false)
@@ -397,26 +412,113 @@ function disconnectRouter() {
   showConnectForm.value = true
 }
 
+async function loadInstallerStatus() {
+  try {
+    installerStatus.value = await rpcClient.call<InstallerStatus>({
+      method: 'openwrt.installer.status',
+      timeout: 15000,
+    })
+  } catch {
+    installerStatus.value = { available: false, error: 'installer status unavailable' }
+  }
+}
+
 async function provisionTollgate() {
-  provisioning.value = true
   provisionError.value = ''
   provisionSuccess.value = false
+  if (!installPayoutAddress.value.trim()) {
+    provisionError.value =
+      'A Lightning payout address is required by the official installer (where TollGate sends your share).'
+    return
+  }
+  const params: Record<string, unknown> = {
+    ...authParams(),
+    price_sats: installPriceSats.value,
+    step_size_ms: installStepSizeMin.value * 60_000,
+    min_steps: installMinSteps.value,
+    payout_address: installPayoutAddress.value.trim(),
+    private_ssid: editPrivateSsid.value || 'noderunner-private',
+  }
+
+  provisioning.value = true
   try {
-    const params: Record<string, unknown> = {
-      ...authParams(),
-      price_sats: installPriceSats.value,
-      step_size_ms: installStepSizeMin.value * 60_000,
-      min_steps: installMinSteps.value,
-      private_ssid: editPrivateSsid.value || 'noderunner-private',
+    // The installer owns host-key trust. Ask it to identify the router first;
+    // an untrusted key comes back as `ssh_fingerprint` and the operator must
+    // confirm it on the router's console before we retry.
+    const ip = host.value.trim() || status.value?.host || ''
+    const pw = sshPassword.value || String(authParams().ssh_password ?? '')
+    if (ip) {
+      const identity = await rpcClient
+        .call<{ ssh_fingerprint?: string }>({
+          method: 'openwrt.installer.identify',
+          params: { ip, password: pw },
+          timeout: 30000,
+        })
+        .catch(() => null)
+      if (identity?.ssh_fingerprint) {
+        trustFingerprint.value = identity.ssh_fingerprint
+        pendingProvision.value = params
+        trustRequired.value = true
+        return
+      }
     }
-    await rpcClient.call({ method: 'openwrt.provision-tollgate', params, timeout: 300000 })
-    provisionSuccess.value = true
-    await load(connectedParams.value ?? undefined)
+    await doProvision(params)
   } catch (e) {
     provisionError.value = e instanceof Error ? e.message : String(e)
   } finally {
+    if (!trustRequired.value) provisioning.value = false
+  }
+}
+
+async function doProvision(params: Record<string, unknown>) {
+  const result = await rpcClient.call<{
+    ok?: boolean
+    host_key_untrusted?: boolean
+    ssh_fingerprint?: string
+  }>({
+    method: 'openwrt.provision-tollgate',
+    params,
+    timeout: 900000,
+  })
+  if (result?.host_key_untrusted && result.ssh_fingerprint) {
+    trustFingerprint.value = result.ssh_fingerprint
+    pendingProvision.value = params
+    trustRequired.value = true
+    return
+  }
+  provisionSuccess.value = true
+  await load(connectedParams.value ?? undefined)
+  await loadInstallerStatus()
+}
+
+async function trustAndInstall() {
+  const params = pendingProvision.value
+  if (!params) return
+  trustPending.value = true
+  provisionError.value = ''
+  try {
+    const ip = host.value.trim() || status.value?.host || ''
+    await rpcClient.call({
+      method: 'openwrt.installer.trust',
+      params: { ip, fingerprint: trustFingerprint.value },
+      timeout: 30000,
+    })
+    trustRequired.value = false
+    await doProvision({ ...params, trust_fingerprint: trustFingerprint.value })
+    pendingProvision.value = null
+  } catch (e) {
+    provisionError.value = e instanceof Error ? e.message : String(e)
+  } finally {
+    trustPending.value = false
     provisioning.value = false
   }
+}
+
+function cancelTrust() {
+  trustRequired.value = false
+  pendingProvision.value = null
+  trustFingerprint.value = ''
+  provisioning.value = false
 }
 
 function startEditTollgate() {
@@ -741,6 +843,7 @@ const boardName = computed(() => {
 // remount, still reconcile the connect-form/error UI state from the cached
 // entry (mirrors what a completed load() call would have set).
 onMounted(() => {
+  void loadInstallerStatus()
   if (routerResource.data.value === null || routerResource.isStale.value) {
     void load()
     return
@@ -1168,6 +1271,20 @@ onMounted(() => {
       <div class="glass-card p-6 mb-4">
         <h2 class="text-sm font-semibold text-white/80 mb-4">TollGate</h2>
 
+        <div class="mb-3 text-xs">
+          <span class="text-white/40">Engine: </span>
+          <span v-if="installerStatus?.available" class="text-green-300">
+            official {{ installerStatus.installer_version }}
+            <span v-if="installerStatus.feed_release_tag" class="text-white/40">
+              · {{ installerStatus.feed_release_tag }}
+            </span>
+          </span>
+          <span v-else class="text-yellow-300">
+            tollgate-installer unavailable
+            <span v-if="installerStatus?.error" class="text-white/40"> — {{ installerStatus.error }}</span>
+          </span>
+        </div>
+
         <div v-if="!status.tollgate.installed">
           <div class="flex items-center gap-3 mb-4">
             <span class="w-2 h-2 rounded-full bg-white/20 inline-block"></span>
@@ -1193,6 +1310,14 @@ onMounted(() => {
                 class="w-full px-3 py-2 bg-transparent border border-white/20 rounded-lg text-white focus:outline-none focus:border-white/40" />
             </label>
           </div>
+          <label class="block mb-3">
+            <span class="block text-xs text-white/40 mb-1">Payout Lightning address (required)</span>
+            <input v-model="installPayoutAddress" type="text" placeholder="you@wallet.example"
+              class="w-full px-3 py-2 bg-transparent border border-white/20 rounded-lg text-white placeholder-white/30 focus:outline-none focus:border-white/40" />
+            <span class="block text-[11px] text-white/30 mt-1">
+              Where TollGate sends the operator share. The official installer requires it.
+            </span>
+          </label>
           <button
             :disabled="provisioning"
             class="glass-button glass-button-success w-full text-sm font-medium"
@@ -1473,6 +1598,30 @@ onMounted(() => {
       </div>
 
     </template>
+
+    <!-- Host-key trust (the official installer refuses an unknown key). -->
+    <div v-if="trustRequired" class="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4">
+      <div class="glass-card max-w-md w-full p-6">
+        <h3 class="text-sm font-semibold text-white/90 mb-2">Trust this router's SSH key</h3>
+        <p class="text-xs text-white/50 mb-3">
+          Verify this fingerprint on the router's own console before continuing.
+          The installer will not send the root password until the key is trusted.
+        </p>
+        <pre class="text-xs font-mono bg-black/30 rounded-lg p-3 text-green-300 break-all mb-4">{{ trustFingerprint }}</pre>
+        <div class="flex items-center gap-3">
+          <button
+            class="glass-button glass-button-success text-sm font-medium"
+            :disabled="trustPending"
+            :class="trustPending ? 'opacity-40 cursor-not-allowed' : ''"
+            @click="trustAndInstall"
+          >
+            {{ trustPending ? 'Trusting…' : 'Trust and install' }}
+          </button>
+          <button class="text-xs text-white/40 hover:text-white" @click="cancelTrust">Cancel</button>
+        </div>
+        <p v-if="provisionError" class="mt-3 text-xs text-red-400">{{ provisionError }}</p>
+      </div>
+    </div>
 
   </div>
 </template>
