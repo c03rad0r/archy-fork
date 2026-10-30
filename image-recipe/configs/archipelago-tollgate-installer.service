@@ -13,7 +13,7 @@ Environment=HOME=/var/lib/archipelago/tollgate-installer
 Environment=TOLLGATE_CREDENTIAL_FILE=/var/lib/archipelago/tollgate-installer/root-credentials
 # File/env-driven Archy profile; ignored by installers that do not know them.
 Environment=TOLLGATE_BRAND=archipelago
-Environment=TOLLGATE_PRIVATE_NYM=noderunner-private
+Environment=TOLLGATE_PRIVATE_NYM=noderunner
 Environment=TOLLGATE_SSID_PREFIXES_FILE=/etc/tollgate/ssid-prefixes
 ExecStart=/usr/local/bin/tollgate-installer --bind 127.0.0.1 --port 8099
 Restart=on-failure

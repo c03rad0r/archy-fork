@@ -92,7 +92,7 @@ pub async fn provision_after_install(router: &Router, config: &TollGateConfig) -
         .context("re-gate upstream tollgate-module-basic-go default AP(s)")?;
     // The upstream installer's rebranded factory AP is still a second open
     // SSID next to ours. Disable it; the product owns `archipelago` (public)
-    // and `noderunner-private` (management) only.
+    // and `noderunner-<code>` (management) only.
     wifi::disable_upstream_default_aps(router)
         .context("disable upstream TollGate-<serial> default AP(s)")?;
     // Rename the package's private management SSID and, when supplied, set
@@ -120,6 +120,39 @@ pub async fn provision_after_install(router: &Router, config: &TollGateConfig) -
     nodogsplash::restart(router)?;
 
     info!("[{}] TollGate provisioning complete", router.host);
+    Ok(())
+}
+
+/// Rename the product APs on an already-provisioned router without touching
+/// pricing, mints or unrelated daemon settings.
+///
+/// `provision_ssid` creates/updates the dedicated `wireless.tollgate` AP and
+/// `set_private_network` updates the management AP. `set_private_ssid` updates
+/// only `/etc/tollgate/config.json`'s `private_ssid`; unlike
+/// `apply_daemon_config` it does not rewrite metric, pricing or mints.
+pub fn rename_network(
+    router: &Router,
+    public_ssid: &str,
+    private_ssid: &str,
+    enabled: bool,
+) -> Result<()> {
+    let cfg = TollGateConfig {
+        ssid: public_ssid.to_string(),
+        private_ssid: private_ssid.to_string(),
+        enabled,
+        ..TollGateConfig::default()
+    };
+    wifi::provision_ssid(router, &cfg)?;
+    wifi::regate_upstream_default_aps(router)?;
+    wifi::disable_upstream_default_aps(router)?;
+    wifi::set_private_network(router, &cfg)?;
+    config::set_private_ssid(router, private_ssid)?;
+    restart_services(router, enabled)?;
+    nodogsplash::restart(router)?;
+    info!(
+        "[{}] renamed product SSIDs to {public_ssid} / {private_ssid}",
+        router.host
+    );
     Ok(())
 }
 
@@ -163,7 +196,7 @@ fn stop_tollgate_daemon(router: &Router) -> Result<()> {
 }
 
 /// Start the new binary after the network is up and prove it bound.
-fn restart_tollgate_daemon(router: &Router) -> Result<()> {
+pub fn restart_tollgate_daemon(router: &Router) -> Result<()> {
     stop_tollgate_daemon(router)?;
     router.run_ok("/etc/init.d/tollgate-wrt start")?;
 

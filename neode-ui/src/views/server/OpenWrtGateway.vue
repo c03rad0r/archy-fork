@@ -94,6 +94,7 @@ interface DiscoveredRouter {
   has_saved_credentials?: boolean
   saved_hostname?: string
   saved_model?: string
+  kind?: string
 }
 
 interface SelectRouterResult {
@@ -133,7 +134,34 @@ interface KnownTollGate {
   price_per_step?: number
   step_size?: number
   best_signal?: number
+  worst_signal?: number
+  sample_count?: number
+  first_seen?: string
   last_seen?: string
+}
+
+interface KnownTollGateGroup {
+  ssid: string
+  best: KnownTollGate
+  entries: KnownTollGate[]
+  confirmed: boolean
+  stale: boolean
+  bestSignal: number
+  lastSeen?: string
+  sampleCount: number
+}
+
+interface MintHealthEntry {
+  url: string
+  advertised: boolean
+  ok: boolean
+  error?: string
+}
+
+interface MintHealth {
+  configured: number
+  advertised: number
+  mints: MintHealthEntry[]
 }
 
 interface UpstreamNetwork {
@@ -202,8 +230,12 @@ const routerResource = useCachedResource<RouterStatus>({
     maxRetries: 1,
   }),
   ttlMs: 30_000,
-  persist: true, // router/network status (host/uptime/wifi/wan) — no identity/money payload
-  immediate: false, // initial fetch is gated explicitly in onMounted below
+  // The selected gateway is explicit. A cached status from a different
+  // router must never paint before the operator selects one, and a focus
+  // event must not silently reconnect to the last saved router.
+  persist: false,
+  revalidateOnFocus: false,
+  immediate: false,
 })
 const status = computed(() => routerResource.data.value)
 // 'refreshing' deliberately excluded (D-07, keep-last-value): a background
@@ -213,6 +245,7 @@ const status = computed(() => routerResource.data.value)
 // still briefly show the skeleton on every mount instead of painting
 // instantly.
 const loading = computed(() => {
+  if (!selectionConfirmed.value) return false
   const s = routerResource.loadState.value
   return routerResource.data.value === null && (s === 'loading' || s === 'idle')
 })
@@ -278,9 +311,13 @@ const discoveryError = ref('')
 const discoveryActive = ref('')
 const selectedRouterIp = ref('')
 const needsPassword = ref(false)
+const selectionConfirmed = ref(false)
 const selectedRouter = computed(() =>
   discovered.value.find(r => r.ip === selectedRouterIp.value) ?? null,
 )
+const trustRouterPending = ref(false)
+const trustRouterError = ref('')
+const trustRouterDone = ref(false)
 
 const walletInfo = ref<WalletInfo | null>(null)
 const walletLoading = ref(false)
@@ -291,6 +328,13 @@ const upstreamNetworks = ref<UpstreamNetwork[]>([])
 const upstreamLoading = ref(false)
 const upstreamError = ref('')
 const upstreamPassphrase = ref('')
+const showUnverifiedUpstreams = ref(true)
+const mintHealth = ref<MintHealth | null>(null)
+const mintHealthLoading = ref(false)
+const mintHealthError = ref('')
+const showMintHealth = ref(false)
+const applyingNetworkNames = ref(false)
+const networkNamesError = ref('')
 const trustRequired = ref(false)
 const trustPending = ref(false)
 const trustFingerprint = ref('')
@@ -307,7 +351,7 @@ const editMints = ref<MintConfig[]>([])
 type MintTestState = { status: 'idle' | 'testing' | 'ok' | 'fail'; detail: string }
 const mintTest = ref<Record<number, MintTestState>>({})
 const editPayoutAddress = ref('')
-const editPrivateSsid = ref('noderunner-private')
+const editPrivateSsid = ref('noderunner')
 const editPrivateKey = ref('')
 const editEnabled = ref(true)
 
@@ -319,14 +363,6 @@ const daemonLabel = computed(() => {
     return `${t.daemon_version || 'unknown'}${up}`
   }
   return t.daemon_error || 'unreachable — restart required'
-})
-
-const mintMismatch = computed(() => {
-  const t = status.value?.tollgate
-  if (!t) return false
-  const advertised = t.advertised_mints?.length ?? 0
-  const configured = t.configured_mints ?? 0
-  return configured > 0 && advertised !== configured
 })
 
 const restartRequired = computed(() => {
@@ -341,12 +377,35 @@ const installerNeeded = computed(() => {
 
 const adminReady = computed(() => {
   const t = status.value?.tollgate
-  return !!t && t.installed && t.up_to_date !== false && t.daemon_running !== false
+  return (
+    selectionConfirmed.value &&
+    !!t &&
+    t.installed &&
+    t.up_to_date !== false &&
+    t.daemon_running !== false
+  )
 })
 
 const showUplink = computed(
-  () => !!status.value && installerNeeded.value && !status.value.wan?.internet,
+  () => selectionConfirmed.value && !!status.value && installerNeeded.value && !status.value.wan?.internet,
 )
+
+const advertisedMintKeys = computed(
+  () =>
+    new Set(
+      (status.value?.tollgate?.advertised_mints ?? []).map(m =>
+        normalizeMintUrl(m.url),
+      ),
+    ),
+)
+
+const missingMintRows = computed(() =>
+  mintRows.value.filter(
+    m => m.url.trim() && !advertisedMintKeys.value.has(normalizeMintUrl(m.url)),
+  ),
+)
+
+const mintHealthRows = computed(() => mintHealth.value?.mints ?? [])
 
 const walletDegraded = computed(() => {
   if (walletInfo.value?.degraded) return true
@@ -363,6 +422,70 @@ const walletTotal = computed(
 )
 const walletMintCount = computed(
   () => walletInfo.value?.wallet?.mint_count ?? 0,
+)
+
+const publicSsid = computed(
+  () =>
+    status.value?.wifi_interfaces.find(
+      i => i.network === 'tollgate' && !i.disabled,
+    )?.ssid ?? '',
+)
+const privateSsid = computed(
+  () =>
+    status.value?.wifi_interfaces.find(
+      i => i.network === 'private' && !i.disabled,
+    )?.ssid ?? '',
+)
+const networkNamesOutdated = computed(() => {
+  const pub = publicSsid.value
+  const priv = privateSsid.value
+  return (
+    !pub ||
+    !priv ||
+    !pub.startsWith('archipelago-tollgate-') ||
+    !priv.startsWith('noderunner-')
+  )
+})
+
+const knownGroups = computed<KnownTollGateGroup[]>(() => {
+  const groups = new Map<string, KnownTollGate[]>()
+  for (const entry of upstreamKnown.value) {
+    const key = entry.ssid || '(hidden)'
+    const list = groups.get(key) ?? []
+    list.push(entry)
+    groups.set(key, list)
+  }
+  const now = Date.now()
+  const result: KnownTollGateGroup[] = []
+  for (const [ssid, entries] of groups) {
+    const best = entries.reduce((a, b) =>
+      (b.best_signal ?? -999) > (a.best_signal ?? -999) ? b : a,
+    )
+    const lastSeenMs = Math.max(
+      ...entries.map(e => (e.last_seen ? Date.parse(e.last_seen) : 0)),
+      0,
+    )
+    result.push({
+      ssid,
+      best,
+      entries,
+      confirmed: entries.some(e => (e.price_per_step ?? 0) > 0),
+      stale: lastSeenMs > 0 && now - lastSeenMs > 30 * 60_000,
+      bestSignal: best.best_signal ?? -999,
+      lastSeen: lastSeenMs > 0 ? new Date(lastSeenMs).toISOString() : undefined,
+      sampleCount: entries.reduce((n, e) => n + (e.sample_count ?? 0), 0),
+    })
+  }
+  return result.sort((a, b) => {
+    if (a.confirmed !== b.confirmed) return a.confirmed ? -1 : 1
+    return b.bestSignal - a.bestSignal
+  })
+})
+
+const visibleKnownGroups = computed(() =>
+  showUnverifiedUpstreams.value
+    ? knownGroups.value
+    : knownGroups.value.filter(g => g.confirmed),
 )
 
 const isDataMetering = computed(
@@ -430,6 +553,7 @@ const masqEnabled = ref(true)
 // routerResource.entry keeps the cache/TTL/status-panel rendering
 // consistent with what a normal refresh() success does.
 async function load(params?: Record<string, string>) {
+  if (!params && !selectionConfirmed.value) return
   error.value = ''
   if (params) {
     try {
@@ -494,7 +618,7 @@ function syncInstallDefaults(s: RouterStatus) {
   )
   installMinSteps.value = s.tollgate.min_steps ?? 1
   installPayoutAddress.value = s.tollgate.payout_address ?? ''
-  editPrivateSsid.value = s.tollgate.private_ssid || 'noderunner-private'
+  editPrivateSsid.value = s.tollgate.private_ssid || 'noderunner'
 }
 
 async function connect() {
@@ -555,12 +679,17 @@ function pickDetectedRouter(ip: string) {
 // so onMounted's no-args load() always reconnects automatically — without this,
 // there'd be no way back to the connect form (and its Detect button) at all.
 function disconnectRouter() {
-  host.value = status.value?.host ?? host.value
   connectedParams.value = null
+  selectionConfirmed.value = false
   error.value = ''
   detectError.value = ''
   detectedCandidates.value = []
-  showConnectForm.value = true
+  showConnectForm.value = false
+  walletInfo.value = null
+  upstreamKnown.value = []
+  upstreamList.value = []
+  upstreamNetworks.value = []
+  mintHealth.value = null
 }
 
 async function loadInstallerStatus() {
@@ -588,6 +717,12 @@ async function discoverRouters() {
     discovered.value = result.routers ?? []
     discoveryActive.value = result.active ?? ''
     if (
+      selectionConfirmed.value &&
+      !discovered.value.some(r => r.ip === selectedRouterIp.value)
+    ) {
+      selectionConfirmed.value = false
+    }
+    if (
       !selectedRouterIp.value ||
       !discovered.value.some(r => r.ip === selectedRouterIp.value)
     ) {
@@ -604,6 +739,16 @@ async function discoverRouters() {
 function onDiscoveryChange() {
   const router = selectedRouter.value
   if (router) void selectDiscoveredRouter(router)
+}
+
+function linkLabel(r: DiscoveredRouter): string {
+  const type =
+    r.link_type === 'wifi'
+      ? 'WiFi'
+      : r.link_type === 'ethernet'
+        ? 'Ethernet'
+        : 'link unknown'
+  return r.interface ? `${type} · ${r.interface}` : type
 }
 
 function discoveryLabel(r: DiscoveredRouter): string {
@@ -631,11 +776,20 @@ async function selectDiscoveredRouter(r: DiscoveredRouter) {
   error.value = ''
   showConnectForm.value = false
   needsPassword.value = false
+  trustRouterError.value = ''
+  trustRouterDone.value = false
+  walletInfo.value = null
+  upstreamKnown.value = []
+  upstreamList.value = []
+  upstreamNetworks.value = []
+  mintHealth.value = null
+  showMintHealth.value = false
   await trySelectRouter(r, '')
 }
 
 async function trySelectRouter(r: DiscoveredRouter, password: string) {
   connecting.value = true
+  selectionConfirmed.value = false
   error.value = ''
   try {
     const result = await rpcClient.call<SelectRouterResult>({
@@ -660,6 +814,7 @@ async function trySelectRouter(r: DiscoveredRouter, password: string) {
     }
     needsPassword.value = false
     showConnectForm.value = false
+    selectionConfirmed.value = true
     if (password) {
       await load({
         host: r.ip,
@@ -670,8 +825,8 @@ async function trySelectRouter(r: DiscoveredRouter, password: string) {
       await load()
     }
     await discoverRouters()
-    await loadAdminData()
   } catch (e) {
+    selectionConfirmed.value = false
     error.value = e instanceof Error ? e.message : String(e)
     showConnectForm.value = true
     needsPassword.value = true
@@ -722,7 +877,7 @@ async function loadUpstreams() {
     upstreamKnown.value = allKnown.filter(
       k =>
         (k.price_per_step ?? 0) > 0 ||
-        /^!?(TollGate|Archipelago|Net4sats)-/i.test(k.ssid || ''),
+        /^!?(TollGate|Archipelago|Net4sats)(-|$)/i.test(k.ssid || ''),
     )
   } catch (e) {
     upstreamError.value = e instanceof Error ? e.message : String(e)
@@ -747,8 +902,12 @@ async function scanUpstreams() {
   }
 }
 
-async function connectUpstream(net: UpstreamNetwork) {
+async function connectUpstream(
+  net: UpstreamNetwork,
+  opts?: { skipConfirm?: boolean },
+) {
   if (
+    !opts?.skipConfirm &&
     !window.confirm(
       `Connect the router's upstream to "${net.ssid}"? This changes the router's upstream and may interrupt active sessions.`,
     )
@@ -793,6 +952,153 @@ async function removeUpstream(ssid: string) {
   }
 }
 
+function scrollToUpstream() {
+  const el = document.getElementById('upstream-gateways')
+  if (el) {
+    el.scrollIntoView({ behavior: 'smooth', block: 'start' })
+  } else {
+    error.value = 'Install or upgrade TollGate first to manage its upstream.'
+  }
+}
+
+async function trustSelectedRouter() {
+  const r = selectedRouter.value
+  if (!r?.ssh_fingerprint) return
+  trustRouterPending.value = true
+  trustRouterError.value = ''
+  try {
+    await rpcClient.call({
+      method: 'openwrt.installer.trust',
+      params: { ip: r.ip, fingerprint: r.ssh_fingerprint },
+      timeout: 30000,
+    })
+    trustRouterDone.value = true
+    await discoverRouters()
+  } catch (e) {
+    trustRouterError.value = e instanceof Error ? e.message : String(e)
+  } finally {
+    trustRouterPending.value = false
+  }
+}
+
+function normalizeMintUrl(url: string): string {
+  return url.trim().replace(/\/+$/, '').toLowerCase()
+}
+
+function mintHost(url: string): string {
+  const match = url.match(/^[a-z]+:\/\/([^/]+)/i)
+  return match?.[1] ?? url
+}
+
+function formatLastSeen(iso?: string): string {
+  if (!iso) return 'unknown'
+  const parsed = Date.parse(iso)
+  if (!Number.isFinite(parsed)) return 'unknown'
+  const minutes = Math.max(0, Math.floor((Date.now() - parsed) / 60_000))
+  if (minutes < 1) return 'just now'
+  if (minutes < 60) return `${minutes}m ago`
+  const hours = Math.floor(minutes / 60)
+  if (hours < 24) return `${hours}h ago`
+  return `${Math.floor(hours / 24)}d ago`
+}
+
+async function checkMints() {
+  mintHealthLoading.value = true
+  mintHealthError.value = ''
+  try {
+    mintHealth.value = await rpcClient.call<MintHealth>({
+      method: 'openwrt.mint-health',
+      params: authParams(),
+      timeout: 120000,
+    })
+    showMintHealth.value = true
+  } catch (e) {
+    mintHealthError.value = e instanceof Error ? e.message : String(e)
+  } finally {
+    mintHealthLoading.value = false
+  }
+}
+
+async function pruneMissingMints() {
+  const urls = missingMintRows.value.map(m => m.url)
+  if (urls.length === 0) return
+  if (
+    !window.confirm(
+      `Remove ${urls.length} mint${urls.length === 1 ? '' : 's'} the daemon is not advertising?\n\n${urls.join(
+        '\n',
+      )}\n\nThis does not delete wallet.db or any existing ecash.`,
+    )
+  ) {
+    return
+  }
+  mintHealthLoading.value = true
+  mintHealthError.value = ''
+  try {
+    await rpcClient.call({
+      method: 'openwrt.prune-mints',
+      params: { ...authParams(), urls },
+      timeout: 120000,
+    })
+    mintHealth.value = null
+    await load()
+  } catch (e) {
+    mintHealthError.value = e instanceof Error ? e.message : String(e)
+  } finally {
+    mintHealthLoading.value = false
+  }
+}
+
+async function applyNetworkNames() {
+  if (
+    !window.confirm(
+      'Apply archipelago-tollgate-<code> and noderunner-<code> to this router?\n\nThis briefly restarts Wi-Fi and the TollGate daemon.',
+    )
+  ) {
+    return
+  }
+  applyingNetworkNames.value = true
+  networkNamesError.value = ''
+  try {
+    await rpcClient.call({
+      method: 'openwrt.apply-network-names',
+      params: authParams(),
+      timeout: 180000,
+    })
+    await load()
+  } catch (e) {
+    networkNamesError.value = e instanceof Error ? e.message : String(e)
+  } finally {
+    applyingNetworkNames.value = false
+  }
+}
+
+function hideKnownGroup(group: KnownTollGateGroup) {
+  upstreamKnown.value = upstreamKnown.value.filter(e => e.ssid !== group.ssid)
+}
+
+async function connectKnownGroup(group: KnownTollGateGroup) {
+  const bssid = group.best.bssid ? ` (${group.best.bssid})` : ''
+  const kind = group.confirmed
+    ? 'a confirmed TollGate'
+    : 'an UNCONFIRMED AP — no signed price was found'
+  if (
+    !window.confirm(
+      `Connect the router's upstream to "${group.ssid}"${bssid}?\n\nThis is ${kind}. It changes the router's upstream and may interrupt active sessions.`,
+    )
+  ) {
+    return
+  }
+  await connectUpstream(
+    {
+      ssid: group.ssid,
+      signal: group.bestSignal,
+      encryption: 'unknown',
+      ...(group.best.bssid ? { bssid: group.best.bssid } : {}),
+    },
+    { skipConfirm: true },
+  )
+}
+
 async function provisionTollgate() {
   provisionError.value = ''
   provisionSuccess.value = false
@@ -807,7 +1113,7 @@ async function provisionTollgate() {
     step_size_ms: installStepSizeMin.value * 60_000,
     min_steps: installMinSteps.value,
     payout_address: installPayoutAddress.value.trim(),
-    private_ssid: editPrivateSsid.value || 'noderunner-private',
+    private_ssid: editPrivateSsid.value || 'noderunner',
   }
 
   provisioning.value = true
@@ -907,7 +1213,7 @@ function startEditTollgate() {
   editMints.value = listed.map(m => ({ ...m }))
   mintTest.value = {}
   editPayoutAddress.value = tg?.payout_address ?? ''
-  editPrivateSsid.value = tg?.private_ssid || 'noderunner-private'
+  editPrivateSsid.value = tg?.private_ssid || 'noderunner'
   editPrivateKey.value = ''
   editEnabled.value = tg?.enabled ?? true
   updateTollgateError.value = ''
@@ -945,6 +1251,8 @@ async function saveTollgateConfig() {
     }
     await rpcClient.call({ method: 'openwrt.provision-tollgate', params, timeout: 300000 })
     editingTollgate.value = false
+    mintHealth.value = null
+    showMintHealth.value = false
     await load(connectedParams.value ?? undefined)
   } catch (e) {
     updateTollgateError.value = e instanceof Error ? e.message : String(e)
@@ -1018,11 +1326,13 @@ async function restartTollgate() {
         min_steps: tg?.min_steps ?? 1,
         mint_url: tg?.mint_url ?? '',
         payout_address: tg?.payout_address ?? '',
-        private_ssid: tg?.private_ssid || 'noderunner-private',
+        private_ssid: tg?.private_ssid || 'noderunner',
         enabled: tg?.enabled ?? true,
       },
       timeout: 300000,
     })
+    mintHealth.value = null
+    showMintHealth.value = false
     await load(connectedParams.value ?? undefined)
   } catch (e) {
     updateTollgateError.value = e instanceof Error ? e.message : String(e)
@@ -1201,24 +1511,12 @@ const boardName = computed(() => {
   return status.value.release.openwrt_board_name || ''
 })
 
-// Only force-fetch when the cache is missing or past its TTL, so a repeat
-// open inside the TTL paints from cache with no new RPC. On a within-TTL
-// remount, still reconcile the connect-form/error UI state from the cached
-// entry (mirrors what a completed load() call would have set).
+// Discovery only. The saved active router is preselected but not connected:
+// status, wallet, upstream and schema RPCs must wait for an explicit
+// `openwrt.select-router` success.
 onMounted(() => {
   void loadInstallerStatus()
   void discoverRouters()
-  if (routerResource.data.value === null || routerResource.isStale.value) {
-    void load()
-    return
-  }
-  const err = routerResource.error.value
-  if (err) {
-    if (err.includes('No router configured')) showConnectForm.value = true
-    else error.value = err
-  } else {
-    showConnectForm.value = false
-  }
 })
 </script>
 
@@ -1269,13 +1567,12 @@ onMounted(() => {
             <span v-if="selectedRouter.mac" class="font-mono text-white/30"> · {{ selectedRouter.mac }}</span>
           </div>
           <div>
-            <span class="text-white/30">Firmware:</span>
-            {{ selectedRouter.firmware || selectedRouter.vendor || 'unknown' }}
-            <span v-if="selectedRouter.identified"> · OpenWrt</span>
-            <span v-if="!selectedRouter.ssh_open"> · no SSH</span>
+            <span class="text-white/30">Link:</span> {{ linkLabel(selectedRouter) }}
           </div>
-          <div v-if="selectedRouter.ssh_fingerprint" class="text-yellow-300">
-            Host key not trusted yet — trust is only needed for install/upgrade.
+          <div>
+            <span class="text-white/30">Model:</span>
+            {{ selectedRouter.saved_model || selectedRouter.model || selectedRouter.vendor || 'unknown (password required)' }}
+            <span v-if="selectedRouter.firmware"> · {{ selectedRouter.firmware }}</span>
           </div>
           <div v-if="selectedRouter.has_saved_credentials" class="text-green-300">
             Root password saved for this router.
@@ -1283,12 +1580,52 @@ onMounted(() => {
           <div v-else class="text-white/40">
             Root password required.
           </div>
+          <div v-if="!selectedRouter.ssh_open" class="text-white/40">
+            No SSH — this host cannot be managed.
+          </div>
+
+          <div
+            v-if="selectedRouter.ssh_open && selectedRouter.ssh_fingerprint"
+            class="mt-2 rounded-lg border border-yellow-400/20 bg-yellow-400/5 p-3 space-y-2"
+          >
+            <div class="text-yellow-300">
+              TollGate installer host key is not trusted yet.
+            </div>
+            <pre class="text-[11px] font-mono bg-black/30 rounded p-2 text-green-300 break-all whitespace-pre-wrap">{{ selectedRouter.ssh_fingerprint }}</pre>
+            <div class="text-white/40">Verify on the router console:</div>
+            <code class="block text-[11px] font-mono bg-black/30 rounded p-2 text-white/70 break-all whitespace-pre-wrap">dropbearkey -y -f /etc/dropbear/dropbear_ed25519_host_key</code>
+            <button
+              class="glass-button glass-button-warning text-xs px-3 py-1.5"
+              :disabled="trustRouterPending"
+              :class="trustRouterPending ? 'opacity-40 cursor-not-allowed' : ''"
+              @click="trustSelectedRouter"
+            >
+              {{ trustRouterPending ? 'Trusting…' : 'Trust host key' }}
+            </button>
+            <p v-if="trustRouterError" class="text-red-400">{{ trustRouterError }}</p>
+          </div>
+          <div v-else-if="selectedRouter.ssh_open" class="text-green-300">
+            Host key trusted by the TollGate installer.
+          </div>
+          <div v-if="trustRouterDone && !selectedRouter.ssh_fingerprint" class="text-green-300">
+            Host key trusted.
+          </div>
+
+          <button
+            v-if="!selectionConfirmed"
+            class="glass-button glass-button-success mt-2 text-xs px-3 py-1.5"
+            :disabled="connecting"
+            :class="connecting ? 'opacity-40 cursor-not-allowed' : ''"
+            @click="selectDiscoveredRouter(selectedRouter)"
+          >
+            {{ connecting ? 'Connecting…' : 'Connect to this gateway' }}
+          </button>
         </div>
       </template>
     </div>
 
     <!-- Connect form -->
-    <template v-if="showConnectForm">
+    <template v-if="showConnectForm && !selectionConfirmed">
     <div class="glass-card p-6 mb-6">
       <h2 class="text-sm font-semibold text-white/80 mb-4">Connect to Router</h2>
       <div class="space-y-3">
@@ -1340,6 +1677,9 @@ onMounted(() => {
               placeholder="(blank for none)"
               class="w-full px-4 py-3 bg-transparent border border-white/20 rounded-lg text-white placeholder-white/30 focus:outline-none focus:border-white/40 focus:ring-1 focus:ring-white/20 transition-colors"
             />
+            <p class="mt-1 text-[11px] text-white/30">
+              Leave blank on a fresh OpenWrt reset; otherwise use the current root password.
+            </p>
           </div>
         </div>
         <p
@@ -1390,6 +1730,11 @@ onMounted(() => {
       </div>
     </div>
 
+    <!-- No selection yet -->
+    <div v-else-if="!selectionConfirmed" class="glass-card p-6 mb-4 text-sm text-white/50">
+      Select a gateway above to load its status, installer and admin panel.
+    </div>
+
     <!-- Status panels -->
     <template v-else-if="status">
 
@@ -1428,8 +1773,12 @@ onMounted(() => {
           <button class="text-xs text-white/40 hover:text-white/70 transition-colors" @click="load()">
             ↻ Refresh
           </button>
-          <button class="text-xs text-white/40 hover:text-white/70 transition-colors" @click="disconnectRouter">
-            Switch router →
+          <button
+            v-if="adminReady"
+            class="text-xs text-white/40 hover:text-white/70 transition-colors"
+            @click="scrollToUpstream"
+          >
+            Router upstream →
           </button>
         </div>
       </div>
@@ -1779,6 +2128,14 @@ onMounted(() => {
             </div>
             <div class="flex items-center gap-3">
               <button
+                v-if="networkNamesOutdated && status.wifi_interfaces.length > 0"
+                class="text-xs text-yellow-300 hover:text-yellow-200"
+                :disabled="applyingNetworkNames"
+                @click="applyNetworkNames"
+              >
+                {{ applyingNetworkNames ? 'Renaming…' : 'Apply network names' }}
+              </button>
+              <button
                 v-if="restartRequired"
                 class="text-xs text-yellow-300 hover:text-yellow-200"
                 :disabled="updatingTollgate"
@@ -1789,6 +2146,7 @@ onMounted(() => {
               <button class="text-xs text-white/40 hover:text-white" @click="startEditTollgate">Edit</button>
             </div>
           </div>
+          <p v-if="networkNamesError" class="mb-3 text-xs text-red-400">{{ networkNamesError }}</p>
           <dl class="grid grid-cols-2 gap-x-6 gap-y-3 text-sm">
             <div>
               <dt class="text-xs text-white/40 mb-0.5">Price</dt>
@@ -1806,13 +2164,52 @@ onMounted(() => {
             <div class="col-span-2">
               <dt class="text-xs text-white/40 mb-0.5">Mints</dt>
               <dd class="text-white/70 text-xs">
-                <div>{{ mintRows.length }} configured · {{ advertisedMintCount }} advertised</div>
+                <div>
+                  {{ advertisedMintCount }} of {{ mintRows.length }} configured mints advertised.
+                </div>
                 <ul class="font-mono break-all mt-1 space-y-0.5">
-                  <li v-for="mint in mintRows.slice(0, 3)" :key="mint.url">{{ mint.url }}</li>
+                  <li v-for="mint in mintRows" :key="mint.url">
+                    <span
+                      :class="advertisedMintKeys.has(normalizeMintUrl(mint.url)) ? 'text-green-300' : 'text-yellow-300'"
+                    >
+                      {{ advertisedMintKeys.has(normalizeMintUrl(mint.url)) ? '●' : '○' }}
+                    </span>
+                    {{ mint.url }}
+                  </li>
                 </ul>
-                <div v-if="mintRows.length > 3">… +{{ mintRows.length - 3 }} more</div>
-                <div v-if="mintMismatch" class="text-yellow-300 mt-1">
-                  Configured and advertised counts differ — the daemon may need a restart.
+                <div v-if="missingMintRows.length" class="text-yellow-300 mt-1">
+                  Not advertised by the daemon:
+                  {{ missingMintRows.map(m => mintHost(m.url)).join(', ') }}
+                </div>
+                <div class="flex items-center gap-3 mt-2">
+                  <button
+                    v-if="missingMintRows.length"
+                    class="text-xs text-white/50 hover:text-white"
+                    :disabled="mintHealthLoading"
+                    @click="checkMints"
+                  >
+                    {{ mintHealthLoading ? 'Checking…' : 'Check mint health' }}
+                  </button>
+                  <button
+                    v-if="missingMintRows.length"
+                    class="text-xs text-red-300/80 hover:text-red-200"
+                    :disabled="mintHealthLoading"
+                    @click="pruneMissingMints"
+                  >
+                    Remove unreachable
+                  </button>
+                </div>
+                <div v-if="mintHealthError" class="text-red-400 mt-1">{{ mintHealthError }}</div>
+                <div v-if="showMintHealth && mintHealth" class="mt-2 space-y-1">
+                  <div v-for="m in mintHealthRows" :key="m.url" class="text-[11px]">
+                    <span
+                      :class="m.advertised ? 'text-green-300' : m.ok ? 'text-yellow-300' : 'text-red-300'"
+                    >
+                      {{ m.advertised ? 'advertised' : m.ok ? 'reachable, not advertised' : 'unreachable' }}
+                    </span>
+                    <span class="font-mono break-all text-white/50"> {{ m.url }}</span>
+                    <span v-if="m.error" class="text-red-300"> — {{ m.error }}</span>
+                  </div>
                 </div>
               </dd>
             </div>
@@ -1836,10 +2233,7 @@ onMounted(() => {
                   <span v-if="status.tollgate.up_to_date" class="text-green-300">up to date</span>
                 </div>
                 <div>
-                  Advertised mints: {{ status.tollgate.advertised_mints?.length ?? 0 }}
-                  <span v-if="mintMismatch" class="text-yellow-300">
-                    (config says {{ status.tollgate.configured_mints }})
-                  </span>
+                  Advertised mints: {{ advertisedMintCount }} of {{ mintRows.length }}
                 </div>
               </dd>
             </div>
@@ -1867,12 +2261,12 @@ onMounted(() => {
                 </li>
               </ul>
               <div v-if="walletMints.length === 0" class="text-xs text-white/40 mt-1">
-                No funds across configured mints.
+                No payments received yet.
               </div>
             </div>
 
             <!-- Upstream gateways -->
-            <div>
+            <div id="upstream-gateways">
               <div class="flex items-center justify-between mb-2">
                 <h3 class="text-sm font-semibold text-white/80">Upstream gateways</h3>
                 <button class="text-xs text-white/40 hover:text-white" :disabled="upstreamLoading" @click="scanUpstreams">
@@ -1900,24 +2294,60 @@ onMounted(() => {
                 </button>
               </div>
 
-              <div class="text-xs text-white/40 mt-3 mb-1">Known TollGates</div>
-              <div v-if="upstreamKnown.length === 0" class="text-xs text-white/40">None discovered yet</div>
+              <div class="flex items-center justify-between mt-3 mb-1">
+                <div class="text-xs text-white/40">Known TollGates</div>
+                <label class="flex items-center gap-1 text-[11px] text-white/40">
+                  <input v-model="showUnverifiedUpstreams" type="checkbox" />
+                  Show unverified
+                </label>
+              </div>
+              <div v-if="visibleKnownGroups.length === 0" class="text-xs text-white/40">
+                None discovered yet
+              </div>
               <div
-                v-for="k in upstreamKnown"
-                :key="k.bssid || k.ssid"
-                class="flex items-center justify-between text-xs py-1"
+                v-for="g in visibleKnownGroups"
+                :key="g.ssid"
+                class="py-2 border-b border-white/5 last:border-0"
               >
-                <span class="font-mono">{{ k.ssid }}</span>
-                <span class="text-white/40">
-                  {{ k.price_per_step ? k.price_per_step + ' sats/' + (k.step_size || '?') + 'ms' : 'price unknown' }}
-                  <span v-if="k.best_signal"> · {{ k.best_signal }} dBm</span>
-                </span>
-                <button
-                  class="text-green-300 hover:text-green-200"
-                  @click="connectUpstream({ ssid: k.ssid, signal: k.best_signal || 0, encryption: 'unknown' })"
-                >
-                  Connect
-                </button>
+                <div class="flex items-start justify-between gap-3 text-xs">
+                  <div class="min-w-0">
+                    <div class="font-mono text-white/80">
+                      {{ g.ssid }}
+                      <span v-if="g.confirmed" class="ml-1 text-green-300">confirmed</span>
+                      <span v-else class="ml-1 text-yellow-300">unconfirmed</span>
+                      <span v-if="g.stale" class="ml-1 text-white/30">stale</span>
+                    </div>
+                    <div class="text-white/40">
+                      {{ g.best.bssid || 'no BSSID' }} · {{ g.bestSignal }} dBm
+                      <span v-if="g.lastSeen"> · {{ formatLastSeen(g.lastSeen) }}</span>
+                      <span v-if="g.entries.length > 1"> · {{ g.entries.length }} radios</span>
+                      <span v-if="g.sampleCount"> · {{ g.sampleCount }} samples</span>
+                    </div>
+                    <div v-if="!g.confirmed" class="text-[11px] text-yellow-300/70">
+                      No signed price observed; SSID prefix only.
+                    </div>
+                    <div v-if="g.entries.length > 1" class="mt-1 space-y-0.5 text-[11px] text-white/30">
+                      <div v-for="e in g.entries" :key="e.bssid || e.ssid">
+                        {{ e.bssid || 'no BSSID' }} · {{ e.best_signal }} dBm · {{ formatLastSeen(e.last_seen) }}
+                      </div>
+                    </div>
+                  </div>
+                  <div class="flex items-center gap-2 whitespace-nowrap">
+                    <button
+                      v-if="!g.confirmed || g.stale"
+                      class="text-white/30 hover:text-white/60"
+                      @click="hideKnownGroup(g)"
+                    >
+                      Hide
+                    </button>
+                    <button
+                      class="text-green-300 hover:text-green-200"
+                      @click="connectKnownGroup(g)"
+                    >
+                      Connect
+                    </button>
+                  </div>
+                </div>
               </div>
 
               <div v-if="upstreamNetworks.length > 0" class="mt-3">
@@ -2073,7 +2503,7 @@ onMounted(() => {
             <input
               v-model="editPrivateSsid"
               type="text"
-              placeholder="noderunner-private"
+              placeholder="noderunner"
               class="w-full px-4 py-3 bg-transparent border border-white/20 rounded-lg text-white placeholder-white/30 focus:outline-none focus:border-white/40 transition-colors"
             />
           </div>
@@ -2150,7 +2580,8 @@ onMounted(() => {
           Verify this fingerprint on the router's own console before continuing.
           The installer will not send the root password until the key is trusted.
         </p>
-        <pre class="text-xs font-mono bg-black/30 rounded-lg p-3 text-green-300 break-all mb-4">{{ trustFingerprint }}</pre>
+        <pre class="text-xs font-mono bg-black/30 rounded-lg p-3 text-green-300 break-all mb-2">{{ trustFingerprint }}</pre>
+        <code class="block text-[11px] font-mono bg-black/30 rounded-lg p-2 text-white/60 break-all whitespace-pre-wrap mb-4">dropbearkey -y -f /etc/dropbear/dropbear_ed25519_host_key</code>
         <div class="flex items-center gap-3">
           <button
             class="glass-button glass-button-success text-sm font-medium"

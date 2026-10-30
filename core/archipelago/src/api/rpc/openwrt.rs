@@ -47,16 +47,19 @@ async fn provision_after_install_once(
         let router = Router::connect_password(&host, 22, &ssh_user, &ssh_password)?;
         router.verify_openwrt()?;
         // The installer owns the device code. Derive the product names from
-        // it so a re-deploy keeps the same `!Archipelago-XXXX` and
-        // `noderunner-private-XXXX`, regardless of which SSID the released
-        // installer wrote first.
+        // it so a re-deploy keeps the same `archipelago-tollgate-XXXX` and
+        // `noderunner-XXXX`, regardless of which SSID the released installer
+        // wrote first. An operator-supplied custom private SSID is preserved.
         let mut config = config;
         if let Ok(code) = router.uci_get("tollgate.device.code") {
             let code = code.trim().to_ascii_uppercase();
             if !code.is_empty() {
-                config.ssid = format!("!Archipelago-{code}");
-                if config.private_ssid == "noderunner-private" {
-                    config.private_ssid = format!("noderunner-private-{code}");
+                config.ssid = format!("archipelago-tollgate-{code}");
+                if config.private_ssid.is_empty()
+                    || config.private_ssid == "noderunner"
+                    || config.private_ssid == "noderunner-private"
+                {
+                    config.private_ssid = format!("noderunner-{code}");
                 }
             }
         }
@@ -148,6 +151,34 @@ async fn link_context(ip: &str) -> (String, String, String) {
         })
         .unwrap_or_default();
     (iface, link.to_string(), subnet)
+}
+
+/// Fetch a URL from the router using whichever HTTP client is installed.
+///
+/// OpenWrt images are not uniform: some ship `curl`, some only
+/// `uclient-fetch`, and a stock BusyBox image only has `wget`. The old code
+/// called `curl` unconditionally, so every advertisement and mint read failed
+/// on 25.12 with `sh: curl: not found`. The wrapper prints the first
+/// successful body, or one `__ERROR__:` line after every client failed; it
+/// never mixes a failed client's stderr into a later successful body.
+fn router_http_get(router: &Router, url: &str, timeout_secs: u32) -> Result<String> {
+    let script = format!(
+        "out=$(curl -fsS -m {timeout_secs} '{url}' 2>&1) && {{ printf '%s' \"$out\"; exit 0; }}; \
+         out=$(uclient-fetch -q -O - -T {timeout_secs} '{url}' 2>&1) && {{ printf '%s' \"$out\"; exit 0; }}; \
+         out=$(wget -q -O - -T {timeout_secs} '{url}' 2>&1) && {{ printf '%s' \"$out\"; exit 0; }}; \
+         printf '__ERROR__:%s' \"$out\"; exit 0"
+    );
+    let out = router.run_ok(&script)?;
+    if let Some(err) = out.strip_prefix("__ERROR__:") {
+        anyhow::bail!("HTTP request failed: {}", err.trim());
+    }
+    Ok(out)
+}
+
+/// Compare mint URLs the way the daemon does: a trailing slash is not part of
+/// the mint identity, and neither is the host's case.
+fn mint_url_key(url: &str) -> String {
+    url.trim().trim_end_matches('/').to_ascii_lowercase()
 }
 
 #[derive(Debug, Clone, Default)]
@@ -270,6 +301,139 @@ fn validate_mint_url(url: &str) -> Result<()> {
         anyhow::bail!("mint URL contains an unsafe character: {url}");
     }
     Ok(())
+}
+
+/// Prefer the entry that represents the router the operator is actually
+/// managing: active config first, then a remembered credential, then a
+/// completed identify.
+fn router_score(v: &serde_json::Value) -> i32 {
+    let mut score = 0;
+    if v.get("active").and_then(|x| x.as_bool()).unwrap_or(false) {
+        score += 100;
+    }
+    if v.get("has_saved_credentials")
+        .and_then(|x| x.as_bool())
+        .unwrap_or(false)
+    {
+        score += 50;
+    }
+    if v.get("password_status").and_then(|x| x.as_str()) == Some("accepted") {
+        score += 20;
+    }
+    if v.get("identified")
+        .and_then(|x| x.as_bool())
+        .unwrap_or(false)
+    {
+        score += 10;
+    }
+    if v.get("ssh_open").and_then(|x| x.as_bool()).unwrap_or(false) {
+        score += 5;
+    }
+    score
+}
+
+/// Fill keys the winner does not have (or has as null) from the duplicate.
+fn merge_missing(dst: &mut serde_json::Value, src: &serde_json::Value) {
+    let (Some(dst), Some(src)) = (dst.as_object_mut(), src.as_object()) else {
+        return;
+    };
+    for (key, value) in src {
+        // Trust/auth state is per address, not per physical router. The
+        // duplicate's fingerprint must not reappear after the selected
+        // address was trusted.
+        if matches!(
+            key.as_str(),
+            "ip" | "mac"
+                | "active"
+                | "has_saved_credentials"
+                | "ssh_fingerprint"
+                | "password_status"
+                | "source"
+                | "note"
+        ) {
+            continue;
+        }
+        let missing = !dst.contains_key(key) || dst.get(key).map(|v| v.is_null()).unwrap_or(false);
+        if missing {
+            dst.insert(key.clone(), value.clone());
+        }
+    }
+}
+
+/// Resolve the 4-character device code the installer/module store, falling
+/// back to a machine-shaped hostname suffix and then the MAC.
+fn device_code(router: &Router) -> String {
+    let is_code = |s: &str| {
+        s.len() == 4
+            && s.chars()
+                .all(|c| c.is_ascii_uppercase() || c.is_ascii_digit())
+    };
+    let stored = router
+        .uci_get("tollgate.device.code")
+        .unwrap_or_default()
+        .trim()
+        .to_ascii_uppercase();
+    if is_code(&stored) {
+        return stored;
+    }
+    let hostname = router
+        .uci_get("system.@system[0].hostname")
+        .unwrap_or_default();
+    let suffix = hostname
+        .trim()
+        .rsplit('-')
+        .next()
+        .unwrap_or("")
+        .to_ascii_uppercase();
+    if is_code(&suffix) {
+        return suffix;
+    }
+    let mac = router
+        .run_ok(
+            "cat /sys/class/net/br-lan/address 2>/dev/null || \
+             cat /sys/class/net/eth0/address 2>/dev/null",
+        )
+        .unwrap_or_default();
+    let hex: String = mac.chars().filter(|c| c.is_ascii_hexdigit()).collect();
+    if hex.len() >= 4 {
+        return hex[hex.len() - 4..].to_ascii_uppercase();
+    }
+    String::new()
+}
+
+/// Probe one Cashu mint from the router and return the same shape the UI's
+/// per-mint "Test" button consumes. `/v1/info` is best-effort; `/v1/keysets`
+/// is the authoritative reachability/active-sat-keyset check.
+fn probe_mint_with_router(router: &Router, url: &str) -> Result<serde_json::Value> {
+    let base = url.trim_end_matches('/');
+    let info_out = router_http_get(router, &format!("{base}/v1/info"), 10).unwrap_or_default();
+    let info: serde_json::Value =
+        serde_json::from_str(&info_out).unwrap_or_else(|_| serde_json::json!({}));
+    let keys_out = router_http_get(router, &format!("{base}/v1/keysets"), 10)
+        .with_context(|| format!("probe {url} from the router"))?;
+    let keys: serde_json::Value =
+        serde_json::from_str(&keys_out).with_context(|| format!("parse {url}/v1/keysets"))?;
+    let active = keys
+        .get("keysets")
+        .and_then(|v| v.as_array())
+        .and_then(|a| {
+            a.iter().find(|k| {
+                k.get("unit").and_then(|v| v.as_str()) == Some("sat")
+                    && k.get("active").and_then(|v| v.as_bool()).unwrap_or(false)
+            })
+        });
+    let active_sat = active.is_some();
+    let fee = active
+        .and_then(|k| k.get("input_fee_ppk"))
+        .and_then(|v| v.as_u64());
+    Ok(serde_json::json!({
+        "url": url,
+        "ok": active_sat,
+        "name": info.get("name").cloned().unwrap_or_default(),
+        "version": info.get("version").cloned().unwrap_or_default(),
+        "active_sat_keyset": active_sat,
+        "input_fee_ppk": fee,
+    }))
 }
 
 impl RpcHandler {
@@ -474,11 +638,11 @@ impl RpcHandler {
                     };
                     let daemon_matches =
                         daemon_running && daemon_version_matches(&daemon_version, &desired);
-                    let advertised_mints = router
-                        .run_ok("curl -sS -m 5 http://127.0.0.1:2121/ 2>/dev/null")
-                        .ok()
-                        .map(|out| parse_advertisement(&out))
-                        .unwrap_or_default();
+                    let advertised_mints =
+                        router_http_get(&router, "http://127.0.0.1:2121/", 5)
+                            .ok()
+                            .map(|out| parse_advertisement(&out))
+                            .unwrap_or_default();
                     let configured_mints: Vec<tollgate::MintConfig> = router
                         .run_ok("cat /etc/tollgate/config.json 2>/dev/null")
                         .ok()
@@ -617,39 +781,105 @@ impl RpcHandler {
         let result = tokio::task::spawn_blocking(move || -> Result<serde_json::Value> {
             let router = Router::connect_password(&host, 22, &ssh_user, &ssh_password)?;
             router.verify_openwrt()?;
-            let base = url.trim_end_matches('/');
-            let info_out =
-                router.run_ok(&format!("curl -sS -m 10 '{base}/v1/info' 2>/dev/null"))?;
-            let info: serde_json::Value =
-                serde_json::from_str(&info_out).unwrap_or_else(|_| serde_json::json!({}));
-            let keys_out =
-                router.run_ok(&format!("curl -sS -m 10 '{base}/v1/keysets' 2>/dev/null"))?;
-            let keys: serde_json::Value =
-                serde_json::from_str(&keys_out).unwrap_or_else(|_| serde_json::json!({}));
-            let active = keys
-                .get("keysets")
-                .and_then(|v| v.as_array())
-                .and_then(|a| {
-                    a.iter().find(|k| {
-                        k.get("unit").and_then(|v| v.as_str()) == Some("sat")
-                            && k.get("active").and_then(|v| v.as_bool()).unwrap_or(false)
-                    })
-                });
-            let active_sat = active.is_some();
-            let fee = active
-                .and_then(|k| k.get("input_fee_ppk"))
-                .and_then(|v| v.as_u64());
-            Ok(serde_json::json!({
-                "url": url,
-                "ok": active_sat,
-                "name": info.get("name").cloned().unwrap_or_default(),
-                "version": info.get("version").cloned().unwrap_or_default(),
-                "active_sat_keyset": active_sat,
-                "input_fee_ppk": fee,
-            }))
+            probe_mint_with_router(&router, &url)
         })
         .await
         .context("openwrt mint test task")??;
+
+        Ok(result)
+    }
+
+    /// Compare what the daemon advertises with what the config accepts, and
+    /// probe the missing mints from the router.
+    ///
+    /// This is deliberately separate from the wallet: an empty wallet is not
+    /// a degraded mint, and a count mismatch is not evidence that the daemon
+    /// needs a restart.
+    pub(super) async fn handle_openwrt_mint_health(
+        &self,
+        params: Option<serde_json::Value>,
+    ) -> Result<serde_json::Value> {
+        let saved = net_router::load_router_config(&self.config.data_dir).await?;
+        let p = params.unwrap_or_default();
+        let host = p
+            .get("host")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string())
+            .or_else(|| {
+                if saved.configured {
+                    Some(saved.address.clone())
+                } else {
+                    None
+                }
+            })
+            .ok_or_else(|| anyhow::anyhow!("No router configured"))?;
+        let ssh_user = p
+            .get("ssh_user")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string())
+            .or_else(|| saved.username.clone())
+            .unwrap_or_else(|| "root".to_string());
+        let ssh_password = p
+            .get("ssh_password")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string())
+            .or_else(|| saved.password.clone())
+            .unwrap_or_default();
+
+        let result = tokio::task::spawn_blocking(move || -> Result<serde_json::Value> {
+            let router = Router::connect_password(&host, 22, &ssh_user, &ssh_password)?;
+            router.verify_openwrt()?;
+            let configured: Vec<tollgate::MintConfig> = router
+                .run_ok("cat /etc/tollgate/config.json 2>/dev/null")
+                .ok()
+                .and_then(|out| serde_json::from_str::<serde_json::Value>(&out).ok())
+                .and_then(|doc| doc.get("accepted_mints").cloned())
+                .and_then(|v| serde_json::from_value(v).ok())
+                .unwrap_or_default();
+            let advertised = router_http_get(&router, "http://127.0.0.1:2121/", 5)
+                .ok()
+                .map(|out| parse_advertisement(&out))
+                .unwrap_or_default();
+
+            let mut mints = Vec::new();
+            for mint in &configured {
+                if mint.url.trim().is_empty() {
+                    continue;
+                }
+                let key = mint_url_key(&mint.url);
+                let is_advertised = advertised.iter().any(|a| mint_url_key(&a.url) == key);
+                let (ok, error) = if is_advertised {
+                    (true, String::new())
+                } else {
+                    match probe_mint_with_router(&router, &mint.url) {
+                        Ok(probe) => {
+                            let ok = probe.get("ok").and_then(|v| v.as_bool()).unwrap_or(false);
+                            let error = if ok {
+                                "reachable but not advertised by the daemon".to_string()
+                            } else {
+                                "no active sat keyset".to_string()
+                            };
+                            (ok, error)
+                        }
+                        Err(err) => (false, err.to_string()),
+                    }
+                };
+                mints.push(serde_json::json!({
+                    "url": mint.url,
+                    "advertised": is_advertised,
+                    "ok": ok,
+                    "error": error,
+                }));
+            }
+
+            Ok(serde_json::json!({
+                "configured": configured.len(),
+                "advertised": advertised.len(),
+                "mints": mints,
+            }))
+        })
+        .await
+        .context("openwrt mint health task")??;
 
         Ok(result)
     }
@@ -769,6 +999,124 @@ impl RpcHandler {
         Ok(serde_json::json!({ "ok": true, "result": result }))
     }
 
+    /// Remove mints from `accepted_mints` without reinstalling TollGate or
+    /// touching the wallet database.
+    pub(super) async fn handle_openwrt_prune_mints(
+        &self,
+        params: Option<serde_json::Value>,
+    ) -> Result<serde_json::Value> {
+        let saved = net_router::load_router_config(&self.config.data_dir).await?;
+        let p = params.unwrap_or_default();
+        let host = p
+            .get("host")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string())
+            .or_else(|| saved.configured.then(|| saved.address.clone()))
+            .ok_or_else(|| anyhow::anyhow!("No router configured"))?;
+        let ssh_user = p
+            .get("ssh_user")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string())
+            .or_else(|| saved.username.clone())
+            .unwrap_or_else(|| "root".to_string());
+        let ssh_password = p
+            .get("ssh_password")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string())
+            .or_else(|| saved.password.clone())
+            .unwrap_or_default();
+        let urls: Vec<String> = p
+            .get("urls")
+            .and_then(|v| v.as_array())
+            .map(|a| {
+                a.iter()
+                    .filter_map(|v| v.as_str())
+                    .map(str::trim)
+                    .filter(|s| !s.is_empty())
+                    .map(str::to_string)
+                    .collect()
+            })
+            .unwrap_or_default();
+        if urls.is_empty() {
+            anyhow::bail!("urls is required");
+        }
+
+        let result = tokio::task::spawn_blocking(move || -> Result<serde_json::Value> {
+            let router = Router::connect_password(&host, 22, &ssh_user, &ssh_password)?;
+            router.verify_openwrt()?;
+            let remaining = tollgate::config::remove_mints(&router, &urls)?;
+            let enabled = router
+                .uci_get("tollgate.main.enabled")
+                .map(|v| v == "1")
+                .unwrap_or(true);
+            if enabled {
+                tollgate::restart_tollgate_daemon(&router)?;
+            }
+            Ok(serde_json::json!({
+                "ok": true,
+                "remaining": remaining,
+            }))
+        })
+        .await
+        .context("openwrt prune mints task")??;
+
+        Ok(result)
+    }
+
+    /// Apply the product AP names (`archipelago-tollgate-<code>` and
+    /// `noderunner-<code>`) to an already-provisioned router.
+    pub(super) async fn handle_openwrt_apply_network_names(
+        &self,
+        params: Option<serde_json::Value>,
+    ) -> Result<serde_json::Value> {
+        let saved = net_router::load_router_config(&self.config.data_dir).await?;
+        let p = params.unwrap_or_default();
+        let host = p
+            .get("host")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string())
+            .or_else(|| saved.configured.then(|| saved.address.clone()))
+            .ok_or_else(|| anyhow::anyhow!("No router configured"))?;
+        let ssh_user = p
+            .get("ssh_user")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string())
+            .or_else(|| saved.username.clone())
+            .unwrap_or_else(|| "root".to_string());
+        let ssh_password = p
+            .get("ssh_password")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string())
+            .or_else(|| saved.password.clone())
+            .unwrap_or_default();
+
+        let result = tokio::task::spawn_blocking(move || -> Result<serde_json::Value> {
+            let router = Router::connect_password(&host, 22, &ssh_user, &ssh_password)?;
+            router.verify_openwrt()?;
+            let code = device_code(&router);
+            if code.is_empty() {
+                anyhow::bail!("could not resolve a 4-character device code");
+            }
+            let public_ssid = format!("archipelago-tollgate-{code}");
+            let private_ssid = format!("noderunner-{code}");
+            let enabled = router
+                .uci_get("tollgate.main.enabled")
+                .map(|v| v == "1")
+                .unwrap_or(true);
+            tollgate::rename_network(&router, &public_ssid, &private_ssid, enabled)?;
+            Ok(serde_json::json!({
+                "ok": true,
+                "code": code,
+                "public_ssid": public_ssid,
+                "private_ssid": private_ssid,
+            }))
+        })
+        .await
+        .context("openwrt apply network names task")??;
+
+        Ok(result)
+    }
+
     pub(super) async fn handle_openwrt_discover(&self) -> Result<serde_json::Value> {
         let saved = net_router::load_router_config(&self.config.data_dir).await?;
         let known = net_router::load_known_routers(&self.config.data_dir).await?;
@@ -816,9 +1164,86 @@ impl RpcHandler {
                     router["saved_model"] = serde_json::json!(remembered.model);
                 }
             }
+            let model = router
+                .get("model")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_ascii_lowercase();
+            let saved_model = router
+                .get("saved_model")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_ascii_lowercase();
+            let kind = if model.contains("gl.inet")
+                || model.contains("gl-mt")
+                || saved_model.contains("gl.inet")
+                || saved_model.contains("gl-mt")
+            {
+                "gl-inet"
+            } else if router
+                .get("identified")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false)
+            {
+                "openwrt"
+            } else if router
+                .get("ssh_open")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false)
+            {
+                "ssh"
+            } else {
+                "unknown"
+            };
+            router["kind"] = serde_json::json!(kind);
         }
+
+        // The installer scan lists one entry per management address, so a
+        // router that answers on both its WAN and LAN appears twice. Keep one
+        // row per MAC, preferring the active/saved-credential entry and
+        // filling any fields the other address knew.
+        let mut deduped: Vec<serde_json::Value> = Vec::new();
+        for router in routers {
+            let mac = router
+                .get("mac")
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_ascii_lowercase());
+            let fingerprint = router
+                .get("ssh_fingerprint")
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_ascii_lowercase());
+            if mac.is_some() || fingerprint.is_some() {
+                if let Some(pos) = deduped.iter().position(|r| {
+                    let other_mac = r
+                        .get("mac")
+                        .and_then(|v| v.as_str())
+                        .map(|s| s.to_ascii_lowercase());
+                    let other_fingerprint = r
+                        .get("ssh_fingerprint")
+                        .and_then(|v| v.as_str())
+                        .map(|s| s.to_ascii_lowercase());
+                    (mac.is_some() && mac == other_mac)
+                        || (fingerprint.is_some() && fingerprint == other_fingerprint)
+                }) {
+                    let existing_score = router_score(&deduped[pos]);
+                    let candidate_score = router_score(&router);
+                    if candidate_score > existing_score {
+                        let mut winner = router;
+                        merge_missing(&mut winner, &deduped[pos]);
+                        deduped[pos] = winner;
+                    } else {
+                        let mut winner = deduped[pos].clone();
+                        merge_missing(&mut winner, &router);
+                        deduped[pos] = winner;
+                    }
+                    continue;
+                }
+            }
+            deduped.push(router);
+        }
+
         Ok(serde_json::json!({
-            "routers": routers,
+            "routers": deduped,
             "active": saved.address,
             "diagnostics": scan.get("diagnostics"),
             "failure": scan.get("failure"),
@@ -1172,7 +1597,7 @@ impl RpcHandler {
             .and_then(|v| v.as_str())
             .map(str::trim)
             .filter(|s| !s.is_empty())
-            .unwrap_or("noderunner-private")
+            .unwrap_or("noderunner")
             .to_string();
         let private_key = p
             .get("private_key")

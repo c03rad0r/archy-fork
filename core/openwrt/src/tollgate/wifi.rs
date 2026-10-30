@@ -178,7 +178,8 @@ fn should_regate_upstream_ap(network: &str, ssid: &str) -> bool {
 ///
 /// `regate_upstream_default_aps` moves them onto the paid bridge, but they are
 /// still a second open SSID next to `archipelago`. The product owns exactly two
-/// names — the public `archipelago` and the private `noderunner-private` — so
+/// names — the public `archipelago-tollgate-<code>` and the private
+/// `noderunner-<code>` — so
 /// disable the upstream `TollGate-<serial>` sections instead of leaving a
 /// duplicate portal broadcast. Only sections whose SSID carries the upstream
 /// prefix are touched; a genuine operator AP is left alone.
@@ -191,7 +192,11 @@ pub fn disable_upstream_default_aps(router: &Router) -> Result<()> {
         let ssid = router
             .uci_get(&format!("{section}.ssid"))
             .unwrap_or_default();
-        if ssid.trim().starts_with("TollGate-") {
+        let name = ssid.trim().trim_start_matches('!').to_ascii_lowercase();
+        if name.starts_with("tollgate-")
+            || name.starts_with("archipelago-")
+            || name.starts_with("archipelago-tollgate-")
+        {
             info!(
                 "[{}] Disabling upstream default AP {} ({}) — only the Archy SSIDs should broadcast",
                 router.host, section, ssid

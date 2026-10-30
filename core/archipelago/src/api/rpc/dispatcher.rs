@@ -294,6 +294,9 @@ impl RpcHandler {
             "openwrt.installer.scan" => self.handle_openwrt_installer_scan().await,
             "openwrt.installer.config" => self.handle_openwrt_installer_config().await,
             "openwrt.test-mint" => self.handle_openwrt_test_mint(params).await,
+            "openwrt.mint-health" => self.handle_openwrt_mint_health(params).await,
+            "openwrt.prune-mints" => self.handle_openwrt_prune_mints(params).await,
+            "openwrt.apply-network-names" => self.handle_openwrt_apply_network_names(params).await,
             "openwrt.scan-wifi" => self.handle_openwrt_scan_wifi(params).await,
             "openwrt.configure-wan" => self.handle_openwrt_configure_wan(params).await,
 

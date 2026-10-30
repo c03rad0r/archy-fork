@@ -108,7 +108,7 @@ impl InstallerClient {
             // is still the final writer, so this is a head start, not a
             // dependency.
             .env("TOLLGATE_BRAND", "archipelago")
-            .env("TOLLGATE_PRIVATE_NYM", "noderunner-private")
+            .env("TOLLGATE_PRIVATE_NYM", "noderunner")
             .env("TOLLGATE_SSID_PREFIXES_FILE", "/etc/tollgate/ssid-prefixes")
             .stdout(Stdio::from(out))
             .stderr(Stdio::from(err))

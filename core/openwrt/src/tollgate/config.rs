@@ -85,7 +85,7 @@ impl Default for TollGateConfig {
             min_steps: 1,
             enabled: true,
             payout_address: None,
-            private_ssid: "noderunner-private".to_string(),
+            private_ssid: "noderunner".to_string(),
             private_key: None,
             accepted_mints: None,
         }
@@ -230,11 +230,15 @@ pub fn apply_daemon_config(router: &Router, cfg: &TollGateConfig) -> Result<()> 
         doc["accepted_mints"] = serde_json::json!(mints);
     }
 
-    let json_str = serde_json::to_string_pretty(&doc).context("serialize config.json")?;
+    write_daemon_doc(router, &doc)
+}
 
-    // Prefer the package's own writer when the schema CLI is present: it
-    // validates the document and applies operator settings in one place.
-    // Fall back to the file upload for older packages or a stale socket.
+/// Write a full `/etc/tollgate/config.json` document without dropping fields
+/// this project does not manage. Prefer the package's schema CLI; fall back
+/// to a file upload for older packages or a stale socket.
+fn write_daemon_doc(router: &Router, doc: &serde_json::Value) -> Result<()> {
+    let json_str = serde_json::to_string_pretty(doc).context("serialize config.json")?;
+
     let tmp = "/tmp/tollgate-config.json";
     router
         .upload_file(tmp, json_str.as_bytes())
@@ -268,6 +272,56 @@ pub fn apply_daemon_config(router: &Router, cfg: &TollGateConfig) -> Result<()> 
         .context("upload /etc/tollgate/config.json")?;
     let _ = router.run_ok("rm -f /tmp/tollgate-config.json");
     Ok(())
+}
+
+/// Remove the named mints from `accepted_mints` while preserving every other
+/// daemon setting (metric, profit share, upstream tuning, ...). Returns the
+/// remaining URLs. Refuses to empty the list.
+///
+/// This deliberately does not touch `wallet.db` or the ecash directory:
+/// removing a mint from the accepted set stops new payments there; it does not
+/// delete funds the wallet already holds.
+pub fn remove_mints(router: &Router, remove: &[String]) -> Result<Vec<String>> {
+    let existing = router.run_ok("cat /etc/tollgate/config.json 2>/dev/null || echo '{}'")?;
+    let mut doc: serde_json::Value =
+        serde_json::from_str(existing.trim()).unwrap_or_else(|_| serde_json::json!({}));
+    let Some(mints) = doc.get_mut("accepted_mints").and_then(|v| v.as_array_mut()) else {
+        anyhow::bail!("config.json has no accepted_mints list");
+    };
+    let before = mints.len();
+    mints.retain(|mint| {
+        let url = mint.get("url").and_then(|v| v.as_str()).unwrap_or("");
+        !remove.iter().any(|remove_url| {
+            remove_url
+                .trim_end_matches('/')
+                .eq_ignore_ascii_case(url.trim_end_matches('/'))
+        })
+    });
+    if mints.is_empty() {
+        anyhow::bail!("refusing to remove every accepted mint");
+    }
+    if mints.len() == before {
+        return Ok(mints
+            .iter()
+            .filter_map(|m| m.get("url").and_then(|v| v.as_str()).map(str::to_string))
+            .collect());
+    }
+    let remaining: Vec<String> = mints
+        .iter()
+        .filter_map(|m| m.get("url").and_then(|v| v.as_str()).map(str::to_string))
+        .collect();
+    write_daemon_doc(router, &doc)?;
+    Ok(remaining)
+}
+
+/// Update only the daemon's `private_ssid` field, preserving every other
+/// setting in `/etc/tollgate/config.json`.
+pub fn set_private_ssid(router: &Router, ssid: &str) -> Result<()> {
+    let existing = router.run_ok("cat /etc/tollgate/config.json 2>/dev/null || echo '{}'")?;
+    let mut doc: serde_json::Value =
+        serde_json::from_str(existing.trim()).unwrap_or_else(|_| serde_json::json!({}));
+    doc["private_ssid"] = serde_json::json!(ssid);
+    write_daemon_doc(router, &doc)
 }
 
 /// Set the operator's own payout Lightning address in
