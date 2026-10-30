@@ -278,6 +278,8 @@ impl RpcHandler {
 
             // OpenWrt / TollGate
             "openwrt.scan" => self.handle_openwrt_scan(params).await,
+            "openwrt.discover" => self.handle_openwrt_discover().await,
+            "openwrt.select-router" => self.handle_openwrt_select_router(params).await,
             "openwrt.get-status" => self.handle_openwrt_get_status(params).await,
             "openwrt.provision-tollgate" => self.handle_openwrt_provision_tollgate(params).await,
             "openwrt.installer.status" => self.handle_openwrt_installer_status().await,

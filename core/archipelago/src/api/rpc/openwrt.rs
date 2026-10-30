@@ -593,6 +593,106 @@ impl RpcHandler {
         Ok(result)
     }
 
+    /// Discover every router the node can manage on its interfaces.
+    ///
+    /// The installer already scans the host's LAN interfaces and returns
+    /// model/vendor/firmware/trust metadata; this wraps that list, marks the
+    /// saved active router, and leaves selection explicit.
+    pub(super) async fn handle_openwrt_discover(&self) -> Result<serde_json::Value> {
+        let saved = net_router::load_router_config(&self.config.data_dir).await?;
+        let client = InstallerClient::new(&self.config.data_dir);
+        let cfg = client
+            .ensure_running()
+            .await
+            .context("start the local tollgate-installer")?;
+        let scan = client.scan().await.context("scan the LAN")?;
+        let mut routers = scan
+            .get("routers")
+            .and_then(|v| v.as_array())
+            .cloned()
+            .unwrap_or_default();
+        for router in &mut routers {
+            let ip = router.get("ip").and_then(|v| v.as_str()).unwrap_or("");
+            router["active"] = serde_json::json!(saved.configured && ip == saved.address);
+        }
+        Ok(serde_json::json!({
+            "routers": routers,
+            "active": saved.address,
+            "diagnostics": scan.get("diagnostics"),
+            "failure": scan.get("failure"),
+            "installer_version": cfg.get("installer_version"),
+            "feed_release_tag": cfg.get("feed_release_tag"),
+        }))
+    }
+
+    /// Make a discovered router the active one (and persist it).
+    ///
+    /// Verifies SSH/OpenWrt before saving, so a typo cannot replace a working
+    /// saved router. `trust_fingerprint` optionally records the host key with
+    /// the installer as well.
+    pub(super) async fn handle_openwrt_select_router(
+        &self,
+        params: Option<serde_json::Value>,
+    ) -> Result<serde_json::Value> {
+        let p = params.unwrap_or_default();
+        let host = p
+            .get("host")
+            .and_then(|v| v.as_str())
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .ok_or_else(|| anyhow::anyhow!("host is required"))?
+            .to_string();
+        let ssh_user = p
+            .get("ssh_user")
+            .and_then(|v| v.as_str())
+            .map(str::to_string)
+            .unwrap_or_else(|| "root".to_string());
+        let ssh_password = p
+            .get("ssh_password")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
+        let trust_fingerprint = p
+            .get("trust_fingerprint")
+            .and_then(|v| v.as_str())
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(str::to_string);
+
+        let host_check = host.clone();
+        let user_check = ssh_user.clone();
+        let pass_check = ssh_password.clone();
+        tokio::task::spawn_blocking(move || -> Result<()> {
+            let router = Router::connect_password(&host_check, 22, &user_check, &pass_check)?;
+            router.verify_openwrt()?;
+            Ok(())
+        })
+        .await
+        .context("openwrt select-router verify task")??;
+
+        if let Some(fingerprint) = trust_fingerprint {
+            let client = InstallerClient::new(&self.config.data_dir);
+            client.ensure_running().await?;
+            client.trust(&host, &fingerprint).await?;
+        }
+
+        let saved = net_router::configure_router(
+            &self.config.data_dir,
+            net_router::RouterType::OpenWrt,
+            &host,
+            None,
+            Some(&ssh_user),
+            Some(&ssh_password),
+        )
+        .await?;
+        Ok(serde_json::json!({
+            "ok": true,
+            "host": saved.address,
+            "address": saved.address,
+            "username": saved.username,
+        }))
+    }
+
     /// Status/version of the local tollgate-installer service.
     pub(super) async fn handle_openwrt_installer_status(&self) -> Result<serde_json::Value> {
         let client = InstallerClient::new(&self.config.data_dir);

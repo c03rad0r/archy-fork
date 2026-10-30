@@ -74,6 +74,22 @@ interface InstallerStatus {
   error?: string
 }
 
+interface DiscoveredRouter {
+  ip: string
+  mac?: string
+  name?: string
+  vendor?: string
+  model?: string
+  firmware?: string
+  identified?: boolean
+  ssh_open?: boolean
+  ssh_fingerprint?: string
+  password_status?: string
+  note?: string
+  source?: string
+  active?: boolean
+}
+
 interface WanStatus {
   configured: boolean
   ssid: string
@@ -199,6 +215,10 @@ const installMinSteps = ref(1)
 const installPayoutAddress = ref('')
 
 const installerStatus = ref<InstallerStatus | null>(null)
+const discovered = ref<DiscoveredRouter[]>([])
+const discovering = ref(false)
+const discoveryError = ref('')
+const discoveryActive = ref('')
 const trustRequired = ref(false)
 const trustPending = ref(false)
 const trustFingerprint = ref('')
@@ -350,7 +370,20 @@ async function connect() {
   connecting.value = true
   error.value = ''
   try {
-    await load({ host: host.value.trim(), ssh_user: sshUser.value, ssh_password: sshPassword.value })
+    const params = {
+      host: host.value.trim(),
+      ssh_user: sshUser.value,
+      ssh_password: sshPassword.value,
+    }
+    await rpcClient.call({
+      method: 'openwrt.select-router',
+      params,
+      timeout: 30000,
+    })
+    await load(params)
+    await discoverRouters()
+  } catch (e) {
+    error.value = e instanceof Error ? e.message : String(e)
   } finally {
     connecting.value = false
   }
@@ -421,6 +454,36 @@ async function loadInstallerStatus() {
   } catch {
     installerStatus.value = { available: false, error: 'installer status unavailable' }
   }
+}
+
+async function discoverRouters() {
+  discovering.value = true
+  discoveryError.value = ''
+  try {
+    const result = await rpcClient.call<{
+      routers: DiscoveredRouter[]
+      active?: string
+    }>({
+      method: 'openwrt.discover',
+      timeout: 120000,
+    })
+    discovered.value = result.routers ?? []
+    discoveryActive.value = result.active ?? ''
+  } catch (e) {
+    discoveryError.value = e instanceof Error ? e.message : String(e)
+  } finally {
+    discovering.value = false
+  }
+}
+
+function selectDiscoveredRouter(r: DiscoveredRouter) {
+  host.value = r.ip
+  sshUser.value = 'root'
+  sshPassword.value = ''
+  detectedCandidates.value = []
+  detectError.value = ''
+  error.value = ''
+  showConnectForm.value = true
 }
 
 async function provisionTollgate() {
@@ -837,6 +900,7 @@ const boardName = computed(() => {
 // entry (mirrors what a completed load() call would have set).
 onMounted(() => {
   void loadInstallerStatus()
+  void discoverRouters()
   if (routerResource.data.value === null || routerResource.isStale.value) {
     void load()
     return
@@ -858,6 +922,62 @@ onMounted(() => {
     <div class="flex items-center gap-3 mb-6">
       <BackButton desktop-margin="mb-0" @click="goBack" />
       <h1 class="text-lg font-semibold text-white">OpenWrt Gateway</h1>
+    </div>
+
+    <!-- Discovered gateways -->
+    <div class="glass-card p-6 mb-6">
+      <div class="flex items-center justify-between mb-3">
+        <h2 class="text-sm font-semibold text-white/80">Discovered gateways</h2>
+        <button
+          class="text-xs text-white/40 hover:text-white"
+          :disabled="discovering"
+          @click="discoverRouters"
+        >
+          {{ discovering ? 'Scanning…' : 'Rescan' }}
+        </button>
+      </div>
+      <p v-if="discoveryError" class="text-xs text-red-400">{{ discoveryError }}</p>
+      <div v-if="discovering" class="text-sm text-white/50">Scanning the node's LAN interfaces…</div>
+      <div
+        v-else-if="discovered.length === 0 && !discoveryError"
+        class="text-sm text-white/50"
+      >
+        No manageable gateways found.
+      </div>
+      <div v-else class="space-y-2">
+        <div
+          v-for="r in discovered"
+          :key="r.ip"
+          class="flex items-center justify-between gap-3 p-3 bg-white/5 rounded-lg"
+        >
+          <div class="min-w-0">
+            <div class="text-sm text-white/80">
+              {{ r.name || r.model || 'OpenWrt router' }}
+              <span v-if="r.active" class="ml-2 text-[10px] uppercase tracking-wide text-green-300">Active</span>
+            </div>
+            <div class="text-xs font-mono text-white/50 break-all">
+              {{ r.ip }}<span v-if="r.mac"> · {{ r.mac }}</span>
+            </div>
+            <div class="text-[11px] text-white/40">
+              {{ r.firmware || r.vendor || 'unknown firmware' }}
+              <span v-if="r.identified"> · OpenWrt</span>
+              <span v-if="!r.ssh_open"> · no SSH</span>
+            </div>
+            <div v-if="r.ssh_fingerprint" class="text-[11px] text-yellow-300">
+              Host key not trusted yet
+            </div>
+            <div v-else-if="r.password_status === 'refused'" class="text-[11px] text-red-300">
+              Password refused
+            </div>
+          </div>
+          <button
+            class="glass-button px-3 py-1.5 text-xs whitespace-nowrap"
+            @click="selectDiscoveredRouter(r)"
+          >
+            Select
+          </button>
+        </div>
+      </div>
     </div>
 
     <!-- Connect form -->
