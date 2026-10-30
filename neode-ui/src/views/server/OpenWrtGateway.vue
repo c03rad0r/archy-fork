@@ -88,6 +88,63 @@ interface DiscoveredRouter {
   note?: string
   source?: string
   active?: boolean
+  link_type?: string
+  interface?: string
+  subnet?: string
+  has_saved_credentials?: boolean
+  saved_hostname?: string
+  saved_model?: string
+}
+
+interface SelectRouterResult {
+  ok: boolean
+  host?: string
+  address?: string
+  username?: string
+  hostname?: string
+  model?: string
+  used_saved_credentials?: boolean
+  needs_password?: boolean
+  bad_password?: boolean
+  error?: string
+}
+
+interface WalletInfo {
+  ok: boolean
+  degraded?: boolean
+  error?: string
+  wallet?: {
+    total_balance: number
+    mint_count: number
+    mint_balances: Record<string, number>
+  }
+}
+
+interface UpstreamSTA {
+  ssid: string
+  status: string
+  radio: string
+  encryption: string
+}
+
+interface KnownTollGate {
+  ssid: string
+  bssid?: string
+  price_per_step?: number
+  step_size?: number
+  best_signal?: number
+  last_seen?: string
+}
+
+interface UpstreamNetwork {
+  ssid: string
+  signal: number
+  encryption: string
+  bssid?: string
+  band?: string
+  is_tollgate?: boolean
+  price_per_step?: number
+  step_size?: number
 }
 
 interface WanStatus {
@@ -219,6 +276,21 @@ const discovered = ref<DiscoveredRouter[]>([])
 const discovering = ref(false)
 const discoveryError = ref('')
 const discoveryActive = ref('')
+const selectedRouterIp = ref('')
+const needsPassword = ref(false)
+const selectedRouter = computed(() =>
+  discovered.value.find(r => r.ip === selectedRouterIp.value) ?? null,
+)
+
+const walletInfo = ref<WalletInfo | null>(null)
+const walletLoading = ref(false)
+const walletError = ref('')
+const upstreamList = ref<UpstreamSTA[]>([])
+const upstreamKnown = ref<KnownTollGate[]>([])
+const upstreamNetworks = ref<UpstreamNetwork[]>([])
+const upstreamLoading = ref(false)
+const upstreamError = ref('')
+const upstreamPassphrase = ref('')
 const trustRequired = ref(false)
 const trustPending = ref(false)
 const trustFingerprint = ref('')
@@ -261,6 +333,37 @@ const restartRequired = computed(() => {
   const t = status.value?.tollgate
   return !!t && t.installed && (!t.daemon_running || t.daemon_version_matches === false)
 })
+
+const installerNeeded = computed(() => {
+  const t = status.value?.tollgate
+  return !!t && (!t.installed || t.up_to_date === false)
+})
+
+const adminReady = computed(() => {
+  const t = status.value?.tollgate
+  return !!t && t.installed && t.up_to_date !== false && t.daemon_running !== false
+})
+
+const showUplink = computed(
+  () => !!status.value && installerNeeded.value && !status.value.wan?.internet,
+)
+
+const walletDegraded = computed(() => {
+  if (walletInfo.value?.degraded) return true
+  const t = status.value?.tollgate
+  if (!t) return false
+  return (t.configured_mints ?? 0) > 0 && (t.advertised_mints?.length ?? 0) === 0
+})
+
+const walletMints = computed(() =>
+  Object.entries(walletInfo.value?.wallet?.mint_balances ?? {}),
+)
+const walletTotal = computed(
+  () => walletInfo.value?.wallet?.total_balance ?? 0,
+)
+const walletMintCount = computed(
+  () => walletInfo.value?.wallet?.mint_count ?? 0,
+)
 
 const isDataMetering = computed(
   () => (status.value?.tollgate?.metric ?? '').toLowerCase() === 'bytes',
@@ -342,6 +445,14 @@ async function load(params?: Record<string, string>) {
       routerResource.entry.loadState = 'ready'
       showConnectForm.value = false
       connectedParams.value = params
+      syncInstallDefaults(result)
+      if (
+        result.tollgate.installed &&
+        result.tollgate.up_to_date !== false &&
+        result.tollgate.daemon_running
+      ) {
+        void loadAdminData()
+      }
     } catch (e) {
       const message = e instanceof Error ? e.message : String(e)
       if (message.includes('No router configured')) {
@@ -362,31 +473,38 @@ async function load(params?: Record<string, string>) {
     }
   } else {
     showConnectForm.value = false
+    const current = routerResource.data.value
+    if (current) syncInstallDefaults(current)
+    if (
+      current?.tollgate.installed &&
+      current.tollgate.up_to_date !== false &&
+      current.tollgate.daemon_running
+    ) {
+      void loadAdminData()
+    }
   }
 }
 
+function syncInstallDefaults(s: RouterStatus) {
+  if (!s.tollgate.installed) return
+  installPriceSats.value = s.tollgate.price_per_step ?? 10
+  installStepSizeMin.value = Math.max(
+    1,
+    Math.round((s.tollgate.step_size_ms ?? 60_000) / 60_000),
+  )
+  installMinSteps.value = s.tollgate.min_steps ?? 1
+  installPayoutAddress.value = s.tollgate.payout_address ?? ''
+  editPrivateSsid.value = s.tollgate.private_ssid || 'noderunner-private'
+}
+
 async function connect() {
-  if (!host.value.trim()) return
-  connecting.value = true
-  error.value = ''
-  try {
-    const params = {
-      host: host.value.trim(),
-      ssh_user: sshUser.value,
-      ssh_password: sshPassword.value,
-    }
-    await rpcClient.call({
-      method: 'openwrt.select-router',
-      params,
-      timeout: 30000,
-    })
-    await load(params)
-    await discoverRouters()
-  } catch (e) {
-    error.value = e instanceof Error ? e.message : String(e)
-  } finally {
-    connecting.value = false
-  }
+  const ip = host.value.trim()
+  if (!ip) return
+  const router: DiscoveredRouter =
+    selectedRouter.value && selectedRouter.value.ip === ip
+      ? selectedRouter.value
+      : { ip }
+  await trySelectRouter(router, sshPassword.value)
 }
 
 interface WiredInterface { name: string; type: string; state: string; ipv4: string[] }
@@ -469,6 +587,13 @@ async function discoverRouters() {
     })
     discovered.value = result.routers ?? []
     discoveryActive.value = result.active ?? ''
+    if (
+      !selectedRouterIp.value ||
+      !discovered.value.some(r => r.ip === selectedRouterIp.value)
+    ) {
+      selectedRouterIp.value =
+        result.active || discovered.value[0]?.ip || ''
+    }
   } catch (e) {
     discoveryError.value = e instanceof Error ? e.message : String(e)
   } finally {
@@ -476,14 +601,189 @@ async function discoverRouters() {
   }
 }
 
-function selectDiscoveredRouter(r: DiscoveredRouter) {
+function onDiscoveryChange() {
+  const router = selectedRouter.value
+  if (router) void selectDiscoveredRouter(router)
+}
+
+function discoveryLabel(r: DiscoveredRouter): string {
+  const name = r.saved_hostname || r.name || r.model || 'OpenWrt router'
+  const link =
+    r.link_type === 'wifi'
+      ? 'WiFi'
+      : r.link_type === 'ethernet'
+        ? 'Ethernet'
+        : 'link unknown'
+  const model = r.saved_model || r.model || r.vendor || ''
+  const credential = r.has_saved_credentials
+    ? 'password saved'
+    : 'password required'
+  return `${name} · ${r.ip} · ${link}${model ? ` · ${model}` : ''} · ${credential}${r.active ? ' · active' : ''}`
+}
+
+async function selectDiscoveredRouter(r: DiscoveredRouter) {
+  selectedRouterIp.value = r.ip
   host.value = r.ip
   sshUser.value = 'root'
   sshPassword.value = ''
   detectedCandidates.value = []
   detectError.value = ''
   error.value = ''
-  showConnectForm.value = true
+  showConnectForm.value = false
+  needsPassword.value = false
+  await trySelectRouter(r, '')
+}
+
+async function trySelectRouter(r: DiscoveredRouter, password: string) {
+  connecting.value = true
+  error.value = ''
+  try {
+    const result = await rpcClient.call<SelectRouterResult>({
+      method: 'openwrt.select-router',
+      params: {
+        host: r.ip,
+        ssh_user: 'root',
+        ssh_password: password,
+        ...(r.mac ? { mac: r.mac } : {}),
+        ...(r.model ? { model: r.model } : {}),
+        ...(r.name ? { name: r.name } : {}),
+      },
+      timeout: 30000,
+    })
+    if (!result.ok) {
+      needsPassword.value = true
+      showConnectForm.value = true
+      error.value = result.bad_password
+        ? 'That root password was refused. Enter the router root password.'
+        : result.error || 'This router needs a root password.'
+      return
+    }
+    needsPassword.value = false
+    showConnectForm.value = false
+    if (password) {
+      await load({
+        host: r.ip,
+        ssh_user: result.username || 'root',
+        ssh_password: password,
+      })
+    } else {
+      await load()
+    }
+    await discoverRouters()
+    await loadAdminData()
+  } catch (e) {
+    error.value = e instanceof Error ? e.message : String(e)
+    showConnectForm.value = true
+    needsPassword.value = true
+  } finally {
+    connecting.value = false
+  }
+}
+
+async function loadAdminData() {
+  if (!adminReady.value) return
+  await Promise.all([loadWallet(), loadUpstreams()])
+}
+
+async function loadWallet() {
+  walletLoading.value = true
+  walletError.value = ''
+  try {
+    walletInfo.value = await rpcClient.call<WalletInfo>({
+      method: 'openwrt.wallet-info',
+      timeout: 30000,
+    })
+  } catch (e) {
+    walletError.value = e instanceof Error ? e.message : String(e)
+    walletInfo.value = null
+  } finally {
+    walletLoading.value = false
+  }
+}
+
+async function loadUpstreams() {
+  upstreamLoading.value = true
+  upstreamError.value = ''
+  try {
+    const [list, known] = await Promise.all([
+      rpcClient.call<{ upstreams: UpstreamSTA[] }>({
+        method: 'openwrt.upstream-list',
+        timeout: 30000,
+      }),
+      rpcClient.call<{ known: { known_tollgates?: KnownTollGate[] } }>({
+        method: 'openwrt.upstream-known',
+        timeout: 30000,
+      }),
+    ])
+    upstreamList.value = list.upstreams ?? []
+    upstreamKnown.value = known.known?.known_tollgates ?? []
+  } catch (e) {
+    upstreamError.value = e instanceof Error ? e.message : String(e)
+  } finally {
+    upstreamLoading.value = false
+  }
+}
+
+async function scanUpstreams() {
+  upstreamLoading.value = true
+  upstreamError.value = ''
+  try {
+    const result = await rpcClient.call<{ networks: UpstreamNetwork[] }>({
+      method: 'openwrt.upstream-scan',
+      timeout: 120000,
+    })
+    upstreamNetworks.value = result.networks ?? []
+  } catch (e) {
+    upstreamError.value = e instanceof Error ? e.message : String(e)
+  } finally {
+    upstreamLoading.value = false
+  }
+}
+
+async function connectUpstream(net: UpstreamNetwork) {
+  if (
+    !window.confirm(
+      `Connect the router's upstream to "${net.ssid}"? This changes the router's upstream and may interrupt active sessions.`,
+    )
+  ) {
+    return
+  }
+  upstreamLoading.value = true
+  upstreamError.value = ''
+  try {
+    await rpcClient.call({
+      method: 'openwrt.upstream-connect',
+      params: {
+        ssid: net.ssid,
+        passphrase: net.encryption === 'none' ? '' : upstreamPassphrase.value,
+      },
+      timeout: 180000,
+    })
+    upstreamPassphrase.value = ''
+    await loadUpstreams()
+  } catch (e) {
+    upstreamError.value = e instanceof Error ? e.message : String(e)
+  } finally {
+    upstreamLoading.value = false
+  }
+}
+
+async function removeUpstream(ssid: string) {
+  if (!window.confirm(`Remove disabled upstream "${ssid}"?`)) return
+  upstreamLoading.value = true
+  upstreamError.value = ''
+  try {
+    await rpcClient.call({
+      method: 'openwrt.upstream-remove',
+      params: { ssid },
+      timeout: 30000,
+    })
+    await loadUpstreams()
+  } catch (e) {
+    upstreamError.value = e instanceof Error ? e.message : String(e)
+  } finally {
+    upstreamLoading.value = false
+  }
 }
 
 async function provisionTollgate() {
@@ -944,40 +1244,40 @@ onMounted(() => {
       >
         No manageable gateways found.
       </div>
-      <div v-else class="space-y-2">
-        <div
-          v-for="r in discovered"
-          :key="r.ip"
-          class="flex items-center justify-between gap-3 p-3 bg-white/5 rounded-lg"
+      <template v-else>
+        <select
+          v-model="selectedRouterIp"
+          class="w-full px-3 py-2.5 bg-transparent border border-white/20 rounded-lg text-white text-sm focus:outline-none focus:border-white/40"
+          @change="onDiscoveryChange"
         >
-          <div class="min-w-0">
-            <div class="text-sm text-white/80">
-              {{ r.name || r.model || 'OpenWrt router' }}
-              <span v-if="r.active" class="ml-2 text-[10px] uppercase tracking-wide text-green-300">Active</span>
-            </div>
-            <div class="text-xs font-mono text-white/50 break-all">
-              {{ r.ip }}<span v-if="r.mac"> · {{ r.mac }}</span>
-            </div>
-            <div class="text-[11px] text-white/40">
-              {{ r.firmware || r.vendor || 'unknown firmware' }}
-              <span v-if="r.identified"> · OpenWrt</span>
-              <span v-if="!r.ssh_open"> · no SSH</span>
-            </div>
-            <div v-if="r.ssh_fingerprint" class="text-[11px] text-yellow-300">
-              Host key not trusted yet
-            </div>
-            <div v-else-if="r.password_status === 'refused'" class="text-[11px] text-red-300">
-              Password refused
-            </div>
+          <option value="">Select a gateway…</option>
+          <option v-for="r in discovered" :key="r.ip" :value="r.ip">
+            {{ discoveryLabel(r) }}
+          </option>
+        </select>
+        <div v-if="selectedRouter" class="mt-3 text-xs text-white/50 space-y-1">
+          <div>
+            <span class="text-white/30">Address:</span>
+            <span class="font-mono">{{ selectedRouter.ip }}</span>
+            <span v-if="selectedRouter.mac" class="font-mono text-white/30"> · {{ selectedRouter.mac }}</span>
           </div>
-          <button
-            class="glass-button px-3 py-1.5 text-xs whitespace-nowrap"
-            @click="selectDiscoveredRouter(r)"
-          >
-            Select
-          </button>
+          <div>
+            <span class="text-white/30">Firmware:</span>
+            {{ selectedRouter.firmware || selectedRouter.vendor || 'unknown' }}
+            <span v-if="selectedRouter.identified"> · OpenWrt</span>
+            <span v-if="!selectedRouter.ssh_open"> · no SSH</span>
+          </div>
+          <div v-if="selectedRouter.ssh_fingerprint" class="text-yellow-300">
+            Host key not trusted yet — trust is only needed for install/upgrade.
+          </div>
+          <div v-if="selectedRouter.has_saved_credentials" class="text-green-300">
+            Root password saved for this router.
+          </div>
+          <div v-else class="text-white/40">
+            Root password required.
+          </div>
         </div>
-      </div>
+      </template>
     </div>
 
     <!-- Connect form -->
@@ -1025,7 +1325,7 @@ onMounted(() => {
               class="w-full px-4 py-3 bg-transparent border border-white/20 rounded-lg text-white focus:outline-none focus:border-white/40 focus:ring-1 focus:ring-white/20 transition-colors"
             />
           </div>
-          <div>
+          <div v-if="needsPassword || !selectedRouter?.has_saved_credentials">
             <label class="block text-xs text-white/40 mb-1">Password</label>
             <input
               v-model="sshPassword"
@@ -1035,6 +1335,12 @@ onMounted(() => {
             />
           </div>
         </div>
+        <p
+          v-if="selectedRouter?.has_saved_credentials && !needsPassword"
+          class="text-xs text-green-300"
+        >
+          Using the saved root password. If it is refused, the password field appears.
+        </p>
         <button
           :disabled="connecting || !host.trim()"
           class="glass-button w-full text-sm font-medium"
@@ -1121,8 +1427,8 @@ onMounted(() => {
         </div>
       </div>
 
-      <!-- WAN / Uplink -->
-      <div class="glass-card p-6 mb-4">
+      <!-- WAN / Uplink (only when an install/upgrade needs internet) -->
+      <div v-if="showUplink" class="glass-card p-6 mb-4">
         <div class="flex items-center justify-between mb-4">
           <h2 class="text-sm font-semibold text-white/80">WAN / Uplink</h2>
           <button
@@ -1398,10 +1704,16 @@ onMounted(() => {
           </span>
         </div>
 
-        <div v-if="!status.tollgate.installed">
+        <div v-if="installerNeeded">
           <div class="flex items-center gap-3 mb-4">
             <span class="w-2 h-2 rounded-full bg-white/20 inline-block"></span>
-            <span class="text-sm text-white/50">Not installed</span>
+            <span class="text-sm text-white/50">
+              {{ status.tollgate.installed ? 'Update available' : 'Not installed' }}
+            </span>
+          </div>
+          <div v-if="status.tollgate.installed" class="mb-3 text-xs text-yellow-400/80 bg-yellow-400/10 rounded-lg px-3 py-2">
+            Installed <span class="font-mono">{{ status.tollgate.version || 'unknown' }}</span>,
+            latest <span class="font-mono">{{ status.tollgate.pinned_version || 'unknown' }}</span>.
           </div>
           <div v-if="!status.wan?.internet" class="mb-3 text-xs text-yellow-400/80 bg-yellow-400/10 rounded-lg px-3 py-2">
             Router needs internet access to install TollGate. Configure WAN above first.
@@ -1437,7 +1749,13 @@ onMounted(() => {
             :class="provisioning ? 'opacity-40 cursor-not-allowed' : ''"
             @click="provisionTollgate"
           >
-            {{ provisioning ? 'Installing… this may take a few minutes' : 'Install TollGate' }}
+            {{
+              provisioning
+                ? 'Working… this may take a few minutes'
+                : status.tollgate.installed
+                  ? 'Upgrade TollGate'
+                  : 'Install TollGate'
+            }}
           </button>
           <p v-if="provisionError" class="mt-3 text-xs text-red-400">{{ provisionError }}</p>
           <p v-if="provisionSuccess && !provisioning" class="mt-3 text-xs text-green-400">TollGate provisioned successfully.</p>
@@ -1519,6 +1837,111 @@ onMounted(() => {
               </dd>
             </div>
           </dl>
+
+          <div v-if="adminReady" class="mt-4 border-t border-white/10 pt-4 space-y-5">
+            <!-- Wallet -->
+            <div>
+              <div class="flex items-center justify-between mb-2">
+                <h3 class="text-sm font-semibold text-white/80">Wallet</h3>
+                <button class="text-xs text-white/40 hover:text-white" :disabled="walletLoading" @click="loadWallet">
+                  {{ walletLoading ? 'Loading…' : 'Refresh' }}
+                </button>
+              </div>
+              <div v-if="walletError" class="text-xs text-red-400">{{ walletError }}</div>
+              <div v-if="walletDegraded" class="text-xs text-yellow-300 mb-2">
+                Wallet degraded: {{ walletInfo?.error || 'configured mints are not being advertised' }}
+              </div>
+              <div class="text-sm text-white/70">
+                {{ walletTotal }} sats · {{ walletMintCount }} mint{{ walletMintCount === 1 ? '' : 's' }}
+              </div>
+              <ul class="mt-1 text-xs font-mono text-white/50 break-all space-y-0.5">
+                <li v-for="mint in walletMints" :key="mint[0]">
+                  {{ mint[0] }} · {{ mint[1] }} sats
+                </li>
+              </ul>
+              <div v-if="walletMints.length === 0" class="text-xs text-white/40 mt-1">
+                No funds across configured mints.
+              </div>
+            </div>
+
+            <!-- Upstream gateways -->
+            <div>
+              <div class="flex items-center justify-between mb-2">
+                <h3 class="text-sm font-semibold text-white/80">Upstream gateways</h3>
+                <button class="text-xs text-white/40 hover:text-white" :disabled="upstreamLoading" @click="scanUpstreams">
+                  {{ upstreamLoading ? 'Scanning…' : 'Scan' }}
+                </button>
+              </div>
+              <div v-if="upstreamError" class="text-xs text-red-400 mb-2">{{ upstreamError }}</div>
+              <div class="text-xs text-white/40 mb-1">Configured</div>
+              <div v-if="upstreamList.length === 0" class="text-xs text-white/40">None</div>
+              <div
+                v-for="u in upstreamList"
+                :key="u.ssid"
+                class="flex items-center justify-between text-xs py-1"
+              >
+                <span class="font-mono">{{ u.ssid }}</span>
+                <span :class="u.status === 'ACTIVE' ? 'text-green-300' : 'text-white/40'">
+                  {{ u.status }} · {{ u.radio }} · {{ u.encryption }}
+                </span>
+                <button
+                  v-if="u.status !== 'ACTIVE'"
+                  class="text-red-300/80 hover:text-red-200"
+                  @click="removeUpstream(u.ssid)"
+                >
+                  Remove
+                </button>
+              </div>
+
+              <div class="text-xs text-white/40 mt-3 mb-1">Known TollGates</div>
+              <div v-if="upstreamKnown.length === 0" class="text-xs text-white/40">None discovered yet</div>
+              <div
+                v-for="k in upstreamKnown"
+                :key="k.bssid || k.ssid"
+                class="flex items-center justify-between text-xs py-1"
+              >
+                <span class="font-mono">{{ k.ssid }}</span>
+                <span class="text-white/40">
+                  {{ k.price_per_step ? k.price_per_step + ' sats/' + (k.step_size || '?') + 'ms' : 'price unknown' }}
+                  <span v-if="k.best_signal"> · {{ k.best_signal }} dBm</span>
+                </span>
+                <button
+                  class="text-green-300 hover:text-green-200"
+                  @click="connectUpstream({ ssid: k.ssid, signal: k.best_signal || 0, encryption: 'unknown' })"
+                >
+                  Connect
+                </button>
+              </div>
+
+              <div v-if="upstreamNetworks.length > 0" class="mt-3">
+                <div class="text-xs text-white/40 mb-1">Scanned networks</div>
+                <div
+                  v-for="n in upstreamNetworks"
+                  :key="n.bssid || n.ssid"
+                  class="flex items-center justify-between text-xs py-1"
+                >
+                  <span class="font-mono">{{ n.ssid }}</span>
+                  <span class="text-white/40">
+                    {{ n.encryption }} · {{ n.signal }} dBm
+                    <span v-if="n.is_tollgate" class="text-green-300"> · TollGate</span>
+                  </span>
+                  <button class="text-green-300 hover:text-green-200" @click="connectUpstream(n)">
+                    Connect
+                  </button>
+                </div>
+              </div>
+
+              <input
+                v-model="upstreamPassphrase"
+                type="password"
+                placeholder="Upstream WiFi password (leave blank if open)"
+                class="mt-3 w-full px-3 py-2 bg-transparent border border-white/20 rounded-lg text-white placeholder-white/30 text-xs focus:outline-none focus:border-white/40"
+              />
+              <p class="mt-2 text-[11px] text-yellow-300/80">
+                Connecting changes the router's upstream and may interrupt active sessions.
+              </p>
+            </div>
+          </div>
         </template>
 
         <!-- Reconfigure form -->

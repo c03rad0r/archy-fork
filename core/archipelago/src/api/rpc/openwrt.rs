@@ -89,6 +89,11 @@ async fn tollgate_is_at_pin(
     .unwrap_or(false)
 }
 
+/// Quote one argument for the router's POSIX shell.
+fn shell_quote(s: &str) -> String {
+    format!("'{}'", s.replace('\'', "'\\''"))
+}
+
 #[derive(Debug, Clone, Default)]
 struct DaemonStatus {
     running: bool,
@@ -598,8 +603,116 @@ impl RpcHandler {
     /// The installer already scans the host's LAN interfaces and returns
     /// model/vendor/firmware/trust metadata; this wraps that list, marks the
     /// saved active router, and leaves selection explicit.
+    /// Run one `tollgate --json <args>` against the active router and return
+    /// its `data` payload. Used by the admin wallet/upstream panels.
+    async fn tollgate_json(&self, args: &str) -> Result<serde_json::Value> {
+        let saved = net_router::load_router_config(&self.config.data_dir).await?;
+        if !saved.configured {
+            anyhow::bail!("No active router is selected");
+        }
+        let host = saved.address;
+        let user = saved.username.unwrap_or_else(|| "root".to_string());
+        let pass = saved.password.unwrap_or_default();
+        let command = format!("tollgate --json {args} 2>/dev/null");
+        let out = tokio::task::spawn_blocking(move || -> Result<String> {
+            let router = Router::connect_password(&host, 22, &user, &pass)?;
+            router.verify_openwrt()?;
+            router.run_ok(&command)
+        })
+        .await
+        .context("tollgate admin command task")??;
+        let value: serde_json::Value =
+            serde_json::from_str(&out).context("parse tollgate JSON output")?;
+        if value.get("success").and_then(|v| v.as_bool()) == Some(false) {
+            let error = value
+                .get("error")
+                .and_then(|v| v.as_str())
+                .unwrap_or("tollgate command failed");
+            anyhow::bail!("{error}");
+        }
+        Ok(value
+            .get("data")
+            .cloned()
+            .unwrap_or(serde_json::Value::Null))
+    }
+
+    /// Wallet total and per-mint balances. A degraded wallet is returned as a
+    /// structured failure (so the UI can show the reason) rather than an RPC
+    /// error.
+    pub(super) async fn handle_openwrt_wallet_info(&self) -> Result<serde_json::Value> {
+        match self.tollgate_json("wallet info").await {
+            Ok(wallet) => Ok(serde_json::json!({
+                "ok": true,
+                "degraded": false,
+                "wallet": wallet,
+            })),
+            Err(err) => Ok(serde_json::json!({
+                "ok": false,
+                "degraded": true,
+                "error": err.to_string(),
+            })),
+        }
+    }
+
+    pub(super) async fn handle_openwrt_upstream_list(&self) -> Result<serde_json::Value> {
+        Ok(serde_json::json!({
+            "upstreams": self.tollgate_json("upstream list-upstream").await?,
+        }))
+    }
+
+    pub(super) async fn handle_openwrt_upstream_known(&self) -> Result<serde_json::Value> {
+        Ok(serde_json::json!({
+            "known": self.tollgate_json("upstream known").await?,
+        }))
+    }
+
+    pub(super) async fn handle_openwrt_upstream_scan(&self) -> Result<serde_json::Value> {
+        Ok(serde_json::json!({
+            "networks": self.tollgate_json("upstream scan").await?,
+        }))
+    }
+
+    pub(super) async fn handle_openwrt_upstream_connect(
+        &self,
+        params: Option<serde_json::Value>,
+    ) -> Result<serde_json::Value> {
+        let p = params.unwrap_or_default();
+        let ssid = p
+            .get("ssid")
+            .and_then(|v| v.as_str())
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .ok_or_else(|| anyhow::anyhow!("ssid is required"))?;
+        let passphrase = p.get("passphrase").and_then(|v| v.as_str()).unwrap_or("");
+        let mut args = format!("upstream connect {}", shell_quote(ssid));
+        if !passphrase.is_empty() {
+            args.push(' ');
+            args.push_str(&shell_quote(passphrase));
+        }
+        let result = self.tollgate_json(&args).await?;
+        Ok(serde_json::json!({ "ok": true, "result": result }))
+    }
+
+    pub(super) async fn handle_openwrt_upstream_remove(
+        &self,
+        params: Option<serde_json::Value>,
+    ) -> Result<serde_json::Value> {
+        let p = params.unwrap_or_default();
+        let ssid = p
+            .get("ssid")
+            .and_then(|v| v.as_str())
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .ok_or_else(|| anyhow::anyhow!("ssid is required"))?;
+        let result = self
+            .tollgate_json(&format!("upstream remove {}", shell_quote(ssid)))
+            .await?;
+        Ok(serde_json::json!({ "ok": true, "result": result }))
+    }
+
     pub(super) async fn handle_openwrt_discover(&self) -> Result<serde_json::Value> {
         let saved = net_router::load_router_config(&self.config.data_dir).await?;
+        let known = net_router::load_known_routers(&self.config.data_dir).await?;
         let client = InstallerClient::new(&self.config.data_dir);
         let cfg = client
             .ensure_running()
@@ -613,7 +726,26 @@ impl RpcHandler {
             .unwrap_or_default();
         for router in &mut routers {
             let ip = router.get("ip").and_then(|v| v.as_str()).unwrap_or("");
+            let mac = router.get("mac").and_then(|v| v.as_str());
+            let remembered = net_router::find_known_router(&known, ip, mac);
+            let active_has_password = saved.configured
+                && ip == saved.address
+                && saved
+                    .password
+                    .as_deref()
+                    .map(|p| !p.is_empty())
+                    .unwrap_or(false);
             router["active"] = serde_json::json!(saved.configured && ip == saved.address);
+            router["has_saved_credentials"] =
+                serde_json::json!(remembered.is_some() || active_has_password);
+            if let Some(remembered) = remembered {
+                if !remembered.hostname.is_empty() {
+                    router["saved_hostname"] = serde_json::json!(remembered.hostname);
+                }
+                if !remembered.model.is_empty() {
+                    router["saved_model"] = serde_json::json!(remembered.model);
+                }
+            }
         }
         Ok(serde_json::json!({
             "routers": routers,
@@ -642,16 +774,19 @@ impl RpcHandler {
             .filter(|s| !s.is_empty())
             .ok_or_else(|| anyhow::anyhow!("host is required"))?
             .to_string();
-        let ssh_user = p
-            .get("ssh_user")
+        let mac = p
+            .get("mac")
             .and_then(|v| v.as_str())
-            .map(str::to_string)
-            .unwrap_or_else(|| "root".to_string());
-        let ssh_password = p
+            .map(|s| s.to_ascii_lowercase());
+        let supplied_password = p
             .get("ssh_password")
             .and_then(|v| v.as_str())
             .unwrap_or("")
             .to_string();
+        let supplied_user = p
+            .get("ssh_user")
+            .and_then(|v| v.as_str())
+            .map(str::to_string);
         let trust_fingerprint = p
             .get("trust_fingerprint")
             .and_then(|v| v.as_str())
@@ -659,22 +794,103 @@ impl RpcHandler {
             .filter(|s| !s.is_empty())
             .map(str::to_string);
 
+        let known = net_router::load_known_routers(&self.config.data_dir).await?;
+        let active = net_router::load_router_config(&self.config.data_dir).await?;
+        let remembered = net_router::find_known_router(&known, &host, mac.as_deref())
+            .cloned()
+            .or_else(|| {
+                if active.configured
+                    && active.address == host
+                    && active
+                        .password
+                        .as_deref()
+                        .map(|p| !p.is_empty())
+                        .unwrap_or(false)
+                {
+                    Some(net_router::KnownRouter {
+                        hostname: String::new(),
+                        model: String::new(),
+                        username: active
+                            .username
+                            .clone()
+                            .unwrap_or_else(|| "root".to_string()),
+                        password: active.password.clone().unwrap_or_default(),
+                        last_seen: String::new(),
+                    })
+                } else {
+                    None
+                }
+            });
+        let used_saved = supplied_password.is_empty() && remembered.is_some();
+        let ssh_user = supplied_user
+            .or_else(|| remembered.as_ref().map(|r| r.username.clone()))
+            .unwrap_or_else(|| "root".to_string());
+        let ssh_password = if !supplied_password.is_empty() {
+            supplied_password
+        } else {
+            remembered
+                .as_ref()
+                .map(|r| r.password.clone())
+                .unwrap_or_default()
+        };
+        let attempted_saved = remembered.is_some() || !ssh_password.is_empty();
+
         let host_check = host.clone();
         let user_check = ssh_user.clone();
         let pass_check = ssh_password.clone();
-        tokio::task::spawn_blocking(move || -> Result<()> {
+        let verified = tokio::task::spawn_blocking(move || -> Result<(String, String)> {
             let router = Router::connect_password(&host_check, 22, &user_check, &pass_check)?;
             router.verify_openwrt()?;
-            Ok(())
+            let hostname = router
+                .uci_get("system.@system[0].hostname")
+                .unwrap_or_default();
+            let model = router
+                .run_ok("cat /tmp/sysinfo/model 2>/dev/null")
+                .unwrap_or_default()
+                .trim()
+                .to_string();
+            Ok((hostname, model))
         })
         .await
-        .context("openwrt select-router verify task")??;
+        .context("openwrt select-router verify task")?;
+
+        let (hostname, model) = match verified {
+            Ok(found) => found,
+            Err(err) => {
+                return Ok(serde_json::json!({
+                    "ok": false,
+                    "host": host,
+                    "needs_password": true,
+                    "bad_password": attempted_saved,
+                    "error": err.to_string(),
+                }));
+            }
+        };
 
         if let Some(fingerprint) = trust_fingerprint {
             let client = InstallerClient::new(&self.config.data_dir);
             client.ensure_running().await?;
             client.trust(&host, &fingerprint).await?;
         }
+
+        let key = mac.clone().unwrap_or_else(|| host.clone());
+        let model = if model.is_empty() {
+            p.get("model")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string()
+        } else {
+            model
+        };
+        net_router::remember_router(
+            &self.config.data_dir,
+            &key,
+            &hostname,
+            &model,
+            &ssh_user,
+            &ssh_password,
+        )
+        .await?;
 
         let saved = net_router::configure_router(
             &self.config.data_dir,
@@ -690,6 +906,9 @@ impl RpcHandler {
             "host": saved.address,
             "address": saved.address,
             "username": saved.username,
+            "hostname": hostname,
+            "model": model,
+            "used_saved_credentials": used_saved,
         }))
     }
 

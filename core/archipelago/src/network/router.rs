@@ -3,6 +3,7 @@
 
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::path::Path;
 use tokio::fs;
 use tracing::debug;
@@ -390,6 +391,89 @@ pub async fn save_router_config(data_dir: &Path, config: &RouterConfig) -> Resul
     fs::write(&path, data)
         .await
         .context("Writing router config")
+}
+
+const KNOWN_ROUTERS_FILE: &str = "known_routers.json";
+
+/// A router whose root credential Archy has successfully used before.
+///
+/// Keyed by MAC in the file (IP fallback), so a DHCP change does not lose the
+/// credential. The password is never returned by discovery RPCs.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct KnownRouter {
+    #[serde(default)]
+    pub hostname: String,
+    #[serde(default)]
+    pub model: String,
+    pub username: String,
+    pub password: String,
+    #[serde(default)]
+    pub last_seen: String,
+}
+
+pub type KnownRouters = HashMap<String, KnownRouter>;
+
+pub async fn load_known_routers(data_dir: &Path) -> Result<KnownRouters> {
+    let path = data_dir.join(KNOWN_ROUTERS_FILE);
+    if !path.exists() {
+        return Ok(KnownRouters::new());
+    }
+    let data = fs::read_to_string(&path)
+        .await
+        .context("Reading known routers")?;
+    serde_json::from_str(&data).context("Parsing known routers")
+}
+
+pub async fn save_known_routers(data_dir: &Path, routers: &KnownRouters) -> Result<()> {
+    let path = data_dir.join(KNOWN_ROUTERS_FILE);
+    let data = serde_json::to_string_pretty(routers)?;
+    fs::write(&path, data)
+        .await
+        .context("Writing known routers")?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let _ = std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600));
+    }
+    Ok(())
+}
+
+/// Find a remembered credential by MAC first, then IP.
+pub fn find_known_router<'a>(
+    routers: &'a KnownRouters,
+    ip: &str,
+    mac: Option<&str>,
+) -> Option<&'a KnownRouter> {
+    if let Some(mac) = mac.map(|m| m.to_ascii_lowercase()) {
+        if let Some(router) = routers.get(&mac) {
+            return Some(router);
+        }
+    }
+    routers.get(ip)
+}
+
+/// Remember a working root credential. Key by MAC when known.
+pub async fn remember_router(
+    data_dir: &Path,
+    key: &str,
+    hostname: &str,
+    model: &str,
+    username: &str,
+    password: &str,
+) -> Result<()> {
+    let mut routers = load_known_routers(data_dir).await?;
+    let now = chrono::Utc::now().to_rfc3339();
+    routers.insert(
+        key.to_ascii_lowercase(),
+        KnownRouter {
+            hostname: hostname.to_string(),
+            model: model.to_string(),
+            username: username.to_string(),
+            password: password.to_string(),
+            last_seen: now,
+        },
+    );
+    save_known_routers(data_dir, &routers).await
 }
 
 /// Validate that an IP string is a private/LAN address (not public, not localhost).
