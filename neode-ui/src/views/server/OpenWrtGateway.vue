@@ -18,6 +18,10 @@ interface ReleaseInfo {
   openwrt_board_name?: string
   openwrt_arch?: string
   openwrt_target?: string
+  distrib_description?: string
+  distrib_release?: string
+  distrib_arch?: string
+  distrib_target?: string
 }
 
 interface WifiInterface {
@@ -1639,7 +1643,13 @@ function formatBytes(bytes: number): string {
 const openwrtVersion = computed(() => {
   if (!status.value) return ''
   const r = status.value.release
-  return r.openwrt_release || r.openwrt_version || ''
+  return (
+    r.openwrt_release ||
+    r.distrib_description ||
+    r.openwrt_version ||
+    r.distrib_release ||
+    ''
+  )
 })
 
 const boardName = computed(() => {
@@ -1657,7 +1667,7 @@ onMounted(() => {
 </script>
 
 <template>
-  <div class="pb-12">
+  <div class="pb-32 sm:pb-12">
     <!-- mb-0 overrides the pill's default mb-4, which pushed it above the
          title's centerline in this inline header row. -->
     <div class="flex items-center gap-3 mb-6">
@@ -1715,7 +1725,11 @@ onMounted(() => {
           <div>
             <span class="text-white/30">Model:</span>
             {{ selectedRouter.saved_model || selectedRouter.model || selectedRouter.vendor || 'unknown (password required)' }}
-            <span v-if="selectedRouter.firmware"> · {{ selectedRouter.firmware }}</span>
+            <span
+              v-if="selectedRouter.firmware && selectedRouter.firmware.toLowerCase() !== 'unknown'"
+            >
+              · {{ selectedRouter.firmware }}
+            </span>
           </div>
           <div v-if="selectedRouter.has_saved_credentials" class="text-green-300">
             Root password saved for this router.
@@ -1953,7 +1967,9 @@ onMounted(() => {
             <span class="w-2 h-2 rounded-full inline-block flex-shrink-0"
               :class="status.wan.internet ? 'bg-green-400' : 'bg-yellow-400 animate-pulse'"></span>
             <div>
-              <div class="text-sm font-medium text-white">{{ status.wan.ssid }}</div>
+              <div class="text-sm font-medium text-white">
+                {{ status.wan.ssid || (status.wan.configured ? 'Ethernet' : 'Not configured') }}
+              </div>
               <div class="text-xs text-white/40">
                 {{ status.wan.internet ? status.wan.ip : 'Connecting…' }}
               </div>

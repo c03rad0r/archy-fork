@@ -557,9 +557,32 @@ impl RpcHandler {
                 router.verify_openwrt()?;
 
                 // System info
-                let release = router
+                let release_raw = router
                     .run_ok("cat /etc/openwrt_release")
                     .unwrap_or_default();
+                let board = router
+                    .run_ok("cat /tmp/sysinfo/model 2>/dev/null")
+                    .unwrap_or_default()
+                    .trim()
+                    .to_string();
+                let mut release_info = parse_release(&release_raw);
+                if let Some(obj) = release_info.as_object_mut() {
+                    if !board.is_empty() {
+                        obj.insert("openwrt_board_name".to_string(), serde_json::json!(board));
+                    }
+                    // The UI/API historically used OPENWRT_* names; expose
+                    // them alongside the raw DISTRIB_* fields so both work.
+                    for (source, destination) in [
+                        ("distrib_description", "openwrt_release"),
+                        ("distrib_release", "openwrt_version"),
+                        ("distrib_arch", "openwrt_arch"),
+                        ("distrib_target", "openwrt_target"),
+                    ] {
+                        if let Some(value) = obj.get(source).cloned() {
+                            obj.insert(destination.to_string(), value);
+                        }
+                    }
+                }
                 let hostname = router
                     .uci_get("system.@system[0].hostname")
                     .unwrap_or_else(|_| "unknown".into());
@@ -811,7 +834,7 @@ impl RpcHandler {
                     "host": host,
                     "hostname": hostname,
                     "uptime_secs": uptime_secs,
-                    "release": parse_release(&release),
+                    "release": release_info,
                     "tollgate": tollgate,
                     "wifi_interfaces": wifi_interfaces,
                     "wan": wan_status,
