@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed, onMounted, nextTick } from 'vue'
+import { ref, computed, onMounted, onUnmounted, nextTick } from 'vue'
 import { useRouter } from 'vue-router'
 import { rpcClient } from '@/api/rpc-client'
 import { useCachedResource } from '@/composables/useCachedResource'
@@ -176,6 +176,42 @@ interface DrainResult {
   received?: { mint: string; amount: number }[]
   failed?: DrainFailed[]
   router_errors?: unknown[]
+}
+
+interface FlashLink {
+  name: string
+  carrier: boolean
+  wireless: boolean
+  ipv4: string[]
+}
+
+interface CleanSlateInfo {
+  ok: boolean
+  needs_trust?: boolean
+  ssh_fingerprint?: string
+  host: string
+  version: string
+  board?: string
+  image_url?: string
+  sha256?: string
+  flash_ready?: boolean
+  links?: FlashLink[]
+  error?: string
+}
+
+interface FlashStep {
+  name: string
+  status: string
+  detail?: string
+}
+
+interface CleanSlateJob {
+  ip?: string
+  status: string
+  step?: number
+  steps?: FlashStep[]
+  error?: string
+  note?: string
 }
 
 interface UpstreamSTA {
@@ -406,6 +442,19 @@ const selectedRouter = computed(() =>
 const visibleDiscovered = computed(() =>
   discovered.value.filter(r => showUnverifiedRouters.value || r.ssh_open || r.active),
 )
+const flashHost = computed(
+  () => selectedRouter.value?.ip || status.value?.host || host.value.trim(),
+)
+const flashCanStart = computed(() => {
+  const info = flashInfo.value
+  return (
+    !!info?.ok &&
+    !!info.board &&
+    info.flash_ready === true &&
+    flashAcknowledge.value &&
+    flashConfirmation.value.trim() === info.board
+  )
+})
 const trustRouterPending = ref(false)
 const trustRouterError = ref('')
 const trustRouterDone = ref(false)
@@ -422,6 +471,20 @@ const drainMintAdding = ref(false)
 const drainMintError = ref('')
 const drainResult = ref<DrainResult | null>(null)
 const drainResultModal = ref(false)
+const flashOpen = ref(false)
+const flashVersion = ref('25.12.5')
+const flashPassword = ref('')
+const flashInfo = ref<CleanSlateInfo | null>(null)
+const flashInfoLoading = ref(false)
+const flashInfoError = ref('')
+const flashConfirmation = ref('')
+const flashAcknowledge = ref(false)
+const flashRunning = ref(false)
+const flashJobId = ref('')
+const flashJob = ref<CleanSlateJob | null>(null)
+const flashError = ref('')
+const flashTrustPending = ref(false)
+let flashTimer: ReturnType<typeof setInterval> | null = null
 const upstreamList = ref<UpstreamSTA[]>([])
 const upstreamKnown = ref<KnownTollGate[]>([])
 const upstreamNetworks = ref<UpstreamNetwork[]>([])
@@ -1168,6 +1231,203 @@ async function copyText(value: string) {
     // Clipboard permissions are optional; the text is still selectable.
   }
 }
+
+function hasFlashAddress(link: FlashLink): boolean {
+  return link.ipv4.some(addr => addr.startsWith('192.168.1.'))
+}
+
+function clearFlashTimer() {
+  if (flashTimer !== null) {
+    clearInterval(flashTimer)
+    flashTimer = null
+  }
+}
+
+async function openFlashModal() {
+  flashOpen.value = true
+  flashVersion.value = '25.12.5'
+  flashPassword.value = sshPassword.value || ''
+  flashInfo.value = null
+  flashInfoError.value = ''
+  flashConfirmation.value = ''
+  flashAcknowledge.value = false
+  flashJob.value = null
+  flashJobId.value = ''
+  flashError.value = ''
+  await inspectFlashImage()
+}
+
+async function inspectFlashImage() {
+  const ip = flashHost.value
+  if (!ip) {
+    flashInfoError.value = 'No router is selected.'
+    return
+  }
+  flashInfoLoading.value = true
+  flashInfoError.value = ''
+  flashInfo.value = null
+  try {
+    const params: Record<string, unknown> = {
+      host: ip,
+      version: flashVersion.value,
+    }
+    if (flashPassword.value.trim()) params.ssh_password = flashPassword.value.trim()
+    const info = await rpcClient.call<CleanSlateInfo>({
+      method: 'openwrt.installer.clean-slate-info',
+      params,
+      timeout: 90000,
+    })
+    flashInfo.value = info
+    if (!info.ok && !info.needs_trust) {
+      flashInfoError.value = info.error || 'Could not inspect the router.'
+    }
+  } catch (e) {
+    flashInfoError.value = e instanceof Error ? e.message : String(e)
+  } finally {
+    flashInfoLoading.value = false
+  }
+}
+
+async function trustFlashHost() {
+  const info = flashInfo.value
+  if (!info?.ssh_fingerprint) return
+  flashTrustPending.value = true
+  flashError.value = ''
+  try {
+    await rpcClient.call({
+      method: 'openwrt.installer.trust',
+      params: { ip: info.host, fingerprint: info.ssh_fingerprint },
+      timeout: 30000,
+    })
+    await inspectFlashImage()
+  } catch (e) {
+    flashError.value = e instanceof Error ? e.message : String(e)
+  } finally {
+    flashTrustPending.value = false
+  }
+}
+
+async function prepareFlashLink(link: FlashLink) {
+  if (
+    !window.confirm(
+      `Add 192.168.1.2/24 to ${link.name} so the flashed router at 192.168.1.1 is reachable?`,
+    )
+  ) {
+    return
+  }
+  flashInfoError.value = ''
+  try {
+    const result = await rpcClient.call<{
+      ok: boolean
+      error?: string
+      command?: string
+    }>({
+      method: 'openwrt.installer.prepare-flash-link',
+      params: { interface: link.name },
+      timeout: 30000,
+    })
+    if (!result.ok) {
+      flashInfoError.value = result.error || 'Could not add the address.'
+      if (result.command) {
+        flashInfoError.value += ` Run: ${result.command}`
+      }
+      return
+    }
+    await inspectFlashImage()
+  } catch (e) {
+    flashInfoError.value = e instanceof Error ? e.message : String(e)
+  }
+}
+
+async function startFlash() {
+  const info = flashInfo.value
+  if (!info?.ok || !info.board || !flashCanStart.value) return
+  if (
+    !window.confirm(
+      `Flash vanilla OpenWrt ${flashVersion.value} onto ${info.host}?\n\nThis erases ALL configuration. The router will only answer on 192.168.1.1 on its LAN.`,
+    )
+  ) {
+    return
+  }
+  flashRunning.value = true
+  flashError.value = ''
+  flashJob.value = null
+  flashJobId.value = ''
+  try {
+    const params: Record<string, unknown> = {
+      confirm: true,
+      host: info.host,
+      version: flashVersion.value,
+      confirmation: flashConfirmation.value.trim(),
+    }
+    if (flashPassword.value.trim()) params.ssh_password = flashPassword.value.trim()
+    const result = await rpcClient.call<{
+      ok: boolean
+      job_id?: string
+      error?: string
+      message?: string
+      needs_wired_link?: boolean
+    }>({
+      method: 'openwrt.installer.clean-slate-flash',
+      params,
+      timeout: 60000,
+    })
+    if (!result.ok || !result.job_id) {
+      flashError.value = result.message || result.error || 'Could not start the flash.'
+      flashRunning.value = false
+      return
+    }
+    flashJobId.value = result.job_id
+    flashJob.value = { status: 'running', steps: [] }
+    clearFlashTimer()
+    flashTimer = setInterval(async () => {
+      if (!flashJobId.value) return
+      try {
+        const job = await rpcClient.call<CleanSlateJob>({
+          method: 'openwrt.installer.clean-slate-status',
+          params: { job_id: flashJobId.value },
+          timeout: 30000,
+        })
+        flashJob.value = job
+        if (['done', 'failed', 'pending'].includes(job.status)) {
+          clearFlashTimer()
+          flashRunning.value = false
+          if (job.status === 'failed') {
+            flashError.value = job.error || 'The flash failed.'
+          }
+        }
+      } catch (e) {
+        clearFlashTimer()
+        flashRunning.value = false
+        flashError.value = e instanceof Error ? e.message : String(e)
+      }
+    }, 2000)
+  } catch (e) {
+    flashError.value = e instanceof Error ? e.message : String(e)
+    flashRunning.value = false
+  }
+}
+
+function closeFlashModal() {
+  if (flashRunning.value) return
+  clearFlashTimer()
+  flashOpen.value = false
+}
+
+async function useFlashedRouter() {
+  const ip = flashJob.value?.ip || '192.168.1.1'
+  clearFlashTimer()
+  flashOpen.value = false
+  selectionConfirmed.value = false
+  connectedParams.value = null
+  selectedRouterIp.value = ''
+  showConnectForm.value = true
+  host.value = ip
+  error.value = ''
+  await discoverRouters()
+}
+
+onUnmounted(clearFlashTimer)
 
 async function loadUpstreams() {
   upstreamLoading.value = true
@@ -3161,7 +3421,216 @@ onMounted(() => {
         </div>
       </div>
 
+      <!-- Advanced: destructive vanilla-OpenWrt flash -->
+      <div class="glass-card p-6 mt-4" data-testid="advanced-flash">
+        <div class="flex items-start justify-between gap-4">
+          <div>
+            <h2 class="text-sm font-semibold text-white/80">Advanced</h2>
+            <p class="mt-1 text-xs text-white/40">
+              Flash vanilla OpenWrt and erase all router configuration. Use this to
+              start from a clean install; it is separate from Install TollGate.
+            </p>
+          </div>
+          <button
+            class="glass-button glass-button-warning text-xs px-3 py-1.5 whitespace-nowrap"
+            :disabled="!installerStatus?.available"
+            :class="!installerStatus?.available ? 'opacity-40 cursor-not-allowed' : ''"
+            data-testid="flash-open"
+            @click="openFlashModal"
+          >
+            Flash vanilla OpenWrt…
+          </button>
+        </div>
+      </div>
+
     </template>
+
+    <!-- Destructive vanilla-OpenWrt flash -->
+    <div
+      v-if="flashOpen"
+      class="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4"
+    >
+      <div
+        class="glass-card max-w-2xl w-full p-6 max-h-[90vh] overflow-y-auto"
+        data-testid="flash-modal"
+      >
+        <div class="flex items-start justify-between gap-4 mb-3">
+          <div>
+            <h3 class="text-sm font-semibold text-white/90">Flash vanilla OpenWrt</h3>
+            <p class="mt-1 text-xs text-red-300">
+              This erases all configuration. The router returns at 192.168.1.1 on
+              its LAN and its SSH host key changes.
+            </p>
+          </div>
+          <button
+            class="text-xs text-white/40 hover:text-white"
+            :disabled="flashRunning"
+            @click="closeFlashModal"
+          >
+            Close
+          </button>
+        </div>
+
+        <div v-if="flashInfo?.needs_trust" class="rounded-lg border border-yellow-400/20 bg-yellow-400/5 p-3">
+          <div class="text-xs text-yellow-300">
+            The installer does not trust this router's SSH key yet.
+          </div>
+          <pre class="mt-2 text-[11px] font-mono bg-black/30 rounded p-2 text-green-300 break-all whitespace-pre-wrap">{{ flashInfo.ssh_fingerprint }}</pre>
+          <code class="block mt-2 text-[11px] font-mono bg-black/30 rounded p-2 text-white/60 break-all whitespace-pre-wrap">dropbearkey -y -f /etc/dropbear/dropbear_ed25519_host_key</code>
+          <button
+            class="glass-button glass-button-warning text-xs px-3 py-1.5 mt-2"
+            :disabled="flashTrustPending"
+            @click="trustFlashHost"
+          >
+            {{ flashTrustPending ? 'Trusting…' : 'Trust host key and inspect' }}
+          </button>
+        </div>
+
+        <template v-else>
+          <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <label class="block">
+              <span class="block text-xs text-white/40 mb-1">OpenWrt release</span>
+              <select
+                v-model="flashVersion"
+                class="w-full px-3 py-2 bg-black/30 border border-white/20 rounded-lg text-white text-sm focus:outline-none focus:border-white/40"
+                data-testid="flash-version"
+                @change="inspectFlashImage"
+              >
+                <option value="25.12.5">25.12.5 (apk)</option>
+                <option value="24.10.8">24.10.8 (opkg, if supported)</option>
+              </select>
+            </label>
+            <label class="block">
+              <span class="block text-xs text-white/40 mb-1">Root password</span>
+              <input
+                v-model="flashPassword"
+                type="password"
+                placeholder="blank uses saved credentials / no password"
+                class="w-full px-3 py-2 bg-transparent border border-white/20 rounded-lg text-white placeholder-white/30 text-sm focus:outline-none focus:border-white/40"
+                data-testid="flash-password"
+              />
+            </label>
+          </div>
+          <button
+            class="glass-button text-xs px-3 py-1.5 mt-2"
+            :disabled="flashInfoLoading"
+            @click="inspectFlashImage"
+          >
+            {{ flashInfoLoading ? 'Inspecting…' : 'Inspect image' }}
+          </button>
+
+          <p v-if="flashInfoError" class="mt-2 text-xs text-red-400">{{ flashInfoError }}</p>
+
+          <div v-if="flashInfo?.ok" class="mt-4 space-y-3">
+            <div class="text-xs text-white/60">
+              Board:
+              <span class="font-mono text-white/90" data-testid="flash-board">{{ flashInfo.board }}</span>
+            </div>
+            <div class="text-xs text-white/40 break-all">
+              Image: <span class="font-mono">{{ flashInfo.image_url }}</span>
+            </div>
+            <div class="text-xs text-white/40 break-all">
+              SHA256: <span class="font-mono">{{ flashInfo.sha256 }}</span>
+            </div>
+
+            <div class="rounded-lg border border-white/10 bg-white/[0.02] p-3">
+              <div class="text-xs text-white/40 mb-1">Post-flash wired link</div>
+              <div
+                v-for="link in flashInfo.links"
+                :key="link.name"
+                class="flex flex-wrap items-center justify-between gap-2 py-1 text-xs"
+              >
+                <span class="font-mono text-white/60">
+                  {{ link.name }} · {{ link.wireless ? 'WiFi' : 'Wired' }} ·
+                  carrier {{ link.carrier ? '1' : '0' }} ·
+                  {{ link.ipv4.join(', ') || 'no IPv4' }}
+                </span>
+                <button
+                  v-if="!link.wireless && link.carrier && !hasFlashAddress(link)"
+                  class="text-xs text-yellow-300 hover:text-yellow-200 underline"
+                  @click="prepareFlashLink(link)"
+                >
+                  Add 192.168.1.2/24
+                </button>
+              </div>
+              <div v-if="flashInfo.flash_ready" class="text-xs text-green-300 mt-1">
+                A wired 192.168.1.x link is ready for the post-flash address.
+              </div>
+              <div v-else class="text-xs text-red-300 mt-1">
+                No wired interface with carrier and a 192.168.1.x address. After
+                flashing, the router is only reachable at 192.168.1.1; add the
+                address or connect its LAN port first.
+              </div>
+            </div>
+
+            <label class="block">
+              <span class="block text-xs text-white/40 mb-1">
+                Type the board name to confirm
+              </span>
+              <input
+                v-model="flashConfirmation"
+                type="text"
+                :placeholder="flashInfo.board"
+                class="w-full px-3 py-2 bg-transparent border border-white/20 rounded-lg text-white placeholder-white/30 font-mono text-sm focus:outline-none focus:border-white/40"
+                data-testid="flash-confirmation"
+              />
+            </label>
+            <label class="flex items-start gap-2 text-xs text-white/60">
+              <input v-model="flashAcknowledge" type="checkbox" data-testid="flash-ack" />
+              <span>
+                I understand this erases all configuration and the router will only
+                answer on 192.168.1.1 on its LAN.
+              </span>
+            </label>
+            <button
+              class="glass-button glass-button-warning w-full text-sm font-medium"
+              :disabled="!flashCanStart || flashRunning"
+              :class="!flashCanStart || flashRunning ? 'opacity-40 cursor-not-allowed' : ''"
+              data-testid="flash-start"
+              @click="startFlash"
+            >
+              {{ flashRunning ? 'Flashing…' : `Flash ${flashVersion} vanilla OpenWrt` }}
+            </button>
+          </div>
+
+          <div v-if="flashJob" class="mt-4 rounded-lg border border-white/10 p-3" data-testid="flash-progress">
+            <div class="flex items-center justify-between text-xs">
+              <span class="text-white/60">Status</span>
+              <span class="font-mono" :class="flashJob.status === 'failed' ? 'text-red-300' : flashJob.status === 'done' ? 'text-green-300' : 'text-yellow-300'">
+                {{ flashJob.status }}
+              </span>
+            </div>
+            <div v-for="step in flashJob.steps" :key="step.name" class="mt-1 text-[11px] text-white/50">
+              {{ step.name }} · {{ step.status }}<span v-if="step.detail"> · {{ step.detail }}</span>
+            </div>
+            <p v-if="flashJob.error" class="mt-2 text-xs text-red-400">{{ flashJob.error }}</p>
+            <p v-if="flashJob.note" class="mt-2 text-xs text-yellow-300">{{ flashJob.note }}</p>
+            <template v-if="flashJob.status === 'done'">
+              <p class="mt-2 text-xs text-green-300">
+                Router flashed. It is at
+                <span class="font-mono">{{ flashJob.ip || '192.168.1.1' }}</span>; the old host key is gone.
+              </p>
+              <button
+                class="glass-button glass-button-success text-xs px-3 py-1.5 mt-2"
+                data-testid="flash-reconnect"
+                @click="useFlashedRouter"
+              >
+                Reconnect at {{ flashJob.ip || '192.168.1.1' }}
+              </button>
+            </template>
+            <p v-else-if="flashJob.status === 'failed'" class="mt-2 text-xs text-yellow-300">
+              The job may still have flashed the router. Check
+              <span class="font-mono">192.168.1.1</span> before retrying.
+            </p>
+            <p v-else-if="flashJob.status === 'pending'" class="mt-2 text-xs text-yellow-300">
+              The router is still starting. Check
+              <span class="font-mono">{{ flashJob.ip || '192.168.1.1' }}</span> before retrying.
+            </p>
+          </div>
+          <p v-if="flashError" class="mt-2 text-xs text-red-400">{{ flashError }}</p>
+        </template>
+      </div>
+    </div>
 
     <!-- Router wallet drain preview -->
     <div

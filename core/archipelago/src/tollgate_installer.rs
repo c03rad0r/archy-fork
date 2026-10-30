@@ -147,6 +147,41 @@ impl InstallerClient {
         .await
     }
 
+    /// Inspect the vanilla-OpenWrt image for a router.
+    pub async fn clean_slate_info(&self, ip: &str, password: &str, version: &str) -> Result<Value> {
+        self.post(
+            "/api/clean-slate-info",
+            json!({ "ip": ip, "password": password, "version": version }),
+        )
+        .await
+    }
+
+    /// Start a clean-slate flash. Returns the installer's job id.
+    pub async fn clean_slate_flash(
+        &self,
+        ip: &str,
+        password: &str,
+        version: &str,
+        confirmation: &str,
+    ) -> Result<String> {
+        let value = self
+            .post(
+                "/api/clean-slate-flash",
+                json!({
+                    "ip": ip,
+                    "password": password,
+                    "version": version,
+                    "confirmation": confirmation,
+                }),
+            )
+            .await?;
+        value
+            .get("job_id")
+            .and_then(|v| v.as_str())
+            .map(str::to_string)
+            .ok_or_else(|| anyhow::anyhow!("tollgate-installer returned no job_id"))
+    }
+
     /// Start a deploy. Returns the installer's job id.
     pub async fn deploy(&self, body: Value) -> Result<String> {
         let value = self.post("/api/deploy", body).await?;

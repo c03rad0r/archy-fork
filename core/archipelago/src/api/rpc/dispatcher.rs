@@ -297,6 +297,18 @@ impl RpcHandler {
             "openwrt.installer.trust" => self.handle_openwrt_installer_trust(params).await,
             "openwrt.installer.scan" => self.handle_openwrt_installer_scan().await,
             "openwrt.installer.config" => self.handle_openwrt_installer_config().await,
+            "openwrt.installer.clean-slate-info" => {
+                self.handle_openwrt_clean_slate_info(params).await
+            }
+            "openwrt.installer.clean-slate-flash" => {
+                self.handle_openwrt_clean_slate_flash(params).await
+            }
+            "openwrt.installer.clean-slate-status" => {
+                self.handle_openwrt_clean_slate_status(params).await
+            }
+            "openwrt.installer.prepare-flash-link" => {
+                self.handle_openwrt_prepare_flash_link(params).await
+            }
             "openwrt.test-mint" => self.handle_openwrt_test_mint(params).await,
             "openwrt.mint-health" => self.handle_openwrt_mint_health(params).await,
             "openwrt.prune-mints" => self.handle_openwrt_prune_mints(params).await,

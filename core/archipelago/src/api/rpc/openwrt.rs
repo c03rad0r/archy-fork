@@ -226,6 +226,72 @@ fn is_test_mint(url: &str) -> bool {
     mint_url_key(url).contains("testnut")
 }
 
+#[derive(Debug, Clone, serde::Serialize)]
+struct FlashLink {
+    name: String,
+    carrier: bool,
+    wireless: bool,
+    ipv4: Vec<String>,
+}
+
+/// Node interfaces relevant to the post-flash `192.168.1.1` path.
+async fn flash_links() -> Vec<FlashLink> {
+    let mut links = Vec::new();
+    let Ok(mut entries) = tokio::fs::read_dir("/sys/class/net").await else {
+        return links;
+    };
+    while let Ok(Some(entry)) = entries.next_entry().await {
+        let name = entry.file_name().to_string_lossy().to_string();
+        if name == "lo" {
+            continue;
+        }
+        let carrier = tokio::fs::read_to_string(format!("/sys/class/net/{name}/carrier"))
+            .await
+            .map(|value| value.trim() == "1")
+            .unwrap_or(false);
+        let wireless = tokio::fs::metadata(format!("/sys/class/net/{name}/wireless"))
+            .await
+            .is_ok();
+        let mut ipv4 = Vec::new();
+        if let Ok(out) = tokio::process::Command::new("ip")
+            .args(["-4", "-o", "addr", "show", "dev", &name])
+            .output()
+            .await
+        {
+            if out.status.success() {
+                let text = String::from_utf8_lossy(&out.stdout);
+                for line in text.lines() {
+                    let mut words = line.split_whitespace();
+                    while let Some(word) = words.next() {
+                        if word == "inet" {
+                            if let Some(cidr) = words.next() {
+                                ipv4.push(cidr.to_string());
+                            }
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+        links.push(FlashLink {
+            name,
+            carrier,
+            wireless,
+            ipv4,
+        });
+    }
+    links.sort_by(|a, b| a.name.cmp(&b.name));
+    links
+}
+
+fn flash_ready(links: &[FlashLink]) -> bool {
+    links.iter().any(|link| {
+        !link.wireless
+            && link.carrier
+            && link.ipv4.iter().any(|addr| addr.starts_with("192.168.1."))
+    })
+}
+
 #[derive(Debug, Clone, Default)]
 struct DaemonStatus {
     running: bool,
@@ -1939,6 +2005,200 @@ impl RpcHandler {
         let client = InstallerClient::new(&self.config.data_dir);
         client.ensure_running().await?;
         client.trust(&ip, fingerprint).await
+    }
+
+    /// Inspect the vanilla-OpenWrt image for the selected router.
+    pub(super) async fn handle_openwrt_clean_slate_info(
+        &self,
+        params: Option<serde_json::Value>,
+    ) -> Result<serde_json::Value> {
+        let saved = net_router::load_router_config(&self.config.data_dir).await?;
+        let p = params.unwrap_or_default();
+        let host = p
+            .get("host")
+            .and_then(|v| v.as_str())
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(str::to_string)
+            .or_else(|| saved.configured.then(|| saved.address.clone()))
+            .ok_or_else(|| anyhow::anyhow!("No router selected"))?;
+        let password = p
+            .get("ssh_password")
+            .and_then(|v| v.as_str())
+            .map(str::to_string)
+            .or_else(|| saved.password.clone())
+            .unwrap_or_default();
+        let version = p
+            .get("version")
+            .and_then(|v| v.as_str())
+            .filter(|s| !s.is_empty())
+            .unwrap_or("25.12.5")
+            .to_string();
+        let client = InstallerClient::new(&self.config.data_dir);
+        client.ensure_running().await?;
+
+        // The installer's clean-slate SSH uses its own known-hosts. Surface a
+        // pending key instead of a generic connection failure.
+        if let Ok(identity) = client.identify(&host, &password).await {
+            if let Some(fingerprint) = identity
+                .get("ssh_fingerprint")
+                .and_then(|v| v.as_str())
+                .filter(|s| !s.is_empty())
+            {
+                return Ok(serde_json::json!({
+                    "ok": false,
+                    "needs_trust": true,
+                    "host": host,
+                    "version": version,
+                    "ssh_fingerprint": fingerprint,
+                }));
+            }
+        }
+
+        let info = client.clean_slate_info(&host, &password, &version).await?;
+        let links = flash_links().await;
+        Ok(serde_json::json!({
+            "ok": true,
+            "host": host,
+            "version": version,
+            "board": info.get("board"),
+            "image_url": info.get("image_url"),
+            "sha256": info.get("sha256"),
+            "flash_ready": flash_ready(&links),
+            "links": links,
+        }))
+    }
+
+    /// Start a clean-slate flash. This is destructive and requires
+    /// confirm=true plus the exact detected board.
+    pub(super) async fn handle_openwrt_clean_slate_flash(
+        &self,
+        params: Option<serde_json::Value>,
+    ) -> Result<serde_json::Value> {
+        let saved = net_router::load_router_config(&self.config.data_dir).await?;
+        let p = params.unwrap_or_default();
+        if p.get("confirm").and_then(|v| v.as_bool()) != Some(true) {
+            anyhow::bail!("confirm=true is required to flash vanilla OpenWrt");
+        }
+        let host = p
+            .get("host")
+            .and_then(|v| v.as_str())
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(str::to_string)
+            .or_else(|| saved.configured.then(|| saved.address.clone()))
+            .ok_or_else(|| anyhow::anyhow!("No router selected"))?;
+        let password = p
+            .get("ssh_password")
+            .and_then(|v| v.as_str())
+            .map(str::to_string)
+            .or_else(|| saved.password.clone())
+            .unwrap_or_default();
+        let version = p
+            .get("version")
+            .and_then(|v| v.as_str())
+            .filter(|s| !s.is_empty())
+            .unwrap_or("25.12.5");
+        let confirmation = p
+            .get("confirmation")
+            .and_then(|v| v.as_str())
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .ok_or_else(|| anyhow::anyhow!("confirmation is required"))?;
+
+        let links = flash_links().await;
+        if !flash_ready(&links) {
+            return Ok(serde_json::json!({
+                "ok": false,
+                "needs_wired_link": true,
+                "links": links,
+                "message": "A wired interface with carrier and a 192.168.1.x address is required before flashing.",
+            }));
+        }
+
+        let client = InstallerClient::new(&self.config.data_dir);
+        client.ensure_running().await?;
+        let job_id = client
+            .clean_slate_flash(&host, &password, version, confirmation)
+            .await?;
+        Ok(serde_json::json!({
+            "ok": true,
+            "job_id": job_id,
+            "host": host,
+            "version": version,
+        }))
+    }
+
+    pub(super) async fn handle_openwrt_clean_slate_status(
+        &self,
+        params: Option<serde_json::Value>,
+    ) -> Result<serde_json::Value> {
+        let p = params.unwrap_or_default();
+        let job_id = p
+            .get("job_id")
+            .and_then(|v| v.as_str())
+            .filter(|s| !s.is_empty())
+            .ok_or_else(|| anyhow::anyhow!("job_id is required"))?;
+        let client = InstallerClient::new(&self.config.data_dir);
+        client.ensure_running().await?;
+        client.job(job_id).await
+    }
+
+    /// Add 192.168.1.2/24 to a wired interface with carrier so the
+    /// post-flash router at 192.168.1.1 is reachable.
+    pub(super) async fn handle_openwrt_prepare_flash_link(
+        &self,
+        params: Option<serde_json::Value>,
+    ) -> Result<serde_json::Value> {
+        let p = params.unwrap_or_default();
+        let requested = p
+            .get("interface")
+            .and_then(|v| v.as_str())
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .ok_or_else(|| anyhow::anyhow!("interface is required"))?;
+        let links = flash_links().await;
+        let Some(link) = links.iter().find(|link| link.name == requested) else {
+            anyhow::bail!("interface {requested} is not present on this node");
+        };
+        if link.wireless || !link.carrier {
+            anyhow::bail!("interface {requested} is not a wired link with carrier");
+        }
+        let command = format!("sudo -n ip addr add 192.168.1.2/24 dev {}", link.name);
+        let output = tokio::process::Command::new("sudo")
+            .args([
+                "-n",
+                "ip",
+                "addr",
+                "add",
+                "192.168.1.2/24",
+                "dev",
+                &link.name,
+            ])
+            .output()
+            .await;
+        let result = match output {
+            Ok(out) if out.status.success() => Ok(()),
+            Ok(out) => Err(format!(
+                "{} (command: {command})",
+                String::from_utf8_lossy(&out.stderr).trim()
+            )),
+            Err(err) => Err(format!("{err} (command: {command})")),
+        };
+        match result {
+            Ok(()) => Ok(serde_json::json!({
+                "ok": true,
+                "interface": link.name,
+                "address": "192.168.1.2/24",
+            })),
+            Err(error) => Ok(serde_json::json!({
+                "ok": false,
+                "interface": link.name,
+                "address": "192.168.1.2/24",
+                "error": error,
+                "command": command,
+            })),
+        }
     }
 
     /// LAN discovery through the installer.
