@@ -2182,7 +2182,7 @@ fn parse_release(raw: &str) -> serde_json::Value {
         if let Some((k, v)) = line.split_once('=') {
             m.insert(
                 k.to_lowercase(),
-                serde_json::Value::String(v.trim_matches('"').to_string()),
+                serde_json::Value::String(v.trim_matches(|c| c == '"' || c == '\'').to_string()),
             );
         }
     }
