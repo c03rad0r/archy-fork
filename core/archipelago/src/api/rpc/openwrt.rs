@@ -410,9 +410,9 @@ fn probe_mint_with_router(router: &Router, url: &str) -> Result<serde_json::Valu
     let info: serde_json::Value =
         serde_json::from_str(&info_out).unwrap_or_else(|_| serde_json::json!({}));
     let keys_out = router_http_get(router, &format!("{base}/v1/keysets"), 10)
-        .with_context(|| format!("probe {url} from the router"))?;
-    let keys: serde_json::Value =
-        serde_json::from_str(&keys_out).with_context(|| format!("parse {url}/v1/keysets"))?;
+        .with_context(|| format!("probe {base}/v1/keysets from the router"))?;
+    let keys: serde_json::Value = serde_json::from_str(&keys_out)
+        .map_err(|e| anyhow::anyhow!("invalid or empty /v1/keysets response: {e}"))?;
     let active = keys
         .get("keysets")
         .and_then(|v| v.as_array())

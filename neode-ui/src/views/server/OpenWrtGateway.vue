@@ -309,11 +309,15 @@ const discovered = ref<DiscoveredRouter[]>([])
 const discovering = ref(false)
 const discoveryError = ref('')
 const discoveryActive = ref('')
+const showUnverifiedRouters = ref(false)
 const selectedRouterIp = ref('')
 const needsPassword = ref(false)
 const selectionConfirmed = ref(false)
 const selectedRouter = computed(() =>
   discovered.value.find(r => r.ip === selectedRouterIp.value) ?? null,
+)
+const visibleDiscovered = computed(() =>
+  discovered.value.filter(r => showUnverifiedRouters.value || r.ssh_open || r.active),
 )
 const trustRouterPending = ref(false)
 const trustRouterError = ref('')
@@ -1533,18 +1537,24 @@ onMounted(() => {
     <div class="glass-card p-6 mb-6">
       <div class="flex items-center justify-between mb-3">
         <h2 class="text-sm font-semibold text-white/80">Discovered gateways</h2>
-        <button
-          class="text-xs text-white/40 hover:text-white"
-          :disabled="discovering"
-          @click="discoverRouters"
-        >
-          {{ discovering ? 'Scanning…' : 'Rescan' }}
-        </button>
+        <div class="flex items-center gap-3">
+          <label class="flex items-center gap-1 text-[11px] text-white/40">
+            <input v-model="showUnverifiedRouters" type="checkbox" />
+            Show unverified
+          </label>
+          <button
+            class="text-xs text-white/40 hover:text-white"
+            :disabled="discovering"
+            @click="discoverRouters"
+          >
+            {{ discovering ? 'Scanning…' : 'Rescan' }}
+          </button>
+        </div>
       </div>
       <p v-if="discoveryError" class="text-xs text-red-400">{{ discoveryError }}</p>
       <div v-if="discovering" class="text-sm text-white/50">Scanning the node's LAN interfaces…</div>
       <div
-        v-else-if="discovered.length === 0 && !discoveryError"
+        v-else-if="visibleDiscovered.length === 0 && !discoveryError"
         class="text-sm text-white/50"
       >
         No manageable gateways found.
@@ -1556,7 +1566,7 @@ onMounted(() => {
           @change="onDiscoveryChange"
         >
           <option value="">Select a gateway…</option>
-          <option v-for="r in discovered" :key="r.ip" :value="r.ip">
+          <option v-for="r in visibleDiscovered" :key="r.ip" :value="r.ip">
             {{ discoveryLabel(r) }}
           </option>
         </select>
