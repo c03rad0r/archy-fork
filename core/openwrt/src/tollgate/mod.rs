@@ -147,6 +147,7 @@ pub fn rename_network(
     wifi::disable_upstream_default_aps(router)?;
     wifi::set_private_network(router, &cfg)?;
     config::set_private_ssid(router, private_ssid)?;
+    config::sync_uci_from_daemon(router, enabled)?;
     restart_services(router, enabled)?;
     nodogsplash::restart(router)?;
     info!(

@@ -602,7 +602,9 @@ impl RpcHandler {
                         .as_deref()
                         .and_then(|tag| tollgate::package_version_from_pin(tag).ok())
                         .unwrap_or_else(|| {
-                            tollgate::TOLLGATE_VERSION.trim_start_matches('v').to_string()
+                            tollgate::TOLLGATE_VERSION
+                                .trim_start_matches('v')
+                                .to_string()
                         });
                     let version_str = match &installed_version {
                         Installed::Version(v) => v.clone(),
@@ -619,38 +621,146 @@ impl RpcHandler {
                         .run_ok("tollgate --json status 2>/dev/null")
                         .ok()
                         .and_then(|out| parse_daemon_status(&out));
-                    let (daemon_running, daemon_version, daemon_uptime, daemon_error) = match &daemon
-                    {
-                        Some(d) => (
-                            d.running,
-                            d.version.clone(),
-                            d.uptime.clone(),
-                            d.error.clone(),
-                        ),
-                        None => (
-                            false,
-                            String::new(),
-                            String::new(),
-                            Some(
-                                "tollgate --json status did not return a usable response".to_string(),
+                    let (daemon_running, daemon_version, daemon_uptime, daemon_error) =
+                        match &daemon {
+                            Some(d) => (
+                                d.running,
+                                d.version.clone(),
+                                d.uptime.clone(),
+                                d.error.clone(),
                             ),
-                        ),
-                    };
+                            None => (
+                                false,
+                                String::new(),
+                                String::new(),
+                                Some(
+                                    "tollgate --json status did not return a usable response"
+                                        .to_string(),
+                                ),
+                            ),
+                        };
                     let daemon_matches =
                         daemon_running && daemon_version_matches(&daemon_version, &desired);
-                    let advertised_mints =
-                        router_http_get(&router, "http://127.0.0.1:2121/", 5)
-                            .ok()
-                            .map(|out| parse_advertisement(&out))
-                            .unwrap_or_default();
-                    let configured_mints: Vec<tollgate::MintConfig> = router
+                    let advertised_mints = router_http_get(&router, "http://127.0.0.1:2121/", 5)
+                        .ok()
+                        .map(|out| parse_advertisement(&out))
+                        .unwrap_or_default();
+                    // The daemon's config.json is the source of truth for what
+                    // it is actually selling. The `tollgate.main.*` UCI keys are
+                    // only a display mirror and can be absent (e.g. a router
+                    // renamed without a full re-provision), which made the
+                    // dashboard report Disabled / 0 sat / 0 ms on a healthy
+                    // daemon.
+                    let daemon_doc: Option<serde_json::Value> = router
                         .run_ok("cat /etc/tollgate/config.json 2>/dev/null")
                         .ok()
-                        .and_then(|out| serde_json::from_str::<serde_json::Value>(&out).ok())
+                        .and_then(|out| serde_json::from_str::<serde_json::Value>(&out).ok());
+                    let configured_mints: Vec<tollgate::MintConfig> = daemon_doc
+                        .as_ref()
                         .and_then(|doc| doc.get("accepted_mints").cloned())
                         .and_then(|v| serde_json::from_value(v).ok())
                         .unwrap_or_default();
                     let configured_mint_count = configured_mints.len();
+                    let first_mint = configured_mints.first();
+                    let uci_enabled = router
+                        .uci_get("tollgate.main.enabled")
+                        .map(|v| v == "1")
+                        .unwrap_or(false);
+                    let enabled = daemon_running || uci_enabled;
+                    let metric = daemon_doc
+                        .as_ref()
+                        .and_then(|doc| doc.get("metric"))
+                        .and_then(|v| v.as_str())
+                        .map(str::to_string)
+                        .filter(|s| !s.is_empty())
+                        .or_else(|| {
+                            router
+                                .uci_get("tollgate.main.metric")
+                                .ok()
+                                .filter(|s| !s.is_empty())
+                        })
+                        .unwrap_or_default();
+                    let step_size_ms = daemon_doc
+                        .as_ref()
+                        .and_then(|doc| doc.get("step_size"))
+                        .and_then(|v| v.as_u64())
+                        .or_else(|| {
+                            router
+                                .uci_get("tollgate.main.step_size")
+                                .ok()
+                                .and_then(|v| v.parse().ok())
+                        })
+                        .unwrap_or(0);
+                    let price_per_step = first_mint
+                        .map(|m| m.price_per_step)
+                        .or_else(|| {
+                            router
+                                .uci_get("tollgate.main.price_per_step")
+                                .ok()
+                                .and_then(|v| v.parse().ok())
+                        })
+                        .unwrap_or(0);
+                    let currency = first_mint
+                        .map(|m| m.price_unit.clone())
+                        .filter(|s| !s.is_empty())
+                        .or_else(|| {
+                            router
+                                .uci_get("tollgate.main.currency")
+                                .ok()
+                                .filter(|s| !s.is_empty())
+                        })
+                        .unwrap_or_default();
+                    let min_steps = first_mint
+                        .map(|m| m.purchase_min_steps.min(u32::MAX as u64) as u32)
+                        .or_else(|| {
+                            router
+                                .uci_get("tollgate.main.min_steps")
+                                .ok()
+                                .and_then(|v| v.parse().ok())
+                        })
+                        .unwrap_or(1);
+                    let mint_url = first_mint
+                        .map(|m| m.url.clone())
+                        .filter(|s| !s.is_empty())
+                        .or_else(|| {
+                            router
+                                .uci_get("tollgate.main.mint_url")
+                                .ok()
+                                .filter(|s| !s.is_empty())
+                        })
+                        .unwrap_or_default();
+                    let private_ssid = daemon_doc
+                        .as_ref()
+                        .and_then(|doc| doc.get("private_ssid"))
+                        .and_then(|v| v.as_str())
+                        .map(str::to_string)
+                        .filter(|s| !s.is_empty())
+                        .or_else(|| {
+                            router
+                                .uci_get("tollgate.main.private_ssid")
+                                .ok()
+                                .filter(|s| !s.is_empty())
+                        })
+                        .unwrap_or_default();
+                    let payout_address = router
+                        .run_ok("cat /etc/tollgate/identities.json 2>/dev/null")
+                        .ok()
+                        .and_then(|out| serde_json::from_str::<serde_json::Value>(&out).ok())
+                        .and_then(|doc| {
+                            doc.get("public_identities")
+                                .and_then(|v| v.as_array())
+                                .and_then(|a| {
+                                    a.iter().find(|i| {
+                                        i.get("name").and_then(|n| n.as_str()) == Some("owner")
+                                    })
+                                })
+                                .and_then(|owner| owner.get("lightning_address"))
+                                .and_then(|v| v.as_str())
+                                .map(str::to_string)
+                        })
+                        .or_else(|| router.uci_get("tollgate.main.payout_address").ok())
+                        .filter(|s| !s.is_empty())
+                        .unwrap_or_default();
 
                     serde_json::json!({
                         "installed": true,
@@ -671,15 +781,15 @@ impl RpcHandler {
                             PkgManager::Opkg => "opkg",
                             PkgManager::ApkNative => "apk",
                         }),
-                        "enabled":       router.uci_get("tollgate.main.enabled").map(|v| v == "1").unwrap_or(false),
-                        "metric":        router.uci_get("tollgate.main.metric").unwrap_or_default(),
-                        "step_size_ms":  router.uci_get("tollgate.main.step_size").ok().and_then(|v| v.parse::<u64>().ok()).unwrap_or(0),
-                        "price_per_step":router.uci_get("tollgate.main.price_per_step").ok().and_then(|v| v.parse::<u64>().ok()).unwrap_or(0),
-                        "min_steps":     router.uci_get("tollgate.main.min_steps").ok().and_then(|v| v.parse::<u32>().ok()).unwrap_or(1),
-                        "currency":      router.uci_get("tollgate.main.currency").unwrap_or_default(),
-                        "mint_url":      router.uci_get("tollgate.main.mint_url").unwrap_or_default(),
-                        "payout_address":router.uci_get("tollgate.main.payout_address").unwrap_or_default(),
-                        "private_ssid":  router.uci_get("tollgate.main.private_ssid").unwrap_or_default(),
+                        "enabled": enabled,
+                        "metric": metric,
+                        "step_size_ms": step_size_ms,
+                        "price_per_step": price_per_step,
+                        "min_steps": min_steps,
+                        "currency": currency,
+                        "mint_url": mint_url,
+                        "payout_address": payout_address,
+                        "private_ssid": private_ssid,
                     })
                 } else {
                     serde_json::json!({
@@ -1605,6 +1715,17 @@ impl RpcHandler {
             .map(str::trim)
             .filter(|s| !s.is_empty())
             .map(str::to_string);
+        // `None` preserves the daemon's existing metric. The UI sends the
+        // current one so editing a bytes-metered router does not silently
+        // switch it to milliseconds.
+        let metric = match p.get("metric").and_then(|v| v.as_str()) {
+            Some("bytes") => Some("bytes".to_string()),
+            Some("milliseconds") => Some("milliseconds".to_string()),
+            Some(other) if !other.trim().is_empty() => {
+                anyhow::bail!("metric must be bytes or milliseconds")
+            }
+            _ => None,
+        };
 
         let accepted_mints: Option<Vec<tollgate::MintConfig>> = p
             .get("accepted_mints")
@@ -1639,6 +1760,7 @@ impl RpcHandler {
             mint_url,
             price_sats,
             step_size_ms,
+            metric,
             min_steps: min_steps as u32,
             enabled: p.get("enabled").and_then(|v| v.as_bool()).unwrap_or(true),
             payout_address,

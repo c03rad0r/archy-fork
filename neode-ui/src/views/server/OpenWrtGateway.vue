@@ -29,6 +29,15 @@ interface WifiInterface {
   disabled: boolean
 }
 
+interface WifiGroup {
+  ssid: string
+  network: string
+  encryption: string
+  disabled: boolean
+  radios: string[]
+  sections: string[]
+}
+
 interface MintConfig {
   url: string
   price_per_step: number
@@ -301,6 +310,8 @@ const provisionSuccess = ref(false)
 // defaults and immediately edit.
 const installPriceSats = ref(10)
 const installStepSizeMin = ref(1)
+const installStepSizeMb = ref(21)
+const installMetric = ref<'milliseconds' | 'bytes'>('milliseconds')
 const installMinSteps = ref(1)
 const installPayoutAddress = ref('')
 
@@ -310,6 +321,7 @@ const discovering = ref(false)
 const discoveryError = ref('')
 const discoveryActive = ref('')
 const showUnverifiedRouters = ref(false)
+const showDisabledWifi = ref(false)
 const selectedRouterIp = ref('')
 const needsPassword = ref(false)
 const selectionConfirmed = ref(false)
@@ -332,7 +344,7 @@ const upstreamNetworks = ref<UpstreamNetwork[]>([])
 const upstreamLoading = ref(false)
 const upstreamError = ref('')
 const upstreamPassphrase = ref('')
-const showUnverifiedUpstreams = ref(true)
+const showUnverifiedUpstreams = ref(false)
 const mintHealth = ref<MintHealth | null>(null)
 const mintHealthLoading = ref(false)
 const mintHealthError = ref('')
@@ -350,6 +362,8 @@ const updatingTollgate = ref(false)
 const updateTollgateError = ref('')
 const editPriceSats = ref(10)
 const editStepSizeMin = ref(1)
+const editStepSizeMb = ref(21)
+const editMetric = ref<'milliseconds' | 'bytes'>('milliseconds')
 const editMinSteps = ref(1)
 const editMints = ref<MintConfig[]>([])
 type MintTestState = { status: 'idle' | 'testing' | 'ok' | 'fail'; detail: string }
@@ -367,6 +381,24 @@ const daemonLabel = computed(() => {
     return `${t.daemon_version || 'unknown'}${up}`
   }
   return t.daemon_error || 'unreachable — restart required'
+})
+
+const daemonVersionLabel = computed(() => {
+  const t = status.value?.tollgate
+  return t?.daemon_version || t?.version || 'unknown'
+})
+
+const tollgateActive = computed(() => {
+  const t = status.value?.tollgate
+  return !!t && (t.daemon_running === true || t.enabled === true)
+})
+
+const tollgateStateLabel = computed(() => {
+  const t = status.value?.tollgate
+  if (!t) return 'Unknown'
+  if (t.daemon_running) return 'Enabled'
+  if (t.enabled) return 'Enabled · daemon down'
+  return 'Disabled'
 })
 
 const restartRequired = computed(() => {
@@ -390,9 +422,10 @@ const adminReady = computed(() => {
   )
 })
 
-const showUplink = computed(
-  () => selectionConfirmed.value && !!status.value && installerNeeded.value && !status.value.wan?.internet,
-)
+// The internet uplink is an ongoing admin control, not just an install step.
+// It stays visible after the router is current so an operator can reconnect a
+// broken WAN without reinstalling TollGate.
+const showUplink = computed(() => selectionConfirmed.value && !!status.value)
 
 const advertisedMintKeys = computed(
   () =>
@@ -462,6 +495,38 @@ const networkNamesOutdated = computed(() => {
   )
 })
 
+const wifiGroups = computed<WifiGroup[]>(() => {
+  const groups = new Map<string, WifiGroup>()
+  for (const iface of status.value?.wifi_interfaces ?? []) {
+    const key = iface.ssid || '(hidden)'
+    const existing = groups.get(key)
+    if (existing) {
+      existing.disabled = existing.disabled && iface.disabled
+      if (!existing.radios.includes(iface.device)) existing.radios.push(iface.device)
+      existing.sections.push(iface.section)
+      if (existing.encryption === 'none' && iface.encryption !== 'none') {
+        existing.encryption = iface.encryption
+      }
+      continue
+    }
+    groups.set(key, {
+      ssid: key,
+      network: iface.network,
+      encryption: iface.encryption,
+      disabled: iface.disabled,
+      radios: [iface.device],
+      sections: [iface.section],
+    })
+  }
+  return [...groups.values()]
+})
+
+const visibleWifiGroups = computed(() =>
+  showDisabledWifi.value
+    ? wifiGroups.value
+    : wifiGroups.value.filter(g => !g.disabled),
+)
+
 const knownGroups = computed<KnownTollGateGroup[]>(() => {
   const groups = new Map<string, KnownTollGate[]>()
   for (const entry of upstreamKnown.value) {
@@ -501,6 +566,12 @@ const visibleKnownGroups = computed(() =>
   showUnverifiedUpstreams.value
     ? knownGroups.value
     : knownGroups.value.filter(g => g.confirmed),
+)
+
+const tollgateScanResults = computed(() =>
+  upstreamNetworks.value.filter(
+    n => n.is_tollgate === true || (n.price_per_step ?? 0) > 0,
+  ),
 )
 
 const isDataMetering = computed(
@@ -626,11 +697,20 @@ async function load(params?: Record<string, string>) {
 
 function syncInstallDefaults(s: RouterStatus) {
   if (!s.tollgate.installed) return
+  const metric = s.tollgate.metric === 'bytes' ? 'bytes' : 'milliseconds'
+  installMetric.value = metric
   installPriceSats.value = s.tollgate.price_per_step ?? 10
-  installStepSizeMin.value = Math.max(
-    1,
-    Math.round((s.tollgate.step_size_ms ?? 60_000) / 60_000),
-  )
+  if (metric === 'bytes') {
+    installStepSizeMb.value = Math.max(
+      1,
+      Math.round((s.tollgate.step_size_ms ?? 21 * 1024 * 1024) / (1024 * 1024)),
+    )
+  } else {
+    installStepSizeMin.value = Math.max(
+      1,
+      Math.round((s.tollgate.step_size_ms ?? 60_000) / 60_000),
+    )
+  }
   installMinSteps.value = s.tollgate.min_steps ?? 1
   installPayoutAddress.value = s.tollgate.payout_address ?? ''
   editPrivateSsid.value = s.tollgate.private_ssid || 'noderunner'
@@ -1017,6 +1097,12 @@ function formatLastSeen(iso?: string): string {
   return `${Math.floor(hours / 24)}d ago`
 }
 
+function isStaleTimestamp(iso?: string): boolean {
+  if (!iso) return false
+  const parsed = Date.parse(iso)
+  return Number.isFinite(parsed) && Date.now() - parsed > 30 * 60_000
+}
+
 async function checkMints() {
   mintHealthLoading.value = true
   mintHealthError.value = ''
@@ -1122,10 +1208,15 @@ async function provisionTollgate() {
       'A Lightning payout address is required by the official installer (where TollGate sends your share).'
     return
   }
+  const stepSize =
+    installMetric.value === 'bytes'
+      ? Math.max(1, installStepSizeMb.value) * 1024 * 1024
+      : Math.max(1, installStepSizeMin.value) * 60_000
   const params: Record<string, unknown> = {
     ...authParams(),
     price_sats: installPriceSats.value,
-    step_size_ms: installStepSizeMin.value * 60_000,
+    step_size_ms: stepSize,
+    metric: installMetric.value,
     min_steps: installMinSteps.value,
     payout_address: installPayoutAddress.value.trim(),
     private_ssid: editPrivateSsid.value || 'noderunner',
@@ -1214,8 +1305,17 @@ function cancelTrust() {
 
 function startEditTollgate() {
   const tg = status.value?.tollgate
+  const metric = tg?.metric === 'bytes' ? 'bytes' : 'milliseconds'
+  editMetric.value = metric
   editPriceSats.value = tg?.price_per_step ?? 10
-  editStepSizeMin.value = Math.max(1, Math.round((tg?.step_size_ms ?? 60000) / 60000))
+  if (metric === 'bytes') {
+    editStepSizeMb.value = Math.max(
+      1,
+      Math.round((tg?.step_size_ms ?? 21 * 1024 * 1024) / (1024 * 1024)),
+    )
+  } else {
+    editStepSizeMin.value = Math.max(1, Math.round((tg?.step_size_ms ?? 60000) / 60000))
+  }
   editMinSteps.value = tg?.min_steps ?? 1
   const listed: MintConfig[] = tg?.accepted_mints?.length
     ? tg.accepted_mints
@@ -1243,10 +1343,15 @@ async function saveTollgateConfig() {
   updatingTollgate.value = true
   updateTollgateError.value = ''
   try {
+    const stepSize =
+      editMetric.value === 'bytes'
+        ? Math.max(1, editStepSizeMb.value) * 1024 * 1024
+        : Math.max(1, editStepSizeMin.value) * 60_000
     const params: Record<string, unknown> = {
       ...authParams(),
       price_sats: editPriceSats.value,
-      step_size_ms: editStepSizeMin.value * 60_000,
+      step_size_ms: stepSize,
+      metric: editMetric.value,
       min_steps: editMinSteps.value,
       mint_url: editMints.value[0]?.url.trim() ?? '',
       accepted_mints: editMints.value.map(m => ({
@@ -1338,6 +1443,7 @@ async function restartTollgate() {
         ...authParams(),
         price_sats: tg?.price_per_step ?? 10,
         step_size_ms: tg?.step_size_ms ?? 60_000,
+        metric: tg?.metric === 'bytes' ? 'bytes' : 'milliseconds',
         min_steps: tg?.min_steps ?? 1,
         mint_url: tg?.mint_url ?? '',
         payout_address: tg?.payout_address ?? '',
@@ -1508,11 +1614,18 @@ function formatDurationWords(ms: number): string {
   return `${ms} milliseconds`
 }
 
+function trimNumber(value: number): string {
+  return Number.isInteger(value) ? String(value) : value.toFixed(1)
+}
+
 function formatBytes(bytes: number): string {
-  if (bytes >= 1_000_000_000 && bytes % 1_000_000_000 === 0) return `${bytes / 1_000_000_000} GB`
-  if (bytes >= 1_000_000 && bytes % 1_000_000 === 0) return `${bytes / 1_000_000} MB`
-  if (bytes >= 1_000 && bytes % 1_000 === 0) return `${bytes / 1_000} KB`
-  return `${bytes} bytes`
+  if (bytes <= 0) return '0 B'
+  const mib = bytes / (1024 * 1024)
+  if (mib >= 1024) return `${trimNumber(mib / 1024)} GB`
+  if (mib >= 1) return `${trimNumber(mib)} MB`
+  const kib = bytes / 1024
+  if (kib >= 1) return `${trimNumber(kib)} KB`
+  return `${bytes} B`
 }
 
 const openwrtVersion = computed(() => {
@@ -1545,7 +1658,7 @@ onMounted(() => {
     </div>
 
     <!-- Discovered gateways -->
-    <div class="glass-card p-6 mb-6">
+    <div class="glass-card p-6 mb-6" data-testid="discovered-gateways">
       <div class="flex items-center justify-between mb-3">
         <h2 class="text-sm font-semibold text-white/80">Discovered gateways</h2>
         <div class="flex items-center gap-3">
@@ -1573,6 +1686,7 @@ onMounted(() => {
       <template v-else>
         <select
           v-model="selectedRouterIp"
+          data-testid="gateway-select"
           class="w-full px-3 py-2.5 bg-transparent border border-white/20 rounded-lg text-white text-sm focus:outline-none focus:border-white/40"
           @change="onDiscoveryChange"
         >
@@ -1608,6 +1722,7 @@ onMounted(() => {
           <div
             v-if="selectedRouter.ssh_open && selectedRouter.ssh_fingerprint"
             class="mt-2 rounded-lg border border-yellow-400/20 bg-yellow-400/5 p-3 space-y-2"
+            data-testid="trust-host-key"
           >
             <div class="text-yellow-300">
               TollGate installer host key is not trusted yet.
@@ -1619,6 +1734,7 @@ onMounted(() => {
               class="glass-button glass-button-warning text-xs px-3 py-1.5"
               :disabled="trustRouterPending"
               :class="trustRouterPending ? 'opacity-40 cursor-not-allowed' : ''"
+              data-testid="trust-host-key-button"
               @click="trustSelectedRouter"
             >
               {{ trustRouterPending ? 'Trusting…' : 'Trust host key' }}
@@ -1637,6 +1753,7 @@ onMounted(() => {
             class="glass-button glass-button-success mt-2 text-xs px-3 py-1.5"
             :disabled="connecting"
             :class="connecting ? 'opacity-40 cursor-not-allowed' : ''"
+            data-testid="connect-gateway"
             @click="selectDiscoveredRouter(selectedRouter)"
           >
             {{ connecting ? 'Connecting…' : 'Connect to this gateway' }}
@@ -1752,7 +1869,11 @@ onMounted(() => {
     </div>
 
     <!-- No selection yet -->
-    <div v-else-if="!selectionConfirmed" class="glass-card p-6 mb-4 text-sm text-white/50">
+    <div
+      v-else-if="!selectionConfirmed"
+      class="glass-card p-6 mb-4 text-sm text-white/50"
+      data-testid="select-gateway-prompt"
+    >
       Select a gateway above to load its status, installer and admin panel.
     </div>
 
@@ -1804,13 +1925,14 @@ onMounted(() => {
         </div>
       </div>
 
-      <!-- WAN / Uplink (only when an install/upgrade needs internet) -->
-      <div v-if="showUplink" class="glass-card p-6 mb-4">
+      <!-- Internet uplink (regular Wi-Fi/WAN, separate from TollGate upstreams) -->
+      <div v-if="showUplink" class="glass-card p-6 mb-4" data-testid="internet-uplink">
         <div class="flex items-center justify-between mb-4">
-          <h2 class="text-sm font-semibold text-white/80">WAN / Uplink</h2>
+          <h2 class="text-sm font-semibold text-white/80">Internet uplink</h2>
           <button
             v-if="wanStep === 'idle' || wanStep === 'done'"
             class="text-xs text-white/40 hover:text-white transition-colors"
+            data-testid="configure-uplink"
             @click="startWanSetup"
           >
             {{ status.wan?.configured ? 'Reconfigure →' : 'Set up →' }}
@@ -1916,6 +2038,7 @@ onMounted(() => {
           </div>
           <button
             class="glass-button glass-button-warning w-full text-sm font-medium"
+            data-testid="scan-uplink"
             @click="scanWifi"
           >
             Scan for Networks
@@ -1944,6 +2067,7 @@ onMounted(() => {
               v-for="net in scannedNetworks"
               :key="net.bssid"
               class="w-full flex items-center justify-between px-3 py-2.5 rounded-lg border border-white/10 hover:border-white/30 hover:bg-white/5 transition-colors text-left"
+              data-testid="uplink-network"
               @click="selectNetwork(net)"
             >
               <div class="flex items-center gap-2.5">
@@ -1975,6 +2099,7 @@ onMounted(() => {
             v-if="selectedNetwork?.encryption !== 'none'"
             v-model="wanPassword"
             type="password"
+            data-testid="uplink-password"
             placeholder="WiFi password"
             class="w-full px-4 py-3 mb-3 bg-transparent border border-white/20 rounded-lg text-white placeholder-white/30 focus:outline-none focus:border-white/40 transition-colors"
             @keyup.enter="wanStep = 'dhcp'"
@@ -1988,7 +2113,13 @@ onMounted(() => {
             >
               Next →
             </button>
-            <button class="text-xs text-white/40 hover:text-white px-3 py-2" @click="wanStep = 'list'">←</button>
+            <button
+              class="text-xs text-white/40 hover:text-white px-3 py-2"
+              data-testid="uplink-back"
+              @click="wanStep = 'list'"
+            >
+              ←
+            </button>
           </div>
           <p v-if="wanError" class="mt-2 text-xs text-red-400">{{ wanError }}</p>
         </template>
@@ -2064,7 +2195,7 @@ onMounted(() => {
       </div>
 
       <!-- TollGate -->
-      <div class="glass-card p-6 mb-4">
+      <div class="glass-card p-6 mb-4" data-testid="tollgate-card">
         <h2 class="text-sm font-semibold text-white/80 mb-4">TollGate</h2>
 
         <div class="mb-3 text-xs">
@@ -2095,15 +2226,29 @@ onMounted(() => {
           <div v-if="!status.wan?.internet" class="mb-3 text-xs text-yellow-400/80 bg-yellow-400/10 rounded-lg px-3 py-2">
             Router needs internet access to install TollGate. Configure WAN above first.
           </div>
-          <div class="grid grid-cols-3 gap-3 mb-3">
+          <div class="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-3">
             <label class="block">
-              <span class="block text-xs text-white/40 mb-1">Price (sats / min)</span>
+              <span class="block text-xs text-white/40 mb-1">Metering</span>
+              <select v-model="installMetric"
+                class="w-full px-3 py-2 bg-black/30 border border-white/20 rounded-lg text-white focus:outline-none focus:border-white/40">
+                <option value="milliseconds">Time</option>
+                <option value="bytes">Data</option>
+              </select>
+            </label>
+            <label class="block">
+              <span class="block text-xs text-white/40 mb-1">
+                {{ installMetric === 'bytes' ? 'Price (sats / step)' : 'Price (sats / min)' }}
+              </span>
               <input v-model.number="installPriceSats" type="number" min="1"
                 class="w-full px-3 py-2 bg-transparent border border-white/20 rounded-lg text-white focus:outline-none focus:border-white/40" />
             </label>
             <label class="block">
-              <span class="block text-xs text-white/40 mb-1">Step (minutes)</span>
-              <input v-model.number="installStepSizeMin" type="number" min="1"
+              <span class="block text-xs text-white/40 mb-1">
+                {{ installMetric === 'bytes' ? 'Step (MB)' : 'Step (minutes)' }}
+              </span>
+              <input v-if="installMetric === 'bytes'" v-model.number="installStepSizeMb" type="number" min="1"
+                class="w-full px-3 py-2 bg-transparent border border-white/20 rounded-lg text-white focus:outline-none focus:border-white/40" />
+              <input v-else v-model.number="installStepSizeMin" type="number" min="1"
                 class="w-full px-3 py-2 bg-transparent border border-white/20 rounded-lg text-white focus:outline-none focus:border-white/40" />
             </label>
             <label class="block">
@@ -2140,11 +2285,11 @@ onMounted(() => {
 
         <template v-else-if="!editingTollgate">
           <div class="flex items-center justify-between mb-4">
-            <div class="flex items-center gap-2">
+            <div class="flex items-center gap-2" data-testid="tollgate-enabled">
               <span class="w-2 h-2 rounded-full inline-block"
-                :class="status.tollgate.enabled ? 'bg-green-400' : 'bg-yellow-400'"></span>
-              <span class="text-sm" :class="status.tollgate.enabled ? 'text-green-300' : 'text-yellow-300'">
-                {{ status.tollgate.enabled ? 'Enabled' : 'Disabled' }}
+                :class="tollgateActive ? 'bg-green-400' : 'bg-yellow-400'"></span>
+              <span class="text-sm" :class="tollgateActive ? 'text-green-300' : 'text-yellow-300'">
+                {{ tollgateStateLabel }}
               </span>
             </div>
             <div class="flex items-center gap-3">
@@ -2168,101 +2313,121 @@ onMounted(() => {
             </div>
           </div>
           <p v-if="networkNamesError" class="mb-3 text-xs text-red-400">{{ networkNamesError }}</p>
-          <dl class="grid grid-cols-2 gap-x-6 gap-y-3 text-sm">
-            <div>
-              <dt class="text-xs text-white/40 mb-0.5">Price</dt>
-              <dd class="text-white font-medium">
-                {{ status.tollgate.price_per_step }} {{ status.tollgate.currency || 'sat' }} per {{ stepSizeLabel }}
-              </dd>
-            </div>
-            <div>
-              <dt class="text-xs text-white/40 mb-0.5">Metering</dt>
-              <dd class="text-white/70">
-                {{ meteringLabel }} · step {{ stepSizeLabel }}
-                <span v-if="!isDataMetering">({{ status.tollgate.step_size_ms ?? 60000 }} ms)</span>
-              </dd>
-            </div>
-            <div class="col-span-2">
-              <dt class="text-xs text-white/40 mb-0.5">Mints</dt>
-              <dd class="text-white/70 text-xs">
-                <div>
-                  {{ advertisedMintCount }} of {{ mintRows.length }} configured mints advertised.
-                </div>
-                <ul class="font-mono break-all mt-1 space-y-0.5">
-                  <li v-for="mint in mintRows" :key="mint.url">
-                    <span
-                      :class="advertisedMintKeys.has(normalizeMintUrl(mint.url)) ? 'text-green-300' : 'text-yellow-300'"
-                    >
-                      {{ advertisedMintKeys.has(normalizeMintUrl(mint.url)) ? '●' : '○' }}
-                    </span>
-                    {{ mint.url }}
-                  </li>
-                </ul>
-                <div v-if="missingMintRows.length" class="text-yellow-300 mt-1">
-                  Not advertised by the daemon:
-                  {{ missingMintRows.map(m => mintHost(m.url)).join(', ') }}
-                </div>
-                <div class="flex items-center gap-3 mt-2">
-                  <button
-                    v-if="missingMintRows.length"
-                    class="text-xs text-white/50 hover:text-white"
-                    :disabled="mintHealthLoading"
-                    @click="checkMints"
-                  >
-                    {{ mintHealthLoading ? 'Checking…' : 'Check mint health' }}
-                  </button>
-                  <button
-                    v-if="missingMintRows.length && missingMintRows.length < mintRows.length"
-                    class="text-xs text-red-300/80 hover:text-red-200"
-                    :disabled="mintHealthLoading"
-                    @click="pruneMissingMints"
-                  >
-                    Remove unreachable
-                  </button>
-                </div>
-                <div v-if="mintHealthError" class="text-red-400 mt-1">{{ mintHealthError }}</div>
-                <div v-if="showMintHealth && mintHealth" class="mt-2 space-y-1">
-                  <div v-for="m in mintHealthRows" :key="m.url" class="text-[11px]">
-                    <span
-                      :class="m.advertised ? 'text-green-300' : m.ok ? 'text-yellow-300' : 'text-red-300'"
-                    >
-                      {{ m.advertised ? 'advertised' : m.ok ? 'reachable, not advertised' : 'unreachable' }}
-                    </span>
-                    <span class="font-mono break-all text-white/50"> {{ m.url }}</span>
-                    <span v-if="m.error" class="text-red-300"> — {{ m.error }}</span>
+
+          <div class="text-sm text-white/70" data-testid="mint-summary">
+            Advertising {{ advertisedMintCount }} of {{ mintRows.length }} mints
+            <span class="text-white/30">·</span>
+            <span class="font-mono">{{ daemonVersionLabel }}</span>
+          </div>
+          <div class="mt-1 text-xs text-white/50">
+            {{ status.tollgate.price_per_step }} {{ status.tollgate.currency || 'sat' }} / {{ stepSizeLabel }}
+            <span class="text-white/30">·</span>
+            {{ meteringLabel }}
+            <span v-if="!isDataMetering">({{ status.tollgate.step_size_ms ?? 60000 }} ms)</span>
+          </div>
+
+          <details class="mt-3" data-testid="tollgate-details">
+            <summary class="cursor-pointer text-xs text-white/40 hover:text-white/70" data-testid="details-summary">
+              Details
+            </summary>
+            <dl class="grid grid-cols-2 gap-x-6 gap-y-3 text-sm mt-3">
+              <div>
+                <dt class="text-xs text-white/40 mb-0.5">Price</dt>
+                <dd class="text-white font-medium">
+                  {{ status.tollgate.price_per_step }} {{ status.tollgate.currency || 'sat' }} per {{ stepSizeLabel }}
+                </dd>
+              </div>
+              <div>
+                <dt class="text-xs text-white/40 mb-0.5">Metering</dt>
+                <dd class="text-white/70">
+                  {{ meteringLabel }} · step {{ stepSizeLabel }}
+                  <span v-if="!isDataMetering">({{ status.tollgate.step_size_ms ?? 60000 }} ms)</span>
+                </dd>
+              </div>
+              <div class="col-span-2">
+                <dt class="text-xs text-white/40 mb-0.5">Mints</dt>
+                <dd class="text-white/70 text-xs">
+                  <div>
+                    {{ advertisedMintCount }} of {{ mintRows.length }} configured mints advertised.
                   </div>
-                </div>
-              </dd>
-            </div>
-            <div class="col-span-2 border-t border-white/10 pt-3 mt-1">
-              <dt class="text-xs text-white/40 mb-1">Version</dt>
-              <dd class="text-white/70 text-xs space-y-1">
-                <div>
-                  Package:
-                  <span class="font-mono">{{ status.tollgate.version || 'unknown' }}</span>
-                  <span v-if="status.tollgate.pkg_manager">({{ status.tollgate.pkg_manager }})</span>
-                </div>
-                <div>
-                  Running daemon:
-                  <span class="font-mono" :class="status.tollgate.daemon_running ? 'text-green-300' : 'text-yellow-300'">
-                    {{ daemonLabel }}
-                  </span>
-                </div>
-                <div>
-                  Pinned:
-                  <span class="font-mono">{{ status.tollgate.pinned_version || 'unknown' }}</span>
-                  <span v-if="status.tollgate.up_to_date" class="text-green-300">up to date</span>
-                </div>
-                <div>
-                  Advertised mints: {{ advertisedMintCount }} of {{ mintRows.length }}
-                </div>
-              </dd>
-            </div>
-          </dl>
+                  <ul class="font-mono break-all mt-1 space-y-0.5">
+                    <li v-for="mint in mintRows" :key="mint.url">
+                      <span
+                        :class="advertisedMintKeys.has(normalizeMintUrl(mint.url)) ? 'text-green-300' : 'text-yellow-300'"
+                      >
+                        {{ advertisedMintKeys.has(normalizeMintUrl(mint.url)) ? '●' : '○' }}
+                      </span>
+                      {{ mint.url }}
+                    </li>
+                  </ul>
+                  <div v-if="missingMintRows.length" class="text-yellow-300 mt-1">
+                    Not advertised by the daemon:
+                    {{ missingMintRows.map(m => mintHost(m.url)).join(', ') }}
+                  </div>
+                  <div class="flex items-center gap-3 mt-2">
+                    <button
+                      v-if="missingMintRows.length"
+                      class="text-xs text-white/50 hover:text-white"
+                      :disabled="mintHealthLoading"
+                      data-testid="check-mints"
+                      @click="checkMints"
+                    >
+                      {{ mintHealthLoading ? 'Checking…' : 'Check mint health' }}
+                    </button>
+                    <button
+                      v-if="missingMintRows.length && missingMintRows.length < mintRows.length"
+                      class="text-xs text-red-300/80 hover:text-red-200"
+                      :disabled="mintHealthLoading"
+                      data-testid="prune-mints"
+                      @click="pruneMissingMints"
+                    >
+                      Remove unreachable
+                    </button>
+                  </div>
+                  <div v-if="mintHealthError" class="text-red-400 mt-1">{{ mintHealthError }}</div>
+                  <div v-if="showMintHealth && mintHealth" class="mt-2 space-y-1">
+                    <div v-for="m in mintHealthRows" :key="m.url" class="text-[11px]">
+                      <span
+                        :class="m.advertised ? 'text-green-300' : m.ok ? 'text-yellow-300' : 'text-red-300'"
+                      >
+                        {{ m.advertised ? 'advertised' : m.ok ? 'reachable, not advertised' : 'unreachable' }}
+                      </span>
+                      <span class="font-mono break-all text-white/50"> {{ m.url }}</span>
+                      <span v-if="m.error" class="text-red-300"> — {{ m.error }}</span>
+                    </div>
+                  </div>
+                </dd>
+              </div>
+              <div class="col-span-2 border-t border-white/10 pt-3 mt-1">
+                <dt class="text-xs text-white/40 mb-1">Version</dt>
+                <dd class="text-white/70 text-xs space-y-1">
+                  <div>
+                    Package:
+                    <span class="font-mono">{{ status.tollgate.version || 'unknown' }}</span>
+                    <span v-if="status.tollgate.pkg_manager">({{ status.tollgate.pkg_manager }})</span>
+                  </div>
+                  <div>
+                    Running daemon:
+                    <span class="font-mono" :class="status.tollgate.daemon_running ? 'text-green-300' : 'text-yellow-300'">
+                      {{ daemonLabel }}
+                    </span>
+                  </div>
+                  <div>
+                    Pinned:
+                    <span class="font-mono">{{ status.tollgate.pinned_version || 'unknown' }}</span>
+                    <span v-if="status.tollgate.up_to_date" class="text-green-300">up to date</span>
+                  </div>
+                  <div>
+                    Advertised mints: {{ advertisedMintCount }} of {{ mintRows.length }}
+                  </div>
+                </dd>
+              </div>
+            </dl>
+          </details>
 
           <div v-if="adminReady" class="mt-4 border-t border-white/10 pt-4 space-y-5">
             <!-- Wallet -->
-            <div>
+            <div data-testid="wallet-card">
               <div class="flex items-center justify-between mb-2">
                 <h3 class="text-sm font-semibold text-white/80">Wallet</h3>
                 <button class="text-xs text-white/40 hover:text-white" :disabled="walletLoading" @click="loadWallet">
@@ -2287,7 +2452,7 @@ onMounted(() => {
             </div>
 
             <!-- Upstream gateways -->
-            <div id="upstream-gateways">
+            <div id="upstream-gateways" data-testid="upstream-gateways">
               <div class="flex items-center justify-between mb-2">
                 <h3 class="text-sm font-semibold text-white/80">Upstream gateways</h3>
                 <button class="text-xs text-white/40 hover:text-white" :disabled="upstreamLoading" @click="scanUpstreams">
@@ -2315,66 +2480,81 @@ onMounted(() => {
                 </button>
               </div>
 
-              <div class="flex items-center justify-between mt-3 mb-1">
-                <div class="text-xs text-white/40">Known TollGates</div>
-                <label class="flex items-center gap-1 text-[11px] text-white/40">
-                  <input v-model="showUnverifiedUpstreams" type="checkbox" />
-                  Show unverified
-                </label>
-              </div>
-              <div v-if="visibleKnownGroups.length === 0" class="text-xs text-white/40">
-                None discovered yet
-              </div>
-              <div
-                v-for="g in visibleKnownGroups"
-                :key="g.ssid"
-                class="py-2 border-b border-white/5 last:border-0"
-              >
-                <div class="flex items-start justify-between gap-3 text-xs">
-                  <div class="min-w-0">
-                    <div class="font-mono text-white/80">
-                      {{ g.ssid }}
-                      <span v-if="g.confirmed" class="ml-1 text-green-300">confirmed</span>
-                      <span v-else class="ml-1 text-yellow-300">unconfirmed</span>
-                      <span v-if="g.stale" class="ml-1 text-white/30">stale</span>
-                    </div>
-                    <div class="text-white/40">
-                      {{ g.best.bssid || 'no BSSID' }} · {{ g.bestSignal }} dBm
-                      <span v-if="g.lastSeen"> · {{ formatLastSeen(g.lastSeen) }}</span>
-                      <span v-if="g.entries.length > 1"> · {{ g.entries.length }} radios</span>
-                      <span v-if="g.sampleCount"> · {{ g.sampleCount }} samples</span>
-                    </div>
-                    <div v-if="!g.confirmed" class="text-[11px] text-yellow-300/70">
-                      No signed price observed; SSID prefix only.
-                    </div>
-                    <div v-if="g.entries.length > 1" class="mt-1 space-y-0.5 text-[11px] text-white/30">
-                      <div v-for="e in g.entries" :key="e.bssid || e.ssid">
-                        {{ e.bssid || 'no BSSID' }} · {{ e.best_signal }} dBm · {{ formatLastSeen(e.last_seen) }}
+              <div data-testid="known-tollgates">
+                <div class="flex items-center justify-between mt-3 mb-1">
+                  <div class="text-xs text-white/40">Known TollGates</div>
+                  <label class="flex items-center gap-1 text-[11px] text-white/40">
+                    <input
+                      v-model="showUnverifiedUpstreams"
+                      type="checkbox"
+                      data-testid="show-unverified-upstreams"
+                    />
+                    Show unverified
+                  </label>
+                </div>
+                <p data-testid="unverified-explainer" class="text-[11px] text-white/40 mb-2">
+                  Verified means the router returned a signed TollGate price. Unverified means
+                  only the Wi-Fi name matched.
+                </p>
+                <div v-if="knownGroups.length === 0" class="text-xs text-white/40">
+                  No TollGates discovered nearby.
+                </div>
+                <div v-else-if="visibleKnownGroups.length === 0" class="text-xs text-white/40">
+                  No verified TollGates nearby. Enable “Show unverified” to inspect name-only matches.
+                </div>
+                <div
+                  v-for="g in visibleKnownGroups"
+                  :key="g.ssid"
+                  class="py-2 border-b border-white/5 last:border-0"
+                  data-testid="known-tollgate-group"
+                >
+                  <div class="flex items-start justify-between gap-3 text-xs">
+                    <div class="min-w-0">
+                      <div class="font-mono text-white/80">
+                        {{ g.ssid }}
+                        <span v-if="g.confirmed" class="ml-1 text-green-300">verified</span>
+                        <span v-else class="ml-1 text-yellow-300">unverified</span>
+                        <span v-if="g.stale" class="ml-1 text-white/30">stale</span>
+                      </div>
+                      <div class="text-white/40">
+                        {{ g.best.bssid || 'no BSSID' }} · {{ g.bestSignal }} dBm
+                        <span v-if="g.lastSeen"> · {{ formatLastSeen(g.lastSeen) }}</span>
+                        <span v-if="g.entries.length > 1"> · {{ g.entries.length }} radios</span>
+                        <span v-if="g.sampleCount"> · {{ g.sampleCount }} samples</span>
+                      </div>
+                      <div v-if="!g.confirmed" class="text-[11px] text-yellow-300/70">
+                        No signed price observed; SSID prefix only.
+                      </div>
+                      <div v-if="g.entries.length > 1" class="mt-1 space-y-0.5 text-[11px] text-white/30">
+                        <div v-for="e in g.entries" :key="e.bssid || e.ssid">
+                          {{ e.bssid || 'no BSSID' }} · {{ e.best_signal }} dBm · {{ formatLastSeen(e.last_seen) }}
+                          <span v-if="isStaleTimestamp(e.last_seen)" class="text-yellow-300/70">· stale</span>
+                        </div>
                       </div>
                     </div>
-                  </div>
-                  <div class="flex items-center gap-2 whitespace-nowrap">
-                    <button
-                      v-if="!g.confirmed || g.stale"
-                      class="text-white/30 hover:text-white/60"
-                      @click="hideKnownGroup(g)"
-                    >
-                      Hide
-                    </button>
-                    <button
-                      class="text-green-300 hover:text-green-200"
-                      @click="connectKnownGroup(g)"
-                    >
-                      Connect
-                    </button>
+                    <div class="flex items-center gap-2 whitespace-nowrap">
+                      <button
+                        v-if="!g.confirmed || g.stale"
+                        class="text-white/30 hover:text-white/60"
+                        @click="hideKnownGroup(g)"
+                      >
+                        Hide
+                      </button>
+                      <button
+                        class="text-green-300 hover:text-green-200"
+                        @click="connectKnownGroup(g)"
+                      >
+                        {{ g.confirmed ? 'Connect' : 'Connect anyway' }}
+                      </button>
+                    </div>
                   </div>
                 </div>
               </div>
 
-              <div v-if="upstreamNetworks.length > 0" class="mt-3">
-                <div class="text-xs text-white/40 mb-1">Scanned networks</div>
+              <div v-if="tollgateScanResults.length > 0" class="mt-3">
+                <div class="text-xs text-white/40 mb-1">Scanned TollGates</div>
                 <div
-                  v-for="n in upstreamNetworks"
+                  v-for="n in tollgateScanResults"
                   :key="n.bssid || n.ssid"
                   class="flex items-center justify-between text-xs py-1"
                 >
@@ -2421,7 +2601,19 @@ onMounted(() => {
             </button>
           </div>
           <div class="mb-4">
-            <label class="block text-xs text-white/40 mb-2">Price per minute (sats)</label>
+            <label class="block text-xs text-white/40 mb-2">Metering</label>
+            <select
+              v-model="editMetric"
+              class="w-full px-4 py-3 bg-black/30 border border-white/20 rounded-lg text-white focus:outline-none focus:border-white/40 transition-colors"
+            >
+              <option value="milliseconds">Time</option>
+              <option value="bytes">Data</option>
+            </select>
+          </div>
+          <div class="mb-4">
+            <label class="block text-xs text-white/40 mb-2">
+              {{ editMetric === 'bytes' ? 'Price per step (sats)' : 'Price per minute (sats)' }}
+            </label>
             <input
               v-model.number="editPriceSats"
               type="number"
@@ -2430,8 +2622,18 @@ onMounted(() => {
             />
           </div>
           <div class="mb-4">
-            <label class="block text-xs text-white/40 mb-2">Step (minutes)</label>
+            <label class="block text-xs text-white/40 mb-2">
+              {{ editMetric === 'bytes' ? 'Step (MB)' : 'Step (minutes)' }}
+            </label>
             <input
+              v-if="editMetric === 'bytes'"
+              v-model.number="editStepSizeMb"
+              type="number"
+              min="1"
+              class="w-full px-4 py-3 bg-transparent border border-white/20 rounded-lg text-white placeholder-white/30 focus:outline-none focus:border-white/40 transition-colors"
+            />
+            <input
+              v-else
               v-model.number="editStepSizeMin"
               type="number"
               min="1"
@@ -2560,34 +2762,50 @@ onMounted(() => {
       </div>
 
       <!-- WiFi interfaces -->
-      <div class="glass-card p-6">
-        <h2 class="text-sm font-semibold text-white/80 mb-4">
-          WiFi Interfaces
-          <span class="ml-2 text-xs font-normal text-white/40">(AP mode)</span>
-        </h2>
+      <div class="glass-card p-6" data-testid="wifi-interfaces">
+        <div class="flex items-center justify-between mb-4">
+          <h2 class="text-sm font-semibold text-white/80">
+            WiFi Interfaces
+            <span class="ml-2 text-xs font-normal text-white/40">(AP mode)</span>
+          </h2>
+          <label class="flex items-center gap-1 text-[11px] text-white/40">
+            <input
+              v-model="showDisabledWifi"
+              type="checkbox"
+              data-testid="show-legacy-wifi"
+            />
+            Show disabled/legacy
+          </label>
+        </div>
 
-        <div v-if="status.wifi_interfaces.length === 0" class="text-sm text-white/50">
-          No AP interfaces configured.
+        <div v-if="visibleWifiGroups.length === 0" class="text-sm text-white/50">
+          No active AP interfaces.
         </div>
 
         <div
-          v-for="iface in status.wifi_interfaces"
-          :key="iface.section"
+          v-for="group in visibleWifiGroups"
+          :key="group.ssid"
           class="flex items-start justify-between py-3 border-b border-white/10 last:border-0"
+          data-testid="wifi-group"
+          :data-ssid="group.ssid"
         >
-          <div>
+          <div class="min-w-0">
             <div class="flex items-center gap-2 mb-0.5">
-              <span class="w-1.5 h-1.5 rounded-full inline-block"
-                :class="iface.disabled ? 'bg-white/20' : 'bg-green-400'"></span>
-              <span class="text-sm font-medium text-white">{{ iface.ssid || '(hidden)' }}</span>
-              <span v-if="iface.network === 'tollgate'"
-                class="text-xs px-1.5 py-0.5 rounded bg-blue-500/20 text-blue-300">TollGate</span>
+              <span class="w-1.5 h-1.5 rounded-full inline-block flex-shrink-0"
+                :class="group.disabled ? 'bg-white/20' : 'bg-green-400'"></span>
+              <span class="text-sm font-medium text-white truncate">{{ group.ssid }}</span>
+              <span v-if="group.network === 'tollgate'"
+                class="text-xs px-1.5 py-0.5 rounded bg-blue-500/20 text-blue-300">Paid</span>
+              <span v-if="group.disabled"
+                class="text-xs px-1.5 py-0.5 rounded bg-white/5 text-white/30">Disabled</span>
             </div>
             <div class="text-xs text-white/40 ml-3.5">
-              {{ iface.device }} · {{ iface.encryption === 'none' ? 'Open' : iface.encryption }}
+              {{ group.encryption === 'none' ? 'Open' : group.encryption }}
             </div>
           </div>
-          <span class="text-xs text-white/30 font-mono mt-0.5">{{ iface.section }}</span>
+          <span class="text-xs text-white/50 font-mono text-right ml-3">
+            {{ group.radios.join(', ') }}
+          </span>
         </div>
       </div>
 

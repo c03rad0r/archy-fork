@@ -50,8 +50,12 @@ pub struct TollGateConfig {
     pub mint_url: String,
     /// Price in satoshis per `step_size` interval.
     pub price_sats: u64,
-    /// Step size in milliseconds (default: 60000 = 1 minute).
+    /// Step size in milliseconds (default: 60000 = 1 minute), or bytes when
+    /// `metric` is `bytes`.
     pub step_size_ms: u64,
+    /// Metering metric: `bytes` or `milliseconds`. `None` preserves whatever
+    /// the daemon already has; a fresh install defaults to milliseconds.
+    pub metric: Option<String>,
     /// Minimum steps a customer must purchase at once.
     pub min_steps: u32,
     /// Whether the TollGate service should be running and enabled at boot.
@@ -82,6 +86,7 @@ impl Default for TollGateConfig {
             mint_url: String::new(), // must be set by caller from the running mint app
             price_sats: 10,
             step_size_ms: 60_000,
+            metric: None,
             min_steps: 1,
             enabled: true,
             payout_address: None,
@@ -90,6 +95,18 @@ impl Default for TollGateConfig {
             accepted_mints: None,
         }
     }
+}
+
+/// Read the metric from the daemon's existing config.json, if present.
+fn daemon_metric(router: &Router) -> Option<String> {
+    let existing = router
+        .run_ok("cat /etc/tollgate/config.json 2>/dev/null || echo '{}'")
+        .ok()?;
+    let doc: serde_json::Value = serde_json::from_str(existing.trim()).ok()?;
+    doc.get("metric")
+        .and_then(|v| v.as_str())
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
 }
 
 /// Write TollGate UCI configuration and commit.
@@ -113,11 +130,19 @@ pub fn apply(router: &Router, cfg: &TollGateConfig) -> Result<()> {
         .map(|m| m.price_per_step)
         .unwrap_or(cfg.price_sats)
         .to_string();
+    let metric = cfg
+        .metric
+        .as_deref()
+        .map(str::trim)
+        .filter(|m| !m.is_empty())
+        .map(str::to_string)
+        .or_else(|| daemon_metric(router))
+        .unwrap_or_else(|| "milliseconds".to_string());
 
     let mut pairs = vec![
         ("tollgate.main", "tollgate"),
         ("tollgate.main.enabled", if cfg.enabled { "1" } else { "0" }),
-        ("tollgate.main.metric", "milliseconds"),
+        ("tollgate.main.metric", metric.as_str()),
         ("tollgate.main.step_size", step_size.as_str()),
         ("tollgate.main.min_steps", min_steps.as_str()),
         ("tollgate.main.price_per_step", price_sats.as_str()),
@@ -153,7 +178,25 @@ pub fn apply_daemon_config(router: &Router, cfg: &TollGateConfig) -> Result<()> 
     let mut doc: serde_json::Value =
         serde_json::from_str(existing.trim()).unwrap_or_else(|_| serde_json::json!({}));
 
-    doc["metric"] = serde_json::json!("milliseconds");
+    match cfg
+        .metric
+        .as_deref()
+        .map(str::trim)
+        .filter(|m| !m.is_empty())
+    {
+        Some(metric) => doc["metric"] = serde_json::json!(metric),
+        None => {
+            if doc
+                .get("metric")
+                .and_then(|v| v.as_str())
+                .map(str::trim)
+                .filter(|m| !m.is_empty())
+                .is_none()
+            {
+                doc["metric"] = serde_json::json!("milliseconds");
+            }
+        }
+    }
     doc["step_size"] = serde_json::json!(cfg.step_size_ms);
 
     // The private management SSID/key are first-class schema fields. Empty
@@ -322,6 +365,71 @@ pub fn set_private_ssid(router: &Router, ssid: &str) -> Result<()> {
         serde_json::from_str(existing.trim()).unwrap_or_else(|_| serde_json::json!({}));
     doc["private_ssid"] = serde_json::json!(ssid);
     write_daemon_doc(router, &doc)
+}
+
+/// Mirror the daemon's real config into the `tollgate.main.*` UCI fields.
+///
+/// These fields are a display/detection mirror only; the daemon reads
+/// `/etc/tollgate/config.json`. A router installed by another path (or renamed
+/// without a full re-provision) can have no mirror at all, which used to make
+/// the dashboard report `Disabled / 0 sat / 0 ms`. Callers that already know
+/// whether the service should run pass `enabled`.
+pub fn sync_uci_from_daemon(router: &Router, enabled: bool) -> Result<()> {
+    let existing = router.run_ok("cat /etc/tollgate/config.json 2>/dev/null || echo '{}'")?;
+    let doc: serde_json::Value =
+        serde_json::from_str(existing.trim()).unwrap_or_else(|_| serde_json::json!({}));
+    let first_mint = doc
+        .get("accepted_mints")
+        .and_then(|v| v.as_array())
+        .and_then(|a| a.first());
+
+    let metric = doc
+        .get("metric")
+        .and_then(|v| v.as_str())
+        .unwrap_or("milliseconds");
+    let step = doc
+        .get("step_size")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(60_000)
+        .to_string();
+    let price = first_mint
+        .and_then(|m| m.get("price_per_step"))
+        .and_then(|v| v.as_u64())
+        .unwrap_or(0)
+        .to_string();
+    let currency = first_mint
+        .and_then(|m| m.get("price_unit"))
+        .and_then(|v| v.as_str())
+        .unwrap_or("sat");
+    let min_steps = first_mint
+        .and_then(|m| m.get("purchase_min_steps"))
+        .and_then(|v| v.as_u64())
+        .unwrap_or(1)
+        .to_string();
+    let mint_url = first_mint
+        .and_then(|m| m.get("url"))
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
+    let private_ssid = doc
+        .get("private_ssid")
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
+
+    let mut pairs = vec![
+        ("tollgate.main", "tollgate"),
+        ("tollgate.main.enabled", if enabled { "1" } else { "0" }),
+        ("tollgate.main.metric", metric),
+        ("tollgate.main.step_size", step.as_str()),
+        ("tollgate.main.price_per_step", price.as_str()),
+        ("tollgate.main.currency", currency),
+        ("tollgate.main.min_steps", min_steps.as_str()),
+        ("tollgate.main.mint_url", mint_url),
+    ];
+    if !private_ssid.trim().is_empty() {
+        pairs.push(("tollgate.main.private_ssid", private_ssid));
+    }
+    router.uci_apply("tollgate", &pairs)?;
+    Ok(())
 }
 
 /// Set the operator's own payout Lightning address in
