@@ -339,20 +339,20 @@ pub(super) async fn upstream_wifi_psk() -> Result<Option<(String, String)>> {
 /// Find the active 802-11-wireless NetworkManager profile: `(profile, device)`.
 async fn active_wifi_profile() -> Option<(String, String)> {
     let out = tokio::process::Command::new("nmcli")
-        .args([
-            "-t",
-            "-f",
-            "NAME,TYPE,DEVICE,ACTIVE",
-            "connection",
-            "show",
-        ])
+        .args(["-t", "-f", "NAME,TYPE,DEVICE,ACTIVE", "connection", "show"])
         .output()
         .await
         .ok()?;
     if !out.status.success() {
         return None;
     }
-    let text = String::from_utf8_lossy(&out.stdout);
+    parse_active_wifi_connection(&String::from_utf8_lossy(&out.stdout))
+}
+
+/// Pick the active 802-11-wireless row out of
+/// `nmcli -t -f NAME,TYPE,DEVICE,ACTIVE connection show` output. Pure, so the
+/// escaped-colon shape is testable without NetworkManager.
+fn parse_active_wifi_connection(text: &str) -> Option<(String, String)> {
     for line in text.lines() {
         let fields = split_nmcli_escaped(line, 4);
         if fields.len() < 4 {
@@ -696,4 +696,47 @@ async fn configure_ethernet_static(
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod upstream_wifi_tests {
+    use super::parse_active_wifi_connection;
+
+    #[test]
+    fn picks_the_active_wifi_row() {
+        let out = "Wired connection 1:802-3-ethernet:eth0:yes\n\
+                   archipelago-wifi-venue:802-11-wireless:wlp3s0:yes\n";
+        assert_eq!(
+            parse_active_wifi_connection(out),
+            Some(("archipelago-wifi-venue".to_string(), "wlp3s0".to_string()))
+        );
+    }
+
+    #[test]
+    fn ignores_inactive_wifi_and_wired_only_nodes() {
+        assert_eq!(
+            parse_active_wifi_connection(
+                "home:802-11-wireless:wlp3s0:no\nWired:802-3-ethernet:eth0:yes\n"
+            ),
+            None
+        );
+    }
+
+    #[test]
+    fn handles_escaped_colons_in_the_profile_name() {
+        let out = "archipelago-wifi-venue\\:guest:802-11-wireless:wlp3s0:yes\n";
+        assert_eq!(
+            parse_active_wifi_connection(out),
+            Some((
+                "archipelago-wifi-venue:guest".to_string(),
+                "wlp3s0".to_string()
+            ))
+        );
+    }
+
+    #[test]
+    fn accepts_an_uppercase_active_flag() {
+        let out = "home:802-11-wireless:wlp3s0:YES\n";
+        assert!(parse_active_wifi_connection(out).is_some());
+    }
 }
