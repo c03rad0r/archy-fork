@@ -6,6 +6,7 @@ import { useCachedResource } from '@/composables/useCachedResource'
 import BackButton from '@/components/BackButton.vue'
 import DeviceModel from '@/components/DeviceModel.vue'
 import HardwareMarketplace from '@/components/HardwareMarketplace.vue'
+import ProvisionProgressPanel from '@/components/ProvisionProgressPanel.vue'
 
 const router = useRouter()
 function goBack() {
@@ -503,6 +504,8 @@ const trustRouterDone = ref(false)
 const walletInfo = ref<WalletInfo | null>(null)
 const walletLoading = ref(false)
 const walletError = ref('')
+const daemonStarting = ref(false)
+let readinessRun: Promise<void> | null = null
 const drainPreview = ref<DrainPreview | null>(null)
 const drainPreviewLoading = ref(false)
 const drainPreviewError = ref('')
@@ -625,30 +628,6 @@ const installUplinkMessage = computed(() => {
     : 'No internet uplink is configured. Configure the internet uplink before installing TollGate.'
 })
 
-function stepIcon(status: string): string {
-  return (
-    {
-      done: '✓',
-      running: '●',
-      skipped: '–',
-      failed: '!',
-      pending: '○',
-    }[status] ?? '○'
-  )
-}
-
-function stepClass(status: string): string {
-  return status === 'done'
-    ? 'text-green-400'
-    : status === 'running'
-      ? 'text-yellow-300 animate-pulse'
-      : status === 'failed'
-        ? 'text-red-400'
-        : status === 'skipped'
-          ? 'text-white/30'
-          : 'text-white/30'
-}
-
 function scrollToUplink() {
   document
     .querySelector('[data-testid="internet-uplink"]')
@@ -690,6 +669,30 @@ const mintHealthRows = computed(() => mintHealth.value?.mints ?? [])
 const unreachableMints = computed(() =>
   mintHealthRows.value.filter(m => !m.ok),
 )
+
+function durationToSeconds(value?: string): number {
+  if (!value) return 0
+  let total = 0
+  const pattern = /(\d+(?:\.\d+)?)(h|m|s)/g
+  let match: RegExpExecArray | null
+  while ((match = pattern.exec(value))) {
+    const amount = Number(match[1])
+    total +=
+      match[2] === 'h' ? amount * 3600 : match[2] === 'm' ? amount * 60 : amount
+  }
+  return total
+}
+
+const daemonWarmingUp = computed(() => {
+  const t = status.value?.tollgate
+  if (!t?.installed) return false
+  if (daemonStarting.value) return true
+  return (
+    t.daemon_running === true &&
+    (t.advertised_mints?.length ?? 0) === 0 &&
+    durationToSeconds(t.daemon_uptime) < 60
+  )
+})
 
 const walletDegraded = computed(() => {
   if (walletInfo.value?.degraded) return true
@@ -929,6 +932,13 @@ const visibleUpstreams = computed(() =>
 )
 
 const hiddenUpstreamCount = computed(() => upstreamSplit.value.hidden)
+
+const provisionButtonLabel = computed(() => {
+  const progress = provisionProgress.value
+  if (!progress) return 'Starting…'
+  const running = progress.steps.find(step => step.status === 'running')
+  return `${progress.percent}% · ${running?.label || progress.current || 'Starting…'}`
+})
 
 const rankedUplinkNetworks = computed(() =>
   rankNetworks(buildRankedNetworks(scannedNetworks.value, ownSsidSet.value)),
@@ -1429,6 +1439,48 @@ async function loadWallet() {
   }
 }
 
+async function checkDaemonReady(): Promise<boolean> {
+  try {
+    await load()
+    await loadWallet()
+  } catch {
+    return false
+  }
+  const t = status.value?.tollgate
+  const advertised = t?.advertised_mints?.length ?? 0
+  const configured = t?.configured_mints ?? 0
+  return (
+    !!t?.installed &&
+    t.daemon_running === true &&
+    advertised > 0 &&
+    advertised >= configured &&
+    walletInfo.value?.ok === true &&
+    walletInfo.value?.degraded !== true
+  )
+}
+
+/// A just-restarted daemon needs a few seconds to probe and advertise its
+/// mints. Without this poll the first status snapshot after install looks
+/// like a permanent "wallet degraded" state until the operator reloads.
+async function waitForDaemonReady() {
+  if (readinessRun) return readinessRun
+  daemonStarting.value = true
+  readinessRun = (async () => {
+    try {
+      for (let attempt = 0; attempt < 14; attempt++) {
+        if (await checkDaemonReady()) break
+        await new Promise(resolve =>
+          setTimeout(resolve, attempt < 5 ? 2000 : 5000),
+        )
+      }
+    } finally {
+      daemonStarting.value = false
+      readinessRun = null
+    }
+  })()
+  return readinessRun
+}
+
 async function previewDrain() {
   drainPreviewLoading.value = true
   drainPreviewError.value = ''
@@ -1882,6 +1934,10 @@ async function trustSelectedRouter() {
     })
     trustRouterDone.value = true
     await discoverRouters()
+    if (selectionConfirmed.value) {
+      await load()
+      if (status.value?.tollgate.installed) void waitForDaemonReady()
+    }
   } catch (e) {
     trustRouterError.value = e instanceof Error ? e.message : String(e)
   } finally {
@@ -2096,6 +2152,10 @@ async function refreshProvisionProgress(id: string) {
     })
     if (result?.progress) {
       provisionProgress.value = result.progress
+      if (result.progress.done || result.progress.failed) {
+        provisioning.value = false
+        stopProvisionPolling()
+      }
     } else if (provisionProgress.value?.phase === 'starting') {
       // The backend refused before it created a progress entry (for example
       // the no-WAN gate). Hide the placeholder; the error explains why.
@@ -2113,6 +2173,31 @@ function startProvisionPolling(id: string) {
   provisionTimer = setInterval(() => {
     void refreshProvisionProgress(id)
   }, 1000)
+}
+
+/// Restore a running install after a page reload. Without this, the progress
+/// panel and polling only exist while the original install RPC is open in the
+/// same page.
+async function resumeProvisionProgress() {
+  try {
+    const result = await rpcClient.call<{
+      ok: boolean
+      progress?: ProvisionProgress | null
+    }>({
+      method: 'openwrt.provision-progress',
+      params: {},
+      timeout: 10000,
+    })
+    const progress = result?.progress
+    if (!progress) return
+    provisionProgress.value = progress
+    if (!progress.done && !progress.failed && progress.provision_id) {
+      provisioning.value = true
+      startProvisionPolling(progress.provision_id)
+    }
+  } catch {
+    // No active install to resume.
+  }
 }
 
 function syncActiveHost(resultHost?: string) {
@@ -2179,6 +2264,7 @@ async function runProvisionRequest(
     syncActiveHost(result?.host)
     await load(connectedParams.value ?? undefined)
     await loadInstallerStatus()
+    void waitForDaemonReady()
   } finally {
     await refreshProvisionProgress(provisionId)
     stopProvisionPolling()
@@ -2611,6 +2697,7 @@ const boardName = computed(() => {
 onMounted(() => {
   void loadInstallerStatus()
   void discoverRouters()
+  void resumeProvisionProgress()
 })
 </script>
 
@@ -3207,66 +3294,11 @@ onMounted(() => {
           </span>
         </div>
 
-        <div
-          v-if="provisionProgress"
-          class="mb-4 rounded-lg border border-white/10 bg-white/[0.02] p-3"
-          data-testid="provision-progress"
-        >
-          <div class="flex items-start justify-between gap-3">
-            <div class="min-w-0">
-              <div class="text-xs text-white/50">
-                {{ provisionProgress.kind === 'apply' ? 'Applying Archy configuration' : 'Installing TollGate' }}
-                <span v-if="!provisionProgress.done && !provisionProgress.failed">
-                  · step
-                  {{ provisionProgress.steps.filter(step => step.status === 'done' || step.status === 'skipped').length }}
-                  of {{ provisionProgress.steps.length }}
-                </span>
-              </div>
-              <div class="text-sm text-white/80 truncate" data-testid="provision-current">
-                {{ provisionProgress.current || 'Starting…' }}
-              </div>
-            </div>
-            <div
-              class="text-sm font-mono shrink-0"
-              :class="provisionProgress.failed ? 'text-red-300' : provisionProgress.done ? 'text-green-300' : 'text-white/80'"
-              data-testid="provision-percent"
-            >
-              {{ provisionProgress.percent }}%
-            </div>
-          </div>
-          <div class="mt-2 h-1.5 w-full rounded bg-white/10 overflow-hidden">
-            <div
-              class="h-full rounded bg-white/60 transition-all"
-              :style="{ width: `${provisionProgress.percent}%` }"
-              data-testid="provision-bar"
-            ></div>
-          </div>
-          <ul class="mt-2 space-y-0.5">
-            <li
-              v-for="step in provisionProgress.steps"
-              :key="step.id"
-              class="flex items-start gap-2 text-[11px]"
-              :data-testid="`provision-step-${step.id}`"
-            >
-              <span class="w-3 shrink-0 text-center" :class="stepClass(step.status)">
-                {{ stepIcon(step.status) }}
-              </span>
-              <span :class="stepClass(step.status)">{{ step.label }}</span>
-              <span v-if="step.detail" class="text-white/30 truncate">· {{ step.detail }}</span>
-            </li>
-          </ul>
-          <p v-if="provisionProgress.error" class="mt-2 text-xs text-red-400">
-            {{ provisionProgress.error }}
-          </p>
-          <button
-            v-if="provisionProgress.failed"
-            class="glass-button glass-button-warning text-xs px-3 py-1.5 mt-2"
-            data-testid="provision-retry"
-            @click="retryProvision"
-          >
-            Retry
-          </button>
-        </div>
+        <ProvisionProgressPanel
+          v-if="provisionProgress && provisionProgress.kind === 'apply'"
+          :progress="provisionProgress"
+          @retry="retryProvision"
+        />
 
         <div v-if="installerNeeded">
           <div class="flex items-center gap-3 mb-4">
@@ -3368,6 +3400,11 @@ onMounted(() => {
               Where TollGate sends the operator share. The official installer requires it.
             </span>
           </label>
+          <ProvisionProgressPanel
+            v-if="provisionProgress && provisionProgress.kind === 'install'"
+            :progress="provisionProgress"
+            @retry="retryProvision"
+          />
           <button
             :disabled="provisioning || installBlockedNoWan"
             class="glass-button glass-button-success w-full text-sm font-medium"
@@ -3377,7 +3414,7 @@ onMounted(() => {
           >
             {{
               provisioning
-                ? 'Working… this may take a few minutes'
+                ? provisionButtonLabel
                 : status.tollgate.installed
                   ? 'Upgrade TollGate'
                   : 'Install TollGate'
@@ -3447,6 +3484,7 @@ onMounted(() => {
           </div>
 
           <div class="text-sm text-white/70" data-testid="mint-summary">
+            <span v-if="daemonWarmingUp" class="text-white/50">Starting —</span>
             Advertising {{ advertisedMintCount }} of {{ mintRows.length }} mints
             <span class="text-white/30">·</span>
             <span class="font-mono">{{ daemonVersionLabel }}</span>
@@ -3567,7 +3605,14 @@ onMounted(() => {
                 </button>
               </div>
               <div v-if="walletError" class="text-xs text-red-400">{{ walletError }}</div>
-              <div v-if="walletDegraded" class="text-xs text-yellow-300 mb-2">
+              <div
+                v-if="daemonWarmingUp"
+                class="text-xs text-white/50 mb-2"
+                data-testid="daemon-starting"
+              >
+                Daemon starting — waiting for mints to advertise…
+              </div>
+              <div v-else-if="walletDegraded" class="text-xs text-yellow-300 mb-2">
                 Wallet degraded: {{ walletDegradedReason }}
               </div>
               <div v-else-if="walletInfo?.ok" class="text-xs text-green-300 mb-1">
