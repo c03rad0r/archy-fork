@@ -525,6 +525,17 @@ const flashJobId = ref('')
 const flashJob = ref<CleanSlateJob | null>(null)
 const flashError = ref('')
 const flashTrustPending = ref(false)
+const flashRecoveryLoading = ref(false)
+const flashRecoveryTrusting = ref(false)
+const flashRecoveryError = ref('')
+const flashRecoveryInfo = ref<{
+  ip: string
+  identified?: boolean
+  firmware?: string
+  model?: string
+  name?: string
+  ssh_fingerprint?: string
+} | null>(null)
 let flashTimer: ReturnType<typeof setInterval> | null = null
 const upstreamList = ref<UpstreamSTA[]>([])
 const upstreamKnown = ref<KnownTollGate[]>([])
@@ -1578,6 +1589,56 @@ async function trustFlashHost() {
   }
 }
 
+function flashRecoveryTarget(): string {
+  return flashJob.value?.ip || '192.168.1.1'
+}
+
+async function recheckFlashedRouter() {
+  const ip = flashRecoveryTarget()
+  flashRecoveryLoading.value = true
+  flashRecoveryError.value = ''
+  flashRecoveryInfo.value = null
+  try {
+    const params: Record<string, unknown> = { ip }
+    if (flashPassword.value.trim()) params.password = flashPassword.value.trim()
+    const info = await rpcClient.call<{
+      identified?: boolean
+      firmware?: string
+      model?: string
+      name?: string
+      ssh_fingerprint?: string
+    }>({
+      method: 'openwrt.installer.identify',
+      params,
+      timeout: 30000,
+    })
+    flashRecoveryInfo.value = { ip, ...info }
+  } catch (e) {
+    flashRecoveryError.value = e instanceof Error ? e.message : String(e)
+  } finally {
+    flashRecoveryLoading.value = false
+  }
+}
+
+async function trustRecoveredRouter() {
+  const info = flashRecoveryInfo.value
+  if (!info?.ssh_fingerprint) return
+  flashRecoveryTrusting.value = true
+  flashRecoveryError.value = ''
+  try {
+    await rpcClient.call({
+      method: 'openwrt.installer.trust',
+      params: { ip: info.ip, fingerprint: info.ssh_fingerprint },
+      timeout: 30000,
+    })
+    await recheckFlashedRouter()
+  } catch (e) {
+    flashRecoveryError.value = e instanceof Error ? e.message : String(e)
+  } finally {
+    flashRecoveryTrusting.value = false
+  }
+}
+
 async function prepareFlashLink(link: FlashLink) {
   if (
     !window.confirm(
@@ -1686,7 +1747,7 @@ function closeFlashModal() {
 }
 
 async function useFlashedRouter() {
-  const ip = flashJob.value?.ip || '192.168.1.1'
+  const ip = flashRecoveryInfo.value?.ip || flashJob.value?.ip || '192.168.1.1'
   clearFlashTimer()
   flashOpen.value = false
   selectionConfirmed.value = false
@@ -4088,10 +4149,56 @@ onMounted(() => {
                 Reconnect at {{ flashJob.ip || '192.168.1.1' }}
               </button>
             </template>
-            <p v-else-if="flashJob.status === 'failed'" class="mt-2 text-xs text-yellow-300">
-              The job may still have flashed the router. Check
-              <span class="font-mono">192.168.1.1</span> before retrying.
-            </p>
+            <template v-else-if="flashJob.status === 'failed'">
+              <p class="mt-2 text-xs text-yellow-300">
+                The job may still have flashed the router. Check
+                <span class="font-mono">192.168.1.1</span> before retrying.
+              </p>
+              <button
+                class="glass-button text-xs px-3 py-1.5 mt-2"
+                :disabled="flashRecoveryLoading"
+                data-testid="flash-recheck"
+                @click="recheckFlashedRouter"
+              >
+                {{ flashRecoveryLoading ? 'Checking 192.168.1.1…' : 'Check 192.168.1.1' }}
+              </button>
+              <div v-if="flashRecoveryInfo" class="mt-2 rounded-lg border border-white/10 p-2">
+                <template v-if="flashRecoveryInfo.ssh_fingerprint">
+                  <p class="text-xs text-yellow-300">
+                    The router returned with a new SSH host key.
+                  </p>
+                  <pre
+                    class="mt-1 text-[11px] font-mono bg-black/30 rounded p-2 text-green-300 break-all whitespace-pre-wrap"
+                    data-testid="flash-recovery-fingerprint"
+                  >{{ flashRecoveryInfo.ssh_fingerprint }}</pre>
+                  <code class="block mt-1 text-[11px] font-mono bg-black/30 rounded p-2 text-white/60 break-all whitespace-pre-wrap">dropbearkey -y -f /etc/dropbear/dropbear_ed25519_host_key</code>
+                  <button
+                    class="glass-button glass-button-warning text-xs px-3 py-1.5 mt-2"
+                    :disabled="flashRecoveryTrusting"
+                    data-testid="flash-recovery-trust"
+                    @click="trustRecoveredRouter"
+                  >
+                    {{ flashRecoveryTrusting ? 'Trusting…' : 'Trust and reconnect' }}
+                  </button>
+                </template>
+                <template v-else-if="flashRecoveryInfo.identified">
+                  <p class="text-xs text-green-300">
+                    Router is at {{ flashRecoveryInfo.ip }}; it is already on vanilla OpenWrt.
+                  </p>
+                  <p class="text-[11px] text-white/40 mt-1">
+                    {{ flashRecoveryInfo.firmware }}<span v-if="flashRecoveryInfo.model"> · {{ flashRecoveryInfo.model }}</span>
+                  </p>
+                  <button
+                    class="glass-button glass-button-success text-xs px-3 py-1.5 mt-2"
+                    data-testid="flash-recovery-reconnect"
+                    @click="useFlashedRouter"
+                  >
+                    Reconnect at {{ flashRecoveryInfo.ip }}
+                  </button>
+                </template>
+              </div>
+              <p v-if="flashRecoveryError" class="mt-2 text-xs text-red-400">{{ flashRecoveryError }}</p>
+            </template>
             <p v-else-if="flashJob.status === 'pending'" class="mt-2 text-xs text-yellow-300">
               The router is still starting. Check
               <span class="font-mono">{{ flashJob.ip || '192.168.1.1' }}</span> before retrying.
