@@ -178,6 +178,27 @@ interface DrainResult {
   router_errors?: unknown[]
 }
 
+interface ProvisionStep {
+  id: string
+  label: string
+  status: 'pending' | 'running' | 'done' | 'skipped' | 'failed' | string
+  detail?: string
+}
+
+interface ProvisionProgress {
+  provision_id: string
+  kind: string
+  phase: string
+  percent: number
+  current: string
+  steps: ProvisionStep[]
+  done: boolean
+  failed: boolean
+  error?: string
+  host?: string
+  result?: Record<string, unknown>
+}
+
 interface FlashLink {
   name: string
   carrier: boolean
@@ -389,6 +410,8 @@ const provisioning = ref(false)
 const provisionError = ref('')
 const provisionSuccess = ref(false)
 const provisionSkippedMints = ref<string[]>([])
+const provisionProgress = ref<ProvisionProgress | null>(null)
+let provisionTimer: ReturnType<typeof setInterval> | null = null
 const repairingPortal = ref(false)
 const portalError = ref('')
 
@@ -557,6 +580,49 @@ const installerNeeded = computed(() => {
   const t = status.value?.tollgate
   return !!t && (!t.installed || t.up_to_date === false)
 })
+
+const installBlockedNoWan = computed(() => {
+  const wan = status.value?.wan
+  return !!wan && wan.internet === false
+})
+
+const installUplinkMessage = computed(() => {
+  const wan = status.value?.wan
+  if (!wan) return ''
+  return wan.configured
+    ? 'Internet uplink is configured but offline. Reconnect it before installing TollGate.'
+    : 'No internet uplink is configured. Configure the internet uplink before installing TollGate.'
+})
+
+function stepIcon(status: string): string {
+  return (
+    {
+      done: '✓',
+      running: '●',
+      skipped: '–',
+      failed: '!',
+      pending: '○',
+    }[status] ?? '○'
+  )
+}
+
+function stepClass(status: string): string {
+  return status === 'done'
+    ? 'text-green-400'
+    : status === 'running'
+      ? 'text-yellow-300 animate-pulse'
+      : status === 'failed'
+        ? 'text-red-400'
+        : status === 'skipped'
+          ? 'text-white/30'
+          : 'text-white/30'
+}
+
+function scrollToUplink() {
+  document
+    .querySelector('[data-testid="internet-uplink"]')
+    ?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+}
 
 const adminReady = computed(() => {
   const t = status.value?.tollgate
@@ -1428,6 +1494,7 @@ async function useFlashedRouter() {
 }
 
 onUnmounted(clearFlashTimer)
+onUnmounted(stopProvisionPolling)
 
 async function loadUpstreams() {
   upstreamLoading.value = true
@@ -1704,6 +1771,11 @@ async function provisionTollgate() {
   provisionError.value = ''
   provisionSuccess.value = false
   provisionSkippedMints.value = []
+  if (installBlockedNoWan.value) {
+    provisionError.value = installUplinkMessage.value
+    scrollToUplink()
+    return
+  }
   if (!installPayoutAddress.value.trim()) {
     provisionError.value =
       'A Lightning payout address is required by the official installer (where TollGate sends your share).'
@@ -1763,27 +1835,178 @@ async function provisionTollgate() {
   }
 }
 
-async function doProvision(params: Record<string, unknown>) {
-  const result = await rpcClient.call<{
-    ok?: boolean
-    host_key_untrusted?: boolean
-    ssh_fingerprint?: string
-    skipped_mints?: string[]
-  }>({
-    method: 'openwrt.provision-tollgate',
-    params,
-    timeout: 900000,
-  })
-  if (result?.host_key_untrusted && result.ssh_fingerprint) {
-    trustFingerprint.value = result.ssh_fingerprint
-    pendingProvision.value = params
-    trustRequired.value = true
-    return
+function newProvisionId(): string {
+  if (typeof crypto !== 'undefined' && 'randomUUID' in crypto) {
+    return crypto.randomUUID()
   }
-  provisionSkippedMints.value = result?.skipped_mints ?? []
-  provisionSuccess.value = true
-  await load(connectedParams.value ?? undefined)
-  await loadInstallerStatus()
+  return `provision-${Date.now()}-${Math.random().toString(16).slice(2)}`
+}
+
+function stopProvisionPolling() {
+  if (provisionTimer !== null) {
+    clearInterval(provisionTimer)
+    provisionTimer = null
+  }
+}
+
+async function refreshProvisionProgress(id: string) {
+  try {
+    const result = await rpcClient.call<{
+      ok: boolean
+      progress?: ProvisionProgress | null
+    }>({
+      method: 'openwrt.provision-progress',
+      params: { provision_id: id },
+      timeout: 10000,
+    })
+    if (result?.progress) {
+      provisionProgress.value = result.progress
+    } else if (provisionProgress.value?.phase === 'starting') {
+      // The backend refused before it created a progress entry (for example
+      // the no-WAN gate). Hide the placeholder; the error explains why.
+      provisionProgress.value = null
+    }
+  } catch {
+    // The long provision request carries the authoritative error. A missed
+    // poll must not surface a second, confusing failure.
+  }
+}
+
+function startProvisionPolling(id: string) {
+  stopProvisionPolling()
+  void refreshProvisionProgress(id)
+  provisionTimer = setInterval(() => {
+    void refreshProvisionProgress(id)
+  }, 1000)
+}
+
+function syncActiveHost(resultHost?: string) {
+  if (!resultHost) return
+  host.value = resultHost
+  if (connectedParams.value) {
+    connectedParams.value = { ...connectedParams.value, host: resultHost }
+  }
+}
+
+async function runProvisionRequest(
+  method: 'openwrt.provision-tollgate' | 'openwrt.apply-config',
+  params: Record<string, unknown>,
+  timeout: number,
+) {
+  const provisionId = newProvisionId()
+  // Show the panel immediately; the first poll replaces this placeholder with
+  // the installer's real step list.
+  provisionProgress.value = {
+    provision_id: provisionId,
+    kind: method === 'openwrt.apply-config' ? 'apply' : 'install',
+    phase: 'starting',
+    percent: 0,
+    current: 'Starting…',
+    steps: [],
+    done: false,
+    failed: false,
+  }
+  startProvisionPolling(provisionId)
+  try {
+    const result = await rpcClient.call<{
+      ok?: boolean
+      host?: string
+      host_key_untrusted?: boolean
+      ssh_fingerprint?: string
+      skipped_mints?: string[]
+      needs_uplink?: boolean
+      message?: string
+      error?: string
+    }>({
+      method,
+      params: { ...params, provision_id: provisionId },
+      timeout,
+    })
+    if (result?.host_key_untrusted && result.ssh_fingerprint) {
+      trustFingerprint.value = result.ssh_fingerprint
+      pendingProvision.value = params
+      trustRequired.value = true
+      return
+    }
+    if (result?.needs_uplink) {
+      provisionError.value =
+        result.message || 'Configure the internet uplink before installing TollGate.'
+      scrollToUplink()
+      return
+    }
+    if (result?.ok === false) {
+      provisionError.value =
+        result.message || result.error || 'TollGate provisioning failed.'
+      return
+    }
+    provisionSkippedMints.value = result?.skipped_mints ?? []
+    provisionSuccess.value = true
+    syncActiveHost(result?.host)
+    await load(connectedParams.value ?? undefined)
+    await loadInstallerStatus()
+  } finally {
+    await refreshProvisionProgress(provisionId)
+    stopProvisionPolling()
+  }
+}
+
+async function doProvision(params: Record<string, unknown>) {
+  await runProvisionRequest('openwrt.provision-tollgate', params, 900000)
+}
+
+async function retryProvision() {
+  if (status.value?.tollgate.installed) {
+    await reapplyConfig()
+  } else {
+    await provisionTollgate()
+  }
+}
+
+function currentTollgateParams(): Record<string, unknown> | null {
+  const tg = status.value?.tollgate
+  if (!tg) return null
+  const mints = (tg.accepted_mints ?? []).map(mint => ({
+    url: mint.url,
+    price_per_step: mint.price_per_step,
+    price_unit: mint.price_unit || 'sat',
+    purchase_min_steps: mint.purchase_min_steps,
+    ...(mint.min_balance !== undefined ? { min_balance: mint.min_balance } : {}),
+    ...(mint.balance_tolerance_percent !== undefined
+      ? { balance_tolerance_percent: mint.balance_tolerance_percent }
+      : {}),
+    ...(mint.payout_interval_seconds !== undefined
+      ? { payout_interval_seconds: mint.payout_interval_seconds }
+      : {}),
+    ...(mint.min_payout_amount !== undefined
+      ? { min_payout_amount: mint.min_payout_amount }
+      : {}),
+  }))
+  return {
+    ...authParams(),
+    price_sats: tg.price_per_step ?? 10,
+    step_size_ms: tg.step_size_ms ?? 60_000,
+    metric: tg.metric === 'bytes' ? 'bytes' : 'milliseconds',
+    min_steps: tg.min_steps ?? 1,
+    ...(mints.length ? { accepted_mints: mints } : {}),
+    payout_address: tg.payout_address ?? '',
+    private_ssid: tg.private_ssid || 'noderunner',
+    enabled: tg.enabled ?? true,
+  }
+}
+
+async function reapplyConfig() {
+  const params = currentTollgateParams()
+  if (!params) return
+  updatingTollgate.value = true
+  updateTollgateError.value = ''
+  provisionError.value = ''
+  try {
+    await runProvisionRequest('openwrt.apply-config', params, 300000)
+  } catch (e) {
+    updateTollgateError.value = e instanceof Error ? e.message : String(e)
+  } finally {
+    updatingTollgate.value = false
+  }
 }
 
 async function trustAndInstall() {
@@ -1882,7 +2105,7 @@ async function saveTollgateConfig() {
       ...(editPrivateKey.value ? { private_key: editPrivateKey.value } : {}),
       enabled: editEnabled.value,
     }
-    await rpcClient.call({ method: 'openwrt.provision-tollgate', params, timeout: 300000 })
+    await runProvisionRequest('openwrt.apply-config', params, 300000)
     editingTollgate.value = false
     mintHealth.value = null
     showMintHealth.value = false
@@ -1946,25 +2169,12 @@ async function testMint(index: number) {
 /// on the backend. Used when the running daemon is stale (unreachable or a
 /// different version from the installed package).
 async function restartTollgate() {
+  const params = currentTollgateParams()
+  if (!params) return
   updatingTollgate.value = true
   updateTollgateError.value = ''
   try {
-    const tg = status.value?.tollgate
-    await rpcClient.call({
-      method: 'openwrt.provision-tollgate',
-      params: {
-        ...authParams(),
-        price_sats: tg?.price_per_step ?? 10,
-        step_size_ms: tg?.step_size_ms ?? 60_000,
-        metric: tg?.metric === 'bytes' ? 'bytes' : 'milliseconds',
-        min_steps: tg?.min_steps ?? 1,
-        mint_url: tg?.mint_url ?? '',
-        payout_address: tg?.payout_address ?? '',
-        private_ssid: tg?.private_ssid || 'noderunner',
-        enabled: tg?.enabled ?? true,
-      },
-      timeout: 300000,
-    })
+    await runProvisionRequest('openwrt.apply-config', params, 300000)
     mintHealth.value = null
     showMintHealth.value = false
     await load(connectedParams.value ?? undefined)
@@ -2742,6 +2952,67 @@ onMounted(() => {
           </span>
         </div>
 
+        <div
+          v-if="provisionProgress"
+          class="mb-4 rounded-lg border border-white/10 bg-white/[0.02] p-3"
+          data-testid="provision-progress"
+        >
+          <div class="flex items-start justify-between gap-3">
+            <div class="min-w-0">
+              <div class="text-xs text-white/50">
+                {{ provisionProgress.kind === 'apply' ? 'Applying Archy configuration' : 'Installing TollGate' }}
+                <span v-if="!provisionProgress.done && !provisionProgress.failed">
+                  · step
+                  {{ provisionProgress.steps.filter(step => step.status === 'done' || step.status === 'skipped').length }}
+                  of {{ provisionProgress.steps.length }}
+                </span>
+              </div>
+              <div class="text-sm text-white/80 truncate" data-testid="provision-current">
+                {{ provisionProgress.current || 'Starting…' }}
+              </div>
+            </div>
+            <div
+              class="text-sm font-mono shrink-0"
+              :class="provisionProgress.failed ? 'text-red-300' : provisionProgress.done ? 'text-green-300' : 'text-white/80'"
+              data-testid="provision-percent"
+            >
+              {{ provisionProgress.percent }}%
+            </div>
+          </div>
+          <div class="mt-2 h-1.5 w-full rounded bg-white/10 overflow-hidden">
+            <div
+              class="h-full rounded bg-white/60 transition-all"
+              :style="{ width: `${provisionProgress.percent}%` }"
+              data-testid="provision-bar"
+            ></div>
+          </div>
+          <ul class="mt-2 space-y-0.5">
+            <li
+              v-for="step in provisionProgress.steps"
+              :key="step.id"
+              class="flex items-start gap-2 text-[11px]"
+              :data-testid="`provision-step-${step.id}`"
+            >
+              <span class="w-3 shrink-0 text-center" :class="stepClass(step.status)">
+                {{ stepIcon(step.status) }}
+              </span>
+              <span :class="stepClass(step.status)">{{ step.label }}</span>
+              <span v-if="step.detail" class="text-white/30 truncate">· {{ step.detail }}</span>
+            </li>
+          </ul>
+          <p v-if="provisionProgress.error" class="mt-2 text-xs text-red-400">
+            {{ provisionProgress.error }}
+          </p>
+          <button
+            v-if="provisionProgress.failed"
+            class="glass-button glass-button-warning text-xs px-3 py-1.5 mt-2"
+            data-testid="provision-retry"
+            @click="retryProvision"
+          >
+            Retry
+          </button>
+        </div>
+
         <div v-if="installerNeeded">
           <div class="flex items-center gap-3 mb-4">
             <span class="w-2 h-2 rounded-full bg-white/20 inline-block"></span>
@@ -2753,8 +3024,15 @@ onMounted(() => {
             Installed <span class="font-mono">{{ status.tollgate.version || 'unknown' }}</span>,
             latest <span class="font-mono">{{ status.tollgate.pinned_version || 'unknown' }}</span>.
           </div>
-          <div v-if="!status.wan?.internet" class="mb-3 text-xs text-yellow-400/80 bg-yellow-400/10 rounded-lg px-3 py-2">
-            Router needs internet access to install TollGate. Configure WAN above first.
+          <div
+            v-if="installBlockedNoWan"
+            class="mb-3 text-xs text-yellow-400/80 bg-yellow-400/10 rounded-lg px-3 py-2"
+            data-testid="install-blocked-no-wan"
+          >
+            {{ installUplinkMessage }}
+            <button class="ml-1 underline text-yellow-200 hover:text-yellow-100" @click="scrollToUplink">
+              Configure uplink
+            </button>
           </div>
           <div class="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-3">
             <label class="block">
@@ -2836,9 +3114,10 @@ onMounted(() => {
             </span>
           </label>
           <button
-            :disabled="provisioning"
+            :disabled="provisioning || installBlockedNoWan"
             class="glass-button glass-button-success w-full text-sm font-medium"
-            :class="provisioning ? 'opacity-40 cursor-not-allowed' : ''"
+            :class="provisioning || installBlockedNoWan ? 'opacity-40 cursor-not-allowed' : ''"
+            data-testid="install-tollgate"
             @click="provisionTollgate"
           >
             {{
@@ -2882,6 +3161,14 @@ onMounted(() => {
                 @click="restartTollgate"
               >
                 Restart TollGate
+              </button>
+              <button
+                class="text-xs text-white/40 hover:text-white"
+                :disabled="updatingTollgate"
+                data-testid="reapply-config"
+                @click="reapplyConfig"
+              >
+                {{ updatingTollgate ? 'Applying…' : 'Reapply config' }}
               </button>
               <button class="text-xs text-white/40 hover:text-white" @click="startEditTollgate">Edit</button>
             </div>

@@ -11,10 +11,352 @@ use archipelago_openwrt::{
     wan, wifi_scan,
 };
 use serde::Deserialize;
+use std::collections::HashMap;
+use std::sync::Arc;
 use std::time::Duration;
+use tokio::sync::{mpsc, RwLock};
 
 /// Default port for the local Cashu mint (nutshell / cashu-mint app).
 const LOCAL_MINT_PORT: u16 = 3338;
+
+/// Archy-owned steps that run after the official installer job. They are
+/// appended to the installer's own steps so the UI can show one continuous
+/// progress list.
+const ARCHY_PROGRESS_STEPS: &[(&str, &str)] = &[
+    ("archy-reconnect", "Find router after install"),
+    ("archy-network", "Apply SSID and network names"),
+    ("archy-config", "Apply price, payout, and mints"),
+    ("archy-portal", "Gate the paid bridge"),
+    ("archy-firewall", "Allow paid bridge to the API"),
+    ("archy-restart", "Restart and verify the daemon"),
+];
+
+const INSTALLER_STEP_NAMES: &[&str] = &[
+    "verify", "stage", "flash", "firmware", "password", "upstream", "install", "brand", "portal",
+    "lnurl", "services", "health",
+];
+
+#[derive(Debug, Clone, serde::Serialize)]
+pub(super) struct ProvisionStep {
+    pub id: String,
+    pub label: String,
+    pub status: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub detail: Option<String>,
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+pub(super) struct ProvisionProgress {
+    pub provision_id: String,
+    pub kind: String,
+    pub phase: String,
+    pub percent: u8,
+    pub current: String,
+    pub steps: Vec<ProvisionStep>,
+    pub done: bool,
+    pub failed: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub host: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub result: Option<serde_json::Value>,
+    pub updated_at: u64,
+}
+
+pub(super) type ProvisionProgressMap = Arc<RwLock<HashMap<String, ProvisionProgress>>>;
+
+fn now_secs() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0)
+}
+
+fn installer_step_label(name: &str) -> String {
+    match name {
+        "verify" => "Verify router",
+        "stage" => "Prepare installer",
+        "flash" => "Flash firmware",
+        "firmware" => "Check firmware",
+        "password" => "Set admin access",
+        "upstream" => "Configure internet uplink",
+        "install" => "Install TollGate package",
+        "brand" => "Apply branding",
+        "portal" => "Configure captive portal",
+        "lnurl" => "Configure payout",
+        "services" => "Start services",
+        "health" => "Check health",
+        other => other,
+    }
+    .to_string()
+}
+
+fn recompute_progress(progress: &mut ProvisionProgress) {
+    let total = progress.steps.len().max(1);
+    let completed = progress
+        .steps
+        .iter()
+        .filter(|step| step.status == "done" || step.status == "skipped")
+        .count();
+    progress.percent = ((completed * 100) / total).min(100) as u8;
+    if progress.failed {
+        progress.percent = progress.percent.min(99);
+    }
+
+    if let Some(step) = progress.steps.iter().find(|step| step.status == "running") {
+        progress.current = match step.detail.as_deref().filter(|d| !d.is_empty()) {
+            Some(detail) => format!("{} · {detail}", step.label),
+            None => step.label.clone(),
+        };
+    } else if let Some(step) = progress.steps.iter().find(|step| step.status == "failed") {
+        progress.current = format!("Failed: {}", step.label);
+    } else if progress.done {
+        progress.current = "Complete".to_string();
+    } else if let Some(step) = progress.steps.iter().find(|step| step.status == "pending") {
+        progress.current = step.label.clone();
+    }
+}
+
+fn initial_progress(id: &str, kind: &str, host: Option<String>) -> ProvisionProgress {
+    let mut steps = Vec::new();
+    if kind == "install" {
+        for name in INSTALLER_STEP_NAMES {
+            steps.push(ProvisionStep {
+                id: (*name).to_string(),
+                label: installer_step_label(name),
+                status: "pending".to_string(),
+                detail: None,
+            });
+        }
+    }
+    for (step_id, label) in ARCHY_PROGRESS_STEPS {
+        steps.push(ProvisionStep {
+            id: (*step_id).to_string(),
+            label: (*label).to_string(),
+            status: "pending".to_string(),
+            detail: None,
+        });
+    }
+    if let Some(step) = steps.first_mut() {
+        step.status = "running".to_string();
+    }
+    let mut progress = ProvisionProgress {
+        provision_id: id.to_string(),
+        kind: kind.to_string(),
+        phase: if kind == "install" {
+            "installer".to_string()
+        } else {
+            "archy".to_string()
+        },
+        percent: 0,
+        current: String::new(),
+        steps,
+        done: false,
+        failed: false,
+        error: None,
+        host,
+        result: None,
+        updated_at: now_secs(),
+    };
+    recompute_progress(&mut progress);
+    progress
+}
+
+async fn progress_start(map: &ProvisionProgressMap, id: &str, kind: &str, host: Option<String>) {
+    let mut guard = map.write().await;
+    if guard.len() > 16 {
+        guard.retain(|_, progress| !progress.done && !progress.failed);
+    }
+    guard.insert(id.to_string(), initial_progress(id, kind, host));
+}
+
+async fn progress_installer_snapshot(
+    map: &ProvisionProgressMap,
+    id: &str,
+    snapshot: &serde_json::Value,
+) {
+    let mut guard = map.write().await;
+    let Some(progress) = guard.get_mut(id) else {
+        return;
+    };
+    let archy_steps: Vec<ProvisionStep> = progress
+        .steps
+        .iter()
+        .filter(|step| {
+            ARCHY_PROGRESS_STEPS
+                .iter()
+                .any(|(step_id, _)| *step_id == step.id)
+        })
+        .cloned()
+        .collect();
+    if let Some(steps) = snapshot.get("steps").and_then(|value| value.as_array()) {
+        if !steps.is_empty() {
+            let mut next_steps = Vec::new();
+            for (index, step) in steps.iter().enumerate() {
+                let name = step
+                    .get("name")
+                    .and_then(|value| value.as_str())
+                    .map(str::to_string)
+                    .unwrap_or_else(|| format!("step-{index}"));
+                let status = step
+                    .get("status")
+                    .and_then(|value| value.as_str())
+                    .unwrap_or("pending");
+                let detail = step
+                    .get("detail")
+                    .and_then(|value| value.as_str())
+                    .filter(|value| !value.is_empty())
+                    .or_else(|| step.get("desc").and_then(|value| value.as_str()))
+                    .map(str::to_string);
+                next_steps.push(ProvisionStep {
+                    label: installer_step_label(&name),
+                    id: name,
+                    status: status.to_string(),
+                    detail,
+                });
+            }
+            next_steps.extend(archy_steps);
+            progress.steps = next_steps;
+        }
+    }
+    let status = snapshot
+        .get("status")
+        .and_then(|value| value.as_str())
+        .unwrap_or("running");
+    if let Some(error) = snapshot
+        .get("error")
+        .and_then(|value| value.as_str())
+        .filter(|value| !value.is_empty())
+    {
+        progress.error = Some(error.to_string());
+    }
+    if status == "failed" {
+        progress.failed = true;
+        progress.phase = "failed".to_string();
+        if !progress.steps.iter().any(|step| step.status == "failed") {
+            if let Some(step) = progress
+                .steps
+                .iter_mut()
+                .find(|step| step.status == "running")
+            {
+                step.status = "failed".to_string();
+            } else if let Some(step) = progress
+                .steps
+                .iter_mut()
+                .find(|step| step.status == "pending")
+            {
+                step.status = "failed".to_string();
+            }
+        }
+    } else if status == "done" || status == "pending" {
+        progress.phase = "archy".to_string();
+    }
+    progress.updated_at = now_secs();
+    recompute_progress(progress);
+}
+
+async fn progress_set_archy_step(
+    map: &ProvisionProgressMap,
+    id: &str,
+    step_id: &str,
+    status: &str,
+    detail: Option<String>,
+    host: Option<String>,
+) {
+    let mut guard = map.write().await;
+    let Some(progress) = guard.get_mut(id) else {
+        return;
+    };
+    // The installer also has steps called `portal`/`config`; keep the
+    // Archy-owned ids in a separate namespace so they can never collide.
+    let step_id = if step_id.starts_with("archy-") {
+        step_id.to_string()
+    } else {
+        format!("archy-{step_id}")
+    };
+    if let Some(step) = progress.steps.iter_mut().find(|step| step.id == step_id) {
+        step.status = status.to_string();
+        step.detail = detail;
+    }
+    if let Some(host) = host {
+        progress.host = Some(host);
+    }
+    if !progress.done && !progress.failed {
+        progress.phase = "archy".to_string();
+    }
+    progress.updated_at = now_secs();
+    recompute_progress(progress);
+}
+
+async fn progress_finish(
+    map: &ProvisionProgressMap,
+    id: &str,
+    result: Option<serde_json::Value>,
+    error: Option<String>,
+) {
+    let mut guard = map.write().await;
+    let Some(progress) = guard.get_mut(id) else {
+        return;
+    };
+    progress.done = error.is_none();
+    progress.failed = error.is_some();
+    progress.phase = if progress.failed {
+        "failed".to_string()
+    } else {
+        "done".to_string()
+    };
+    progress.error = error;
+    progress.result = result;
+    if progress.failed {
+        if !progress.steps.iter().any(|step| step.status == "failed") {
+            if let Some(step) = progress
+                .steps
+                .iter_mut()
+                .find(|step| step.status == "running")
+            {
+                step.status = "failed".to_string();
+            } else if let Some(step) = progress
+                .steps
+                .iter_mut()
+                .find(|step| step.status == "pending")
+            {
+                step.status = "failed".to_string();
+            }
+        }
+    } else {
+        for step in progress.steps.iter_mut() {
+            if step.status == "pending" || step.status == "running" {
+                step.status = "done".to_string();
+            }
+        }
+    }
+    progress.updated_at = now_secs();
+    recompute_progress(progress);
+}
+
+fn spawn_archy_step_forwarder(
+    map: ProvisionProgressMap,
+    id: String,
+) -> (mpsc::UnboundedSender<String>, tokio::task::JoinHandle<()>) {
+    let (tx, mut rx) = mpsc::unbounded_channel::<String>();
+    let handle = tokio::spawn(async move {
+        let mut current: Option<String> = Some("reconnect".to_string());
+        while let Some(next) = rx.recv().await {
+            if let Some(previous) = current.as_ref() {
+                if previous != &next {
+                    progress_set_archy_step(&map, &id, previous, "done", None, None).await;
+                }
+            }
+            progress_set_archy_step(&map, &id, &next, "running", None, None).await;
+            current = Some(next);
+        }
+        // Leave the last step `running`. `progress_finish` turns it into
+        // `done` on success or `failed` when the post-config errors, so a
+        // failure is attributed to the step that was actually executing.
+    });
+    (tx, handle)
+}
 
 /// Run one full provision pass over a fresh SSH session.
 ///
@@ -43,6 +385,7 @@ async fn provision_after_install_once(
     ssh_user: String,
     ssh_password: String,
     config: TollGateConfig,
+    progress: Option<mpsc::UnboundedSender<String>>,
 ) -> Result<Vec<String>> {
     tokio::task::spawn_blocking(move || -> Result<Vec<String>> {
         let router = Router::connect_password(&host, 22, &ssh_user, &ssh_password)?;
@@ -68,6 +411,9 @@ async fn provision_after_install_once(
         // before it reaches the daemon config so a dead mint cannot strand
         // the whole merchant in `no-reachable-mints`. Keep the original list
         // if none are reachable: that is a network outage, not data loss.
+        if let Some(tx) = progress.as_ref() {
+            let _ = tx.send("config".to_string());
+        }
         let mut skipped = Vec::new();
         if let Some(mints) = config.accepted_mints.clone() {
             let mut reachable = Vec::new();
@@ -103,12 +449,84 @@ async fn provision_after_install_once(
                 config.accepted_mints = Some(reachable);
             }
         }
-        tokio::runtime::Handle::current()
-            .block_on(tollgate::provision_after_install(&router, &config))?;
+        tokio::runtime::Handle::current().block_on(
+            tollgate::provision_after_install_with_progress(&router, &config, move |step| {
+                if let Some(tx) = progress.as_ref() {
+                    let _ = tx.send(step.to_string());
+                }
+            }),
+        )?;
         Ok(skipped)
     })
     .await
     .context("openwrt post-install task")?
+}
+
+/// Check the router's WAN state before a full install. The installer's
+/// upstream/mint steps need internet; a half-install with the factory mint
+/// list is worse than refusing early.
+async fn router_internet_status(
+    host: String,
+    ssh_user: String,
+    ssh_password: String,
+) -> Option<bool> {
+    tokio::task::spawn_blocking(move || -> Option<bool> {
+        let router = Router::connect_password(&host, 22, &ssh_user, &ssh_password).ok()?;
+        let status = wan::get_wan_status(&router);
+        status.get("internet").and_then(|value| value.as_bool())
+    })
+    .await
+    .ok()
+    .flatten()
+}
+
+/// Find the router after the installer finishes.
+///
+/// The package's post-install restart can move the wired management address
+/// from `192.168.1.1` onto `br-private` at `192.168.2.1`. The installer's
+/// snapshot is a hint, not a guarantee. Try it first, then the two known
+/// private/LAN addresses, with backoff so a reboot can finish.
+async fn reconnect_router(
+    map: &ProvisionProgressMap,
+    provision_id: &str,
+    candidates: Vec<String>,
+    ssh_user: &str,
+    ssh_password: &str,
+) -> Result<String> {
+    let mut seen = std::collections::HashSet::new();
+    for candidate in candidates {
+        let candidate = candidate.trim().to_string();
+        if candidate.is_empty() || !seen.insert(candidate.clone()) {
+            continue;
+        }
+        for attempt in 1..=6u32 {
+            progress_set_archy_step(
+                map,
+                provision_id,
+                "reconnect",
+                "running",
+                Some(format!("Trying {candidate} ({attempt}/6)")),
+                Some(candidate.clone()),
+            )
+            .await;
+            let host = candidate.clone();
+            let user = ssh_user.to_string();
+            let password = ssh_password.to_string();
+            let reachable = tokio::task::spawn_blocking(move || -> bool {
+                match Router::connect_password(&host, 22, &user, &password) {
+                    Ok(router) => router.verify_openwrt().is_ok(),
+                    Err(_) => false,
+                }
+            })
+            .await
+            .unwrap_or(false);
+            if reachable {
+                return Ok(candidate);
+            }
+            tokio::time::sleep(Duration::from_secs(5)).await;
+        }
+    }
+    anyhow::bail!("router did not answer at any known post-install address")
 }
 
 /// Whether the router reports the pinned TollGate package installed.
@@ -2382,6 +2800,82 @@ impl RpcHandler {
             accepted_mints,
         };
 
+        let provision_id = p
+            .get("provision_id")
+            .and_then(|v| v.as_str())
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(str::to_string)
+            .unwrap_or_else(|| format!("provision-{}", now_secs()));
+
+        // Reapply Archy's config on an already-installed router. This is the
+        // repair path: it never starts a deploy, and it does not require the
+        // installer's upstream step to run again.
+        if p.get("apply_only")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false)
+        {
+            progress_start(
+                &self.provision_progress,
+                &provision_id,
+                "apply",
+                Some(host.clone()),
+            )
+            .await;
+            progress_set_archy_step(
+                &self.provision_progress,
+                &provision_id,
+                "reconnect",
+                "done",
+                Some("Using the current router address".to_string()),
+                Some(host.clone()),
+            )
+            .await;
+            let (tx, forwarder) =
+                spawn_archy_step_forwarder(self.provision_progress.clone(), provision_id.clone());
+            let applied = provision_after_install_once(
+                host.clone(),
+                ssh_user.clone(),
+                ssh_password.clone(),
+                config.clone(),
+                Some(tx),
+            )
+            .await;
+            let _ = forwarder.await;
+            match applied {
+                Ok(skipped_mints) => {
+                    let result = serde_json::json!({
+                        "ok": true,
+                        "engine": "official",
+                        "mode": "apply",
+                        "host": host,
+                        "ssid": config.ssid,
+                        "mint_url": config.mint_url,
+                        "skipped_mints": skipped_mints,
+                        "provision_id": provision_id,
+                    });
+                    progress_finish(
+                        &self.provision_progress,
+                        &provision_id,
+                        Some(result.clone()),
+                        None,
+                    )
+                    .await;
+                    return Ok(result);
+                }
+                Err(err) => {
+                    progress_finish(
+                        &self.provision_progress,
+                        &provision_id,
+                        None,
+                        Some(format!("{err:#}")),
+                    )
+                    .await;
+                    return Err(err);
+                }
+            }
+        }
+
         let engine = p
             .get("engine")
             .and_then(|v| v.as_str())
@@ -2497,6 +2991,35 @@ impl RpcHandler {
                 .context("trust the router's SSH host key")?;
         }
 
+        // A full install without internet leaves the factory mint list on the
+        // router and cannot reach `no-reachable-mints` safely. Refuse early
+        // instead of producing a half-install; the UI exposes the uplink card.
+        let allow_offline = p
+            .get("allow_offline")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
+        if !allow_offline {
+            if let Some(false) =
+                router_internet_status(host.clone(), ssh_user.clone(), ssh_password.clone()).await
+            {
+                return Ok(serde_json::json!({
+                    "ok": false,
+                    "engine": "official",
+                    "host": host,
+                    "needs_uplink": true,
+                    "message": "The router has no internet uplink. Configure the Internet uplink first, then retry the install.",
+                }));
+            }
+        }
+
+        progress_start(
+            &self.provision_progress,
+            &provision_id,
+            "install",
+            Some(host.clone()),
+        )
+        .await;
+
         let mut deploy = serde_json::json!({
             "ip": host,
             "password": ssh_password,
@@ -2538,24 +3061,78 @@ impl RpcHandler {
             deploy["margin"] = serde_json::json!(v);
         }
 
-        let job = installer
-            .deploy(deploy)
-            .await
-            .context("start the tollgate-installer deploy")?;
-        let snapshot = installer
-            .wait(&job, Duration::from_secs(900))
-            .await
-            .with_context(|| format!("tollgate-installer job {job}"))?;
+        let job = match installer.deploy(deploy).await {
+            Ok(job) => job,
+            Err(err) => {
+                progress_finish(
+                    &self.provision_progress,
+                    &provision_id,
+                    None,
+                    Some(format!("{err:#}")),
+                )
+                .await;
+                return Err(err.context("start the tollgate-installer deploy"));
+            }
+        };
+        let wait_started = std::time::Instant::now();
+        let snapshot = loop {
+            let snapshot = installer
+                .job(&job)
+                .await
+                .with_context(|| format!("tollgate-installer job {job}"))?;
+            progress_installer_snapshot(&self.provision_progress, &provision_id, &snapshot).await;
+            let status = snapshot
+                .get("status")
+                .and_then(|v| v.as_str())
+                .unwrap_or("running");
+            match status {
+                "done" | "pending" => break snapshot,
+                "failed" => {
+                    let err = snapshot
+                        .get("error")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("tollgate-installer deploy failed")
+                        .to_string();
+                    progress_finish(
+                        &self.provision_progress,
+                        &provision_id,
+                        None,
+                        Some(err.clone()),
+                    )
+                    .await;
+                    anyhow::bail!("tollgate-installer deploy failed: {err}");
+                }
+                _ => {}
+            }
+            if wait_started.elapsed() > Duration::from_secs(900) {
+                let message = format!("tollgate-installer deploy timed out after 900s (job {job})");
+                progress_finish(
+                    &self.provision_progress,
+                    &provision_id,
+                    None,
+                    Some(message.clone()),
+                )
+                .await;
+                anyhow::bail!("{message}");
+            }
+            tokio::time::sleep(Duration::from_secs(1)).await;
+        };
 
         // The package's post-install restart can move the wired management
         // address onto br-private. The installer records the address it ended
-        // on in the job snapshot.
-        let final_host = snapshot
+        // on, but that hint can be stale; try it and the known private/LAN
+        // addresses before giving up.
+        let mut candidates = Vec::new();
+        if let Some(ip) = snapshot
             .get("ip")
             .and_then(|v| v.as_str())
             .filter(|s| !s.is_empty())
-            .unwrap_or(&host)
-            .to_string();
+        {
+            candidates.push(ip.to_string());
+        }
+        candidates.push("192.168.2.1".to_string());
+        candidates.push("192.168.1.1".to_string());
+
         // The installer may have generated a root credential; it is served
         // once on the terminal status read. Use it for the post-config SSH.
         let post_password = snapshot
@@ -2571,16 +3148,74 @@ impl RpcHandler {
             })
             .unwrap_or_else(|| ssh_password.clone());
 
-        let skipped_mints = provision_after_install_once(
-            final_host.clone(),
-            ssh_user.clone(),
-            post_password,
-            config.clone(),
+        let final_host = match reconnect_router(
+            &self.provision_progress,
+            &provision_id,
+            candidates,
+            &ssh_user,
+            &post_password,
         )
         .await
-        .context("apply the Archy TollGate configuration after the installer")?;
+        {
+            Ok(host) => host,
+            Err(err) => {
+                progress_finish(
+                    &self.provision_progress,
+                    &provision_id,
+                    None,
+                    Some(format!("{err:#}")),
+                )
+                .await;
+                return Err(err);
+            }
+        };
 
-        Ok(serde_json::json!({
+        let (tx, forwarder) =
+            spawn_archy_step_forwarder(self.provision_progress.clone(), provision_id.clone());
+        let skipped_mints = match provision_after_install_once(
+            final_host.clone(),
+            ssh_user.clone(),
+            post_password.clone(),
+            config.clone(),
+            Some(tx),
+        )
+        .await
+        {
+            Ok(skipped_mints) => skipped_mints,
+            Err(err) => {
+                let _ = forwarder.await;
+                progress_finish(
+                    &self.provision_progress,
+                    &provision_id,
+                    None,
+                    Some(format!("{err:#}")),
+                )
+                .await;
+                return Err(
+                    err.context("apply the Archy TollGate configuration after the installer")
+                );
+            }
+        };
+        let _ = forwarder.await;
+
+        // Make the address Archy just used the saved one. Without this the UI
+        // keeps polling the pre-install address and reports a dead router.
+        if let Err(err) = net_router::configure_router(
+            &self.config.data_dir,
+            net_router::RouterType::OpenWrt,
+            &final_host,
+            None,
+            Some(&ssh_user),
+            Some(&post_password),
+        )
+        .await
+        {
+            tracing::warn!(
+                "[{final_host}] could not persist the post-install router address: {err:#}"
+            );
+        }
+
+        let result = serde_json::json!({
             "ok": true,
             "engine": "official",
             "host": final_host,
@@ -2588,9 +3223,53 @@ impl RpcHandler {
             "mint_url": config.mint_url,
             "skipped_mints": skipped_mints,
             "job_id": job,
+            "provision_id": provision_id,
             "installer_version": installer_cfg.get("installer_version"),
             "feed_release_tag": installer_cfg.get("feed_release_tag"),
             "feed_pkg_version": installer_cfg.get("feed_pkg_version"),
+        });
+        progress_finish(
+            &self.provision_progress,
+            &provision_id,
+            Some(result.clone()),
+            None,
+        )
+        .await;
+        Ok(result)
+    }
+
+    /// Reapply Archy's configuration on an already-installed router without
+    /// starting another installer deploy.
+    pub(super) async fn handle_openwrt_apply_config(
+        &self,
+        params: Option<serde_json::Value>,
+    ) -> Result<serde_json::Value> {
+        let mut params = params.unwrap_or_default();
+        if let Some(object) = params.as_object_mut() {
+            object.insert("apply_only".to_string(), serde_json::Value::Bool(true));
+        }
+        self.handle_openwrt_provision_tollgate(Some(params)).await
+    }
+
+    /// Snapshot of the current (or most recent) provision job, for the UI's
+    /// progress panel.
+    pub(super) async fn handle_openwrt_provision_progress(
+        &self,
+        params: Option<serde_json::Value>,
+    ) -> Result<serde_json::Value> {
+        let p = params.unwrap_or_default();
+        let requested = p
+            .get("provision_id")
+            .and_then(|v| v.as_str())
+            .filter(|s| !s.is_empty());
+        let guard = self.provision_progress.read().await;
+        let progress = match requested {
+            Some(id) => guard.get(id),
+            None => guard.values().max_by_key(|progress| progress.updated_at),
+        };
+        Ok(serde_json::json!({
+            "ok": progress.is_some(),
+            "progress": progress,
         }))
     }
 

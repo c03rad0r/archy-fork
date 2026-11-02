@@ -209,6 +209,9 @@ pub struct RpcHandler {
     /// Install/update success paths subscribe to this to know when a kicked scan
     /// has actually finished before flipping to the terminal state.
     pub(crate) scan_tick: Arc<tokio::sync::watch::Sender<u64>>,
+    /// Live progress for the current/most recent TollGate install or reapply.
+    /// The UI polls this while the long provision RPC is still running.
+    pub(super) provision_progress: openwrt::ProvisionProgressMap,
 }
 
 impl RpcHandler {
@@ -283,6 +286,7 @@ impl RpcHandler {
             self_pubkey_hex: Arc::new(tokio::sync::RwLock::new(None)),
             scan_kick: Arc::new(tokio::sync::Notify::new()),
             scan_tick: Arc::new(tokio::sync::watch::channel(0u64).0),
+            provision_progress: Default::default(),
         })
     }
 

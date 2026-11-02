@@ -83,6 +83,22 @@ pub async fn provision_native(router: &Router, config: &TollGateConfig) -> Resul
 /// network, daemon config, payout identity, NoDogSplash, firewall, restart.
 /// Idempotent, so it is also what the native path calls after its install.
 pub async fn provision_after_install(router: &Router, config: &TollGateConfig) -> Result<()> {
+    provision_after_install_with_progress(router, config, |_| {}).await
+}
+
+/// Same as [`provision_after_install`], but reports the coarse phase id before
+/// each group of writes. Archy uses this to show the operator which Archy-owned
+/// step is running after the official installer finishes:
+/// `network`, `config`, `portal`, `firewall`, `restart`.
+pub async fn provision_after_install_with_progress<F>(
+    router: &Router,
+    config: &TollGateConfig,
+    mut on_step: F,
+) -> Result<()>
+where
+    F: FnMut(&'static str),
+{
+    on_step("network");
     config::apply(router, config)?;
     wifi::provision_ssid(router, config)?;
     // Must come after provision_ssid (creates the `tollgate` network this
@@ -101,21 +117,25 @@ pub async fn provision_after_install(router: &Router, config: &TollGateConfig) -
     wifi::set_private_network(router, config).context("rename the private management SSID")?;
     // Must come after provision_ssid (which creates br-tollgate) and before
     // the daemon restart below — config.json is only read at startup.
+    on_step("config");
     config::apply_daemon_config(router, config)
         .context("write /etc/tollgate/config.json — tollgate-wrt reads this, not UCI")?;
     config::apply_payout_identity(router, config.payout_address.as_deref())
         .context("write /etc/tollgate/identities.json owner payout address")?;
     // Also must come after provision_ssid: points gatewayinterface at
     // br-tollgate, which provision_ssid is what creates.
+    on_step("portal");
     nodogsplash::configure(router, config)
         .context("configure nodogsplash — tollgate-wrt cannot gate clients without it")?;
 
     // The packaged nft fragments assume the captive bridge is called
     // br-lan; this deployment calls it br-tollgate, so the backend API
     // (the portal's own data source) was dropped from the paid network.
+    on_step("firewall");
     firewall::ensure_paid_bridge_can_reach_api(router)
         .context("allow the TollGate API from the paid bridge")?;
 
+    on_step("restart");
     restart_services(router, config.enabled)?;
     nodogsplash::restart(router)?;
     nodogsplash::verify(router)?;

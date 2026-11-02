@@ -292,6 +292,8 @@ impl RpcHandler {
             "openwrt.upstream-remove" => self.handle_openwrt_upstream_remove(params).await,
             "openwrt.get-status" => self.handle_openwrt_get_status(params).await,
             "openwrt.provision-tollgate" => self.handle_openwrt_provision_tollgate(params).await,
+            "openwrt.provision-progress" => self.handle_openwrt_provision_progress(params).await,
+            "openwrt.apply-config" => self.handle_openwrt_apply_config(params).await,
             "openwrt.installer.status" => self.handle_openwrt_installer_status().await,
             "openwrt.installer.identify" => self.handle_openwrt_installer_identify(params).await,
             "openwrt.installer.trust" => self.handle_openwrt_installer_trust(params).await,
