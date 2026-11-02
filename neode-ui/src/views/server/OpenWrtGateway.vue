@@ -3687,6 +3687,7 @@ onMounted(() => {
           class="flex items-start justify-between py-3 border-b border-white/10 last:border-0"
           data-testid="wifi-group"
           :data-ssid="group.ssid"
+          :data-disabled="group.disabled"
         >
           <div class="min-w-0">
             <div class="flex items-center gap-2 mb-0.5">
