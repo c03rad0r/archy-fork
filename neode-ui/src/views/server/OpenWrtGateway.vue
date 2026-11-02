@@ -323,6 +323,24 @@ interface ScannedNetwork {
   signal: number
   channel: number
   encryption: string
+  band?: string
+  is_tollgate?: boolean
+  price_per_step?: number
+  step_size?: number
+}
+
+interface RankedNetwork {
+  ssid: string
+  bssid?: string
+  signal: number
+  encryption: string
+  band?: string
+  channel?: number
+  isTollGate: boolean
+  pricePerStep?: number
+  stepSize?: number
+  radios: number
+  lastSeen?: string
 }
 
 // Router status is cached via the shared useCachedResource hook so revisits
@@ -514,7 +532,9 @@ const upstreamNetworks = ref<UpstreamNetwork[]>([])
 const upstreamLoading = ref(false)
 const upstreamError = ref('')
 const upstreamPassphrase = ref('')
-const showUnverifiedUpstreams = ref(false)
+const upstreamScanned = ref(false)
+const showAllUpstreams = ref(false)
+const showAllUplinkNetworks = ref(false)
 const mintHealth = ref<MintHealth | null>(null)
 const mintHealthLoading = ref(false)
 const mintHealthError = ref('')
@@ -778,17 +798,200 @@ const knownGroups = computed<KnownTollGateGroup[]>(() => {
   })
 })
 
-const visibleKnownGroups = computed(() =>
-  showUnverifiedUpstreams.value
-    ? knownGroups.value
-    : knownGroups.value.filter(g => g.confirmed),
+function looksLikeTollGate(ssid: string, flag?: boolean): boolean {
+  return (
+    flag === true ||
+    /^!?(TollGate|Archipelago|Net4sats)(-|$)/i.test((ssid || '').trim())
+  )
+}
+
+function buildRankedNetworks(
+  networks: Array<{
+    ssid: string
+    signal?: number
+    encryption?: string
+    bssid?: string
+    band?: string
+    channel?: number
+    is_tollgate?: boolean
+    price_per_step?: number
+    step_size?: number
+  }>,
+  ownSsids: Set<string>,
+): RankedNetwork[] {
+  const groups = new Map<string, RankedNetwork>()
+  for (const network of networks) {
+    const ssid = (network.ssid || '').trim()
+    if (!ssid || ownSsids.has(ssid)) continue
+    const signal = Number.isFinite(network.signal)
+      ? Number(network.signal)
+      : -999
+    const isTollGate = looksLikeTollGate(ssid, network.is_tollgate)
+    const existing = groups.get(ssid)
+    if (!existing) {
+      groups.set(ssid, {
+        ssid,
+        bssid: network.bssid,
+        signal,
+        encryption: network.encryption || 'unknown',
+        band: network.band,
+        channel: network.channel,
+        isTollGate,
+        pricePerStep: network.price_per_step,
+        stepSize: network.step_size,
+        radios: 1,
+      })
+      continue
+    }
+    existing.radios += 1
+    existing.isTollGate = existing.isTollGate || isTollGate
+    if (signal > existing.signal) {
+      existing.signal = signal
+      existing.bssid = network.bssid ?? existing.bssid
+      existing.encryption = network.encryption || existing.encryption
+      existing.band = network.band ?? existing.band
+      existing.channel = network.channel ?? existing.channel
+    }
+    if (existing.pricePerStep === undefined && (network.price_per_step ?? 0) > 0) {
+      existing.pricePerStep = network.price_per_step
+      existing.stepSize = network.step_size
+    }
+  }
+  return [...groups.values()]
+}
+
+function rankNetworks(networks: RankedNetwork[]): RankedNetwork[] {
+  return [...networks].sort((a, b) => {
+    if (a.isTollGate !== b.isTollGate) return a.isTollGate ? -1 : 1
+    return b.signal - a.signal
+  })
+}
+
+function splitRankedNetworks(networks: RankedNetwork[]) {
+  const tollgates = networks.filter(network => network.isTollGate)
+  const regular = networks.filter(network => !network.isTollGate)
+  return {
+    tollgates,
+    regular,
+    collapsed: [...tollgates, ...regular.slice(0, 3)],
+    hidden: Math.max(0, regular.length - 3),
+  }
+}
+
+const ownSsidSet = computed(
+  () =>
+    new Set(
+      (status.value?.wifi_interfaces ?? [])
+        .map(iface => (iface.ssid || '').trim())
+        .filter(Boolean),
+    ),
 )
 
-const tollgateScanResults = computed(() =>
-  upstreamNetworks.value.filter(
-    n => n.is_tollgate === true || (n.price_per_step ?? 0) > 0,
+const rankedLiveUpstreams = computed(() =>
+  rankNetworks(buildRankedNetworks(upstreamNetworks.value, ownSsidSet.value)),
+)
+
+const rankedKnownUpstreams = computed(() =>
+  rankNetworks(
+    knownGroups.value.map(group => ({
+      ssid: group.ssid,
+      bssid: group.best.bssid,
+      signal: group.bestSignal,
+      encryption: 'unknown',
+      isTollGate: true,
+      pricePerStep: group.best.price_per_step,
+      stepSize: group.best.step_size,
+      radios: group.entries.length,
+      lastSeen: group.lastSeen,
+    })),
   ),
 )
+
+const rankedUpstreams = computed(() =>
+  upstreamScanned.value ? rankedLiveUpstreams.value : rankedKnownUpstreams.value,
+)
+
+const upstreamSplit = computed(() => splitRankedNetworks(rankedUpstreams.value))
+
+const visibleUpstreams = computed(() =>
+  showAllUpstreams.value ? rankedUpstreams.value : upstreamSplit.value.collapsed,
+)
+
+const hiddenUpstreamCount = computed(() => upstreamSplit.value.hidden)
+
+const rankedUplinkNetworks = computed(() =>
+  rankNetworks(buildRankedNetworks(scannedNetworks.value, ownSsidSet.value)),
+)
+
+const uplinkSplit = computed(() => splitRankedNetworks(rankedUplinkNetworks.value))
+
+const visibleUplinkNetworks = computed(() =>
+  showAllUplinkNetworks.value
+    ? rankedUplinkNetworks.value
+    : uplinkSplit.value.collapsed,
+)
+
+const hiddenUplinkCount = computed(() => uplinkSplit.value.hidden)
+
+function advertisedPrice(row: RankedNetwork): string {
+  if (!row.pricePerStep) return 'no price advertised'
+  return `advertised ${row.pricePerStep} sat / step`
+}
+
+function isActiveUpstream(ssid: string): boolean {
+  const wanSsid = (status.value?.wan?.ssid || '').trim()
+  if (wanSsid && wanSsid === ssid.trim()) return true
+  return upstreamList.value.some(
+    upstream => upstream.status === 'ACTIVE' && upstream.ssid === ssid,
+  )
+}
+
+function useAsUplink(row: RankedNetwork) {
+  startWanSetup()
+  const encryption = row.encryption === 'unknown' ? 'psk2' : row.encryption
+  selectedNetwork.value = {
+    ssid: row.ssid,
+    bssid: row.bssid ?? '',
+    signal: row.signal,
+    channel: row.channel ?? 0,
+    encryption,
+  }
+  wanStep.value = encryption === 'none' ? 'dhcp' : 'password'
+  nextTick(() => {
+    document
+      .querySelector('[data-testid="internet-uplink"]')
+      ?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+  })
+}
+
+function selectRankedUplink(row: RankedNetwork) {
+  selectNetwork({
+    ssid: row.ssid,
+    bssid: row.bssid ?? '',
+    signal: row.signal,
+    channel: row.channel ?? 0,
+    encryption: row.encryption,
+  })
+}
+
+async function connectRankedUpstream(row: RankedNetwork) {
+  if (!row.isTollGate) {
+    useAsUplink(row)
+    return
+  }
+  await connectUpstream({
+    ssid: row.ssid,
+    signal: row.signal,
+    encryption: row.encryption,
+    ...(row.bssid ? { bssid: row.bssid } : {}),
+    ...(row.band ? { band: row.band } : {}),
+    is_tollgate: true,
+    ...(row.pricePerStep !== undefined
+      ? { price_per_step: row.pricePerStep }
+      : {}),
+    ...(row.stepSize !== undefined ? { step_size: row.stepSize } : {}),
+  })
+}
 
 const isDataMetering = computed(
   () => (status.value?.tollgate?.metric ?? '').toLowerCase() === 'bytes',
@@ -1046,6 +1249,7 @@ function disconnectRouter() {
   upstreamKnown.value = []
   upstreamList.value = []
   upstreamNetworks.value = []
+  upstreamScanned.value = false
   mintHealth.value = null
 }
 
@@ -1139,6 +1343,7 @@ async function selectDiscoveredRouter(r: DiscoveredRouter) {
   upstreamKnown.value = []
   upstreamList.value = []
   upstreamNetworks.value = []
+  upstreamScanned.value = false
   mintHealth.value = null
   showMintHealth.value = false
   await trySelectRouter(r, '')
@@ -1529,12 +1734,14 @@ async function loadUpstreams() {
 async function scanUpstreams() {
   upstreamLoading.value = true
   upstreamError.value = ''
+  showAllUpstreams.value = false
   try {
     const result = await rpcClient.call<{ networks: UpstreamNetwork[] }>({
       method: 'openwrt.upstream-scan',
       timeout: 120000,
     })
     upstreamNetworks.value = result.networks ?? []
+    upstreamScanned.value = true
   } catch (e) {
     upstreamError.value = e instanceof Error ? e.message : String(e)
   } finally {
@@ -1642,12 +1849,6 @@ function formatLastSeen(iso?: string): string {
   return `${Math.floor(hours / 24)}d ago`
 }
 
-function isStaleTimestamp(iso?: string): boolean {
-  if (!iso) return false
-  const parsed = Date.parse(iso)
-  return Number.isFinite(parsed) && Date.now() - parsed > 30 * 60_000
-}
-
 async function checkMints() {
   mintHealthLoading.value = true
   mintHealthError.value = ''
@@ -1738,33 +1939,6 @@ async function applyNetworkNames() {
   } finally {
     applyingNetworkNames.value = false
   }
-}
-
-function hideKnownGroup(group: KnownTollGateGroup) {
-  upstreamKnown.value = upstreamKnown.value.filter(e => e.ssid !== group.ssid)
-}
-
-async function connectKnownGroup(group: KnownTollGateGroup) {
-  const bssid = group.best.bssid ? ` (${group.best.bssid})` : ''
-  const kind = group.confirmed
-    ? 'a confirmed TollGate'
-    : 'an UNCONFIRMED AP — no signed price was found'
-  if (
-    !window.confirm(
-      `Connect the router's upstream to "${group.ssid}"${bssid}?\n\nThis is ${kind}. It changes the router's upstream and may interrupt active sessions.`,
-    )
-  ) {
-    return
-  }
-  await connectUpstream(
-    {
-      ssid: group.ssid,
-      signal: group.bestSignal,
-      encryption: 'unknown',
-      ...(group.best.bssid ? { bssid: group.best.bssid } : {}),
-    },
-    { skipConfirm: true },
-  )
 }
 
 async function provisionTollgate() {
@@ -2188,6 +2362,7 @@ async function restartTollgate() {
 function startWanSetup() {
   wanStep.value = 'scan'
   wanError.value = ''
+  showAllUplinkNetworks.value = false
   scannedNetworks.value = []
   selectedNetwork.value = null
   wanPassword.value = ''
@@ -2251,6 +2426,7 @@ async function connectUsingNodeCredentials() {
 async function scanWifi() {
   wanStep.value = 'scanning'
   wanError.value = ''
+  showAllUplinkNetworks.value = false
   try {
     const params: Record<string, unknown> = { ...authParams() }
     const result = await rpcClient.call<{ networks: ScannedNetwork[] }>({
@@ -2800,15 +2976,21 @@ onMounted(() => {
 
         <!-- Step: network list -->
         <template v-else-if="wanStep === 'list'">
-          <p class="text-xs text-white/40 mb-3">{{ scannedNetworks.length }} network{{ scannedNetworks.length !== 1 ? 's' : '' }} found. Select one:</p>
-          <div v-if="scannedNetworks.length === 0" class="text-sm text-white/50">No networks found. Try scanning again.</div>
+          <p class="text-xs text-white/40 mb-3">
+            {{ rankedUplinkNetworks.length }} network{{ rankedUplinkNetworks.length !== 1 ? 's' : '' }} found. Select one:
+          </p>
+          <div v-if="rankedUplinkNetworks.length === 0" class="text-sm text-white/50">
+            No networks found. Try scanning again.
+          </div>
           <div class="space-y-1.5">
             <button
-              v-for="net in scannedNetworks"
-              :key="net.bssid"
+              v-for="net in visibleUplinkNetworks"
+              :key="net.ssid"
               class="w-full flex items-center justify-between px-3 py-2.5 rounded-lg border border-white/10 hover:border-white/30 hover:bg-white/5 transition-colors text-left"
               data-testid="uplink-network"
-              @click="selectNetwork(net)"
+              :data-ssid="net.ssid"
+              :data-tollgate="net.isTollGate ? 'true' : 'false'"
+              @click="selectRankedUplink(net)"
             >
               <div class="flex items-center gap-2.5">
                 <!-- Signal bars -->
@@ -2821,12 +3003,24 @@ onMounted(() => {
                     ]"
                   ></div>
                 </div>
-                <span class="text-white text-sm">{{ net.ssid || '(hidden)' }}</span>
+                <span class="text-white text-sm">{{ net.ssid }}</span>
+                <span v-if="net.isTollGate"
+                  class="text-xs px-1.5 py-0.5 rounded bg-blue-500/20 text-blue-300">TollGate</span>
                 <span v-if="net.encryption !== 'none'" class="text-white/30 text-xs">🔒</span>
               </div>
-              <span class="text-xs text-white/30 font-mono flex-shrink-0">ch{{ net.channel }}</span>
+              <span class="text-xs text-white/30 font-mono flex-shrink-0">
+                {{ net.radios > 1 ? `${net.radios} radios` : `ch${net.channel ?? 0}` }}
+              </span>
             </button>
           </div>
+          <button
+            v-if="hiddenUplinkCount > 0"
+            class="mt-2 text-xs text-white/40 hover:text-white"
+            data-testid="uplink-show-more"
+            @click="showAllUplinkNetworks = !showAllUplinkNetworks"
+          >
+            {{ showAllUplinkNetworks ? 'Show less' : `Show ${hiddenUplinkCount} more` }}
+          </button>
           <button class="mt-3 text-xs text-white/40 hover:text-white" @click="wanStep = 'scan'">← Scan again</button>
         </template>
 
@@ -3354,7 +3548,12 @@ onMounted(() => {
             <div id="upstream-gateways" data-testid="upstream-gateways">
               <div class="flex items-center justify-between mb-2">
                 <h3 class="text-sm font-semibold text-white/80">Upstream gateways</h3>
-                <button class="text-xs text-white/40 hover:text-white" :disabled="upstreamLoading" @click="scanUpstreams">
+                <button
+                  class="text-xs text-white/40 hover:text-white"
+                  :disabled="upstreamLoading"
+                  data-testid="scan-upstreams"
+                  @click="scanUpstreams"
+                >
                   {{ upstreamLoading ? 'Scanning…' : 'Scan' }}
                 </button>
               </div>
@@ -3379,93 +3578,76 @@ onMounted(() => {
                 </button>
               </div>
 
-              <div data-testid="known-tollgates">
-                <div class="flex items-center justify-between mt-3 mb-1">
-                  <div class="text-xs text-white/40">Known TollGates</div>
-                  <label class="flex items-center gap-1 text-[11px] text-white/40">
-                    <input
-                      v-model="showUnverifiedUpstreams"
-                      type="checkbox"
-                      data-testid="show-unverified-upstreams"
-                    />
-                    Show unverified
-                  </label>
+              <div class="mt-3" data-testid="upstream-ranked-list">
+                <div class="flex items-center justify-between mb-1">
+                  <div class="text-xs text-white/40">
+                    {{ upstreamScanned ? 'Nearby upstreams' : 'Previously seen' }}
+                  </div>
+                  <span v-if="!upstreamScanned" class="text-[11px] text-white/30">
+                    Scan for live signal
+                  </span>
                 </div>
-                <p data-testid="unverified-explainer" class="text-[11px] text-white/40 mb-2">
-                  Verified means the router returned a signed TollGate price. Unverified means
-                  only the Wi-Fi name matched.
-                </p>
-                <div v-if="knownGroups.length === 0" class="text-xs text-white/40">
-                  No TollGates discovered nearby.
-                </div>
-                <div v-else-if="visibleKnownGroups.length === 0" class="text-xs text-white/40">
-                  No verified TollGates nearby. Enable “Show unverified” to inspect name-only matches.
+                <div v-if="visibleUpstreams.length === 0" class="text-xs text-white/40">
+                  {{ upstreamScanned ? 'No upstreams found. Scan again.' : 'No upstreams seen yet. Scan to look for nearby APs.' }}
                 </div>
                 <div
-                  v-for="g in visibleKnownGroups"
-                  :key="g.ssid"
+                  v-for="row in visibleUpstreams"
+                  :key="row.ssid"
                   class="py-2 border-b border-white/5 last:border-0"
-                  data-testid="known-tollgate-group"
+                  data-testid="upstream-row"
+                  :data-ssid="row.ssid"
+                  :data-tollgate="row.isTollGate ? 'true' : 'false'"
                 >
                   <div class="flex items-start justify-between gap-3 text-xs">
                     <div class="min-w-0">
                       <div class="font-mono text-white/80">
-                        {{ g.ssid }}
-                        <span v-if="g.confirmed" class="ml-1 text-green-300">verified</span>
-                        <span v-else class="ml-1 text-yellow-300">unverified</span>
-                        <span v-if="g.stale" class="ml-1 text-white/30">stale</span>
+                        {{ row.ssid }}
+                        <span v-if="row.isTollGate" class="ml-1 text-blue-300" data-testid="upstream-tollgate-badge">TollGate</span>
+                        <span v-if="isActiveUpstream(row.ssid)" class="ml-1 text-green-300">active</span>
                       </div>
                       <div class="text-white/40">
-                        {{ g.best.bssid || 'no BSSID' }} · {{ g.bestSignal }} dBm
-                        <span v-if="g.lastSeen"> · {{ formatLastSeen(g.lastSeen) }}</span>
-                        <span v-if="g.entries.length > 1"> · {{ g.entries.length }} radios</span>
-                        <span v-if="g.sampleCount"> · {{ g.sampleCount }} samples</span>
+                        {{ row.signal }} dBm · {{ row.encryption === 'none' ? 'Open' : row.encryption }}
+                        <span v-if="row.radios > 1"> · {{ row.radios }} radios</span>
+                        <span v-if="row.lastSeen"> · {{ formatLastSeen(row.lastSeen) }}</span>
                       </div>
-                      <div v-if="!g.confirmed" class="text-[11px] text-yellow-300/70">
-                        No signed price observed; SSID prefix only.
-                      </div>
-                      <div v-if="g.entries.length > 1" class="mt-1 space-y-0.5 text-[11px] text-white/30">
-                        <div v-for="e in g.entries" :key="e.bssid || e.ssid">
-                          {{ e.bssid || 'no BSSID' }} · {{ e.best_signal }} dBm · {{ formatLastSeen(e.last_seen) }}
-                          <span v-if="isStaleTimestamp(e.last_seen)" class="text-yellow-300/70">· stale</span>
-                        </div>
+                      <div v-if="row.isTollGate" class="text-[11px] text-white/40" data-testid="upstream-price">
+                        {{ advertisedPrice(row) }}
                       </div>
                     </div>
                     <div class="flex items-center gap-2 whitespace-nowrap">
-                      <button
-                        v-if="!g.confirmed || g.stale"
-                        class="text-white/30 hover:text-white/60"
-                        @click="hideKnownGroup(g)"
-                      >
-                        Hide
+                      <button v-if="isActiveUpstream(row.ssid)" class="text-green-300" disabled>
+                        Active
                       </button>
                       <button
+                        v-else-if="row.isTollGate"
                         class="text-green-300 hover:text-green-200"
-                        @click="connectKnownGroup(g)"
+                        data-testid="upstream-connect"
+                        @click="connectRankedUpstream(row)"
                       >
-                        {{ g.confirmed ? 'Connect' : 'Connect anyway' }}
+                        Connect
+                      </button>
+                      <button
+                        v-else
+                        class="text-green-300 hover:text-green-200"
+                        data-testid="upstream-use-as-uplink"
+                        @click="useAsUplink(row)"
+                      >
+                        Use as uplink
                       </button>
                     </div>
                   </div>
                 </div>
-              </div>
-
-              <div v-if="tollgateScanResults.length > 0" class="mt-3">
-                <div class="text-xs text-white/40 mb-1">Scanned TollGates</div>
-                <div
-                  v-for="n in tollgateScanResults"
-                  :key="n.bssid || n.ssid"
-                  class="flex items-center justify-between text-xs py-1"
+                <button
+                  v-if="hiddenUpstreamCount > 0"
+                  class="mt-2 text-xs text-white/40 hover:text-white"
+                  data-testid="upstream-show-more"
+                  @click="showAllUpstreams = !showAllUpstreams"
                 >
-                  <span class="font-mono">{{ n.ssid }}</span>
-                  <span class="text-white/40">
-                    {{ n.encryption }} · {{ n.signal }} dBm
-                    <span v-if="n.is_tollgate" class="text-green-300"> · TollGate</span>
-                  </span>
-                  <button class="text-green-300 hover:text-green-200" @click="connectUpstream(n)">
-                    Connect
-                  </button>
-                </div>
+                  {{ showAllUpstreams ? 'Show less' : `Show ${hiddenUpstreamCount} more` }}
+                </button>
+                <p class="mt-2 text-[11px] text-white/30" data-testid="upstream-caveat">
+                  Prices are self-reported by the seller; Archy cannot verify they will be honored.
+                </p>
               </div>
 
               <input
