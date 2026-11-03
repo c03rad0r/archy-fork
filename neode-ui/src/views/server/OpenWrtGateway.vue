@@ -1859,9 +1859,10 @@ async function useFlashedRouter() {
   showConnectForm.value = true
   host.value = ip
   error.value = ''
-  if (newPassword) sshPassword.value = newPassword
   // A clean-slate flash wipes the root password, so the pre-flash credential
-  // must not be reused for the reconnect.
+  // must not be reused for the reconnect. An explicit new password is
+  // prefilled; a blank one clears the stale value.
+  sshPassword.value = newPassword
   await rpcClient
     .call({
       method: 'openwrt.forget-router',
