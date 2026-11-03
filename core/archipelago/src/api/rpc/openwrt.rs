@@ -769,6 +769,36 @@ fn flash_ready(links: &[FlashLink]) -> bool {
         .any(|link| link.carrier && link.ipv4.iter().any(|addr| addr.starts_with("192.168.1.")))
 }
 
+/// The address alone is not enough: another interface on a `192.168.1.0/24`
+/// network can win the route. After the flash the only reachable router is the
+/// one on the prepared wired link, so `ip route get 192.168.1.1` must resolve to
+/// a physical wired carrier link that owns a `192.168.1.x` address.
+fn flash_route_ok(links: &[FlashLink], route: Option<&str>) -> bool {
+    let Some(route) = route else {
+        return false;
+    };
+    let preferred_physical = links
+        .iter()
+        .find(|link| link.preferred && link.physical && !link.wireless);
+    match preferred_physical {
+        Some(preferred) => {
+            preferred.name == route
+                && preferred.carrier
+                && preferred
+                    .ipv4
+                    .iter()
+                    .any(|addr| addr.starts_with("192.168.1."))
+        }
+        None => links.iter().any(|link| {
+            link.name == route
+                && link.physical
+                && !link.wireless
+                && link.carrier
+                && link.ipv4.iter().any(|addr| addr.starts_with("192.168.1."))
+        }),
+    }
+}
+
 #[derive(Debug, Clone, Default)]
 struct DaemonStatus {
     running: bool,
@@ -2568,6 +2598,8 @@ impl RpcHandler {
 
         let info = client.clean_slate_info(&host, &password, &version).await?;
         let links = flash_links_for(&host).await;
+        let post_flash_route = route_interface("192.168.1.1").await;
+        let ready = flash_ready(&links) && flash_route_ok(&links, post_flash_route.as_deref());
         Ok(serde_json::json!({
             "ok": true,
             "host": host,
@@ -2575,7 +2607,8 @@ impl RpcHandler {
             "board": info.get("board"),
             "image_url": info.get("image_url"),
             "sha256": info.get("sha256"),
-            "flash_ready": flash_ready(&links),
+            "flash_ready": ready,
+            "post_flash_route": post_flash_route,
             "links": links,
         }))
     }
@@ -2625,12 +2658,14 @@ impl RpcHandler {
             .map(str::to_string);
 
         let links = flash_links_for(&host).await;
-        if !flash_ready(&links) {
+        let post_flash_route = route_interface("192.168.1.1").await;
+        if !flash_ready(&links) || !flash_route_ok(&links, post_flash_route.as_deref()) {
             return Ok(serde_json::json!({
                 "ok": false,
                 "needs_wired_link": true,
                 "links": links,
-                "message": "A wired interface with carrier and a 192.168.1.x address is required before flashing.",
+                "post_flash_route": post_flash_route,
+                "message": "A wired interface with carrier, a 192.168.1.x address, and the route to 192.168.1.1 is required before flashing.",
             }));
         }
 
@@ -2727,13 +2762,13 @@ impl RpcHandler {
         if link.wireless || !link.physical || !link.carrier {
             anyhow::bail!("interface {requested} is not a physical wired link with carrier");
         }
-        let command = format!("sudo -n ip addr add 192.168.1.2/24 dev {}", link.name);
+        let command = format!("sudo -n ip addr replace 192.168.1.2/24 dev {}", link.name);
         let output = tokio::process::Command::new("sudo")
             .args([
                 "-n",
                 "ip",
                 "addr",
-                "add",
+                "replace",
                 "192.168.1.2/24",
                 "dev",
                 &link.name,
@@ -2749,19 +2784,118 @@ impl RpcHandler {
             Err(err) => Err(format!("{err} (command: {command})")),
         };
         match result {
-            Ok(()) => Ok(serde_json::json!({
-                "ok": true,
-                "interface": link.name,
-                "address": "192.168.1.2/24",
-            })),
+            Ok(()) => {
+                let refreshed_links = flash_links().await;
+                let post_flash_route = route_interface("192.168.1.1").await;
+                let route_ok = flash_route_ok(&refreshed_links, post_flash_route.as_deref());
+                tracing::info!(
+                    "[prepare-flash-link] {} -> 192.168.1.2/24 route={:?} ok={}",
+                    link.name,
+                    post_flash_route,
+                    route_ok
+                );
+                if route_ok {
+                    Ok(serde_json::json!({
+                        "ok": true,
+                        "interface": link.name,
+                        "address": "192.168.1.2/24",
+                        "post_flash_route": post_flash_route,
+                        "route_ok": true,
+                    }))
+                } else {
+                    Ok(serde_json::json!({
+                        "ok": false,
+                        "interface": link.name,
+                        "address": "192.168.1.2/24",
+                        "post_flash_route": post_flash_route,
+                        "route_ok": false,
+                        "error": format!(
+                            "Added 192.168.1.2/24 to {}, but ip route get 192.168.1.1 does not use that link. Check for another interface on 192.168.1.0/24.",
+                            link.name
+                        ),
+                        "command": command,
+                    }))
+                }
+            }
             Err(error) => Ok(serde_json::json!({
                 "ok": false,
                 "interface": link.name,
                 "address": "192.168.1.2/24",
+                "route_ok": false,
                 "error": error,
                 "command": command,
             })),
         }
+    }
+
+    /// Remove the prepared 192.168.1.2/24 address. Only the address the
+    /// automation added is removed; a DHCP lease on the same link is untouched.
+    pub(super) async fn handle_openwrt_remove_flash_link(
+        &self,
+        params: Option<serde_json::Value>,
+    ) -> Result<serde_json::Value> {
+        let p = params.unwrap_or_default();
+        let requested = p
+            .get("interface")
+            .and_then(|v| v.as_str())
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .ok_or_else(|| anyhow::anyhow!("interface is required"))?;
+        let links = flash_links().await;
+        let Some(link) = links.iter().find(|link| link.name == requested) else {
+            anyhow::bail!("interface {requested} is not present on this node");
+        };
+        if link.wireless || !link.physical || !link.carrier {
+            anyhow::bail!("interface {requested} is not a physical wired link with carrier");
+        }
+        let present = link.ipv4.iter().any(|addr| addr == "192.168.1.2/24");
+        if present {
+            let command = format!("sudo -n ip addr del 192.168.1.2/24 dev {}", link.name);
+            let output = tokio::process::Command::new("sudo")
+                .args([
+                    "-n",
+                    "ip",
+                    "addr",
+                    "del",
+                    "192.168.1.2/24",
+                    "dev",
+                    &link.name,
+                ])
+                .output()
+                .await;
+            let failed = match output {
+                Ok(out) if out.status.success() => None,
+                Ok(out) => Some(format!(
+                    "{} (command: {command})",
+                    String::from_utf8_lossy(&out.stderr).trim()
+                )),
+                Err(err) => Some(format!("{err} (command: {command})")),
+            };
+            if let Some(error) = failed {
+                return Ok(serde_json::json!({
+                    "ok": false,
+                    "interface": link.name,
+                    "address": "192.168.1.2/24",
+                    "removed": false,
+                    "error": error,
+                    "command": command,
+                }));
+            }
+        }
+        let post_flash_route = route_interface("192.168.1.1").await;
+        tracing::info!(
+            "[remove-flash-link] {} removed={} route={:?}",
+            link.name,
+            present,
+            post_flash_route
+        );
+        Ok(serde_json::json!({
+            "ok": true,
+            "interface": link.name,
+            "address": "192.168.1.2/24",
+            "removed": present,
+            "post_flash_route": post_flash_route,
+        }))
     }
 
     /// LAN discovery through the installer.
@@ -3778,6 +3912,33 @@ mod tests {
             false,
         )];
         assert!(flash_ready(&links));
+    }
+
+    #[test]
+    fn post_flash_route_must_use_the_prepared_wired_link() {
+        let links = vec![
+            flash_link("wg0", false, false, true, &["192.168.1.2/24"], false),
+            flash_link("enx0", true, false, true, &["192.168.1.2/24"], true),
+            flash_link("enx1", true, false, true, &["192.168.50.5/24"], false),
+        ];
+        assert!(flash_route_ok(&links, Some("enx0")));
+        assert!(!flash_route_ok(&links, Some("wg0")));
+        assert!(!flash_route_ok(&links, Some("enx1")));
+        assert!(!flash_route_ok(&links, None));
+    }
+
+    #[test]
+    fn post_flash_route_without_a_preferred_link_uses_the_route_link() {
+        let links = vec![flash_link(
+            "enx0",
+            true,
+            false,
+            true,
+            &["192.168.1.2/24"],
+            false,
+        )];
+        assert!(flash_route_ok(&links, Some("enx0")));
+        assert!(!flash_route_ok(&links, Some("enx1")));
     }
 
     #[test]

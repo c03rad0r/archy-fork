@@ -220,6 +220,7 @@ interface CleanSlateInfo {
   image_url?: string
   sha256?: string
   flash_ready?: boolean
+  post_flash_route?: string
   links?: FlashLink[]
   error?: string
 }
@@ -536,6 +537,10 @@ const flashNewPassword = ref('')
 const flashInfo = ref<CleanSlateInfo | null>(null)
 const flashInfoLoading = ref(false)
 const flashInfoError = ref('')
+const flashPreparing = ref(false)
+const flashRemoving = ref(false)
+const flashAutoPrepareAttempted = ref(false)
+const flashPreparedLink = ref('')
 const flashConfirmation = ref('')
 const flashAcknowledge = ref(false)
 const flashRunning = ref(false)
@@ -1669,14 +1674,38 @@ function canPrepareFlashLink(link: FlashLink): boolean {
   return preferred ? link.name === preferred.name : true
 }
 
+function hasPreparedFlashAddress(link: FlashLink): boolean {
+  return link.ipv4.includes('192.168.1.2/24')
+}
+
+function canRemoveFlashLink(link: FlashLink): boolean {
+  return (
+    !!link.physical &&
+    !link.wireless &&
+    link.carrier &&
+    hasPreparedFlashAddress(link)
+  )
+}
+
 const flashBlockReason = computed(() => {
   const info = flashInfo.value
   if (!info) return 'Inspect the image first.'
   if (!info.ok) return info.error || 'Could not inspect the router image.'
   if (!info.board) return 'Detect the router board first.'
   if (!info.flash_ready) {
-    return preferredFlashLink.value
-      ? `Add 192.168.1.2/24 to ${preferredFlashLink.value.name} (the router link) to enable flashing.`
+    if (flashPreparing.value) {
+      return 'Preparing the post-flash wired link…'
+    }
+    const preferred = preferredFlashLink.value
+    if (
+      preferred &&
+      info.post_flash_route &&
+      info.post_flash_route !== preferred.name
+    ) {
+      return `The route to 192.168.1.1 goes via ${info.post_flash_route}, not ${preferred.name}. Remove the conflicting 192.168.1.x address first.`
+    }
+    return preferred
+      ? `Add 192.168.1.2/24 to ${preferred.name} (the router link) to enable flashing.`
       : 'Add a 192.168.1.x address to the physical wired router link to enable flashing.'
   }
   if (flashConfirmation.value.trim() !== info.board) {
@@ -1702,6 +1731,10 @@ async function openFlashModal() {
   flashNewPassword.value = ''
   flashInfo.value = null
   flashInfoError.value = ''
+  flashPreparing.value = false
+  flashRemoving.value = false
+  flashAutoPrepareAttempted.value = false
+  flashPreparedLink.value = ''
   flashConfirmation.value = ''
   flashAcknowledge.value = false
   flashJob.value = null
@@ -1710,9 +1743,23 @@ async function openFlashModal() {
   await inspectFlashImage()
 }
 
-async function inspectFlashImage() {
+async function fetchFlashInfo(): Promise<CleanSlateInfo> {
   const ip = flashHost.value
-  if (!ip) {
+  if (!ip) throw new Error('No router is selected.')
+  const params: Record<string, unknown> = {
+    host: ip,
+    version: flashVersion.value,
+  }
+  if (flashPassword.value.trim()) params.ssh_password = flashPassword.value.trim()
+  return rpcClient.call<CleanSlateInfo>({
+    method: 'openwrt.installer.clean-slate-info',
+    params,
+    timeout: 90000,
+  })
+}
+
+async function inspectFlashImage(autoPrepare = true) {
+  if (!flashHost.value) {
     flashInfoError.value = 'No router is selected.'
     return
   }
@@ -1720,16 +1767,25 @@ async function inspectFlashImage() {
   flashInfoError.value = ''
   flashInfo.value = null
   try {
-    const params: Record<string, unknown> = {
-      host: ip,
-      version: flashVersion.value,
+    let info = await fetchFlashInfo()
+    flashInfo.value = info
+    if (!info.ok && !info.needs_trust) {
+      flashInfoError.value = info.error || 'Could not inspect the router.'
+      return
     }
-    if (flashPassword.value.trim()) params.ssh_password = flashPassword.value.trim()
-    const info = await rpcClient.call<CleanSlateInfo>({
-      method: 'openwrt.installer.clean-slate-info',
-      params,
-      timeout: 90000,
-    })
+    if (
+      !autoPrepare ||
+      !info.ok ||
+      info.flash_ready ||
+      flashAutoPrepareAttempted.value
+    ) {
+      return
+    }
+    const link = preferredFlashLink.value
+    if (!link || !canPrepareFlashLink(link)) return
+    flashAutoPrepareAttempted.value = true
+    if (!(await prepareFlashLink(link, false))) return
+    info = await fetchFlashInfo()
     flashInfo.value = info
     if (!info.ok && !info.needs_trust) {
       flashInfoError.value = info.error || 'Could not inspect the router.'
@@ -1810,20 +1866,19 @@ async function trustRecoveredRouter() {
   }
 }
 
-async function prepareFlashLink(link: FlashLink) {
-  if (
-    !window.confirm(
-      `Add 192.168.1.2/24 to ${link.name} so the flashed router at 192.168.1.1 is reachable?`,
-    )
-  ) {
-    return
-  }
+async function prepareFlashLink(
+  link: FlashLink,
+  reinspect = true,
+): Promise<boolean> {
+  flashPreparing.value = true
   flashInfoError.value = ''
   try {
     const result = await rpcClient.call<{
       ok: boolean
       error?: string
       command?: string
+      route_ok?: boolean
+      post_flash_route?: string
     }>({
       method: 'openwrt.installer.prepare-flash-link',
       params: { interface: link.name },
@@ -1834,11 +1889,43 @@ async function prepareFlashLink(link: FlashLink) {
       if (result.command) {
         flashInfoError.value += ` Run: ${result.command}`
       }
-      return
+      return false
     }
-    await inspectFlashImage()
+    flashPreparedLink.value = link.name
+    if (reinspect) await inspectFlashImage(false)
+    return true
   } catch (e) {
     flashInfoError.value = e instanceof Error ? e.message : String(e)
+    return false
+  } finally {
+    flashPreparing.value = false
+  }
+}
+
+async function removeFlashLink(link: FlashLink) {
+  flashRemoving.value = true
+  flashInfoError.value = ''
+  try {
+    const result = await rpcClient.call<{
+      ok: boolean
+      error?: string
+      removed?: boolean
+    }>({
+      method: 'openwrt.installer.remove-flash-link',
+      params: { interface: link.name },
+      timeout: 30000,
+    })
+    if (!result.ok) {
+      flashInfoError.value = result.error || 'Could not remove the address.'
+      return
+    }
+    flashPreparedLink.value = ''
+    flashAutoPrepareAttempted.value = false
+    await inspectFlashImage(false)
+  } catch (e) {
+    flashInfoError.value = e instanceof Error ? e.message : String(e)
+  } finally {
+    flashRemoving.value = false
   }
 }
 
@@ -4335,15 +4422,37 @@ onMounted(() => {
                   <span v-if="link.preferred" class="ml-1 text-blue-300">router link</span>
                   <span v-if="!link.physical" class="ml-1 text-white/30">virtual</span>
                 </span>
-                <button
-                  v-if="canPrepareFlashLink(link)"
-                  class="text-xs text-yellow-300 hover:text-yellow-200 underline"
-                  data-testid="flash-prepare-link"
-                  :data-interface="link.name"
-                  @click="prepareFlashLink(link)"
-                >
-                  {{ link.preferred ? 'Add 192.168.1.2/24 (router link)' : 'Add 192.168.1.2/24' }}
-                </button>
+                <span class="flex items-center gap-2">
+                  <button
+                    v-if="canPrepareFlashLink(link)"
+                    class="text-xs text-yellow-300 hover:text-yellow-200 underline"
+                    data-testid="flash-prepare-link"
+                    :data-interface="link.name"
+                    :disabled="flashPreparing"
+                    @click="prepareFlashLink(link)"
+                  >
+                    {{ flashPreparing ? 'Adding…' : link.preferred ? 'Add 192.168.1.2/24 (router link)' : 'Add 192.168.1.2/24' }}
+                  </button>
+                  <button
+                    v-if="canRemoveFlashLink(link)"
+                    class="text-xs text-white/40 hover:text-white underline"
+                    data-testid="flash-remove-link"
+                    :data-interface="link.name"
+                    :disabled="flashRemoving"
+                    @click="removeFlashLink(link)"
+                  >
+                    {{ flashRemoving ? 'Removing…' : 'Remove 192.168.1.2/24' }}
+                  </button>
+                </span>
+              </div>
+              <div v-if="flashPreparing" class="text-xs text-yellow-300 mt-1" data-testid="flash-preparing">
+                Preparing 192.168.1.2/24 for post-flash 192.168.1.1…
+              </div>
+              <div v-else-if="flashPreparedLink" class="text-xs text-green-300 mt-1" data-testid="flash-prepared">
+                Prepared 192.168.1.2/24 on <span class="font-mono">{{ flashPreparedLink }}</span> for post-flash 192.168.1.1.
+              </div>
+              <div v-if="flashInfo.post_flash_route" class="text-xs text-white/40 mt-1" data-testid="flash-route">
+                Post-flash route to 192.168.1.1: <span class="font-mono">{{ flashInfo.post_flash_route }}</span>
               </div>
               <div v-if="flashInfo.flash_ready" class="text-xs text-green-300 mt-1">
                 A wired 192.168.1.x link is ready for the post-flash address.
