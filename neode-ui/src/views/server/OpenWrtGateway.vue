@@ -508,7 +508,17 @@ const walletInfo = ref<WalletInfo | null>(null)
 const walletLoading = ref(false)
 const walletError = ref('')
 const daemonStarting = ref(false)
+const lastUpdatedAt = ref(0)
+const nowTick = ref(Date.now())
+const readinessExhausted = ref(false)
 let readinessRun: Promise<void> | null = null
+let readinessActive = false
+let clockTimer: ReturnType<typeof setInterval> | null = null
+let gatewayDisposed = false
+
+// A freshly restarted daemon can take well over a minute to fetch keysets and
+// advertise every configured mint (observed ~2 minutes on a 5-mint router).
+const READINESS_WINDOW_MS = 180_000
 const drainPreview = ref<DrainPreview | null>(null)
 const drainPreviewLoading = ref(false)
 const drainPreviewError = ref('')
@@ -693,9 +703,21 @@ const daemonWarmingUp = computed(() => {
   if (daemonStarting.value) return true
   return (
     t.daemon_running === true &&
-    (t.advertised_mints?.length ?? 0) === 0 &&
-    durationToSeconds(t.daemon_uptime) < 60
+    (t.advertised_mints?.length ?? 0) < (t.configured_mints ?? 0) &&
+    durationToSeconds(t.daemon_uptime) < READINESS_WINDOW_MS / 1000
   )
+})
+
+const lastUpdatedLabel = computed(() => {
+  if (!lastUpdatedAt.value) return ''
+  const seconds = Math.max(
+    0,
+    Math.floor((nowTick.value - lastUpdatedAt.value) / 1000),
+  )
+  if (seconds < 5) return 'just now'
+  if (seconds < 60) return `${seconds}s ago`
+  const minutes = Math.floor(seconds / 60)
+  return `${minutes}m ago`
 })
 
 const walletDegraded = computed(() => {
@@ -1082,7 +1104,7 @@ const masqEnabled = ref(true)
 // no way to tell. Writing the resolved result directly into
 // routerResource.entry keeps the cache/TTL/status-panel rendering
 // consistent with what a normal refresh() success does.
-async function load(params?: Record<string, string>) {
+async function load(params?: Record<string, string>, resumeReadiness = true) {
   if (!params && !selectionConfirmed.value) return
   error.value = ''
   if (params) {
@@ -1100,6 +1122,9 @@ async function load(params?: Record<string, string>) {
       showConnectForm.value = false
       connectedParams.value = params
       syncInstallDefaults(result)
+      lastUpdatedAt.value = Date.now()
+      nowTick.value = Date.now()
+      if (resumeReadiness) maybeResumeReadiness()
       if (
         result.tollgate.installed &&
         result.tollgate.up_to_date !== false &&
@@ -1129,6 +1154,9 @@ async function load(params?: Record<string, string>) {
     showConnectForm.value = false
     const current = routerResource.data.value
     if (current) syncInstallDefaults(current)
+    lastUpdatedAt.value = Date.now()
+    nowTick.value = Date.now()
+    if (resumeReadiness) maybeResumeReadiness()
     if (
       current?.tollgate.installed &&
       current.tollgate.up_to_date !== false &&
@@ -1453,11 +1481,13 @@ async function loadWallet() {
 
 async function checkDaemonReady(): Promise<boolean> {
   try {
-    await load()
+    await load(undefined, false)
     await loadWallet()
   } catch {
     return false
   }
+  lastUpdatedAt.value = Date.now()
+  nowTick.value = Date.now()
   const t = status.value?.tollgate
   const advertised = t?.advertised_mints?.length ?? 0
   const configured = t?.configured_mints ?? 0
@@ -1471,26 +1501,66 @@ async function checkDaemonReady(): Promise<boolean> {
   )
 }
 
+/// Resume the readiness poll after a reload or a router reconnect when the
+/// daemon is still advertising its mints. Without this the page keeps a
+/// snapshot from a 1-minute-old daemon forever and reports "wallet degraded".
+function maybeResumeReadiness(): void {
+  if (readinessActive || readinessExhausted.value) return
+  const t = status.value?.tollgate
+  if (!t?.installed || t.daemon_running !== true) return
+  const configured = t.configured_mints ?? 0
+  const advertised = t.advertised_mints?.length ?? 0
+  if (configured === 0 || advertised >= configured) return
+  void waitForDaemonReady()
+}
+
 /// A just-restarted daemon needs a few seconds to probe and advertise its
 /// mints. Without this poll the first status snapshot after install looks
 /// like a permanent "wallet degraded" state until the operator reloads.
-async function waitForDaemonReady() {
-  if (readinessRun) return readinessRun
+///
+/// `force` restarts a poll after the 3-minute window was exhausted (manual
+/// Refresh). Automatic callers never force, so a daemon that genuinely cannot
+/// advertise its mints falls back to the real mint-health warning instead of
+/// refreshing forever.
+async function waitForDaemonReady(force = false) {
+  if (readinessActive) return readinessRun ?? Promise.resolve()
+  if (readinessExhausted.value && !force) return
+  if (force) readinessExhausted.value = false
+
+  const startedAt = Date.now()
   daemonStarting.value = true
+  readinessActive = true
   readinessRun = (async () => {
+    let attempt = 0
     try {
-      for (let attempt = 0; attempt < 14; attempt++) {
-        if (await checkDaemonReady()) break
+      while (!gatewayDisposed && Date.now() - startedAt < READINESS_WINDOW_MS) {
+        if (await checkDaemonReady()) return
+        attempt += 1
+        const remaining = READINESS_WINDOW_MS - (Date.now() - startedAt)
+        if (remaining <= 0) break
         await new Promise(resolve =>
-          setTimeout(resolve, attempt < 5 ? 2000 : 5000),
+          setTimeout(resolve, Math.min(attempt < 15 ? 2000 : 5000, remaining)),
         )
       }
+      readinessExhausted.value = true
     } finally {
       daemonStarting.value = false
+      readinessActive = false
       readinessRun = null
     }
   })()
   return readinessRun
+}
+
+/// Manual refresh: fetch once, then let the readiness poll continue if the
+/// daemon still has mints to advertise.
+async function refreshGateway() {
+  readinessExhausted.value = false
+  await load(undefined, false)
+  if (adminReady.value) await loadWallet()
+  lastUpdatedAt.value = Date.now()
+  nowTick.value = Date.now()
+  maybeResumeReadiness()
 }
 
 async function previewDrain() {
@@ -1878,6 +1948,13 @@ async function useFlashedRouter() {
 
 onUnmounted(clearFlashTimer)
 onUnmounted(stopProvisionPolling)
+onUnmounted(() => {
+  gatewayDisposed = true
+  if (clockTimer !== null) {
+    clearInterval(clockTimer)
+    clockTimer = null
+  }
+})
 
 async function loadUpstreams() {
   upstreamLoading.value = true
@@ -2760,6 +2837,9 @@ const boardName = computed(() => {
 // status, wallet, upstream and schema RPCs must wait for an explicit
 // `openwrt.select-router` success.
 onMounted(() => {
+  clockTimer = setInterval(() => {
+    nowTick.value = Date.now()
+  }, 5000)
   void loadInstallerStatus()
   void discoverRouters()
   void resumeProvisionProgress()
@@ -2991,7 +3071,7 @@ onMounted(() => {
     <div v-else-if="error" class="glass-card p-6 mb-4">
       <p class="text-sm text-red-300">{{ error }}</p>
       <div class="mt-3 flex items-center gap-4">
-        <button class="text-xs text-white/50 hover:text-white transition-colors underline" @click="load()">Retry</button>
+        <button class="text-xs text-white/50 hover:text-white transition-colors underline" @click="refreshGateway">Retry</button>
         <button class="text-xs text-orange-300/80 hover:text-orange-200 transition-colors underline" @click="disconnectRouter">Reconfigure router</button>
       </div>
     </div>
@@ -3040,9 +3120,16 @@ onMounted(() => {
           </div>
         </dl>
         <div class="mt-4 flex items-center gap-4">
-          <button class="text-xs text-white/40 hover:text-white/70 transition-colors" @click="load()">
+          <button class="text-xs text-white/40 hover:text-white/70 transition-colors" @click="refreshGateway">
             ↻ Refresh
           </button>
+          <span
+            v-if="lastUpdatedLabel"
+            class="text-xs text-white/30"
+            data-testid="gateway-updated"
+          >
+            Updated {{ lastUpdatedLabel }}
+          </span>
           <button
             v-if="adminReady"
             class="text-xs text-white/40 hover:text-white/70 transition-colors"
@@ -3561,6 +3648,14 @@ onMounted(() => {
             {{ meteringLabel }}
             <span v-if="!isDataMetering">({{ status.tollgate.step_size_ms ?? 60000 }} ms)</span>
           </div>
+          <div
+            v-if="lastUpdatedLabel"
+            class="mt-1 text-[11px] text-white/30"
+            data-testid="tollgate-updated"
+          >
+            Updated {{ lastUpdatedLabel }}
+            <span v-if="daemonWarmingUp">· the daemon is still advertising mints</span>
+          </div>
 
           <details class="mt-3" data-testid="tollgate-details">
             <summary class="cursor-pointer text-xs text-white/40 hover:text-white/70" data-testid="details-summary">
@@ -3666,7 +3761,7 @@ onMounted(() => {
             <div data-testid="wallet-card">
               <div class="flex items-center justify-between mb-2">
                 <h3 class="text-sm font-semibold text-white/80">Wallet</h3>
-                <button class="text-xs text-white/40 hover:text-white" :disabled="walletLoading" @click="loadWallet">
+                <button class="text-xs text-white/40 hover:text-white" :disabled="walletLoading" @click="refreshGateway">
                   {{ walletLoading ? 'Loading…' : 'Refresh' }}
                 </button>
               </div>
