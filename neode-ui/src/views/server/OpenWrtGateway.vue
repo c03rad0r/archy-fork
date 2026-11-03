@@ -298,6 +298,7 @@ interface WanStatus {
   ssid: string
   assoc_ssid: string
   encryption: string
+  radio?: string
   ip: string
   internet: boolean
   radio0_disabled: boolean
@@ -1084,6 +1085,7 @@ interface UpstreamWifi {
 }
 const nodeUpstream = ref<UpstreamWifi | null>(null)
 const wanError = ref('')
+const wanRadio = ref('')
 
 // DHCP/masq settings (step 3 of wizard)
 const dhcpStart = ref(100)
@@ -2651,6 +2653,7 @@ async function restartTollgate() {
 function startWanSetup() {
   wanStep.value = 'scan'
   wanError.value = ''
+  wanRadio.value = ''
   showAllUplinkNetworks.value = false
   scannedNetworks.value = []
   selectedNetwork.value = null
@@ -2687,7 +2690,7 @@ async function connectUsingNodeCredentials() {
   wanStep.value = 'connecting'
   wanError.value = ''
   try {
-    await rpcClient.call({
+    const result = await rpcClient.call<{ radio?: string }>({
       method: 'openwrt.configure-wan',
       params: {
         ...authParams(),
@@ -2695,12 +2698,16 @@ async function connectUsingNodeCredentials() {
         password: '',
         use_node_credentials: true,
         encryption: up.security || 'psk2',
+        // The node's own band is often empty; the backend then tries every
+        // radio (band-first) and verifies association.
+        ...(up.band ? { band: up.band } : {}),
         dhcp_start: dhcpStart.value,
         dhcp_limit: dhcpLimit.value,
         masq: masqEnabled.value,
       },
-      timeout: 30000,
+      timeout: 120000,
     })
+    wanRadio.value = result?.radio || ''
     wanStep.value = 'done'
     setTimeout(() => {
       wanStep.value = 'idle'
@@ -2710,6 +2717,13 @@ async function connectUsingNodeCredentials() {
     wanError.value = e instanceof Error ? e.message : String(e)
     wanStep.value = 'scan'
   }
+}
+
+function bandForChannel(channel?: number): string {
+  if (!channel) return ''
+  if (channel <= 14) return '2.4'
+  if (channel >= 32 && channel <= 177) return '5'
+  return ''
 }
 
 async function scanWifi() {
@@ -2748,11 +2762,24 @@ async function configureWan() {
       ssid: selectedNetwork.value.ssid,
       password: wanPassword.value,
       encryption: selectedNetwork.value.encryption,
+      ...(selectedNetwork.value.band ||
+      bandForChannel(selectedNetwork.value.channel)
+        ? {
+            band:
+              selectedNetwork.value.band ||
+              bandForChannel(selectedNetwork.value.channel),
+          }
+        : {}),
       dhcp_start: dhcpStart.value,
       dhcp_limit: dhcpLimit.value,
       masq: masqEnabled.value,
     }
-    await rpcClient.call({ method: 'openwrt.configure-wan', params, timeout: 30000 })
+    const result = await rpcClient.call<{ radio?: string }>({
+      method: 'openwrt.configure-wan',
+      params,
+      timeout: 120000,
+    })
+    wanRadio.value = result?.radio || ''
     wanStep.value = 'done'
     // Give the router ~8s to associate before reloading status
     setTimeout(() => {
@@ -3195,6 +3222,12 @@ onMounted(() => {
           <dl v-if="status.wan?.configured && !status.wan.internet"
               class="grid grid-cols-2 gap-x-4 gap-y-2 text-xs mt-1 mb-3 border-t border-white/10 pt-3">
             <div>
+              <dt class="text-white/30 mb-0.5">Uplink radio</dt>
+              <dd class="text-white/70 font-mono">
+                {{ status.wan.radio || wanRadio || 'none' }}
+              </dd>
+            </div>
+            <div>
               <dt class="text-white/30 mb-0.5">Radio</dt>
               <dd :class="status.wan.radio0_disabled ? 'text-red-400' : 'text-green-400'">
                 {{ status.wan.radio0_disabled ? 'disabled' : 'enabled' }}
@@ -3225,7 +3258,7 @@ onMounted(() => {
           </dl>
 
           <p v-if="wanStep === 'done'" class="mt-2 text-xs text-green-400">
-            WAN configured. Router is connecting…
+            WAN configured{{ wanRadio ? ` on ${wanRadio}` : '' }}. Router is connecting…
           </p>
         </template>
 
@@ -3344,6 +3377,7 @@ onMounted(() => {
               class="glass-button glass-button-success flex-1 text-sm font-medium"
               :disabled="selectedNetwork?.encryption !== 'none' && !wanPassword"
               :class="selectedNetwork?.encryption !== 'none' && !wanPassword ? 'opacity-40 cursor-not-allowed' : ''"
+              data-testid="uplink-next"
               @click="wanStep = 'dhcp'"
             >
               Next →
@@ -3409,6 +3443,7 @@ onMounted(() => {
           <div class="flex items-center gap-2">
             <button
               class="glass-button glass-button-success flex-1 text-sm font-medium"
+              data-testid="uplink-apply"
               @click="configureWan"
             >
               Apply Settings
