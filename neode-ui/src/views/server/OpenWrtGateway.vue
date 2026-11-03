@@ -204,6 +204,8 @@ interface FlashLink {
   name: string
   carrier: boolean
   wireless: boolean
+  physical?: boolean
+  preferred?: boolean
   ipv4: string[]
 }
 
@@ -1569,6 +1571,40 @@ async function copyText(value: string) {
 function hasFlashAddress(link: FlashLink): boolean {
   return link.ipv4.some(addr => addr.startsWith('192.168.1.'))
 }
+
+const preferredFlashLink = computed(
+  () =>
+    flashInfo.value?.links?.find(
+      link => link.preferred && link.physical && !link.wireless,
+    ) ?? null,
+)
+
+function canPrepareFlashLink(link: FlashLink): boolean {
+  if (!link.physical || link.wireless || !link.carrier || hasFlashAddress(link)) {
+    return false
+  }
+  const preferred = preferredFlashLink.value
+  return preferred ? link.name === preferred.name : true
+}
+
+const flashBlockReason = computed(() => {
+  const info = flashInfo.value
+  if (!info) return 'Inspect the image first.'
+  if (!info.ok) return info.error || 'Could not inspect the router image.'
+  if (!info.board) return 'Detect the router board first.'
+  if (!info.flash_ready) {
+    return preferredFlashLink.value
+      ? `Add 192.168.1.2/24 to ${preferredFlashLink.value.name} (the router link) to enable flashing.`
+      : 'Add a 192.168.1.x address to the physical wired router link to enable flashing.'
+  }
+  if (flashConfirmation.value.trim() !== info.board) {
+    return `Type ${info.board} to confirm.`
+  }
+  if (!flashAcknowledge.value) {
+    return 'Acknowledge that the router will be erased.'
+  }
+  return ''
+})
 
 function clearFlashTimer() {
   if (flashTimer !== null) {
@@ -4115,27 +4151,40 @@ onMounted(() => {
                 v-for="link in flashInfo.links"
                 :key="link.name"
                 class="flex flex-wrap items-center justify-between gap-2 py-1 text-xs"
+                data-testid="flash-link"
+                :data-interface="link.name"
               >
                 <span class="font-mono text-white/60">
                   {{ link.name }} · {{ link.wireless ? 'WiFi' : 'Wired' }} ·
                   carrier {{ link.carrier ? '1' : '0' }} ·
                   {{ link.ipv4.join(', ') || 'no IPv4' }}
+                  <span v-if="link.preferred" class="ml-1 text-blue-300">router link</span>
+                  <span v-if="!link.physical" class="ml-1 text-white/30">virtual</span>
                 </span>
                 <button
-                  v-if="!link.wireless && link.carrier && !hasFlashAddress(link)"
+                  v-if="canPrepareFlashLink(link)"
                   class="text-xs text-yellow-300 hover:text-yellow-200 underline"
+                  data-testid="flash-prepare-link"
+                  :data-interface="link.name"
                   @click="prepareFlashLink(link)"
                 >
-                  Add 192.168.1.2/24
+                  {{ link.preferred ? 'Add 192.168.1.2/24 (router link)' : 'Add 192.168.1.2/24' }}
                 </button>
               </div>
               <div v-if="flashInfo.flash_ready" class="text-xs text-green-300 mt-1">
                 A wired 192.168.1.x link is ready for the post-flash address.
               </div>
               <div v-else class="text-xs text-red-300 mt-1">
-                No wired interface with carrier and a 192.168.1.x address. After
-                flashing, the router is only reachable at 192.168.1.1; add the
-                address or connect its LAN port first.
+                <template v-if="preferredFlashLink">
+                  Add <span class="font-mono">192.168.1.2/24</span> to
+                  <span class="font-mono">{{ preferredFlashLink.name }}</span>
+                  (the router link) to enable flashing.
+                </template>
+                <template v-else>
+                  No physical wired interface with carrier and a 192.168.1.x
+                  address. After flashing, the router is only reachable at
+                  192.168.1.1 on its LAN.
+                </template>
               </div>
             </div>
 
@@ -4158,6 +4207,13 @@ onMounted(() => {
                 answer on 192.168.1.1 on its LAN.
               </span>
             </label>
+            <p
+              v-if="flashBlockReason"
+              class="text-xs text-white/50"
+              data-testid="flash-block-reason"
+            >
+              {{ flashBlockReason }}
+            </p>
             <button
               class="glass-button glass-button-warning w-full text-sm font-medium"
               :disabled="!flashCanStart || flashRunning"

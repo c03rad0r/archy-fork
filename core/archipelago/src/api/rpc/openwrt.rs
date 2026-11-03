@@ -649,6 +649,12 @@ struct FlashLink {
     name: String,
     carrier: bool,
     wireless: bool,
+    /// Backed by a device in `/sys/class/net/<iface>/device`, i.e. a real
+    /// Ethernet/WiFi port rather than a bridge, tunnel or VPN.
+    physical: bool,
+    /// The interface the kernel would use to reach the router. This is the
+    /// only link that can reach `192.168.1.1` after the flash.
+    preferred: bool,
     ipv4: Vec<String>,
 }
 
@@ -668,6 +674,9 @@ async fn flash_links() -> Vec<FlashLink> {
             .map(|value| value.trim() == "1")
             .unwrap_or(false);
         let wireless = tokio::fs::metadata(format!("/sys/class/net/{name}/wireless"))
+            .await
+            .is_ok();
+        let physical = tokio::fs::metadata(format!("/sys/class/net/{name}/device"))
             .await
             .is_ok();
         let mut ipv4 = Vec::new();
@@ -695,6 +704,8 @@ async fn flash_links() -> Vec<FlashLink> {
             name,
             carrier,
             wireless,
+            physical,
+            preferred: false,
             ipv4,
         });
     }
@@ -702,12 +713,60 @@ async fn flash_links() -> Vec<FlashLink> {
     links
 }
 
+/// The interface the kernel would use to reach `host`, if any.
+async fn route_interface(host: &str) -> Option<String> {
+    let out = tokio::process::Command::new("ip")
+        .args(["-4", "route", "get", host])
+        .output()
+        .await
+        .ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    let text = String::from_utf8_lossy(&out.stdout);
+    let mut words = text.split_whitespace();
+    while let Some(word) = words.next() {
+        if word == "dev" {
+            return words.next().map(str::to_string);
+        }
+    }
+    None
+}
+
+/// Interfaces relevant to the router, with the actual route link first.
+async fn flash_links_for(host: &str) -> Vec<FlashLink> {
+    let mut links = flash_links().await;
+    if let Some(iface) = route_interface(host).await {
+        for link in &mut links {
+            link.preferred = link.name == iface;
+        }
+    }
+    links.sort_by_key(|link| {
+        (
+            !link.preferred,
+            !link.physical,
+            link.wireless,
+            link.name.clone(),
+        )
+    });
+    links
+}
+
 fn flash_ready(links: &[FlashLink]) -> bool {
-    links.iter().any(|link| {
-        !link.wireless
-            && link.carrier
-            && link.ipv4.iter().any(|addr| addr.starts_with("192.168.1."))
-    })
+    let preferred_physical = links
+        .iter()
+        .filter(|link| link.preferred && link.physical && !link.wireless);
+    let candidates: Vec<&FlashLink> = if preferred_physical.clone().next().is_some() {
+        preferred_physical.collect()
+    } else {
+        links
+            .iter()
+            .filter(|link| link.physical && !link.wireless)
+            .collect()
+    };
+    candidates
+        .iter()
+        .any(|link| link.carrier && link.ipv4.iter().any(|addr| addr.starts_with("192.168.1.")))
 }
 
 #[derive(Debug, Clone, Default)]
@@ -2474,7 +2533,7 @@ impl RpcHandler {
         }
 
         let info = client.clean_slate_info(&host, &password, &version).await?;
-        let links = flash_links().await;
+        let links = flash_links_for(&host).await;
         Ok(serde_json::json!({
             "ok": true,
             "host": host,
@@ -2524,7 +2583,7 @@ impl RpcHandler {
             .filter(|s| !s.is_empty())
             .ok_or_else(|| anyhow::anyhow!("confirmation is required"))?;
 
-        let links = flash_links().await;
+        let links = flash_links_for(&host).await;
         if !flash_ready(&links) {
             return Ok(serde_json::json!({
                 "ok": false,
@@ -2579,8 +2638,8 @@ impl RpcHandler {
         let Some(link) = links.iter().find(|link| link.name == requested) else {
             anyhow::bail!("interface {requested} is not present on this node");
         };
-        if link.wireless || !link.carrier {
-            anyhow::bail!("interface {requested} is not a wired link with carrier");
+        if link.wireless || !link.physical || !link.carrier {
+            anyhow::bail!("interface {requested} is not a physical wired link with carrier");
         }
         let command = format!("sudo -n ip addr add 192.168.1.2/24 dev {}", link.name);
         let output = tokio::process::Command::new("sudo")
@@ -3571,5 +3630,54 @@ mod tests {
         assert!(daemon_version_matches("TollGate v0.6.0", "0.6.0-r1"));
         assert!(!daemon_version_matches("TollGate v0.5.0-gabc", "0.6.0"));
         assert!(!daemon_version_matches("", "0.6.0"));
+    }
+
+    fn flash_link(
+        name: &str,
+        physical: bool,
+        wireless: bool,
+        carrier: bool,
+        ipv4: &[&str],
+        preferred: bool,
+    ) -> FlashLink {
+        FlashLink {
+            name: name.to_string(),
+            carrier,
+            wireless,
+            physical,
+            preferred,
+            ipv4: ipv4.iter().map(|addr| addr.to_string()).collect(),
+        }
+    }
+
+    #[test]
+    fn virtual_interface_does_not_make_flash_ready() {
+        let links = vec![
+            flash_link("wg0", false, false, true, &["192.168.1.2/24"], true),
+            flash_link("enx0", true, false, true, &["192.168.2.5/24"], false),
+        ];
+        assert!(!flash_ready(&links));
+    }
+
+    #[test]
+    fn preferred_physical_link_with_post_flash_address_is_ready() {
+        let links = vec![
+            flash_link("enx1", true, false, true, &["192.168.50.5/24"], false),
+            flash_link("enx0", true, false, true, &["192.168.1.2/24"], true),
+        ];
+        assert!(flash_ready(&links));
+    }
+
+    #[test]
+    fn physical_link_without_a_preferred_route_still_counts() {
+        let links = vec![flash_link(
+            "enx0",
+            true,
+            false,
+            true,
+            &["192.168.1.2/24"],
+            false,
+        )];
+        assert!(flash_ready(&links));
     }
 }
