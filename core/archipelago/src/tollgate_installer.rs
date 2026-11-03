@@ -163,18 +163,18 @@ impl InstallerClient {
         password: &str,
         version: &str,
         confirmation: &str,
+        new_password: Option<&str>,
     ) -> Result<String> {
-        let value = self
-            .post(
-                "/api/clean-slate-flash",
-                json!({
-                    "ip": ip,
-                    "password": password,
-                    "version": version,
-                    "confirmation": confirmation,
-                }),
-            )
-            .await?;
+        let mut body = json!({
+            "ip": ip,
+            "password": password,
+            "version": version,
+            "confirmation": confirmation,
+        });
+        if let Some(new_password) = new_password.map(str::trim).filter(|s| !s.is_empty()) {
+            body["newPassword"] = json!(new_password);
+        }
+        let value = self.post("/api/clean-slate-flash", body).await?;
         value
             .get("job_id")
             .and_then(|v| v.as_str())

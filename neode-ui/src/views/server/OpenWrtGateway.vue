@@ -122,6 +122,7 @@ interface SelectRouterResult {
   model?: string
   used_saved_credentials?: boolean
   needs_password?: boolean
+  needs_root_password?: boolean
   bad_password?: boolean
   error?: string
 }
@@ -520,6 +521,7 @@ const drainResultModal = ref(false)
 const flashOpen = ref(false)
 const flashVersion = ref('25.12.5')
 const flashPassword = ref('')
+const flashNewPassword = ref('')
 const flashInfo = ref<CleanSlateInfo | null>(null)
 const flashInfoLoading = ref(false)
 const flashInfoError = ref('')
@@ -1211,7 +1213,7 @@ async function connect() {
     selectedRouter.value && selectedRouter.value.ip === ip
       ? selectedRouter.value
       : { ip }
-  await trySelectRouter(router, sshPassword.value)
+  await trySelectRouter(router, sshPassword.value, true)
 }
 
 interface WiredInterface { name: string; type: string; state: string; ipv4: string[] }
@@ -1372,7 +1374,11 @@ async function selectDiscoveredRouter(r: DiscoveredRouter) {
   await trySelectRouter(r, '')
 }
 
-async function trySelectRouter(r: DiscoveredRouter, password: string) {
+async function trySelectRouter(
+  r: DiscoveredRouter,
+  password: string,
+  passwordProvided = false,
+) {
   connecting.value = true
   selectionConfirmed.value = false
   error.value = ''
@@ -1383,6 +1389,7 @@ async function trySelectRouter(r: DiscoveredRouter, password: string) {
         host: r.ip,
         ssh_user: 'root',
         ssh_password: password,
+        password_provided: passwordProvided,
         ...(r.mac ? { mac: r.mac } : {}),
         ...(r.model ? { model: r.model } : {}),
         ...(r.name ? { name: r.name } : {}),
@@ -1392,9 +1399,12 @@ async function trySelectRouter(r: DiscoveredRouter, password: string) {
     if (!result.ok) {
       needsPassword.value = true
       showConnectForm.value = true
-      error.value = result.bad_password
-        ? 'That root password was refused. Enter the router root password.'
-        : result.error || 'This router needs a root password.'
+      error.value = result.needs_root_password
+        ? result.error ||
+          'Fresh OpenWrt has no root password. Set one on the router or in the flash form.'
+        : result.bad_password
+          ? 'That root password was refused. Enter the router root password.'
+          : result.error || 'This router needs a root password.'
       return
     }
     needsPassword.value = false
@@ -1617,6 +1627,7 @@ async function openFlashModal() {
   flashOpen.value = true
   flashVersion.value = '25.12.5'
   flashPassword.value = sshPassword.value || ''
+  flashNewPassword.value = ''
   flashInfo.value = null
   flashInfoError.value = ''
   flashConfirmation.value = ''
@@ -1780,6 +1791,9 @@ async function startFlash() {
       version: flashVersion.value,
       confirmation: flashConfirmation.value.trim(),
     }
+    if (flashNewPassword.value.trim()) {
+      params.new_password = flashNewPassword.value.trim()
+    }
     if (flashPassword.value.trim()) params.ssh_password = flashPassword.value.trim()
     const result = await rpcClient.call<{
       ok: boolean
@@ -1836,6 +1850,7 @@ function closeFlashModal() {
 
 async function useFlashedRouter() {
   const ip = flashRecoveryInfo.value?.ip || flashJob.value?.ip || '192.168.1.1'
+  const newPassword = flashNewPassword.value.trim()
   clearFlashTimer()
   flashOpen.value = false
   selectionConfirmed.value = false
@@ -1844,6 +1859,19 @@ async function useFlashedRouter() {
   showConnectForm.value = true
   host.value = ip
   error.value = ''
+  if (newPassword) sshPassword.value = newPassword
+  // A clean-slate flash wipes the root password, so the pre-flash credential
+  // must not be reused for the reconnect.
+  await rpcClient
+    .call({
+      method: 'openwrt.forget-router',
+      params: {
+        host: ip,
+        ...(selectedRouter.value?.mac ? { mac: selectedRouter.value.mac } : {}),
+      },
+      timeout: 10000,
+    })
+    .catch(() => {})
   await discoverRouters()
 }
 
@@ -2914,7 +2942,8 @@ onMounted(() => {
               class="w-full px-4 py-3 bg-transparent border border-white/20 rounded-lg text-white placeholder-white/30 focus:outline-none focus:border-white/40 focus:ring-1 focus:ring-white/20 transition-colors"
             />
             <p class="mt-1 text-[11px] text-white/30">
-              Leave blank on a fresh OpenWrt reset; otherwise use the current root password.
+              A fresh OpenWrt flash has no root password. Set one on the router
+              or in the flash form before connecting.
             </p>
           </div>
         </div>
@@ -4113,7 +4142,7 @@ onMounted(() => {
               </select>
             </label>
             <label class="block">
-              <span class="block text-xs text-white/40 mb-1">Root password</span>
+              <span class="block text-xs text-white/40 mb-1">Current root password (before flash)</span>
               <input
                 v-model="flashPassword"
                 type="password"
@@ -4123,6 +4152,20 @@ onMounted(() => {
               />
             </label>
           </div>
+          <label class="block mt-3">
+            <span class="block text-xs text-white/40 mb-1">New root password after flash (optional)</span>
+            <input
+              v-model="flashNewPassword"
+              type="password"
+              autocomplete="new-password"
+              placeholder="set a password so Archy can reconnect"
+              class="w-full px-3 py-2 bg-transparent border border-white/20 rounded-lg text-white placeholder-white/30 text-sm focus:outline-none focus:border-white/40"
+              data-testid="flash-new-password"
+            />
+            <span class="block text-[11px] text-white/30 mt-1">
+              The flash wipes the current root password. This is applied after the router reboots.
+            </span>
+          </label>
           <button
             class="glass-button text-xs px-3 py-1.5 mt-2"
             :disabled="flashInfoLoading"

@@ -311,6 +311,7 @@ impl RpcHandler {
             "openwrt.installer.prepare-flash-link" => {
                 self.handle_openwrt_prepare_flash_link(params).await
             }
+            "openwrt.forget-router" => self.handle_openwrt_forget_router(params).await,
             "openwrt.test-mint" => self.handle_openwrt_test_mint(params).await,
             "openwrt.mint-health" => self.handle_openwrt_mint_health(params).await,
             "openwrt.prune-mints" => self.handle_openwrt_prune_mints(params).await,

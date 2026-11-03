@@ -2258,6 +2258,26 @@ impl RpcHandler {
         }))
     }
 
+    /// Resolve the SSH password for `select-router`.
+    ///
+    /// `password_provided` distinguishes an explicit blank submission from an
+    /// omitted password that may fall back to the remembered credential. A
+    /// fresh OpenWrt flash has no root password, so the operator must be able
+    /// to say "use blank" instead of silently reusing the old password.
+    fn resolve_router_password(
+        supplied: &str,
+        password_provided: bool,
+        remembered: Option<&str>,
+    ) -> (String, bool) {
+        let used_saved = !password_provided && supplied.is_empty() && remembered.is_some();
+        let password = if password_provided || !supplied.is_empty() {
+            supplied.to_string()
+        } else {
+            remembered.unwrap_or("").to_string()
+        };
+        (password, used_saved)
+    }
+
     /// Make a discovered router the active one (and persist it).
     ///
     /// Verifies SSH/OpenWrt before saving, so a typo cannot replace a working
@@ -2284,6 +2304,10 @@ impl RpcHandler {
             .and_then(|v| v.as_str())
             .unwrap_or("")
             .to_string();
+        let password_provided = p
+            .get("password_provided")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
         let supplied_user = p
             .get("ssh_user")
             .and_then(|v| v.as_str())
@@ -2322,19 +2346,29 @@ impl RpcHandler {
                     None
                 }
             });
-        let used_saved = supplied_password.is_empty() && remembered.is_some();
         let ssh_user = supplied_user
             .or_else(|| remembered.as_ref().map(|r| r.username.clone()))
             .unwrap_or_else(|| "root".to_string());
-        let ssh_password = if !supplied_password.is_empty() {
-            supplied_password
+        let (ssh_password, used_saved) = Self::resolve_router_password(
+            &supplied_password,
+            password_provided,
+            remembered.as_ref().map(|r| r.password.as_str()),
+        );
+        let attempted_saved = if password_provided {
+            !ssh_password.is_empty()
         } else {
-            remembered
-                .as_ref()
-                .map(|r| r.password.clone())
-                .unwrap_or_default()
+            remembered.is_some() || !ssh_password.is_empty()
         };
-        let attempted_saved = remembered.is_some() || !ssh_password.is_empty();
+        if password_provided && ssh_password.is_empty() {
+            return Ok(serde_json::json!({
+                "ok": false,
+                "host": host,
+                "needs_password": true,
+                "bad_password": false,
+                "needs_root_password": true,
+                "error": "Fresh OpenWrt has no root password. Set one on the router, or set a new root password during the flash.",
+            }));
+        }
 
         let host_check = host.clone();
         let user_check = ssh_user.clone();
@@ -2582,6 +2616,13 @@ impl RpcHandler {
             .map(str::trim)
             .filter(|s| !s.is_empty())
             .ok_or_else(|| anyhow::anyhow!("confirmation is required"))?;
+        let new_password = p
+            .get("new_password")
+            .or_else(|| p.get("newPassword"))
+            .and_then(|v| v.as_str())
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(str::to_string);
 
         let links = flash_links_for(&host).await;
         if !flash_ready(&links) {
@@ -2596,7 +2637,13 @@ impl RpcHandler {
         let client = InstallerClient::new(&self.config.data_dir);
         client.ensure_running().await?;
         let job_id = client
-            .clean_slate_flash(&host, &password, version, confirmation)
+            .clean_slate_flash(
+                &host,
+                &password,
+                version,
+                confirmation,
+                new_password.as_deref(),
+            )
             .await?;
         Ok(serde_json::json!({
             "ok": true,
@@ -2619,6 +2666,45 @@ impl RpcHandler {
         let client = InstallerClient::new(&self.config.data_dir);
         client.ensure_running().await?;
         client.job(job_id).await
+    }
+
+    /// Remove a router's remembered credentials. Used after a clean-slate
+    /// flash, which wipes the root password; otherwise the next connect would
+    /// silently reuse the pre-flash password.
+    pub(super) async fn handle_openwrt_forget_router(
+        &self,
+        params: Option<serde_json::Value>,
+    ) -> Result<serde_json::Value> {
+        let p = params.unwrap_or_default();
+        let host = p
+            .get("host")
+            .and_then(|v| v.as_str())
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(str::to_string);
+        let mac = p
+            .get("mac")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_ascii_lowercase());
+        if host.is_none() && mac.is_none() {
+            anyhow::bail!("host or mac is required");
+        }
+        let mut known = net_router::load_known_routers(&self.config.data_dir).await?;
+        let before = known.len();
+        known.retain(|key, _| {
+            if host.as_deref().is_some_and(|h| key.eq_ignore_ascii_case(h)) {
+                return false;
+            }
+            if mac.as_deref().is_some_and(|m| key.eq_ignore_ascii_case(m)) {
+                return false;
+            }
+            true
+        });
+        let removed = before.saturating_sub(known.len());
+        if removed > 0 {
+            net_router::save_known_routers(&self.config.data_dir, &known).await?;
+        }
+        Ok(serde_json::json!({ "ok": true, "removed": removed }))
     }
 
     /// Add 192.168.1.2/24 to a wired interface with carrier so the
@@ -3679,5 +3765,29 @@ mod tests {
             false,
         )];
         assert!(flash_ready(&links));
+    }
+
+    #[test]
+    fn explicit_blank_password_does_not_reuse_saved_credentials() {
+        assert_eq!(
+            RpcHandler::resolve_router_password("", true, Some("old")),
+            (String::new(), false)
+        );
+    }
+
+    #[test]
+    fn omitted_password_falls_back_to_saved_credentials() {
+        assert_eq!(
+            RpcHandler::resolve_router_password("", false, Some("old")),
+            ("old".to_string(), true)
+        );
+    }
+
+    #[test]
+    fn supplied_password_wins_over_saved_credentials() {
+        assert_eq!(
+            RpcHandler::resolve_router_password("new", false, Some("old")),
+            ("new".to_string(), false)
+        );
     }
 }
