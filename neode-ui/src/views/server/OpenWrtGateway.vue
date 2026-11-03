@@ -4353,7 +4353,7 @@ onMounted(() => {
                 v-model="flashVersion"
                 class="w-full px-3 py-2 bg-black/30 border border-white/20 rounded-lg text-white text-sm focus:outline-none focus:border-white/40"
                 data-testid="flash-version"
-                @change="inspectFlashImage"
+                @change="inspectFlashImage()"
               >
                 <option value="25.12.5">25.12.5 (apk)</option>
                 <option value="24.10.8">24.10.8 (opkg, if supported)</option>
@@ -4387,7 +4387,7 @@ onMounted(() => {
           <button
             class="glass-button text-xs px-3 py-1.5 mt-2"
             :disabled="flashInfoLoading"
-            @click="inspectFlashImage"
+            @click="inspectFlashImage()"
           >
             {{ flashInfoLoading ? 'Inspecting…' : 'Inspect image' }}
           </button>
