@@ -502,8 +502,11 @@ const visibleDiscovered = computed(() =>
   discovered.value.filter(
     r =>
       showUnverifiedRouters.value ||
-      r.active ||
-      (r.ssh_open && r.on_link !== false),
+      // `active` is not a trust signal on its own: an older backend (or a
+      // cached response) may still mark a stale saved address that is only
+      // reachable through the default gateway. Off-link hosts stay behind the
+      // explicit toggle regardless of what the flag says.
+      (r.on_link !== false && (r.active || r.ssh_open)),
   ),
 )
 const flashHost = computed(
@@ -1369,7 +1372,9 @@ async function discoverRouters() {
     // Never auto-select a host Archy cannot manage. A stale saved address can
     // be answered by an unrelated HTTP-only device; it must not own the
     // selection just because it used to be the router.
-    const manageable = discovered.value.filter(r => r.ssh_open || r.identified)
+    const manageable = discovered.value.filter(
+      r => (r.ssh_open || r.identified) && r.on_link !== false,
+    )
     const preferred =
       manageable.find(r => r.ip === result.suggested)?.ip ||
       manageable.find(r => r.ip === result.active)?.ip ||
