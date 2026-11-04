@@ -2025,6 +2025,7 @@ impl RpcHandler {
             };
             tollgate::nodogsplash::configure(&router, &cfg)?;
             tollgate::firewall::ensure_paid_bridge_can_reach_api(&router)?;
+            tollgate::firewall::ensure_paid_bridge_is_enforced(&router, "br-tollgate")?;
             tollgate::nodogsplash::restart(&router)?;
             tollgate::nodogsplash::verify(&router)?;
             let (gateway, ok) = tollgate::nodogsplash::summary(&router);

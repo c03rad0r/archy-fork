@@ -134,6 +134,10 @@ where
     on_step("firewall");
     firewall::ensure_paid_bridge_can_reach_api(router)
         .context("allow the TollGate API from the paid bridge")?;
+    // The same fragment family also hardcodes br-lan in the forward
+    // enforcement bridge, which leaves the paid network ungated.
+    firewall::ensure_paid_bridge_is_enforced(router, "br-tollgate")
+        .context("scope NoDogSplash forward enforcement to the paid bridge")?;
 
     on_step("restart");
     restart_services(router, config.enabled)?;
@@ -175,6 +179,7 @@ pub fn rename_network(
     // br-tollgate.
     nodogsplash::configure(router, &cfg)?;
     firewall::ensure_paid_bridge_can_reach_api(router)?;
+    firewall::ensure_paid_bridge_is_enforced(router, "br-tollgate")?;
     restart_services(router, enabled)?;
     nodogsplash::restart(router)?;
     nodogsplash::verify(router)?;
