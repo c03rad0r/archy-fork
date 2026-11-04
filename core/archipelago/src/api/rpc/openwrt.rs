@@ -556,28 +556,61 @@ fn shell_quote(s: &str) -> String {
     format!("'{}'", s.replace('\'', "'\\''"))
 }
 
-/// How the node reaches a candidate: `(interface, "wifi"|"ethernet", subnet)`.
-/// Best-effort; unknown values are empty strings.
-async fn link_context(ip: &str) -> (String, String, String) {
+/// How the node reaches a candidate.
+///
+/// `via` is the gateway from `ip route get`; it is empty when the candidate is
+/// directly on one of our subnets. A candidate that is only reachable through
+/// the default gateway is not attached to the router link, so it must never be
+/// presented as a directly-connected gateway.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+struct LinkContext {
+    interface: String,
+    link_type: String,
+    subnet: String,
+    via: String,
+}
+
+impl LinkContext {
+    fn on_link(&self) -> bool {
+        self.via.is_empty() && !self.interface.is_empty()
+    }
+}
+
+/// Parse the `ip route get` line for the device and the gateway.
+///
+/// Pure so the distinction survives a unit test without touching the host's
+/// routing table. An on-link route has no `via`.
+fn parse_route_get(out: &str) -> (String, String) {
+    let mut iface = String::new();
+    let mut via = String::new();
+    let mut words = out.split_whitespace();
+    while let Some(word) = words.next() {
+        match word {
+            "dev" => iface = words.next().unwrap_or("").to_string(),
+            "via" => via = words.next().unwrap_or("").to_string(),
+            _ => {}
+        }
+    }
+    (iface, via)
+}
+
+/// How the node reaches a candidate: interface, link type, subnet, and the
+/// gateway when it is not on-link. Best-effort; unknown values are empty.
+async fn link_context(ip: &str) -> LinkContext {
     let route = tokio::process::Command::new("ip")
         .args(["route", "get", ip])
         .output()
         .await;
     let Ok(route) = route else {
-        return (String::new(), String::new(), String::new());
+        return LinkContext::default();
     };
     if !route.status.success() {
-        return (String::new(), String::new(), String::new());
+        return LinkContext::default();
     }
     let route_text = String::from_utf8_lossy(&route.stdout);
-    let iface = route_text
-        .split_whitespace()
-        .skip_while(|word| *word != "dev")
-        .nth(1)
-        .unwrap_or("")
-        .to_string();
+    let (iface, via) = parse_route_get(&route_text);
     if iface.is_empty() {
-        return (String::new(), String::new(), String::new());
+        return LinkContext::default();
     }
     let link = if std::path::Path::new(&format!("/sys/class/net/{iface}/wireless")).exists() {
         "wifi"
@@ -609,7 +642,76 @@ async fn link_context(ip: &str) -> (String, String, String) {
             ))
         })
         .unwrap_or_default();
-    (iface, link.to_string(), subnet)
+    LinkContext {
+        interface: iface,
+        link_type: link.to_string(),
+        subnet,
+        via,
+    }
+}
+
+/// A host can only be *the router* when Archy can actually manage it: either
+/// its SSH port answers, or the installer already identified it as OpenWrt.
+/// An HTTP-only bystander that happens to sit on a saved address must never be
+/// promoted to the active router.
+fn router_manageable(value: &serde_json::Value) -> bool {
+    value
+        .get("ssh_open")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false)
+        || value
+            .get("identified")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false)
+}
+
+/// Preference score for auto-selecting the gateway.
+///
+/// On-link beats reachable-through-the-default-gateway, and identified beats
+/// merely-open-SSH so a lab gateway on the same LAN does not outrank the
+/// operator's router.
+fn router_preference(value: &serde_json::Value) -> i32 {
+    let mut score = 0;
+    for (key, weight) in [
+        ("on_link", 8),
+        ("identified", 4),
+        ("ssh_open", 2),
+        ("has_saved_credentials", 1),
+    ] {
+        if value.get(key).and_then(|v| v.as_bool()).unwrap_or(false) {
+            score += weight;
+        }
+    }
+    score
+}
+
+/// The best manageable router address, or `None` when the scan found only
+/// bystanders. Deterministic: equal scores break by the smaller address.
+fn best_router(routers: &[serde_json::Value]) -> Option<String> {
+    let mut best: Option<(i32, String)> = None;
+    for router in routers {
+        if !router_manageable(router) {
+            continue;
+        }
+        let Some(ip) = router
+            .get("ip")
+            .and_then(|v| v.as_str())
+            .filter(|ip| !ip.is_empty())
+        else {
+            continue;
+        };
+        let score = router_preference(router);
+        let better = match &best {
+            None => true,
+            Some((best_score, best_ip)) => {
+                score > *best_score || (score == *best_score && ip < best_ip.as_str())
+            }
+        };
+        if better {
+            best = Some((score, ip.to_string()));
+        }
+    }
+    best.map(|(_, ip)| ip)
 }
 
 /// Fetch a URL from the router using whichever HTTP client is installed.
@@ -873,8 +975,14 @@ fn parse_advertisement(out: &str) -> Vec<AdvertisedMint> {
             if tag.first()?.as_str()? != "price_per_step" {
                 return None;
             }
+            // An empty URL is a malformed advertisement, not a mint. Accepting
+            // it produces a blank row that no wallet or probe can use.
+            let url = tag.get(4)?.as_str()?.trim();
+            if url.is_empty() {
+                return None;
+            }
             Some(AdvertisedMint {
-                url: tag.get(4)?.as_str()?.to_string(),
+                url: url.to_string(),
                 price: tag.get(2)?.as_str()?.parse().ok()?,
                 unit: tag
                     .get(3)
@@ -2185,13 +2293,22 @@ impl RpcHandler {
                     .as_deref()
                     .map(|p| !p.is_empty())
                     .unwrap_or(false);
-            router["active"] = serde_json::json!(saved.configured && ip == saved.address);
             router["has_saved_credentials"] =
                 serde_json::json!(remembered.is_some() || active_has_password);
-            let (interface, link_type, subnet) = link_context(&ip).await;
-            router["interface"] = serde_json::json!(interface);
-            router["link_type"] = serde_json::json!(link_type);
-            router["subnet"] = serde_json::json!(subnet);
+            let link = link_context(&ip).await;
+            let on_link = link.on_link();
+            let manageable = router_manageable(router);
+            router["interface"] = serde_json::json!(link.interface);
+            router["link_type"] = serde_json::json!(link.link_type);
+            router["subnet"] = serde_json::json!(link.subnet);
+            router["on_link"] = serde_json::json!(on_link);
+            router["via"] = serde_json::json!(link.via);
+            router["reachable"] = serde_json::json!(manageable);
+            // `active` is not address equality alone: a stale saved address
+            // can be answered by an unrelated HTTP-only host. Only a host the
+            // node can actually manage may own the active slot.
+            router["active"] =
+                serde_json::json!(saved.configured && ip == saved.address && manageable);
             if let Some(remembered) = remembered {
                 if !remembered.hostname.is_empty() {
                     router["saved_hostname"] = serde_json::json!(remembered.hostname);
@@ -2278,9 +2395,24 @@ impl RpcHandler {
             deduped.push(router);
         }
 
+        let active_address = saved.configured.then(|| saved.address.clone());
+        let active_reachable = active_address
+            .as_deref()
+            .map(|address| {
+                deduped.iter().any(|router| {
+                    router.get("ip").and_then(|v| v.as_str()) == Some(address)
+                        && router_manageable(router)
+                })
+            })
+            .unwrap_or(false);
+        let suggested = best_router(&deduped);
+
         Ok(serde_json::json!({
             "routers": deduped,
             "active": saved.address,
+            "active_address": active_address,
+            "active_reachable": active_reachable,
+            "suggested": suggested,
             "diagnostics": scan.get("diagnostics"),
             "failure": scan.get("failure"),
             "installer_version": cfg.get("installer_version"),
@@ -2422,12 +2554,37 @@ impl RpcHandler {
         let (hostname, model) = match verified {
             Ok(found) => found,
             Err(err) => {
+                // A vanilla OpenWrt image has an empty root shadow hash:
+                // Dropbear accepts any password, but libssh2 (what Archy uses)
+                // refuses. Saying "the password was refused" sends the
+                // operator looking for a credential that does not exist, so
+                // ask the installer what state the router is really in.
+                let needs_root_password = InstallerClient::new(&self.config.data_dir)
+                    .identify(&host, &ssh_password)
+                    .await
+                    .ok()
+                    .and_then(|info| {
+                        info.get("password_status")
+                            .and_then(|v| v.as_str())
+                            .map(|s| s == "not_required")
+                    })
+                    .unwrap_or(false);
+                let error = if needs_root_password {
+                    "This router has no root password yet. Vanilla OpenWrt \
+                     accepts any password over Dropbear, but Archy needs a real \
+                     one. Set it on the router first: ssh root@<router> and run \
+                     printf \"NEW_PASSWORD\\nNEW_PASSWORD\\n\" | passwd root"
+                        .to_string()
+                } else {
+                    err.to_string()
+                };
                 return Ok(serde_json::json!({
                     "ok": false,
                     "host": host,
                     "needs_password": true,
-                    "bad_password": attempted_saved,
-                    "error": err.to_string(),
+                    "bad_password": !needs_root_password && attempted_saved,
+                    "needs_root_password": needs_root_password,
+                    "error": error,
                 }));
             }
         };
@@ -3803,6 +3960,96 @@ fn parse_ipv4(s: &str) -> Result<[u8; 4]> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn route_get_distinguishes_on_link_from_a_gateway() {
+        let (iface, via) = parse_route_get(
+            "192.168.1.1 dev enx6c6e0750cd79 src 192.168.1.153 uid 1000\n    cache\n",
+        );
+        assert_eq!(iface, "enx6c6e0750cd79");
+        assert!(via.is_empty());
+
+        let (iface, via) = parse_route_get(
+            "192.168.2.1 via 192.168.50.1 dev enx9c69d3c70689 src 192.168.50.166\n    cache\n",
+        );
+        assert_eq!(iface, "enx9c69d3c70689");
+        assert_eq!(via, "192.168.50.1");
+    }
+
+    #[test]
+    fn an_http_only_bystander_is_not_a_router() {
+        let bystander = serde_json::json!({
+            "ip": "192.168.2.1",
+            "ssh_open": false,
+            "identified": false,
+        });
+        assert!(!router_manageable(&bystander));
+
+        let router = serde_json::json!({
+            "ip": "192.168.1.1",
+            "ssh_open": true,
+            "identified": true,
+        });
+        assert!(router_manageable(&router));
+    }
+
+    #[test]
+    fn best_router_prefers_identified_and_on_link() {
+        // The shapes observed on the test node: the real router is on-link and
+        // identified, the lab gateway is on-link but unidentified, and the
+        // stale saved address is only reachable through the default gateway.
+        let routers = vec![
+            serde_json::json!({
+                "ip": "192.168.50.1",
+                "ssh_open": true,
+                "identified": false,
+                "on_link": true,
+            }),
+            serde_json::json!({
+                "ip": "192.168.2.1",
+                "ssh_open": false,
+                "identified": false,
+                "on_link": false,
+            }),
+            serde_json::json!({
+                "ip": "192.168.1.1",
+                "ssh_open": true,
+                "identified": true,
+                "on_link": true,
+            }),
+        ];
+        assert_eq!(best_router(&routers).as_deref(), Some("192.168.1.1"));
+    }
+
+    #[test]
+    fn best_router_ignores_unmanageable_hosts() {
+        let routers = vec![serde_json::json!({
+            "ip": "192.168.2.1",
+            "ssh_open": false,
+            "identified": false,
+            "on_link": false,
+        })];
+        assert_eq!(best_router(&routers), None);
+    }
+
+    #[test]
+    fn best_router_breaks_ties_by_address() {
+        let routers = vec![
+            serde_json::json!({
+                "ip": "192.168.1.9",
+                "ssh_open": true,
+                "identified": true,
+                "on_link": true,
+            }),
+            serde_json::json!({
+                "ip": "192.168.1.2",
+                "ssh_open": true,
+                "identified": true,
+                "on_link": true,
+            }),
+        ];
+        assert_eq!(best_router(&routers).as_deref(), Some("192.168.1.2"));
+    }
 
     #[test]
     fn parses_the_live_kind_10021_advertisement() {

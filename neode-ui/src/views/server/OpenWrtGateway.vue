@@ -104,6 +104,9 @@ interface DiscoveredRouter {
   note?: string
   source?: string
   active?: boolean
+  reachable?: boolean
+  on_link?: boolean
+  via?: string
   link_type?: string
   interface?: string
   subnet?: string
@@ -478,16 +481,30 @@ const discovered = ref<DiscoveredRouter[]>([])
 const discovering = ref(false)
 const discoveryError = ref('')
 const discoveryActive = ref('')
+const discoveryActiveAddress = ref('')
+const discoveryActiveReachable = ref(true)
+const discoverySuggested = ref('')
+const forgettingStaleRouter = ref(false)
 const showUnverifiedRouters = ref(false)
 const showDisabledWifi = ref(false)
 const selectedRouterIp = ref('')
 const needsPassword = ref(false)
+const needsRootPassword = ref(false)
 const selectionConfirmed = ref(false)
 const selectedRouter = computed(() =>
   discovered.value.find(r => r.ip === selectedRouterIp.value) ?? null,
 )
+// Only directly-attached, manageable hosts are shown by default. A candidate
+// that is merely reachable through the default gateway (for example a stale
+// saved address answered by another device on the LAN) is not a gateway this
+// node can manage, so it stays behind "Show unverified".
 const visibleDiscovered = computed(() =>
-  discovered.value.filter(r => showUnverifiedRouters.value || r.ssh_open || r.active),
+  discovered.value.filter(
+    r =>
+      showUnverifiedRouters.value ||
+      r.active ||
+      (r.ssh_open && r.on_link !== false),
+  ),
 )
 const flashHost = computed(
   () => selectedRouter.value?.ip || status.value?.host || host.value.trim(),
@@ -1331,24 +1348,36 @@ async function discoverRouters() {
     const result = await rpcClient.call<{
       routers: DiscoveredRouter[]
       active?: string
+      active_address?: string | null
+      active_reachable?: boolean
+      suggested?: string | null
     }>({
       method: 'openwrt.discover',
       timeout: 120000,
     })
     discovered.value = result.routers ?? []
     discoveryActive.value = result.active ?? ''
+    discoveryActiveAddress.value = result.active_address ?? ''
+    discoveryActiveReachable.value = result.active_reachable ?? true
+    discoverySuggested.value = result.suggested ?? ''
     if (
       selectionConfirmed.value &&
       !discovered.value.some(r => r.ip === selectedRouterIp.value)
     ) {
       selectionConfirmed.value = false
     }
-    if (
-      !selectedRouterIp.value ||
-      !discovered.value.some(r => r.ip === selectedRouterIp.value)
-    ) {
-      selectedRouterIp.value =
-        result.active || discovered.value[0]?.ip || ''
+    // Never auto-select a host Archy cannot manage. A stale saved address can
+    // be answered by an unrelated HTTP-only device; it must not own the
+    // selection just because it used to be the router.
+    const manageable = discovered.value.filter(r => r.ssh_open || r.identified)
+    const preferred =
+      manageable.find(r => r.ip === result.suggested)?.ip ||
+      manageable.find(r => r.ip === result.active)?.ip ||
+      manageable[0]?.ip ||
+      ''
+    const current = discovered.value.find(r => r.ip === selectedRouterIp.value)
+    if (!current || !(current.ssh_open || current.identified)) {
+      selectedRouterIp.value = preferred
     }
   } catch (e) {
     discoveryError.value = e instanceof Error ? e.message : String(e)
@@ -1362,6 +1391,58 @@ function onDiscoveryChange() {
   if (router) void selectDiscoveredRouter(router)
 }
 
+/// The address the saved router used to have, when it no longer answers and
+/// discovery found a different manageable router. Empty when there is nothing
+/// to offer.
+const staleActiveRouter = computed(() => {
+  const saved = discoveryActiveAddress.value
+  if (!saved || discoveryActiveReachable.value) return ''
+  const suggestion = discoverySuggested.value
+  if (!suggestion || suggestion === saved) return ''
+  return suggestion
+})
+
+async function connectSuggestedRouter() {
+  const target = discovered.value.find(r => r.ip === discoverySuggested.value)
+  if (!target) return
+  await selectDiscoveredRouter(target)
+}
+
+/// A vanilla OpenWrt image has an empty root shadow hash. Dropbear accepts any
+/// password, but Archy authenticates with libssh2, which refuses that state.
+/// Telling the operator "the password was refused" hides the real fix.
+const routerNeedsRootPassword = computed(
+  () =>
+    needsRootPassword.value ||
+    selectedRouter.value?.password_status === 'not_required',
+)
+
+const rootPasswordCommand = computed(() => {
+  const ip = selectedRouter.value?.ip || host.value.trim() || '<router-ip>'
+  return `ssh root@${ip} 'printf "NEW_PASSWORD\\nNEW_PASSWORD\\n" | passwd root'`
+})
+
+async function forgetStaleRouter() {
+  const saved = discoveryActiveAddress.value
+  if (!saved) return
+  forgettingStaleRouter.value = true
+  discoveryError.value = ''
+  try {
+    await rpcClient.call({
+      method: 'openwrt.forget-router',
+      params: { host: saved },
+      timeout: 10000,
+    })
+    discoveryActiveAddress.value = ''
+    discoveryActiveReachable.value = true
+    await discoverRouters()
+  } catch (e) {
+    discoveryError.value = e instanceof Error ? e.message : String(e)
+  } finally {
+    forgettingStaleRouter.value = false
+  }
+}
+
 function linkLabel(r: DiscoveredRouter): string {
   const type =
     r.link_type === 'wifi'
@@ -1369,7 +1450,10 @@ function linkLabel(r: DiscoveredRouter): string {
       : r.link_type === 'ethernet'
         ? 'Ethernet'
         : 'link unknown'
-  return r.interface ? `${type} · ${r.interface}` : type
+  const base = r.interface ? `${type} · ${r.interface}` : type
+  // A candidate reached through the default gateway is not attached to this
+  // node's router link; naming only the NIC implies a direct connection.
+  return r.via ? `${base} · via ${r.via} (not directly attached)` : base
 }
 
 function discoveryLabel(r: DiscoveredRouter): string {
@@ -1384,7 +1468,8 @@ function discoveryLabel(r: DiscoveredRouter): string {
   const credential = r.has_saved_credentials
     ? 'password saved'
     : 'password required'
-  return `${name} · ${r.ip} · ${link}${model ? ` · ${model}` : ''} · ${credential}${r.active ? ' · active' : ''}`
+  const route = r.via ? ` · via ${r.via}` : ''
+  return `${name} · ${r.ip} · ${link}${route}${model ? ` · ${model}` : ''} · ${credential}${r.active ? ' · active' : ''}`
 }
 
 async function selectDiscoveredRouter(r: DiscoveredRouter) {
@@ -1397,6 +1482,7 @@ async function selectDiscoveredRouter(r: DiscoveredRouter) {
   error.value = ''
   showConnectForm.value = false
   needsPassword.value = false
+  needsRootPassword.value = false
   trustRouterError.value = ''
   trustRouterDone.value = false
   walletInfo.value = null
@@ -1433,6 +1519,7 @@ async function trySelectRouter(
     })
     if (!result.ok) {
       needsPassword.value = true
+      needsRootPassword.value = !!result.needs_root_password
       showConnectForm.value = true
       error.value = result.needs_root_password
         ? result.error ||
@@ -1443,6 +1530,7 @@ async function trySelectRouter(
       return
     }
     needsPassword.value = false
+    needsRootPassword.value = false
     showConnectForm.value = false
     selectionConfirmed.value = true
     if (password) {
@@ -2975,7 +3063,11 @@ onMounted(() => {
         <h2 class="text-sm font-semibold text-white/80">Discovered gateways</h2>
         <div class="flex items-center gap-3">
           <label class="flex items-center gap-1 text-[11px] text-white/40">
-            <input v-model="showUnverifiedRouters" type="checkbox" />
+            <input
+              v-model="showUnverifiedRouters"
+              type="checkbox"
+              data-testid="show-unverified"
+            />
             Show unverified
           </label>
           <button
@@ -2984,6 +3076,36 @@ onMounted(() => {
             @click="discoverRouters"
           >
             {{ discovering ? 'Scanning…' : 'Rescan' }}
+          </button>
+        </div>
+      </div>
+      <div
+        v-if="staleActiveRouter"
+        class="mb-3 rounded-lg border border-yellow-400/40 bg-yellow-400/10 p-3"
+        data-testid="router-moved"
+      >
+        <p class="text-xs text-yellow-200">
+          The saved router
+          <span class="font-mono">{{ discoveryActiveAddress }}</span> is not
+          answering. The router looks like it is at
+          <span class="font-mono">{{ staleActiveRouter }}</span>.
+        </p>
+        <div class="mt-2 flex flex-wrap items-center gap-3">
+          <button
+            class="text-xs font-medium text-yellow-200 underline hover:text-yellow-100"
+            :disabled="connecting"
+            data-testid="router-moved-connect"
+            @click="connectSuggestedRouter"
+          >
+            Connect to {{ staleActiveRouter }}
+          </button>
+          <button
+            class="text-xs text-white/40 underline hover:text-white/70"
+            :disabled="forgettingStaleRouter"
+            data-testid="router-moved-forget"
+            @click="forgetStaleRouter"
+          >
+            {{ forgettingStaleRouter ? 'Forgetting…' : `Forget ${discoveryActiveAddress}` }}
           </button>
         </div>
       </div>
@@ -3136,7 +3258,21 @@ onMounted(() => {
               placeholder="(blank for none)"
               class="w-full px-4 py-3 bg-transparent border border-white/20 rounded-lg text-white placeholder-white/30 focus:outline-none focus:border-white/40 focus:ring-1 focus:ring-white/20 transition-colors"
             />
-            <p class="mt-1 text-[11px] text-white/30">
+            <template v-if="routerNeedsRootPassword">
+              <p
+                class="mt-1 text-[11px] text-yellow-300/80"
+                data-testid="root-password-guidance"
+              >
+                This router has no root password yet. Vanilla OpenWrt accepts
+                any password over Dropbear, but Archy needs a real one. Set it
+                on the router first:
+              </p>
+              <code
+                class="mt-1 block text-[11px] font-mono text-white/60 break-all"
+                data-testid="root-password-command"
+              >{{ rootPasswordCommand }}</code>
+            </template>
+            <p v-else class="mt-1 text-[11px] text-white/30">
               A fresh OpenWrt flash has no root password. Set one on the router
               or in the flash form before connecting.
             </p>
