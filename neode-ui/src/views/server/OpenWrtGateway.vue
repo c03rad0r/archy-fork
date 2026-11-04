@@ -3166,6 +3166,23 @@ onMounted(() => {
           <div v-if="!selectedRouter.ssh_open" class="text-white/40">
             No SSH — this host cannot be managed.
           </div>
+          <div
+            v-if="routerNeedsRootPassword"
+            class="mt-2 rounded-lg border border-yellow-400/20 bg-yellow-400/5 p-3 space-y-1"
+            data-testid="no-root-password"
+          >
+            <div class="text-yellow-300">
+              This router has no root password yet.
+            </div>
+            <div class="text-white/40">
+              Vanilla OpenWrt accepts any password over Dropbear, but Archy
+              needs a real one. Set it on the router first:
+            </div>
+            <code
+              class="block text-[11px] font-mono bg-black/30 rounded p-2 text-white/70 break-all whitespace-pre-wrap"
+              data-testid="root-password-command"
+            >{{ rootPasswordCommand }}</code>
+          </div>
 
           <div
             v-if="selectedRouter.ssh_open && selectedRouter.ssh_fingerprint"
@@ -3274,7 +3291,7 @@ onMounted(() => {
               </p>
               <code
                 class="mt-1 block text-[11px] font-mono text-white/60 break-all"
-                data-testid="root-password-command"
+                data-testid="root-password-command-connect"
               >{{ rootPasswordCommand }}</code>
             </template>
             <p v-else class="mt-1 text-[11px] text-white/30">
