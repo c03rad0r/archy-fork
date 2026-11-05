@@ -513,19 +513,88 @@ async fn set_wifi_radio(enabled: bool) -> Result<()> {
     Ok(())
 }
 
+/// UUID of an existing Wi-Fi profile with this exact SSID, if any.
+///
+/// `nmcli connection add` with a name that already exists only warns and
+/// creates a duplicate. Reusing the profile by UUID keeps the operator's own
+/// working connection instead of piling up copies.
+async fn wifi_profile_uuid(ssid: &str) -> Option<String> {
+    let list = tokio::process::Command::new("nmcli")
+        .args(["-t", "-f", "UUID,TYPE", "connection", "show"])
+        .output()
+        .await
+        .ok()?;
+    if !list.status.success() {
+        return None;
+    }
+    let text = String::from_utf8_lossy(&list.stdout);
+    for line in text.lines() {
+        let Some((uuid, kind)) = line.split_once(':') else {
+            continue;
+        };
+        if kind != "802-11-wireless" {
+            continue;
+        }
+        let Ok(out) = tokio::process::Command::new("nmcli")
+            .args(["-g", "802-11-wireless.ssid", "connection", "show", uuid])
+            .output()
+            .await
+        else {
+            continue;
+        };
+        if out.status.success() && String::from_utf8_lossy(&out.stdout).trim() == ssid {
+            return Some(uuid.to_string());
+        }
+    }
+    None
+}
+
 /// Connect to a WiFi network using nmcli.
 async fn connect_wifi(ssid: &str, password: &str) -> Result<()> {
-    let conn_name = format!("archipelago-wifi-{ssid}");
+    // Prefer an existing profile for this SSID. The operator may already have
+    // one (the node's own uplink), and a previous version deleted a profile
+    // named after the SSID, which could destroy that working connection.
+    if let Some(uuid) = wifi_profile_uuid(ssid).await {
+        if !password.is_empty() {
+            let modify = tokio::process::Command::new("nmcli")
+                .args([
+                    "connection",
+                    "modify",
+                    &uuid,
+                    "wifi-sec.key-mgmt",
+                    "wpa-psk",
+                    "wifi-sec.psk",
+                    password,
+                ])
+                .output()
+                .await
+                .context("Failed to run nmcli wifi profile modify")?;
+            if !modify.status.success() {
+                anyhow::bail!(
+                    "WiFi profile update failed: {}",
+                    String::from_utf8_lossy(&modify.stderr)
+                );
+            }
+        }
+        let activate = tokio::process::Command::new("nmcli")
+            .args(["connection", "up", &uuid])
+            .output()
+            .await
+            .context("Failed to run nmcli wifi connect")?;
+        if !activate.status.success() {
+            anyhow::bail!(
+                "WiFi connection failed: {}",
+                String::from_utf8_lossy(&activate.stderr)
+            );
+        }
+        return Ok(());
+    }
 
-    // Delete prior profiles for this SSID/name first. Failed attempts can leave
-    // a profile with key-mgmt but no saved PSK, causing future retries to fail
-    // with "no secrets" before the supplied password is used.
+    let conn_name = format!("archipelago-wifi-{ssid}");
+    // Only Archy's own profile name is ours to replace. A bare-SSID profile
+    // belongs to the operator.
     let _ = tokio::process::Command::new("nmcli")
         .args(["connection", "delete", &conn_name])
-        .output()
-        .await;
-    let _ = tokio::process::Command::new("nmcli")
-        .args(["connection", "delete", ssid])
         .output()
         .await;
 
