@@ -99,15 +99,13 @@ impl MetricsStore {
 
     /// Decrement WebSocket connection count (called on disconnect).
     pub fn decrement_ws(&self) {
-        // Use saturating semantics to avoid underflow
+        // Use saturating semantics to avoid underflow. `fetch_update` is the
+        // stable CAS loop; `try_update` is still unstable on the toolchain
+        // this repo builds with.
         let _ = self
             .ws_connections
-            .try_update(Ordering::Relaxed, Ordering::Relaxed, |v| {
-                if v > 0 {
-                    Some(v - 1)
-                } else {
-                    Some(0)
-                }
+            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |v| {
+                Some(v.saturating_sub(1))
             });
     }
 
