@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed, onMounted, onUnmounted, nextTick } from 'vue'
+import { ref, computed, onMounted, onUnmounted, nextTick, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { rpcClient } from '@/api/rpc-client'
 import { useCachedResource } from '@/composables/useCachedResource'
@@ -111,6 +111,7 @@ interface DiscoveredRouter {
   interface?: string
   subnet?: string
   has_saved_credentials?: boolean
+  identity_confirmed?: boolean
   saved_hostname?: string
   saved_model?: string
   kind?: string
@@ -491,6 +492,15 @@ const selectedRouterIp = ref('')
 const needsPassword = ref(false)
 const needsRootPassword = ref(false)
 const selectionConfirmed = ref(false)
+// A moved router is followed automatically only when its MAC already has a
+// remembered credential. Address equality alone is not identity. One shot per
+// page load; a manual Rescan re-arms it.
+const autoConnectAttempted = ref(false)
+const passwordCheckState = ref<'' | 'checking' | 'wrong' | 'accepted'>('')
+let passwordDebounceTimer: ReturnType<typeof setTimeout> | null = null
+let lastPasswordAttemptAt = 0
+let lastAttemptedPassword = ''
+let passwordAutoAttempts = 0
 const selectedRouter = computed(() =>
   discovered.value.find(r => r.ip === selectedRouterIp.value) ?? null,
 )
@@ -1271,6 +1281,72 @@ async function connect() {
   await trySelectRouter(router, sshPassword.value, true)
 }
 
+/// The password field is a one-shot control: when the operator types the right
+/// password, the page should connect without a second click. Debounced so a
+/// typo does not become one SSH auth attempt per keystroke, throttled so a
+/// paste-and-edit sequence cannot hammer Dropbear, and capped so a genuinely
+/// wrong password still falls back to an explicit action.
+const PASSWORD_DEBOUNCE_MS = 600
+const PASSWORD_MIN_INTERVAL_MS = 1200
+const PASSWORD_MAX_AUTO_ATTEMPTS = 5
+
+function passwordAttemptReady(): boolean {
+  return (
+    sshPassword.value.length > 0 &&
+    !connecting.value &&
+    !provisioning.value &&
+    !flashRunning.value
+  )
+}
+
+function notePasswordAttempt(): void {
+  lastPasswordAttemptAt = Date.now()
+  lastAttemptedPassword = sshPassword.value
+  passwordAutoAttempts += 1
+  passwordCheckState.value = 'checking'
+}
+
+function submitPasswordIfReady(): void {
+  if (!passwordAttemptReady()) return
+  if (sshPassword.value === lastAttemptedPassword) return
+  if (passwordAutoAttempts >= PASSWORD_MAX_AUTO_ATTEMPTS) return
+  notePasswordAttempt()
+  void connect()
+}
+
+function submitPasswordNow(): void {
+  if (passwordDebounceTimer !== null) {
+    clearTimeout(passwordDebounceTimer)
+    passwordDebounceTimer = null
+  }
+  submitPasswordIfReady()
+}
+
+function onPasswordBlur(): void {
+  submitPasswordNow()
+}
+
+watch(sshPassword, value => {
+  if (passwordDebounceTimer !== null) {
+    clearTimeout(passwordDebounceTimer)
+    passwordDebounceTimer = null
+  }
+  passwordCheckState.value = ''
+  if (!value) {
+    // Emptying the field is an explicit reset, not another try.
+    lastAttemptedPassword = ''
+    passwordAutoAttempts = 0
+    return
+  }
+  if (!needsPassword.value && !showConnectForm.value) return
+  const elapsed = Date.now() - lastPasswordAttemptAt
+  const wait = Math.max(PASSWORD_DEBOUNCE_MS, PASSWORD_MIN_INTERVAL_MS - elapsed)
+  passwordDebounceTimer = setTimeout(() => {
+    passwordDebounceTimer = null
+    submitPasswordIfReady()
+  }, wait)
+})
+
 interface WiredInterface { name: string; type: string; state: string; ipv4: string[] }
 
 async function detectRouter() {
@@ -1344,7 +1420,8 @@ async function loadInstallerStatus() {
   }
 }
 
-async function discoverRouters() {
+async function discoverRouters(resetAutoConnect = false) {
+  if (resetAutoConnect) autoConnectAttempted.value = false
   discovering.value = true
   discoveryError.value = ''
   try {
@@ -1384,11 +1461,40 @@ async function discoverRouters() {
     if (!current || !(current.ssh_open || current.identified)) {
       selectedRouterIp.value = preferred
     }
+    maybeAutoConnect(manageable)
   } catch (e) {
     discoveryError.value = e instanceof Error ? e.message : String(e)
   } finally {
     discovering.value = false
   }
+}
+
+/// Follow a router that already proved its identity by MAC. Address equality
+/// cannot prove it after a reflash; a MAC match can. A venue gateway can also
+/// be on-link and SSH-open, so "exactly one manageable host" is too strict:
+/// exactly one *MAC-confirmed* host is the right condition. Only that host is
+/// followed; ambiguous multiple matches are left to the operator.
+function maybeAutoConnect(manageable: DiscoveredRouter[]): void {
+  if (autoConnectAttempted.value || selectionConfirmed.value || connecting.value) return
+  if (provisioning.value || flashRunning.value) return
+  // A reload during a provision job must not repoint the router mid-install.
+  if (provisionProgress.value?.steps?.some(step => step.status === 'running')) return
+  const confirmed = manageable.filter(r => r.identity_confirmed === true)
+  if (confirmed.length !== 1) return
+  const target = confirmed[0]!
+  autoConnectAttempted.value = true
+  selectedRouterIp.value = target.ip
+  host.value = target.ip
+  // A vanilla flash has no root password. Connecting cannot succeed until the
+  // operator sets one, so show the one guidance block and the field instead of
+  // burning an attempt that is guaranteed to fail.
+  if (target.password_status === 'not_required') {
+    needsPassword.value = true
+    needsRootPassword.value = true
+    showConnectForm.value = true
+    return
+  }
+  void selectDiscoveredRouter(target)
 }
 
 function onDiscoveryChange() {
@@ -1404,6 +1510,9 @@ const staleActiveRouter = computed(() => {
   if (!saved || discoveryActiveReachable.value) return ''
   const suggestion = discoverySuggested.value
   if (!suggestion || suggestion === saved) return ''
+  // A MAC-confirmed router is followed automatically. Suppress the banner
+  // whenever one exists; a second confirmation would duplicate that action.
+  if (discovered.value.some(r => r.identity_confirmed)) return ''
   return suggestion
 })
 
@@ -1418,14 +1527,23 @@ async function connectSuggestedRouter() {
 /// Telling the operator "the password was refused" hides the real fix.
 const routerNeedsRootPassword = computed(
   () =>
-    needsRootPassword.value ||
-    selectedRouter.value?.password_status === 'not_required',
+    !selectionConfirmed.value &&
+    (needsRootPassword.value ||
+      selectedRouter.value?.password_status === 'not_required'),
 )
 
 const rootPasswordCommand = computed(() => {
   const ip = selectedRouter.value?.ip || host.value.trim() || '<router-ip>'
   return `ssh root@${ip} 'printf "NEW_PASSWORD\\nNEW_PASSWORD\\n" | passwd root'`
 })
+
+async function copyRootPasswordCommand() {
+  try {
+    await navigator.clipboard.writeText(rootPasswordCommand.value)
+  } catch {
+    // Clipboard permission can be denied; the command is still selectable.
+  }
+}
 
 async function forgetStaleRouter() {
   const saved = discoveryActiveAddress.value
@@ -1488,6 +1606,13 @@ async function selectDiscoveredRouter(r: DiscoveredRouter) {
   showConnectForm.value = false
   needsPassword.value = false
   needsRootPassword.value = false
+  passwordCheckState.value = ''
+  lastAttemptedPassword = ''
+  passwordAutoAttempts = 0
+  if (passwordDebounceTimer !== null) {
+    clearTimeout(passwordDebounceTimer)
+    passwordDebounceTimer = null
+  }
   trustRouterError.value = ''
   trustRouterDone.value = false
   walletInfo.value = null
@@ -1508,6 +1633,8 @@ async function trySelectRouter(
   connecting.value = true
   selectionConfirmed.value = false
   error.value = ''
+  if (password) passwordCheckState.value = 'checking'
+  lastAttemptedPassword = password
   try {
     const result = await rpcClient.call<SelectRouterResult>({
       method: 'openwrt.select-router',
@@ -1526,9 +1653,11 @@ async function trySelectRouter(
       needsPassword.value = true
       needsRootPassword.value = !!result.needs_root_password
       showConnectForm.value = true
+      passwordCheckState.value = result.bad_password ? 'wrong' : ''
+      // The card already renders the "no root password" guidance and command.
+      // Repeating it here was the third copy of the same paragraph.
       error.value = result.needs_root_password
-        ? result.error ||
-          'Fresh OpenWrt has no root password. Set one on the router or in the flash form.'
+        ? ''
         : result.bad_password
           ? 'That root password was refused. Enter the router root password.'
           : result.error || 'This router needs a root password.'
@@ -1537,6 +1666,7 @@ async function trySelectRouter(
     needsPassword.value = false
     needsRootPassword.value = false
     showConnectForm.value = false
+    passwordCheckState.value = password ? 'accepted' : ''
     selectionConfirmed.value = true
     if (password) {
       await load({
@@ -1550,6 +1680,7 @@ async function trySelectRouter(
     await discoverRouters()
   } catch (e) {
     selectionConfirmed.value = false
+    passwordCheckState.value = password ? 'wrong' : ''
     error.value = e instanceof Error ? e.message : String(e)
     showConnectForm.value = true
     needsPassword.value = true
@@ -2135,6 +2266,10 @@ onUnmounted(() => {
   if (clockTimer !== null) {
     clearInterval(clockTimer)
     clockTimer = null
+  }
+  if (passwordDebounceTimer !== null) {
+    clearTimeout(passwordDebounceTimer)
+    passwordDebounceTimer = null
   }
 })
 
@@ -3078,7 +3213,7 @@ onMounted(() => {
           <button
             class="text-xs text-white/40 hover:text-white"
             :disabled="discovering"
-            @click="discoverRouters"
+            @click="discoverRouters(true)"
           >
             {{ discovering ? 'Scanning…' : 'Rescan' }}
           </button>
@@ -3157,7 +3292,7 @@ onMounted(() => {
               · {{ selectedRouter.firmware }}
             </span>
           </div>
-          <div v-if="selectedRouter.has_saved_credentials" class="text-green-300">
+          <div v-if="selectedRouter.has_saved_credentials && !routerNeedsRootPassword" class="text-green-300">
             Root password saved for this router.
           </div>
           <div v-else class="text-white/40">
@@ -3182,6 +3317,13 @@ onMounted(() => {
               class="block text-[11px] font-mono bg-black/30 rounded p-2 text-white/70 break-all whitespace-pre-wrap"
               data-testid="root-password-command"
             >{{ rootPasswordCommand }}</code>
+            <button
+              class="text-[11px] text-white/50 underline hover:text-white"
+              data-testid="copy-root-password-command"
+              @click="copyRootPasswordCommand"
+            >
+              Copy command
+            </button>
           </div>
 
           <div
@@ -3214,7 +3356,7 @@ onMounted(() => {
           </div>
 
           <button
-            v-if="!selectionConfirmed"
+            v-if="!selectionConfirmed && !showConnectForm"
             class="glass-button glass-button-success mt-2 text-xs px-3 py-1.5"
             :disabled="connecting"
             :class="connecting ? 'opacity-40 cursor-not-allowed' : ''"
@@ -3273,14 +3415,40 @@ onMounted(() => {
             />
           </div>
           <div v-if="needsPassword || !selectedRouter?.has_saved_credentials">
-            <label class="block text-xs text-white/40 mb-1">Password</label>
+            <label class="block text-xs text-white/40 mb-1">
+              {{ routerNeedsRootPassword ? 'New root password' : 'Password' }}
+            </label>
             <input
               v-model="sshPassword"
               type="password"
-              placeholder="(blank for none)"
+              data-testid="password-input"
+              :placeholder="routerNeedsRootPassword ? 'Set it on the router, then enter it here' : '(blank for none)'"
               class="w-full px-4 py-3 bg-transparent border border-white/20 rounded-lg text-white placeholder-white/30 focus:outline-none focus:border-white/40 focus:ring-1 focus:ring-white/20 transition-colors"
+              @keyup.enter="submitPasswordNow"
+              @blur="onPasswordBlur"
             />
-            <template v-if="routerNeedsRootPassword">
+            <p
+              v-if="passwordCheckState === 'checking'"
+              class="mt-1 text-[11px] text-white/40"
+              data-testid="password-checking"
+            >
+              Checking…
+            </p>
+            <p
+              v-else-if="passwordCheckState === 'wrong'"
+              class="mt-1 text-[11px] text-red-300"
+              data-testid="password-wrong"
+            >
+              That password was refused.
+            </p>
+            <p
+              v-else-if="passwordCheckState === 'accepted'"
+              class="mt-1 text-[11px] text-green-300"
+              data-testid="password-accepted"
+            >
+              Password accepted.
+            </p>
+            <template v-if="routerNeedsRootPassword && !selectedRouter">
               <p
                 class="mt-1 text-[11px] text-yellow-300/80"
                 data-testid="root-password-guidance"
@@ -3294,22 +3462,18 @@ onMounted(() => {
                 data-testid="root-password-command-connect"
               >{{ rootPasswordCommand }}</code>
             </template>
-            <p v-else class="mt-1 text-[11px] text-white/30">
-              A fresh OpenWrt flash has no root password. Set one on the router
-              or in the flash form before connecting.
-            </p>
           </div>
         </div>
         <p
-          v-if="selectedRouter?.has_saved_credentials && !needsPassword"
+          v-if="selectedRouter?.has_saved_credentials && !needsPassword && !routerNeedsRootPassword"
           class="text-xs text-green-300"
         >
           Using the saved root password. If it is refused, the password field appears.
         </p>
         <button
-          :disabled="connecting || !host.trim()"
+          :disabled="connecting || !host.trim() || (routerNeedsRootPassword && !sshPassword)"
           class="glass-button w-full text-sm font-medium"
-          :class="connecting || !host.trim() ? 'opacity-40 cursor-not-allowed' : 'glass-button-warning'"
+          :class="connecting || !host.trim() || (routerNeedsRootPassword && !sshPassword) ? 'opacity-40 cursor-not-allowed' : 'glass-button-warning'"
           @click="connect"
         >
           {{ connecting ? 'Connecting…' : 'Connect' }}

@@ -1029,6 +1029,17 @@ fn validate_mint_url(url: &str) -> Result<()> {
     Ok(())
 }
 
+/// True when this scan entry's MAC is the key of a remembered credential.
+///
+/// Address equality cannot prove identity after a reflash or DHCP change: a
+/// different device can answer the old address. A MAC match can, and it lets
+/// the UI follow a moved router without asking the operator to confirm the
+/// same hardware a second time.
+fn identity_confirmed_by_mac(known: &net_router::KnownRouters, mac: Option<&str>) -> bool {
+    mac.map(|m| known.contains_key(&m.to_ascii_lowercase()))
+        .unwrap_or(false)
+}
+
 /// Prefer the entry that represents the router the operator is actually
 /// managing: active config first, then a remembered credential, then a
 /// completed identify.
@@ -2287,6 +2298,10 @@ impl RpcHandler {
                 .and_then(|v| v.as_str())
                 .map(str::to_string);
             let remembered = net_router::find_known_router(&known, &ip, mac.as_deref());
+            // MAC-keyed, so an address change does not break identity. The UI
+            // uses this to follow a moved router without a second confirmation.
+            router["identity_confirmed"] =
+                serde_json::json!(identity_confirmed_by_mac(&known, mac.as_deref()));
             let active_has_password = saved.configured
                 && ip == saved.address
                 && saved
@@ -3992,6 +4007,32 @@ mod tests {
             "identified": true,
         });
         assert!(router_manageable(&router));
+    }
+
+    #[test]
+    fn identity_is_confirmed_by_mac_not_address() {
+        let mut known = net_router::KnownRouters::new();
+        known.insert(
+            "94:83:c4:8c:59:c3".to_string(),
+            net_router::KnownRouter {
+                hostname: "archipelago-2A39".to_string(),
+                model: "GL-MT3000".to_string(),
+                username: "root".to_string(),
+                password: "secret".to_string(),
+                last_seen: String::new(),
+            },
+        );
+
+        // A moved router keeps its MAC; case is irrelevant.
+        assert!(identity_confirmed_by_mac(&known, Some("94:83:c4:8c:59:c3")));
+        assert!(identity_confirmed_by_mac(&known, Some("94:83:C4:8C:59:C3")));
+        // A different device answering the old address is not the router.
+        assert!(!identity_confirmed_by_mac(
+            &known,
+            Some("aa:bb:cc:dd:ee:ff")
+        ));
+        // No MAC means no proof; never infer identity from the address alone.
+        assert!(!identity_confirmed_by_mac(&known, None));
     }
 
     #[test]
