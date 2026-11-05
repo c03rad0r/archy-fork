@@ -476,6 +476,53 @@ const installMints = ref<MintConfig[]>(defaultInstallMints())
 const installNewMint = ref('')
 const installShowTestMints = ref(false)
 const installPayoutAddress = ref('')
+// Default payout address: the node's own identity lud16 if it has one, else
+// the last address this operator used. "Change" clears the field so a new
+// default can be typed, and a successful install stores it for next time.
+const payoutDefault = ref('')
+const payoutInput = ref<HTMLInputElement>()
+const PAYOUT_STORAGE_KEY = 'archy.tollgate.payout_address'
+
+async function loadDefaultPayoutAddress() {
+  let nodeDefault = ''
+  try {
+    const result = await rpcClient.call<{
+      identities?: Array<{
+        is_default?: boolean
+        is_node?: boolean
+        profile?: { lud16?: string }
+      }>
+    }>({
+      method: 'identity.list',
+      timeout: 15000,
+    })
+    const withAddress = (result.identities ?? []).filter(
+      i => (i.profile?.lud16 ?? '').trim().length > 0,
+    )
+    const preferred =
+      withAddress.find(i => i.is_default) ??
+      withAddress.find(i => !i.is_node) ??
+      withAddress[0]
+    nodeDefault = (preferred?.profile?.lud16 ?? '').trim()
+  } catch {
+    // Identity listing is optional; the field stays fully editable.
+  }
+  payoutDefault.value = nodeDefault
+  let stored = ''
+  try {
+    stored = (localStorage.getItem(PAYOUT_STORAGE_KEY) ?? '').trim()
+  } catch {
+    // localStorage unavailable
+  }
+  if (!installPayoutAddress.value.trim()) {
+    installPayoutAddress.value = stored || nodeDefault
+  }
+}
+
+function changePayoutAddress() {
+  installPayoutAddress.value = ''
+  void nextTick(() => payoutInput.value?.focus())
+}
 
 const installerStatus = ref<InstallerStatus | null>(null)
 const discovered = ref<DiscoveredRouter[]>([])
@@ -1272,8 +1319,9 @@ function syncInstallTestMints() {
 }
 
 async function connect() {
-  const ip = host.value.trim()
+  const ip = host.value.trim() || selectedRouter.value?.ip || ''
   if (!ip) return
+  if (!host.value.trim()) host.value = ip
   const router: DiscoveredRouter =
     selectedRouter.value && selectedRouter.value.ip === ip
       ? selectedRouter.value
@@ -1292,6 +1340,7 @@ const PASSWORD_MAX_AUTO_ATTEMPTS = 5
 
 function passwordAttemptReady(): boolean {
   return (
+    (host.value.trim().length > 0 || !!selectedRouter.value?.ip) &&
     sshPassword.value.length > 0 &&
     !connecting.value &&
     !provisioning.value &&
@@ -1345,6 +1394,15 @@ watch(sshPassword, value => {
     passwordDebounceTimer = null
     submitPasswordIfReady()
   }, wait)
+})
+
+// The password can be typed before discovery has named the host (or before a
+// selection is confirmed). Retry when the host becomes available rather than
+// burning the one auto-attempt on an empty address.
+watch(host, () => {
+  if (!sshPassword.value) return
+  if (!needsPassword.value && !showConnectForm.value) return
+  submitPasswordNow()
 })
 
 interface WiredInterface { name: string; type: string; state: string; ipv4: string[] }
@@ -2720,6 +2778,14 @@ async function runProvisionRequest(
     }
     provisionSkippedMints.value = result?.skipped_mints ?? []
     provisionSuccess.value = true
+    try {
+      localStorage.setItem(
+        PAYOUT_STORAGE_KEY,
+        String(params.payout_address ?? installPayoutAddress.value).trim(),
+      )
+    } catch {
+      // localStorage unavailable; the field still works for this install.
+    }
     syncActiveHost(result?.host)
     await load(connectedParams.value ?? undefined)
     await loadInstallerStatus()
@@ -3185,6 +3251,7 @@ onMounted(() => {
   void loadInstallerStatus()
   void discoverRouters()
   void resumeProvisionProgress()
+  void loadDefaultPayoutAddress()
 })
 </script>
 
@@ -3989,14 +4056,37 @@ onMounted(() => {
               Unreachable mints are skipped before the daemon starts; the five defaults are the production set.
             </p>
           </div>
-          <label class="block mb-3">
-            <span class="block text-xs text-white/40 mb-1">Payout Lightning address (required)</span>
-            <input v-model="installPayoutAddress" type="text" placeholder="you@wallet.example"
-              class="w-full px-3 py-2 bg-transparent border border-white/20 rounded-lg text-white placeholder-white/30 focus:outline-none focus:border-white/40" />
+          <div class="block mb-3">
+            <div class="flex items-center justify-between mb-1">
+              <label for="install-payout-address" class="block text-xs text-white/40">
+                Payout Lightning address (required)
+              </label>
+              <button
+                type="button"
+                class="text-[11px] text-white/40 underline hover:text-white"
+                data-testid="change-payout-address"
+                @click="changePayoutAddress"
+              >
+                Change
+              </button>
+            </div>
+            <input
+              id="install-payout-address"
+              ref="payoutInput"
+              v-model="installPayoutAddress"
+              type="text"
+              placeholder="you@wallet.example"
+              data-testid="install-payout-address"
+              class="w-full px-3 py-2 bg-transparent border border-white/20 rounded-lg text-white placeholder-white/30 focus:outline-none focus:border-white/40"
+            />
             <span class="block text-[11px] text-white/30 mt-1">
-              Where TollGate sends the operator share. The official installer requires it.
+              {{
+                payoutDefault
+                  ? `Default from this node: ${payoutDefault}. Change stores a new default for the next install.`
+                  : 'Where TollGate sends the operator share. The official installer requires it.'
+              }}
             </span>
-          </label>
+          </div>
           <ProvisionProgressPanel
             v-if="provisionProgress && provisionProgress.kind === 'install'"
             :progress="provisionProgress"
