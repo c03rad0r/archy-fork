@@ -1148,10 +1148,16 @@ const mintRows = computed<MintConfig[]>(() => {
 const advertisedMintCount = computed(() => status.value?.tollgate?.advertised_mints?.length ?? 0)
 
 // WAN setup flow
-type WanStep = 'idle' | 'scan' | 'scanning' | 'list' | 'password' | 'dhcp' | 'connecting' | 'done'
+type WanStep = 'idle' | 'scan' | 'scanning' | 'list' | 'password' | 'dhcp' | 'testing' | 'connecting' | 'done'
 const wanStep = ref<WanStep>('idle')
 const scannedNetworks = ref<ScannedNetwork[]>([])
 const selectedNetwork = ref<ScannedNetwork | null>(null)
+const selectedUplinkSsid = ref('')
+
+function onUplinkPick() {
+  const net = rankedUplinkNetworks.value.find(n => n.ssid === selectedUplinkSsid.value)
+  if (net) selectRankedUplink(net)
+}
 const wanPassword = ref('')
 
 // The node's own Wi-Fi uplink, offered as a prefilled WAN source. The
@@ -3070,46 +3076,93 @@ async function restartTollgate() {
   }
 }
 
-function startWanSetup() {
+async function startWanSetup() {
   wanStep.value = 'scan'
   wanError.value = ''
   wanRadio.value = ''
   showAllUplinkNetworks.value = false
   scannedNetworks.value = []
   selectedNetwork.value = null
+  selectedUplinkSsid.value = ''
   wanPassword.value = ''
   nodeUpstream.value = null
   dhcpStart.value = Number(status.value?.wan?.dhcp_start) || 100
   dhcpLimit.value = Number(status.value?.wan?.dhcp_limit) || 150
   masqEnabled.value = true
-  void loadNodeUpstream()
+
+  const up = await loadNodeUpstream()
+  if (up && !flashRunning.value && !provisioning.value) {
+    await connectUsingNodeCredentials()
+  } else {
+    await scanWifi()
+  }
 }
 
-async function loadNodeUpstream() {
+async function loadNodeUpstream(): Promise<UpstreamWifi | null> {
   try {
     const result = await rpcClient.call<UpstreamWifi>({
       method: 'network.upstream-wifi',
       timeout: 10000,
     })
-    nodeUpstream.value =
+    const up =
       result?.configured && result.ssid && result.has_password ? result : null
+    nodeUpstream.value = up
+    return up
   } catch {
     // A wired node, an enterprise uplink or an unreadable secret all land
     // here on purpose: the manual scan/password path is still available.
     nodeUpstream.value = null
+    return null
   }
 }
 
 function dismissNodeUpstream() {
   nodeUpstream.value = null
+  void scanWifi()
+}
+
+/// Probe upstream Wi-Fi with rollback through the installer. A failed probe
+/// never replaces the current WAN. The node's PSK is resolved server-side; only
+/// the SSID and has_password reach the browser.
+async function testUpstreamWifi(args: {
+  ssid: string
+  password?: string
+  band?: string
+  use_node_credentials?: boolean
+}): Promise<void> {
+  const result = await rpcClient.call<{
+    ok?: boolean
+    error?: string
+    message?: string
+  }>({
+    method: 'openwrt.installer.wifi-test',
+    params: {
+      host: host.value.trim() || status.value?.host || '',
+      password: String(authParams().ssh_password ?? ''),
+      ssid: args.ssid,
+      wifiPass: args.use_node_credentials ? '' : (args.password ?? ''),
+      use_node_credentials: args.use_node_credentials ?? false,
+      ...(args.band ? { band: args.band } : {}),
+    },
+    timeout: 120000,
+  })
+  if (result?.ok === false) {
+    throw new Error(result.error || result.message || 'Upstream Wi-Fi test failed')
+  }
 }
 
 async function connectUsingNodeCredentials() {
   const up = nodeUpstream.value
   if (!up?.ssid) return
-  wanStep.value = 'connecting'
+  wanStep.value = 'testing'
   wanError.value = ''
   try {
+    await testUpstreamWifi({
+      ssid: up.ssid,
+      band: up.band || undefined,
+      use_node_credentials: true,
+    })
+    wanStep.value = 'connecting'
     const result = await rpcClient.call<{ radio?: string }>({
       method: 'openwrt.configure-wan',
       params: {
@@ -3174,8 +3227,21 @@ function selectNetwork(net: ScannedNetwork) {
 
 async function configureWan() {
   if (!selectedNetwork.value) return
-  wanStep.value = 'connecting'
+  const band = selectedNetwork.value.band || bandForChannel(selectedNetwork.value.channel)
+  wanStep.value = 'testing'
   wanError.value = ''
+  try {
+    await testUpstreamWifi({
+      ssid: selectedNetwork.value.ssid,
+      password: wanPassword.value,
+      band: band || undefined,
+    })
+  } catch (e) {
+    wanError.value = e instanceof Error ? e.message : String(e)
+    wanStep.value = 'password'
+    return
+  }
+  wanStep.value = 'connecting'
   try {
     const params: Record<string, unknown> = {
       ...authParams(),
@@ -3290,6 +3356,8 @@ watchEffect(() => {
   routerWorkInProgress.value =
     flashRunning.value ||
     provisioning.value ||
+    wanStep.value === 'testing' ||
+    wanStep.value === 'connecting' ||
     !!provisionProgress.value?.steps?.some(step => step.status === 'running')
 })
 
@@ -3848,37 +3916,28 @@ onMounted(() => {
           <div v-if="rankedUplinkNetworks.length === 0" class="text-sm text-white/50">
             No networks found. Try scanning again.
           </div>
-          <div class="space-y-1.5">
-            <button
+          <label class="block text-xs text-white/40 mb-1">Upstream SSID</label>
+          <select
+            v-model="selectedUplinkSsid"
+            class="w-full px-3 py-2.5 bg-black/30 border border-white/20 rounded-lg text-white text-sm focus:outline-none focus:border-white/40"
+            data-testid="uplink-select"
+            @change="onUplinkPick"
+          >
+            <option value="">Select an upstream SSID…</option>
+            <option
               v-for="net in visibleUplinkNetworks"
               :key="net.ssid"
-              class="w-full flex items-center justify-between px-3 py-2.5 rounded-lg border border-white/10 hover:border-white/30 hover:bg-white/5 transition-colors text-left"
-              data-testid="uplink-network"
+              :value="net.ssid"
               :data-ssid="net.ssid"
               :data-tollgate="net.isTollGate ? 'true' : 'false'"
-              @click="selectRankedUplink(net)"
+              data-testid="uplink-option"
             >
-              <div class="flex items-center gap-2.5">
-                <!-- Signal bars -->
-                <div class="flex items-end gap-0.5 h-4">
-                  <div v-for="b in 4" :key="b"
-                    class="w-1 rounded-sm"
-                    :class="[
-                      b * 1 <= signalBars(net.signal) ? 'bg-white/70' : 'bg-white/15',
-                      b === 1 ? 'h-1' : b === 2 ? 'h-2' : b === 3 ? 'h-3' : 'h-4'
-                    ]"
-                  ></div>
-                </div>
-                <span class="text-white text-sm">{{ net.ssid }}</span>
-                <span v-if="net.isTollGate"
-                  class="text-xs px-1.5 py-0.5 rounded bg-blue-500/20 text-blue-300">TollGate</span>
-                <span v-if="net.encryption !== 'none'" class="text-white/30 text-xs">🔒</span>
-              </div>
-              <span class="text-xs text-white/30 font-mono flex-shrink-0">
-                {{ net.radios > 1 ? `${net.radios} radios` : `ch${net.channel ?? 0}` }}
-              </span>
-            </button>
-          </div>
+              {{ net.ssid }}
+              · {{ net.encryption === 'none' ? 'open' : net.encryption }}
+              · {{ net.radios > 1 ? `${net.radios} radios` : `ch${net.channel ?? 0}` }}
+              · {{ net.signal }} dBm{{ net.isTollGate ? ' · TollGate' : '' }}
+            </option>
+          </select>
           <button
             v-if="hiddenUplinkCount > 0"
             class="mt-2 text-xs text-white/40 hover:text-white"
@@ -3981,6 +4040,17 @@ onMounted(() => {
               Apply Settings
             </button>
             <button class="text-xs text-white/40 hover:text-white px-3 py-2" @click="wanStep = 'password'">←</button>
+          </div>
+        </template>
+
+        <!-- Step: reversible upstream Wi-Fi test -->
+        <template v-else-if="wanStep === 'testing'">
+          <div class="flex items-center gap-3 py-2" data-testid="uplink-testing">
+            <svg class="animate-spin w-4 h-4 text-white/50" fill="none" viewBox="0 0 24 24">
+              <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/>
+              <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8z"/>
+            </svg>
+            <span class="text-sm text-white/50">Testing upstream Wi-Fi before applying…</span>
           </div>
         </template>
 

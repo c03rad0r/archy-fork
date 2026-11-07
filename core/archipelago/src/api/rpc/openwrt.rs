@@ -2706,6 +2706,60 @@ impl RpcHandler {
         client.identify(&ip, &password).await
     }
 
+    /// Test an upstream SSID/password through the installer (temporary STA
+    /// configuration plus rollback), never by replacing the current WAN first.
+    pub(super) async fn handle_openwrt_installer_wifi_test(
+        &self,
+        params: Option<serde_json::Value>,
+    ) -> Result<serde_json::Value> {
+        let saved = net_router::load_router_config(&self.config.data_dir).await?;
+        let p = params.unwrap_or_default();
+        let ip = p
+            .get("ip")
+            .or_else(|| p.get("host"))
+            .and_then(|v| v.as_str())
+            .map(str::to_string)
+            .or_else(|| saved.configured.then(|| saved.address.clone()))
+            .ok_or_else(|| anyhow::anyhow!("ip is required"))?;
+        let ssh_password = p
+            .get("password")
+            .or_else(|| p.get("ssh_password"))
+            .and_then(|v| v.as_str())
+            .map(str::to_string)
+            .or_else(|| saved.password.clone())
+            .unwrap_or_default();
+        let ssid = p
+            .get("ssid")
+            .and_then(|v| v.as_str())
+            .filter(|s| !s.trim().is_empty())
+            .ok_or_else(|| anyhow::anyhow!("ssid is required"))?;
+        let mut wifi_pass = p
+            .get("wifiPass")
+            .or_else(|| p.get("wifi_pass"))
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
+        let use_node = p
+            .get("use_node_credentials")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
+        if use_node {
+            // Resolve the PSK from NetworkManager on this node. The browser
+            // never sees it, and it is only forwarded to the local installer.
+            if let Ok(Some((node_ssid, node_psk))) =
+                super::interfaces::upstream_wifi_psk().await
+            {
+                if wifi_pass.is_empty() && ssid == node_ssid {
+                    wifi_pass = node_psk;
+                }
+            }
+        }
+        let band = p.get("band").and_then(|v| v.as_str());
+        let client = InstallerClient::new(&self.config.data_dir);
+        client.ensure_running().await?;
+        client.wifi_test(&ip, &ssh_password, ssid, &wifi_pass, band).await
+    }
+
     /// Set a vanilla root password through the installer. The secret is only
     /// forwarded to the local installer, never logged by Archy.
     pub(super) async fn handle_openwrt_installer_set_root_password(

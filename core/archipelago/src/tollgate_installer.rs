@@ -158,6 +158,29 @@ impl InstallerClient {
         .await
     }
 
+    /// Exercise an upstream SSID/password through the installer. The installer
+    /// applies temporary STA settings, checks association/DHCP and rolls them
+    /// back on failure. No WAN change is applied by this probe itself.
+    pub async fn wifi_test(
+        &self,
+        ip: &str,
+        password: &str,
+        ssid: &str,
+        wifi_pass: &str,
+        band: Option<&str>,
+    ) -> Result<Value> {
+        let mut body = json!({
+            "ip": ip,
+            "password": password,
+            "ssid": ssid,
+            "wifiPass": wifi_pass,
+        });
+        if let Some(band) = band {
+            body["band"] = serde_json::Value::String(band.to_string());
+        }
+        self.post("/api/wifi-test", body).await
+    }
+
     pub async fn trust(&self, ip: &str, fingerprint: &str) -> Result<Value> {
         self.post(
             "/api/trust-host-key",
@@ -266,10 +289,14 @@ impl InstallerClient {
     }
 
     async fn post(&self, path: &str, body: Value) -> Result<Value> {
+        // A probe can try multiple radios plus association/DHCP and rollback;
+        // it legitimately exceeds the short metadata request timeout.
+        let timeout = if path == "/api/wifi-test" { 90 } else { 20 };
         let resp = self
             .http
             .post(format!("{}{}", self.base, path))
             .json(&body)
+            .timeout(Duration::from_secs(timeout))
             .send()
             .await
             .with_context(|| format!("POST {path}"))?;
