@@ -296,6 +296,9 @@ impl RpcHandler {
             "openwrt.apply-config" => self.handle_openwrt_apply_config(params).await,
             "openwrt.installer.status" => self.handle_openwrt_installer_status().await,
             "openwrt.installer.identify" => self.handle_openwrt_installer_identify(params).await,
+            "openwrt.installer.set-root-password" => {
+                self.handle_openwrt_installer_set_root_password(params).await
+            }
             "openwrt.installer.trust" => self.handle_openwrt_installer_trust(params).await,
             "openwrt.installer.scan" => self.handle_openwrt_installer_scan().await,
             "openwrt.installer.config" => self.handle_openwrt_installer_config().await,

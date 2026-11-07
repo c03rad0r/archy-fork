@@ -2,6 +2,7 @@
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
 import { rpcClient } from '@/api/rpc-client'
+import { routerWorkInProgress } from '@/stores/criticalOperations'
 
 export interface MeshStatus {
   enabled: boolean
@@ -384,6 +385,7 @@ export const useMeshStore = defineStore('mesh', () => {
     const s = status.value
     if (!s) return []
     if (Date.now() < suppressDetectUntil.value) return []
+    if (routerWorkInProgress.value) return []
     return (s.detected_devices || []).filter(p =>
       dismissedDetected.value[p] !== pluggedAt(s, p) &&
       // The port the live session occupies is not a candidate…

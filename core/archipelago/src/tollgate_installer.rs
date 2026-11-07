@@ -139,6 +139,25 @@ impl InstallerClient {
             .await
     }
 
+    /// Set a root password through the installer's Dropbear-compatible path.
+    /// The secret is only sent to the local installer; it is not logged here.
+    pub async fn set_root_password(
+        &self,
+        ip: &str,
+        password: &str,
+        new_password: &str,
+    ) -> Result<Value> {
+        self.post(
+            "/api/set-root-password",
+            json!({
+                "ip": ip,
+                "password": password,
+                "new_password": new_password,
+            }),
+        )
+        .await
+    }
+
     pub async fn trust(&self, ip: &str, fingerprint: &str) -> Result<Value> {
         self.post(
             "/api/trust-host-key",

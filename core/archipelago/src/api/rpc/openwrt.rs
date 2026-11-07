@@ -2706,6 +2706,38 @@ impl RpcHandler {
         client.identify(&ip, &password).await
     }
 
+    /// Set a vanilla root password through the installer. The secret is only
+    /// forwarded to the local installer, never logged by Archy.
+    pub(super) async fn handle_openwrt_installer_set_root_password(
+        &self,
+        params: Option<serde_json::Value>,
+    ) -> Result<serde_json::Value> {
+        let saved = net_router::load_router_config(&self.config.data_dir).await?;
+        let p = params.unwrap_or_default();
+        let ip = p
+            .get("ip")
+            .or_else(|| p.get("host"))
+            .and_then(|v| v.as_str())
+            .map(str::to_string)
+            .or_else(|| saved.configured.then(|| saved.address.clone()))
+            .ok_or_else(|| anyhow::anyhow!("ip is required"))?;
+        let current = p
+            .get("password")
+            .or_else(|| p.get("ssh_password"))
+            .and_then(|v| v.as_str())
+            .map(str::to_string)
+            .or_else(|| saved.password.clone())
+            .unwrap_or_default();
+        let new_password = p
+            .get("new_password")
+            .and_then(|v| v.as_str())
+            .filter(|s| !s.trim().is_empty())
+            .ok_or_else(|| anyhow::anyhow!("new_password is required"))?;
+        let client = InstallerClient::new(&self.config.data_dir);
+        client.ensure_running().await?;
+        client.set_root_password(&ip, &current, new_password).await
+    }
+
     /// Trust the router's SSH host key after the operator verified the
     /// fingerprint out of band.
     pub(super) async fn handle_openwrt_installer_trust(

@@ -287,6 +287,7 @@
 <script setup lang="ts">
 import { ref, computed, watch, onBeforeUnmount } from 'vue'
 import { useRouter } from 'vue-router'
+import { routerWorkInProgress } from '@/stores/criticalOperations'
 import BaseModal from '@/components/BaseModal.vue'
 import { useMeshStore, type MeshDeviceProbe, type MeshConfigureParams, type FlashFirmwareFamily, type FlashBoard, type FlashJobStatus } from '@/stores/mesh'
 import { useAppStore } from '@/stores/app'
@@ -457,7 +458,8 @@ async function keepAsIs() {
     })
     mesh.dismissDetectedDevice(path)
     // The Mesh view lives under the dashboard shell — a bare /mesh 404s.
-    void router.push('/dashboard/mesh')
+    // A router flash/provision in progress must not lose its route to LoRa.
+    if (!routerWorkInProgress.value) void router.push('/dashboard/mesh')
   } catch (e) {
     error.value = e instanceof Error ? e.message : 'Failed to connect the mesh radio'
   } finally {
@@ -503,7 +505,7 @@ async function applySetup() {
         .catch(() => {})
     }
     mesh.dismissDetectedDevice(path)
-    void router.push('/dashboard/mesh')
+    if (!routerWorkInProgress.value) void router.push('/dashboard/mesh')
   } catch (e) {
     error.value = e instanceof Error ? e.message : 'Failed to configure the mesh radio'
   } finally {

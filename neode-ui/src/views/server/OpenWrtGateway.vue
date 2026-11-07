@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import { ref, computed, onMounted, onUnmounted, nextTick, watch } from 'vue'
+import { ref, computed, onMounted, onUnmounted, nextTick, watch, watchEffect } from 'vue'
+import { routerWorkInProgress } from '@/stores/criticalOperations'
 import { useRouter } from 'vue-router'
 import { rpcClient } from '@/api/rpc-client'
 import { useCachedResource } from '@/composables/useCachedResource'
@@ -1330,6 +1331,39 @@ async function connect() {
   await trySelectRouter(router, sshPassword.value, true)
 }
 
+/// A vanilla image has an empty root shadow: libssh2 cannot authenticate until
+/// a real password exists. Use the installer's Dropbear-compatible path to set
+/// it, then connect with the new credential. The secret never reaches logs.
+async function setRootPasswordAndConnect(): Promise<void> {
+  const r = selectedRouter.value
+  if (!r) return
+  if (sshPassword.value.length < 8) {
+    error.value = 'Root password must be at least 8 characters.'
+    return
+  }
+  connecting.value = true
+  error.value = ''
+  passwordCheckState.value = 'checking'
+  try {
+    await rpcClient.call({
+      method: 'openwrt.installer.set-root-password',
+      params: { host: r.ip, password: sshPassword.value, new_password: sshPassword.value },
+      timeout: 45000,
+    })
+    await trySelectRouter(r, sshPassword.value, true)
+  } catch (e) {
+    passwordCheckState.value = 'wrong'
+    error.value = e instanceof Error ? e.message : String(e)
+  } finally {
+    connecting.value = false
+  }
+}
+
+async function primaryConnect(): Promise<void> {
+  if (routerNeedsRootPassword.value) await setRootPasswordAndConnect()
+  else await connect()
+}
+
 /// The password field is a one-shot control: when the operator types the right
 /// password, the page should connect without a second click. Debounced so a
 /// typo does not become one SSH auth attempt per keystroke, throttled so a
@@ -1361,7 +1395,11 @@ function submitPasswordIfReady(): void {
   if (sshPassword.value === lastAttemptedPassword) return
   if (passwordAutoAttempts >= PASSWORD_MAX_AUTO_ATTEMPTS) return
   notePasswordAttempt()
-  void connect()
+  if (routerNeedsRootPassword.value) {
+    void setRootPasswordAndConnect()
+  } else {
+    void connect()
+  }
 }
 
 function submitPasswordNow(): void {
@@ -3245,6 +3283,16 @@ const boardName = computed(() => {
 // Discovery only. The saved active router is preselected but not connected:
 // status, wallet, upstream and schema RPCs must wait for an explicit
 // `openwrt.select-router` success.
+// Detected LoRa radios must not hijack a router flash/provision. The mesh
+// store suppresses automatic presentation while this is true, and resumes it
+// after the job completes.
+watchEffect(() => {
+  routerWorkInProgress.value =
+    flashRunning.value ||
+    provisioning.value ||
+    !!provisionProgress.value?.steps?.some(step => step.status === 'running')
+})
+
 onMounted(() => {
   clockTimer = setInterval(() => {
     nowTick.value = Date.now()
@@ -3539,12 +3587,19 @@ onMounted(() => {
           Using the saved root password. If it is refused, the password field appears.
         </p>
         <button
-          :disabled="connecting || !host.trim() || (routerNeedsRootPassword && !sshPassword)"
+          :disabled="connecting || !host.trim() || (routerNeedsRootPassword && sshPassword.length < 8)"
           class="glass-button w-full text-sm font-medium"
-          :class="connecting || !host.trim() || (routerNeedsRootPassword && !sshPassword) ? 'opacity-40 cursor-not-allowed' : 'glass-button-warning'"
-          @click="connect"
+          :class="connecting || !host.trim() || (routerNeedsRootPassword && sshPassword.length < 8) ? 'opacity-40 cursor-not-allowed' : 'glass-button-warning'"
+          data-testid="connect-router"
+          @click="primaryConnect"
         >
-          {{ connecting ? 'Connecting…' : 'Connect' }}
+          {{
+            connecting
+              ? 'Connecting…'
+              : routerNeedsRootPassword
+                ? 'Set password & connect'
+                : 'Connect'
+          }}
         </button>
       </div>
       <p v-if="error" class="mt-3 text-xs text-red-400">{{ error }}</p>
