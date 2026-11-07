@@ -1504,6 +1504,7 @@ impl RpcHandler {
                         .unwrap_or_default();
                     let (nodogsplash_gateway, nodogsplash_ok) =
                         tollgate::nodogsplash::summary(&router);
+                    let nodogsplash_expected = tollgate::nodogsplash::paid_bridge(&router);
                     let payout_address = router
                         .run_ok("cat /etc/tollgate/identities.json 2>/dev/null")
                         .ok()
@@ -1553,6 +1554,7 @@ impl RpcHandler {
                         "payout_address": payout_address,
                         "private_ssid": private_ssid,
                         "nodogsplash_gateway": nodogsplash_gateway,
+                        "nodogsplash_expected": nodogsplash_expected,
                         "nodogsplash_ok": nodogsplash_ok,
                     })
                 } else {
@@ -2034,9 +2036,16 @@ impl RpcHandler {
                 enabled: true,
                 ..TollGateConfig::default()
             };
+            let bridge = tollgate::nodogsplash::paid_bridge(&router);
+            if bridge.is_empty() {
+                anyhow::bail!(
+                    "cannot repair the paid portal: no AP network, NDS gateway or \
+                     tollgate.main.paid_bridge names an existing bridge"
+                );
+            }
             tollgate::nodogsplash::configure(&router, &cfg)?;
             tollgate::firewall::ensure_paid_bridge_can_reach_api(&router)?;
-            tollgate::firewall::ensure_paid_bridge_is_enforced(&router, "br-tollgate")?;
+            tollgate::firewall::ensure_paid_bridge_is_enforced(&router, &bridge)?;
             tollgate::nodogsplash::restart(&router)?;
             tollgate::nodogsplash::verify(&router)?;
             let (gateway, ok) = tollgate::nodogsplash::summary(&router);
@@ -2044,6 +2053,7 @@ impl RpcHandler {
                 "ok": true,
                 "gateway": gateway,
                 "gateway_ok": ok,
+                "expected": bridge,
                 "ssid": cfg.ssid,
             }))
         })

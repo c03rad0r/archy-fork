@@ -80,6 +80,7 @@ interface TollGateStatus {
   accepted_mints?: MintConfig[]
   installer_feed_tag?: string
   nodogsplash_gateway?: string
+  nodogsplash_expected?: string
   nodogsplash_ok?: boolean
 }
 
@@ -4157,7 +4158,10 @@ onMounted(() => {
             v-if="status.tollgate.nodogsplash_ok === false"
             class="mb-3 rounded-lg border border-red-400/20 bg-red-400/5 p-3 text-xs text-red-300"
           >
-            The paid-network portal is not gating <span class="font-mono">br-tollgate</span>
+            The paid-network portal is not gating
+            <span class="font-mono">{{
+              status.tollgate.nodogsplash_expected || 'the paid bridge'
+            }}</span>
             (current: <span class="font-mono">{{ status.tollgate.nodogsplash_gateway || 'none' }}</span>).
             <button
               class="ml-2 text-white/60 hover:text-white underline"

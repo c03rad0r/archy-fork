@@ -68,15 +68,136 @@ pub fn install_captive_portal_symlink(router: &Router) -> Result<()> {
     Ok(())
 }
 
-/// Configure NoDogSplash to gate the dedicated `br-tollgate` bridge (see
-/// `wifi::provision_network`), not `br-lan` — the paid SSID here lives on its
-/// own isolated network/subnet rather than the canonical upstream layout
-/// where it's bridged into `lan`.
+/// Whether `ip link show` answers for this bridge name.
 ///
-/// Must run after `wifi::provision_ssid` has created `br-tollgate` — pointing
-/// `gatewayinterface` at a bridge that doesn't exist yet is at best a no-op
-/// and at worst leaves NoDogSplash in a confused state.
+/// The name is validated before interpolation: UCI values are operator input.
+fn bridge_exists(router: &Router, bridge: &str) -> bool {
+    let bridge = bridge.trim();
+    if bridge.is_empty()
+        || !bridge
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '-' | '.'))
+    {
+        return false;
+    }
+    router
+        .run(&format!("ip link show {bridge} 2>/dev/null"))
+        .map(|(_, code)| code == 0)
+        .unwrap_or(false)
+}
+
+/// Networks carried by enabled AP wifi-iface sections, isolated `tollgate`
+/// first. A stock install has `lan`; Archy's isolated layout has `tollgate`.
+fn ap_networks(router: &Router) -> Vec<String> {
+    let (out, _) = router
+        .run("uci show wireless 2>/dev/null")
+        .unwrap_or_default();
+    let mut sections: std::collections::BTreeMap<String, (String, String, String)> =
+        std::collections::BTreeMap::new();
+    for line in out.lines() {
+        let Some((lhs, rhs)) = line.trim().split_once('=') else {
+            continue;
+        };
+        let parts: Vec<&str> = lhs.splitn(3, '.').collect();
+        if parts.len() != 3 || parts[0] != "wireless" {
+            continue;
+        }
+        let value = rhs.trim().trim_matches('\'').to_string();
+        let entry = sections.entry(parts[1].to_string()).or_default();
+        match parts[2] {
+            "mode" => entry.0 = value,
+            "network" => entry.1 = value,
+            "disabled" => entry.2 = value,
+            _ => {}
+        }
+    }
+    let mut networks: Vec<String> = Vec::new();
+    for (mode, network, disabled) in sections.values() {
+        if mode != "ap" || disabled == "1" || network.is_empty() {
+            continue;
+        }
+        if !networks.contains(network) {
+            networks.push(network.clone());
+        }
+    }
+    networks.sort_by_key(|n| if n == "tollgate" { 0 } else { 1 });
+    networks
+}
+
+/// Resolve a UCI network to its bridge device. OpenWrt omits
+/// `network.lan.device` when it uses the implicit `br-lan`.
+fn network_device(router: &Router, network: &str) -> Option<String> {
+    if let Ok(dev) = router.uci_get(&format!("network.{network}.device")) {
+        let dev = dev.trim();
+        if !dev.is_empty() {
+            return Some(dev.to_string());
+        }
+    }
+    let candidate = format!("br-{network}");
+    if bridge_exists(router, &candidate) {
+        Some(candidate)
+    } else {
+        None
+    }
+}
+
+/// The bridge that actually carries paid clients.
+///
+/// Order:
+/// 1. `tollgate.main.paid_bridge`, when it names an existing bridge.
+/// 2. `network.tollgate.device` (Archy's isolated layout).
+/// 3. The paid AP's `network` resolved to its device (stock installer layout:
+///    `lan` -> `br-lan`).
+/// 4. The existing NoDogSplash gateway.
+/// 5. `br-tollgate`, then `br-lan`, when they exist.
+///
+/// Empty when nothing resolves. Callers must refuse to rewrite in that case;
+/// substituting a literal is what broke gating on 2026-11-07.
+pub fn paid_bridge(router: &Router) -> String {
+    if let Ok(value) = router.uci_get("tollgate.main.paid_bridge") {
+        let value = value.trim();
+        if !value.is_empty() && bridge_exists(router, value) {
+            return value.to_string();
+        }
+    }
+    if let Ok(value) = router.uci_get("network.tollgate.device") {
+        let value = value.trim();
+        if !value.is_empty() && bridge_exists(router, value) {
+            return value.to_string();
+        }
+    }
+    for network in ap_networks(router) {
+        if let Some(dev) = network_device(router, &network) {
+            return dev;
+        }
+    }
+    for gateway in enabled_gateways(router) {
+        if bridge_exists(router, &gateway) {
+            return gateway;
+        }
+    }
+    for candidate in ["br-tollgate", "br-lan"] {
+        if bridge_exists(router, candidate) {
+            return candidate.to_string();
+        }
+    }
+    String::new()
+}
+
+/// Configure NoDogSplash to gate the bridge that actually carries the paid AP.
+///
+/// This is not always `br-tollgate`: the stock/installer layout keeps the paid
+/// AP on `lan` (`br-lan`), while Archy's isolated layout creates
+/// `br-tollgate`. Resolve the bridge first and refuse to point the portal at a
+/// name that does not exist.
 pub fn configure(router: &Router, cfg: &TollGateConfig) -> Result<()> {
+    let bridge = paid_bridge(router);
+    if bridge.is_empty() {
+        anyhow::bail!(
+            "cannot configure the paid portal: no AP network, NDS gateway or \
+             tollgate.main.paid_bridge names an existing bridge"
+        );
+    }
     router.run_ok("touch /etc/config/nodogsplash")?;
 
     // The nodogsplash package's own uci-defaults populate an anonymous
@@ -90,7 +211,7 @@ pub fn configure(router: &Router, cfg: &TollGateConfig) -> Result<()> {
 
     router.uci_set("nodogsplash.main", "nodogsplash")?;
     router.uci_set("nodogsplash.main.enabled", "1")?;
-    router.uci_set("nodogsplash.main.gatewayinterface", "br-tollgate")?;
+    router.uci_set("nodogsplash.main.gatewayinterface", &bridge)?;
     router.uci_set(
         "nodogsplash.main.gatewayname",
         &format!("{} Portal", cfg.ssid),
@@ -168,48 +289,55 @@ fn enabled_gateways(router: &Router) -> Vec<String> {
         .collect()
 }
 
-/// The active gateway interface and whether it is the paid bridge.
+/// The active gateway interface and whether it matches the derived paid bridge.
 pub fn summary(router: &Router) -> (String, bool) {
+    let expected = paid_bridge(router);
     let gateways = enabled_gateways(router);
     let gateway = gateways
         .iter()
-        .find(|g| g.as_str() == "br-tollgate")
+        .find(|g| g.as_str() == expected)
         .cloned()
         .or_else(|| gateways.first().cloned())
         .unwrap_or_default();
-    let bridge_ok = router
-        .run("ip link show br-tollgate 2>/dev/null")
-        .map(|(_, code)| code == 0)
-        .unwrap_or(false);
-    (
-        gateway,
-        gateways.iter().any(|g| g == "br-tollgate") && bridge_ok,
-    )
+    let ok = !expected.is_empty()
+        && gateways.len() == 1
+        && gateway == expected
+        && gateways.iter().any(|g| g == &expected)
+        && bridge_exists(router, &expected);
+    (gateway, ok)
 }
 
-/// Refuse a provisioned router whose NoDogSplash is not gating the paid
-/// bridge. This catches both the package's stock `br-lan` default and a
-/// second anonymous instance left behind by an old install.
+/// Refuse a provisioned router whose NoDogSplash is not gating the bridge that
+/// carries the paid AP. Accepts both the stock `br-lan` layout and Archy's
+/// isolated `br-tollgate` layout; rejects extra enabled gateways and any
+/// derived bridge that does not exist.
 pub fn verify(router: &Router) -> Result<()> {
+    let expected = paid_bridge(router);
+    if expected.is_empty() {
+        anyhow::bail!(
+            "cannot determine the paid bridge: no AP network, NDS gateway or \
+             tollgate.main.paid_bridge names an existing bridge"
+        );
+    }
     let gateways = enabled_gateways(router);
     if gateways.is_empty() {
         anyhow::bail!("NoDogSplash has no enabled gateway section");
     }
-    if gateways.iter().any(|g| g == "br-lan") {
+    if !gateways.iter().any(|g| g == &expected) {
         anyhow::bail!(
-            "NoDogSplash is still gating br-lan (enabled interfaces: {:?})",
+            "NoDogSplash is not gating {expected} (enabled interfaces: {:?})",
             gateways
         );
     }
-    if !gateways.iter().any(|g| g == "br-tollgate") {
+    if let Some(extra) = gateways.iter().find(|g| g.as_str() != expected) {
         anyhow::bail!(
-            "NoDogSplash is not gating br-tollgate (enabled interfaces: {:?})",
+            "NoDogSplash is gating an extra interface {extra} (expected {expected}; \
+             enabled interfaces: {:?})",
             gateways
         );
     }
-    let (_, code) = router.run("ip link show br-tollgate 2>/dev/null")?;
-    if code != 0 {
-        anyhow::bail!("br-tollgate does not exist");
+    if !bridge_exists(router, &expected) {
+        anyhow::bail!("{expected} does not exist");
     }
     Ok(())
 }
@@ -219,4 +347,154 @@ pub fn restart(router: &Router) -> Result<()> {
     router.run_ok("/etc/init.d/nodogsplash enable")?;
     router.run_ok("/etc/init.d/nodogsplash restart || /etc/init.d/nodogsplash start")?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    struct Fixture {
+        bridges: Vec<String>,
+        wireless: String,
+        tollgate_dev: Option<String>,
+        explicit: Option<String>,
+        nds: String,
+    }
+
+    fn router(f: Fixture) -> Router {
+        let bridges = f.bridges.clone();
+        Router::scripted(move |cmd| {
+            if cmd == "uci show wireless 2>/dev/null" {
+                return Ok((f.wireless.clone(), 0));
+            }
+            if cmd == "uci show nodogsplash 2>/dev/null" {
+                return Ok((f.nds.clone(), 0));
+            }
+            if let Some(key) = cmd.strip_prefix("uci get ") {
+                let value = match key {
+                    "tollgate.main.paid_bridge" => f.explicit.clone(),
+                    "network.tollgate.device" => f.tollgate_dev.clone(),
+                    other if other.starts_with("network.") && other.ends_with(".device") => None,
+                    _ => None,
+                };
+                return value
+                    .map(|v| (v, 0))
+                    .ok_or_else(|| anyhow::anyhow!("uci: entry not found"));
+            }
+            if let Some(rest) = cmd.strip_prefix("ip link show ") {
+                let name = rest.split_whitespace().next().unwrap_or("");
+                let code = if bridges.iter().any(|b| b == name) {
+                    0
+                } else {
+                    1
+                };
+                return Ok((String::new(), code));
+            }
+            Ok((String::new(), 0))
+        })
+    }
+
+    fn ap(network: &str) -> String {
+        format!(
+            "wireless.default_radio0=wifi-iface\n\
+             wireless.default_radio0.mode='ap'\n\
+             wireless.default_radio0.network='{network}'\n\
+             wireless.default_radio0.disabled='0'\n"
+        )
+    }
+
+    #[test]
+    fn stock_layout_resolves_br_lan() {
+        let r = router(Fixture {
+            bridges: vec!["br-lan".into(), "br-private".into()],
+            wireless: ap("lan"),
+            tollgate_dev: None,
+            explicit: None,
+            nds: "nodogsplash.main=nodogsplash\n\
+                  nodogsplash.main.enabled='1'\n\
+                  nodogsplash.main.gatewayinterface='br-lan'\n"
+                .into(),
+        });
+        assert_eq!(paid_bridge(&r), "br-lan");
+        assert_eq!(summary(&r), ("br-lan".into(), true));
+        assert!(verify(&r).is_ok());
+    }
+
+    #[test]
+    fn isolated_layout_resolves_br_tollgate() {
+        let r = router(Fixture {
+            bridges: vec!["br-lan".into(), "br-tollgate".into()],
+            wireless: ap("tollgate"),
+            tollgate_dev: Some("br-tollgate".into()),
+            explicit: None,
+            nds: "nodogsplash.main=nodogsplash\n\
+                  nodogsplash.main.enabled='1'\n\
+                  nodogsplash.main.gatewayinterface='br-tollgate'\n"
+                .into(),
+        });
+        assert_eq!(paid_bridge(&r), "br-tollgate");
+        assert_eq!(summary(&r), ("br-tollgate".into(), true));
+        assert!(verify(&r).is_ok());
+    }
+
+    #[test]
+    fn explicit_paid_bridge_wins_when_it_exists() {
+        let r = router(Fixture {
+            bridges: vec!["br-lan".into(), "br-guest".into()],
+            wireless: ap("lan"),
+            tollgate_dev: None,
+            explicit: Some("br-guest".into()),
+            nds: "nodogsplash.main.enabled='1'\n\
+                  nodogsplash.main.gatewayinterface='br-lan'\n"
+                .into(),
+        });
+        assert_eq!(paid_bridge(&r), "br-guest");
+        // The enforcement still says br-lan, so the check must fail, not lie.
+        assert!(!summary(&r).1);
+        assert!(verify(&r).is_err());
+    }
+
+    #[test]
+    fn a_nonexistent_explicit_bridge_is_ignored() {
+        let r = router(Fixture {
+            bridges: vec!["br-lan".into()],
+            wireless: ap("lan"),
+            tollgate_dev: None,
+            explicit: Some("br-missing".into()),
+            nds: "nodogsplash.main.enabled='1'\n\
+                  nodogsplash.main.gatewayinterface='br-lan'\n"
+                .into(),
+        });
+        assert_eq!(paid_bridge(&r), "br-lan");
+    }
+
+    #[test]
+    fn no_resolvable_bridge_refuses_to_guess() {
+        let r = router(Fixture {
+            bridges: vec![],
+            wireless: String::new(),
+            tollgate_dev: None,
+            explicit: None,
+            nds: String::new(),
+        });
+        assert_eq!(paid_bridge(&r), "");
+        assert!(verify(&r).is_err());
+    }
+
+    #[test]
+    fn an_extra_enabled_gateway_is_rejected() {
+        let r = router(Fixture {
+            bridges: vec!["br-lan".into(), "br-tollgate".into()],
+            wireless: ap("lan"),
+            tollgate_dev: None,
+            explicit: None,
+            nds: "nodogsplash.main.enabled='1'\n\
+                  nodogsplash.main.gatewayinterface='br-lan'\n\
+                  nodogsplash.@nodogsplash[0].enabled='1'\n\
+                  nodogsplash.@nodogsplash[0].gatewayinterface='br-tollgate'\n"
+                .into(),
+        });
+        assert_eq!(summary(&r), ("br-lan".into(), false));
+        assert!(verify(&r).is_err());
+    }
 }
