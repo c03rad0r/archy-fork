@@ -3147,7 +3147,11 @@ async function testUpstreamWifi(args: {
     method: 'openwrt.installer.wifi-test',
     params: {
       host: host.value.trim() || status.value?.host || '',
-      password: String(authParams().ssh_password ?? ''),
+      // Omit an empty field: it must mean "use the saved router credential",
+      // not "authenticate with a blank root password".
+      ...(String(authParams().ssh_password ?? '')
+        ? { password: String(authParams().ssh_password) }
+        : {}),
       ssid: args.ssid,
       wifiPass: args.use_node_credentials ? '' : (args.password ?? ''),
       use_node_credentials: args.use_node_credentials ?? false,

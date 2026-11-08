@@ -1255,12 +1255,9 @@ impl RpcHandler {
             .or_else(|| saved.username.clone())
             .unwrap_or_else(|| "root".to_string());
 
-        let ssh_password = p
-            .get("ssh_password")
-            .and_then(|v| v.as_str())
-            .map(|s| s.to_string())
-            .or_else(|| saved.password.clone())
-            .unwrap_or_default();
+        // The UI's optional password field sends "" when empty; that must
+        // mean "use the saved router credential", not "authenticate blank".
+        let ssh_password = Self::resolve_ssh_password(&p, saved.password.as_deref());
 
         // The SSH session is blocking (ssh2 over std TcpStream). Run it on the
         // blocking pool: inline it used to park a tokio worker for the whole
@@ -1639,12 +1636,9 @@ impl RpcHandler {
             .map(|s| s.to_string())
             .or_else(|| saved.username.clone())
             .unwrap_or_else(|| "root".to_string());
-        let ssh_password = p
-            .get("ssh_password")
-            .and_then(|v| v.as_str())
-            .map(|s| s.to_string())
-            .or_else(|| saved.password.clone())
-            .unwrap_or_default();
+        // The UI's optional password field sends "" when empty; that must
+        // mean "use the saved router credential", not "authenticate blank".
+        let ssh_password = Self::resolve_ssh_password(&p, saved.password.as_deref());
         let url = p
             .get("url")
             .and_then(|v| v.as_str())
@@ -1695,12 +1689,9 @@ impl RpcHandler {
             .map(|s| s.to_string())
             .or_else(|| saved.username.clone())
             .unwrap_or_else(|| "root".to_string());
-        let ssh_password = p
-            .get("ssh_password")
-            .and_then(|v| v.as_str())
-            .map(|s| s.to_string())
-            .or_else(|| saved.password.clone())
-            .unwrap_or_default();
+        // The UI's optional password field sends "" when empty; that must
+        // mean "use the saved router credential", not "authenticate blank".
+        let ssh_password = Self::resolve_ssh_password(&p, saved.password.as_deref());
 
         let result = tokio::task::spawn_blocking(move || -> Result<serde_json::Value> {
             let router = Router::connect_password(&host, 22, &ssh_user, &ssh_password)?;
@@ -1895,12 +1886,9 @@ impl RpcHandler {
             .map(|s| s.to_string())
             .or_else(|| saved.username.clone())
             .unwrap_or_else(|| "root".to_string());
-        let ssh_password = p
-            .get("ssh_password")
-            .and_then(|v| v.as_str())
-            .map(|s| s.to_string())
-            .or_else(|| saved.password.clone())
-            .unwrap_or_default();
+        // The UI's optional password field sends "" when empty; that must
+        // mean "use the saved router credential", not "authenticate blank".
+        let ssh_password = Self::resolve_ssh_password(&p, saved.password.as_deref());
         let urls: Vec<String> = p
             .get("urls")
             .and_then(|v| v.as_array())
@@ -1959,12 +1947,9 @@ impl RpcHandler {
             .map(|s| s.to_string())
             .or_else(|| saved.username.clone())
             .unwrap_or_else(|| "root".to_string());
-        let ssh_password = p
-            .get("ssh_password")
-            .and_then(|v| v.as_str())
-            .map(|s| s.to_string())
-            .or_else(|| saved.password.clone())
-            .unwrap_or_default();
+        // The UI's optional password field sends "" when empty; that must
+        // mean "use the saved router credential", not "authenticate blank".
+        let ssh_password = Self::resolve_ssh_password(&p, saved.password.as_deref());
 
         let result = tokio::task::spawn_blocking(move || -> Result<serde_json::Value> {
             let router = Router::connect_password(&host, 22, &ssh_user, &ssh_password)?;
@@ -2017,12 +2002,9 @@ impl RpcHandler {
             .map(|s| s.to_string())
             .or_else(|| saved.username.clone())
             .unwrap_or_else(|| "root".to_string());
-        let ssh_password = p
-            .get("ssh_password")
-            .and_then(|v| v.as_str())
-            .map(|s| s.to_string())
-            .or_else(|| saved.password.clone())
-            .unwrap_or_default();
+        // The UI's optional password field sends "" when empty; that must
+        // mean "use the saved router credential", not "authenticate blank".
+        let ssh_password = Self::resolve_ssh_password(&p, saved.password.as_deref());
 
         let result = tokio::task::spawn_blocking(move || -> Result<serde_json::Value> {
             let router = Router::connect_password(&host, 22, &ssh_user, &ssh_password)?;
@@ -2446,6 +2428,32 @@ impl RpcHandler {
         }))
     }
 
+    /// Resolve an optional SSH credential for helper RPCs. Empty means the
+    /// optional field was omitted; use the saved router credential. A
+    /// non-empty explicit value always wins.
+    fn resolve_ssh_password(params: &serde_json::Value, saved: Option<&str>) -> String {
+        Self::non_empty(params.get("ssh_password"))
+            .or_else(|| saved.filter(|s| !s.is_empty()).map(str::to_string))
+            .unwrap_or_default()
+    }
+
+    /// Root-password handlers use `password` in their request body. Keep it
+    /// separate from `ssh_password` because `configure-wan` uses `password`
+    /// for the upstream Wi-Fi PSK, not for SSH.
+    fn resolve_root_password(params: &serde_json::Value, saved: Option<&str>) -> String {
+        Self::non_empty(params.get("password"))
+            .or_else(|| Self::non_empty(params.get("ssh_password")))
+            .or_else(|| saved.filter(|s| !s.is_empty()).map(str::to_string))
+            .unwrap_or_default()
+    }
+
+    fn non_empty(value: Option<&serde_json::Value>) -> Option<String> {
+        value
+            .and_then(|v| v.as_str())
+            .filter(|s| !s.is_empty())
+            .map(str::to_string)
+    }
+
     /// Resolve the SSH password for `select-router`.
     ///
     /// `password_provided` distinguishes an explicit blank submission from an
@@ -2694,13 +2702,7 @@ impl RpcHandler {
             .map(str::to_string)
             .or_else(|| saved.configured.then(|| saved.address.clone()))
             .ok_or_else(|| anyhow::anyhow!("ip is required"))?;
-        let password = p
-            .get("password")
-            .or_else(|| p.get("ssh_password"))
-            .and_then(|v| v.as_str())
-            .map(str::to_string)
-            .or_else(|| saved.password.clone())
-            .unwrap_or_default();
+        let password = Self::resolve_root_password(&p, saved.password.as_deref());
         let client = InstallerClient::new(&self.config.data_dir);
         client.ensure_running().await?;
         client.identify(&ip, &password).await
@@ -2721,13 +2723,9 @@ impl RpcHandler {
             .map(str::to_string)
             .or_else(|| saved.configured.then(|| saved.address.clone()))
             .ok_or_else(|| anyhow::anyhow!("ip is required"))?;
-        let ssh_password = p
-            .get("password")
-            .or_else(|| p.get("ssh_password"))
-            .and_then(|v| v.as_str())
-            .map(str::to_string)
-            .or_else(|| saved.password.clone())
-            .unwrap_or_default();
+        // The UI's optional password field sends "" when empty; that must
+        // mean "use the saved router credential", not "authenticate blank".
+        let ssh_password = Self::resolve_root_password(&p, saved.password.as_deref());
         let ssid = p
             .get("ssid")
             .and_then(|v| v.as_str())
@@ -2746,9 +2744,7 @@ impl RpcHandler {
         if use_node {
             // Resolve the PSK from NetworkManager on this node. The browser
             // never sees it, and it is only forwarded to the local installer.
-            if let Ok(Some((node_ssid, node_psk))) =
-                super::interfaces::upstream_wifi_psk().await
-            {
+            if let Ok(Some((node_ssid, node_psk))) = super::interfaces::upstream_wifi_psk().await {
                 if wifi_pass.is_empty() && ssid == node_ssid {
                     wifi_pass = node_psk;
                 }
@@ -2757,7 +2753,9 @@ impl RpcHandler {
         let band = p.get("band").and_then(|v| v.as_str());
         let client = InstallerClient::new(&self.config.data_dir);
         client.ensure_running().await?;
-        client.wifi_test(&ip, &ssh_password, ssid, &wifi_pass, band).await
+        client
+            .wifi_test(&ip, &ssh_password, ssid, &wifi_pass, band)
+            .await
     }
 
     /// Set a vanilla root password through the installer. The secret is only
@@ -2775,13 +2773,7 @@ impl RpcHandler {
             .map(str::to_string)
             .or_else(|| saved.configured.then(|| saved.address.clone()))
             .ok_or_else(|| anyhow::anyhow!("ip is required"))?;
-        let current = p
-            .get("password")
-            .or_else(|| p.get("ssh_password"))
-            .and_then(|v| v.as_str())
-            .map(str::to_string)
-            .or_else(|| saved.password.clone())
-            .unwrap_or_default();
+        let current = Self::resolve_root_password(&p, saved.password.as_deref());
         let new_password = p
             .get("new_password")
             .and_then(|v| v.as_str())
@@ -2832,12 +2824,7 @@ impl RpcHandler {
             .map(str::to_string)
             .or_else(|| saved.configured.then(|| saved.address.clone()))
             .ok_or_else(|| anyhow::anyhow!("No router selected"))?;
-        let password = p
-            .get("ssh_password")
-            .and_then(|v| v.as_str())
-            .map(str::to_string)
-            .or_else(|| saved.password.clone())
-            .unwrap_or_default();
+        let password = Self::resolve_root_password(&p, saved.password.as_deref());
         let version = p
             .get("version")
             .and_then(|v| v.as_str())
@@ -2901,12 +2888,7 @@ impl RpcHandler {
             .map(str::to_string)
             .or_else(|| saved.configured.then(|| saved.address.clone()))
             .ok_or_else(|| anyhow::anyhow!("No router selected"))?;
-        let password = p
-            .get("ssh_password")
-            .and_then(|v| v.as_str())
-            .map(str::to_string)
-            .or_else(|| saved.password.clone())
-            .unwrap_or_default();
+        let password = Self::resolve_root_password(&p, saved.password.as_deref());
         let version = p
             .get("version")
             .and_then(|v| v.as_str())
@@ -3222,12 +3204,9 @@ impl RpcHandler {
             .map(|s| s.to_string())
             .or_else(|| saved.username.clone())
             .unwrap_or_else(|| "root".to_string());
-        let ssh_password = p
-            .get("ssh_password")
-            .and_then(|v| v.as_str())
-            .map(|s| s.to_string())
-            .or_else(|| saved.password.clone())
-            .unwrap_or_default();
+        // The UI's optional password field sends "" when empty; that must
+        // mean "use the saved router credential", not "authenticate blank".
+        let ssh_password = Self::resolve_ssh_password(&p, saved.password.as_deref());
 
         let default_mint_url = format!("http://{}:{}", self.config.host_ip, LOCAL_MINT_PORT);
         // Trim trailing slash(es): tollgate-wrt matches a token's embedded
@@ -3853,12 +3832,9 @@ impl RpcHandler {
             .map(|s| s.to_string())
             .or_else(|| saved.username.clone())
             .unwrap_or_else(|| "root".to_string());
-        let ssh_password = p
-            .get("ssh_password")
-            .and_then(|v| v.as_str())
-            .map(|s| s.to_string())
-            .or_else(|| saved.password.clone())
-            .unwrap_or_default();
+        // The UI's optional password field sends "" when empty; that must
+        // mean "use the saved router credential", not "authenticate blank".
+        let ssh_password = Self::resolve_ssh_password(&p, saved.password.as_deref());
 
         // A radio scan is seconds of SSH round-trips even on a healthy
         // router; keep it off the runtime.
@@ -3928,12 +3904,9 @@ impl RpcHandler {
             .map(|s| s.to_string())
             .or_else(|| saved.username.clone())
             .unwrap_or_else(|| "root".to_string());
-        let ssh_password = p
-            .get("ssh_password")
-            .and_then(|v| v.as_str())
-            .map(|s| s.to_string())
-            .or_else(|| saved.password.clone())
-            .unwrap_or_default();
+        // The UI's optional password field sends "" when empty; that must
+        // mean "use the saved router credential", not "authenticate blank".
+        let ssh_password = Self::resolve_ssh_password(&p, saved.password.as_deref());
 
         let mut ssid = p
             .get("ssid")
@@ -4324,6 +4297,42 @@ mod tests {
         )];
         assert!(flash_route_ok(&links, Some("enx0")));
         assert!(!flash_route_ok(&links, Some("enx1")));
+    }
+
+    #[test]
+    fn empty_ui_password_falls_back_to_saved_ssh_credential() {
+        let params = serde_json::json!({ "ssh_password": "" });
+        assert_eq!(
+            RpcHandler::resolve_ssh_password(&params, Some("saved-root")),
+            "saved-root"
+        );
+        let explicit = serde_json::json!({ "ssh_password": "typed-root" });
+        assert_eq!(
+            RpcHandler::resolve_ssh_password(&explicit, Some("saved-root")),
+            "typed-root"
+        );
+        assert_eq!(RpcHandler::resolve_ssh_password(&params, None), "");
+    }
+
+    #[test]
+    fn root_password_field_beats_ssh_password_but_empty_falls_back() {
+        let empty = serde_json::json!({ "password": "", "ssh_password": "" });
+        assert_eq!(
+            RpcHandler::resolve_root_password(&empty, Some("saved-root")),
+            "saved-root"
+        );
+        let root = serde_json::json!({ "password": "root-field" });
+        assert_eq!(
+            RpcHandler::resolve_root_password(&root, Some("saved-root")),
+            "root-field"
+        );
+        let upstream_psk = serde_json::json!({ "password": "wifi-psk" });
+        // configure-wan must use the SSH-only resolver so the upstream PSK is
+        // never mistaken for the router login.
+        assert_eq!(
+            RpcHandler::resolve_ssh_password(&upstream_psk, Some("saved-root")),
+            "saved-root"
+        );
     }
 
     #[test]
