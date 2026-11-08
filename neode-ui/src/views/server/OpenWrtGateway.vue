@@ -733,6 +733,11 @@ function scrollToUplink() {
     ?.scrollIntoView({ behavior: 'smooth', block: 'center' })
 }
 
+async function configureUplink() {
+  scrollToUplink()
+  await startWanSetup()
+}
+
 const adminReady = computed(() => {
   const t = status.value?.tollgate
   return (
@@ -1011,6 +1016,10 @@ const ownSsidSet = computed(
         .filter(Boolean),
     ),
 )
+
+// network.lan.ipaddr may already include its /prefix on current OpenWrt, while
+// the template also appends a netmask. Normalize it to one masked address.
+const wanLanIp = computed(() => (status.value?.wan?.lan_ip || '192.168.1.1').split('/')[0])
 
 const rankedLiveUpstreams = computed(() =>
   rankNetworks(buildRankedNetworks(upstreamNetworks.value, ownSsidSet.value)),
@@ -3770,15 +3779,18 @@ onMounted(() => {
       <!-- Internet uplink (regular Wi-Fi/WAN, separate from TollGate upstreams) -->
       <div v-if="showUplink" class="glass-card p-6 mb-4" data-testid="internet-uplink">
         <div class="flex items-center justify-between mb-4">
-          <h2 class="text-sm font-semibold text-white/80">Internet uplink</h2>
-          <button
-            v-if="wanStep === 'idle' || wanStep === 'done'"
-            class="text-xs text-white/40 hover:text-white transition-colors"
-            data-testid="configure-uplink"
-            @click="startWanSetup"
-          >
-            {{ status.wan?.configured ? 'Reconfigure →' : 'Set up →' }}
-          </button>
+          <div class="mb-4">
+            <button
+              class="glass-button glass-button-warning w-full text-sm font-medium"
+              data-testid="configure-uplink"
+              @click="configureUplink"
+            >
+              {{ status.wan?.configured ? 'Reconfigure internet uplink' : 'Configure internet uplink' }}
+            </button>
+          </div>
+          <div class="flex items-center justify-between mb-4">
+            <h2 class="text-sm font-semibold text-white/80">Internet uplink</h2>
+          </div>
         </div>
 
         <!-- Current status (idle) -->
@@ -3804,7 +3816,7 @@ onMounted(() => {
               class="grid grid-cols-3 gap-x-4 gap-y-1 text-xs text-white/40 mb-3">
             <div>
               <dt class="text-white/25">LAN</dt>
-              <dd class="text-white/60 font-mono">{{ status.wan.lan_ip }}/24</dd>
+              <dd class="text-white/60 font-mono">{{ wanLanIp }}/24</dd>
             </div>
             <div>
               <dt class="text-white/25">DHCP</dt>
@@ -3984,15 +3996,20 @@ onMounted(() => {
           <p v-if="wanError" class="mt-2 text-xs text-red-400">{{ wanError }}</p>
         </template>
 
-        <!-- Step: DHCP + masquerade config -->
+        <!-- Advanced: only for operators who want to override the pool/NAT.
+             The happy path keeps the router's current LAN/DHCP defaults. -->
         <template v-else-if="wanStep === 'dhcp'">
+          <details class="mb-3 rounded-lg border border-white/10 p-2" data-testid="uplink-advanced">
+            <summary class="text-xs text-white/50 cursor-pointer">
+              Advanced DHCP and NAT (defaults are usually correct)
+            </summary>
           <p class="text-xs text-white/50 mb-4">
             Configure how this router hands out addresses to WiFi clients.
           </p>
 
           <!-- LAN info -->
           <div class="mb-4 text-xs font-mono bg-black/20 rounded-lg px-3 py-2 text-white/50">
-            <span class="text-white/30">LAN: </span>{{ status?.wan?.lan_ip || '192.168.1.1' }}/24
+            <span class="text-white/30">LAN: </span>{{ wanLanIp }}/24
           </div>
 
           <!-- DHCP range -->
@@ -4030,6 +4047,7 @@ onMounted(() => {
             </button>
           </div>
 
+          </details>
           <p v-if="wanError" class="mb-3 text-xs text-red-400">{{ wanError }}</p>
           <div class="flex items-center gap-2">
             <button
@@ -4107,7 +4125,7 @@ onMounted(() => {
             data-testid="install-blocked-no-wan"
           >
             {{ installUplinkMessage }}
-            <button class="ml-1 underline text-yellow-200 hover:text-yellow-100" @click="scrollToUplink">
+            <button class="ml-1 underline text-yellow-200 hover:text-yellow-100" @click="configureUplink">
               Configure uplink
             </button>
           </div>
